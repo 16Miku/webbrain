@@ -1,0 +1,27 @@
+{
+  "id": "001",
+  "user": "go to firefox extensions management pagr",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 917,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "about:addons"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants to go to the Firefox extensions management page. I need to navigate to that URL. Let me check what the current page is - it says \"about:home — Title: New Tab\", so I'm at a blank new tab page.\n\nI need to navigate to the Firefox extensions management page. The typical URL for Firefox extensions management is \"about:addons\" or \"chrome://extensions\". Let me try \"about:addons\" first as that's the standard way to access the extensions manager in Firefox.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"about:addons\"}}\n]",
+  "usage": {
+    "completion_tokens": 132,
+    "prompt_tokens": 8468,
+    "total_tokens": 8600,
+    "prompt_tokens_details": {
+      "cached_tokens": 8467
+    }
+  }
+}

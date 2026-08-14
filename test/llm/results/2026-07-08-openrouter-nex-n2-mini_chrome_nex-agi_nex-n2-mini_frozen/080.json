@@ -1,0 +1,47 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 19429,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxChars": 4000,
+      "maxDepth": 8,
+      "page": 1,
+      "ref_id": ""
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17458,
+    "completion_tokens": 3166,
+    "total_tokens": 20624,
+    "cost": 0.00075305,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00075305,
+      "upstream_inference_prompt_cost": 0.00043645,
+      "upstream_inference_completions_cost": 0.0003166
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 3087,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "060",
+  "user": "find 3 wireless earbuds under $100",
+  "tab": {
+    "url": "https://www.amazon.com/",
+    "title": "Amazon.com"
+  },
+  "latencyMs": 1939,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "window.location.href"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17450,
+    "total_tokens": 17521,
+    "completion_tokens": 71,
+    "prompt_tokens_details": null
+  }
+}

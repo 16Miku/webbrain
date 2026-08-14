@@ -1,0 +1,27 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3104,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to \"switch to my netflix tab\". This means they want me to navigate to their Netflix tab. I need to first check what tabs are available or navigate to Netflix.\n\nLet me start by checking the current page context. The user mentioned \"switch to my netflix tab\" which suggests they have a Netflix tab open already. I should first check what's currently on the page and then navigate to Netflix if needed.\n\nLet me start by reading the current page to understand the context.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 132,
+    "prompt_tokens": 8466,
+    "total_tokens": 8598,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

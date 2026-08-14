@@ -1,0 +1,25 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 503,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.google.com\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9182,
+    "completion_tokens": 30,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4831,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm not sure what you're referring to — this is a fresh conversation and I'm currently on a blank New Tab page, so I don't have any prior context about \"that other thing.\"\n\nCould you clarify what you'd like me to go back to? For example:\n- A specific website or URL?\n- A previous task we were working on?\n- Something you saw earlier in your browsing history?",
+  "usage": {
+    "prompt_tokens": 16971,
+    "completion_tokens": 154,
+    "total_tokens": 17125,
+    "cost": 0.0105522,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0105522,
+      "upstream_inference_prompt_cost": 0.0101826,
+      "upstream_inference_completions_cost": 0.0003696
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 89,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "019",
+  "user": "search reddit for mechanical keyboards",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1741,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have access to Reddit or the ability to search external sites directly. However, I can help you craft a search query or guide you on how to search Reddit using your browser. If you'd like, I can also suggest some popular mechanical keyboard subreddits to visit. Let me know how you'd like to proceed!",
+  "usage": {
+    "prompt_tokens": 8594,
+    "completion_tokens": 68,
+    "total_tokens": 8662,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

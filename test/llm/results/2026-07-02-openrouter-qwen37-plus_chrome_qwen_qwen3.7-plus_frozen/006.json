@@ -1,0 +1,42 @@
+{
+  "id": "006",
+  "user": "i wanna check netflix",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3220,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.netflix.com"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "Let me open Netflix for you.\n\n",
+  "usage": {
+    "prompt_tokens": 17327,
+    "completion_tokens": 55,
+    "total_tokens": 17382,
+    "cost": 0.001256896,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17024,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.001256896,
+      "upstream_inference_prompt_cost": 0.001186496,
+      "upstream_inference_completions_cost": 0.0000704
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 14,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

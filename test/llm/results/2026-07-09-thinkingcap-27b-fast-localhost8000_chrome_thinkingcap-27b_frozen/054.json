@@ -1,0 +1,27 @@
+{
+  "id": "054",
+  "user": "download this image",
+  "mode": "act",
+  "tab": {
+    "url": "https://example.com/photo.jpg",
+    "title": "photo.jpg"
+  },
+  "latencyMs": 2389,
+  "error": null,
+  "firstToolCall": {
+    "name": "download_file",
+    "args": {
+      "url": "https://example.com/photo.jpg",
+      "filename": "photo.jpg"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17328,
+    "total_tokens": 17411,
+    "completion_tokens": 83,
+    "prompt_tokens_details": null
+  }
+}

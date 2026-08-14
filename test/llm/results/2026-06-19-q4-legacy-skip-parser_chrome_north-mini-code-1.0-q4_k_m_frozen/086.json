@@ -1,0 +1,22 @@
+{
+  "id": "086",
+  "user": "what does CORS stand for",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3682,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "The user is asking \"what does CORS stand for\". This is a straightforward question about an acronym. I don't need to browse the web or interact with any pages - this is a knowledge question that I can answer directly.\n\nLooking at the instructions, I should start by reading the current page to understand the context. The current page is \"about:home — Title: New Tab\", which is just a new tab page. This doesn't contain any information about CORS, so I should just answer the question directly.\n\nThe user is asking for the meaning of CORS, which is a technical acronym. I can answer this without needing to use any tools.CORS stands for **Cross-Origin Resource Sharing**.\n\nIt's a security feature implemented by web browsers that controls how web pages can make requests to resources from a different domain than the one the page is hosted on. CORS helps protect users by preventing malicious websites from making unauthorized requests to other websites on behalf of the user.\n\nWhen a website wants to allow other sites to access its resources (like APIs), it must include specific HTTP headers in its responses to indicate which origins are permitted to access them. This enables safe cross-origin communication while maintaining security boundaries between different websites.",
+  "usage": {
+    "completion_tokens": 242,
+    "prompt_tokens": 8466,
+    "total_tokens": 8708,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

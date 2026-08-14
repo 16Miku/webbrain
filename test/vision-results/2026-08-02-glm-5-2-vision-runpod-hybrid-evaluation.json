@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "sourceResult": "2026-08-02-glm-5-2-vision-runpod-hybrid.json",
+  "fixture": "test/fixtures/google-signin-password-error.jpg",
+  "model": "GLM-5.2-Vision",
+  "checkpoint": "0xSero/GLM-5.2-MXFP8-NVFP4-NF3-Hybrid-Vision",
+  "checkpointRevision": "6395e588e0f22dc9c9988907d6281ce675ec7e20",
+  "evaluation": {
+    "pagePurpose": "correct",
+    "visibleStrings": {
+      "correct": 12,
+      "total": 12
+    },
+    "emailChipOcr": "correct",
+    "emailChipSemanticType": "misclassified as an email field",
+    "emailChipDropdownAffordance": "missed",
+    "passwordFieldState": "correctly described as empty, but incorrectly marked not focused",
+    "redErrorState": "exact error text + warning icon; red input border omitted",
+    "nextButtonState": "correctly identified as visually enabled but unable to advance without a password",
+    "semanticBlocker": "correctly inferred",
+    "unknownsCalibration": "failed; answered None",
+    "fabricatedVisibleText": 0,
+    "formatNotes": [
+      "Did not report the disabled state for the password field or the checked/disabled state for the checkbox as requested.",
+      "Reported the account pill as an email field and did not identify its chevron/dropdown behavior.",
+      "Omitted the visible red border around the password input."
+    ]
+  },
+  "metrics": {
+    "headersLatencyMs": 1344,
+    "firstTokenLatencyMs": 15644,
+    "totalLatencyMs": 21631,
+    "promptTokens": 4487,
+    "completionTokens": 180,
+    "reasoningTokens": 0
+  }
+}

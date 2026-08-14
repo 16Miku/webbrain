@@ -1,0 +1,25 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1726,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "js": "(function() { const tabs = await chrome.tabs.query({}); const netflixTab = tabs.find(tab => tab.url && tab.url.includes('netflix.com')); if (netflixTab) { chrome.tabs.update(netflixTab.id, {active: true}); return 'Switched to Netflix tab'; } return 'Netflix tab not found'; })()"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"execute_js\",\"arguments\":{\"js\":\"(function() { const tabs = await chrome.tabs.query({}); const netflixTab = tabs.find(tab => tab.url && tab.url.includes('netflix.com')); if (netflixTab) { chrome.tabs.update(netflixTab.id, {active: true}); return 'Switched to Netflix tab'; } return 'Netflix tab not found'; })()\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9156,
+    "total_tokens": 9258,
+    "completion_tokens": 102,
+    "prompt_tokens_details": null
+  }
+}

@@ -8,6 +8,7 @@ import {
   deleteRun, clearAllRuns,
 } from '../trace/recorder.js';
 import { t } from './i18n.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 
 const listEl = document.getElementById('run-list');
 const mainPane = document.getElementById('main-pane');
@@ -17,11 +18,14 @@ const filterText = document.getElementById('filter-text');
 const filterModel = document.getElementById('filter-model');
 const imgModal = document.getElementById('img-modal');
 const imgModalImg = document.getElementById('img-modal-img');
+const initialRunId = new URLSearchParams(location.search).get('runId');
 
 let allRuns = [];
 let selectedRunId = null;
 let compareMode = false;
 let compareIds = []; // length 0..2
+let timelineObjectUrls = new Set();
+let traceRenderRequestId = 0;
 
 // conversationId → [runs, oldest first]. Rebuilt from allRuns on every refresh.
 let conversationMap = new Map();
@@ -72,6 +76,17 @@ async function refresh() {
   renderList();
 }
 
+async function ensureRunLoaded(runId) {
+  if (!runId || allRuns.some((run) => run.runId === runId)) return true;
+  const run = await getRun(runId).catch(() => null);
+  if (!run) return false;
+  allRuns.push(run);
+  allRuns.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  rebuildConversationMap();
+  countPill.textContent = t(allRuns.length === 1 ? 'tr.run' : 'tr.runs', { n: allRuns.length });
+  return true;
+}
+
 function renderList() {
   const needle = filterText.value.trim().toLowerCase();
   const modelFilter = filterModel.value;
@@ -87,6 +102,7 @@ function renderList() {
   }
   listEl.innerHTML = filtered.map(r => {
     const status = r.status || 'done';
+    const statusClass = safeClassToken(status, 'done');
     const started = new Date(r.startedAt).toLocaleString();
     const dur = r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : '—';
     const steps = r.stepCount || 0;
@@ -108,7 +124,7 @@ function renderList() {
     const costClass = isCostlyFailure ? 'cost-warn' : '';
     return `
       <div class="${cls}" data-run-id="${escapeAttr(r.runId)}">
-        <div class="run-title"><span class="status-dot ${status}"></span>${escapeHtml(title.slice(0, 120))}${convChip}</div>
+        <div class="run-title"><span class="status-dot ${statusClass}"></span>${escapeHtml(title.slice(0, 120))}${convChip}</div>
         <div class="run-meta">
           <span class="run-model">${escapeHtml(r.model || '?')}</span>
           <span>${escapeHtml(r.providerId || '')}</span>
@@ -136,6 +152,7 @@ function handleRunClick(runId) {
     if (compareIds.length === 2) renderCompare(compareIds[0], compareIds[1]);
     else {
       mainPane.classList.remove('compare-mode');
+      replaceTimelineObjectUrls(new Set());
       mainPane.innerHTML = `<div id="empty-state"><div><p style="font-size:14px;">${escapeHtml(t('tr.compare_mode.title'))}</p><p style="color:var(--text3);">${escapeHtml(t('tr.compare_mode.picked', { n: compareIds.length }))}</p></div></div>`;
     }
   } else {
@@ -147,23 +164,61 @@ function handleRunClick(runId) {
 
 // ----- Single run view ------------------------------------------------------
 
+function isCurrentRunRender(requestId, runId) {
+  return requestId === traceRenderRequestId && !compareMode && selectedRunId === runId;
+}
+
+function isCurrentCompareRender(requestId, aId, bId) {
+  return requestId === traceRenderRequestId &&
+    compareMode &&
+    compareIds.length === 2 &&
+    compareIds[0] === aId &&
+    compareIds[1] === bId;
+}
+
 async function renderRun(runId) {
+  const requestId = ++traceRenderRequestId;
   const run = await getRun(runId);
-  if (!run) return;
-  const events = await getRunEvents(runId);
+  if (!isCurrentRunRender(requestId, runId)) return;
+  if (!run) {
+    replaceTimelineObjectUrls(new Set());
+    return;
+  }
+  const events = await getRunEvents(runId).catch(() => []);
+  if (!isCurrentRunRender(requestId, runId)) return;
+  const objectUrls = new Set();
+  const html = await buildRunView(run, events, false, objectUrls);
+  if (!isCurrentRunRender(requestId, runId)) {
+    revokeObjectUrls(objectUrls);
+    return;
+  }
   mainPane.classList.remove('compare-mode');
-  mainPane.innerHTML = await buildRunView(run, events, false);
+  replaceTimelineObjectUrls(objectUrls);
+  mainPane.innerHTML = html;
   wireTimelineImages(mainPane);
 }
 
 async function renderCompare(aId, bId) {
+  const requestId = ++traceRenderRequestId;
   const [a, b, aEv, bEv] = await Promise.all([
-    getRun(aId), getRun(bId), getRunEvents(aId), getRunEvents(bId),
+    getRun(aId), getRun(bId),
+    getRunEvents(aId).catch(() => []),
+    getRunEvents(bId).catch(() => []),
   ]);
-  if (!a || !b) return;
+  if (!isCurrentCompareRender(requestId, aId, bId)) return;
+  if (!a || !b) {
+    replaceTimelineObjectUrls(new Set());
+    return;
+  }
+  const objectUrls = new Set();
+  const aHtml = await buildRunView(a, aEv, true, objectUrls);
+  const bHtml = await buildRunView(b, bEv, true, objectUrls);
+  if (!isCurrentCompareRender(requestId, aId, bId)) {
+    revokeObjectUrls(objectUrls);
+    return;
+  }
   mainPane.classList.add('compare-mode');
-  const aHtml = await buildRunView(a, aEv, true);
-  const bHtml = await buildRunView(b, bEv, true);
+  replaceTimelineObjectUrls(objectUrls);
   mainPane.innerHTML = `<div class="pane">${aHtml}</div><div class="pane">${bHtml}</div>`;
   wireTimelineImages(mainPane);
 }
@@ -195,7 +250,7 @@ function renderConversationPanel(run, compact) {
   `;
 }
 
-async function buildRunView(run, events, compact) {
+async function buildRunView(run, events, compact, objectUrls = new Set()) {
   const header = `
     <div class="run-header">
       <h2>${escapeHtml(run.model || t('tr.unknown_model'))}</h2>
@@ -221,15 +276,19 @@ async function buildRunView(run, events, compact) {
       if (shot) shotCache.set(ev.seq, shot);
     }
   }
-  const items = events.map(ev => renderEvent(ev, shotCache, compact)).join('');
+  const items = events.map(ev => renderEvent(ev, shotCache, compact, objectUrls)).join('');
   return `${header}<div class="timeline">${items}</div>`;
 }
 
-function renderEvent(ev, shotCache, compact) {
+function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
   const ts = new Date(ev.ts).toLocaleTimeString();
   const stepBadge = ev.data?.step != null ? `<span class="step">${escapeHtml(t('tr.event.step', { step: ev.data.step }))}</span>` : '';
   switch (ev.kind) {
     case 'llm_request': {
+      const media = [
+        Number.isFinite(ev.data?.imageBlockCount) ? `${ev.data.imageBlockCount} img` : '',
+        Number.isFinite(ev.data?.documentBlockCount) ? `${ev.data.documentBlockCount} doc` : '',
+      ].filter(Boolean).join(' · ');
       return `
         <div class="event llm_request">
           <div class="event-head"><span class="kind">${escapeHtml(t('tr.event.llm_request'))}</span>${stepBadge}<span class="latency">${ts}</span></div>
@@ -237,7 +296,7 @@ function renderEvent(ev, shotCache, compact) {
             m: ev.data?.messageCount || 0,
             t: ev.data?.toolsCount || 0,
             model: ev.data?.model || '',
-          }))}</span>
+          }))}${media ? ` · ${escapeHtml(media)}` : ''}</span>
         </div>`;
     }
     case 'llm_response': {
@@ -285,13 +344,33 @@ function renderEvent(ev, shotCache, compact) {
     case 'screenshot': {
       const shot = shotCache.get(ev.seq);
       let src = '';
-      if (shot?.blob) src = URL.createObjectURL(shot.blob);
+      if (shot?.blob) src = createTrackedObjectUrl(shot.blob, objectUrls);
       else if (shot?.dataUrl) src = shot.dataUrl;
       const caption = ev.data?.caption || t('tr.event.screenshot_caption');
       return `
         <div class="event screenshot">
           <div class="event-head"><span class="kind">📷 ${escapeHtml(caption)}</span>${stepBadge}<span class="latency">${ts}</span></div>
-          ${src ? `<img src="${src}" alt="${escapeAttr(caption)}" loading="lazy">` : `<span class="latency">${escapeHtml(t('tr.event.screenshot_missing'))}</span>`}
+          ${src ? `<img src="${escapeAttr(src)}" alt="${escapeAttr(caption)}" loading="lazy">` : `<span class="latency">${escapeHtml(t('tr.event.screenshot_missing'))}</span>`}
+        </div>`;
+    }
+    case 'streaming': {
+      const d = ev.data || {};
+      const details = [
+        d.protocol,
+        d.reason,
+        d.errorCode ? `#${d.errorCode}` : '',
+        Number.isFinite(d.textDeltaCount) ? `Δ × ${d.textDeltaCount}` : '',
+        Number.isFinite(d.textChars) ? t('st.skills.item.chars', { count: d.textChars }) : '',
+        Number.isFinite(d.firstDeltaMs) ? `TTFT ${d.firstDeltaMs} ms` : '',
+        Number.isFinite(d.durationMs) ? `${t('tr.duration.label')}: ${d.durationMs} ms` : '',
+        Number.isFinite(d.toolCallCount) ? `🔧 × ${d.toolCallCount}` : '',
+      ].filter(Boolean).join(' · ');
+      const message = d.message ? `<div class="content-text">${escapeHtml(d.message)}</div>` : '';
+      return `
+        <div class="event streaming">
+          <div class="event-head"><span class="kind">🌊 ${escapeHtml(t('st.display.openai_ask_streaming.label'))}: ${escapeHtml(d.status || '?')}</span>${stepBadge}<span class="latency">${ts}</span></div>
+          ${details ? `<div class="tool-args">${escapeHtml(details)}</div>` : ''}
+          ${message}
         </div>`;
     }
     case 'error': {
@@ -325,6 +404,30 @@ function renderEvent(ev, shotCache, compact) {
         </div>`;
     }
   }
+}
+
+function createTrackedObjectUrl(blob, objectUrls) {
+  const url = URL.createObjectURL(blob);
+  objectUrls.add(url);
+  return url;
+}
+
+function revokeObjectUrls(urls) {
+  for (const url of urls) URL.revokeObjectURL(url);
+}
+
+function replaceTimelineObjectUrls(nextUrls) {
+  const oldUrls = timelineObjectUrls;
+  if (oldUrls.size > 0) {
+    const modalSrc = imgModalImg?.src || '';
+    const modalUsesOldUrl = oldUrls.has(modalSrc);
+    revokeObjectUrls(oldUrls);
+    if (modalUsesOldUrl) {
+      imgModal.classList.remove('show');
+      imgModalImg.removeAttribute('src');
+    }
+  }
+  timelineObjectUrls = nextUrls;
 }
 
 function wireTimelineImages(root) {
@@ -366,12 +469,14 @@ document.getElementById('btn-compare').addEventListener('click', () => {
     compareIds = [];
     selectedRunId = null;
     mainPane.classList.remove('compare-mode');
+    replaceTimelineObjectUrls(new Set());
     mainPane.innerHTML = `<div id="empty-state"><div><p style="font-size:14px;">${escapeHtml(t('tr.compare_mode.title'))}</p><p style="color:var(--text3);">${escapeHtml(t('tr.compare_mode.hint'))}</p></div></div>`;
   } else {
     btn.classList.remove('primary');
     btn.textContent = t('tr.btn.compare');
     compareIds = [];
     mainPane.classList.remove('compare-mode');
+    replaceTimelineObjectUrls(new Set());
     mainPane.innerHTML = `<div id="empty-state"><div><p style="font-size:14px;">${escapeHtml(t('tr.empty.title'))}</p></div></div>`;
   }
   renderList();
@@ -379,12 +484,14 @@ document.getElementById('btn-compare').addEventListener('click', () => {
 
 document.getElementById('btn-export').addEventListener('click', async () => {
   if (!selectedRunId) return alert(t('tr.select_first'));
-  const run = await getRun(selectedRunId);
-  const events = await getRunEvents(selectedRunId);
+  const runId = selectedRunId;
+  const run = await getRun(runId);
+  if (!run) return alert(t('tr.select_first'));
+  const events = await getRunEvents(runId).catch(() => []);
   // Resolve screenshot blobs to base64 for portability.
   for (const ev of events) {
     if (ev.kind === 'screenshot') {
-      const shot = await getScreenshot(selectedRunId, ev.seq);
+      const shot = await getScreenshot(runId, ev.seq);
       if (shot?.blob) {
         ev.data = ev.data || {};
         ev.data.screenshot_base64 = await blobToBase64(shot.blob);
@@ -393,23 +500,38 @@ document.getElementById('btn-export').addEventListener('click', async () => {
       }
     }
   }
-  const payload = { run, events, exportedAt: Date.now(), schema: 'webbrain-trace/1' };
+  const payload = {
+    run,
+    events,
+    exportedAt: Date.now(),
+    exportedByWebBrainVersion: browser.runtime.getManifest().version || '',
+    schema: 'webbrain-trace/1',
+  };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = `webbrain-trace-${run.model || 'unknown'}-${run.runId}.json`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  document.body.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 7000);
+  }
 });
 
 document.getElementById('btn-delete').addEventListener('click', async () => {
   if (!selectedRunId) return alert(t('tr.select_first'));
+  const runId = selectedRunId;
   if (!confirm(t('tr.confirm_delete'))) return;
-  await deleteRun(selectedRunId);
-  selectedRunId = null;
-  mainPane.innerHTML = `<div id="empty-state"><div><p>${escapeHtml(t('tr.deleted'))}</p></div></div>`;
-  refresh();
+  await deleteRun(runId);
+  if (selectedRunId === runId) {
+    selectedRunId = null;
+    replaceTimelineObjectUrls(new Set());
+    mainPane.innerHTML = `<div id="empty-state"><div><p>${escapeHtml(t('tr.deleted'))}</p></div></div>`;
+  }
+  await refresh();
 });
 
 document.getElementById('btn-clear-all').addEventListener('click', async () => {
@@ -417,13 +539,32 @@ document.getElementById('btn-clear-all').addEventListener('click', async () => {
   await clearAllRuns();
   selectedRunId = null;
   compareIds = [];
+  replaceTimelineObjectUrls(new Set());
   mainPane.innerHTML = `<div id="empty-state"><div><p>${escapeHtml(t('tr.all_deleted'))}</p></div></div>`;
   refresh();
 });
 
 // Re-render on locale change so already-rendered content updates in place.
-document.addEventListener('wb-locale-changed', () => {
-  refresh();
+document.addEventListener('wb-locale-changed', async () => {
+  await refresh();
+  const compareBtn = document.getElementById('btn-compare');
+  compareBtn.textContent = compareMode ? t('tr.btn.compare.picking') : t('tr.btn.compare');
+  if (compareMode) {
+    if (compareIds.length === 2) {
+      renderCompare(compareIds[0], compareIds[1]);
+    } else {
+      mainPane.classList.remove('compare-mode');
+      replaceTimelineObjectUrls(new Set());
+      const textKey = compareIds.length === 0 ? 'tr.compare_mode.hint' : 'tr.compare_mode.picked';
+      const textParams = compareIds.length === 0 ? undefined : { n: compareIds.length };
+      mainPane.innerHTML = `<div id="empty-state"><div><p style="font-size:14px;">${escapeHtml(t('tr.compare_mode.title'))}</p><p style="color:var(--text3);">${escapeHtml(t(textKey, textParams))}</p></div></div>`;
+    }
+  } else if (selectedRunId) {
+    renderRun(selectedRunId);
+  } else {
+    replaceTimelineObjectUrls(new Set());
+    mainPane.innerHTML = `<div id="empty-state"><div><p style="font-size:14px;">${escapeHtml(t('tr.empty.title'))}</p></div></div>`;
+  }
 });
 
 filterText.addEventListener('input', renderList);
@@ -431,13 +572,9 @@ filterModel.addEventListener('change', renderList);
 
 // ----- Utils -----------------------------------------------------------------
 
-function escapeHtml(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-}
-function escapeAttr(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function safeClassToken(value, fallback = 'unknown') {
+  const token = String(value == null ? '' : value).trim();
+  return /^[A-Za-z0-9_-]+$/.test(token) ? token : fallback;
 }
 function blobToBase64(blob) {
   return new Promise((resolve) => {
@@ -480,5 +617,10 @@ document.addEventListener('visibilitychange', () => {
 // polling if the freshly-loaded data shows a live run.
 (async () => {
   await refresh();
+  if (initialRunId && await ensureRunLoaded(initialRunId)) {
+    selectedRunId = initialRunId;
+    renderList();
+    await renderRun(initialRunId);
+  }
   if (hasRunningJob()) scheduleAutoRefresh();
 })();

@@ -1,0 +1,25 @@
+{
+  "id": "014",
+  "user": "show me my bookmarks",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 519,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "chrome://bookmarks/"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"chrome://bookmarks/\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9154,
+    "total_tokens": 9179,
+    "completion_tokens": 25,
+    "prompt_tokens_details": null
+  }
+}

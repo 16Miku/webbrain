@@ -1,0 +1,20 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 656,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have any record of a previous task in this session, as we are starting on a new tab. Could you please tell me what you'd like me to do?",
+  "usage": {
+    "prompt_tokens": 9155,
+    "total_tokens": 9198,
+    "completion_tokens": 43,
+    "prompt_tokens_details": null
+  }
+}

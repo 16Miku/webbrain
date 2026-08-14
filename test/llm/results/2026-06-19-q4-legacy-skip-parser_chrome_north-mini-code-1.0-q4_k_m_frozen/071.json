@@ -1,0 +1,27 @@
+{
+  "id": "071",
+  "user": "send it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3063,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to \"send it\" which is quite vague. I need to understand what they want me to do. Let me start by reading the current page to understand the context.\n\nThe current page is \"about:home\" which is a New Tab page. This is likely a blank Chrome new tab page. I should read the accessibility tree to see what's available on this page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 113,
+    "prompt_tokens": 8463,
+    "total_tokens": 8576,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

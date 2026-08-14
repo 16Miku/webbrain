@@ -128,10 +128,10 @@ def test_instagram(page, js_path, sdir):
     r.sample_urls = [u[:90] for u in urls[:3]]; r.needs_login = logged_out
     r.assertions = [
         f"profile == 'instagram' (got: {r.profile_detected})",
-        "logged in: cdninstagram/fbcdn URLs >= 5" if not logged_out else "logged out: profile detection only",
+        "logged in: focused cdninstagram/fbcdn URL >= 1" if not logged_out else "logged out: profile detection only",
     ]
     if r.profile_detected != "instagram": r.failures.append("wrong profile")
-    if not logged_out and len(ig) < 5:   r.failures.append("too few IG URLs (logged in)")
+    if not logged_out and len(ig) < 1:   r.failures.append("no focused IG URL (logged in)")
     r.passed = not r.failures and not logged_out
     if logged_out: r.notes = "Use CDP attach or --setup for full coverage."
     if not r.passed and not logged_out: r.screenshot_path = _screenshot(page, sdir, "instagram")

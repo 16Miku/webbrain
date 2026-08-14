@@ -1,0 +1,25 @@
+{
+  "id": "071",
+  "user": "send it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3037,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}",
+  "usage": {
+    "prompt_tokens": 8602,
+    "total_tokens": 9113,
+    "completion_tokens": 511,
+    "prompt_tokens_details": null
+  }
+}

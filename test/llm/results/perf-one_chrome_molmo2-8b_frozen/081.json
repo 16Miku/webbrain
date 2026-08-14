@@ -1,0 +1,22 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 5564,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'll start by opening a new email draft in Gmail. Then I'll click the \"To\" field and type \"me\" to select all your contacts. Finally, I'll compose your thank-you message and click \"Send\" to send it.\n\nI'll begin by clicking the \"Compose\" button in the upper left of your inbox.",
+  "usage": {
+    "prompt_tokens": 8750,
+    "completion_tokens": 69,
+    "total_tokens": 8819,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

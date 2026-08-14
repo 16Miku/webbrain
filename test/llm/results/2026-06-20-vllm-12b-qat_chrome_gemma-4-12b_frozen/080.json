@@ -1,0 +1,25 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1246,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "window.chrome.tabs.query({currentWindow: true}).then(tabs => { tabs.forEach(tab => { if (tab.id !== tab.index === 0 ? tabs[0].id : tab.id) { chrome.tabs.remove(tab.id); } }); });"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"execute_js\",\"arguments\":{\"code\":\"window.chrome.tabs.query({currentWindow: true}).then(tabs => { tabs.forEach(tab => { if (tab.id !== tab.index === 0 ? tabs[0].id : tab.id) { chrome.tabs.remove(tab.id); } }); });\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 9243,
+    "completion_tokens": 86,
+    "prompt_tokens_details": null
+  }
+}

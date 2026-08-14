@@ -1,0 +1,20 @@
+{
+  "id": "077",
+  "user": "delete all my emails",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1895,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I cannot delete all your emails in a single action because Gmail requires selecting messages and confirming the deletion, and \"all\" could mean thousands of emails across many pages. To do this safely and accurately, I need to know if you want to delete:\n\n1.  **Only the emails currently visible on this page?**\n2.  **All emails in a specific category** (e.g., \"Promotions\", \"Social\", or \"Trash\")?\n3.  **Every single email in your entire account** (which would require navigating through multiple pages of results)?\n\nPlease let me know how you'd like to proceed.",
+  "usage": {
+    "prompt_tokens": 9320,
+    "total_tokens": 9456,
+    "completion_tokens": 136,
+    "prompt_tokens_details": null
+  }
+}

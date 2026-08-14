@@ -1,0 +1,42 @@
+{
+  "id": "021",
+  "user": "wiki \"ww2\"",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 55561,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://en.wikipedia.org/wiki/Special:Search?search=ww2&go=Go&ns0=1"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17482,
+    "completion_tokens": 80,
+    "total_tokens": 17562,
+    "cost": 0.00084408,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00084408,
+      "upstream_inference_prompt_cost": 0.00075208,
+      "upstream_inference_completions_cost": 0.000092
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -1,21 +1,18 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 9.0.10 · Manifest V2 · Background Page
+> Version 30.0.7 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
 - **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
-- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureVisibleTab()` instead of CDP `Page.captureScreenshot`.
-- **No conversation persistence** — conversations are lost when the sidebar closes (no session-storage equivalent for MV2 background pages).
+- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's Firefox 109 minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
-- **No trace recorder** — no IndexedDB run recorder, no `unlimitedStorage` permission, no trace viewer UI.
-- **No duplicate-submit guard** — the per-tab submit-throttle (Chrome v3.6.5+) is still Chrome-only. Firefox's agent loop does not block rapid duplicate Create/Submit clicks. `blockedDone` and the ambiguous-click candidate payload were ported to Firefox in v4.0.1 (see "Overlay defenses" below).
-- **Fewer tools overall** — Firefox exposes 31 tools (27 legacy + 4 AX) vs Chrome's ~34 (missing full-page screenshot, shadow-dom-query via CDP, file upload via CDP).
+- **Some Chrome-only tools/features remain absent** — no CDP full-page screenshot, CDP upload automation, tab recording, offscreen fetch proxy, Chrome-only `shadow_dom_query`, or closed-shadow-root traversal.
 
-Everything else — the agent loop, LLM providers, site adapters, loop detection, context management — is architecturally identical to Chrome.
+Everything else — the agent loop, LLM providers, site adapters, Ask/Act/Dev mode routing, Plan before Act, loop detection, API shortcut observer, trace recorder, scheduler, context management — is architecturally identical to Chrome unless noted below.
 
 ---
 
@@ -53,30 +50,46 @@ src/firefox/
 ├── src/
 │   ├── background.html             # Background page (MV2 requirement)
 │   ├── background.js               # Message router
+│   ├── run-ui-journal.js           # Detached-run replay + streamed-text snapshots
 │   ├── agent/
 │   │   ├── agent.js                # Core agent loop
+│   │   ├── loop-detector.js        # Browser-free loop detection, directly unit-tested
+│   │   ├── image-budget.js         # Browser-free screenshot sizing, directly unit-tested
+│   │   ├── mutation-tools.js       # This build's state-change + mutating tool sets
 │   │   ├── tools.js                # Tool schemas + system prompts (incl. 4 AX tools)
-│   │   └── adapters.js             # Per-site guidance (identical to Chrome)
+│   │   ├── skills.js               # Settings skills + dynamic skill tool manifests
+│   │   ├── planner.js              # Plan-before-Act structured planner
+│   │   ├── permission-gate.js      # Capability x origin permission gate
+│   │   ├── adapters.js             # Per-site guidance (identical to Chrome)
+│   │   └── scheduler.js            # ScheduledJobManager — alarms-backed deferred tasks
 │   ├── content/
 │   │   ├── accessibility-tree.js   # AX tree builder + ref_id registry (NEW in 3.6.8)
 │   │   └── content.js              # DOM reader / typer / clicker + AX handlers
 │   ├── network/
-│   │   └── network-tools.js        # fetch_url, research_url
+│   │   └── network-tools.js        # fetch_url, research_url, skill HTTP tools
 │   ├── providers/
 │   │   ├── base.js                 # Provider interface
 │   │   ├── manager.js              # Provider lifecycle
 │   │   ├── openai.js               # OpenAI-compatible
+│   │   ├── azure-openai.js         # Azure OpenAI deployments
+│   │   ├── aws-bedrock.js          # AWS Bedrock Converse
 │   │   ├── anthropic.js            # Anthropic Claude
-│   │   └── llamacpp.js             # Local llama.cpp server
+│   │   ├── llamacpp.js             # Local llama.cpp server
+│   │   └── fetch-timeout.js        # Direct provider fetch timeout wrapper
+│   ├── trace/
+│   │   └── recorder.js             # Optional IndexedDB run recorder
 │   └── ui/
 │       ├── sidepanel.html
 │       ├── sidepanel.js            # Chat UI, verbose mode, deep verbose
 │       ├── settings.html
-│       └── settings.js
+│       ├── settings.js
+│       ├── traces.html
+│       └── traces.js
+├── skills/                         # Packaged default skills (removable after seeding)
 └── icons/
 ```
 
-Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `trace/`, no `ui/traces.html`, no `providers/fetch-with-fallback.js`.
+Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `recorder/`, no `providers/fetch-with-fallback.js`.
 
 ## Permissions
 
@@ -84,23 +97,32 @@ Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `trace/`, no `ui/trac
 {
   "permissions": [
     "activeTab",
+    "menus",
+    "webNavigation",
+    "webRequest",
     "storage",
     "unlimitedStorage",
     "tabs",
+    "tabGroups",
+    "downloads",
+    "alarms",
+    "clipboardWrite",
+    "clipboardRead",
     "<all_urls>"
   ]
 }
 ```
 
-Notably **missing** vs Chrome: `debugger`, `downloads`, `sidePanel`, `scripting`, `webNavigation`, `offscreen`, `privateNetworkAccess`.
+Notably **missing** vs Chrome: `debugger`, `sidePanel`, `scripting`, `offscreen`, `privateNetworkAccess`, `tabCapture`.
 
 - No `debugger` → no CDP, no trusted events
 - No `offscreen` → no HTTP fetch proxy; direct fetch from background page only
 - No `privateNetworkAccess` → localhost LLM servers must send CORS headers themselves
+- `webRequest` is used for the same opt-in in-memory API shortcut observer as Chrome. The setting is off by default.
 - Uses `sidebar_action` (MV2) instead of `side_panel` (MV3)
 - Uses `browser.tabs.executeScript()` / `browser.tabs.sendMessage()` instead of `chrome.scripting.executeScript()`
 
-`unlimitedStorage` is declared for parity (forward-looking: if a trace recorder is ported to Firefox, it will want IndexedDB without quota friction). It is currently unused by the Firefox build.
+`unlimitedStorage` supports the optional IndexedDB trace recorder, matching Chrome's trace storage model.
 
 ---
 
@@ -150,10 +172,9 @@ Firefox's AX tools use synthetic events only — there is no trusted-event path.
 
 ### What was intentionally skipped in the Firefox port
 
-These Chrome v3.6.x features depend on CDP or agent-level state and were not ported — they can be re-evaluated later:
+These Chrome v3.6.x features depend on CDP and were not ported — they can be re-evaluated later:
 
 - **CDP-enriched `click_ax` frontmost resolution** — when `click_ax` lands on a node that overlaps many candidates, Chrome re-queries via CDP to pick the frontmost hit. Firefox relies on the initial ref_id resolution plus the v4.0.1 occlusion hit-test (see below).
-- **Duplicate-submit guard** — Chrome's agent.js tracks recent submit tool calls and blocks duplicates within a short window. Not in Firefox's agent loop.
 - **Offscreen fetch fallback** — Chrome falls through to an offscreen-document proxy when direct fetch fails (common for localhost LLM servers and private-network destinations). Firefox has no offscreen API; local servers must handle CORS themselves.
 
 ### Overlay defenses (v4.0.1+)
@@ -168,11 +189,52 @@ Brought to Chrome parity in v4.0.1 — same three layers, synthetic-event-safe s
 
 System prompt has a new "MODALS & DIALOGS" section describing the intended flow and the "dialog still open" failure pattern.
 
+### Duplicate-submit guard
+
+Submit-like text clicks use the same browser-free guard as Chrome. The first
+click is recorded by tab, normalized label, and current URL; another matching
+click within 45 seconds is blocked unless `_allowResubmit` explicitly
+acknowledges the retry. An acknowledged retry re-arms the window, so a further
+rapid duplicate needs its own acknowledgement. Navigation, expired entries,
+ordinary labels, and validation-rejected submits remain eligible for a fresh
+click.
+
+---
+
+## Skills and Dynamic Skill Tools
+
+Settings -> Skills stores enabled skills under `customSkills`. On first run,
+`background.js` seeds packaged skills from `skills/*`; FreeSkillz.xyz is enabled
+by default but is just a stored built-in skill, so the user can remove it. If a
+packaged built-in skill changes and the user still has it enabled, startup
+refreshes the stored copy without re-adding deleted skills.
+
+`agent/skills.js` splits each skill into two surfaces:
+
+- prompt instructions appended by `buildCustomSkillsPrompt()`;
+- optional tool schemas declared in fenced `webbrain-tools` JSON blocks.
+
+The manifest fence is stripped before prompt injection. Declared skill tools are
+appended to `getToolsForMode(...)` at LLM-call time and executed through
+`executeHttpSkillTool()` in `network-tools.js`. Current skill tools support
+read-only HTTPS GET/POST integrations and HTTPS download-job integrations that
+poll a same-origin status URL, save through browser Downloads, and clean up the
+provider job. Requests use `credentials: "omit"`, optional URL input allowlists,
+and optional response limits.
+
+Importing/enabling a skill is the trust boundary. After import, the declared
+tool can contact its declared endpoint without a per-call permission prompt.
+Download-job tools still run in action modes and use the normal Downloads
+permission gate before saving files. Third-party results should use
+`resultPolicy: "untrusted"` so the agent wraps and digests them like page
+content instead of trusted instructions.
+
 ---
 
 ## Agent Loop
 
-The agent loop is structurally identical to Chrome. The same `processMessage()` / `processMessageStream()` flow runs:
+The agent loop is structurally identical to Chrome. The same Ask/Act/Dev
+`processMessage()` / `processMessageStream()` flow runs:
 
 ```
 User message
@@ -181,24 +243,56 @@ User message
 _enrichFirstUserMessage()     ← same as Chrome (URL/title + screenshot + adapter)
     │
     ▼
-Main Loop (max 120 steps)
+Main Loop (max steps from Settings, default 130)
     │
-    ├─ provider.chat(messages, {tools, temp:0.3, maxTokens:4096})
+    ├─ chatMainTurn(messages, {tools, temp, maxTokens:4096})
+    │  ├─ provider.chat() by default
+    │  └─ official OpenAI Responses streaming for interactive Ask only
     ├─ If tool_calls → _executeToolBatch() → push results → continue
     ├─ If text only → return as final answer
     └─ If done() → return summary
 ```
 
-### No conversation persistence
+### Ask-only OpenAI Responses streaming
 
-Chrome persists conversations to `chrome.storage.session` and hydrates on service-worker restart. Firefox does **not** — conversations live only in memory on the background page and are lost when the sidebar closes or the background page unloads.
+Firefox uses the same narrow integration as Chrome inside the production
+`processMessage()` loop. Normal sidebar sends remain detached `chat_start`
+runs owned and journaled by the background page, including reconnect replay and
+Ask attachments. Only an interactive Ask run using the official OpenAI
+Responses route can call `provider.chatStream()`, and the default-on Advanced
+kill switch can force new chats back to `provider.chat()` immediately. Act,
+Dev, scheduled, cloud, and Continue runs are non-streaming.
+
+Text deltas may render before completion, but tool calls, usage, reasoning, and
+Responses output Items are withheld from the loop until `response.completed`.
+Transport/protocol interruptions clear partial text, disable streaming for the
+rest of that run, and retry the generation through `provider.chat()`; terminal
+HTTP/API and `response.incomplete` errors propagate without a duplicate
+fallback request. No incomplete assistant turn or tool call is persisted or
+executed. Live deltas remain immediate, while reconnect snapshots coalesce on
+a 200 ms trailing interval; terminal updates and pre-tool durability
+checkpoints flush immediately. The older full `processMessageStream()`
+lifecycle remains separate; this feature does not move normal chat traffic
+into it. The journal also keeps separately bounded accumulated streamed text,
+so a reopened sidebar can rebuild in-progress Markdown after early delta events
+have been acknowledged or trimmed from the replay window.
+
+### Conversation persistence (parity with Chrome)
+
+Per-tab agent conversations, sidebar chat HTML, and detached-run UI snapshots
+are mirrored to `browser.storage.session` as `agentConv:<tabId>`,
+`tabChat:<tabId>`, and `runUi:<tabId>`, the same key shapes as Chrome. The
+background page hydrates provider history before the next message; the sidebar
+restores the visible transcript and reconnects to active runs on open/reopen.
+The UI snapshot has a 256-event replay window plus separately bounded
+accumulated streamed text, so an in-progress Markdown response survives a
+sidebar close without duplicated or plaintext fragments. Delta writes
+coalesce for 200 ms; non-delta, terminal, and pre-tool checkpoints persist
+immediately.
 
 ```javascript
-// Chrome has:
-this.conversations = new Map();  // + _persist() + _hydrate()
-
-// Firefox has:
-this.conversations = new Map();  // memory only, no persistence
+// Both browsers:
+this.conversations = new Map();  // + _persist() + _hydrate() → storage.session
 ```
 
 ---
@@ -207,7 +301,17 @@ this.conversations = new Map();  // memory only, no persistence
 
 ### Complete tool list
 
-AX tier (preferred in 3.6.x):
+The model-facing tool surface is selected by conversation mode plus provider
+tier:
+
+- **Ask**: semantic/read-only page tools only. Ask intentionally excludes
+  `clarify`, `read_page_source`, `inspect_element_styles`, `execute_js`, and
+  action tools.
+- **Act**: the selected provider tier's normal browser-agent tools.
+- **Dev**: Mid/Full only. Uses the selected Act tier, then adds source/style
+  tools and Dev-extended shadow/frame inspection. Compact Dev is blocked.
+
+AX tools (preferred in 3.6.x):
 
 | Tool | Description |
 |---|---|
@@ -215,8 +319,8 @@ AX tier (preferred in 3.6.x):
 | `click_ax` | Click by ref_id |
 | `type_ax` | Type into field by ref_id |
 | `set_field` | Type + combobox-aware commit (ArrowDown+Enter) or form submit |
-| `hover` | Synthetic hover (mouseenter/mouseover/pointerover events). `isTrusted: false` — sites that gate hover-reveal on event trust will not respond. Works on most React/Vue handlers that listen to the standard events. |
-| `drag_drop` | Synthetic drag: pointerdown/move/up + HTML5 dragstart/dragover/drop with constructed DataTransfer. Less reliable than Chrome's CDP-trusted path; verify by re-reading the tree. |
+| `hover` | Full Act only. Synthetic hover (mouseenter/mouseover/pointerover events). `isTrusted: false` — sites that gate hover-reveal on event trust will not respond. Works on most React/Vue handlers that listen to the standard events. |
+| `drag_drop` | Full Act only. Synthetic drag: pointerdown/move/up + HTML5 dragstart/dragover/drop with constructed DataTransfer. Less reliable than Chrome's CDP-trusted path; verify by re-reading the tree. |
 
 Legacy tier (kept for compatibility with older prompts and for non-AX flows):
 
@@ -224,15 +328,18 @@ Legacy tier (kept for compatibility with older prompts and for non-AX flows):
 |---|---|
 | `read_page`, `screenshot`, `get_interactive_elements` | Page content / image / indexed elements |
 | `click`, `type_text`, `press_keys` | Text/selector/index-based interaction |
-| `scroll`, `navigate`, `new_tab`, `wait_for_element`, `wait_for_stable` | Page control. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
-| `extract_data`, `get_selection`, `execute_js` | Data extraction / arbitrary JS |
-| `get_shadow_dom`, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` | Frame / shadow DOM |
+| `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
+| `extract_data`, `get_selection` | Data extraction / selected text |
+| `get_shadow_dom`, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` | Frame / shadow DOM. Iframe reads enumerate labels, values, and per-selector `matchIndex` values; mutations fail before dispatch on ambiguity. An iframe type must be followed by same-scope `verify_form({urlFilter})` before successful completion. `get_shadow_dom` and `get_frames` are Full Act and Dev-extended for Mid Dev. |
 | `fetch_url`, `research_url` | HTTP / open-and-read |
-| `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files` | Download helpers (limited without `downloads` permission — graceful fallbacks) |
+| `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files` | Download helpers via `browser.downloads` where available |
 | `verify_form` | Reads form field values + viewport screenshot before submit |
 | `done` | Signal completion |
 
-Chrome-only (absent in Firefox): `full_page_screenshot`, `shadow_dom_query` (CDP shadow-pierce variant), `upload_file` (CDP-driven file input).
+Dev-only Firefox add-ons: `read_page_source`, `inspect_element_styles`, and `execute_js`. `execute_js` is intentionally absent from normal Act and is only exposed when the user selects Dev mode on a Mid/Full provider.
+
+Chrome-only (absent in Firefox): `full_page_screenshot`, `shadow_dom_query` (CDP shadow-pierce variant), and slash-driven tab/screen recording.
+Firefox `upload_file` supports `downloadId` re-fetch and a sidepanel user file picker; arbitrary local `filePath` uploads remain Chrome-only (CDP).
 
 ### Click — content script implementation
 
@@ -301,7 +408,7 @@ document.dispatchEvent(ev);
 
 ### Verify form
 
-Reads all form field values via `browser.tabs.executeScript()` and captures a viewport screenshot via `browser.tabs.captureVisibleTab()`. The system prompt guides the LLM to call this before submitting important multi-field forms.
+Reads all form field values via `browser.tabs.executeScript()` and captures a viewport screenshot via `browser.tabs.captureTab()`. The system prompt guides the LLM to call this before submitting important multi-field forms.
 
 ---
 
@@ -316,7 +423,7 @@ type_ax                 →  resolveRef(id) → native setter + input/change
 set_field               →  type + combobox detect → ArrowDown/Enter or submit
 ```
 
-Plus the legacy handlers: `read_page`, `screenshot`, `click`, `type_text`, `press_keys`, `scroll`, `extract_data`, `get_selection`, `get_shadow_dom`, `get_frames`, `iframe_*`.
+Plus the legacy handlers: `read_page`, `click`, `type_text`, `press_keys`, `scroll`, `extract_data`, `get_selection`, `get_shadow_dom`, `get_frames`, `iframe_*`, and Dev-only read/debug handlers.
 
 ### Manifest wiring
 
@@ -334,7 +441,12 @@ Plus the legacy handlers: `read_page`, `screenshot`, `click`, `type_text`, `pres
 
 ## Provider System
 
-Identical to Chrome. Same five providers (OpenAI, Anthropic, llama.cpp, Ollama, and generic OpenAI-compatible) with the same message format and conversion logic. Ollama uses the OpenAI-compatible provider with `localhost:11434/v1`.
+Identical to Chrome at the provider-class and configuration layer:
+WebBrain Cloud, nine local endpoints, Azure OpenAI, AWS Bedrock, Anthropic, and
+the current direct-cloud/router OpenAI-compatible configs use the same message
+format and conversion logic. The canonical current ID and default-model table
+is maintained in
+[`docs/providers-and-models.md`](../../docs/providers-and-models.md).
 
 Uses `browser.storage.local` instead of `chrome.storage.local` for config persistence.
 
@@ -342,14 +454,39 @@ Uses `browser.storage.local` instead of `chrome.storage.local` for config persis
 
 ---
 
+## Scheduled Tasks (`scheduler.js`)
+
+Firefox ships the same `ScheduledJobManager` class (`src/firefox/src/agent/scheduler.js`), using `browser.alarms` instead of `chrome.alarms`. Feature parity with the Chrome build except for one difference:
+
+- **No service-worker keepalive.** Chrome pings `chrome.runtime.getPlatformInfo` every 20 s during a job run to prevent the MV3 service worker from dying mid-run. Firefox has a persistent background page (MV2) that is always alive, so no keepalive is needed.
+
+Like Chrome, Firefox opens URL-target task tabs inactive and does not activate
+an existing target tab before a scheduled run.
+
+All job kinds (`resume`, `task`), lifecycle states, retry/deferral logic, schedule types (`once`, `recurring`), LLM tools (`schedule_resume`, `schedule_task`), and storage key (`wb_scheduled_jobs`) are identical to Chrome. See `docs/architecture.md § Scheduled Tasks` for the full reference.
+
+---
+
 ## Loop Detection, Context Management, Verbose Mode, Site Adapters
 
 All identical to Chrome:
 
-- **Loop detection** — three detectors (general repeat, coordinate click, navigation) with the same thresholds and nudge/stop behavior
+- **Rich-text toolbar guard** — `content/rich-text-toolbar-heuristic.js` is
+  byte-identical to the Chrome copy and is loaded ahead of `content.js` by the
+  manifest. Detection, the recovery contract, and the positive-proof `verified`
+  semantics for text-entry tools match Chrome exactly; see
+  `src/chrome/ARCHITECTURE.md § Rich-Text Toolbar Guard`. The only difference is
+  adjudication: Chrome can also route a selector probe through CDP, which
+  Firefox has no equivalent for, so Firefox always scores through the content
+  script
+- **Loop detection** — `agent/loop-detector.js` is inherited by `Agent` and
+  imported directly by the unit suite; it contains the three detectors
+  (general repeat, coordinate click, navigation) with the same thresholds and
+  nudge/stop behavior. It is byte-identical to the Chrome copy; the tool sets
+  it classifies against differ and live in `agent/mutation-tools.js`
 - **Context management** — auto-trim at >50 messages or >80,000 chars, LLM-powered summarization, emergency trim on context overflow, image pruning (last 4 only), tool-result cap at 8,000 chars
 - **Verbose mode** — three levels: Normal / Verbose ON / Deep verbose (Shift+click dumps the LLM-payload ring buffer to DevTools console). Deep verbose works identically; there's just no persisted trace UI to browse it from
-- **Site adapters** — same adapter set as Chrome (57 sites across code/dev, productivity, social, messaging, e-commerce, travel, finance, news paywalls, job portals, etc.); same `getActiveAdapter(url)` matching, same mid-conversation re-injection on navigation. Only ONE adapter fires at a time so prompt cost is fixed regardless of total count.
+- **Site adapters** — same adapter set as Chrome (58 sites across code/dev, productivity, social, messaging, e-commerce, travel, finance, news paywalls, job portals, etc.); same `getActiveAdapter(url)` matching, same mid-conversation re-injection on navigation. Only ONE adapter fires at a time so prompt cost is fixed regardless of total count.
 
 ---
 
@@ -358,8 +495,9 @@ All identical to Chrome:
 | Feature | Chrome | Firefox |
 |---|---|---|
 | Panel type | Side panel (MV3 API) | Sidebar action (MV2) |
-| Chat persistence | Survives panel close | Lost on close |
-| Tab tracking | `chrome.tabs.onActivated` + session storage | `browser.tabs.onActivated` + in-memory Map |
+| Chat persistence | Survives panel close | Survives sidebar close (`browser.storage.session`) |
+| Long-reply navigation | Reading-first anchors + floating navigation | Same behavior and localized controls |
+| Tab tracking | `chrome.tabs.onActivated` + session storage | `browser.tabs.onActivated` + session storage |
 | Background comms | `chrome.runtime.sendMessage` | `browser.runtime.sendMessage` (Promise-based) |
 | Trace viewer | Yes (`ui/traces.html`) | No |
 
@@ -371,11 +509,14 @@ All identical to Chrome:
 1. User: "create a product priced at 500 CNY billed every 2 months"
    in a Stripe product-creation tab.
 
-2. sidepanel.js → background.js → agent.processMessage(tabId, text, 'act')
+2. sidepanel.js → sendRunWithReconnect('chat_start', {
+     text, mode: 'act', tabId, requestId
+   })
 
-3. Agent builds messages: [system prompt, user msg + URL/title + screenshot].
+3. background.js begins/persists `runUi:<tabId>`, starts the detached `chat`
+   lifecycle, then calls `agent.processMessage(tabId, text, onUpdate, 'act')`.
 
-4. Agent calls provider.chat(...)
+4. Agent builds messages and calls `provider.chat(...)`.
 
 5. LLM: get_accessibility_tree {}
    → content.js runs buildAccessibilityTree
@@ -408,6 +549,10 @@ All identical to Chrome:
 
 Same end-to-end shape as Chrome, minus the CDP-trusted-event path and the offscreen fetch fallback.
 
+Planner prompts follow Chrome's token-minimal gating: the base planner prompt
+includes general repeated-task pacing, while API replay guidance is appended only
+when the tab conversation already has `/allow-api`.
+
 ---
 
 ## Limitations vs Chrome
@@ -416,13 +561,10 @@ Same end-to-end shape as Chrome, minus the CDP-trusted-event path and the offscr
 |---|---|---|
 | No CDP (no `debugger` permission) | Clicks are synthetic (`isTrusted: false`) | Most sites work; some banking/captcha sites may reject |
 | No offscreen document | Localhost LLM fetches fail on CORS | Configure server CORS headers |
-| No trace recorder | No run replay / model-comparison UI | Use deep-verbose console dump |
-| No conversation persistence | Chat lost when sidebar closes | None — MV2 limitation |
 | No trusted keyboard events | `press_keys` may not land on all sites | Dispatched to both activeElement and document |
 | No full-page screenshot | Only visible viewport | Scroll + multiple captures |
-| No shadow-root piercing (closed) | Can't read closed shadow roots | `execute_js` with manual traversal |
-| No file upload | Can't automate file input dialogs | User uploads manually |
-| No duplicate-submit guard | Agent may submit twice if LLM loops | Rely on site-level idempotence / user watches |
+| No shadow-root piercing (closed) | Can't read closed shadow roots | Dev-mode `execute_js` with manual traversal |
+| No arbitrary-path/CDP upload | Cannot attach an arbitrary local path silently | Use a prior `downloadId` re-fetch or WebBrain's user file picker |
 | No ambiguous-click CDP enrichment | Overlapping hit-target ambiguity resolved by ref_id only | Prompting / adapter guidance |
 | MV2 background page | Less efficient than MV3 service worker | `persistent: false` helps |
 
@@ -435,7 +577,10 @@ Same as Chrome, minus CDP:
 - Extension runs with user's full browser permissions
 - `<all_urls>` host permission allows content-script injection anywhere
 - Cross-origin iframes accessible via extension privilege
-- `/allow-api` flag required for API mutations
+- Ask is read-only; Act and Dev are action modes. Dev adds source/style/page-inspection tools and is blocked for Compact-tier providers.
+- Plan before Act can require user approval before any action-mode tool executes
+- API shortcut observer is off by default; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
+- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`)
 - Finance adapters get extra safety warnings
 - Tool results capped at 8KB
 - No remote code execution: all providers called via `fetch()` with user-supplied keys; no eval of LLM responses
@@ -444,4 +589,10 @@ Same as Chrome, minus CDP:
 
 ## Versioning & Port Status
 
-v3.6.8 is the first Firefox release at feature parity with Chrome's AX subsystem. Work was done on the `firefox-port-3.6.8` branch. Skipped-on-purpose items (listed above under "What was intentionally skipped in the Firefox port") are the natural next scope for a v3.7 Firefox pass.
+Firefox remains a self-contained MV2 build with mirrored agent/provider/UI code
+where the browser APIs allow it. The historical v3.6.8 port brought the AX
+subsystem to parity; current 25.7.12 parity includes Plan before Act, scheduled
+tasks, trace recording, the API shortcut observer, browser-history tools,
+reading-first navigation, and reconnect-safe streamed Markdown.
+The remaining gaps are browser-platform gaps listed above, mostly CDP/offscreen
+features.

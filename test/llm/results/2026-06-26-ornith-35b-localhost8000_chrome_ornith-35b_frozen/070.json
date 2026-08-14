@@ -1,0 +1,20 @@
+{
+  "id": "070",
+  "user": "log in",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2922,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nThe current page is a new tab — there's no login form here. Could you tell me which site you'd like to log into? For example:\n\n- \"Log into GitHub\"\n- \"Log into Gmail\"\n- \"Log into my company's internal tool\"\n\nOr if you're already on a login page, just let me know and I'll help you through it.",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17473,
+    "completion_tokens": 149,
+    "prompt_tokens_details": null
+  }
+}

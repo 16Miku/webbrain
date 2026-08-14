@@ -1,0 +1,27 @@
+{
+  "id": "011",
+  "user": "open firefox settings",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2890,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "about:preferences"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to open Firefox settings. I need to navigate to the Firefox settings page. The current page is \"about:home\" which is a new tab page. I should navigate to \"about:preferences\" which is the settings page for Firefox.\n\nLet me start by navigating to the Firefox settings page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"about:preferences\"}}\n]",
+  "usage": {
+    "completion_tokens": 96,
+    "prompt_tokens": 8464,
+    "total_tokens": 8560,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

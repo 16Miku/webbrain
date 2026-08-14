@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-02T16:08:57.722Z",
+  "model": "thinkingmachines/inkling-small",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "image": {
+    "path": "test/fixtures/google-signin-password-error.jpg",
+    "bytes": 56442,
+    "sha256": "15f287f319edae5fc0d97dd44201a0493a0864deb4bec556b236169a3f1b4e4a",
+    "mime": "image/jpeg"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "temperature": 0,
+    "maxTokens": 800,
+    "foldSystemIntoUser": false,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Google account password verification / sign-in challenge.\n2) Visible text: \"Hi Emre\", \"To continue, first verify it's you\", \"esokullu@gmail.com\", \"Enter your password\", \"Enter a password\", \"Show password\", \"Try another way\", \"Next\", \"English (United States)\", \"Help\", \"Privacy\", \"Terms\".\n3) Inputs: Password field (label \"Enter your password\", empty, focused, red border); checkbox \"Show password\" (unchecked); account pill \"esokullu@gmail.com\".\n4) State signals: Validation error \"Enter a password\" with red warning icon under password field; input border red.\n5) Blockers: Password field empty with active validation error; Next likely blocked until filled.\n6) Unknowns: None.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 3649,
+      "completion_tokens": 381,
+      "total_tokens": 4030,
+      "cost": 0.00207685,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 64,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00207685,
+        "upstream_inference_prompt_cost": 0.00161965,
+        "upstream_inference_completions_cost": 0.0004572
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 243,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 769,
+    "firstToken": 3600,
+    "total": 5134
+  }
+}

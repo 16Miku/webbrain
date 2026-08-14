@@ -1,0 +1,26 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3822,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "// Get all window/tab info - we can only close tabs from within the browser\n// Let's check how many tabs we're working with by using the extension API\nconst tabs = await chrome.tabs.query({currentWindow: true});\nreturn tabs.map(t => ({id: t.id, url: t.url, title: t.title, active: t.active}));"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17329,
+    "total_tokens": 17455,
+    "completion_tokens": 126,
+    "prompt_tokens_details": null
+  }
+}

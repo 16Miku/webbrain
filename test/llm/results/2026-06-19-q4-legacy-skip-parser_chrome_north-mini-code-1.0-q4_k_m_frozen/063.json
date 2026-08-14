@@ -1,0 +1,27 @@
+{
+  "id": "063",
+  "user": "whats my shipping address",
+  "tab": {
+    "url": "https://www.amazon.com/gp/buy/spc/handlers/display.html",
+    "title": "Amazon Checkout"
+  },
+  "latencyMs": 3184,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking \"what's my shipping address\" and I'm in an Amazon checkout context. This suggests they want to see their current shipping address information on the Amazon checkout page.\n\nLet me start by reading the current page to understand what's available. I should use get_accessibility_tree to see what's on the checkout page, particularly looking for shipping address information.\n\nThe current page is https://www.amazon.com/gp/buy/spc/handlers/display.html which appears to be an Amazon checkout page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 130,
+    "prompt_tokens": 8581,
+    "total_tokens": 8711,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

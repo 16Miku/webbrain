@@ -6,9 +6,9 @@
  * --------------------------------------------------------------------
  * Quick start (paste into the page's DevTools console):
  *
- *   await SocialMediaDownloader.run()           // current view, main content
+ *   await SocialMediaDownloader.run()           // focused/open media item
  *   await SocialMediaDownloader.single()        // just the main photo/video
- *   await SocialMediaDownloader.run({ all:true })// scroll the feed, grab everything
+ *   await SocialMediaDownloader.run({ mode:"all", all:true }) // intentional bulk
  *   SocialMediaDownloader.list()                // print URLs, don't download
  *
  * For VIDEOS played through MediaSource Extensions (Facebook, IG reels,
@@ -20,12 +20,12 @@
  *   await SocialMediaDownloader.saveMse()       // download captured bytes
  *
  * Options for run():
- *   mode:    'auto' (default) — single-photo pages = main content only;
- *                              feeds/profiles = everything
- *            'main'           — force "main content" mode
- *            'all'            — force "everything on page" mode
- *   all:     true|false       — scroll-and-collect (only useful in 'all')
- *   limit:   N                — max downloads
+ *   mode:    'auto' (default) - focused/open/centered media item only
+ *            'main'           - force "main content" mode
+ *            'all'            - force "everything on page" mode
+ *   all:     true|false       - scroll-and-collect (only useful in 'all')
+ *   target:  'auto'|'media'|'image'|'video' - filter before saving
+ *   limit:   N                - max downloads
  *
  * --------------------------------------------------------------------
  * What's NEW in v4
@@ -215,6 +215,9 @@ window.SocialMediaDownloader = (() => {
         '[data-visualcompletion="media-vc-image"], ' +
         '[role="dialog"] [data-visualcompletion="media-vc-image"], ' +
         '[role="dialog"] img[data-imgperflogname]',  // FB tags the main photo
+      focusSel:
+        '[data-pagelet*="MediaViewer" i], ' +
+        '[role="dialog"]',
       // Each album thumbnail is a `<a href="/photo/?fbid=…">` wrapping an
       // `<img>`. Scoping to that link pattern excludes the page profile
       // pic, cover photo, nav avatars, ads, and the "Suggested for you"
@@ -278,6 +281,10 @@ window.SocialMediaDownloader = (() => {
         // role=presentation is the IG main-post marker on some layouts
         'main article[role="presentation"] img, ' +
         'main article[role="presentation"] video',
+      focusSel:
+        '[role="dialog"], ' +
+        'main article[role="presentation"], ' +
+        'main article:first-of-type',
       exclude: [
         'header', 'nav', 'aside',
         '[role="navigation"]',
@@ -307,6 +314,9 @@ window.SocialMediaDownloader = (() => {
         // Status page without modal — grab only the FIRST tweet's media
         'main article[data-testid="tweet"]:first-of-type [data-testid="tweetPhoto"] img, ' +
         'main article[data-testid="tweet"]:first-of-type [data-testid="videoPlayer"] video',
+      focusSel:
+        '[aria-modal="true"], ' +
+        'main article[data-testid="tweet"]:first-of-type',
       exclude: [
         'header', 'nav', 'aside',
         '[data-testid*="UserAvatar"]',
@@ -326,6 +336,10 @@ window.SocialMediaDownloader = (() => {
         '[data-test-id="post-content"] video, ' +
         '[slot="post-media-container"] img, ' +
         '[slot="post-media-container"] video',
+      focusSel:
+        'shreddit-post, ' +
+        '[data-test-id="post-content"], ' +
+        '[slot="post-media-container"]',
       exclude: [
         'header', 'nav', 'aside',
         'faceplate-tracker[noun="avatar"]',
@@ -343,6 +357,9 @@ window.SocialMediaDownloader = (() => {
         '[data-test-id="pin-closeup-image"] img, ' +
         '[data-test-id="visual-content-container"] img, ' +
         '[data-test-id="visual-content-container"] video',
+      focusSel:
+        '[data-test-id="pin-closeup-image"], ' +
+        '[data-test-id="visual-content-container"]',
       exclude: [
         'header', 'nav', 'aside',
         '[data-test-id="user-profile-thumbnail"]',
@@ -361,6 +378,9 @@ window.SocialMediaDownloader = (() => {
         '.feed-shared-image img, ' +
         '.feed-shared-linkedin-video video, ' +
         'article img, article video',
+      focusSel:
+        '.feed-shared-update-v2__content, ' +
+        'article',
       exclude: [
         'header', 'nav', 'aside',
         // Generic
@@ -395,6 +415,10 @@ window.SocialMediaDownloader = (() => {
         'ytd-player video, ytd-player img, ' +
         'ytd-watch-flexy video, ' +
         'ytd-reel-player-renderer video',
+      focusSel:
+        '#movie_player, ' +
+        'ytd-player, ' +
+        'ytd-reel-player-renderer',
       exclude: [
         'header', 'nav', 'aside',
         '#secondary',                              // right rail (up-next videos)
@@ -413,6 +437,7 @@ window.SocialMediaDownloader = (() => {
       match: () => true,
       isSingle: () => false,
       mainSel: 'main img, main video, article img, article video',
+      focusSel: 'main, article',
       exclude: ['header', 'nav', 'aside', 'svg', '[role="navigation"]']
     }
   };
@@ -489,6 +514,156 @@ window.SocialMediaDownloader = (() => {
       el = el.parentElement;
     }
     return false;
+  };
+
+  const viewportSize = () => ({
+    w: Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0),
+    h: Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0),
+  });
+
+  const visibleArea = rect => {
+    const vp = viewportSize();
+    const left = Math.max(0, rect.left);
+    const top = Math.max(0, rect.top);
+    const right = Math.min(vp.w, rect.right);
+    const bottom = Math.min(vp.h, rect.bottom);
+    return Math.max(0, right - left) * Math.max(0, bottom - top);
+  };
+
+  const isVisibleElement = el => {
+    if (!el || !el.getBoundingClientRect) return false;
+    const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 24 || rect.height < 24) return false;
+    return visibleArea(rect) >= 1024;
+  };
+
+  const mediaBoxElement = el => {
+    if (!el) return null;
+    const tag = el.tagName;
+    if (tag === 'SOURCE') return el.closest('picture,video') || el.parentElement;
+    return el;
+  };
+
+  const addMediaCandidateUrls = (el, add) => {
+    if (!el) return;
+    const tag = el.tagName;
+    if (tag === 'IMG') {
+      [el.currentSrc, el.src,
+       el.getAttribute('src'), el.getAttribute('data-src'),
+       el.getAttribute('data-original'), el.getAttribute('data-url')]
+        .forEach(add);
+      parseSrcset(el.getAttribute('srcset')).forEach(add);
+      const picture = el.closest('picture');
+      if (picture) {
+        picture.querySelectorAll('source').forEach(s => {
+          [s.src, s.getAttribute('src'), s.getAttribute('srcset')]
+            .forEach(v => { parseSrcset(v).forEach(add); add(v); });
+        });
+      }
+      return;
+    }
+    if (tag === 'VIDEO') {
+      [el.currentSrc, el.src, el.poster,
+       el.getAttribute('src'), el.getAttribute('poster')]
+        .forEach(add);
+      el.querySelectorAll('source').forEach(s => {
+        [s.src, s.getAttribute('src'), s.getAttribute('srcset')]
+          .forEach(v => { parseSrcset(v).forEach(add); add(v); });
+      });
+      return;
+    }
+    if (tag === 'SOURCE') {
+      [el.src, el.getAttribute('src'), el.getAttribute('srcset')]
+        .forEach(v => { parseSrcset(v).forEach(add); add(v); });
+    }
+  };
+
+  const directMediaUrls = el => {
+    const urls = new Set();
+    const add = url => {
+      url = absoluteUrl(url);
+      if (isMediaUrl(url)) urls.add(url);
+    };
+    addMediaCandidateUrls(el, add);
+    return [...urls];
+  };
+
+  const mediaElementsIn = root => {
+    if (!root) return [];
+    const out = [];
+    if (root.matches && root.matches('img, video, source')) out.push(root);
+    if (root.querySelectorAll) {
+      root.querySelectorAll('img, video, source').forEach(el => out.push(el));
+    }
+    return out;
+  };
+
+  const mediaElementScore = el => {
+    const box = mediaBoxElement(el);
+    if (!box || !box.getBoundingClientRect) return -Infinity;
+    const rect = box.getBoundingClientRect();
+    const area = visibleArea(rect);
+    if (area <= 0) return -Infinity;
+    const vp = viewportSize();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const maxDist = Math.hypot(vp.w / 2, vp.h / 2) || 1;
+    const centered = 1 - Math.min(1, Math.hypot(cx - vp.w / 2, cy - vp.h / 2) / maxDist);
+    let score = area + centered * 50000;
+    if (box.closest('dialog[open], [aria-modal="true"], [role="dialog"]')) score += 1000000;
+    if (box.closest('[aria-selected="true"], [data-current="true"], [data-active="true"]')) score += 20000;
+    if (el.tagName === 'VIDEO' || box.tagName === 'VIDEO') score += 10000;
+    return score;
+  };
+
+  const bestFocusedMedia = (roots, excluded) => {
+    const candidates = [];
+    for (const root of roots || []) {
+      if (!root || isExcluded(root, excluded) || !isVisibleElement(root)) continue;
+      for (const el of mediaElementsIn(root)) {
+        const box = mediaBoxElement(el);
+        if (!box || isExcluded(box, excluded) || !isVisibleElement(box)) continue;
+        const rect = box.getBoundingClientRect();
+        const intrinsicW = el.naturalWidth || el.videoWidth || el.width || rect.width || 0;
+        const intrinsicH = el.naturalHeight || el.videoHeight || el.height || rect.height || 0;
+        if (intrinsicW < 120 || intrinsicH < 120) continue;
+        const urls = directMediaUrls(el);
+        if (!urls.length) continue;
+        candidates.push({ el, urls, score: mediaElementScore(el) });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  };
+
+  const queryVisibleRoots = selector => {
+    const roots = [];
+    if (!selector) return roots;
+    try {
+      document.querySelectorAll(selector).forEach(el => {
+        if (isVisibleElement(el)) roots.push(el);
+      });
+    } catch { /* unsupported selector */ }
+    return roots;
+  };
+
+  const collectFocusedMedia = (profile, excluded) => {
+    const dialogRoots = queryVisibleRoots(
+      'dialog[open], [aria-modal="true"], [role="dialog"], ' +
+      '[data-pagelet*="MediaViewer" i], [data-testid*="lightbox" i]'
+    );
+    let best = bestFocusedMedia(dialogRoots, excluded);
+    if (best) return best.urls;
+
+    best = bestFocusedMedia(queryVisibleRoots(profile.focusSel), excluded);
+    if (best) return best.urls;
+
+    best = bestFocusedMedia([document.body || document.documentElement], excluded);
+    return best ? best.urls : [];
   };
 
   // Extract candidate media URLs from a given root (default: document)
@@ -587,7 +762,11 @@ window.SocialMediaDownloader = (() => {
   // 128-bit big-endian unsigned integer (left-zero-padded).
   const _ivFromSequence = seq => {
     const iv = new Uint8Array(16);
-    let n = BigInt(seq | 0);
+    // A bitwise `| 0` here would coerce to a signed 32-bit int, returning an
+    // all-zero IV for any media sequence ≥ 2^31 (which long-running live HLS
+    // streams routinely exceed) and breaking AES-128 segment decryption.
+    // Coerce defensively to a non-negative integer, then go straight to BigInt.
+    let n = BigInt(Math.max(0, Math.trunc(Number(seq)) || 0));
     for (let i = 15; i >= 0 && n > 0n; i--) {
       iv[i] = Number(n & 0xffn);
       n >>= 8n;
@@ -731,6 +910,14 @@ window.SocialMediaDownloader = (() => {
     return '.bin';
   };
 
+  const _mseEntryHasMuxedAudioVideo = entry => {
+    const mime = String(entry && entry.mime || '');
+    if (!/^video\//i.test(mime)) return false;
+    const hasVideoCodec = /\b(?:avc1|avc3|hvc1|hev1|vp0?[89]|av01|theora)\b/i.test(mime);
+    const hasAudioCodec = /(?:mp4a|aac|ac-3|ec-3|opus|vorbis)/i.test(mime);
+    return hasVideoCodec && hasAudioCodec;
+  };
+
   // Group captured SourceBuffers by their parent MediaSource. Each
   // MediaSource ≈ one stream on the page — typically one reel on
   // infinite-feed viewers like Instagram /reels/, where the player
@@ -844,12 +1031,21 @@ window.SocialMediaDownloader = (() => {
   //   'all'   → every captured group
   // Default 'all' preserves the pre-v4 contract for direct console
   // callers of saveMse() — only download_social_media plumbs the mode.
-  const saveMse = async ({ prefix = 'mse', minBytes = 1, mode = 'all' } = {}) => {
+  const saveMse = async ({ prefix = 'mse', minBytes = 1, mode = 'all', requireMuxedAudioVideo = false } = {}) => {
     const groups = _groupMseBuffers(minBytes);
     const primaryOnly = mode === 'main' || mode === 'auto';
     const toSave = (primaryOnly && groups.length > 1)
       ? [_pickPrimaryMseGroup(groups)]
       : groups;
+    if (requireMuxedAudioVideo && toSave.some((group) => (
+      group.entries.length !== 1 || !_mseEntryHasMuxedAudioVideo(group.entries[0])
+    ))) {
+      const error = new Error(
+        'The browser MSE capture contains split or unverifiably muxed media. No files were saved because a video request must produce one file with audio included.',
+      );
+      error.code = 'split_mse_requires_server_merge';
+      throw error;
+    }
     let i = 1;
     const saved = [];
     for (const group of toSave) {
@@ -956,6 +1152,10 @@ window.SocialMediaDownloader = (() => {
     // get the legacy `mse_capture_available` recommendation.
     mseSavedFiles = null,
     mseSaveError = null,
+    mseSaveCode = null,
+    completedCount = 0,
+    completedVideoCount = null,
+    requestedTarget = 'auto',
     pageUrl = (typeof location !== 'undefined' ? location.href : ''),
   } = {}) => {
     let parsed = null;
@@ -963,12 +1163,23 @@ window.SocialMediaDownloader = (() => {
     const href = parsed ? parsed.href : String(pageUrl || '');
     const path = parsed ? (parsed.pathname + parsed.search) : '';
 
-    // YouTube watch / shorts pages — if no googlevideo URL came back,
-    // the actual stream is signatureCipher-only or Widevine-locked.
-    if (profile === 'youtube') {
+    const completedDownloads = Number(completedCount) || 0;
+    // New callers report successful video downloads explicitly. Preserve
+    // compatibility with older callers by treating a completed run that
+    // discovered a video URL as a completed video when the field is absent.
+    const completedVideos = completedVideoCount === null
+      ? (completedDownloads > 0 && urls.some(isVideoDownloadUrl) ? completedDownloads : 0)
+      : (Number(completedVideoCount) || 0);
+
+    // YouTube watch / shorts pages — a saved thumbnail or OG image does not
+    // satisfy a video request. Only suppress the fallback after an actual
+    // video stream (including a verified muxed MSE file) completed.
+    const youtubeVideoRequested = requestedTarget === 'auto'
+      || requestedTarget === 'media'
+      || requestedTarget === 'video';
+    if (profile === 'youtube' && youtubeVideoRequested) {
       const isWatch = /\/(?:watch|shorts)/i.test(path);
-      const hasVideoUrl = urls.some(u => /googlevideo\.com/.test(u));
-      if (isWatch && !hasVideoUrl) {
+      if (isWatch && completedVideos === 0) {
         return {
           kind: 'youtube_video',
           message:
@@ -981,6 +1192,11 @@ window.SocialMediaDownloader = (() => {
         };
       }
     }
+
+    const completedRequestedDownloads = requestedTarget === 'video'
+      ? completedVideos
+      : completedDownloads;
+    if (completedRequestedDownloads > 0) return null;
 
     // MSE capture available. The new flow: download_social_media calls
     // saveMse() inline and passes mseSavedFiles / mseSaveError in.
@@ -998,11 +1214,21 @@ window.SocialMediaDownloader = (() => {
     //     for backwards compat with any external callers of
     //     _buildRecommendation. NOT consumed by download_social_media
     //     anymore.
-    if (mseBytes > 0) {
+    if (mseBytes > 0 && requestedTarget !== 'image') {
+      if (mseSaveCode === 'split_mse_requires_server_merge') {
+        return {
+          kind: 'split_mse_unmerged',
+          message:
+            'The browser fallback detected split or unverifiably muxed media. ' +
+            'It intentionally saved nothing because the requested video must be one file with audio included. ' +
+            'Use the dedicated public-media downloader for server-side finalization; if that service already failed, report its failure honestly.',
+        };
+      }
       if (Array.isArray(mseSavedFiles) && mseSavedFiles.length > 0) {
         return null; // bytes saved — nothing to recommend
       }
       if (mseSavedFiles !== null || mseSaveError) {
+        // New caller invoked saveMse, but it returned nothing or threw.
         const errBit = mseSaveError ? ' (' + mseSaveError + ')' : '';
         return {
           kind: 'mse_save_failed',
@@ -1109,9 +1335,15 @@ window.SocialMediaDownloader = (() => {
   };
 
   // ---------- Scoring & ranking ----------
+  const isHttpVideoUrl = url =>
+    /^https?:\/\//i.test(url || '') &&
+    (/\.(mp4|mov|m4v|webm|m3u8|mpd|ts)(\?|#|$)/i.test(url) ||
+     /googlevideo\.com\/videoplayback\b/i.test(url) ||
+     /[?&](?:mime|type)=video(?:%2f|\/)/i.test(url));
+
   const scoreUrl = url => {
     let s = 0;
-    if (/\.(mp4|mov|m4v|webm)(\?|#|$)/i.test(url)) s += 100;
+    if (isHttpVideoUrl(url)) s += 100;
     if (/\.(jpg|jpeg|png|webp)(\?|#|$)/i.test(url)) s += 50;
     if (url.includes("name=orig")) s += 20;
     if (url.includes("originals/")) s += 25;
@@ -1119,6 +1351,32 @@ window.SocialMediaDownloader = (() => {
     if (url.startsWith("blob:")) s -= 50;
     if (/preview\.redd\.it/.test(url)) s -= 5;
     return s;
+  };
+
+  const videoFirstUrls = urls => {
+    const httpVideos = urls.filter(isHttpVideoUrl);
+    const blobUrls = urls.filter(u => u.startsWith("blob:"));
+    const rest = urls.filter(u => !isHttpVideoUrl(u) && !u.startsWith("blob:"));
+    return [...httpVideos, ...blobUrls, ...rest];
+  };
+
+  const isVideoDownloadUrl = url =>
+    isHttpVideoUrl(url) ||
+    String(url || '').startsWith('blob:') ||
+    /v\.redd\.it/i.test(url || '');
+
+  const filterUrlsForTarget = (urls, target = 'auto') => {
+    if (target === 'video') return urls.filter(isVideoDownloadUrl);
+    if (target === 'image') return urls.filter(url => !isVideoDownloadUrl(url));
+    return urls;
+  };
+
+  const focusedDownloadUrls = urls => {
+    urls = videoFirstUrls(urls);
+    const httpVideoUrl = urls.find(isHttpVideoUrl);
+    if (httpVideoUrl) return [httpVideoUrl];
+    const blobUrl = urls.find(u => u.startsWith("blob:"));
+    return blobUrl ? [blobUrl] : urls.slice(0, 1);
   };
 
   // ---------- HLS m3u8 stitching ----------
@@ -1233,6 +1491,9 @@ window.SocialMediaDownloader = (() => {
     const profile = activeProfile();
     const excluded = buildExclusionSet(profile);
 
+    const focusedUrls = mode === 'auto'
+      ? collectFocusedMedia(profile, excluded)
+      : [];
     let useMain;
     if (mode === 'main') useMain = true;
     else if (mode === 'all') useMain = false;
@@ -1249,7 +1510,11 @@ window.SocialMediaDownloader = (() => {
       profile.isGallery();
 
     let urls;
-    if (useGallery) {
+    let sourceMode = useGallery ? 'gallery' : (useMain ? 'main' : 'all');
+    if (focusedUrls.length) {
+      urls = focusedUrls;
+      sourceMode = 'focused';
+    } else if (useGallery) {
       const galleryUrls = [];
       const galleryEls = document.querySelectorAll(profile.gallerySel);
       galleryEls.forEach(el => {
@@ -1337,8 +1602,10 @@ window.SocialMediaDownloader = (() => {
         try { return profile.urlFilter(u); } catch { return true; }
       });
     }
+    if (sourceMode === 'focused') finalUrls = focusedDownloadUrls(finalUrls);
+    else if (sourceMode === 'main') finalUrls = videoFirstUrls(finalUrls);
     return { urls: finalUrls, profile,
-             mode: useGallery ? 'gallery' : (useMain ? 'main' : 'all'),
+             mode: sourceMode,
              dashGroups: groups };
   };
 
@@ -1453,6 +1720,7 @@ window.SocialMediaDownloader = (() => {
   // ---------- Public API ----------
   const run = async ({
     mode = 'auto',
+    target = 'auto',
     all = false,
     maxScrolls = 40, scrollDelay = 1000, settleDelay = 1500,
     limit = Infinity,
@@ -1463,8 +1731,9 @@ window.SocialMediaDownloader = (() => {
       ? await scrollAndCollect({ maxScrolls, scrollDelay, settleDelay,
                                   mode: mode === 'auto' ? 'all' : mode })
       : list(mode);
-    const selected = urls.slice(0, limit);
-    console.log(`[SMD] downloading ${selected.length} of ${urls.length}`);
+    const eligibleUrls = filterUrlsForTarget(urls, target);
+    const selected = eligibleUrls.slice(0, limit);
+    console.log(`[SMD] downloading ${selected.length} of ${eligibleUrls.length} target-matching URLs`);
     // Track per-status counts so the calling tool can report honestly to
     // the agent. Before this we returned only the URL list, which made it
     // look like a 713-URL run completed 713 downloads when in practice
@@ -1472,15 +1741,14 @@ window.SocialMediaDownloader = (() => {
     const stats = {
       triggered: selected.length,
       completed: 0,
+      completedVideo: 0,
       openedInTab: 0,
       failed: 0,
       failures: [], // first ~5 failures only — keeps payload small
     };
     let i = 1;
     for (const url of selected) {
-      const isVideo = /\.(mp4|mov|m4v|webm|m3u8|ts)(\?|#|$)/i.test(url)
-        || url.startsWith('blob:')
-        || /v\.redd\.it/.test(url);
+      const isVideo = isVideoDownloadUrl(url);
       const ext = getExt(url) || (isVideo ? '.mp4' : '.jpg');
       const filename = `${filenameSafe(prefix)}_${isVideo ? 'video' : 'photo'}_${String(i).padStart(3, '0')}${ext}`;
       let r;
@@ -1489,8 +1757,10 @@ window.SocialMediaDownloader = (() => {
       } catch (e) {
         r = { status: 'failed', filename, reason: (e && e.message) || String(e) };
       }
-      if (r.status === 'completed') stats.completed++;
-      else if (r.status === 'opened-in-tab') {
+      if (r.status === 'completed') {
+        stats.completed++;
+        if (isVideo) stats.completedVideo++;
+      } else if (r.status === 'opened-in-tab') {
         stats.openedInTab++;
         if (stats.failures.length < 5) stats.failures.push({ filename, url, reason: r.reason });
       } else {
@@ -1531,6 +1801,7 @@ window.SocialMediaDownloader = (() => {
     _hexToBytes,
     _extractYoutubeProgressive,
     _buildRecommendation,
+    _filterUrlsForTarget: filterUrlsForTarget,
     _groupRedditDash: groupRedditDash,
     _preferHighQuality: preferHighQuality
   };

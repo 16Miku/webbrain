@@ -1,0 +1,27 @@
+{
+  "id": "016",
+  "user": "search youtube for lo-fi study music",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 3171,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to search YouTube for \"lo-fi study music\". I need to:\n\n1. First, understand the current page context - they mention YouTube (https://www.youtube.com/)\n2. Navigate to YouTube if not already there\n3. Search for \"lo-fi study music\"\n4. Find relevant results\n\nLet me start by reading the current page to see what's on YouTube.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 116,
+    "prompt_tokens": 8726,
+    "total_tokens": 8842,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

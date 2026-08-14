@@ -1,0 +1,20 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3014,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I’m sorry, but I can’t close other tabs for you.",
+  "usage": {
+    "prompt_tokens": 8607,
+    "total_tokens": 9114,
+    "completion_tokens": 507,
+    "prompt_tokens_details": null
+  }
+}

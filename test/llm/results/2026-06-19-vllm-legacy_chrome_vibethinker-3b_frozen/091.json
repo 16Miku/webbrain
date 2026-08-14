@@ -1,0 +1,23 @@
+{
+  "id": "091",
+  "user": "toggle dark mode on this site",
+  "tab": {
+    "url": "https://stackoverflow.com/questions/111/javascript-closures",
+    "title": "JavaScript closures — Stack Overflow"
+  },
+  "latencyMs": 3669,
+  "error": null,
+  "firstToolCall": {
+    "name": "click",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "click({text: \"Dark mode\"})",
+  "usage": {
+    "prompt_tokens": 8694,
+    "total_tokens": 9312,
+    "completion_tokens": 618,
+    "prompt_tokens_details": null
+  }
+}

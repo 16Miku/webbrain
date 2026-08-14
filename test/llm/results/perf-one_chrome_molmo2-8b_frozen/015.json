@@ -1,0 +1,22 @@
+{
+  "id": "015",
+  "user": "whats my new tab page",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 932,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have access to the current page content. Please provide a URL or describe what you're seeing on the page.",
+  "usage": {
+    "prompt_tokens": 8595,
+    "completion_tokens": 26,
+    "total_tokens": 8621,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

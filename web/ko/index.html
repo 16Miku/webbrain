@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebBrain — Chrome과 Firefox용 무료 오픈소스 AI 브라우저 에이전트</title>
-  <meta name="description" content="WebBrain은 Claude 브라우저 플러그인의 무료 오픈소스 대안입니다. Chrome과 Firefox용 AI 브라우저 에이전트 — 페이지를 읽고, 데이터를 추출하고, 작업을 자동화합니다. llama.cpp, OpenAI, Claude, OpenRouter와 함께 작동합니다. 다국어 UI, 토큰을 아끼는 스크린샷. MIT 라이선스.">
+  <title>WebBrain — Chrome, Firefox, Edge용 무료 오픈소스 AI 브라우저 에이전트</title>
+  <meta name="description" content="WebBrain은 Claude 브라우저 플러그인의 무료 오픈소스 대안입니다. Chrome, Firefox, Edge용 AI 브라우저 에이전트 — 페이지를 읽고, 데이터를 추출하고, 작업을 자동화합니다. llama.cpp, OpenAI, Claude, OpenRouter와 함께 작동합니다. 다국어 UI, 토큰을 아끼는 스크린샷. MIT 라이선스.">
   <meta name="keywords" content="AI 브라우저 에이전트, 브라우저 자동화, 오픈소스 브라우저 플러그인, Claude 브라우저 플러그인 대안, OpenClaw 대안, 웹 자동화, LLM 브라우저 확장, Chrome AI 확장, Firefox AI 애드온, llama.cpp 브라우저, GPT 브라우저 에이전트, 브라우저 AI 어시스턴트, 웹 스크래핑 AI, 오픈소스 AI 도구, 셀프 호스팅 AI 브라우저, 다국어 브라우저 AI, 토큰 효율적인 AI 확장">
   <meta property="og:title" content="WebBrain — 무료 오픈소스 AI 브라우저 에이전트">
   <meta property="og:description" content="Claude 브라우저 플러그인의 오픈소스 대안. Chrome과 Firefox용 AI 브라우저 확장. 어떤 웹 페이지든 읽고, 이해하고, 자동화하세요. 멀티 프로바이더 LLM 지원. 다국어 UI. 영구 무료.">
@@ -12,17 +12,19 @@
   <meta property="og:url" content="https://webbrain.one/ko/">
   <meta property="og:site_name" content="WebBrain">
   <meta property="og:locale" content="ko-KR">
-  <meta property="og:image" content="https://webbrain.one/og-image.svg">
-  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.svg">
-  <meta property="og:image:type" content="image/svg+xml">
-  <meta property="og:image:alt" content="WebBrain 아이콘">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — 무료 오픈소스 AI 브라우저 에이전트">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="WebBrain — 오픈소스 AI 브라우저 에이전트">
   <meta name="twitter:description" content="Claude 브라우저 플러그인의 무료 오픈소스 대안. Chrome과 Firefox용 AI 에이전트. 로컬 또는 클라우드 LLM과 작동. 5개 언어 UI. 기본적으로 토큰을 아낍니다.">
-  <meta name="twitter:image" content="https://webbrain.one/og-image.svg">
-  <meta name="twitter:image:alt" content="WebBrain 아이콘">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — 무료 오픈소스 AI 브라우저 에이전트">
   <meta name="robots" content="index, follow">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="canonical" href="https://webbrain.one/ko/">
   <link rel="alternate" hreflang="en" href="https://webbrain.one/">
   <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
@@ -38,6 +40,14 @@
   <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
   <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
   <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="hi" href="https://webbrain.one/hi/">
+  <link rel="alternate" hreflang="pt" href="https://webbrain.one/pt/">
+  <link rel="alternate" hreflang="vi" href="https://webbrain.one/vi/">
+  <link rel="alternate" hreflang="bn" href="https://webbrain.one/bn/">
+  <link rel="alternate" hreflang="fa" href="https://webbrain.one/fa/">
+  <link rel="alternate" hreflang="nl" href="https://webbrain.one/nl/">
+  <link rel="alternate" hreflang="de" href="https://webbrain.one/de/">
   <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
@@ -46,13 +56,13 @@
   "@type": "SoftwareApplication",
   "name": "WebBrain",
   "applicationCategory": "BrowserApplication",
-  "operatingSystem": "Chrome, Firefox",
+  "operatingSystem": "Chrome, Edge, Firefox",
   "offers": {
     "@type": "Offer",
     "price": "0",
     "priceCurrency": "USD"
   },
-  "description": "WebBrain은 Claude 브라우저 플러그인의 무료 오픈소스 대안입니다. Chrome과 Firefox용 AI 브라우저 에이전트 — 페이지를 읽고, 데이터를 추출하고, 작업을 자동화합니다. llama.cpp, OpenAI, Claude, OpenRouter와 함께 작동합니다. 다국어 UI, 토큰을 아끼는 스크린샷. MIT 라이선스.",
+  "description": "WebBrain은 Claude 브라우저 플러그인의 무료 오픈소스 대안입니다. Chrome, Firefox, Edge용 AI 브라우저 에이전트 — 페이지를 읽고, 데이터를 추출하고, 작업을 자동화합니다. llama.cpp, OpenAI, Claude, OpenRouter와 함께 작동합니다. 다국어 UI, 토큰을 아끼는 스크린샷. MIT 라이선스.",
   "url": "https://webbrain.one/ko/",
   "inLanguage": "ko-KR",
   "downloadUrl": "https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb",
@@ -64,7 +74,8 @@
   },
   "license": "https://opensource.org/licenses/MIT",
   "isAccessibleForFree": true,
-  "screenshot": "https://webbrain.one/og-image.svg"
+  "image": "https://webbrain.one/logo-github.png",
+  "screenshot": "https://webbrain.one/og-image.png"
 }
   </script>
   <script type="application/ld+json">
@@ -79,6 +90,22 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "예. WebBrain은 비슷한 AI 브라우저 에이전트 기능을 제공합니다 — 페이지 읽기, 데이터 추출, 버튼 클릭, 양식 입력, 다단계 워크플로 자동화. Claude Pro 구독이 필요하고 Anthropic 모델만 지원하는 독점 Claude 플러그인과 달리, WebBrain은 완전 무료이고 오픈소스(MIT 라이선스)이며, 머신에서 완전히 실행되는 로컬 모델을 포함해 여러 LLM 프로바이더를 지원합니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain Cloud 구독료는 얼마인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "WebBrain Cloud는 현재 기기 프로필당 월 5달러이며, 당분간 Claude Pro보다 훨씬 저렴합니다. 현재 사용량은 공정 사용 정책 안에서 무제한입니다. 일반적인 개인 사용은 괜찮지만, 남용, 자동화된 대량 사용, 재판매, 비정상적으로 높은 사용량은 허용되지 않습니다. 구독은 사용자 계정이 아니라 확장 프로그램이 해당 브라우저 + OS GUID에 대해 생성한 기기 식별자에 연결됩니다. 확장 프로그램 저장소를 초기화하거나, 브라우저 프로필을 삭제하거나, 브라우저를 재설치하거나, 브라우저/OS를 바꾸거나, 기기를 잃어버려 이 식별자가 사라지면 복구하거나 이전할 수 없으며 그 손실에 대해 환불하지 않습니다. 플러그인 설정 페이지의 Account 섹션에서 Manage billing 버튼으로 구독하거나 결제를 관리할 수 있습니다. 수동으로 취소하려면 결제 때 사용한 이메일 주소로 이메일을 보내 주세요."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "암호화된 Cloud Sync는 어떻게 작동하나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cloud Sync는 활성 WebBrain Cloud 구독자를 위한 선택 기능입니다. WebBrain 메모리, 프로필 자동 입력 텍스트, 지원되는 제공자 설정(API 키 포함)을 동기화합니다. 채팅 기록, 브라우저 기록, 페이지 스크린샷, 레거시 OAuth 액세스/리프레시 토큰은 동기화하지 않습니다. 브라우저는 업로드 전에 사용자가 선택한 비밀번호로 동기화 볼트를 암호화합니다. WebBrain Cloud는 암호화된 볼트만 저장하며, 메모리, 프로필 텍스트, 제공자 설정, API 키를 읽을 수 없고 동기화 비밀번호를 대신 복구해 줄 수도 없습니다. 이메일 필드는 WebBrain Cloud 매직 링크 결제/구독 인증용입니다. 계정 비밀번호가 아닙니다. UI에서 Cloud Sync 비밀번호 변경을 안내하면 이는 동기화 암호화 비밀번호를 의미하며 WebBrain 계정 비밀번호가 아닙니다. 동기화 비밀번호를 잊으면 기존의 암호화된 클라우드 볼트를 복호화할 수 없습니다. 클라우드 볼트를 재설정하고 데이터가 아직 로컬에 있는 기기에서 새 암호화 사본을 업로드할 수 있습니다."
       }
     },
     {
@@ -118,7 +145,15 @@
       "name": "네트워크의 로컬 LLM 서버(vLLM, Ollama, llama.cpp)에 연결할 때 \"Failed to fetch\"가 나타납니다",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "LLM 서버가 로컬 네트워크의 다른 머신(예: http://192.168.1.x:8000)에 있으면, 서버가 CORS 헤더를 보내지 않는 한 Chrome이 요청을 차단합니다. 해결책은 서버에 따라 다릅니다: vLLM: --allowed-origins '[\"*\"]'로 시작하세요 (값은 반드시 JSON 리스트). Ollama: 시작 전에 환경 변수 OLLAMA_ORIGINS=*를 설정하세요. llama.cpp: CORS가 기본으로 활성화되어 있어 — 변경할 필요가 없습니다. 서버가 localhost(브라우저와 같은 머신)에서 실행 중이면 보통 CORS가 필요 없습니다. 이 문제는 로컬 네트워크의 머신 간 연결에만 영향을 미칩니다. WebBrain 설정의 base URL이 /v1로 끝나는지(예: http://192.168.1.47:8000/v1) 확인하세요."
+        "text": "LLM 서버가 로컬 네트워크의 다른 머신(예: http://192.168.1.x:8000)에 있으면, 서버가 CORS 헤더를 보내지 않는 한 Chrome이 요청을 차단합니다. 해결책은 서버에 따라 다릅니다: vLLM: --allowed-origins '[\"*\"]'로 시작하세요 (값은 반드시 JSON 리스트). Ollama: 시작 전에 환경 변수 OLLAMA_ORIGINS=*를 설정하세요. llama.cpp: CORS가 기본으로 활성화되어 있어 — 변경할 필요가 없습니다. 서버가 localhost(브라우저와 같은 머신)에서 실행 중이면 보통 CORS가 필요 없습니다. 이 문제는 로컬 네트워크의 머신 간 연결에만 영향을 미칩니다. WebBrain 설정의 base URL이 /v1로 끝나는지(예: http://192.168.1.47:8000/v1) 확인하세요. 예외: 브라우저 확장 프로그램에서 Ollama를 사용할 때는 여전히 OLLAMA_ORIGINS가 필요할 수 있습니다. 아래 Ollama FAQ를 참고하세요."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "localhost의 Ollama가 WebBrain 확장 프로그램에서 403을 반환하는 이유는 무엇인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "최근 Ollama 버전은 Ollama가 같은 컴퓨터에서 실행 중이어도 브라우저 확장 프로그램 origin의 요청을 거부할 수 있습니다. 확장 프로그램은 chrome-extension://... 또는 moz-extension://... 같은 Origin을 보내며, 이 origin이 허용되지 않으면 Ollama가 403으로 응답할 수 있습니다. 이미 포트 11434를 잡고 있는 Ollama 데스크톱 앱을 종료한 뒤, 다음 명령 중 하나로 Ollama를 시작하세요. OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve WebBrain의 Ollama 기본 URL은 http://localhost:11434/v1로 유지하세요. 터미널의 curl 확인은 브라우저 확장 프로그램 origin을 보내지 않기 때문에 이 설정 없이도 성공할 수 있습니다."
       }
     },
     {
@@ -142,7 +177,23 @@
       "name": "WebBrain은 안전한가요? 웹 페이지를 수정할 수 있나요?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "WebBrain에는 두 가지 모드가 있습니다: 묻기 모드(기본)는 읽기 전용이며 페이지의 어떤 것도 수정하지 못합니다. 실행 모드는 완전한 브라우저 에이전트 기능(클릭, 입력, 탐색)을 활성화하지만, 활성화 전 명시적인 사용자 확인이 필요하고 눈에 띄는 경고 배너가 함께 표시됩니다. 정지 버튼으로 언제든지 에이전트를 멈출 수 있습니다. 확장의 소스 코드는 GitHub에 완전히 공개되어 감사가 가능합니다."
+        "text": "WebBrain에는 세 가지 모드가 있습니다. 묻기 모드(기본)는 읽기 전용이며 페이지를 수정하지 못합니다. 실행 모드는 클릭, 입력, 탐색 같은 브라우저 동작을 허용하고, Dev 모드는 페이지 디버깅 도구를 추가합니다. 결과를 초래하는 동작은 기본적으로 승인이 필요하며, 이 권한 게이트를 끄면 WebBrain이 눈에 띄는 경고 배너를 표시합니다. 정지 버튼으로 언제든지 에이전트를 멈출 수 있습니다. 확장의 소스 코드는 GitHub에 완전히 공개되어 감사가 가능합니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "「WebBrain started debugging this browser」 배너는 무엇인가요? WebBrain은 왜 CDP를 사용하나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "페이지에서 안정적으로 작업하기 위해 WebBrain은 표준 확장 API인 chrome.debugger를 통해 Chrome DevTools Protocol(CDP)을 사용합니다. 이것이 Chrome의 「WebBrain started debugging this browser」 배너가 나타나는 이유입니다. CDP는 에이전트가 최신 사이트가 실제로 받아들이는 신뢰된 입력 이벤트로 클릭하고 입력할 수 있게 해 줍니다. content script에서 발생시킨 합성 이벤트는 많은 사이트, Web Components, 프레임워크가 제어하는 입력란에서 거부됩니다. 또한 WebBrain은 이를 통해 비전 폴백용 픽셀 단위 스크린샷을 캡처하고 content script가 볼 수 없는 교차 출처 iframe과 shadow DOM에 접근합니다. 읽기 전용 묻기 모드는 CDP가 필요 없습니다 — 페이지와 접근성 트리 읽기는 일반 content script를 거칩니다. CDP가 필요한 것은 실행 모드의 안정성과 교차 출처 작업이며, Manifest V3 확장에는 신뢰된 입력을 위한 디버거 없는 API가 없습니다. WebBrain은 작업이 필요할 때만 탭별로 디버거를 연결하며, 확장 전체가 오픈 소스라서 세션이 정확히 무엇을 하는지 감사할 수 있습니다. CDP는 강력하므로 그 영향 범위를 억제해야 할 대상으로 다루고(필요할 때만 연결하고 읽기에는 사용하지 않음), 이를 더 강화하는 것이 보안 로드맵에 포함되어 있습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "질문을 너무 많이 합니다. 비활성화할 수 있나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "이 승인 프롬프트는 사용자의 안전을 위한 것입니다. 신뢰하는 사이트에서도 악의적인 행위자가 LLM 지시를 흉내 내거나 콘텐츠를 삽입해, 사용자가 승인하지 않을 일을 에이전트가 대신 하도록 유도할 수 있습니다. 그래서 WebBrain은 중대한 결과가 따르는 작업 전에 항상 승인을 요청합니다. 그래도 이러한 프롬프트를 거치고 싶지 않다면 비활성화할 수 있습니다. 사이드 플러그인을 열고 헤더의 톱니바퀴 아이콘을 클릭한 다음 settings.html의 Permissions 탭으로 이동하여 Ask before consequential actions 옵션을 끄세요."
       }
     },
     {
@@ -171,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain이 내 탭에서 작업하는 동안 위아래로 스크롤해도 되나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대부분의 경우 가능합니다. 특히 “이 페이지를 요약해 줘” 같은 읽기 전용 요청을 Ask 모드에서 처리할 때는 WebBrain이 작업하는 동안에도 계속 스크롤할 수 있습니다. 언제 피해야 하나요? 자동 스크린샷에는 탭의 현재 뷰포트가 반영됩니다. WebBrain이 Act 또는 Dev 모드에서 보이는 콘텐츠를 적극적으로 살피거나 조작하는 동안 스크롤하면 대상이 이동하거나 모델이 보는 내용이 달라질 수 있습니다. 그 단계가 끝난 뒤 스크롤하세요. 그 외에는 계속 페이지를 사용해도 됩니다."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "WebBrain이 한 페이지에서 작업하는 동안 다른 탭으로 전환할 수 있나요?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "예, Chrome에서는 가능합니다 — 에이전트는 백그라운드 서비스 워커에서 실행되고 시작한 탭에 묶여 있으므로, 포커스를 다른 곳으로 옮겨도 그 특정 탭에서 클릭, 입력, 읽기를 계속합니다. 탭을 대상으로 하는 도구(CDP의 클릭, 입력, 탐색, 스크린샷) 모두 Chrome에서는 백그라운드 탭에서도 작동합니다. 작업이 진행 중인 동안에는 사이드바가 입력을 잠그므로, 새 탭에서 실수로 두 번째 작업을 시작할 수 없습니다 — 기다리거나 현재 작업을 멈춰야 합니다. 브라우저가 백그라운드 탭의 타이머와 애니메이션을 제한하므로, 애니메이션이 많은 사이트는 반응이 다소 느려질 수 있습니다. Firefox에서도 에이전트는 원래 탭에서 계속 실행되지만, 자동 스크린샷은 제한됩니다. Firefox의 스크린샷 API는 현재 활성 탭만 캡처할 수 있고 백그라운드의 특정 탭은 캡처하지 못합니다. WebBrain은 이를 감지해, 관계없는 페이지 이미지를 모델에 먹이는 대신 해당 턴의 스크린샷을 건너뜁니다. 에이전트는 당신이 그 탭으로 돌아갈 때까지 텍스트 기반 컨텍스트로 계획을 이어 갑니다. 에이전트가 작업 중인 같은 탭에서 적극적으로 클릭하거나 입력하는 것은 피하세요 — 같은 페이지를 두고 당신과 에이전트가 싸우는 경합 상태가 됩니다. 탭을 전환하는 것은 괜찮지만, 같은 탭을 함께 운전하는 것은 안 됩니다."
+        "text": "예. 27.0.0부터 WebBrain은 전면 접근이 반드시 필요한 경우를 제외하고 Chromium 기반 브라우저와 Firefox 모두에서 포커스를 빼앗지 않습니다. 실행은 시작된 탭에 계속 연결되어 있으므로 다른 탭에서 안전하게 작업할 수 있습니다. 드물게 원래 탭을 전면에 표시해야 하는 단계에서는 WebBrain이 잠시 그 탭에 포커스를 줄 수 있습니다. WebBrain이 작업 중인 같은 탭에서는 클릭하거나 입력하지 마세요."
       }
     },
     {
@@ -183,6 +242,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "프로필 자동 입력은 설정 → 프로필에 있는 선택 기능입니다. 짧은 자기소개 — 이름, 업무 이메일, 회사, 저위험 가입용 일회용 비밀번호 — 를 입력하고 켜면, WebBrain이 그 텍스트를 에이전트의 시스템 프롬프트에 덧붙여 매번 묻지 않고도 가입 양식을 채울 수 있게 합니다. 텍스트는 브라우저 로컬 저장소에 평문으로 저장됩니다. WebBrain 프로젝트로는 전송되지 않지만, 설정한 LLM 프로바이더에게는 매 턴 시스템 프롬프트의 일부로 전송됩니다. 기본은 꺼짐입니다. 여기에 중요한 계정(Google, Apple, iCloud, 은행, 회사 SSO, 주 이메일) 비밀번호는 절대로 넣지 마세요. 이런 계정은 2FA를 사용해야 하고, 애초에 에이전트에게 넘길 일이 없어야 합니다. 의도된 사용 사례는 뉴스레터 가입과 무료 체험에서 재사용하는 일회용 비밀번호입니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "스크린샷 마스킹 설정을 켜면 개인 데이터가 클라우드 비전 모델에 절대 도달하지 않는다는 것이 보장되나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "아니요 — 노출을 줄여줄 뿐 보장은 아닙니다. 활성화하면(설정 → 멀티모달 → 스크린샷 마스킹, 기본값은 꺼짐) WebBrain은 모든 스크린샷에서 비전 모델로 전송되기 전에 양식 필드와 이메일 주소·전화번호처럼 보이는 텍스트를 픽셀화합니다. 감지는 DOM 휴리스틱을 사용해 전적으로 사용자 기기에서 실행되며, 추가로 전송되는 데이터는 없습니다. 이 기능은 최선을 다하는 방식이며 fail-open입니다. 탐색 직후, PDF 뷰어, 제한된 브라우저 페이지 등에서 감지기가 동작할 수 없는 경우, 작업을 중단하는 대신 스크린샷이 마스킹되지 않은 채로 전송됩니다. DOM 휴리스틱이 볼 수 없는 콘텐츠(캔버스에 그려진 텍스트, 이미지 안의 개인정보, 특이한 위젯 등)도 놓칠 수 있습니다. 그리고 이 설정은 스크린샷만 다루며, 모델로 전송되는 페이지 텍스트는 이것으로 마스킹되지 않습니다. 비전에 대한 완전한 프라이버시가 필요하다면 로컬 모델을 사용하세요. llama.cpp나 Ollama 같은 오프라인 제공자를 사용하면 스크린샷과 페이지 텍스트가 기기를 절대 벗어나지 않으므로 애초에 마스킹할 것이 없습니다 — 프라이버시가 보장되는 유일한 구성입니다. 위의 \"WebBrain을 완전히 오프라인에서 사용할 수 있나요?\"를 참고하세요. 비전을 지원하는 로컬 모델을 돌릴 만한 기기가 없다면? 계획 수립과 도구 호출에는 가벼운 소형 로컬 모델(평범한 CPU/GPU에서도 충분히 가벼운)을 쓰고, 비전 서브콜은 클라우드 제공자에 맡기면서 스크린샷 마스킹을 켜두는 것이 좋은 절충안입니다. 대화와 페이지 텍스트는 여전히 기기 안에 남고, 클라우드 비전으로 나가는 모든 스크린샷은 이미 양식 필드와 감지된 이메일/전화번호가 흐리게 처리된 상태입니다 — 완전한 로컬 비전 모델용 하드웨어 없이도 클라우드 노출을 줄일 수 있습니다. 이 분할 설정은 설정 → 비전에서 구성하세요(위의 \"WebBrain은 클라우드 LLM 청구를 어떻게 통제하나요?\"도 참고하세요)."
       }
     },
     {
@@ -199,6 +266,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "7.0.0 기준으로는 아직 아닙니다. dry-run 모드는 이미 로드맵에 올라가 있고 계획되어 있습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain은 전체 DOM을 AI 모델에 보내나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "아니요. WebBrain은 기본적으로 원시 HTML이나 원시 DOM 덤프를 보내지 않습니다. 먼저 페이지 URL과 제목, 해당 사이트 안내를 사용하며, 비전 기능이 활성화된 경우 보이는 영역의 스크린샷을 선택적으로 추가합니다. 작업에 페이지 콘텐츠가 필요하면 WebBrain은 축약된 의미 기반 접근성 트리 또는 추출된 텍스트로 필요한 만큼만 읽습니다. 읽기 결과는 적절한 경우 가시성 기준으로 필터링되고, 문자 수 제한과 페이지 나누기가 적용됩니다. 원시 페이지 소스 접근은 Dev 모드에서만 사용할 수 있습니다."
       }
     },
     {
@@ -226,6 +301,13 @@
        ================================================================ */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
+    /* ----- Theme tokens -----
+       Dark is the original palette. Light is a warm cream / coffee scheme.
+       Pick by setting `data-theme="light"` or `data-theme="dark"` on <html>.
+       The early-paint script in <head> handles initial selection from
+       localStorage > prefers-color-scheme. The whole site (including the
+       hero browser mockup) reads from these vars; hardcoded rgba(255,255,255,*)
+       values were swapped for --tint-* tokens that invert per theme. */
     :root {
       --bg: #0b0e17;
       --bg-card: #111827;
@@ -239,9 +321,61 @@
       --accent2: #a78bfa;
       --success: #34d399;
       --warning: #fbbf24;
+      /* Subtle tints that ride on top of the bg/card — used for
+         placeholder bars, language dropdown chrome, etc. */
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --tint-strong: rgba(255,255,255,0.10);
+      --tint-stronger: rgba(255,255,255,0.22);
+      --shadow-card: rgba(0,0,0,0.30);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --nav-bg: rgba(11,14,23,0.80);
+      --url-bg: rgba(0,0,0,0.30);
+      /* Browser mockup interior: in dark mode the side panel keeps its
+         original near-black blues so it reads as the WebBrain plugin UI.
+         In light mode (override below) these become warm cream tones. */
+      --sp-bg: #1a1a2e;
+      --sp-msg-assistant-bg: #16213e;
+      --sp-msg-assistant-border: rgba(255,255,255,0.06);
+      --sp-input-bg: #1e2746;
+      /* Hero gradient text accent — keeps the same pink pop in both themes. */
+      --hero-gradient-3: #e879f9;
       --radius: 16px;
       --radius-sm: 10px;
       --max-w: 1100px;
+      color-scheme: dark;
+    }
+
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #b97a00;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --tint-strong: rgba(89,55,25,0.14);
+      --tint-stronger: rgba(89,55,25,0.22);
+      --shadow-card: rgba(89,55,25,0.10);
+      --shadow-strong: rgba(89,55,25,0.18);
+      --nav-bg: rgba(247,241,230,0.85);
+      --url-bg: rgba(89,55,25,0.07);
+      /* Light-mode mockup interior — cream variant of the WebBrain panel. */
+      --sp-bg: #f5e9d0;
+      --sp-msg-assistant-bg: #fff7e1;
+      --sp-msg-assistant-border: rgba(89,55,25,0.10);
+      --sp-input-bg: #fdf3dc;
+      --hero-gradient-3: #b94db3;
+      color-scheme: light;
     }
 
     html { scroll-behavior: smooth; }
@@ -292,8 +426,9 @@
       top: 0;
       z-index: 100;
       backdrop-filter: blur(20px);
-      background: rgba(11,14,23,0.8);
+      background: var(--nav-bg);
       border-bottom: 1px solid var(--border);
+      overflow-x: clip;
     }
     .nav-inner {
       max-width: var(--max-w);
@@ -313,8 +448,13 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    .nav-brand span.emoji { -webkit-text-fill-color: initial; font-size: 22px; }
-    .nav-links { display: flex; gap: 28px; align-items: center; }
+    .nav-brand .brand-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      flex: 0 0 auto;
+    }
+    .nav-links { display: flex; gap: 28px; align-items: center; margin-inline-start: auto; min-width: 0; }
     .nav-links a {
       color: var(--text-dim);
       font-size: 14px;
@@ -322,26 +462,174 @@
       transition: color 0.2s;
     }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
-    .lang-dropdown {
-      background: rgba(255,255,255,0.05);
+    .language-picker {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      direction: ltr;
+    }
+    .language-select-native {
+      display: none;
+    }
+    .language-picker-btn {
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--tint-soft);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 13px;
+      padding: 5px 7px;
+      font: inherit;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
     }
-    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
-    /* Windows/Linux render <option> with OS defaults — without this rule the
-       dropdown panel comes up white-on-white and the items are invisible.
-       macOS/Safari ignore option styling, so this is a no-op there. */
-    .lang-dropdown option {
-      background-color: #1a2233;
+    .language-picker-btn:hover,
+    .language-picker-btn[aria-expanded="true"] {
+      background: var(--tint-medium);
+      border-color: var(--tint-stronger);
+    }
+    .language-picker-btn:focus-visible {
+      outline: 2px solid var(--accent-glow);
+      outline-offset: 2px;
+    }
+    .language-picker-flag,
+    .language-picker-option-flag {
+      display: block;
+      flex: 0 0 auto;
+      object-fit: cover;
+      border: 1px solid var(--border);
+      background: var(--tint-soft);
+    }
+    .language-picker-flag {
+      width: 20px;
+      height: 15px;
+      border-radius: 3px;
+    }
+    .language-picker-code {
+      min-width: 18px;
       color: var(--text);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.45px;
+      line-height: 1;
+      text-align: center;
     }
-    .lang-dropdown option:checked,
-    .lang-dropdown option:hover {
-      background-color: var(--accent);
-      color: #fff;
+    .language-picker-caret {
+      width: 11px;
+      height: 11px;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+    }
+    .language-picker-btn[aria-expanded="true"] .language-picker-caret {
+      transform: rotate(180deg);
+    }
+    .language-picker-menu {
+      position: absolute;
+      z-index: 110;
+      top: calc(100% + 8px);
+      right: 0;
+      width: 236px;
+      max-width: calc(100vw - 20px);
+      max-height: min(384px, 68vh);
+      overflow-y: auto;
+      padding: 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 18px 45px var(--shadow-strong);
+      direction: ltr;
+    }
+    .language-picker-menu[hidden] {
+      display: none;
+    }
+    .picker-menu-highlight {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 0;
+      width: 0;
+      height: 0;
+      border-radius: 7px;
+      background: var(--accent-glow);
+      opacity: 0;
+      pointer-events: none;
+      will-change: transform, width, height;
+      transition:
+        transform 170ms cubic-bezier(0.22, 1, 0.36, 1),
+        width 170ms cubic-bezier(0.22, 1, 0.36, 1),
+        height 170ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 90ms ease;
+    }
+    .picker-menu-highlight.visible {
+      opacity: 1;
+    }
+    .picker-menu-highlight.instant {
+      transition: none;
+    }
+    .language-picker-option {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 24px 14px;
+      align-items: center;
+      gap: 9px;
+      min-height: 38px;
+      padding: 7px 8px;
+      background: transparent;
+      color: var(--text);
+      border: 0;
+      border-radius: 7px;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .language-picker-option:hover,
+    .language-picker-option:focus-visible {
+      background: transparent;
+      outline: none;
+    }
+    .language-picker-option:focus-visible {
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .language-picker-option[aria-selected="true"] {
+      background: transparent;
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .language-picker-option-flag {
+      width: 24px;
+      height: 18px;
+      border-radius: 3px;
+    }
+    .language-picker-option-name {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      unicode-bidi: plaintext;
+    }
+    .language-picker-option-code {
+      color: var(--text);
+      opacity: 0.55;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-align: center;
+    }
+    .language-picker-check {
+      color: var(--accent);
+      font-size: 12px;
+      opacity: 0;
+    }
+    .language-picker-option[aria-selected="true"] .language-picker-check {
+      opacity: 1;
     }
     .nav-cta {
       background: var(--accent) !important;
@@ -361,7 +649,7 @@
       align-items: center;
       gap: 6px;
       padding: 5px 10px 5px 8px;
-      background: rgba(255,255,255,0.04);
+      background: var(--tint-soft-2);
       border: 1px solid var(--border);
       border-radius: 999px;
       color: var(--text);
@@ -372,7 +660,7 @@
       transition: background 0.2s, border-color 0.2s, transform 0.1s;
     }
     .gh-stars:hover {
-      background: rgba(255,255,255,0.08);
+      background: var(--tint-medium);
       border-color: var(--accent);
       text-decoration: none;
       transform: translateY(-1px);
@@ -386,6 +674,42 @@
       min-width: 1ch;
     }
     .gh-stars[data-loading="1"] .gh-count { color: var(--text-dim); }
+
+    /* Theme toggle — sun in light mode, moon in dark mode. JS just flips
+       the data-theme attribute on <html>; the CSS swap is purely visual. */
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    /* Show the icon for the theme the button will switch TO: in dark mode
+       show the sun (click → light); in light mode show the moon. */
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
 
     /* ================================================================
        HERO
@@ -406,7 +730,7 @@
       letter-spacing: -1.5px;
     }
     .hero h1 .gradient {
-      background: linear-gradient(135deg, var(--accent), var(--accent2), #e879f9);
+      background: linear-gradient(135deg, var(--accent), var(--accent2), var(--hero-gradient-3));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -449,10 +773,386 @@
     .btn-secondary:hover { background: var(--bg-card-hover); transform: translateY(-2px); text-decoration: none; }
     .btn svg { width: 18px; height: 18px; }
 
+    /* A video chapter card that follows the demo: show what the product does
+       first, then answer the "will it click things without asking me" objection.
+       The real presenter frame makes the interaction legible before hover. */
+    .hero-trust {
+      max-width: 940px;
+      margin: 58px auto 0;
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(190px, 226px) minmax(0, 1fr);
+      gap: 22px;
+      padding: 12px;
+      overflow: hidden;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 48px var(--shadow-card);
+      text-align: start;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .hero-trust:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      box-shadow: 0 22px 58px var(--shadow-strong);
+    }
+    .hero-trust:focus-within {
+      outline: 2px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    .hero-trust-media {
+      position: relative;
+      min-height: 150px;
+      overflow: hidden;
+      background: #090b11;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      isolation: isolate;
+    }
+    .hero-trust-media::after {
+      content: '';
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 42%, rgba(3, 5, 10, 0.76));
+      pointer-events: none;
+    }
+    .hero-trust-thumbnail {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .hero-trust:hover .hero-trust-thumbnail {
+      transform: scale(1.035);
+    }
+    .hero-trust-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 5px 12px 5px 0;
+    }
+    [dir="rtl"] .hero-trust-copy {
+      padding: 5px 0 5px 12px;
+    }
+    .hero-trust-heading {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .hero-trust-kicker {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--accent2);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.11em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    .hero-trust-title {
+      margin: 0;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .hero-trust-shield {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      color: var(--success);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: inset 0 0 0 3px var(--tint-soft-2);
+    }
+    .hero-trust-shield .shield {
+      width: 20px;
+      height: 20px;
+    }
+    .hero-trust-play {
+      position: absolute;
+      z-index: 2;
+      inset: 50% auto auto 50%;
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: rgba(108, 99, 255, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.42);
+      border-radius: 50%;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+      transform: translate(-50%, -50%);
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+    .hero-trust-play svg {
+      width: 16px;
+      height: 16px;
+      margin-inline-start: 2px;
+    }
+    .hero-trust:hover .hero-trust-play,
+    .hero-trust:focus-within .hero-trust-play {
+      background: var(--accent);
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+    .hero-trust-watch {
+      position: absolute;
+      z-index: 2;
+      inset-inline: 10px;
+      inset-block-end: 9px;
+      overflow: hidden;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 650;
+      line-height: 1.25;
+      text-align: center;
+      text-overflow: ellipsis;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+      white-space: nowrap;
+    }
+    .hero-trust-list {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .hero-trust-list li {
+      display: flex;
+      position: relative;
+      align-items: center;
+      min-width: 0;
+      min-height: 50px;
+      /* Logical padding: the ✓ badge is placed with inset-inline-start, so a
+         physical padding-left would collide with the text in RTL locales. */
+      padding-block: 9px;
+      padding-inline: 35px 9px;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 550;
+      color: var(--text-dim);
+      line-height: 1.35;
+    }
+    .hero-trust-list li::before {
+      content: '✓';
+      position: absolute;
+      inset-inline-start: 9px;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      transform: translateY(-50%);
+      color: var(--success);
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .hero-trust-trigger {
+      position: absolute;
+      z-index: 3;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: inherit;
+      cursor: pointer;
+    }
+    .hero-trust-trigger:focus {
+      outline: 0;
+    }
+
+    /* The security explainer lives in the top layer, keeping the landing page
+       concise while preserving the richer safety story on demand. */
+    .security-video-dialog {
+      position: fixed;
+      inset: 0;
+      width: min(960px, calc(100vw - 32px));
+      max-width: none;
+      max-height: calc(100dvh - 32px);
+      margin: auto;
+      padding: 0;
+      overflow: auto;
+      color: var(--text);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 30px 100px rgba(0, 0, 0, 0.5);
+    }
+    .security-video-dialog::backdrop {
+      background: rgba(7, 9, 16, 0.78);
+      backdrop-filter: blur(10px);
+    }
+    .security-video-dialog-shell {
+      overflow: hidden;
+      border-radius: inherit;
+    }
+    .security-video-dialog-copy {
+      position: relative;
+      padding: 24px 72px 22px 26px;
+      background:
+        radial-gradient(circle at 10% 0%, var(--tint-soft-2), transparent 48%),
+        var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+    [dir="rtl"] .security-video-dialog-copy {
+      padding: 24px 26px 22px 72px;
+    }
+    .security-video-dialog-kicker {
+      margin-bottom: 7px;
+      color: var(--success);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    .security-video-dialog-title {
+      max-width: 720px;
+      font-size: clamp(22px, 3.4vw, 34px);
+      line-height: 1.14;
+      letter-spacing: -0.6px;
+    }
+    .security-video-dialog-description {
+      max-width: 760px;
+      margin-top: 10px;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .security-video-dialog-close {
+      position: absolute;
+      inset-block-start: 20px;
+      inset-inline-end: 20px;
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: var(--text-dim);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      cursor: pointer;
+      transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+    .security-video-dialog-close:hover {
+      color: var(--text);
+      background: var(--bg-card-hover);
+      border-color: var(--accent);
+    }
+    .security-video-dialog-close:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 3px;
+    }
+    .security-video-dialog-close svg {
+      width: 18px;
+      height: 18px;
+    }
+    .security-video-dialog-stage {
+      display: grid;
+      place-items: center;
+      background: #03050a;
+    }
+    .security-video-dialog-frame {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+    }
+    .security-video-dialog-frame video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #03050a;
+    }
+    @media (max-width: 768px) {
+      .hero-trust {
+        grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
+        margin-top: 50px;
+        gap: 16px;
+      }
+      .hero-trust-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .security-video-dialog {
+        width: calc(100vw - 20px);
+        max-height: calc(100dvh - 20px);
+        border-radius: 15px;
+      }
+      .security-video-dialog-copy {
+        padding: 20px 62px 18px 20px;
+      }
+      [dir="rtl"] .security-video-dialog-copy {
+        padding: 20px 20px 18px 62px;
+      }
+      .security-video-dialog-close {
+        inset-block-start: 16px;
+        inset-inline-end: 16px;
+        width: 36px;
+        height: 36px;
+      }
+      .security-video-dialog-frame {
+        width: min(100%, calc((100dvh - 210px) * 0.5625));
+        aspect-ratio: 9 / 16;
+      }
+    }
+    @media (max-width: 560px) {
+      .hero-trust {
+        grid-template-columns: 1fr;
+        gap: 15px;
+        margin-top: 44px;
+        padding: 10px;
+      }
+      .hero-trust-media {
+        min-height: 0;
+        aspect-ratio: 16 / 9;
+      }
+      .hero-trust-copy,
+      [dir="rtl"] .hero-trust-copy {
+        padding: 2px 8px 8px;
+      }
+      .hero-trust-list {
+        grid-template-columns: 1fr;
+      }
+      .hero-trust-list li {
+        min-height: 42px;
+        padding-block: 9px;
+        padding-inline: 38px 10px;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .picker-menu-highlight,
+      .hero-trust,
+      .hero-trust-play,
+      .hero-trust-thumbnail {
+        transition: none;
+      }
+      .hero-trust:hover {
+        transform: none;
+      }
+    }
+
     /* Hero screenshot mockup */
     .hero-visual {
       margin-top: 60px;
       position: relative;
+      overflow: hidden;
     }
     .browser-mockup {
       max-width: 820px;
@@ -461,7 +1161,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
-      box-shadow: 0 24px 80px rgba(0,0,0,0.4);
+      box-shadow: 0 24px 80px var(--shadow-strong);
     }
     .browser-bar {
       display: flex;
@@ -481,16 +1181,21 @@
     .browser-dots span:nth-child(3) { background: #34d399; }
     .browser-url {
       flex: 1;
+      min-width: 0;
       margin-inline-start: 12px;
-      background: rgba(0,0,0,0.3);
+      background: var(--url-bg);
       border-radius: 6px;
       padding: 5px 12px;
       font-size: 12px;
       color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .browser-body {
       display: flex;
       min-height: 380px;
+      flex: 1;
     }
     .browser-page {
       flex: 1;
@@ -502,7 +1207,7 @@
     .browser-page h3 { color: var(--text); margin-bottom: 8px; font-size: 16px; }
     .browser-page .placeholder-line {
       height: 10px;
-      background: rgba(255,255,255,0.04);
+      background: var(--tint-soft-2);
       border-radius: 4px;
       margin-bottom: 8px;
     }
@@ -513,11 +1218,14 @@
     .side-panel {
       width: 300px;
       border-inline-start: 1px solid var(--border);
-      background: #1a1a2e;
+      background: var(--sp-bg);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
     }
+    /* Scene 5 has list-like extraction output, so keep the response aligned
+       like real chat content instead of inheriting the centered hero text. */
+    .scene-response-left .sp-msg.assistant { text-align: start; }
     .sp-header {
       padding: 10px 14px;
       border-bottom: 1px solid var(--border);
@@ -531,7 +1239,11 @@
       background: linear-gradient(135deg, var(--accent), var(--accent2));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
     }
+    .sp-brand-logo { width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto; }
     .sp-header .sp-brand .sp-domain {
       font-weight: 500;
       opacity: 1;
@@ -542,6 +1254,29 @@
       width: 7px; height: 7px;
       background: var(--success);
       border-radius: 50%;
+    }
+    /* Ask / Act / Dev mode switch in the panel header */
+    .sp-modes {
+      display: flex;
+      gap: 2px;
+      padding: 2px;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      margin-inline-start: auto;
+      margin-inline-end: 8px;
+    }
+    .sp-mode {
+      font-size: 9px;
+      font-weight: 600;
+      line-height: 1;
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: var(--text-dim);
+    }
+    .sp-mode.is-on {
+      background: var(--accent);
+      color: #fff;
     }
     .sp-messages {
       flex: 1;
@@ -557,7 +1292,8 @@
       font-size: 12px;
       line-height: 1.5;
       max-width: 90%;
-      animation: fadeUp 0.4s ease both;
+      overflow-wrap: anywhere;
+      opacity: 0;
     }
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(8px); }
@@ -567,14 +1303,20 @@
       background: var(--accent);
       color: #fff;
       align-self: flex-end;
-      animation-delay: 0.2s;
     }
     .sp-msg.assistant {
-      background: #16213e;
-      border: 1px solid rgba(255,255,255,0.06);
+      background: var(--sp-msg-assistant-bg);
+      border: 1px solid var(--sp-msg-assistant-border);
       align-self: flex-start;
-      animation-delay: 0.5s;
     }
+    /* Messages animate only inside the active scene. Toggling .is-active on the
+       scene removes/reapplies the animation rule, restarting it each cycle. */
+    .browser-mockup.is-active .sp-msg          { animation: fadeUp 0.45s ease both; }
+    .browser-mockup.is-active .sp-msg.user     { animation-delay: 0.15s; }
+    .browser-mockup.is-active .sp-msg.assistant{ animation-delay: 0.45s; }
+    /* Variant 4 — second turn lands after the first answer has settled. */
+    .browser-mockup.is-active .sp-msg.user-2       { animation-delay: 0.95s; }
+    .browser-mockup.is-active .sp-msg.assistant-2  { animation-delay: 1.30s; }
     .sp-msg .step {
       display: flex;
       align-items: center;
@@ -591,12 +1333,625 @@
     .sp-input-box {
       display: flex;
       align-items: center;
-      background: #1e2746;
+      background: var(--sp-input-bg);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 8px 12px;
       font-size: 11px;
       color: var(--text-dim);
+    }
+
+    /* ================================================================
+       MOCKUP STACK — 5 demo scenes share the same grid cell and
+       cross-fade between them. The container takes the height of the
+       tallest scene so the surrounding layout doesn't jump.
+       ================================================================ */
+    .mockup-stack {
+      display: grid;
+      /* Single column that fills the container — without this, grid auto-
+         sizes the track to max-content of the items, which collapses the
+         mockup to ~470px instead of the 820px it had before. */
+      grid-template-columns: minmax(0, 1fr);
+      max-width: 820px;
+      margin: 0 auto;
+      overflow: hidden;
+    }
+    .mockup-stage {
+      position: relative;
+      max-width: 940px;
+      margin: 0 auto;
+      padding-inline: 58px;
+    }
+    .mockup-stack > .browser-mockup {
+      grid-column: 1;
+      grid-row: 1;
+      display: flex;
+      flex-direction: column;
+      /* Reset the base .browser-mockup's `margin: 0 auto` — on a grid item,
+         auto margins absorb the leftover track space instead of letting
+         the item stretch, which left the mockup ~470px wide. */
+      margin: 0;
+      width: 100%;
+      opacity: 0;
+      transform: scale(0.985);
+      transition: opacity 0.55s ease, transform 0.55s ease;
+      pointer-events: none;
+    }
+    .mockup-stack > .browser-mockup.is-active {
+      opacity: 1;
+      transform: scale(1);
+      pointer-events: auto;
+    }
+    .scene-arrow {
+      appearance: none;
+      -webkit-appearance: none;
+      position: absolute;
+      top: 50%;
+      z-index: 3;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 12px 30px var(--shadow);
+      cursor: pointer;
+      transform: translateY(-50%);
+      transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.2s, box-shadow 0.2s;
+    }
+    .scene-arrow:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-50%) scale(1.04);
+      box-shadow: 0 16px 36px var(--shadow-strong);
+    }
+    .scene-arrow:focus-visible { outline: 2px solid var(--accent2); outline-offset: 3px; }
+    .scene-arrow svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+    .scene-arrow-prev { inset-inline-start: 0; }
+    .scene-arrow-next { inset-inline-end: 0; }
+
+    .scene-nav {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 22px;
+    }
+    .scene-dot {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-strong);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 9px;
+      height: 9px;
+      padding: 0;
+      cursor: pointer;
+      transition: background 0.2s, width 0.3s, box-shadow 0.2s;
+    }
+    .scene-dot:hover { background: var(--tint-stronger); }
+    .scene-dot.is-active {
+      background: var(--accent);
+      width: 26px;
+      box-shadow: 0 0 0 3px rgba(108,99,255,0.18);
+    }
+    .scene-dot:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+
+    /* ----- v2 — "clone this site" landing-page mockup ----- */
+    .page-landing {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .pl-logo {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: 0.4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pl-logo .pl-mark {
+      color: var(--accent2);
+      font-size: 16px;
+    }
+    .pl-hero {
+      background: linear-gradient(135deg, rgba(108,99,255,0.18), rgba(167,139,250,0.10));
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .pl-headline {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .pl-headline em {
+      font-style: normal;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .pl-buttons { display: flex; gap: 8px; }
+    .pl-btn {
+      height: 22px;
+      width: 70px;
+      border-radius: 6px;
+      background: var(--tint-medium);
+    }
+    .pl-btn.primary { background: var(--accent); width: 86px; }
+    .pl-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .pl-tile {
+      height: 54px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .pl-tile:nth-child(1) { background: linear-gradient(135deg, rgba(108,99,255,0.22), rgba(108,99,255,0.04)); }
+    .pl-tile:nth-child(2) { background: linear-gradient(135deg, rgba(167,139,250,0.22), rgba(167,139,250,0.04)); }
+    .pl-tile:nth-child(3) { background: linear-gradient(135deg, rgba(52,211,153,0.22), rgba(52,211,153,0.04)); }
+    /* Dev scene — after WebBrain suggests the CSS fix, the page preview
+       visibly gains spacing between the blocks. */
+    @keyframes plSpread {
+      from { gap: 10px; margin-top: 0; }
+      to { gap: 26px; margin-top: 14px; }
+    }
+    .browser-mockup.is-active .pl-grid {
+      animation: plSpread 0.6s ease both;
+      animation-delay: 2.1s;
+    }
+    /* Mini code editor inside an assistant message (Dev mode) */
+    .sp-code {
+      margin-top: 6px;
+      border: 1px solid var(--sp-msg-assistant-border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-align: start;
+    }
+    .sp-code-bar {
+      padding: 4px 9px;
+      background: #1c2038;
+      color: #9aa3c0;
+      font-size: 9px;
+      letter-spacing: 0.3px;
+      text-align: left;
+    }
+    .sp-code-body {
+      padding: 6px 0;
+      background: #14172a;
+      color: #c9d2ea;
+      font-size: 10px;
+      line-height: 1.7;
+    }
+    .sp-code-body span {
+      display: block;
+      padding: 0 9px;
+      white-space: pre;
+      text-align: left;
+    }
+    .sp-code-body .del { color: #f38ba8; background: rgba(243,139,168,0.08); }
+    .sp-code-body .add { color: #8ce3ad; background: rgba(140,227,173,0.10); }
+    .palette-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: inline-block;
+      box-shadow: 0 0 0 1px var(--tint-strong);
+    }
+
+    /* ----- v3 — landscape video player (YouTube-style watch page) ----- */
+    .page-video {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 12px;
+      padding: 18px 16px;
+      background: radial-gradient(circle at 50% 20%, rgba(167,139,250,0.10), transparent 70%);
+    }
+    .pv-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.40);
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,0.72) 100%),
+        linear-gradient(135deg, #2d1b69, #6c63ff 65%, #ec4899);
+      color: #fff;
+    }
+    /* Soft frosted play disc — readable as "video" without the loud
+       YouTube-red brand hit that pulls focus from the agent panel. */
+    .pv-frame::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.16);
+      border: 1px solid rgba(255,255,255,0.28);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.28);
+      backdrop-filter: blur(6px);
+      pointer-events: none;
+    }
+    .pv-frame::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 7px 0 7px 12px;
+      border-color: transparent transparent transparent rgba(255,255,255,0.92);
+      transform: translateX(2px);
+      pointer-events: none;
+    }
+    .pv-controls {
+      position: absolute;
+      inset-inline: 0;
+      bottom: 0;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 10px 9px;
+      background: linear-gradient(180deg, transparent, rgba(0,0,0,0.72));
+    }
+    .pv-progress {
+      position: relative;
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.28);
+      overflow: hidden;
+    }
+    .pv-progress::after {
+      content: '';
+      position: absolute;
+      inset-block: 0;
+      inset-inline-start: 0;
+      width: 38%;
+      background: rgba(255,255,255,0.88);
+      border-radius: 2px;
+    }
+    .pv-controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      color: rgba(255,255,255,0.9);
+    }
+    .pv-time {
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.2px;
+    }
+    .pv-controls-icons {
+      display: flex;
+      gap: 8px;
+      opacity: 0.85;
+      font-size: 11px;
+    }
+    .pv-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: start;
+      min-width: 0;
+    }
+    .pv-caption {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.35;
+      letter-spacing: 0.1px;
+    }
+    .pv-username {
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    /* Scene 4 — a compact browser-style completion bubble lands with the
+       assistant's response. The ring draw and check pop make the
+       successful file handoff readable without turning it into confetti. */
+    .download-complete-toast {
+      position: absolute;
+      inset-inline-end: 14px;
+      bottom: 58px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: min(218px, calc(100% - 28px));
+      padding: 9px 11px;
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 11px;
+      background: rgba(15,18,31,0.94);
+      color: #f2f4ff;
+      box-shadow: 0 14px 32px rgba(0,0,0,0.38);
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      transform: translateY(14px) scale(0.96);
+    }
+    .scene-download-panel { position: relative; }
+    .download-complete-icon {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      flex: 0 0 32px;
+    }
+    .download-complete-icon svg {
+      position: absolute;
+      inset: 0;
+      width: 32px;
+      height: 32px;
+      overflow: visible;
+    }
+    .download-complete-track,
+    .download-complete-ring {
+      fill: none;
+      stroke-width: 2.5;
+    }
+    .download-complete-track { stroke: rgba(52,211,153,0.20); }
+    .download-complete-ring {
+      stroke: var(--success);
+      stroke-linecap: round;
+      stroke-dasharray: 69.2;
+      stroke-dashoffset: 69.2;
+      transform: rotate(-90deg);
+      transform-origin: 16px 16px;
+    }
+    .download-complete-check {
+      fill: none;
+      stroke: var(--success);
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0;
+      transform: scale(0.55);
+      transform-origin: 16px 16px;
+    }
+    .download-complete-copy { min-width: 0; line-height: 1.3; text-align: start; }
+    .download-complete-copy strong {
+      display: block;
+      font-size: 11px;
+      letter-spacing: 0.1px;
+    }
+    .download-complete-copy span {
+      display: block;
+      margin-top: 2px;
+      color: rgba(226,231,247,0.70);
+      font-size: 9px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    @keyframes downloadToastIn {
+      from { opacity: 0; transform: translateY(14px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes downloadRingComplete {
+      from { stroke-dashoffset: 69.2; }
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes downloadCheckPop {
+      from { opacity: 0; transform: scale(0.55); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .browser-mockup.is-active .download-complete-toast {
+      animation: downloadToastIn 0.42s cubic-bezier(0.2, 0.85, 0.25, 1.15) 0.45s both;
+    }
+    .browser-mockup.is-active .download-complete-ring {
+      animation: downloadRingComplete 0.62s ease-out 0.55s both;
+    }
+    .browser-mockup.is-active .download-complete-check {
+      animation: downloadCheckPop 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.4) 1.08s both;
+    }
+
+    /* ----- v5 (scene 5) — product catalog grid ----- */
+    .pp-sub {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0.2px;
+    }
+    .pp-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .pp-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: var(--tint-soft-2);
+      line-height: 1.4;
+    }
+    .pp-thumb {
+      height: 44px;
+      border-radius: 6px;
+      margin-bottom: 7px;
+      border: 1px solid var(--border);
+    }
+    .pp-thumb.t1 { background: linear-gradient(135deg, rgba(108,99,255,0.30), rgba(108,99,255,0.06)); }
+    .pp-thumb.t2 { background: linear-gradient(135deg, rgba(167,139,250,0.30), rgba(167,139,250,0.06)); }
+    .pp-thumb.t3 { background: linear-gradient(135deg, rgba(52,211,153,0.30), rgba(52,211,153,0.06)); }
+    .pp-thumb.t4 { background: linear-gradient(135deg, rgba(245,215,110,0.34), rgba(245,215,110,0.07)); }
+    .pp-thumb.t5 { background: linear-gradient(135deg, rgba(236,72,153,0.26), rgba(236,72,153,0.05)); }
+    .pp-thumb.t6 { background: linear-gradient(135deg, rgba(96,165,250,0.30), rgba(96,165,250,0.06)); }
+    .pp-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pp-price {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--accent2);
+    }
+
+    /* ----- v4 — long-form article ----- */
+    .page-article h3 { margin-bottom: 4px; }
+    .pa-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+      letter-spacing: 0.2px;
+    }
+
+    /* ----- v5 — tax / accounting form fill ----- */
+    .page-taxform h3 { margin-bottom: 2px; }
+    .tf-meta {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0.2px;
+    }
+    .tf-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 12px;
+    }
+    .tf-field { min-width: 0; }
+    .tf-field.wide { grid-column: 1 / -1; }
+    .tf-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 3px;
+      line-height: 1.3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .tf-label b {
+      color: var(--text);
+      font-weight: 700;
+      margin-inline-end: 2px;
+    }
+    .tf-label .tf-tags {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .tf-check {
+      color: var(--success);
+      font-size: 10px;
+      opacity: 0;
+    }
+    /* "from memory" chip — appears on fields WebBrain recalled rather
+       than read off the page. */
+    .tf-mem {
+      font-size: 8px;
+      font-weight: 600;
+      line-height: 1;
+      padding: 2px 5px;
+      border-radius: 999px;
+      border: 1px solid var(--accent2);
+      color: var(--accent2);
+      text-transform: none;
+      letter-spacing: 0.2px;
+      opacity: 0;
+    }
+    .browser-mockup.is-active .tf-mem {
+      animation: tfCheck 0.25s ease-out both;
+      animation-delay: calc(var(--d, 0.8s) + 0.45s);
+    }
+    .tf-input {
+      display: flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 8px;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text);
+      line-height: 1;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .tf-value {
+      display: inline-block;
+      max-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      opacity: 0;
+    }
+    @keyframes tfType {
+      0% { max-width: 0; opacity: 1; }
+      100% { max-width: 160px; opacity: 1; }
+    }
+    @keyframes tfCheck {
+      from { opacity: 0; transform: scale(0.6); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    /* Fields "type themselves in" one after another while the scene is
+       active. Per-field stagger comes from the inline --d custom prop. */
+    .browser-mockup.is-active .tf-value {
+      animation: tfType 0.5s steps(14, end) both;
+      animation-delay: var(--d, 0.8s);
+    }
+    .browser-mockup.is-active .tf-check {
+      animation: tfCheck 0.25s ease-out both;
+      animation-delay: calc(var(--d, 0.8s) + 0.45s);
+    }
+    .tf-submit {
+      margin-top: 12px;
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 14px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0.55;
+    }
+
+    /* Reduced motion — keep messages visible and disable cross-fade. */
+    @media (prefers-reduced-motion: reduce) {
+      .sp-msg { opacity: 1; }
+      .browser-mockup.is-active .sp-msg { animation: none; }
+      .mockup-stack > .browser-mockup { transition: none; transform: none; }
+      .tf-value, .browser-mockup.is-active .tf-value { animation: none; max-width: none; opacity: 1; }
+      .tf-check, .browser-mockup.is-active .tf-check { animation: none; opacity: 1; }
+      .tf-mem, .browser-mockup.is-active .tf-mem { animation: none; opacity: 1; }
+      .browser-mockup.is-active .pl-grid { animation: none; gap: 26px; margin-top: 14px; }
+      .download-complete-toast,
+      .browser-mockup.is-active .download-complete-toast { animation: none; opacity: 1; transform: none; }
+      .download-complete-ring,
+      .browser-mockup.is-active .download-complete-ring { animation: none; stroke-dashoffset: 0; }
+      .download-complete-check,
+      .browser-mockup.is-active .download-complete-check { animation: none; opacity: 1; transform: none; }
     }
 
     /* ================================================================
@@ -647,7 +2002,7 @@
       background: var(--bg-card-hover);
       border-color: rgba(108,99,255,0.2);
       transform: translateY(-4px);
-      box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+      box-shadow: 0 12px 40px var(--shadow-card);
     }
     .feature-icon {
       width: 44px; height: 44px;
@@ -668,6 +2023,78 @@
       color: var(--text-dim);
       font-size: 14px;
       line-height: 1.6;
+    }
+    /* Inline consent/permission note on powerful-capability cards, so the
+       "is this opt-in / confirmed per-action?" answer sits with the feature
+       instead of only in the security section further down. */
+    .feature-card .feature-note {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--text-dim);
+    }
+    .feature-card .feature-note::before {
+      content: '🔒';
+      flex: 0 0 auto;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    /* Progressive enhancement: the grid ships fully expanded, and JS collapses
+       it to the six headline capabilities. Without JS all twelve stay visible
+       and the toggle never renders. */
+    .features-grid[data-collapsed="true"] .feature-card[data-extra] {
+      display: none;
+    }
+    .features-more {
+      display: none;
+      justify-content: center;
+      margin-top: 28px;
+    }
+    .features-grid[data-collapsed] + .features-more {
+      display: flex;
+    }
+    .features-more-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 22px;
+      color: var(--text);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, transform 0.2s;
+    }
+    .features-more-btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .features-more-btn:focus-visible {
+      outline: 2px solid var(--accent-glow);
+      outline-offset: 2px;
+    }
+    .features-more-btn svg {
+      width: 14px;
+      height: 14px;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+    }
+    .features-more-btn[aria-expanded="true"] svg {
+      transform: rotate(180deg);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .features-more-btn,
+      .features-more-btn svg { transition: none; }
+      .features-more-btn:hover { transform: none; }
     }
 
     /* ================================================================
@@ -730,6 +2157,7 @@
       position: relative;
       z-index: 1;
     }
+    .cc-core img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
     .cc-ring {
       position: absolute;
       inset: -10px;
@@ -801,7 +2229,10 @@
     .pn-bubble.openrouter { background: rgba(108,99,255,0.12); color: var(--accent2); border-color: rgba(108,99,255,0.3); }
     .pn-bubble.studiolm { background: rgba(245,158,11,0.12); color: #f59e0b; border-color: rgba(245,158,11,0.25); }
     .pn-bubble.vllm { background: rgba(99,102,241,0.12); color: #6366f1; border-color: rgba(99,102,241,0.25); }
+    /* Grok is a white-on-black brand. In dark mode the bubble is near-white
+       on dark; light mode inverts to dark glyph on cream. */
     .pn-bubble.grok { background: rgba(255,255,255,0.06); color: #e5e5e5; border-color: rgba(255,255,255,0.2); }
+    :root[data-theme="light"] .pn-bubble.grok { background: rgba(0,0,0,0.06); color: #1a1a1a; border-color: rgba(0,0,0,0.2); }
     .pn-bubble.gemini { background: rgba(66,133,244,0.12); color: #4285f4; border-color: rgba(66,133,244,0.25); }
     .pn-bubble.deepseek { background: rgba(72,191,255,0.12); color: #48bfff; border-color: rgba(72,191,255,0.25); }
     .pn-bubble.mistral { background: rgba(255,127,80,0.12); color: #ff7f50; border-color: rgba(255,127,80,0.25); }
@@ -833,7 +2264,7 @@
     }
     .mode-card:hover {
       transform: translateY(-4px);
-      box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+      box-shadow: 0 12px 40px var(--shadow-card);
     }
     .mode-card.ask { border-top: 3px solid var(--accent); }
     .mode-card.act { border-top: 3px solid var(--warning); }
@@ -849,14 +2280,24 @@
     }
     .download-cards {
       display: flex;
-      justify-content: center;
+      flex-direction: column;
       align-items: stretch;
       gap: 20px;
-      flex-wrap: nowrap;
       margin-top: 40px;
-      max-width: 820px;
+      max-width: 860px;
       margin-left: auto;
       margin-right: auto;
+    }
+    .download-row {
+      display: grid;
+      gap: 20px;
+      align-items: stretch;
+    }
+    .download-row-current {
+      grid-template-columns: 1fr;
+    }
+    .download-row-secondary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .download-card {
       background: var(--bg-card);
@@ -874,9 +2315,22 @@
     .download-card:hover {
       border-color: var(--accent);
       transform: translateY(-4px);
-      box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+      box-shadow: 0 12px 40px var(--shadow-card);
     }
-    .download-card .browser-icon { font-size: 38px; margin-bottom: 14px; }
+    .download-card .browser-icon {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 14px;
+      display: grid;
+      place-items: center;
+    }
+    .download-card .browser-icon img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+      filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.22));
+    }
     .download-card h3 { font-size: 18px; margin-bottom: 6px; }
     .download-card p { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
     .download-card-actions {
@@ -886,18 +2340,164 @@
       gap: 10px;
       margin-top: auto;
     }
-    .download-card .btn { width: 100%; justify-content: center; }
-    /* Chrome is the more popular browser so the Chrome card gets ~25% more
-       horizontal real estate than Firefox via flex-grow. Both cards stay
-       on a single row at all desktop/tablet widths; the mobile breakpoint
-       below stacks them. */
-    .download-card-chrome {
-      flex-grow: 1.25;
+    .download-card .btn {
+      width: 100%;
+      justify-content: center;
+      line-height: 1.35;
+    }
+    .download-card .btn svg { flex: 0 0 auto; }
+    .download-card-firefox .btn-primary {
+      overflow-wrap: normal;
+      word-break: normal;
+      hyphens: none;
+    }
+    .download-card-edge .btn-primary {
+      background: linear-gradient(135deg, #0078d4, #13a10e);
+    }
+    .download-card.is-disabled {
+      filter: grayscale(1);
+      opacity: 0.72;
+    }
+    .download-card.is-disabled:hover {
+      border-color: var(--border);
+      box-shadow: none;
+      transform: none;
+    }
+    .download-card.is-disabled .btn {
+      cursor: not-allowed;
+      color: #f1f1f1;
+      background: #2a2a2a;
+      border-color: #6f6f6f;
+      box-shadow: none;
+    }
+    .download-row-current .download-card {
       padding: 38px 32px;
       border-color: rgba(0, 212, 255, 0.45);
     }
-    .download-card-chrome .browser-icon { font-size: 46px; }
-    .download-card-chrome h3 { font-size: 20px; }
+    .download-row-current .browser-icon {
+      width: 58px;
+      height: 58px;
+    }
+    .download-row-current h3 { font-size: 20px; }
+    .download-row-current .download-card-actions {
+      max-width: 380px;
+    }
+
+    /* ================================================================
+       MCP BRIDGE
+       ================================================================ */
+    .mcp-showcase {
+      position: relative;
+      max-width: 980px;
+      margin: 40px auto 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+      border: 1px solid rgba(108,99,255,0.3);
+      border-radius: calc(var(--radius) + 4px);
+      background:
+        radial-gradient(circle at 88% 12%, rgba(52,211,153,0.1), transparent 24rem),
+        linear-gradient(145deg, var(--bg-card), var(--surface));
+      box-shadow: 0 24px 70px var(--shadow-strong);
+    }
+    .mcp-showcase::before {
+      content: '127.0.0.1:17374';
+      position: absolute;
+      top: 17px;
+      right: 20px;
+      color: var(--success);
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      opacity: 0.72;
+    }
+    [dir="rtl"] .mcp-showcase::before { right: auto; left: 20px; }
+    .mcp-copy {
+      padding: 42px 36px;
+      border-inline-end: 1px solid var(--border);
+    }
+    .mcp-copy h3 {
+      max-width: 390px;
+      margin: 0 0 14px;
+      font-size: 25px;
+      line-height: 1.2;
+      letter-spacing: -0.025em;
+    }
+    .mcp-copy p {
+      margin: 0 0 24px;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .mcp-command {
+      margin: 0 0 24px;
+      overflow-x: auto;
+      padding: 13px 15px;
+      border: 1px solid rgba(52,211,153,0.2);
+      border-radius: 9px;
+      background: var(--code-bg);
+      color: var(--success);
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: nowrap;
+      text-align: start;
+    }
+    .mcp-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .mcp-actions .btn { padding: 10px 16px; font-size: 13px; }
+    .mcp-console { min-width: 0; padding: 62px 34px 34px; }
+    .mcp-rail {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr) 26px minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+    .mcp-node {
+      min-width: 0;
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 15px 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--tint-soft);
+      text-align: center;
+    }
+    .mcp-node.is-bridge {
+      border-color: rgba(52,211,153,0.34);
+      box-shadow: inset 0 -3px rgba(52,211,153,0.55);
+    }
+    .mcp-node-icon { color: var(--accent2); font-family: 'SFMono-Regular', Consolas, monospace; font-size: 21px; }
+    .mcp-node.is-bridge .mcp-node-icon { color: var(--success); }
+    .mcp-node strong { min-width: 0; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+    .mcp-node span:last-child { color: var(--text-dim); font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9px; }
+    .mcp-arrow { color: var(--faint, var(--text-dim)); font-family: 'SFMono-Regular', Consolas, monospace; text-align: center; }
+    .mcp-tools-label {
+      margin-top: 28px;
+      color: var(--text-dim);
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .mcp-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+    .mcp-tool {
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--code-bg);
+      color: var(--text-dim);
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 10px;
+    }
 
     /* ================================================================
        OPEN SOURCE
@@ -918,10 +2518,28 @@
       gap: 12px;
       justify-content: center;
       flex-wrap: wrap;
+      align-items: center;
     }
     .share-row .btn { gap: 8px; }
-    /* Footer share icons sit just before the text links; visually a small
-       row of two glyphs that stays out of the way. */
+    .share-major {
+      min-width: 184px;
+      justify-content: center;
+    }
+    .share-icon.btn {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border-radius: 12px;
+      flex: 0 0 44px;
+      justify-content: center;
+      gap: 0;
+    }
+    .share-icon.btn svg {
+      width: 19px;
+      height: 19px;
+    }
+    /* Footer social profile icons sit just before the text links; visually a
+       small row of three glyphs that stays out of the way. */
     .footer-icon {
       display: inline-flex;
       align-items: center;
@@ -932,7 +2550,7 @@
       color: var(--text-dim);
       transition: color 0.15s, background 0.15s;
     }
-    .footer-icon:hover { color: var(--text); background: rgba(255,255,255,0.05); text-decoration: none; }
+    .footer-icon:hover { color: var(--text); background: var(--tint-soft); text-decoration: none; }
     .footer-icon svg { display: block; }
 
     /* ================================================================
@@ -956,33 +2574,36 @@
       flex-wrap: wrap;
       gap: 12px;
     }
-    .footer-links { display: flex; gap: 20px; }
-
-    .safety-note {
-      max-width: var(--max-w);
-      margin: 0 auto 24px;
-      background: rgba(251,191,36,0.1);
-      border: 1px solid rgba(251,191,36,0.35);
-      border-radius: var(--radius-sm);
-      padding: 18px 20px;
-      color: var(--text);
-      text-align: start;
-      line-height: 1.55;
+    .footer-links {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+    }
+    /* Only ever revealed by the <noscript> stylesheet in <head>. */
+    .lang-noscript {
+      display: none;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      width: 100%;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      direction: ltr;
+    }
+    .lang-noscript > span {
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .lang-noscript a {
+      color: var(--text-dim);
       font-size: 13px;
     }
-    .safety-note h4 {
-      font-size: 14px;
-      margin-bottom: 8px;
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-      color: var(--warning);
-    }
-    .safety-note ul {
-      margin: 0;
-      padding-inline-start: 18px;
-    }
-    .safety-note li { margin-bottom: 6px; }
-    .safety-note li:last-child { margin-bottom: 0; }
+    .lang-noscript a:hover { color: var(--text); }
 
     /* ================================================================
        COMPARISON TABLE
@@ -1027,6 +2648,102 @@
     }
     .compare-table tbody tr:hover {
       background: rgba(108,99,255,0.04);
+    }
+    .compare-video-card {
+      position: relative;
+      width: min(920px, 100%);
+      margin: 18px auto 0;
+      padding: 17px 18px;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      overflow: hidden;
+      color: var(--text);
+      background:
+        linear-gradient(110deg, var(--tint-soft-2), transparent 58%),
+        var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 12px 30px var(--shadow-card);
+      font: inherit;
+      text-align: start;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .compare-video-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent2), var(--success));
+    }
+    [dir="rtl"] .compare-video-card::before {
+      inset: 0 0 0 auto;
+    }
+    .compare-video-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      box-shadow: 0 17px 38px var(--shadow-strong);
+    }
+    .compare-video-card:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    .compare-video-card-icon {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: linear-gradient(145deg, var(--accent), var(--accent2));
+      border-radius: 15px;
+      box-shadow: 0 8px 22px var(--accent-glow);
+    }
+    .compare-video-card-icon svg {
+      width: 22px;
+      height: 22px;
+      margin-inline-start: 2px;
+    }
+    .compare-video-card-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .compare-video-card-title {
+      font-size: 15px;
+      font-weight: 720;
+      line-height: 1.35;
+      letter-spacing: -0.1px;
+    }
+    .compare-video-card-description {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .compare-video-card-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 12px;
+      color: var(--accent2);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .compare-video-card-runtime {
+      padding-inline-start: 9px;
+      color: var(--text-dim);
+      border-inline-start: 1px solid var(--border);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.4px;
+    }
+    .comparison-video-dialog .security-video-dialog-kicker {
+      color: var(--accent2);
     }
 
     /* ================================================================
@@ -1094,43 +2811,81 @@
     .video-frame {
       position: relative;
       width: 100%;
+      /* 16:9 — the demo video is native 1920x1080 now that the chapter text
+         lives in full-bleed preroll cards instead of a letterboxed caption
+         band. Matches every other media frame on the page. */
       padding-bottom: 56.25%;
       border-radius: var(--radius);
       overflow: hidden;
       border: 1px solid var(--border);
       background: #000;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+      box-shadow: 0 20px 40px var(--shadow-strong);
     }
-    .video-frame iframe {
+    .video-frame video {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
       border: 0;
+      display: block;
+      background: #000;
+      object-fit: contain;
     }
-
     /* ================================================================
        RESPONSIVE
        ================================================================ */
     @media (max-width: 768px) {
+      body { overflow-x: hidden; }
+      .mockup-stage { padding-inline: 0; }
+      .scene-arrow { display: none; }
       .browser-body { flex-direction: column; }
       .side-panel { width: 100%; border-inline-start: none; border-top: 1px solid var(--border); min-height: 260px; }
       .modes-grid { grid-template-columns: 1fr; }
+      .nav-inner { width: 100%; padding: 12px 10px; gap: 8px; }
+      .nav-brand { min-width: 0; font-size: 17px; gap: 6px; }
+      .nav-links { gap: 8px; flex-shrink: 0; }
       .nav-links a:not(.nav-cta) { display: none; }
+      .nav-cta { padding: 8px 14px; font-size: 12px; }
+      .language-picker-menu { max-width: calc(100vw - 20px); }
       .gh-stars { display: none; }
+      /* The theme toggle would overflow the 24px-padded header at phone
+         widths. prefers-color-scheme still auto-picks the right theme
+         on mobile, so visitors aren't stranded — just no manual flip. */
+      .theme-toggle { display: none; }
       .provider-constellation { aspect-ratio: 4 / 5; max-width: 420px; }
       .pn-bubble { width: 46px; height: 46px; font-size: 18px; }
       .pn-label { font-size: 11px; }
       .cc-core { width: 64px; height: 64px; font-size: 28px; }
       .video-showcase { max-width: 380px; }
       .video-frame { padding-bottom: 177.78%; }
+      .mcp-showcase { grid-template-columns: 1fr; }
+      .mcp-copy { border-inline-end: 0; border-bottom: 1px solid var(--border); }
+      .mcp-console { padding-top: 50px; }
+      .compare-video-card {
+        grid-template-columns: 44px minmax(0, 1fr);
+        gap: 12px;
+        padding: 15px;
+      }
+      .compare-video-card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+      }
+      .compare-video-card-action {
+        grid-column: 1 / -1;
+        justify-content: center;
+        margin-top: 2px;
+      }
     }
     @media (max-width: 560px) {
       /* Stack the install cards on small phones — squeezing two side-by-side
          below this width makes the buttons too cramped to tap reliably. */
-      .download-cards { flex-wrap: wrap; max-width: 360px; }
-      .download-card,
-      .download-card-chrome { flex: 1 1 100%; }
+      .download-cards { max-width: 360px; }
+      .download-row-secondary { grid-template-columns: 1fr; }
+      .mcp-copy, .mcp-console { padding-inline: 20px; }
+      .mcp-rail { grid-template-columns: 1fr; }
+      .mcp-node { min-height: 86px; }
+      .mcp-arrow { transform: rotate(90deg); }
     }
     @media (max-width: 480px) {
       .hero { padding: 60px 16px 50px; }
@@ -1139,12 +2894,42 @@
     }
   </style>
 
+  <!-- Theme bootstrap — runs synchronously before first paint so the page
+       opens in the visitor's chosen theme without a dark-flash. Order of
+       precedence: previously saved choice in localStorage > prefers-color-
+       scheme > dark fallback. Wrapped in try/catch because localStorage
+       can throw in private-mode Safari and some sandboxed iframes. -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+
+  <!-- Progressive enhancement: the flag picker is JS-only, so without scripting
+       we hide it and reveal a real <a href> language list in the footer. -->
+  <noscript>
+    <style>
+      .language-picker { display: none !important; }
+      .lang-noscript { display: flex !important; }
+    </style>
+  </noscript>
+
+  <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
   <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
   <script>
     window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
     plausible.init()
   </script>
+  <!-- Plausible analytics: end -->
 </head>
 <body>
 
@@ -1154,36 +2939,60 @@
 <nav>
   <div class="nav-inner">
     <a href="https://webbrain.one/ko/" class="nav-brand" style="text-decoration:none;">
-      <span class="emoji">🧠</span> WebBrain<span style="opacity:0.5; font-weight:400;">.one</span>
+      <img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span style="opacity:0.5; font-weight:400; -webkit-text-fill-color:currentColor;">.one</span>
     </a>
     <div class="nav-links">
-      <a href="#features">기능</a>
-      <a href="#compare">비교</a>
-      <a href="#download">다운로드</a>
-      <a href="#faq">FAQ</a>
+      <a href="/docs/">문서</a>
       <a href="/blog">블로그</a>
-      <select class="lang-dropdown" id="lang-dropdown" aria-label="언어 선택" data-current="ko">
-        <option value="en">English</option>
-        <option value="es">Español</option>
-        <option value="fr">Français</option>
-        <option value="tr">Türkçe</option>
-        <option value="zh">中文</option>
-        <option value="ru">Русский</option>
-        <option value="uk">Українська</option>
-        <option value="ar">العربية</option>
-        <option value="ja">日本語</option>
-        <option value="ko">한국어</option>
-        <option value="id">Bahasa Indonesia</option>
-        <option value="th">ไทย</option>
-        <option value="ms">Bahasa Melayu</option>
-        <option value="tl">Filipino</option>
-      </select>
-      <a href="https://github.com/esokullu/webbrain/stargazers" class="gh-stars" target="_blank" rel="noopener" id="gh-stars" data-loading="1" aria-label="GitHub에서 WebBrain에 별표 주기">
+      <a href="#download" class="nav-cta">다운로드</a>
+      <div class="language-picker" id="language-picker">
+        <select class="language-select-native" id="lang-dropdown" tabindex="-1" aria-hidden="true" data-current="ko">
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+          <option value="ar">العربية</option>
+          <option value="bn">বাংলা</option>
+          <option value="nl">Nederlands</option>
+          <option value="tl">Filipino</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="he">עברית</option>
+          <option value="hi">हिन्दी</option>
+          <option value="id">Bahasa Indonesia</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
+          <option value="ms">Bahasa Melayu</option>
+          <option value="fa">فارسی</option>
+          <option value="pt">Português</option>
+          <option value="ru">Русский</option>
+          <option value="es">Español</option>
+          <option value="th">ไทย</option>
+          <option value="tr">Türkçe</option>
+          <option value="uk">Українська</option>
+          <option value="vi">Tiếng Việt</option>
+        </select>
+        <button class="language-picker-btn" type="button" id="language-picker-btn" aria-label="언어 선택" title="언어 선택" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-picker-menu">
+          <img class="language-picker-flag" id="language-picker-flag" src="/assets/flags/kr.svg" alt="" aria-hidden="true">
+          <span class="language-picker-code" id="language-picker-code">KO</span>
+          <svg class="language-picker-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div class="language-picker-menu" id="language-picker-menu" role="listbox" aria-label="언어 선택" hidden></div>
+      </div>
+      <button class="theme-toggle" type="button" id="theme-toggle" aria-label="라이트 / 다크 테마 전환" title="라이트 / 다크 테마 전환">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+      <a href="https://github.com/webbrain-one/webbrain" class="gh-stars" target="_blank" rel="noopener" id="gh-stars" data-loading="1" aria-label="GitHub에서 WebBrain에 별표 주기">
         <svg class="gh-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
         <svg class="gh-star" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.99 6.36L22 9.4l-5 4.96L18.18 22 12 18.5 5.82 22 7 14.36 2 9.4l7.01-1.04L12 2z"/></svg>
         <span class="gh-count">—</span>
       </a>
-      <a href="https://github.com/esokullu/webbrain" class="nav-cta" target="_blank">GitHub</a>
     </div>
   </div>
 </nav>
@@ -1191,68 +3000,334 @@
 <!-- HERO -->
 <section class="hero">
   <h1>오픈소스 AI <span class="gradient">브라우저 에이전트</span></h1>
-  <p>WebBrain은 Chrome과 Firefox에 AI 에이전트 기능을 가져오는 무료 오픈소스 브라우저 확장입니다. 페이지를 읽고, 데이터를 추출하고, 웹 작업을 자동화합니다 — 원하는 LLM으로. 독점 브라우저 AI 플러그인의 셀프 호스팅 가능한 대안입니다.</p>
+  <p>WebBrain은 브라우저에 AI 에이전트 기능을 가져오는 무료 오픈소스 브라우저 확장입니다. 페이지를 읽고, 데이터를 추출하고, 웹 작업을 자동화합니다 — 원하는 LLM으로. 독점 브라우저 AI 플러그인의 셀프 호스팅 가능한 대안입니다.</p>
   <div class="hero-actions">
     <a href="#download" class="btn btn-primary">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       확장 설치
     </a>
-    <a href="https://github.com/esokullu/webbrain" target="_blank" class="btn btn-secondary">
+    <a href="https://github.com/webbrain-one/webbrain" target="_blank" class="btn btn-secondary">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub에서 보기
     </a>
   </div>
 
-  <!-- Browser mockup -->
+  <!-- Browser mockup — 5 demo scenarios that cross-fade. The first scene
+       carries .is-active on load so its messages animate in immediately;
+       the rotation script swaps the class on a timer / on click. -->
   <div class="hero-visual">
-    <div class="browser-mockup">
-      <div class="browser-bar">
-        <div class="browser-dots">
-          <span></span><span></span><span></span>
+    <div class="mockup-stage">
+      <button class="scene-arrow scene-arrow-prev" type="button" data-scene-step="-1" aria-label="이전 데모 시나리오" aria-controls="mockup-stack">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="mockup-stack" id="mockup-stack">
+
+      <!-- Scene 1: Follow-up question (two-turn conversation) — Ask mode -->
+      <div class="browser-mockup is-active" data-scene="0">
+        <div class="browser-bar">
+          <div class="browser-dots"><span></span><span></span><span></span></div>
+          <div class="browser-url">https://magazine.dev/local-ai-2026</div>
         </div>
-        <div class="browser-url">https://example.com/products</div>
-      </div>
-      <div class="browser-body">
-        <div class="browser-page">
-          <h3>제품 카탈로그</h3>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-          <div class="placeholder-line"></div>
-        </div>
-        <div class="side-panel">
-          <div class="sp-header">
-            <span class="sp-brand">🧠 WebBrain<span class="sp-domain">.one</span></span>
-            <span class="sp-status"></span>
+        <div class="browser-body">
+          <div class="browser-page page-article">
+            <h3>로컬 AI의 미래</h3>
+            <div class="pa-meta">Jane Smith · 8분 읽기</div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
+            <div class="placeholder-line"></div>
           </div>
-          <div class="sp-messages">
-            <div class="sp-msg user">이 페이지의 모든 제품명과 가격을 추출해 줘</div>
-            <div class="sp-msg assistant">
-              <div class="step"><span class="check">&#10003;</span> 페이지 읽는 중</div>
-              <div class="step"><span class="check">&#10003;</span> 데이터 추출 중</div>
-              <div style="margin-top:6px;"><strong>제품 24개</strong>를 찾았습니다. 결과는 다음과 같습니다:</div>
-              <div style="margin-top:4px; font-size:11px; color: var(--text-dim);">
-                1. Widget Pro — $29.99<br>
-                2. Super Gadget — $49.99<br>
-                3. MegaTool X — $19.99<br>
-                <span style="color:var(--accent2);">...그리고 21개 더</span>
+          <div class="side-panel">
+            <div class="sp-header">
+              <span class="sp-brand"><img class="sp-brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="sp-domain">.one</span></span>
+              <span class="sp-modes" aria-hidden="true"><span class="sp-mode is-on">Ask</span><span class="sp-mode">Act</span><span class="sp-mode">Dev</span></span>
+              <span class="sp-status"></span>
+            </div>
+            <div class="sp-messages">
+              <div class="sp-msg user">이 기사를 요약해 줘</div>
+              <div class="sp-msg assistant">로컬 LLM은 이제 더 나은 양자화, 더 빠른 컨슈머 GPU, 프라이버시 우선 흐름에 힘입어 많은 작업에서 클라우드 품질에 맞먹습니다.</div>
+              <div class="sp-msg user user-2">저자가 2026년에 대해 무엇을 예측하나요?</div>
+              <div class="sp-msg assistant assistant-2">
+                <div class="step"><span class="check">&#10003;</span> 기사 컨텍스트 회상 중</div>
+                <div style="margin-top:6px;">저자는 <strong>2026년</strong>까지 컨슈머 AI 워크로드의 70% 이상이 기기에서 실행될 것으로 예상합니다.</div>
               </div>
             </div>
-          </div>
-          <div class="sp-input">
-            <div class="sp-input-box">이 페이지에 대해 무엇이든 물어보세요...</div>
+            <div class="sp-input">
+              <div class="sp-input-box">이 페이지에 대해 무엇이든 물어보세요...</div>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- Scene 2: Tax form fill (Act mode) — fields type themselves in -->
+      <div class="browser-mockup" data-scene="1" aria-hidden="true" inert>
+        <div class="browser-bar">
+          <div class="browser-dots"><span></span><span></span><span></span></div>
+          <div class="browser-url">https://tax.example.gov/filing/quarterly-return</div>
+        </div>
+        <div class="browser-body">
+          <div class="browser-page page-taxform">
+            <h3>분기 세금 신고서 — 양식 QT-4</h3>
+            <div class="tf-meta">세무 당국 · 모든 항목 필수</div>
+            <div class="tf-grid">
+              <div class="tf-field wide">
+                <div class="tf-label"><span><b>1a</b> 법적 사업체명</span> <span class="tf-tags"><span class="tf-mem" style="--d:0.7s;">메모리에서</span><span class="tf-check" style="--d:0.7s;">&#10003;</span></span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:0.7s;">Lumen Coffee LLC</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>1b</b> EIN / 세금 ID</span> <span class="tf-tags"><span class="tf-mem" style="--d:1.1s;">메모리에서</span><span class="tf-check" style="--d:1.1s;">&#10003;</span></span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:1.1s;">84-2917465</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>2</b> 신고 기간</span> <span class="tf-check" style="--d:1.6s;">&#10003;</span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:1.6s;">Q2 2026</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>5a</b> 총 매출</span> <span class="tf-check" style="--d:2.0s;">&#10003;</span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:2.0s;">$148,220.00</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>5b</b> 공제 가능 비용</span> <span class="tf-check" style="--d:2.4s;">&#10003;</span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:2.4s;">$61,884.00</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>7</b> 총 급여</span> <span class="tf-tags"><span class="tf-mem" style="--d:2.8s;">메모리에서</span><span class="tf-check" style="--d:2.8s;">&#10003;</span></span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:2.8s;">$38,400.00</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>9a</b> 납부한 예상 세금</span> <span class="tf-check" style="--d:3.2s;">&#10003;</span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:3.2s;">$9,500.00</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>9b</b> 전기 이월 세액공제</span> <span class="tf-check" style="--d:3.6s;">&#10003;</span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:3.6s;">$1,250.00</span></div>
+              </div>
+              <div class="tf-field">
+                <div class="tf-label"><span><b>11</b> 납부할 순 세금</span> <span class="tf-check" style="--d:4.0s;">&#10003;</span></div>
+                <div class="tf-input"><span class="tf-value" style="--d:4.0s;">$12,067.40</span></div>
+              </div>
+            </div>
+            <span class="tf-submit">신고서 제출</span>
+          </div>
+          <div class="side-panel">
+            <div class="sp-header">
+              <span class="sp-brand"><img class="sp-brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="sp-domain">.one</span></span>
+              <span class="sp-modes" aria-hidden="true"><span class="sp-mode">Ask</span><span class="sp-mode is-on">Act</span><span class="sp-mode">Dev</span></span>
+              <span class="sp-status"></span>
+            </div>
+            <div class="sp-messages">
+              <div class="sp-msg user">이 양식을 작성해 줘</div>
+              <div class="sp-msg assistant">
+                <div class="step"><span class="check">&#10003;</span> 이름, EIN 및 급여를 <strong>메모리에서</strong> 불러옴</div>
+                <div class="step"><span class="check">&#10003;</span> 필수 필드 9개 발견</div>
+                <div class="step"><span class="check">&#10003;</span> 수치로 합계 계산 중</div>
+                <div style="margin-top:6px;"><strong>9개 필드</strong>를 채웠습니다. 제출 전에 중지 — 검토 후 준비되면 보내세요.</div>
+              </div>
+            </div>
+            <div class="sp-input">
+              <div class="sp-input-box">이 페이지에 대해 무엇이든 물어보세요...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 3: Dev mode — CSS spacing question answered in a code editor -->
+      <div class="browser-mockup" data-scene="2" aria-hidden="true" inert>
+        <div class="browser-bar">
+          <div class="browser-dots"><span></span><span></span><span></span></div>
+          <div class="browser-url">http://localhost:3000/preview</div>
+        </div>
+        <div class="browser-body">
+          <div class="browser-page page-landing">
+            <div class="pl-logo"><span class="pl-mark">⬢</span>Acme Studio</div>
+            <div class="pl-hero">
+              <div class="pl-headline"><em>아름다운</em> 것을 만드세요</div>
+              <div class="pl-buttons">
+                <span class="pl-btn primary"></span>
+                <span class="pl-btn"></span>
+              </div>
+            </div>
+            <div class="pl-grid">
+              <div class="pl-tile"></div>
+              <div class="pl-tile"></div>
+              <div class="pl-tile"></div>
+            </div>
+          </div>
+          <div class="side-panel">
+            <div class="sp-header">
+              <span class="sp-brand"><img class="sp-brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="sp-domain">.one</span></span>
+              <span class="sp-modes" aria-hidden="true"><span class="sp-mode">Ask</span><span class="sp-mode">Act</span><span class="sp-mode is-on">Dev</span></span>
+              <span class="sp-status"></span>
+            </div>
+            <div class="sp-messages">
+              <div class="sp-msg user">이 블록들을 서로 더 멀리, 간격을 더 크게 만들려면 어떻게 해야 하나요?</div>
+              <div class="sp-msg assistant">
+                <div class="step"><span class="check">&#10003;</span> DevTools에서 그리드 검사 중</div>
+                <div class="sp-code">
+                  <div class="sp-code-bar">styles.css</div>
+                  <div class="sp-code-body"><span>.feature-grid {</span><span class="del">-  gap: 10px;</span><span class="add">+  gap: 28px;</span><span class="add">+  margin-top: 32px;</span><span>}</span></div>
+                </div>
+                <div style="margin-top:6px;">그리드 <strong>gap</strong>을 늘리고 섹션에 여백을 주세요.</div>
+              </div>
+            </div>
+            <div class="sp-input">
+              <div class="sp-input-box">이 페이지에 대해 무엇이든 물어보세요...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 4: Social video download — Act mode -->
+      <div class="browser-mockup" data-scene="3" aria-hidden="true" inert>
+        <div class="browser-bar">
+          <div class="browser-dots"><span></span><span></span><span></span></div>
+          <div class="browser-url">https://youtube.com/watch?v=n0m4dB0druM</div>
+        </div>
+        <div class="browser-body">
+          <div class="browser-page page-video">
+            <div class="pv-frame">
+              <div class="pv-controls">
+                <div class="pv-progress" aria-hidden="true"></div>
+                <div class="pv-controls-row">
+                  <span class="pv-time">0:09 / 0:24</span>
+                  <span class="pv-controls-icons" aria-hidden="true">CC · ⚙ · ⛶</span>
+                </div>
+              </div>
+            </div>
+            <div class="pv-meta">
+              <div class="pv-caption">Bodrum의 일몰 타임랩스</div>
+              <div class="pv-username">@nomad</div>
+            </div>
+          </div>
+          <div class="side-panel scene-download-panel">
+            <div class="sp-header">
+              <span class="sp-brand"><img class="sp-brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="sp-domain">.one</span></span>
+              <span class="sp-modes" aria-hidden="true"><span class="sp-mode">Ask</span><span class="sp-mode is-on">Act</span><span class="sp-mode">Dev</span></span>
+              <span class="sp-status"></span>
+            </div>
+            <div class="sp-messages">
+              <div class="sp-msg user">이 동영상을 다운로드해 줘</div>
+              <div class="sp-msg assistant">
+                <div class="step"><span class="check">&#10003;</span> 동영상 스트림 찾는 중</div>
+                <div class="step"><span class="check">&#10003;</span> MP4 가져오는 중</div>
+                <div style="margin-top:6px;"><strong>Downloads/nomad-bodrum.mp4</strong>에 저장했습니다</div>
+                <div style="margin-top:4px; font-size:11px; color: var(--text-dim);">1080p · 24s · 4.2 MB</div>
+              </div>
+            </div>
+            <div class="download-complete-toast" aria-hidden="true">
+              <span class="download-complete-icon">
+                <svg viewBox="0 0 32 32" aria-hidden="true">
+                  <circle class="download-complete-track" cx="16" cy="16" r="11"></circle>
+                  <circle class="download-complete-ring" cx="16" cy="16" r="11"></circle>
+                  <path class="download-complete-check" d="M10.5 16.3l3.6 3.5 7.5-8"></path>
+                </svg>
+              </span>
+              <span class="download-complete-copy">
+                <strong>다운로드 완료</strong>
+                <span>nomad-bodrum.mp4 · 4.2 MB</span>
+              </span>
+            </div>
+            <div class="sp-input">
+              <div class="sp-input-box">이 페이지에 대해 무엇이든 물어보세요...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 5: Product extraction (Act mode) -->
+      <div class="browser-mockup scene-response-left" data-scene="4" aria-hidden="true" inert>
+        <div class="browser-bar">
+          <div class="browser-dots"><span></span><span></span><span></span></div>
+          <div class="browser-url">https://example.com/products</div>
+        </div>
+        <div class="browser-body">
+          <div class="browser-page page-products">
+            <h3>제품 카탈로그</h3>
+            <div class="pp-sub">248개 상품 · 베스트셀러순</div>
+            <div class="pp-grid">
+              <div class="pp-card"><div class="pp-thumb t1"></div><div class="pp-name">Widget Pro</div><div class="pp-price">$29.99</div></div>
+              <div class="pp-card"><div class="pp-thumb t2"></div><div class="pp-name">Super Gadget</div><div class="pp-price">$49.99</div></div>
+              <div class="pp-card"><div class="pp-thumb t3"></div><div class="pp-name">MegaTool X</div><div class="pp-price">$19.99</div></div>
+              <div class="pp-card"><div class="pp-thumb t4"></div><div class="pp-name">Nano Hub</div><div class="pp-price">$34.99</div></div>
+              <div class="pp-card"><div class="pp-thumb t5"></div><div class="pp-name">Flex Stand</div><div class="pp-price">$24.99</div></div>
+              <div class="pp-card"><div class="pp-thumb t6"></div><div class="pp-name">Prism Lamp</div><div class="pp-price">$59.99</div></div>
+            </div>
+          </div>
+          <div class="side-panel">
+            <div class="sp-header">
+              <span class="sp-brand"><img class="sp-brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="sp-domain">.one</span></span>
+              <span class="sp-modes" aria-hidden="true"><span class="sp-mode">Ask</span><span class="sp-mode is-on">Act</span><span class="sp-mode">Dev</span></span>
+              <span class="sp-status"></span>
+            </div>
+            <div class="sp-messages">
+              <div class="sp-msg user">이 페이지의 모든 제품명과 가격을 추출해 줘</div>
+              <div class="sp-msg assistant">
+                <div class="step"><span class="check">&#10003;</span> 페이지 읽는 중</div>
+                <div class="step"><span class="check">&#10003;</span> 데이터 추출 중</div>
+                <div style="margin-top:6px;"><strong>제품 24개</strong>를 찾았습니다. 결과는 다음과 같습니다:</div>
+                <div style="margin-top:4px; font-size:11px; color: var(--text-dim);">
+                  1. Widget Pro — $29.99<br>
+                  2. Super Gadget — $49.99<br>
+                  3. MegaTool X — $19.99<br>
+                  <span style="color:var(--accent2);">...그리고 21개 더</span>
+                </div>
+              </div>
+            </div>
+            <div class="sp-input">
+              <div class="sp-input-box">이 페이지에 대해 무엇이든 물어보세요...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      </div>
+      <button class="scene-arrow scene-arrow-next" type="button" data-scene-step="1" aria-label="다음 데모 시나리오" aria-controls="mockup-stack">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>
+
+    <div class="scene-nav" role="tablist" aria-label="데모 시나리오 전환">
+      <button class="scene-dot is-active" type="button" data-scene="0" role="tab" aria-selected="true" aria-label="후속 질문 데모"></button>
+      <button class="scene-dot" type="button" data-scene="1" role="tab" aria-selected="false" aria-label="양식 작성 데모"></button>
+      <button class="scene-dot" type="button" data-scene="2" role="tab" aria-selected="false" aria-label="CSS 간격 데모"></button>
+      <button class="scene-dot" type="button" data-scene="3" role="tab" aria-selected="false" aria-label="동영상 다운로드 데모"></button>
+      <button class="scene-dot" type="button" data-scene="4" role="tab" aria-selected="false" aria-label="제품 추출 데모"></button>
+    </div>
+  </div>
+
+</section>
+
+<dialog
+  class="security-video-dialog"
+  id="security-video-dialog"
+  aria-labelledby="security-video-dialog-title"
+  aria-describedby="security-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">보안</div>
+      <h2 class="security-video-dialog-title" id="security-video-dialog-title">WebBrain이 제어권을 지켜 주는 방식</h2>
+      <p class="security-video-dialog-description" id="security-video-dialog-description">브라우저는 실제 작업이 이루어지는 곳이자 공격적인 입력이 들어올 수 있는 표면입니다. WebBrain은 읽기 전용 Ask Mode에서 시작하고, 행동하기 전에 허락을 구하며, 숨겨진 프롬프트 주입을 방어하고, 민감한 입력란에는 더 엄격한 규칙을 적용합니다.</p>
+      <button
+        class="security-video-dialog-close"
+        id="security-video-close"
+        type="button"
+        aria-label="보안 동영상 닫기"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="security-video" data-desktop-src="/assets/security-desktop.mp4" data-mobile-src="/assets/security-mobile.mp4" poster="/assets/security-poster.jpg" controls preload="none" playsinline></video>
       </div>
     </div>
   </div>
-</section>
+</dialog>
 
 <!-- DEMO VIDEO -->
 <section class="section" id="demo" style="padding-top: 30px;">
@@ -1261,8 +3336,47 @@
   <p class="section-subtitle">WebBrain이 페이지를 읽고, 데이터를 추출하고, 브라우저 작업을 자동화하는 모습을 확인하세요.</p>
   <div class="video-showcase">
     <div class="video-frame">
-      <iframe id="demo-video" src="https://www.youtube.com/embed/3eFAQ-b65J0" data-desktop-src="https://www.youtube.com/embed/3eFAQ-b65J0" data-mobile-src="https://www.youtube.com/embed/Nov3sw7FE_Q?playsinline=1" title="WebBrain 데모 동영상" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      <video id="demo-video" data-desktop-src="/assets/webbrain-home-demo.mp4" data-mobile-src="/assets/webbrain-home-demo-vertical.mp4" data-desktop-poster="/assets/webbrain-home-demo-poster.jpg" data-mobile-poster="/assets/webbrain-home-demo-poster-vertical.jpg" poster="/assets/webbrain-home-demo-poster.jpg" controls preload="metadata" playsinline></video>
     </div>
+  </div>
+
+  <!-- Objection handling sits directly after the demo: the visitor has just seen
+       what the agent does, so "will it act without asking me" is the live question.
+       The real speaker thumbnail makes the click destination clear, while the
+       promises stay readable without opening the modal. -->
+  <div class="hero-trust">
+    <div class="hero-trust-media" aria-hidden="true">
+      <img class="hero-trust-thumbnail" src="/assets/security-speaker-thumbnail.jpg" alt="" loading="lazy" decoding="async">
+      <span class="hero-trust-play">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8a1 1 0 0 1 1.52-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2A1 1 0 0 1 4.5 13.2V2.8z"/></svg>
+      </span>
+      <span class="hero-trust-watch">보안 동영상 보기 · 3:10</span>
+    </div>
+    <div class="hero-trust-copy">
+      <div class="hero-trust-heading">
+        <span class="hero-trust-shield" aria-hidden="true">
+          <svg class="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+        </span>
+        <span>
+          <span class="hero-trust-kicker">보안</span>
+          <h2 class="hero-trust-title" id="hero-trust-title">WebBrain이 제어권을 지켜 주는 방식</h2>
+        </span>
+      </div>
+      <ul class="hero-trust-list">
+        <li>기본값은 읽기 전용 묻기 모드</li>
+        <li>중요한 작업 전에 확인합니다</li>
+        <li>오픈 소스이며 감사 가능</li>
+        <li>텔레메트리 없음, 계정 불필요</li>
+      </ul>
+    </div>
+    <button
+      class="hero-trust-trigger"
+      id="security-video-open"
+      type="button"
+      aria-label="보안 동영상 보기"
+      aria-haspopup="dialog"
+      aria-controls="security-video-dialog"
+    ></button>
   </div>
 </section>
 
@@ -1272,7 +3386,7 @@
   <h2 class="section-title">브라우저 AI에 필요한 모든 것</h2>
   <p class="section-subtitle">브라우저 사이드 패널에 자리 잡고 어떤 웹 페이지든 이해하는 완전한 기능의 AI 에이전트.</p>
 
-  <div class="features-grid">
+  <div class="features-grid" id="features-grid">
     <div class="feature-card">
       <div class="feature-icon">📖</div>
       <h3>페이지 이해</h3>
@@ -1282,6 +3396,7 @@
       <div class="feature-icon">🤖</div>
       <h3>완전한 브라우저 에이전트</h3>
       <p>당신을 대신해 클릭, 입력, 스크롤, 이동하며 페이지와 상호작용합니다. 자연어 지시로 반복 작업을 자동화하세요.</p>
+      <p class="feature-note">중요한 작업 전에 확인하며, 기본값은 읽기 전용 묻기 모드입니다.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">📊</div>
@@ -1303,37 +3418,55 @@
       <h3>스마트 컨텍스트</h3>
       <p>자동 컨텍스트 관리가 토큰 초과를 막습니다. 대화 기록을 똑똑하게 자르고 도구 출력을 제한해, 끊김 없이 매끄러운 세션을 유지합니다.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">👁️</div>
       <h3>전용 비전 모델</h3>
       <p>계획에는 빠른 텍스트 전용 모델을, 스크린샷 읽기에는 별도의 비전 지원 모델을 함께 쓰세요. 모든 일을 거대한 멀티모달 모델 하나로 처리하는 것보다 더 저렴하고 빠릅니다.</p>
     </div>
 
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">👤</div>
       <h3>프로필 자동 입력</h3>
       <p>선택적인 일반 텍스트 자기소개 — 이름, 업무 이메일, 회사, 저위험 가입용 일회용 비밀번호 — 만 있으면, 에이전트가 매번 묻지 않고도 저위험 가입 양식을 술술 넘깁니다. 기본적으로 꺼져 있고, 모두 로컬에 저장됩니다.</p>
+      <p class="feature-note">기본값은 꺼짐. 브라우저에 로컬로 저장되며 WebBrain으로 전송되지 않습니다.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">🍪</div>
       <h3>Cookie와 페이월 인식</h3>
       <p>페이지에 대해 추론하기 전에 동의 배너(OneTrust, Cookiebot, Didomi, Quantcast)를 닫습니다. 페이월이 감지되면 기사 내용을 지어내거나 우회하려 하지 않고 정직하게 알려 줍니다.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">🧩</div>
       <h3>Optional CAPTCHA Solver</h3>
       <p>Plug in a <a href="https://capsolver.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">CapSolver</a> API key and the agent will auto-solve reCAPTCHA v2/v3, hCaptcha, and Cloudflare Turnstile when they block a step — instead of stopping to ask. Off by default, BYO key, no captcha service is shipped or contacted unless you turn it on.</p>
+      <p class="feature-note">기본값은 꺼짐. 자체 키 사용 — 활성화하지 않으면 어떤 CAPTCHA 서비스에도 연결하지 않습니다.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">🌐</div>
       <h3>다국어 UI</h3>
       <p>플러그인은 English, Español, Français, Türkçe, 中文으로 제공됩니다. 처음 사용 시 브라우저 언어를 자동 감지하고, 사이드 패널의 지구본 아이콘으로 언제든 전환할 수 있습니다. 마케팅 사이트도 그에 맞춰 현지화되어 있습니다.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">💰</div>
       <h3>토큰을 아끼는</h3>
       <p>스크린샷은 당신의 머신을 떠나기 전에 크기가 조정되고 반복적으로 JPEG 압축되어 이미지 토큰이 작게 유지됩니다. 스마트 컨텍스트 트리밍과 도구 출력 상한이 클라우드 비용을 예측 가능하게 유지해 — 긴 세션에서도 깜짝 지출이 없습니다.</p>
     </div>
+  </div>
+  <div class="features-more">
+    <button
+      class="features-more-btn"
+      id="features-more-btn"
+      type="button"
+      aria-expanded="false"
+      aria-controls="features-grid"
+      data-label-more="기능 더 보기"
+      data-label-less="간략히 보기"
+    >
+      <span id="features-more-label">기능 더 보기</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
   </div>
 </section>
 
@@ -1371,7 +3504,7 @@
     <div class="constellation-center" aria-hidden="true">
       <div class="cc-ring cc-ring-2"></div>
       <div class="cc-ring"></div>
-      <div class="cc-core">🧠</div>
+      <div class="cc-core"><img src="/logo-github.png" alt="" aria-hidden="true"></div>
     </div>
 
     <a class="provider-node" href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener" style="--x: 10%; --y: 28%; --d: 0s;" data-line="0">
@@ -1419,6 +3552,7 @@
       <div class="pn-label">Mistral</div>
     </a>
   </div>
+
 </section>
 
 <!-- MODES -->
@@ -1445,35 +3579,102 @@
 <section class="section download-section" id="download">
   <div class="section-label">시작하기</div>
   <h2 class="section-title">WebBrain 설치</h2>
-  <p class="section-subtitle">Chrome과 Firefox에서 사용 가능. 무료, 오픈소스, 계정 불필요.</p>
+  <p class="section-subtitle">Chrome, Edge, Firefox에서 사용 가능. 무료, 오픈소스, 계정 불필요.</p>
 
-  <div class="download-cards">
-    <div class="download-card download-card-chrome">
-      <div class="browser-icon">🌐</div>
-      <h3>Chrome 및 Chromium</h3>
-      <p>Manifest V3 · Chrome 116+ · Brave, Edge, Opera, Vivaldi 등 Chromium 호환 브라우저에서도 작동합니다.</p>
-      <div class="download-card-actions">
-        <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Chrome 웹 스토어에서 다운로드
-        </a>
-        <a href="https://github.com/esokullu/webbrain/tree/main/src/chrome" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
-          Chrome 소스 보기
-        </a>
+  <div class="download-cards" data-download-cards>
+    <div class="download-row download-row-current" data-download-current>
+      <div class="download-card download-card-chrome" data-browser-card="chrome">
+        <div class="browser-icon"><img src="/assets/browser-chrome.svg" alt="" aria-hidden="true"></div>
+        <h3>Chrome 및 Chromium</h3>
+        <p>Manifest V3 · Chrome 116+ · Brave, Opera, Vivaldi 등 Chromium 호환 브라우저에서도 작동합니다.</p>
+        <div class="download-card-actions">
+          <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Chrome 웹 스토어에서 다운로드
+          </a>
+          <a href="https://github.com/webbrain-one/webbrain/tree/main/src/chrome" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
+            Chrome 소스 보기
+          </a>
+        </div>
       </div>
     </div>
-    <div class="download-card">
-      <div class="browser-icon">🦊</div>
-      <h3>Firefox</h3>
-      <p>Manifest V2 · Firefox 109+</p>
-      <div class="download-card-actions">
-        <a href="https://addons.mozilla.org/en-US/firefox/addon/webbrain/" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="background: #ff9800;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Firefox 부가 기능에서 다운로드
-        </a>
-        <a href="https://github.com/esokullu/webbrain/tree/main/src/firefox" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
-          Firefox 소스 보기
-        </a>
+    <div class="download-row download-row-secondary" data-download-secondary>
+      <div class="download-card download-card-firefox" data-browser-card="firefox">
+        <div class="browser-icon"><img src="/assets/browser-firefox.svg" alt="" aria-hidden="true"></div>
+        <h3>Firefox</h3>
+        <p>Manifest V2 · Firefox 109+</p>
+        <div class="download-card-actions">
+          <a href="https://addons.mozilla.org/en-US/firefox/addon/webbrain/" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="background: #ff9800;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Firefox 부가 기능에서 다운로드
+          </a>
+          <a href="https://github.com/webbrain-one/webbrain/tree/main/src/firefox" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
+            Firefox 소스 보기
+          </a>
+        </div>
+      </div>
+      <div class="download-card download-card-edge is-disabled" data-browser-card="edge" aria-disabled="true">
+        <div class="browser-icon"><img src="/assets/browser-edge.svg" alt="" aria-hidden="true"></div>
+        <h3>Microsoft Edge</h3>
+        <p>Manifest V3 · Windows 10/11 · Windows의 Microsoft Edge가 필요합니다.</p>
+        <div class="download-card-actions">
+          <button type="button" class="btn btn-primary" disabled data-edge-windows-link data-href="https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Edge Add-ons에서 다운로드
+          </button>
+          <button type="button" class="btn btn-secondary" disabled data-edge-windows-link data-href="https://github.com/webbrain-one/webbrain/tree/main/src/chrome">
+            Chromium 소스 보기
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MCP SERVER -->
+<section class="section" id="mcp">
+  <div class="section-label">새 기능 · MCP 서버</div>
+  <h2 class="section-title">이미 사용 중인 브라우저 안에서 작동하는 코딩 에이전트.</h2>
+  <p class="section-subtitle">Claude Code, Codex, Cursor, OpenCode 또는 모든 stdio MCP 클라이언트를 로그인된 Chromium 탭에 연결하세요. WebBrain은 작업 단위 권한 관문을 브라우저 안에 유지하며 이제 구조화된 JSON도 반환합니다.</p>
+
+  <div class="mcp-showcase">
+    <div class="mcp-copy">
+      <h3>목표는 맡기고 세션은 유지하세요.</h3>
+      <p>쿠키 내보내기, 헤드리스 로그인, 자격 증명 재사용이 필요 없습니다. 로컬 서버가 Chrome, Edge, Brave, Opera 또는 Vivaldi의 WebBrain에 작업을 전달합니다. MCP 브리지는 Firefox를 지원하지 않습니다.</p>
+      <div class="mcp-command" role="region" aria-label="WebBrain MCP 서버 실행 명령">$ npx -y @webbrain/mcp-server</div>
+      <div class="mcp-actions">
+        <a href="/docs/mcp/" class="btn btn-primary">전체 MCP 가이드 열기</a>
+        <a href="https://github.com/webbrain-one/webbrain/tree/main/mcp-server" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">GitHub</a>
+      </div>
+    </div>
+    <div class="mcp-console" aria-label="MCP 클라이언트에서 로컬 WebBrain 서버를 거쳐 로그인된 Chromium 브라우저로 연결">
+      <div class="mcp-rail">
+        <div class="mcp-node">
+          <span class="mcp-node-icon" aria-hidden="true">⌘</span>
+          <strong>코딩 에이전트</strong>
+          <span>MCP · stdio</span>
+        </div>
+        <div class="mcp-arrow" aria-hidden="true">→</div>
+        <div class="mcp-node is-bridge">
+          <span class="mcp-node-icon" aria-hidden="true">◇</span>
+          <strong>WebBrain MCP</strong>
+          <span>loopback only</span>
+        </div>
+        <div class="mcp-arrow" aria-hidden="true">→</div>
+        <div class="mcp-node">
+          <span class="mcp-node-icon" aria-hidden="true">◎</span>
+          <strong>로그인된 브라우저</strong>
+          <span>Chrome · Edge · Brave</span>
+        </div>
+      </div>
+      <div class="mcp-tools-label">작업 단위 도구 6개 · 브라우저 권한은 계속 적용</div>
+      <div class="mcp-tools" aria-label="WebBrain MCP tools">
+        <span class="mcp-tool">webbrain_run</span>
+        <span class="mcp-tool">webbrain_extract</span>
+        <span class="mcp-tool">webbrain_status</span>
+        <span class="mcp-tool">webbrain_respond</span>
+        <span class="mcp-tool">webbrain_abort</span>
+        <span class="mcp-tool">webbrain_connection</span>
       </div>
     </div>
   </div>
@@ -1504,12 +3705,31 @@
         <tr><td>Chrome</td><td class="highlight">예 (MV3)</td><td>예</td></tr>
         <tr><td>Firefox</td><td class="highlight">예 (MV2)</td><td>아니요</td></tr>
         <tr><td>사이드 패널 UI</td><td class="highlight">예</td><td>예</td></tr>
-        <tr><td>묻기 / 실행 모드</td><td class="highlight">예</td><td>유사</td></tr>
         <tr><td>완전 오프라인</td><td class="highlight">예 (로컬 LLM 사용 시)</td><td>아니요 — 클라우드 필요</td></tr>
         <tr><td>셀프 호스팅 가능</td><td class="highlight">예</td><td>아니요</td></tr>
       </tbody>
     </table>
   </div>
+
+  <button
+    class="compare-video-card"
+    id="comparison-video-open"
+    type="button"
+    aria-haspopup="dialog"
+    aria-controls="comparison-video-dialog"
+  >
+    <span class="compare-video-card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8c0-.8.9-1.3 1.6-.9l10.2 7.2a1 1 0 0 1 0 1.7L8.6 20c-.7.5-1.6 0-1.6-.9V4.8Z"/></svg>
+    </span>
+    <span class="compare-video-card-copy">
+      <span class="compare-video-card-title">로컬 WebBrain이 Chrome의 Claude를 앞섭니다</span>
+      <span class="compare-video-card-description">같은 작업, 같은 브라우저. WebBrain은 Gemma 4 31B를 기기에서 실행해 먼저 끝냅니다.</span>
+    </span>
+    <span class="compare-video-card-action">
+      비교 보기
+      <span class="compare-video-card-runtime" aria-hidden="true">1:17</span>
+    </span>
+  </button>
 
   <!-- vs Agent Frameworks -->
   <h3 style="font-size:16px; color:var(--text-dim); margin: 40px 0 16px; text-align:center;">vs. AI 에이전트 프레임워크 <span style="font-weight:400; font-size:13px;">(다른 범주)</span></h3>
@@ -1541,6 +3761,34 @@
   </p>
 </section>
 
+<dialog
+  class="security-video-dialog comparison-video-dialog"
+  id="comparison-video-dialog"
+  aria-labelledby="comparison-video-dialog-title"
+  aria-describedby="comparison-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">vs. 브라우저 AI 플러그인</div>
+      <h2 class="security-video-dialog-title" id="comparison-video-dialog-title">로컬 WebBrain이 Chrome의 Claude를 앞섭니다</h2>
+      <p class="security-video-dialog-description" id="comparison-video-dialog-description">같은 작업, 같은 브라우저. WebBrain은 Gemma 4 31B를 기기에서 실행해 먼저 끝냅니다.</p>
+      <button
+        class="security-video-dialog-close"
+        id="comparison-video-close"
+        type="button"
+        aria-label="비교 동영상 닫기"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="comparison-video" data-desktop-src="/assets/demo-desktop.mp4" data-mobile-src="/assets/demo-mobile.mp4" controls preload="none" playsinline></video>
+      </div>
+    </div>
+  </div>
+</dialog>
+
 <!-- FAQ -->
 <section class="section" id="faq">
   <div class="section-label">FAQ</div>
@@ -1550,6 +3798,16 @@
     <details class="faq-item">
       <summary>WebBrain은 Claude 브라우저 플러그인의 무료 대안인가요?</summary>
       <p>예. WebBrain은 비슷한 AI 브라우저 에이전트 기능을 제공합니다 — 페이지 읽기, 데이터 추출, 버튼 클릭, 양식 입력, 다단계 워크플로 자동화. Claude Pro 구독이 필요하고 Anthropic 모델만 지원하는 독점 Claude 플러그인과 달리, WebBrain은 완전 무료이고 오픈소스(MIT 라이선스)이며, 머신에서 완전히 실행되는 로컬 모델을 포함해 여러 LLM 프로바이더를 지원합니다.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain Cloud 구독료는 얼마인가요?</summary>
+      <p>WebBrain Cloud는 현재 <strong>기기 프로필당 월 5달러</strong>이며, 당분간 Claude Pro보다 훨씬 저렴합니다. 현재 사용량은 공정 사용 정책 안에서 무제한입니다. 일반적인 개인 사용은 괜찮지만, 남용, 자동화된 대량 사용, 재판매, 비정상적으로 높은 사용량은 허용되지 않습니다.</p><p>구독은 사용자 계정이 아니라 확장 프로그램이 해당 브라우저 + OS GUID에 대해 생성한 기기 식별자에 연결됩니다. 확장 프로그램 저장소를 초기화하거나, 브라우저 프로필을 삭제하거나, 브라우저를 재설치하거나, 브라우저/OS를 바꾸거나, 기기를 잃어버려 이 식별자가 사라지면 복구하거나 이전할 수 없으며 그 손실에 대해 환불하지 않습니다.</p><p>플러그인 설정 페이지의 <strong>Account</strong> 섹션에서 <strong>Manage billing</strong> 버튼으로 구독하거나 결제를 관리할 수 있습니다. 수동으로 취소하려면 결제 때 사용한 이메일 주소로 이메일을 보내 주세요.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>암호화된 Cloud Sync는 어떻게 작동하나요?</summary>
+      <p>Cloud Sync는 활성 WebBrain Cloud 구독자를 위한 선택 기능입니다. WebBrain 메모리, 프로필 자동 입력 텍스트, 지원되는 제공자 설정(API 키 포함)을 동기화합니다. 채팅 기록, 브라우저 기록, 페이지 스크린샷, 레거시 OAuth 액세스/리프레시 토큰은 <strong>동기화하지 않습니다</strong>.</p><p>브라우저는 업로드 전에 사용자가 선택한 비밀번호로 동기화 볼트를 암호화합니다. WebBrain Cloud는 암호화된 볼트만 저장하며, 메모리, 프로필 텍스트, 제공자 설정, API 키를 읽을 수 없고 동기화 비밀번호를 대신 복구해 줄 수도 없습니다.</p><p>이메일 필드는 WebBrain Cloud 매직 링크 결제/구독 인증용입니다. 계정 비밀번호가 아닙니다. UI에서 Cloud Sync 비밀번호 변경을 안내하면 이는 <strong>동기화 암호화 비밀번호</strong>를 의미하며 WebBrain 계정 비밀번호가 아닙니다.</p><p>동기화 비밀번호를 잊으면 기존의 암호화된 클라우드 볼트를 복호화할 수 없습니다. 클라우드 볼트를 재설정하고 데이터가 아직 로컬에 있는 기기에서 새 암호화 사본을 업로드할 수 있습니다.</p>
     </details>
 
     <details class="faq-item">
@@ -1574,7 +3832,12 @@
 
     <details class="faq-item">
       <summary>네트워크의 로컬 LLM 서버(vLLM, Ollama, llama.cpp)에 연결할 때 &quot;Failed to fetch&quot;가 나타납니다</summary>
-      <p>LLM 서버가 로컬 네트워크의 다른 머신(예: <code>http://192.168.1.x:8000</code>)에 있으면, 서버가 <strong>CORS 헤더</strong>를 보내지 않는 한 Chrome이 요청을 차단합니다. 해결책은 서버에 따라 다릅니다:</p><p><strong>vLLM:</strong> <code>--allowed-origins '["*"]'</code>로 시작하세요 (값은 반드시 JSON 리스트).<br><strong>Ollama:</strong> 시작 전에 환경 변수 <code>OLLAMA_ORIGINS=*</code>를 설정하세요.<br><strong>llama.cpp:</strong> CORS가 기본으로 활성화되어 있어 — 변경할 필요가 없습니다.</p><p>서버가 <code>localhost</code>(브라우저와 같은 머신)에서 실행 중이면 보통 CORS가 필요 없습니다. 이 문제는 로컬 네트워크의 머신 간 연결에만 영향을 미칩니다. WebBrain 설정의 base URL이 <code>/v1</code>로 끝나는지(예: <code>http://192.168.1.47:8000/v1</code>) 확인하세요.</p>
+      <p>LLM 서버가 로컬 네트워크의 다른 머신(예: <code>http://192.168.1.x:8000</code>)에 있으면, 서버가 <strong>CORS 헤더</strong>를 보내지 않는 한 Chrome이 요청을 차단합니다. 해결책은 서버에 따라 다릅니다:</p><p><strong>vLLM:</strong> <code>--allowed-origins '["*"]'</code>로 시작하세요 (값은 반드시 JSON 리스트).<br><strong>Ollama:</strong> 시작 전에 환경 변수 <code>OLLAMA_ORIGINS=*</code>를 설정하세요.<br><strong>llama.cpp:</strong> CORS가 기본으로 활성화되어 있어 — 변경할 필요가 없습니다.</p><p>서버가 <code>localhost</code>(브라우저와 같은 머신)에서 실행 중이면 보통 CORS가 필요 없습니다. 이 문제는 로컬 네트워크의 머신 간 연결에만 영향을 미칩니다. WebBrain 설정의 base URL이 <code>/v1</code>로 끝나는지(예: <code>http://192.168.1.47:8000/v1</code>) 확인하세요. 예외: 브라우저 확장 프로그램에서 Ollama를 사용할 때는 여전히 <code>OLLAMA_ORIGINS</code>가 필요할 수 있습니다. 아래 Ollama FAQ를 참고하세요.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>localhost의 Ollama가 WebBrain 확장 프로그램에서 403을 반환하는 이유는 무엇인가요?</summary>
+      <p>최근 Ollama 버전은 Ollama가 같은 컴퓨터에서 실행 중이어도 브라우저 확장 프로그램 origin의 요청을 거부할 수 있습니다. 확장 프로그램은 <code>chrome-extension://...</code> 또는 <code>moz-extension://...</code> 같은 <code>Origin</code>을 보내며, 이 origin이 허용되지 않으면 Ollama가 403으로 응답할 수 있습니다.</p><p>이미 포트 <code>11434</code>를 잡고 있는 Ollama 데스크톱 앱을 종료한 뒤, 다음 명령 중 하나로 Ollama를 시작하세요.</p><p><code>OLLAMA_ORIGINS="*" ollama serve</code><br><code>OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ollama serve</code></p><p>WebBrain의 Ollama 기본 URL은 <code>http://localhost:11434/v1</code>로 유지하세요. 터미널의 <code>curl</code> 확인은 브라우저 확장 프로그램 origin을 보내지 않기 때문에 이 설정 없이도 성공할 수 있습니다.</p>
     </details>
 
     <details class="faq-item">
@@ -1588,8 +3851,23 @@
     </details>
 
     <details class="faq-item">
+      <summary>Vivaldi Web Panel에서 WebBrain을 사용할 때 제한이 있나요?</summary>
+      <p>예. Vivaldi Web Panel은 <code>confirm()</code>, <code>alert()</code>, <code>prompt()</code> 같은 기본 JavaScript 대화상자를 차단합니다. WebBrain의 Ask, Act, Dev 모드 전환은 더 이상 이런 대화상자에 의존하지 않지만, 일부 보조 작업은 아직 의존합니다.</p><p><strong>녹화:</strong> 당분간 Vivaldi에서는 <code>/record</code>를 사용하지 마세요. 녹화가 실패하면 Vivaldi가 오류 경고를 숨겨 아무 설명도 표시되지 않을 수 있습니다.</p><p><strong>설정, 기록, 트레이스, Ollama 핸드오프:</strong> 이 페이지들도 기본 대화상자를 사용하지만 WebBrain은 보통 정상 작동하는 일반 탭에서 엽니다. 수동으로 Web Panel에 넣었다면 대화상자에 의존하는 작업을 사용하기 전에 일반 탭에서 여세요.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>WebBrain은 안전한가요? 웹 페이지를 수정할 수 있나요?</summary>
-      <p>WebBrain에는 두 가지 모드가 있습니다: 묻기 모드(기본)는 읽기 전용이며 페이지의 어떤 것도 수정하지 못합니다. 실행 모드는 완전한 브라우저 에이전트 기능(클릭, 입력, 탐색)을 활성화하지만, 활성화 전 명시적인 사용자 확인이 필요하고 눈에 띄는 경고 배너가 함께 표시됩니다. 정지 버튼으로 언제든지 에이전트를 멈출 수 있습니다. 확장의 소스 코드는 GitHub에 완전히 공개되어 감사가 가능합니다.</p>
+      <p>WebBrain에는 세 가지 모드가 있습니다. 묻기 모드(기본)는 읽기 전용이며 페이지를 수정하지 못합니다. 실행 모드는 클릭, 입력, 탐색 같은 브라우저 동작을 허용하고, Dev 모드는 페이지 디버깅 도구를 추가합니다. 결과를 초래하는 동작은 기본적으로 승인이 필요하며, 이 권한 게이트를 끄면 WebBrain이 눈에 띄는 경고 배너를 표시합니다. 정지 버튼으로 언제든지 에이전트를 멈출 수 있습니다. 확장의 소스 코드는 GitHub에 완전히 공개되어 감사가 가능합니다.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>「WebBrain started debugging this browser」 배너는 무엇인가요? WebBrain은 왜 CDP를 사용하나요?</summary>
+      <p>페이지에서 안정적으로 작업하기 위해 WebBrain은 표준 확장 API인 <code>chrome.debugger</code>를 통해 Chrome DevTools Protocol(CDP)을 사용합니다. 이것이 Chrome의 「WebBrain started debugging this browser」 배너가 나타나는 이유입니다. CDP는 에이전트가 최신 사이트가 실제로 받아들이는 <strong>신뢰된 입력 이벤트</strong>로 클릭하고 입력할 수 있게 해 줍니다. content script에서 발생시킨 합성 이벤트는 많은 사이트, Web Components, 프레임워크가 제어하는 입력란에서 거부됩니다. 또한 WebBrain은 이를 통해 비전 폴백용 픽셀 단위 스크린샷을 캡처하고 content script가 볼 수 없는 <strong>교차 출처 iframe과 shadow DOM</strong>에 접근합니다.</p><p>읽기 전용 <strong>묻기 모드는 CDP가 필요 없습니다</strong> — 페이지와 접근성 트리 읽기는 일반 content script를 거칩니다. CDP가 필요한 것은 <strong>실행 모드</strong>의 안정성과 교차 출처 작업이며, Manifest V3 확장에는 신뢰된 입력을 위한 디버거 없는 API가 없습니다. WebBrain은 <strong>작업이 필요할 때만</strong> 탭별로 디버거를 연결하며, 확장 전체가 오픈 소스라서 세션이 정확히 무엇을 하는지 감사할 수 있습니다. CDP는 강력하므로 그 영향 범위를 억제해야 할 대상으로 다루고(필요할 때만 연결하고 읽기에는 사용하지 않음), 이를 더 강화하는 것이 보안 로드맵에 포함되어 있습니다.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>질문을 너무 많이 합니다. 비활성화할 수 있나요?</summary>
+      <p>이 승인 프롬프트는 사용자의 안전을 위한 것입니다. 신뢰하는 사이트에서도 악의적인 행위자가 LLM 지시를 흉내 내거나 콘텐츠를 삽입해, 사용자가 승인하지 않을 일을 에이전트가 대신 하도록 유도할 수 있습니다. 그래서 WebBrain은 중대한 결과가 따르는 작업 전에 항상 승인을 요청합니다. 그래도 이러한 프롬프트를 거치고 싶지 않다면 비활성화할 수 있습니다. 사이드 플러그인을 열고 헤더의 톱니바퀴 아이콘을 클릭한 다음 <code>settings.html</code>의 <strong>Permissions</strong> 탭으로 이동하여 <strong>Ask before consequential actions</strong> 옵션을 끄세요.</p>
     </details>
 
     <details class="faq-item">
@@ -1604,17 +3882,27 @@
 
     <details class="faq-item">
       <summary>LM Studio에서도 사용할 수 있나요?</summary>
-      <p>예. WebBrain의 읽기 전용 네트워크 도구 — <code>fetch_url</code>과 <code>research_url</code> — 는 <a href="https://lmstudio.ai" target="_blank">LM Studio</a>의 독립 플러그인으로도 제공되며 <a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/web-tools</a>에서 받을 수 있습니다. <code>lms clone webbrain/web-tools</code>로 설치하고 LM Studio의 아무 채팅에서나 켜면, 도구 호출이 가능한 모든 모델이 브라우저 확장을 설치하지 않고도 이 두 도구를 호출할 수 있습니다. 순수 Node, 헤드리스 브라우저 없음. 소스: <a href="https://github.com/esokullu/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>.</p>
+      <p>예. WebBrain의 읽기 전용 네트워크 도구 — <code>fetch_url</code>과 <code>research_url</code> — 는 <a href="https://lmstudio.ai" target="_blank">LM Studio</a>의 독립 플러그인으로도 제공되며 <a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/web-tools</a>에서 받을 수 있습니다. <code>lms clone webbrain/web-tools</code>로 설치하고 LM Studio의 아무 채팅에서나 켜면, 도구 호출이 가능한 모든 모델이 브라우저 확장을 설치하지 않고도 이 두 도구를 호출할 수 있습니다. 순수 Node, 헤드리스 브라우저 없음. 소스: <a href="https://github.com/webbrain-one/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain이 내 탭에서 작업하는 동안 위아래로 스크롤해도 되나요?</summary>
+      <p>대부분의 경우 가능합니다. 특히 “이 페이지를 요약해 줘” 같은 읽기 전용 요청을 <strong>Ask 모드</strong>에서 처리할 때는 WebBrain이 작업하는 동안에도 계속 스크롤할 수 있습니다.</p><p><strong>언제 피해야 하나요?</strong> 자동 스크린샷에는 탭의 현재 뷰포트가 반영됩니다. WebBrain이 <strong>Act 또는 Dev 모드</strong>에서 보이는 콘텐츠를 적극적으로 살피거나 조작하는 동안 스크롤하면 대상이 이동하거나 모델이 보는 내용이 달라질 수 있습니다. 그 단계가 끝난 뒤 스크롤하세요. 그 외에는 계속 페이지를 사용해도 됩니다.</p>
     </details>
 
     <details class="faq-item">
       <summary>WebBrain이 한 페이지에서 작업하는 동안 다른 탭으로 전환할 수 있나요?</summary>
-      <p>예, Chrome에서는 가능합니다 — 에이전트는 백그라운드 서비스 워커에서 실행되고 시작한 탭에 묶여 있으므로, 포커스를 다른 곳으로 옮겨도 그 특정 탭에서 클릭, 입력, 읽기를 계속합니다. 탭을 대상으로 하는 도구(CDP의 클릭, 입력, 탐색, 스크린샷) 모두 Chrome에서는 백그라운드 탭에서도 작동합니다. 작업이 진행 중인 동안에는 사이드바가 입력을 잠그므로, 새 탭에서 실수로 두 번째 작업을 시작할 수 없습니다 — 기다리거나 현재 작업을 멈춰야 합니다. 브라우저가 백그라운드 탭의 타이머와 애니메이션을 제한하므로, 애니메이션이 많은 사이트는 반응이 다소 느려질 수 있습니다.</p><p>Firefox에서도 에이전트는 원래 탭에서 계속 실행되지만, 자동 스크린샷은 제한됩니다. Firefox의 스크린샷 API는 현재 활성 탭만 캡처할 수 있고 백그라운드의 특정 탭은 캡처하지 못합니다. WebBrain은 이를 감지해, 관계없는 페이지 이미지를 모델에 먹이는 대신 해당 턴의 스크린샷을 건너뜁니다. 에이전트는 당신이 그 탭으로 돌아갈 때까지 텍스트 기반 컨텍스트로 계획을 이어 갑니다.</p><p><strong>에이전트가 작업 중인 같은 탭에서 적극적으로 클릭하거나 입력하는 것은 피하세요</strong> — 같은 페이지를 두고 당신과 에이전트가 싸우는 경합 상태가 됩니다. 탭을 전환하는 것은 괜찮지만, 같은 탭을 함께 운전하는 것은 안 됩니다.</p>
+      <p>예. <strong>27.0.0</strong>부터 WebBrain은 전면 접근이 반드시 필요한 경우를 제외하고 Chromium 기반 브라우저와 Firefox 모두에서 포커스를 빼앗지 않습니다. 실행은 시작된 탭에 계속 연결되어 있으므로 다른 탭에서 안전하게 작업할 수 있습니다.</p><p>드물게 원래 탭을 전면에 표시해야 하는 단계에서는 WebBrain이 잠시 그 탭에 포커스를 줄 수 있습니다. WebBrain이 작업 중인 같은 탭에서는 클릭하거나 입력하지 마세요.</p>
     </details>
 
     <details class="faq-item">
       <summary>프로필 자동 입력은 어떻게 작동하나요? 안전한가요?</summary>
       <p>프로필 자동 입력은 <strong>설정 → 프로필</strong>에 있는 선택 기능입니다. 짧은 자기소개 — 이름, 업무 이메일, 회사, 저위험 가입용 <em>일회용</em> 비밀번호 — 를 입력하고 켜면, WebBrain이 그 텍스트를 에이전트의 시스템 프롬프트에 덧붙여 매번 묻지 않고도 가입 양식을 채울 수 있게 합니다.</p><p>텍스트는 브라우저 로컬 저장소에 <strong>평문</strong>으로 저장됩니다. WebBrain 프로젝트로는 <strong>전송되지 않지만</strong>, 설정한 LLM 프로바이더에게는 매 턴 시스템 프롬프트의 일부로 <strong>전송됩니다</strong>. 기본은 꺼짐입니다.</p><p>여기에 중요한 계정(Google, Apple, iCloud, 은행, 회사 SSO, 주 이메일) 비밀번호는 <strong>절대로 넣지 마세요</strong>. 이런 계정은 2FA를 사용해야 하고, 애초에 에이전트에게 넘길 일이 없어야 합니다. 의도된 사용 사례는 뉴스레터 가입과 무료 체험에서 재사용하는 일회용 비밀번호입니다.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>스크린샷 마스킹 설정을 켜면 개인 데이터가 클라우드 비전 모델에 절대 도달하지 않는다는 것이 보장되나요?</summary>
+      <p>아니요 — 노출을 줄여줄 뿐 보장은 아닙니다. 활성화하면(<strong>설정 → 멀티모달 → 스크린샷 마스킹</strong>, 기본값은 꺼짐) WebBrain은 모든 스크린샷에서 비전 모델로 전송되기 <em>전에</em> 양식 필드와 이메일 주소·전화번호처럼 보이는 텍스트를 픽셀화합니다. 감지는 DOM 휴리스틱을 사용해 전적으로 사용자 기기에서 실행되며, 추가로 전송되는 데이터는 없습니다.</p><p><strong>이 기능은 최선을 다하는 방식이며 fail-open입니다.</strong> 탐색 직후, PDF 뷰어, 제한된 브라우저 페이지 등에서 감지기가 동작할 수 없는 경우, 작업을 중단하는 대신 스크린샷이 <em>마스킹되지 않은 채로</em> 전송됩니다. DOM 휴리스틱이 볼 수 없는 콘텐츠(캔버스에 그려진 텍스트, 이미지 안의 개인정보, 특이한 위젯 등)도 놓칠 수 있습니다. 그리고 이 설정은 스크린샷만 다루며, 모델로 전송되는 페이지 <em>텍스트</em>는 이것으로 마스킹되지 않습니다.</p><p><strong>비전에 대한 완전한 프라이버시가 필요하다면 로컬 모델을 사용하세요.</strong> llama.cpp나 Ollama 같은 오프라인 제공자를 사용하면 스크린샷과 페이지 텍스트가 기기를 절대 벗어나지 않으므로 애초에 마스킹할 것이 없습니다 — 프라이버시가 보장되는 유일한 구성입니다. 위의 "WebBrain을 완전히 오프라인에서 사용할 수 있나요?"를 참고하세요.</p><p><strong>비전을 지원하는 로컬 모델을 돌릴 만한 기기가 없다면?</strong> 계획 수립과 도구 호출에는 가벼운 소형 로컬 모델(평범한 CPU/GPU에서도 충분히 가벼운)을 쓰고, 비전 서브콜은 클라우드 제공자에 맡기면서 스크린샷 마스킹을 켜두는 것이 좋은 절충안입니다. 대화와 페이지 텍스트는 여전히 기기 안에 남고, 클라우드 비전으로 나가는 모든 스크린샷은 이미 양식 필드와 감지된 이메일/전화번호가 흐리게 처리된 상태입니다 — 완전한 로컬 비전 모델용 하드웨어 없이도 클라우드 노출을 줄일 수 있습니다. 이 분할 설정은 <strong>설정 → 비전</strong>에서 구성하세요(위의 "WebBrain은 클라우드 LLM 청구를 어떻게 통제하나요?"도 참고하세요).</p>
     </details>
 
     <details class="faq-item">
@@ -1628,13 +3916,18 @@
     </details>
 
     <details class="faq-item">
+      <summary>WebBrain은 전체 DOM을 AI 모델에 보내나요?</summary>
+      <p>아니요. WebBrain은 기본적으로 원시 HTML이나 원시 DOM 덤프를 보내지 않습니다. 먼저 페이지 URL과 제목, 해당 사이트 안내를 사용하며, 비전 기능이 활성화된 경우 보이는 영역의 스크린샷을 선택적으로 추가합니다.</p><p>작업에 페이지 콘텐츠가 필요하면 WebBrain은 축약된 의미 기반 접근성 트리 또는 추출된 텍스트로 필요한 만큼만 읽습니다. 읽기 결과는 적절한 경우 가시성 기준으로 필터링되고, 문자 수 제한과 페이지 나누기가 적용됩니다. 원시 페이지 소스 접근은 Dev 모드에서만 사용할 수 있습니다.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>WebBrain은 클라우드 LLM 청구를 어떻게 통제하나요?</summary>
       <p>독립적인 세 가지 레이어가 있습니다:</p><p><strong>토큰을 아끼는 스크린샷.</strong> 이미지가 머신을 떠나기 전에, WebBrain은 크기를 조정하고(짧은 변에 상한, 가로세로 비율 유지) 턴당 이미지 토큰 예산에 맞을 때까지 JPEG로 반복 압축합니다. GPT-4o에서 입력 토큰 약 1,500개에 해당하는 2000×1200 스크린샷이, 페이지 읽기 작업에서 실질적인 손실 없이 ~300–500 토큰으로 압축됩니다. <code>_fitImageDimensions</code>에 구현되어 있고 예산 계산용 유닛 테스트도 있습니다.</p><p><strong>스마트 컨텍스트 트리밍.</strong> 대화 기록, 도구 출력, 인라인 DOM 덤프 모두 턴 단위로 상한이 걸리고, 활성 모델의 컨텍스트 윈도우가 가득 차 가면 오래된 것부터 잘립니다. <code>read_page</code>가 소설 분량의 글을 반환했다는 이유로 실행이 조용히 10k 토큰에서 100k 토큰으로 부풀어 오르는 일은 없습니다.</p><p><strong>전용 비전 모델.</strong> 계획과 도구 호출에는 저렴한 텍스트 모델(예: GPT-4o-mini)을, 스크린샷에만 별도의 비전 지원 모델(예: GPT-4o)을 짝지으면 매 턴마다 멀티모달 모델 가격을 낼 필요가 없습니다. <strong>설정 → 비전</strong>에서 구성하세요.</p><p>결과적으로 클라우드 프로바이더와의 긴 세션은 예측 가능한 상태를 유지합니다. 완전한 제어를 원한다면 로컬 llama.cpp를 쓰세요 — 토큰당 비용은 0입니다.</p>
     </details>
 
     <details class="faq-item">
       <summary>WebBrain에 기여할 수 있나요?</summary>
-      <p>물론입니다! WebBrain은 MIT 라이선스이며 기여를 환영합니다. 이슈, 기능 요청, 기여 가이드는 <a href="https://github.com/esokullu/webbrain" target="_blank">GitHub 저장소</a>에서 확인하세요.</p>
+      <p>물론입니다! WebBrain은 MIT 라이선스이며 기여를 환영합니다. 이슈, 기능 요청, 기여 가이드는 <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub 저장소</a>에서 확인하세요.</p>
     </details>
   </div>
 </section>
@@ -1645,17 +3938,22 @@
     <h3>널리 알리고, 사랑을 나누세요</h3>
     <p>WebBrain은 MIT 라이선스이며, 모든 것이 당신의 브라우저 안에서 실행됩니다. 유용하다면 별표를 주거나 공유해 주세요 — 독립 오픈소스 프로젝트는 그렇게 발견됩니다.</p>
     <div class="share-row">
-      <a href="https://github.com/esokullu/webbrain" target="_blank" rel="noopener" class="btn btn-primary">
+      <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener" class="btn btn-primary share-major">
         <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55 0-.27-.01-1-.02-1.97-3.2.7-3.87-1.54-3.87-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.69 1.25 3.34.95.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.9-.39.99 0 1.98.13 2.9.39 2.21-1.49 3.18-1.18 3.18-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.66.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
         ⭐ GitHub에서 별표
       </a>
-      <a href="https://x.com/intent/post?text=WebBrain%20%E2%80%94%20Chrome%EA%B3%BC%20Firefox%EC%9A%A9%20%EB%AC%B4%EB%A3%8C%20%EC%98%A4%ED%94%88%EC%86%8C%EC%8A%A4%20AI%20%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80%20%EC%97%90%EC%9D%B4%EC%A0%84%ED%8A%B8.%20%EB%8B%A4%EA%B5%AD%EC%96%B4%20UI%2C%20%EA%B8%B0%EB%B3%B8%EC%A0%81%EC%9C%BC%EB%A1%9C%20%ED%86%A0%ED%81%B0%EC%9D%84%20%EC%95%84%EB%81%BC%EA%B3%A0%2C%20MIT%20%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4.&amp;url=https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" class="btn btn-secondary">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644z"/></svg>
-        X에 공유
-      </a>
-      <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" class="btn btn-secondary">
+      <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" class="btn btn-secondary share-major">
         <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M20.45 20.45h-3.555v-5.569c0-1.328-.024-3.038-1.852-3.038-1.853 0-2.136 1.447-2.136 2.94v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.268 2.37 4.268 5.455v6.284zM5.34 7.433a2.062 2.062 0 11.001-4.124 2.062 2.062 0 010 4.124zM7.119 20.45H3.555V9h3.564v11.45zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
         LinkedIn에 공유
+      </a>
+      <a href="https://x.com/intent/post?text=WebBrain%20%E2%80%94%20Chrome%EA%B3%BC%20Firefox%EC%9A%A9%20%EB%AC%B4%EB%A3%8C%20%EC%98%A4%ED%94%88%EC%86%8C%EC%8A%A4%20AI%20%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80%20%EC%97%90%EC%9D%B4%EC%A0%84%ED%8A%B8.%20%EB%8B%A4%EA%B5%AD%EC%96%B4%20UI%2C%20%EA%B8%B0%EB%B3%B8%EC%A0%81%EC%9C%BC%EB%A1%9C%20%ED%86%A0%ED%81%B0%EC%9D%84%20%EC%95%84%EB%81%BC%EA%B3%A0%2C%20MIT%20%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4.&amp;url=https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" class="btn btn-secondary share-icon" aria-label="X에 공유" title="X에 공유">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644z"/></svg>
+      </a>
+      <a href="https://mastoturk.org/share?text=WebBrain%20%E2%80%94%20Chrome%EA%B3%BC%20Firefox%EC%9A%A9%20%EB%AC%B4%EB%A3%8C%20%EC%98%A4%ED%94%88%EC%86%8C%EC%8A%A4%20AI%20%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80%20%EC%97%90%EC%9D%B4%EC%A0%84%ED%8A%B8.%20%EB%8B%A4%EA%B5%AD%EC%96%B4%20UI%2C%20%EA%B8%B0%EB%B3%B8%EC%A0%81%EC%9C%BC%EB%A1%9C%20%ED%86%A0%ED%81%B0%EC%9D%84%20%EC%95%84%EB%81%BC%EA%B3%A0%2C%20MIT%20%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4.%20https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" class="btn btn-secondary share-icon" aria-label="Mastodon에 공유" title="Mastodon에 공유">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.327 8.566c0-5.035-3.298-6.511-3.298-6.511C16.366 1.292 13.508.971 12.04.947h-.036c-1.468.024-4.326.345-5.989 1.108 0 0-3.298 1.476-3.298 6.511 0 1.153-.022 2.535.014 4.001.12 4.935.907 9.799 5.478 11.007 2.106.557 3.916.674 5.374.594 2.645-.147 4.128-.943 4.128-.943l-.087-1.918s-1.888.595-4.012.523c-2.104-.072-4.326-.227-4.668-2.809a5.289 5.289 0 0 1-.047-.724s2.066.505 4.686.625c1.603.073 3.107-.094 4.632-.276 2.925-.349 5.474-2.149 5.794-3.793.503-2.591.462-6.287.462-6.287ZM8.545 15.023H6.09V8.996c0-2.534 1.627-3.829 3.424-3.829 1.963 0 2.909 1.268 3.35 2.257.44-.989 1.386-2.257 3.349-2.257 1.797 0 3.424 1.295 3.424 3.829v6.027h-2.454V9.174c0-1.233-.519-1.859-1.557-1.859-1.148 0-1.724.742-1.724 2.207v3.203h-2.454V9.522c0-1.465-.576-2.207-1.724-2.207-1.038 0-1.557.626-1.557 1.859v5.849Z"/></svg>
+      </a>
+      <a href="https://bsky.app/intent/compose?text=WebBrain%20%E2%80%94%20Chrome%EA%B3%BC%20Firefox%EC%9A%A9%20%EB%AC%B4%EB%A3%8C%20%EC%98%A4%ED%94%88%EC%86%8C%EC%8A%A4%20AI%20%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80%20%EC%97%90%EC%9D%B4%EC%A0%84%ED%8A%B8.%20%EB%8B%A4%EA%B5%AD%EC%96%B4%20UI%2C%20%EA%B8%B0%EB%B3%B8%EC%A0%81%EC%9C%BC%EB%A1%9C%20%ED%86%A0%ED%81%B0%EC%9D%84%20%EC%95%84%EB%81%BC%EA%B3%A0%2C%20MIT%20%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4.%20https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" class="btn btn-secondary share-icon" aria-label="Bluesky에 공유" title="Bluesky에 공유">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 10.8c-1.1-2.1-4-6-6.8-8C2.6.9 1.6 1.3.9 1.6.1 1.9 0 3.1 0 3.8c0 .7.4 5.7.6 6.5.8 2.7 3.7 3.7 5.6 3.4-3.5.6-6.5 2-2.5 6.5 4.3 4.5 5.9-1 6.3-2.8.1-.5.2-.8.3-.8.1 0 .2.3.3.8.4 1.8 2 7.3 6.3 2.8 4-4.5 1-5.9-2.5-6.5 1.9.3 4.8-.7 5.6-3.4.2-.8.6-5.8.6-6.5 0-.7-.1-1.9-.9-2.2-.7-.3-1.7-.6-4.3 1.2-2.8 2-5.7 5.9-6.8 8Z"/></svg>
       </a>
     </div>
   </div>
@@ -1663,55 +3961,325 @@
 
 <!-- FOOTER -->
 <footer>
-  <div class="safety-note" id="safety">
-    <h4>중요한 안전 안내</h4>
-    <ul>
-      <li>WebBrain의 실행 모드는 당신을 대신해 실제 동작을 수행할 수 있습니다. 계속하기 전에 프롬프트, 이동할 페이지, 결과를 검토하는 책임은 당신에게 있습니다.</li>
-      <li>WebBrain은 계획을 위해 스크린샷을 캡처할 수 있습니다. 위험을 감수할 의사가 없다면 민감한 페이지(예: 건강, 금융, 데이팅, 개인 계정 포털)에서는 에이전트 모드 사용을 피하세요.</li>
-      <li>웹 콘텐츠에는 AI 동작을 조작하도록 설계된 악성 prompt injection이 포함될 수 있습니다. 제안된 작업은 항상 검토하고, 예상치 못한 실행은 중지하세요.</li>
-    </ul>
-  </div>
   <div class="footer-inner">
     <span>© 2026 WebBrain. <a href="https://emresokullu.com" target="_blank">Emre Sokullu</a>가 만들었습니다.</span>
     <div class="footer-links">
-      <a href="https://x.com/intent/post?text=WebBrain%20%E2%80%94%20Chrome%EA%B3%BC%20Firefox%EC%9A%A9%20%EB%AC%B4%EB%A3%8C%20%EC%98%A4%ED%94%88%EC%86%8C%EC%8A%A4%20AI%20%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80%20%EC%97%90%EC%9D%B4%EC%A0%84%ED%8A%B8.%20%EB%8B%A4%EA%B5%AD%EC%96%B4%20UI%2C%20%EA%B8%B0%EB%B3%B8%EC%A0%81%EC%9C%BC%EB%A1%9C%20%ED%86%A0%ED%81%B0%EC%9D%84%20%EC%95%84%EB%81%BC%EA%B3%A0%2C%20MIT%20%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4.&amp;url=https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" aria-label="X에 공유" title="X에 공유" class="footer-icon">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644z"/></svg>
+      <a href="https://mastoturk.org/@webbrain" target="_blank" rel="me noopener" aria-label="Mastodon의 WebBrain" title="Mastodon의 WebBrain" class="footer-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M21.327 8.566c0-5.035-3.298-6.511-3.298-6.511C16.366 1.292 13.508.971 12.04.947h-.036c-1.468.024-4.326.345-5.989 1.108 0 0-3.298 1.476-3.298 6.511 0 1.153-.022 2.535.014 4.001.12 4.935.907 9.799 5.478 11.007 2.106.557 3.916.674 5.374.594 2.645-.147 4.128-.943 4.128-.943l-.087-1.918s-1.888.595-4.012.523c-2.104-.072-4.326-.227-4.668-2.809a5.289 5.289 0 0 1-.047-.724s2.066.505 4.686.625c1.603.073 3.107-.094 4.632-.276 2.925-.349 5.474-2.149 5.794-3.793.503-2.591.462-6.287.462-6.287ZM8.545 15.023H6.09V8.996c0-2.534 1.627-3.829 3.424-3.829 1.963 0 2.909 1.268 3.35 2.257.44-.989 1.386-2.257 3.349-2.257 1.797 0 3.424 1.295 3.424 3.829v6.027h-2.454V9.174c0-1.233-.519-1.859-1.557-1.859-1.148 0-1.724.742-1.724 2.207v3.203h-2.454V9.522c0-1.465-.576-2.207-1.724-2.207-1.038 0-1.557.626-1.557 1.859v5.849Z"/></svg>
       </a>
-      <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fwebbrain.one%2Fko%2F" target="_blank" rel="noopener" aria-label="LinkedIn에 공유" title="LinkedIn에 공유" class="footer-icon">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M20.45 20.45h-3.555v-5.569c0-1.328-.024-3.038-1.852-3.038-1.853 0-2.136 1.447-2.136 2.94v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.268 2.37 4.268 5.455v6.284zM5.34 7.433a2.062 2.062 0 11.001-4.124 2.062 2.062 0 010 4.124zM7.119 20.45H3.555V9h3.564v11.45zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+      <a href="https://bsky.app/profile/webbrain-one.bsky.social" target="_blank" rel="me noopener" aria-label="Bluesky의 WebBrain" title="Bluesky의 WebBrain" class="footer-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M12 10.8c-1.1-2.1-4-6-6.8-8C2.6.9 1.6 1.3.9 1.6.1 1.9 0 3.1 0 3.8c0 .7.4 5.7.6 6.5.8 2.7 3.7 3.7 5.6 3.4-3.5.6-6.5 2-2.5 6.5 4.3 4.5 5.9-1 6.3-2.8.1-.5.2-.8.3-.8.1 0 .2.3.3.8.4 1.8 2 7.3 6.3 2.8 4-4.5 1-5.9-2.5-6.5 1.9.3 4.8-.7 5.6-3.4.2-.8.6-5.8.6-6.5 0-.7-.1-1.9-.9-2.2-.7-.3-1.7-.6-4.3 1.2-2.8 2-5.7 5.9-6.8 8Z"/></svg>
+      </a>
+      <a href="https://discord.gg/cgC325ssfw" target="_blank" rel="noopener" aria-label="Discord의 WebBrain" title="Discord의 WebBrain" class="footer-icon">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="15" height="15" aria-hidden="true"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011c.05.069.098.137.142.207a12.471 12.471 0 0 0-3.616 0c.044-.07.093-.138.143-.207A13.207 13.207 0 0 0 3.7 2.907 13.136 13.136 0 0 0 .931 13.362a13.667 13.667 0 0 0 4.022 2.018c.33-.442.623-.907.87-1.396a8.95 8.95 0 0 1-1.37-.652c.114-.083.225-.171.33-.269a9.6 9.6 0 0 0 8.243 0c.108.09.218.18.33.269a8.923 8.923 0 0 1-1.37.652c.248.489.54.954.87 1.396a13.667 13.667 0 0 0 4.022-2.018 13.136 13.136 0 0 0-2.769-10.455zM5.106 11.275c-.788 0-1.438-.72-1.438-1.608 0-.889.625-1.608 1.438-1.608.818 0 1.451.726 1.438 1.608 0 .888-.625 1.608-1.438 1.608zm5.788 0c-.788 0-1.438-.72-1.438-1.608 0-.889.625-1.608 1.438-1.608.818 0 1.451.726 1.438 1.608 0 .888-.625 1.608-1.438 1.608z"/></svg>
       </a>
       <a href="/blog">블로그</a>
-      <a href="#safety">안전 안내</a>
+      <a href="/docs/">문서</a>
       <a href="/privacy">개인정보 처리방침</a>
-      <a href="https://github.com/esokullu/webbrain/issues" target="_blank" rel="noopener">버그 신고</a>
-      <a href="https://github.com/esokullu/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">MIT 라이선스</a>
+      <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">버그 신고</a>
+      <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">MIT 라이선스</a>
       <a href="https://pressreleases.online/org/webbrain.one" target="_blank" rel="noopener">보도자료</a>
+    </div>
+    <div class="lang-noscript">
+      <span>언어 선택</span>
+      <a href="/" hreflang="en">English</a>
+      <a href="/zh/" hreflang="zh">中文</a>
+      <a href="/ar/" hreflang="ar">العربية</a>
+      <a href="/bn/" hreflang="bn">বাংলা</a>
+      <a href="/nl/" hreflang="nl">Nederlands</a>
+      <a href="/tl/" hreflang="tl">Filipino</a>
+      <a href="/fr/" hreflang="fr">Français</a>
+      <a href="/de/" hreflang="de">Deutsch</a>
+      <a href="/he/" hreflang="he">עברית</a>
+      <a href="/hi/" hreflang="hi">हिन्दी</a>
+      <a href="/id/" hreflang="id">Bahasa Indonesia</a>
+      <a href="/ja/" hreflang="ja">日本語</a>
+      <a href="/ko/" hreflang="ko">한국어</a>
+      <a href="/ms/" hreflang="ms">Bahasa Melayu</a>
+      <a href="/fa/" hreflang="fa">فارسی</a>
+      <a href="/pt/" hreflang="pt">Português</a>
+      <a href="/ru/" hreflang="ru">Русский</a>
+      <a href="/es/" hreflang="es">Español</a>
+      <a href="/th/" hreflang="th">ไทย</a>
+      <a href="/tr/" hreflang="tr">Türkçe</a>
+      <a href="/uk/" hreflang="uk">Українська</a>
+      <a href="/vi/" hreflang="vi">Tiếng Việt</a>
     </div>
   </div>
 </footer>
 
 <script>
   (function () {
-    const demoVideo = document.getElementById('demo-video');
-    if (!demoVideo) return;
+    const container = document.querySelector('[data-download-cards]');
+    if (!container) return;
+
+    const currentRow = container.querySelector('[data-download-current]');
+    const secondaryRow = container.querySelector('[data-download-secondary]');
+    const cards = Array.prototype.slice.call(container.querySelectorAll('[data-browser-card]'));
+    if (!currentRow || !secondaryRow || !cards.length) return;
+
+    const ua = navigator.userAgent || '';
+    const platform = (
+      navigator.userAgentData && navigator.userAgentData.platform
+        ? navigator.userAgentData.platform
+        : navigator.platform || ''
+    ).toLowerCase();
+    const isWindows = platform.indexOf('win') !== -1;
+
+    const edgeCard = cards.find((card) => card.dataset.browserCard === 'edge');
+    if (edgeCard && isWindows) {
+      edgeCard.classList.remove('is-disabled');
+      edgeCard.removeAttribute('aria-disabled');
+      edgeCard.querySelectorAll('[data-edge-windows-link]').forEach(function (button) {
+        const href = button.dataset.href;
+        if (!href) return;
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = button.className;
+        link.innerHTML = button.innerHTML;
+        button.replaceWith(link);
+      });
+    }
+
+    let currentBrowser = 'chrome';
+    if (/Edg\//.test(ua)) {
+      currentBrowser = 'edge';
+    } else if (/Firefox\//.test(ua)) {
+      currentBrowser = 'firefox';
+    }
+
+    const currentCard = cards.find((card) => card.dataset.browserCard === currentBrowser) || cards[0];
+    currentRow.appendChild(currentCard);
+    cards.forEach(function (card) {
+      if (card !== currentCard) secondaryRow.appendChild(card);
+    });
+  })();
+</script>
+
+<script>
+  (function () {
+    // Pick the right source (desktop vs mobile) for every responsive video
+    // on the page - the product demo plus the security and comparison modals.
+    const videos = Array.prototype.slice.call(
+      document.querySelectorAll('video[data-desktop-src]')
+    );
+    if (!videos.length) return;
 
     const mobileQuery = window.matchMedia('(max-width: 768px)');
 
-    function syncDemoVideoSource(event) {
-      const isMobile = event.matches ?? mobileQuery.matches;
-      const nextSrc = isMobile ? demoVideo.dataset.mobileSrc : demoVideo.dataset.desktopSrc;
-      if (nextSrc && demoVideo.src !== nextSrc) {
-        demoVideo.src = nextSrc;
+    function syncVideoSources(event) {
+      const isMobile = event && typeof event.matches === 'boolean'
+        ? event.matches : mobileQuery.matches;
+      videos.forEach(function (video) {
+        const nextSrc = isMobile ? video.dataset.mobileSrc : video.dataset.desktopSrc;
+        const nextPoster = isMobile ? video.dataset.mobilePoster : video.dataset.desktopPoster;
+        if (nextPoster && video.poster !== nextPoster) {
+          video.poster = nextPoster;
+        }
+        if (nextSrc && video.src !== nextSrc) {
+          video.src = nextSrc;
+        }
+      });
+    }
+
+    syncVideoSources(mobileQuery);
+
+    if (typeof mobileQuery.addEventListener === 'function') {
+      mobileQuery.addEventListener('change', syncVideoSources);
+    } else if (typeof mobileQuery.addListener === 'function') {
+      mobileQuery.addListener(syncVideoSources);
+    }
+  })();
+</script>
+
+<script>
+  (function () {
+    const trigger = document.getElementById('security-video-open');
+    const dialog = document.getElementById('security-video-dialog');
+    const closeButton = document.getElementById('security-video-close');
+    const video = document.getElementById('security-video');
+    if (!trigger || !dialog || !closeButton || !video) return;
+
+    let previousOverflow = '';
+
+    function openSecurityVideo() {
+      if (dialog.open) return;
+      previousOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      dialog.showModal();
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch(function () {});
       }
     }
 
-    syncDemoVideoSource(mobileQuery);
-
-    if (typeof mobileQuery.addEventListener === 'function') {
-      mobileQuery.addEventListener('change', syncDemoVideoSource);
-    } else if (typeof mobileQuery.addListener === 'function') {
-      mobileQuery.addListener(syncDemoVideoSource);
+    function closeSecurityVideo() {
+      if (dialog.open) dialog.close();
     }
+
+    trigger.addEventListener('click', openSecurityVideo);
+    closeButton.addEventListener('click', closeSecurityVideo);
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) closeSecurityVideo();
+    });
+    dialog.addEventListener('close', function () {
+      video.pause();
+      document.documentElement.style.overflow = previousOverflow;
+      trigger.focus();
+    });
+  })();
+</script>
+
+<script>
+  (function () {
+    const trigger = document.getElementById('comparison-video-open');
+    const dialog = document.getElementById('comparison-video-dialog');
+    const closeButton = document.getElementById('comparison-video-close');
+    const video = document.getElementById('comparison-video');
+    if (!trigger || !dialog || !closeButton || !video) return;
+
+    let previousOverflow = '';
+
+    function openComparisonVideo() {
+      if (dialog.open) return;
+      previousOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      dialog.showModal();
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch(function () {});
+      }
+    }
+
+    function closeComparisonVideo() {
+      if (dialog.open) dialog.close();
+    }
+
+    trigger.addEventListener('click', openComparisonVideo);
+    closeButton.addEventListener('click', closeComparisonVideo);
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) closeComparisonVideo();
+    });
+    dialog.addEventListener('close', function () {
+      video.pause();
+      document.documentElement.style.overflow = previousOverflow;
+      trigger.focus();
+    });
+  })();
+</script>
+
+<!-- Hero mockup rotation: cross-fade through 5 demo scenes. Click a dot or
+     arrow to jump (and freeze the auto-rotate so a hand-picked scene stays put).
+     Auto-rotate pauses on hover and when the tab is hidden. Skipped
+     entirely under prefers-reduced-motion — the first scene just stays. -->
+<script>
+  (function () {
+    const stack = document.getElementById('mockup-stack');
+    if (!stack) return;
+    const stage = stack.closest('.mockup-stage') || stack;
+    const focusScope = stage.closest('.hero-visual') || stage;
+    const scenes = stack.querySelectorAll(':scope > .browser-mockup');
+    const dots = document.querySelectorAll('.scene-nav .scene-dot');
+    const arrows = document.querySelectorAll('.scene-arrow');
+    if (scenes.length < 2) return;
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const INTERVAL_MS = 6000;
+    let current = 0;
+    let timer = null;
+    let userLocked = false; // set true once the visitor uses a manual control
+
+    function activate(idx) {
+      idx = ((idx % scenes.length) + scenes.length) % scenes.length;
+      scenes.forEach((s, i) => {
+        const on = i === idx;
+        if (!on) {
+          // Hide inactive scenes from screen readers + keyboard tab order.
+          // (opacity:0 alone leaves their links/buttons in the a11y tree.)
+          s.classList.remove('is-active');
+          s.setAttribute('aria-hidden', 'true');
+          s.setAttribute('inert', '');
+        }
+      });
+      dots.forEach((d, i) => {
+        const on = i === idx;
+        d.classList.toggle('is-active', on);
+        d.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      // Force a reflow so re-applying the .is-active rule restarts the
+      // message fade-up animation cleanly.
+      void scenes[idx].offsetWidth;
+      scenes[idx].classList.add('is-active');
+      scenes[idx].removeAttribute('aria-hidden');
+      scenes[idx].removeAttribute('inert');
+      current = idx;
+    }
+
+    function tick() { activate(current + 1); }
+
+    function start() {
+      if (reduceMotion || userLocked || timer) return;
+      timer = setInterval(tick, INTERVAL_MS);
+    }
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+    }
+
+    dots.forEach((dot) => {
+      dot.addEventListener('click', function () {
+        const idx = parseInt(dot.dataset.scene, 10);
+        if (Number.isNaN(idx)) return;
+        userLocked = true;
+        stop();
+        activate(idx);
+      });
+    });
+
+    arrows.forEach((arrow) => {
+      arrow.addEventListener('click', function () {
+        const step = parseInt(arrow.dataset.sceneStep, 10);
+        if (Number.isNaN(step)) return;
+        userLocked = true;
+        stop();
+        activate(current + step);
+      });
+    });
+
+    // Left/Right arrow keys step through scenes too, matching the on-screen
+    // prev/next buttons. Scope them to while the hero is visible, hovered, or
+    // contains focus so they work immediately without requiring a click, but
+    // don't hijack arrow-key behavior elsewhere on the page (typing in an
+    // input, the language <select>, browser back/forward gestures, etc).
+    let hovering = false;
+    const isRtl = document.documentElement.dir === 'rtl';
+    stage.addEventListener('mouseenter', function () { hovering = true; stop(); });
+    stage.addEventListener('mouseleave', function () { hovering = false; start(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const active = document.activeElement;
+      const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' ||
+        active.tagName === 'SELECT' || active.isContentEditable);
+      if (typing) return;
+      const heroRect = focusScope.getBoundingClientRect();
+      const heroVisible = heroRect.bottom > 0 && heroRect.top < window.innerHeight &&
+        heroRect.right > 0 && heroRect.left < window.innerWidth;
+      if (!heroVisible && !hovering && !focusScope.contains(active)) return;
+      // Physical Left/Right always matches the visual prev/next placement,
+      // which itself flips for RTL via CSS logical properties.
+      const visualStep = e.key === 'ArrowLeft' ? -1 : 1;
+      const step = isRtl ? -visualStep : visualStep;
+      userLocked = true;
+      stop();
+      activate(current + step);
+      e.preventDefault();
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) stop(); else start();
+    });
+
+    start();
   })();
 </script>
 
@@ -1738,6 +4306,42 @@
   })();
 </script>
 
+<!-- Theme toggle handler — flips data-theme on <html> and persists the
+     choice in localStorage. Also reacts to OS-level theme changes if the
+     user hasn't made an explicit choice yet, so the page stays in sync
+     when they flip system settings. -->
+<script>
+  (function () {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    const root = document.documentElement;
+
+    function setTheme(theme, persist) {
+      root.setAttribute('data-theme', theme);
+      if (persist) {
+        try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+      }
+    }
+
+    btn.addEventListener('click', function () {
+      const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      setTheme(next, true);
+    });
+
+    // Track OS theme changes — but only honor them when the user hasn't
+    // picked a theme manually (localStorage empty).
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    function onMQ(e) {
+      try {
+        if (localStorage.getItem('webbrain-theme')) return;
+      } catch (_) { /* fall through and apply OS pref */ }
+      setTheme(e.matches ? 'light' : 'dark', false);
+    }
+    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+    else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+  })();
+</script>
+
 <!-- GitHub stars pill — fetches count from the public unauthenticated
      /repos endpoint, caches it in localStorage for 6h to keep visitors well
      under GitHub's 60-req/hour anonymous limit and to render the cached
@@ -1747,7 +4351,7 @@
     const el = document.getElementById('gh-stars');
     if (!el) return;
     const countEl = el.querySelector('.gh-count');
-    const REPO = 'esokullu/webbrain';
+    const REPO = 'webbrain-one/webbrain';
     const CACHE_KEY = 'gh-stars:' + REPO;
     const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
@@ -1782,27 +4386,260 @@
   })();
 </script>
 
-<!-- Path-preserving language dropdown. Strips any leading locale segment
-     from the current path, then prepends the new one so /es/foo → /fr/foo
-     instead of collapsing to the locale homepage. -->
+<!-- Feature grid collapse. The markup ships expanded so the no-JS and crawler
+     view keeps all twelve cards; this only runs to shorten the default view. -->
 <script>
   (function () {
-    const LOCALES = ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl'];
+    const grid = document.getElementById('features-grid');
+    const button = document.getElementById('features-more-btn');
+    const label = document.getElementById('features-more-label');
+    if (!grid || !button || !label) return;
+    if (!grid.querySelector('.feature-card[data-extra]')) return;
+
+    const moreLabel = button.dataset.labelMore || label.textContent;
+    const lessLabel = button.dataset.labelLess || moreLabel;
+
+    function setExpanded(expanded) {
+      grid.dataset.collapsed = expanded ? 'false' : 'true';
+      button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      label.textContent = expanded ? lessLabel : moreLabel;
+    }
+
+    setExpanded(false);
+
+    button.addEventListener('click', function () {
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      setExpanded(!expanded);
+      if (expanded) {
+        // Collapsing can strand the viewport below the grid; pull it back to
+        // the toggle so the page does not appear to jump to a later section.
+        const top = button.getBoundingClientRect().top;
+        if (top < 0) button.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    });
+  })();
+</script>
+
+<!-- Flag-based, path-preserving language picker. The native select remains a
+     hidden value source while the visible listbox mirrors the extension UI. -->
+<script>
+  (function () {
+    const LOCALES = ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
+    const FLAG_CODES = {"en":"us","es":"es","fr":"fr","tr":"tr","zh":"cn","ru":"ru","uk":"ua","ar":"sa","ja":"jp","ko":"kr","id":"id","th":"th","ms":"my","tl":"ph","he":"il","hi":"in","pt":"br","vi":"vn","bn":"bd","fa":"ir","nl":"nl","de":"de"};
+    const picker = document.getElementById('language-picker');
     const sel = document.getElementById('lang-dropdown');
-    if (!sel) return;
+    const trigger = document.getElementById('language-picker-btn');
+    const triggerFlag = document.getElementById('language-picker-flag');
+    const triggerCode = document.getElementById('language-picker-code');
+    const menu = document.getElementById('language-picker-menu');
+    if (!picker || !sel || !trigger || !triggerFlag || !triggerCode || !menu) return;
     const current = sel.dataset.current || 'en';
-    // Show a "switch to" hint as the visible default — Chinese on the English
-    // page, English everywhere else. When the dropdown opens we swap the value
-    // back to the page's real locale so the highlight is correct and any pick
-    // (including the previously-shown hint) fires `change`.
-    const suggested = current === 'en' ? 'zh' : 'en';
-    sel.value = suggested;
-    sel.addEventListener('focus', function () {
-      if (sel.value !== current) sel.value = current;
+    const controlLabel = trigger.getAttribute('aria-label') || 'Select language';
+    let typeahead = '';
+    let typeaheadTimer = null;
+
+    function flagSrc(code) {
+      return '/assets/flags/' + FLAG_CODES[code] + '.svg';
+    }
+
+    function options() {
+      return Array.from(menu.querySelectorAll('.language-picker-option'));
+    }
+
+    function ensureMenuHighlight() {
+      let highlight = menu.querySelector(':scope > .picker-menu-highlight');
+      if (highlight) return highlight;
+      highlight = document.createElement('div');
+      highlight.className = 'picker-menu-highlight';
+      highlight.setAttribute('aria-hidden', 'true');
+      menu.prepend(highlight);
+      return highlight;
+    }
+
+    function selectedOption() {
+      return menu.querySelector('.language-picker-option[aria-selected="true"]');
+    }
+
+    function setMenuHighlight(option, instant) {
+      const highlight = ensureMenuHighlight();
+      if (!option || !menu.contains(option)) {
+        highlight.classList.remove('visible');
+        delete highlight.dataset.targetValue;
+        return;
+      }
+      const targetValue = option.dataset.value || '';
+      if (highlight.dataset.targetValue === targetValue && highlight.classList.contains('visible')) return;
+      highlight.dataset.targetValue = targetValue;
+      if (instant) highlight.classList.add('instant');
+      highlight.style.left = option.offsetLeft + 'px';
+      highlight.style.width = option.offsetWidth + 'px';
+      highlight.style.height = option.offsetHeight + 'px';
+      highlight.style.transform = 'translate3d(0, ' + option.offsetTop + 'px, 0)';
+      highlight.classList.add('visible');
+      if (instant) requestAnimationFrame(function () {
+        highlight.classList.remove('instant');
+      });
+    }
+
+    function syncPicker() {
+      const code = sel.value || current;
+      const selected = sel.querySelector('option[value="' + code + '"]');
+      triggerFlag.src = flagSrc(code);
+      triggerCode.textContent = code.toUpperCase();
+      trigger.title = controlLabel + ': ' + (selected ? selected.textContent : code);
+      trigger.setAttribute('aria-label', trigger.title);
+      options().forEach(function (button) {
+        button.setAttribute('aria-selected', button.dataset.value === code ? 'true' : 'false');
+      });
+      if (!menu.hidden) setMenuHighlight(selectedOption(), true);
+    }
+
+    function setOpen(open) {
+      menu.hidden = !open;
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) {
+        const selected = options().find(function (button) {
+          return button.getAttribute('aria-selected') === 'true';
+        }) || options()[0];
+        setMenuHighlight(selected, true);
+        if (selected) selected.focus();
+      } else {
+        setMenuHighlight(null);
+        typeahead = '';
+        if (typeaheadTimer) clearTimeout(typeaheadTimer);
+        typeaheadTimer = null;
+      }
+    }
+
+    function focusAt(index) {
+      const items = options();
+      if (!items.length) return;
+      items[(index + items.length) % items.length].focus();
+    }
+
+    function choose(code) {
+      setOpen(false);
+      trigger.focus();
+      if (code === current) return;
+      sel.value = code;
+      syncPicker();
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    Array.from(sel.options).forEach(function (option) {
+      const code = option.value;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'language-picker-option';
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', 'false');
+      button.dataset.value = code;
+      button.dataset.search = (code + ' ' + option.textContent).toLocaleLowerCase();
+
+      const flag = document.createElement('img');
+      flag.className = 'language-picker-option-flag';
+      flag.src = flagSrc(code);
+      flag.alt = '';
+      flag.setAttribute('aria-hidden', 'true');
+      button.appendChild(flag);
+
+      const name = document.createElement('span');
+      name.className = 'language-picker-option-name';
+      name.textContent = option.textContent;
+      name.dir = 'auto';
+      button.appendChild(name);
+
+      const codeLabel = document.createElement('span');
+      codeLabel.className = 'language-picker-option-code';
+      codeLabel.textContent = code.toUpperCase();
+      codeLabel.dir = 'ltr';
+      button.appendChild(codeLabel);
+
+      const check = document.createElement('span');
+      check.className = 'language-picker-check';
+      check.textContent = '✓';
+      check.setAttribute('aria-hidden', 'true');
+      button.appendChild(check);
+
+      button.addEventListener('click', function () {
+        choose(code);
+      });
+      menu.appendChild(button);
     });
-    sel.addEventListener('blur', function () {
-      if (sel.value === current) sel.value = suggested;
+
+    sel.value = current;
+    syncPicker();
+
+    menu.addEventListener('pointerover', function (event) {
+      const option = event.target.closest && event.target.closest('.language-picker-option');
+      setMenuHighlight(option && menu.contains(option) ? option : null);
     });
+    menu.addEventListener('pointerleave', function () {
+      setMenuHighlight(selectedOption());
+    });
+    menu.addEventListener('focusin', function (event) {
+      const option = event.target.closest && event.target.closest('.language-picker-option');
+      if (option && menu.contains(option)) setMenuHighlight(option);
+    });
+    menu.addEventListener('focusout', function () {
+      queueMicrotask(function () {
+        if (!menu.contains(document.activeElement)) setMenuHighlight(selectedOption());
+      });
+    });
+
+    trigger.addEventListener('click', function () {
+      setOpen(trigger.getAttribute('aria-expanded') !== 'true');
+    });
+    trigger.addEventListener('keydown', function (event) {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      setOpen(true);
+      const items = options();
+      const selectedIndex = Math.max(0, items.findIndex(function (button) {
+        return button.getAttribute('aria-selected') === 'true';
+      }));
+      focusAt(selectedIndex + (event.key === 'ArrowDown' ? 1 : -1));
+    });
+    menu.addEventListener('keydown', function (event) {
+      const items = options();
+      const index = Math.max(0, items.indexOf(document.activeElement));
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        focusAt(index + (event.key === 'ArrowDown' ? 1 : -1));
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        focusAt(event.key === 'Home' ? 0 : items.length - 1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (document.activeElement.dataset.value) choose(document.activeElement.dataset.value);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        trigger.focus();
+      } else if (event.key.length === 1 && event.key.trim()) {
+        typeahead += event.key.toLocaleLowerCase();
+        if (typeaheadTimer) clearTimeout(typeaheadTimer);
+        typeaheadTimer = setTimeout(function () {
+          typeahead = '';
+          typeaheadTimer = null;
+        }, 700);
+        const ordered = items.slice(index + 1).concat(items.slice(0, index + 1));
+        const match = ordered.find(function (button) {
+          return button.dataset.search.startsWith(typeahead)
+            || button.dataset.search.includes(' ' + typeahead);
+        });
+        if (match) match.focus();
+      }
+    });
+    picker.addEventListener('focusout', function () {
+      setTimeout(function () {
+        if (!picker.contains(document.activeElement)) setOpen(false);
+      }, 0);
+    });
+    document.addEventListener('pointerdown', function (event) {
+      if (!picker.contains(event.target)) setOpen(false);
+    });
+
     sel.addEventListener('change', function () {
       const target = sel.value;
       if (!LOCALES.includes(target)) return;

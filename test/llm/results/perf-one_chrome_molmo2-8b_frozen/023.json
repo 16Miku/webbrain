@@ -1,0 +1,22 @@
+{
+  "id": "023",
+  "user": "show me vegan lasagna recipes",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3093,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have access to the web to browse or search for vegan lasagna recipes. However, I can help you by guiding you through the process of finding vegan lasagna recipes on your own. Here are some steps you can follow:\n\n1. Open a search engine like Google or Bing.\n2. Type \"vegan lasagna recipes\" into the search bar.\n3. Press Enter to execute the search.\n4. Browse through the search results and click on the links to the recipes you're interested in.\n5. Read through the recipes and follow the instructions to make your vegan lasagna.\n\nIf you need more specific guidance or have any other questions, feel free to ask!",
+  "usage": {
+    "prompt_tokens": 8595,
+    "completion_tokens": 138,
+    "total_tokens": 8733,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

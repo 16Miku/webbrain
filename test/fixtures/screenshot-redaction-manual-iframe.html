@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: screenshot redaction (nested frame)</title>
+  <style>
+    body { font-family: system-ui; padding: 1em; margin: 0; background: #fffbe6; }
+    label { display: block; font-size: 12px; margin: 10px 0 2px; }
+    input { font-size: 14px; padding: 4px 6px; width: 220px; }
+    .expect { color: #b00; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <p><strong>Same-origin nested iframe.</strong> Tests that redaction maps
+  this frame's fields into the parent's screenshot coordinates.</p>
+
+  <label for="if-password">Password (nested frame)</label>
+  <input id="if-password" type="password" value="nested-hunter2" autocomplete="off">
+  <p class="expect">expect: REDACTED (always, password)</p>
+
+  <label for="if-email">Email (nested frame)</label>
+  <input id="if-email" type="email" value="nested.contact@example.com" autocomplete="off">
+  <p class="expect">expect: REDACTED (sensitive input type)</p>
+
+  <p>Plain text with a phone number rendered in this nested frame: <b>+1 (628) 555-0147</b></p>
+  <p class="expect">expect: REDACTED (detected phone text)</p>
+</body>
+</html>

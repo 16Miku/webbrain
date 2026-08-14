@@ -1,0 +1,26 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1830,
+  "error": null,
+  "firstToolCall": {
+    "name": "press_keys",
+    "args": {
+      "key": "Escape"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17328,
+    "total_tokens": 17377,
+    "completion_tokens": 49,
+    "prompt_tokens_details": null
+  }
+}

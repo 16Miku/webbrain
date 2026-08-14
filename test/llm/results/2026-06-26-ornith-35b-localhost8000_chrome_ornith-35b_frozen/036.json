@@ -1,0 +1,25 @@
+{
+  "id": "036",
+  "user": "submit",
+  "tab": {
+    "url": "https://forms.example.com/contact",
+    "title": "Contact form"
+  },
+  "latencyMs": 2157,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17326,
+    "total_tokens": 17389,
+    "completion_tokens": 63,
+    "prompt_tokens_details": null
+  }
+}

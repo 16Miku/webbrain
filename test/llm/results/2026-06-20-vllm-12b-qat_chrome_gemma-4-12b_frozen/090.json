@@ -1,0 +1,23 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 377,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9156,
+    "total_tokens": 9180,
+    "completion_tokens": 24,
+    "prompt_tokens_details": null
+  }
+}

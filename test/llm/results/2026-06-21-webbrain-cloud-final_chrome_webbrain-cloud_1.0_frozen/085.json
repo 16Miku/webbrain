@@ -1,0 +1,37 @@
+{
+  "id": "085",
+  "user": "tell me a joke",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 7521,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Why don't scientists trust atoms?\n\nBecause they make up everything!",
+  "usage": {
+    "prompt_tokens": 17481,
+    "completion_tokens": 50,
+    "total_tokens": 17531,
+    "cost": 0.00080938,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00080938,
+      "upstream_inference_prompt_cost": 0.00075188,
+      "upstream_inference_completions_cost": 0.0000575
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4370,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to open? Please provide a URL or name the page/site.",
+      "options": [],
+      "reason": "The current tab is a blank New Tab page and there is no link or item to infer from “it.”"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72085,
+    "completion_tokens": 322,
+    "total_tokens": 72407,
+    "cost": 0.020190700000000002,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59807,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.020190700000000002,
+      "upstream_inference_prompt_cost": 0.018258700000000003,
+      "upstream_inference_completions_cost": 0.001932
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 133,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

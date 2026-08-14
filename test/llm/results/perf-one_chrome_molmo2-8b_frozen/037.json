@@ -1,0 +1,27 @@
+{
+  "id": "037",
+  "user": "close the cookie banner",
+  "tab": {
+    "url": "https://www.theguardian.com/uk",
+    "title": "The Guardian"
+  },
+  "latencyMs": 895,
+  "error": null,
+  "firstToolCall": {
+    "name": "click_ax",
+    "args": {
+      "ref_id": "ref_123"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"click_ax\",\"arguments\":{\"ref_id\":\"ref_123\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 8599,
+    "completion_tokens": 20,
+    "total_tokens": 8619,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

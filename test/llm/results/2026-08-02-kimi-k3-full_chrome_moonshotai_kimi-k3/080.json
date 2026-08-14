@@ -1,0 +1,46 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 28372,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I don't have a tab-management tool — I can navigate or open tabs, but I can't see or close your other tabs from here.\n\nThe fastest built-in way to do exactly what you want:\n1. Right-click this \"New Tab\" tab at the top of the browser.\n2. Choose \"Close other tabs\" (Chrome/Edge) — everything except this tab closes instantly.\n\nAlternatives: hold Ctrl+W (Cmd+W on Mac) to close tabs one by one, or right-click a tab and pick \"Close tabs to the right\" if you only want to clear one side."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 21695,
+    "completion_tokens": 885,
+    "total_tokens": 22580,
+    "cost": 0.023064,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20480,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.023064,
+      "upstream_inference_prompt_cost": 0.009789,
+      "upstream_inference_completions_cost": 0.013275
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 699,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

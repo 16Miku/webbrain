@@ -1,0 +1,27 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 3742,
+  "error": null,
+  "firstToolCall": {
+    "name": "download_social_media",
+    "args": {
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to \"save this youtube thumbnail\". Looking at the current page context, I can see that the user is on a YouTube video page: https://www.youtube.com/watch?v=dQw4w9WgXcQ — Title: Rick Astley — YouTube\n\nThe user wants to save the YouTube thumbnail. Based on the instructions, I should use the `download_social_media` tool for downloading images from YouTube. The instructions specifically mention that for YouTube thumbnails, I should call `download_social_media` — it is a SINGLE tool call that handles the per-site DOM, picks the right resolution, and saves to the Downloads folder.\n\nThe user said \"save this youtube thumbnail\" which seems to be referring to the current YouTube video page. I should use the download_social_media tool to download the thumbnail from this YouTube video.\n\nLet me call the download_social_media tool.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"download_social_media\", \"parameters\": {\"url\": \"https://www.youtube.com/watch?v=dQw4w9WgXcQ\"}}\n]",
+  "usage": {
+    "completion_tokens": 230,
+    "prompt_tokens": 8736,
+    "total_tokens": 8966,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

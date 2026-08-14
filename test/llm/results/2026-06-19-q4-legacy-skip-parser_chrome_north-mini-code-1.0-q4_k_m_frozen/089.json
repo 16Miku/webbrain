@@ -1,0 +1,27 @@
+{
+  "id": "089",
+  "user": "open youtube, twitter, and gmail in new tabs",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2917,
+  "error": null,
+  "firstToolCall": {
+    "name": "new_tab",
+    "args": {
+      "url": "https://www.youtube.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to open YouTube, Twitter, and Gmail in new tabs. I need to use the `new_tab` function to open each of these sites. Let me do this one by one.\n\nFirst, I'll open YouTube, then Twitter, then Gmail.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"new_tab\", \"parameters\": {\"url\": \"https://www.youtube.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 91,
+    "prompt_tokens": 8471,
+    "total_tokens": 8562,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

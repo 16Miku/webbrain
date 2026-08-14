@@ -1,0 +1,27 @@
+{
+  "id": "013",
+  "user": "open the about config page",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1469,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "about:config"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\": \"navigate\", \"arguments\": {\"url\": \"about:config\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 97,
+    "prompt_tokens": 9190,
+    "total_tokens": 9287,
+    "prompt_tokens_details": {
+      "cached_tokens": 8931
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "025",
+  "user": "search youtube for \"never gonna give you up\"",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 3109,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to search YouTube for \"never gonna give you up\". This is a search query, so I need to navigate to YouTube and perform a search.\n\nLet me start by reading the current page to see what's on YouTube's homepage, then perform the search.\n\nCurrent page is https://www.youtube.com/ - the YouTube homepage.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 106,
+    "prompt_tokens": 8728,
+    "total_tokens": 8834,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

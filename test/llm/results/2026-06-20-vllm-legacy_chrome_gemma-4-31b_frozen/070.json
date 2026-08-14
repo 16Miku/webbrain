@@ -1,0 +1,25 @@
+{
+  "id": "070",
+  "user": "log in",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 648,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "text": "Which website or service would you like me to log into?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"clarify\",\"arguments\":{\"text\":\"Which website or service would you like me to log into?\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9186,
+    "completion_tokens": 34,
+    "prompt_tokens_details": null
+  }
+}

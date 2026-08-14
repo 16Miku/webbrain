@@ -1,0 +1,37 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 20072,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on the New Tab page. What would you like me to open? A specific website, file, or link?",
+  "usage": {
+    "prompt_tokens": 17479,
+    "completion_tokens": 83,
+    "total_tokens": 17562,
+    "cost": 0.00084693,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00084693,
+      "upstream_inference_prompt_cost": 0.00075148,
+      "upstream_inference_completions_cost": 0.00009545
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

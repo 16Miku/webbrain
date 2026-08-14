@@ -1,0 +1,51 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5331,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to open— a URL, a website, or a file?",
+      "options": [
+        "A URL or website",
+        "A file",
+        "Something else"
+      ],
+      "reason": "The current tab is a blank New Tab and no destination was specified."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72111,
+    "completion_tokens": 372,
+    "total_tokens": 72483,
+    "cost": 0.00384708,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 39858,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00384708,
+      "upstream_inference_prompt_cost": 0.00362388,
+      "upstream_inference_completions_cost": 0.00022320000000000003
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 144,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

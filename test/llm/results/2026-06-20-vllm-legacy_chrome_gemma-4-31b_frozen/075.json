@@ -1,0 +1,25 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 518,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9155,
+    "total_tokens": 9181,
+    "completion_tokens": 26,
+    "prompt_tokens_details": null
+  }
+}

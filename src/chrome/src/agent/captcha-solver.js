@@ -6,11 +6,25 @@
 //   POST /getTaskResult  → { status: "ready"|"processing", solution? }
 //   POST /getBalance     → { balance, packages }
 //
-// Coverage today: reCAPTCHA v2 (checkbox/invisible), reCAPTCHA v3, hCaptcha,
-// Cloudflare Turnstile, plain image-to-text. Other types CapSolver supports
-// (FunCaptcha, AWS WAF, GeeTest, datadome) are not auto-detected here yet —
-// the agent can still drive them by passing an explicit `type` to
-// solve_captcha and the right `taskTypeOverride`.
+// Coverage today: reCAPTCHA v2 (checkbox/invisible), reCAPTCHA v3, both of
+// those in their Enterprise flavour, hCaptcha, Cloudflare Turnstile, plain
+// image-to-text. Other types CapSolver supports (FunCaptcha, AWS WAF,
+// GeeTest, datadome) are not auto-detected here yet — the agent can still
+// drive them by passing an explicit `type` to solve_captcha and the right
+// `taskTypeOverride`.
+
+import {
+  applyCaptchaFrameVisibility,
+  captchaWebsiteUrl,
+  captchaTypesMatch,
+  detectCaptchaCandidatesInPage,
+  injectCaptchaTokenInPage,
+  normalizeCaptchaType,
+  selectCaptchaCandidate,
+} from './captcha-frame-runtime.js';
+import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
+
+export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
 const API_BASE = 'https://api.capsolver.com';
 const POLL_INTERVAL_MS = 2500;
@@ -29,31 +43,42 @@ async function postJson(path, body) {
     const text = await res.text().catch(() => '');
     throw new Error(`CapSolver ${path} HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
-  return await res.json();
+  try { return await res.json(); } catch {
+    throw new Error(`CapSolver ${path} returned invalid JSON.`);
+  }
 }
 
 // Wrap a CapSolver error response in a friendlier message.
 //
-// CapSolver returns several different error codes when it refuses a sitekey
-// it considers a public TEST/DEMO key (Google's recaptcha demo, the
-// hcaptcha.com demo, etc.). Two we've actually hit in the wild:
+// Two failure classes look nearly identical on the wire but need opposite
+// responses from the model, so we key off the *description* rather than the
+// error code — CapSolver reuses ERROR_INVALID_TASK_DATA and
+// ERROR_WRONG_CAPTCHA_TYPE for both:
 //
-//   ERROR_WRONG_CAPTCHA_TYPE  ("wrong captcha type")
-//   ERROR_INVALID_TASK_DATA   ("We don't support this service.")
+//   1. Refused sitekey. CapSolver won't farm public TEST/DEMO keys (Google's
+//      recaptcha demo, hcaptcha.com/demo) because no genuine token would come
+//      back. Description reads like "We don't support this service." The fix
+//      is to try the flow on a real production site.
+//   2. Bad task configuration. Description reads like "Invalid input: check
+//      captcha type or parameters" — you get this when the task type doesn't
+//      match the widget, e.g. a plain ReCaptchaV2TaskProxyLess against an
+//      Enterprise sitekey. The fix is to correct `type`/`isEnterprise`.
 //
-// Both translate, in practice, to "this is a public test sitekey, real
-// captcha solvers won't farm it because no genuine token would come back".
-// The vendor-side description on its own is opaque, so we tack on a one-
-// liner pointing the model (and the user, via the trace) at the real
-// remedy: try on a production site.
+// Blaming (2) on a demo key is actively harmful: the model gives up and moves
+// to another site instead of retrying with the right task type. Match the
+// demo phrasing narrowly for the same reason — an earlier bare /test/ matched
+// the "test" inside "latest" and mislabelled ordinary parameter errors.
+const CAPSOLVER_TASK_CONFIG_RE = /invalid input|check captcha type|wrong captcha type/i;
+const CAPSOLVER_DEMO_KEY_RE = /\btest\s*(?:site\s*)?key\b|\bdemo\b|unsupported|don['’]?t[\s_]support|not[\s_]support/i;
+
 function capsolverError(prefix, body) {
   const desc = body.errorDescription || body.errorCode || 'unknown error';
-  const code = String(body.errorCode || '');
-  const looksLikeDemoRejection =
-    code === 'ERROR_WRONG_CAPTCHA_TYPE' ||
-    code === 'ERROR_INVALID_TASK_DATA' ||
-    /don['’]?t support|not support|unsupported/i.test(desc);
-  if (looksLikeDemoRejection) {
+  if (CAPSOLVER_TASK_CONFIG_RE.test(desc)) {
+    return new Error(
+      `${prefix}: ${desc}. CapSolver rejected the task configuration, not the sitekey — most often the task type doesn't match the widget (a plain reCAPTCHA task against an Enterprise sitekey, or a v2 task against a v3 key). Re-check the detected type and pass \`type\` / \`isEnterprise\` explicitly.`
+    );
+  }
+  if (CAPSOLVER_DEMO_KEY_RE.test(desc)) {
     return new Error(
       `${prefix}: ${desc}. This usually means CapSolver refused the sitekey — most often because it is a public TEST/DEMO key (Google's recaptcha demo, hcaptcha.com/demo, etc.) that no captcha-solving service will farm. Try the same flow on a real production site.`
     );
@@ -64,8 +89,9 @@ function capsolverError(prefix, body) {
 export async function getBalance(apiKey) {
   if (!apiKey) throw new Error('No CapSolver API key configured.');
   const res = await postJson('/getBalance', { clientKey: apiKey });
+  if (!res || typeof res !== 'object') throw new Error('CapSolver getBalance returned unexpected response.');
   if (res.errorId) throw capsolverError('CapSolver', res);
-  return { balance: res.balance, packages: res.packages || [] };
+  return { balance: res.balance ?? 0, packages: res.packages || [] };
 }
 
 async function createTask(apiKey, task) {
@@ -74,15 +100,18 @@ async function createTask(apiKey, task) {
     appId: DEFAULT_APP_ID,
     task,
   });
+  if (!res || typeof res !== 'object') throw new Error('CapSolver createTask returned unexpected response.');
   if (res.errorId) throw capsolverError('CapSolver createTask', res);
   if (!res.taskId) throw new Error('CapSolver createTask returned no taskId.');
   return res.taskId;
 }
 
 async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = {}) {
+  const effectiveTimeout = (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : POLL_TIMEOUT_MS;
   const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  while (Date.now() - start < effectiveTimeout) {
     const res = await postJson('/getTaskResult', { clientKey: apiKey, taskId });
+    if (!res || typeof res !== 'object') throw new Error('CapSolver getTaskResult returned unexpected response.');
     if (res.errorId) throw capsolverError('CapSolver getTaskResult', res);
     if (res.status === 'ready') return res.solution || {};
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
@@ -97,25 +126,56 @@ async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = 
 // default to the "proxyless" task types so the user doesn't need to BYO
 // proxy — that's the simplest path and what virtually every reCAPTCHA /
 // hCaptcha / Turnstile setup actually needs.
+//
+// `enterprisePayload` is deliberately absent from the solve_captcha schema
+// (same as on the hCaptcha branch): the frame detector extracts the
+// site-specific Enterprise `s` token from the widget host or anchor URL and
+// passes it through internally.
 
-function buildTask({ type, websiteURL, websiteKey, ...rest }) {
+// Type aliases the model or the detector may hand us. Kept as sets rather
+// than inline `||` chains so buildTask and captchaParamError below can't
+// drift apart on which spellings count as v3.
+const RECAPTCHA_V2_TYPES = new Set(['recaptcha_v2', 'recaptchav2', 'recaptcha_v2_enterprise', 'recaptcha_enterprise']);
+const RECAPTCHA_V3_TYPES = new Set(['recaptcha_v3', 'recaptchav3', 'recaptcha_v3_enterprise']);
+
+// Validate the params CapSolver would reject before we spend a request on
+// them. Exported so agent.js can run it *before* it flags the tool call as
+// dispatched — a missing pageAction is a local argument error, not an
+// external side effect. Returns an error string, or null when the params
+// are usable.
+export function captchaParamError(params) {
+  const t = String(params?.type || '').toLowerCase();
+  if (!t) return 'solve_captcha: type is required.';
+  if (RECAPTCHA_V3_TYPES.has(t) && !(params.pageAction || params.action)) {
+    return `solve_captcha: ${params.type} requires a \`pageAction\` (e.g. "login", "submit"). reCAPTCHA v3 scores the action name, so CapSolver cannot mint a usable token without it — pass \`pageAction\` explicitly.`;
+  }
+  return null;
+}
+
+export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2') {
+  const isEnterprise = !!rest.isEnterprise || t.includes('enterprise');
+  if (RECAPTCHA_V2_TYPES.has(t)) {
     return {
-      type: 'ReCaptchaV2TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV2EnterpriseTaskProxyLess' : 'ReCaptchaV2TaskProxyLess',
       websiteURL,
       websiteKey,
       ...(rest.isInvisible != null ? { isInvisible: !!rest.isInvisible } : {}),
+      ...(rest.pageAction ? { pageAction: rest.pageAction } : {}),
+      ...(rest.recaptchaDataSValue ? { recaptchaDataSValue: rest.recaptchaDataSValue } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
       ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
   }
-  if (t === 'recaptcha_v3' || t === 'recaptchav3') {
+  if (RECAPTCHA_V3_TYPES.has(t)) {
+    const pageAction = rest.pageAction || rest.action;
     return {
-      type: 'ReCaptchaV3TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV3EnterpriseTaskProxyLess' : 'ReCaptchaV3TaskProxyLess',
       websiteURL,
       websiteKey,
-      pageAction: rest.pageAction || rest.action || 'verify',
+      pageAction,
       ...(rest.minScore ? { minScore: rest.minScore } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
     };
   }
   if (t === 'hcaptcha') {
@@ -151,7 +211,10 @@ function buildTask({ type, websiteURL, websiteKey, ...rest }) {
 // type. The DOM convention is well-documented for the ones we auto-handle.
 function solutionFor(type, solution) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v3' || t === 'recaptchav3') {
+  // Covers every reCAPTCHA spelling — v2/v3, snake or camel, Enterprise or
+  // not. They all return the token under the same solution key and inject
+  // into the same field.
+  if (t.startsWith('recaptcha')) {
     return { token: solution.gRecaptchaResponse, fieldName: 'g-recaptcha-response' };
   }
   if (t === 'hcaptcha') {
@@ -172,7 +235,8 @@ function solutionFor(type, solution) {
 
 export async function solveCaptcha(apiKey, params) {
   if (!apiKey) throw new Error('No CapSolver API key configured.');
-  if (!params?.type) throw new Error('solve_captcha: type is required.');
+  const paramError = captchaParamError(params);
+  if (paramError) throw new Error(paramError);
   const task = buildTask(params);
   const taskId = await createTask(apiKey, task);
   const solution = await pollTaskResult(apiKey, taskId);
@@ -182,194 +246,116 @@ export async function solveCaptcha(apiKey, params) {
 
 // ─── Page-side detection ───────────────────────────────────────────────
 //
-// Runs in the page world via chrome.scripting.executeScript. Looks for the
-// well-known DOM markers each provider drops in. Returns null when nothing
-// is found so the caller can decide whether to error or fall back to
-// asking the user.
-//
-// We intentionally inspect light DOM only — every major captcha widget
-// renders its container element (the `data-sitekey` host) in the host
-// page's light DOM, even if its UI lives inside a same-origin iframe.
+// Runs the self-contained detector in every frame, then ranks the returned
+// candidates centrally. Keeping each candidate bound to the frame that
+// exposed it lets the caller use the correct websiteURL and injection target.
 
-function detectCaptchaInPage() {
-  // Helper: visit same-origin iframes too, since reCAPTCHA on many sites
-  // is rendered inside a same-origin wrapper. Cross-origin frames are
-  // skipped (their .contentDocument throws on access).
-  const docs = [document];
-  for (const f of document.querySelectorAll('iframe')) {
-    try {
-      const d = f.contentDocument;
-      if (d) docs.push(d);
-    } catch { /* cross-origin */ }
+export async function detectCaptcha(tabId, constraints = {}) {
+  const frameTreePromise = typeof chrome.webNavigation?.getAllFrames === 'function'
+    ? chrome.webNavigation.getAllFrames({ tabId })
+    : Promise.resolve([]);
+  const [scriptAttempt, frameTreeAttempt] = await Promise.allSettled([
+    chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: detectCaptchaCandidatesInPage,
+      args: [null, captchaChallengeMatcherOptions()],
+    }),
+    frameTreePromise,
+  ]);
+  const navigationFrames = frameTreeAttempt.status === 'fulfilled'
+    ? frameTreeAttempt.value
+    : [];
+  if (scriptAttempt.status === 'rejected') {
+    const cause = scriptAttempt.reason;
+    const error = new Error(
+      cause instanceof Error
+        ? cause.message
+        : String(cause || 'CAPTCHA frame inspection failed.'),
+    );
+    if (cause instanceof Error) error.cause = cause;
+    error.captchaDiagnostics = buildCaptchaDiagnostics({ navigationFrames });
+    throw error;
   }
-
-  for (const d of docs) {
-    // Order matters: check provider-specific widgets BEFORE the generic
-    // reCAPTCHA fallback. Cloudflare Turnstile and hCaptcha widgets can
-    // carry `data-sitekey` + `data-callback` too, and an earlier version
-    // of this function caught them with `div[data-sitekey][data-callback]`
-    // and misclassified them as reCAPTCHA → CapSolver got the wrong task
-    // type and failed.
-
-    // hCaptcha (.h-captcha[data-sitekey])
-    const hcap = d.querySelector('.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]');
-    if (hcap) {
-      const sitekey = hcap.getAttribute('data-sitekey') || hcap.getAttribute('data-hcaptcha-sitekey');
-      if (sitekey) {
-        const size = hcap.getAttribute('data-size');
-        return {
-          type: 'hcaptcha',
-          websiteKey: sitekey,
-          isInvisible: size === 'invisible',
-        };
-      }
+  const results = scriptAttempt.value;
+  const candidates = [];
+  const frameContexts = [];
+  for (const entry of results || []) {
+    const payload = entry?.result;
+    const pageCandidates = Array.isArray(payload)
+      ? payload
+      : (Array.isArray(payload?.candidates) ? payload.candidates : []);
+    for (const candidate of pageCandidates) {
+      candidates.push({
+        ...candidate,
+        frameId: Number.isInteger(entry.frameId) ? entry.frameId : null,
+      });
     }
-    // Cloudflare Turnstile (.cf-turnstile[data-sitekey])
-    const turn = d.querySelector('.cf-turnstile[data-sitekey], [data-turnstile-sitekey]');
-    if (turn) {
-      const sitekey = turn.getAttribute('data-sitekey') || turn.getAttribute('data-turnstile-sitekey');
-      if (sitekey) {
-        return { type: 'turnstile', websiteKey: sitekey };
-      }
-    }
-    // reCAPTCHA v2/v3. Match only on reCAPTCHA-specific markers — the
-    // `.g-recaptcha` class or `id="g-recaptcha-..."` — so we don't
-    // accidentally grab any `data-sitekey` element from another widget.
-    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey]');
-    if (recap) {
-      const sitekey = recap.getAttribute('data-sitekey');
-      if (sitekey) {
-        const size = recap.getAttribute('data-size');
-        const isInvisible = size === 'invisible';
-        // v3 widgets typically carry data-action; v2 doesn't.
-        const action = recap.getAttribute('data-action') || null;
-        return {
-          type: action ? 'recaptcha_v3' : 'recaptcha_v2',
-          websiteKey: sitekey,
-          isInvisible,
-          ...(action ? { pageAction: action } : {}),
-        };
-      }
-    }
-    // Cloudflare "challenge platform" (the bare interstitial — no sitekey
-    // exposed in DOM, just the script tag). Best we can report is presence;
-    // solve_captcha will error if no key is provided.
-    if (d.querySelector('script[src*="challenges.cloudflare.com/turnstile"]') ||
-        d.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
-      return { type: 'turnstile_challenge', websiteKey: null, note: 'Cloudflare interstitial detected but no sitekey was exposed in the DOM. Pass websiteKey explicitly if you have it.' };
+    if (!Array.isArray(payload) && payload?.frameContext) {
+      frameContexts.push({
+        ...payload.frameContext,
+        frameId: Number.isInteger(entry.frameId) ? entry.frameId : null,
+      });
     }
   }
-
-  // ── URL-string fallback ─────────────────────────────────────────────
-  // The DOM-element checks above cover the vast majority of production
-  // integrations (`<div class="h-captcha" data-sitekey="...">` etc.).
-  // Some pages — notably the official hcaptcha.com/demo and a handful of
-  // SPA integrations that mount the widget via JS — never put the sitekey
-  // on a host element in the main DOM. The sitekey IS still leaking
-  // through iframe `src=` and script `src=` URLs, though, because the
-  // widget script fetches its iframe with a `?sitekey=` (hCaptcha,
-  // Turnstile) or `?k=` (reCAPTCHA) query parameter. iframe.src and
-  // script.src are readable across origins from the parent page, so we
-  // can scrape them even when the widget renders cross-origin.
-  const urlCandidates = [];
-  for (const el of document.querySelectorAll('iframe[src], script[src]')) {
-    try { if (el.src) urlCandidates.push(el.src); } catch {}
-  }
-  for (const url of urlCandidates) {
-    // hCaptcha
-    if (/hcaptcha\.com/i.test(url)) {
-      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
-      }
-    }
-    // Cloudflare Turnstile
-    if (/challenges\.cloudflare\.com\/turnstile/i.test(url)) {
-      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
-      }
-    }
-    // reCAPTCHA v2 — the anchor iframe carries the sitekey in `k=` and
-    // visible (checkbox) widgets are the only kind that produce this URL
-    // pattern (v3 is invisible and would have surfaced via the DOM scan
-    // above if a host element existed).
-    if (/recaptcha\/(api2|enterprise)\/anchor/i.test(url)) {
-      const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'recaptcha_v2', websiteKey: m[1], detectedVia: 'url' };
-      }
-    }
-  }
-  return null;
-}
-
-export async function detectCaptcha(tabId) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: false },
-    func: detectCaptchaInPage,
-  });
-  for (const r of results || []) {
-    if (r?.result) return r.result;
-  }
-  return null;
+  const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames);
+  return {
+    ...selectCaptchaCandidate(visibleCandidates, constraints),
+    diagnostics: buildCaptchaDiagnostics({
+      candidates: visibleCandidates,
+      frameContexts,
+      navigationFrames,
+    }),
+  };
 }
 
 // ─── Token injection ───────────────────────────────────────────────────
 
-function injectTokenIntoPage({ fieldName, alsoSet, token, callbackHint }) {
-  if (!fieldName || !token) return { success: false, error: 'no field/token' };
-  const docs = [document];
-  for (const f of document.querySelectorAll('iframe')) {
-    try { if (f.contentDocument) docs.push(f.contentDocument); } catch {}
-  }
-  const setOn = (d, name) => {
-    let el = d.querySelector(`textarea[name="${name}"]`)
-          || d.querySelector(`input[name="${name}"]`);
-    if (!el) {
-      // Some sites only render the response textarea after the user
-      // engages the widget. Create one if missing so the submit handler
-      // can pick it up.
-      el = d.createElement('textarea');
-      el.name = name;
-      el.style.display = 'none';
-      (d.body || d.documentElement).appendChild(el);
-    }
-    el.value = token;
-    el.textContent = token;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return el;
-  };
-  let touched = 0;
-  for (const d of docs) {
-    setOn(d, fieldName);
-    touched++;
-    if (alsoSet) setOn(d, alsoSet);
-  }
-  // Best-effort: trigger callback registered by the widget (reCAPTCHA
-  // v2/v3 sites usually wire `data-callback="onCaptcha"` on the host
-  // element; some hCaptcha sites do the same with `data-callback`).
-  let calledCallback = false;
-  for (const d of docs) {
-    const host = d.querySelector('[data-callback]');
-    const cbName = host?.getAttribute('data-callback');
-    if (cbName) {
-      try {
-        const fn = (typeof window !== 'undefined' && typeof window[cbName] === 'function') ? window[cbName] : null;
-        if (fn) { fn(token); calledCallback = true; }
-      } catch { /* ignore */ }
-    }
-  }
-  return { success: true, fieldsTouched: touched, calledCallback, callbackHint: callbackHint || null };
-}
-
-export async function injectToken(tabId, { fieldName, alsoSet, token, callbackHint }) {
+export async function injectToken(tabId, {
+  fieldName,
+  alsoSet,
+  token,
+  callbackHint,
+  target = null,
+}) {
   if (!fieldName || !token) return { success: false, error: 'fieldName and token required' };
+  if (!Number.isInteger(target?.frameId) || !target?.frameUrl || !target?.websiteKey) {
+    return {
+      success: false,
+      fieldUpdated: false,
+      targetRequired: true,
+      error: 'Token was not injected because no detected CAPTCHA frame identity, URL, and site key were selected.',
+    };
+  }
+  const pagePayload = {
+    fieldName,
+    alsoSet,
+    token,
+    callbackHint,
+    target: target || {},
+  };
+  const targetSpec = Number.isInteger(target?.frameId)
+    ? { tabId, frameIds: [target.frameId] }
+    : (target?.frameUrl ? { tabId, allFrames: true } : { tabId });
   const results = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: false },
-    args: [{ fieldName, alsoSet, token, callbackHint }],
-    func: injectTokenIntoPage,
+    target: targetSpec,
+    world: 'MAIN',
+    args: [pagePayload],
+    func: injectCaptchaTokenInPage,
   });
-  return results?.[0]?.result || { success: false, error: 'injection script returned no result' };
+  const outputs = (results || []).map(entry => ({
+    ...(entry?.result || {}),
+    frameId: Number.isInteger(entry?.frameId) ? entry.frameId : null,
+  }));
+  const successes = outputs.filter(output => output.success === true);
+  if (successes.length === 1) return successes[0];
+  if (successes.length > 1) {
+    return {
+      success: false,
+      ambiguousTarget: true,
+      error: 'Token injection matched more than one frame; pass an exact frameUrl.',
+      matchedFrames: successes.map(output => ({ frameId: output.frameId, frameUrl: output.frameUrl })),
+    };
+  }
+  return outputs.find(output => !output.skipped)
+    || { success: false, error: 'injection script returned no matching frame result' };
 }

@@ -1,0 +1,22 @@
+{
+  "id": "049",
+  "user": "compose an email to alice@example.com",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1123,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'll start by composing a new email in Gmail. First, I'll click the \"Compose\" button in the upper left of the inbox.",
+  "usage": {
+    "prompt_tokens": 8747,
+    "completion_tokens": 30,
+    "total_tokens": 8777,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

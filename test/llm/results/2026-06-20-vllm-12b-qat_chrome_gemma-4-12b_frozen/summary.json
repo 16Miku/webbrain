@@ -1,0 +1,39 @@
+{
+  "runTag": "2026-06-20-vllm-12b-qat",
+  "model": "gemma-4-12b",
+  "browser": "chrome",
+  "base": "http://127.0.0.1:8000",
+  "saveRequest": false,
+  "tier": null,
+  "chatTemplateCompat": "alternating",
+  "structuredToolsSent": false,
+  "freeze": {
+    "path": "G:\\esoku\\Documents\\webbrain\\test\\llm\\freeze\\baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 7672,
+  "errors": 0,
+  "withToolCall": 92,
+  "withToolCallFromContent": 92,
+  "byTool": {
+    "list_downloads": 2,
+    "navigate": 26,
+    "new_tab": 3,
+    "get_accessibility_tree": 43,
+    "type_ax": 1,
+    "read_page": 4,
+    "extract_data": 3,
+    "set_field": 1,
+    "download_social_media": 3,
+    "(no_tool_call)": 8,
+    "scroll": 1,
+    "screenshot": 1,
+    "get_selection": 1,
+    "fetch_url": 1,
+    "execute_js": 2
+  }
+}

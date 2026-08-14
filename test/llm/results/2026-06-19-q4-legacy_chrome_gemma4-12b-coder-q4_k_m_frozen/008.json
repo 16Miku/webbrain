@@ -1,0 +1,27 @@
+{
+  "id": "008",
+  "user": "wikipedia please",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1539,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://wikipedia.org"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://wikipedia.org\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 103,
+    "prompt_tokens": 9189,
+    "total_tokens": 9292,
+    "prompt_tokens_details": {
+      "cached_tokens": 8936
+    }
+  }
+}

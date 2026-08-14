@@ -1,0 +1,22 @@
+{
+  "id": "017",
+  "user": "google \"best coffee shop in seattle\"",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2146,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have access to the current page content or the ability to perform Google searches directly. However, I can guide you on how to perform this task:\n\n1. Open Google in your browser.\n2. In the search bar, type \"best coffee shop in seattle\" and press Enter.\n3. Browse through the search results to find the coffee shop that best suits your needs.\n\nIf you need more specific information or recommendations, let me know!",
+  "usage": {
+    "prompt_tokens": 8597,
+    "completion_tokens": 92,
+    "total_tokens": 8689,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "deepseek-v4-flash-moonvit-pilot",
+  "seed": 20260802,
+  "tower": {
+    "kind": "moonvit",
+    "model_id": "moonshotai/Kimi-K2.6",
+    "revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb",
+    "weight_prefix": "vision_tower.",
+    "hidden_size": 1152,
+    "merge_size": 2,
+    "component_path": "artifacts/towers/moonvit-k2.6.safetensors"
+  },
+  "projector": {
+    "vision_hidden_size": 1152,
+    "text_hidden_size": 4096,
+    "merge_size": 2,
+    "layer_norm_eps": 0.00001
+  },
+  "text": {
+    "model_id": "artifacts/models/deepseek-v4-flash-bf16",
+    "revision": "dequantized-from-ae01d80c06cdfe30581edfd0e1c5449dc7ed7f17",
+    "hidden_size": 4096,
+    "vocab_size": 129280
+  },
+  "routing": {
+    "policy": "palette_cycle",
+    "palette_path": "configs/routing/deepseek-v4-flash-60d8d707-palette64.json",
+    "palette_size": 64
+  }
+}

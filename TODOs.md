@@ -7,15 +7,15 @@ without re-deriving the analysis.
 
 ## 1. Resolve the compact-vs-full system prompt contradiction
 
-**Status:** Open. Compact prompt is currently disabled in code; every provider
-gets the full ACT prompt. UI checkbox and provider config still exist; routing
-is commented out.
+**Status:** Partially resolved. Compact prompt routing is implemented in both
+Chrome and Firefox as an explicit per-provider opt-in. The remaining question is
+prompt quality and model-tier selection, not browser parity or dead code.
 
 **Where the code lives:**
-- Compact prompt body — [`src/chrome/src/agent/tools.js`](src/chrome/src/agent/tools.js) `SYSTEM_PROMPT_ACT_COMPACT` (~38 lines, ~5 KB, ~1.3K tokens)
-- Full ACT prompt body — same file, `SYSTEM_PROMPT_ACT` (~205 lines, ~30 KB, ~7.4K tokens)
-- Dispatch — [`src/chrome/src/agent/agent.js:1528`](src/chrome/src/agent/agent.js#L1528) `_getActPrompt()` — currently hard-returns the full prompt. The original branch is preserved as a code comment.
-- Provider opt-in — `BaseLLMProvider.useCompactPrompt` getter + per-provider override (`openai.js`, `llamacpp.js`).
+- Compact prompt bodies — [`src/chrome/src/agent/tools.js`](src/chrome/src/agent/tools.js) and [`src/firefox/src/agent/tools.js`](src/firefox/src/agent/tools.js) `SYSTEM_PROMPT_ACT_COMPACT`
+- Full ACT prompt bodies — same files, `SYSTEM_PROMPT_ACT`
+- Dispatch — [`src/chrome/src/agent/agent.js`](src/chrome/src/agent/agent.js) and [`src/firefox/src/agent/agent.js`](src/firefox/src/agent/agent.js) `_getActPrompt()` route Act mode to compact prompts when the active provider has `useCompactPrompt`.
+- Provider opt-in — `BaseLLMProvider.useCompactPrompt` getter + per-provider config (`openai.js`, `llamacpp.js`, inherited by compatible OpenAI-style local providers).
 
 **The actual contradiction:**
 
@@ -41,7 +41,7 @@ The "drop examples to save tokens" choice is exactly backwards: examples are how
 
 `webbrain-trace-qwen3.6-27b-run_1777441198379_v1rqkk.json` — qwen3.6-27b on llama.cpp. Asked to upload `dist/*.zip` to a v5.1.0 GitHub release. Re-downloaded the same files **three times** because each auto-screenshot pushed the original `download_files` result out of recent attention, and the model re-derived "I need to fetch the files" from current visual state. Pattern-matched on intent, not on prior tool history. This is the failure mode small-model compactness was meant to address — and yet the compact prompt would have made it worse by stripping the SCRATCHPAD section that says explicitly to pin download paths.
 
-Per-step input tokens for that run: 21K → 21K → 28K → 30K → 40K (auto-screenshot growth, not summarization growth). The model paid the tax of the full prompt (~7.4K) AND lost track of state. The current "everyone gets full prompt" decision was the right local fix.
+Per-step input tokens for that run: 21K -> 21K -> 28K -> 30K -> 40K (auto-screenshot growth, not summarization growth). The model paid the tax of the full prompt (~7.4K) AND lost track of state. The previous "everyone gets full prompt" decision was the right local fix.
 
 **What an actual resolution would look like:**
 
@@ -53,17 +53,17 @@ Three tiers, not a binary:
 | Mid | Llama 70B, Qwen 35B, GPT-4o-mini | Full rules + 1-2 examples per rule. | ~5K tokens |
 | Small | 7B–30B local (qwen3.6-27b, etc.) | Full rules + many examples + simpler imperative vocabulary, + extra failure-mode reminders. **Larger, not smaller, than current full prompt.** | ~6K-7K tokens |
 
-Per-model-class prompt selection wired through `_getActPrompt()`. Tier inferred from provider config (`useCompactPrompt` is the wrong axis — it should be `tier: 'frontier' | 'mid' | 'small'`).
+Per-model-class prompt selection wired through `_getActPrompt()`. Tier inferred from provider config (`useCompactPrompt` is the wrong axis; it should be `tier: 'frontier' | 'mid' | 'small'`).
 
 **Why this is on the TODO list and not in flight:**
 - Requires picking the tier per model rather than per-provider, which means a model→tier mapping (or a heuristic).
 - Examples need to be written deliberately, not extracted from the existing full prompt.
-- The current "everyone gets the full prompt" works for frontier-skewed users (the dominant cohort), so the urgency is on the small-model end which is also where local-host iteration is hardest to test.
+- Full-prompt defaults work for frontier-skewed users (the dominant cohort), so the urgency is on the small-model end which is also where local-host iteration is hardest to test.
 
 **Concrete next steps when picking this up:**
 1. Define the tier enum and a `getTier()` method on each provider class. Default frontend models to `frontier`, OpenAI/Anthropic configs with non-flagship model names to `mid`, llama.cpp / lmstudio / ollama to `small`.
 2. Author `SYSTEM_PROMPT_ACT_FRONTIER` (trimmed) and `SYSTEM_PROMPT_ACT_SMALL` (expanded). Keep `SYSTEM_PROMPT_ACT` as the mid-tier default.
-3. Re-enable the dispatch in `_getActPrompt()` to route by tier.
+3. Replace the current compact/full dispatch in `_getActPrompt()` with tier-based routing.
 4. Re-run the qwen3.6-27b trace scenario and verify the small-tier prompt prevents the re-download loop.
 5. Token-budget the prompt against each model's context window so prompt + first turn fits.
 
@@ -73,19 +73,23 @@ Per-model-class prompt selection wired through `_getActPrompt()`. Tier inferred 
 
 The Firefox build is meaningfully weaker than Chrome (already noted in the README's "Known Issues"). Some gaps are platform-real (no CDP, no Manifest V3 service worker), but several are just unported features. Worth ticking off one at a time:
 
-- **`upload_file`** — not yet in Firefox. The dispatcher path exists for downloads but not for uploads. Likely a few hours of work; webextensions has the same `<input type="file">` mechanics.
-- **`download_file` (singular)** — Firefox has plural `download_files` only. Trivial port.
-- **Conversation persistence across background restarts** — Chrome persists per-tab chats to `chrome.storage.session`; Firefox keeps them in-memory only. This is why the scratchpad port deliberately skips the `_persist` call. Real fix would persist via `browser.storage.session` + restore on background page reload.
 - **`full_page_screenshot`** — Chrome uses CDP `captureBeyondViewport`; Firefox would need `tabs.captureFullPage` or a scroll-and-stitch fallback. Lower priority.
 - **`shadow_dom_query`** — CDP-dependent. Hardest port; may not be worth it until a concrete user case emerges.
 
+Recently closed Firefox parity items:
+- **`upload_file`** — Firefox now supports `downloadId` re-fetch and a sidepanel user file picker (no arbitrary local `filePath` without CDP). Shipped via the Firefox upload_file port.
+- Firefox now has `downloads` permission and `download_files`; the old singular `download_file` TODO is obsolete because the tool surface was consolidated on plural `download_files`.
+- Firefox Ask mode can access the accessibility tree again (10.0.2).
+
 ---
 
-## 3. Trace recorder: tool events missing step number
+## 3. Trace recorder: tool events missing step number — RESOLVED
 
-When inspecting any trace JSON, `kind: "tool"` events have `data.step === null` even though the surrounding `llm_request` / `llm_response` events carry the right step (1, 2, 3, …). The Compare view in the Traces page would benefit from step numbers on tool rows; currently the timeline still renders fine because `traces.js` falls back to `''` when step is missing.
-
-**Where to fix:** [`src/chrome/src/trace/recorder.js`](src/chrome/src/trace/recorder.js) — the tool-call recording path needs to pull the current step number from the agent loop the same way `llm_request` does. Quick fix; just hasn't been done.
+`kind: "tool"` events previously stored `data.step === null` even though the
+surrounding `llm_request` / `llm_response` events carried the right step. Fixed
+by threading the loop's `steps` counter through `_executeToolBatch` (new `step`
+parameter) to the `trace.recordToolCall` call in both the Chrome and Firefox
+agent loops. Tool rows in the Traces Compare view now carry their step number.
 
 ---
 
@@ -111,15 +115,18 @@ set.
 
 This makes the "Load unpacked" path easy to get wrong. The root README currently
 needs to be unambiguous about whether developers should load `src/chrome/` or a
-generated release directory. Longer term, add a deterministic package step that
-creates the exact Chrome and Firefox directories used for store submission, then
-document that output as the development/release artifact.
+generated release directory.
+
+Partially fixed already: `npm run build:zip` now creates deterministic Chrome
+and Firefox submission zips from `HEAD:src/<browser>` into `dist/`, so release
+zips no longer depend on ad hoc PowerShell/archive behavior. The remaining work
+is the development install story and the misleading root manifest.
 
 **Concrete next steps:**
 1. Decide whether root `manifest.json` should be deleted, generated, or made a
    thin redirect-free copy of the Chrome manifest.
-2. Add `build:chrome`, `build:firefox`, and `build:all` scripts that produce
-   reproducible extension directories/zips.
+2. Consider adding `build:chrome`, `build:firefox`, and `build:all` scripts that
+   produce unpacked development directories in addition to the existing zips.
 3. Update the README quick-start instructions to point at the canonical
    load-unpacked directory.
 
@@ -134,11 +141,14 @@ surface is large.
 
 Store review and user trust would improve if sensitive capabilities are grouped
 by feature and requested/explained at the moment they are needed where the
-browser APIs permit it. At minimum, settings and docs should explain why each
-high-sensitivity permission exists.
+browser APIs permit it.
+
+Partially fixed already: `docs/security-model.md` now includes a permission risk
+table and `SECURITY.md` points to the detailed security model. The remaining
+work is staging/optionality and in-product explanations.
 
 **Concrete next steps:**
-1. Make a permission-to-feature table for Chrome and Firefox.
+1. Keep the permission-to-feature table current for Chrome and Firefox.
 2. Identify which permissions can be optional or triggered by an explicit
    enablement path.
 3. Add UI copy for high-risk capabilities: debugger control, downloads,
@@ -184,44 +194,45 @@ parity regressions likely.
 
 ## 9. Test the real shared logic instead of copied shims
 
-`test/run.js` duplicates pieces of `Agent` logic in `LoopDetectorShim` because
-`agent.js` imports browser-only modules. That means tests can pass while the real
-agent implementation drifts.
+**Status:** Partially resolved. Loop detection and image-budget sizing now live
+in browser-free modules in both builds. `Agent` consumes the production logic,
+`test/run.js` imports it directly, and parity assertions keep the Chrome and
+Firefox copies byte-identical.
 
 **Concrete next steps:**
-1. Move loop detection, coordinate-click bucketing, image budget sizing, and
-   other pure logic into browser-free modules.
-2. Import those modules directly from both `agent.js` and `test/run.js`.
-3. Add regression tests for the text tool-call parser and context trimming,
+1. Move other remaining pure logic into browser-free modules and import those
+   modules directly from `agent.js` and `test/run.js`.
+2. Add broader regression tests for the text tool-call parser and context trimming,
    since both are high-impact agent reliability code.
 
 ---
 
 ## 10. Keep streaming and non-streaming provider behavior in sync
 
-`OpenAICompatibleProvider.chat()` supports `options.extraBody`, but
-`chatStream()` does not. If a local or OpenAI-compatible provider needs extra
-request fields, non-streaming and streaming runs can behave differently.
+The original gap — `OpenAICompatibleProvider.chat()` applying `options.extraBody`
+while `chatStream()` did not — is **already resolved**: both methods now apply
+`extraBody` in `src/chrome/src/providers/openai.js` and the Firefox copy. The
+remaining (lower-priority) work is breadth:
 
 **Concrete next steps:**
-1. Apply `options.extraBody` in every streaming provider path where the
-   non-streaming path supports it.
-2. Add provider-level tests or small request-shape probes for OpenAI-compatible,
+1. Add provider-level tests or small request-shape probes for OpenAI-compatible,
    llama.cpp, and Anthropic providers.
-3. Document which provider-specific request fields are intentionally supported.
+2. Document which provider-specific request fields are intentionally supported.
 
 ---
 
-## 11. Make release builds reproducible
+## 11. Verify generic Mastodon-looking URLs before broad adapter matching
 
-The repo contains built zip files under `dist/`, but `package.json` only exposes
-tests and `build:web`. Extension release artifacts should be generated from
-source by a checked-in command so reviewers and contributors can reproduce them.
+The Mastodon adapter intentionally stays conservative because bare `/@user` and
+`/users/user` routes are common outside Mastodon. Once site adapters can verify
+more than the current URL string, candidate Mastodon hosts could be confirmed
+with page/source signals or with an
+[`instances.social` API](https://instances.social/api/doc/) integration.
 
-**Concrete next steps:**
-1. Add scripts that cleanly assemble Chrome and Firefox release directories.
-2. Zip those directories with deterministic names based on `package.json` /
-   manifest version.
-3. Add a release checklist that runs tests, verifies manifest versions, builds
-   web assets, creates extension zips, and confirms the generated files match
-   the expected store upload layout.
+Two plausible shapes:
+1. A skill-backed lookup that checks candidate hosts only when the page already
+   looks Mastodon-like.
+2. A maintained known-instances list that lets URL-only matching cover common
+   Mastodon domains without treating every `@profile` route as federated social.
+
+---

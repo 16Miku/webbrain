@@ -1,0 +1,27 @@
+{
+  "id": "070",
+  "user": "log in",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2851,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to log in. I need to read the current page first to understand what's on the page and what login options are available. Let me start by getting the accessibility tree to see what's visible.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 77,
+    "prompt_tokens": 8463,
+    "total_tokens": 8540,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "024",
+  "user": "find tweets about react 19",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6713,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://x.com/search?q=react%2019&src=typed_query&f=live",
+      "force": false
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72110,
+    "completion_tokens": 505,
+    "total_tokens": 72615,
+    "cost": 0.021317500000000003,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59815,
+      "cache_write_tokens": 44,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.021317500000000003,
+      "upstream_inference_prompt_cost": 0.0182875,
+      "upstream_inference_completions_cost": 0.00303
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 356,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

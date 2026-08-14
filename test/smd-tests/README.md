@@ -47,7 +47,7 @@ If the runner falls back to (3) when you expected (2), it'll be because Chrome s
 |---|---|---|
 | Pinterest | profile=pinterest, ≥10 pinimg URLs, ≥1 upgraded to /originals/ | (same) |
 | Reddit | profile=reddit, ≥3 redd.it URLs | (same) |
-| Instagram | profile=instagram | + ≥5 cdninstagram/fbcdn URLs |
+| Instagram | profile=instagram | + focused cdninstagram/fbcdn URL (auto mode is intentionally single-item) |
 | X/Twitter | profile=twitter | + ≥1 twimg URL with name=orig |
 | Facebook | profile=facebook | + click into single photo, main-mode returns 1–5 URLs (no avatar leak) |
 | LinkedIn | profile=linkedin | + ≥1 licdn URL after avatar exclusion |

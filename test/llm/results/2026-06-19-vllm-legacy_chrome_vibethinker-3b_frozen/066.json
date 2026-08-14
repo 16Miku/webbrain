@@ -1,0 +1,20 @@
+{
+  "id": "066",
+  "user": "what did i highlight",
+  "tab": {
+    "url": "https://en.wikipedia.org/wiki/Closure_(computer_programming)",
+    "title": "Closure (computer programming) — Wikipedia"
+  },
+  "latencyMs": 3941,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{\"question\":\"Could you let me know what part or phrase you highlighted in the Wikipedia closure article?}}",
+  "usage": {
+    "prompt_tokens": 8619,
+    "total_tokens": 9282,
+    "completion_tokens": 663,
+    "prompt_tokens_details": null
+  }
+}

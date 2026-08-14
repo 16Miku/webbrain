@@ -1,0 +1,25 @@
+{
+  "id": "036",
+  "user": "submit",
+  "tab": {
+    "url": "https://forms.example.com/contact",
+    "title": "Contact form"
+  },
+  "latencyMs": 406,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 9183,
+    "completion_tokens": 26,
+    "prompt_tokens_details": null
+  }
+}

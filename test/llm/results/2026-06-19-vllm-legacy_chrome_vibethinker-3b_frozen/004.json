@@ -1,0 +1,25 @@
+{
+  "id": "004",
+  "user": "open my github",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 7307,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://github.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"navigate\",\n  \"arguments\": {\n    \"url\": \"https://github.com\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8603,
+    "total_tokens": 9840,
+    "completion_tokens": 1237,
+    "prompt_tokens_details": null
+  }
+}

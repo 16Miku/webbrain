@@ -1,0 +1,25 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1031,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "summary": "The user requested to 'delete this', but since they are on a blank 'New Tab' page with no content or specific item to delete, there is nothing to perform. Task completed."
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"done\",\"arguments\":{\"summary\":\"The user requested to 'delete this', but since they are on a blank 'New Tab' page with no content or specific item to delete, there is nothing to perform. Task completed.\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9211,
+    "completion_tokens": 59,
+    "prompt_tokens_details": null
+  }
+}

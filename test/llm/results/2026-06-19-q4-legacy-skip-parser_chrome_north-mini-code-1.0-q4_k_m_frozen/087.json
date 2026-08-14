@@ -1,0 +1,28 @@
+{
+  "id": "087",
+  "user": "open this link in a new tab",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 3540,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+      "new_tab": true
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to open a specific URL in a new tab. The URL is https://www.cnn.com/2026/05/world/example-story/index.html\n\nI need to use the navigate tool with the new_tab parameter to open this link in a new tab. Let me check the available tools:\n\n- navigate: Go to a URL\n- new_tab: Open a new tab\n\nI think I should use navigate with a new_tab parameter, or maybe I need to use new_tab first then navigate. Let me check the tool definitions...\n\nLooking at the tools, I see:\n- navigate: Go to a URL\n- new_tab: Open a new tab\n\nI think the best approach is to use navigate with the URL, and it should open it in a new tab. Let me try that first.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://www.cnn.com/2026/05/world/example-story/index.html\", \"new_tab\": true}}\n]",
+  "usage": {
+    "completion_tokens": 214,
+    "prompt_tokens": 8482,
+    "total_tokens": 8696,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

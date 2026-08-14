@@ -1,0 +1,21 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2877,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI'm on a blank new tab page — I don't see anything to buy. What would you like me to purchase? Could you share:\n\n1. What item/product you want to buy\n2. Which website or store to buy it from",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17415,
+    "completion_tokens": 91,
+    "prompt_tokens_details": null
+  }
+}

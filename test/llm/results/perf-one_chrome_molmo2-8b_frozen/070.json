@@ -1,0 +1,22 @@
+{
+  "id": "070",
+  "user": "log in",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3571,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't see any login button or login form on this New Tab page. The page is empty and there are no visible elements to click or interact with. If you're trying to log in to a specific site, please navigate to that site first.",
+  "usage": {
+    "prompt_tokens": 8591,
+    "completion_tokens": 52,
+    "total_tokens": 8643,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

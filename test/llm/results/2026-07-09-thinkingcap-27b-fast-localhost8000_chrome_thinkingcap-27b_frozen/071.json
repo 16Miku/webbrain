@@ -1,0 +1,21 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2910,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI'm not sure what you'd like me to send — this is a fresh conversation with no prior context. Could you clarify what you'd like me to send and where?",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17412,
+    "completion_tokens": 88,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 32553,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "options": [
+        "Navigate to netflix.com in this tab",
+        "Open netflix.com in a new tab",
+        "I'll provide a specific Netflix URL"
+      ],
+      "question": "How would you like me to access Netflix?",
+      "reason": "I can only interact with the current tab or open new tabs — I cannot see or switch to other tabs you already have open."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'm currently on the New Tab page (about:home). I don't have visibility into other open tabs — I can only interact with the current tab or open new ones.\n\nWould you like me to:\n1. **Navigate to Netflix.com in this tab** (netflix.com)\n2. **Open Netflix in a new tab**\n3. Or do you have a specific Netflix URL you want me to go to (e.g., a specific show, your list, etc.)?\n",
+  "usage": {
+    "prompt_tokens": 18367,
+    "completion_tokens": 535,
+    "total_tokens": 18902,
+    "cost": 0,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0,
+      "upstream_inference_prompt_cost": 0,
+      "upstream_inference_completions_cost": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 366,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

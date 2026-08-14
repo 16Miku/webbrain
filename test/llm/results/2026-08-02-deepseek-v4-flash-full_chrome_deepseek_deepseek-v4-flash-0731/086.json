@@ -1,0 +1,40 @@
+{
+  "id": "086",
+  "user": "what does CORS stand for",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3725,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "**CORS** stands for **Cross-Origin Resource Sharing**.\n\nIt's a browser security mechanism that allows a web page running at one origin (e.g. `https://site-a.com`) to request resources from a different origin (e.g. `https://api.site-b.com`).\n\nHere's the key idea:\n\n- By default, browsers enforce the **same-origin policy**, which blocks a page from making requests to a different origin (different domain, protocol, or port) for security reasons.\n- **CORS** is the standard that lets servers *opt in* to allowing cross-origin requests. The server includes special HTTP headers — most importantly `Access-Control-Allow-Origin` — telling the browser which origins are permitted to read its responses.\n\n**How it works in practice:**\n1. Your page at `site-a.com` makes a request to `api.site-b.com`.\n2. The browser sends the request (for simple requests) or a preflight `OPTIONS` request first (for requests with custom headers, non-simple methods, etc.).\n3. The server responds with CORS headers like `Access-Control-Allow-Origin: https://site-a.com`.\n4. If the origin isn't allowed, the browser **blocks** the response from being read by the page (you'll see a CORS error in the console).\n\nSo CORS is essentially the server's way of saying: *\"I trust this other origin, so let the browser share my data with it.\"*",
+  "usage": {
+    "prompt_tokens": 23504,
+    "completion_tokens": 339,
+    "total_tokens": 23843,
+    "cost": 0.000499068,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23296,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000499068,
+      "upstream_inference_prompt_cost": 0.000438048,
+      "upstream_inference_completions_cost": 0.00006102
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 34,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

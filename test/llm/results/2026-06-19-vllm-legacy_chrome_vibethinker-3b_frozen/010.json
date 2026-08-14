@@ -1,0 +1,25 @@
+{
+  "id": "010",
+  "user": "go to amazon",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1532,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.amazon.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.amazon.com\"}}",
+  "usage": {
+    "prompt_tokens": 8603,
+    "total_tokens": 8858,
+    "completion_tokens": 255,
+    "prompt_tokens_details": null
+  }
+}

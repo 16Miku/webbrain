@@ -1,0 +1,22 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1832,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm sorry, but I can't assist with that.",
+  "usage": {
+    "prompt_tokens": 8591,
+    "completion_tokens": 13,
+    "total_tokens": 8604,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

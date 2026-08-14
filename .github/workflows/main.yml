@@ -1,0 +1,96 @@
+name: Build and Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: patch-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Build patch release notes
+        run: |
+          mkdir -p .release
+          previous_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$previous_tag" ]; then
+            base_ref="$previous_tag"
+          else
+            base_ref=$(git rev-list --max-parents=0 HEAD)
+          fi
+          git log --no-merges --pretty=format:'- %s' "$base_ref..HEAD" > .release/changelog-body.md
+          if [ ! -s .release/changelog-body.md ]; then
+            printf '%s\n' '- Packaged the current extension fixes for browser stores.' > .release/changelog-body.md
+          fi
+
+      - name: Bump patch version
+        run: node scripts/bump-version.mjs
+
+      - name: Update changelog
+        run: |
+          version=$(node -p "require('./package.json').version")
+          node scripts/update-changelog.mjs \
+            --version "$version" \
+            --date "$(date -u +%F)" \
+            --notes-file .release/changelog-body.md
+
+      - name: Commit release metadata
+        run: |
+          version=$(node -p "require('./package.json').version")
+          git add package.json package-lock.json src/chrome/manifest.json src/firefox/manifest.json src/chrome/src/ui/settings.js src/firefox/src/ui/settings.js src/chrome/ARCHITECTURE.md src/firefox/ARCHITECTURE.md CHANGELOG.md
+          git commit -m "chore: release v${version}"
+
+      - name: Rebuild distribution zips
+        run: |
+          rm -rf dist/*
+          node scripts/build-zip.mjs
+          git add -A dist
+          version=$(node -p "require('./package.json').version")
+          git commit -m "dist: rebuild submission zips for v${version}"
+
+      - name: Test
+        run: npm test
+
+      - name: Push release commits
+        run: git push origin HEAD:${{ github.ref_name }}
+
+      - name: Get release metadata
+        id: release_meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SHA=$(git rev-parse HEAD)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "SHA=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.release_meta.outputs.VERSION }}
+          target_commitish: ${{ steps.release_meta.outputs.SHA }}
+          name: Release v${{ steps.release_meta.outputs.VERSION }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.zip

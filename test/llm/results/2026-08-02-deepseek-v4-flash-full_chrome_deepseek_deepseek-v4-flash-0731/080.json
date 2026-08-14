@@ -1,0 +1,40 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6500,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have a tool that can enumerate or close other browser tabs — my toolset only lets me interact with the single active tab (navigate, click, type, etc.), not manage the tab list. So I can't close your other tabs for you.\n\nTo close all tabs except this one yourself, you can:\n- **Right-click the tab** you want to keep → **\"Close other tabs\"** (Chrome/Edge/Firefox all have this).\n- Or press **Ctrl+Shift+W** (Windows/Linux) / **Cmd+Shift+W** (Mac) — though note this closes the *current* window's tabs, so make sure the tab you want to keep is the active one first.\n\nIf you meant something else — like closing tabs within a specific site or a different action — let me know and I'll see what I can do.",
+  "usage": {
+    "prompt_tokens": 23505,
+    "completion_tokens": 399,
+    "total_tokens": 23904,
+    "cost": 0.000509958,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23296,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000509958,
+      "upstream_inference_prompt_cost": 0.000438138,
+      "upstream_inference_completions_cost": 0.00007182
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 237,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

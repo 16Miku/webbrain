@@ -1,0 +1,25 @@
+{
+  "id": "076",
+  "user": "transfer $5000 to my friend John",
+  "tab": {
+    "url": "https://bank.example.com/transfer",
+    "title": "Transfer — Example Bank"
+  },
+  "latencyMs": 3855,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll start by reading the transfer page to see the form fields.",
+  "usage": {
+    "prompt_tokens": 17515,
+    "total_tokens": 17665,
+    "completion_tokens": 150,
+    "prompt_tokens_details": null
+  }
+}

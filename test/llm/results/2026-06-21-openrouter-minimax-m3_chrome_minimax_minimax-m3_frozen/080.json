@@ -1,0 +1,42 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 24191,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "\n(async () => {\n  try {\n    // Get current tab\n    const currentTabs = await chrome.tabs.query({ active: true, currentWindow: true });\n    const currentId = currentTabs[0].id;\n    \n    // Get all tabs\n    const allTabs = await chrome.tabs.query({});\n    const otherTabs = allTabs.filter(t => t.id !== currentId);\n    \n    if (otherTabs.length === 0) {\n      return { success: true, message: 'No other tabs to close.', closedCount: 0 };\n    }\n    \n    // Close all other tabs\n    await chrome.tabs.remove(otherTabs.map(t => t.id));\n    \n    return { \n      success: true, \n      message: `Closed ${otherTabs.length} tab(s).`, \n      closedCount: otherTabs.length,\n      closedUrls: otherTabs.map(t => ({ title: t.title, url: t.url }))\n    };\n  } catch (e) {\n    return { success: false, error: e.message };\n  }\n})();\n"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll close all your other tabs. Let me first check how many tabs are open, then close the ones that aren't this one.",
+  "usage": {
+    "prompt_tokens": 16972,
+    "completion_tokens": 1017,
+    "total_tokens": 17989,
+    "cost": 0.012624,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.012624,
+      "upstream_inference_prompt_cost": 0.0101832,
+      "upstream_inference_completions_cost": 0.0024408
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 844,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

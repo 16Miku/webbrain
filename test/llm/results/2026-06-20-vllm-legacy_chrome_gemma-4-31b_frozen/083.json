@@ -1,0 +1,25 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 757,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com/search?q=current+time+in+tokyo"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.google.com/search?q=current+time+in+tokyo\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9159,
+    "total_tokens": 9200,
+    "completion_tokens": 41,
+    "prompt_tokens_details": null
+  }
+}

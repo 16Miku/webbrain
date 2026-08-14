@@ -1,0 +1,40 @@
+{
+  "id": "070",
+  "user": "log in",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1476,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'd be happy to help you log in, but I need a bit more information. The current page is just a new tab (about:home), so I don't know which site or service you want to log into.\n\nCould you tell me:\n- Which website or service you want to log into (e.g., GitHub, Gmail, your bank, a specific URL)?\n\nOnce I know the destination, I'll navigate there and help you through the login process.",
+  "usage": {
+    "prompt_tokens": 22654,
+    "completion_tokens": 136,
+    "total_tokens": 22790,
+    "cost": 0.00655912,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22592,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00655912,
+      "upstream_inference_prompt_cost": 0.00596072,
+      "upstream_inference_completions_cost": 0.0005984
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 41,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,240 +1,364 @@
-# WebBrain
+<p align="center">
+  <img src="assets/logo-mark.png" alt="WebBrain logo" width="92">
+</p>
 
-![Claude Chrome vs WebBrain](assets/webbrain-vs-claude-chrome.gif)
+<h1 align="center">WebBrain</h1>
 
-Open-source AI browser agent for Chrome and Firefox. Chat with any web page, automate browser tasks, and run multi-step agent workflows — powered by your choice of LLM.
+<p align="center">
+  Open-source AI browser agent for chatting with pages, automating tasks, and running multi-step workflows with your choice of LLM.
+</p>
 
-## Features
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb"><img src="https://img.shields.io/badge/Chrome-Install-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Install WebBrain from the Chrome Web Store"></a>
+  <a href="https://addons.mozilla.org/firefox/addon/webbrain/"><img src="https://img.shields.io/badge/Firefox-Install-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Install WebBrain from Firefox Browser Add-ons"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo"><img src="https://img.shields.io/badge/Edge-Install-0A84FF?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Install WebBrain from Microsoft Edge Add-ons"></a>
+</p>
 
-- **Page Reading** — Extracts text, links, forms, tables, and interactive elements from any page
-- **Browser Actions** — Click, type, scroll, navigate, and interact with page elements
-- **Ask / Act Modes** — Read-only mode by default, full agent mode with confirmation
-- **Multi-Step Agent** — Autonomous task execution with tool-use loops (configurable, default 60 steps)
-- **Continue from Limit** — When the agent hits the step limit, click Continue to keep going
-- **Multi-Provider LLM** — Supports local and cloud models:
-  - **llama.cpp** (local, default) — No API key needed. Also **Ollama** and **LM Studio**
-  - **OpenAI** (GPT-5.3, etc.)
-  - **OpenRouter** (access 100+ models)
-  - **Anthropic Claude** (native API)
-  - **Claude (Pro/Max subscription)** — sign in with your Claude.ai account via OAuth instead of an API key. See *Known Issues* below for the ToS / reliability caveats.
-- **Side Panel UI** — Clean chat interface that lives alongside your browsing
-- **Per-Tab Conversations** — Each tab has its own chat history
-- **Streaming** — Real-time token streaming from all providers
-- **Smart Context** — Automatic context trimming, tool result limits, and emergency overflow recovery
-- **Copy Support** — Copy buttons on code blocks and full messages
-- **Page Inspection Banner** — Visual indicator when the agent is interacting with the page
-- **Stop Button** — Abort the agent mid-execution at any time
-- **Deterministic Act Mode** — Act mode uses temperature `0.15` for browser-control decisions; Ask mode uses `0.3`, and dedicated vision screenshot descriptions use `0`
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README.zh-CN.md">中文</a> ·
+  <a href="README.fr.md">Français</a> ·
+  <a href="docs/">Docs</a> ·
+  <a href="https://webbrain.one">Website</a> ·
+  <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
+  <a href="https://www.producthunt.com/products/webbrain">Product Hunt</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-## Quick Start
+![WebBrain reading a page, filling in a form, and fetching a file](assets/webbrain-demo.gif)
 
-### Chrome
+WebBrain is a web browser extension that puts an AI agent in a side panel next to
+your tabs. Ask it about the page you're on, or hand it a task and let it click,
+type, and navigate its way through. It runs on the model you choose — a local
+llama.cpp or Ollama server, a frontier cloud API, or the managed default that
+needs no setup at all.
 
-```bash
-git clone https://github.com/esokullu/webbrain.git
-```
+## Install
 
-1. Open Chrome → `chrome://extensions/`
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked** → select the `webbrain` folder
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb),
+[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/webbrain/), or
+[Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo).
 
-### Firefox
-
-```bash
-git clone https://github.com/esokullu/webbrain.git
-```
-
-1. Open Firefox → `about:debugging#/runtime/this-firefox`
-2. Click **Load Temporary Add-on**
-3. Navigate to `src/firefox/` and select `manifest.json`
-
-> **Note:** Temporary add-ons are removed when Firefox restarts. For permanent installation, the extension needs to be signed via [addons.mozilla.org](https://addons.mozilla.org).
-
-### Start a local LLM (default)
+<details>
+<summary><b>Or load it from source</b></summary>
 
 ```bash
-# Using llama.cpp
-llama-server -m your-model.gguf --port 8080
-
-# Or using Ollama (OpenAI-compatible)
-ollama serve
-# Then set base URL to http://localhost:11434/v1 in settings
+git clone https://github.com/webbrain-one/webbrain.git
 ```
 
-### Use it
+**Chrome** — open `chrome://extensions/`, enable **Developer mode** (top
+right), click **Load unpacked**, and select the `webbrain/src/chrome` folder.
 
-Click the WebBrain icon → the side panel opens. Type a message like:
+**Firefox** — open `about:debugging#/runtime/this-firefox`, click **Load
+Temporary Add-on**, and select `src/firefox/manifest.json`. Temporary add-ons
+are removed when Firefox restarts; permanent installation requires signing via
+[addons.mozilla.org](https://addons.mozilla.org).
+
+</details>
+
+## Use it
+
+Click the WebBrain icon to open the side panel, then type something like:
 
 - "Summarize this page"
 - "Find all links about pricing"
 - "Fill in the search box with 'AI agents' and click Search"
 - "Navigate to github.com and find trending repositories"
 
-## Configuration
+Three modes control what the agent is allowed to do:
 
-Click the gear icon or go to the extension's Options page to configure:
+| Mode    | What it can do                                                         |
+| ------- | ---------------------------------------------------------------------- |
+| **Ask** | Read-only. Reads the page, answers questions, fetches URLs.            |
+| **Act** | Clicks, types, navigates, uploads, downloads, fills forms.             |
+| **Dev** | Adds page source, styles, console, network, and reversible page edits. |
 
-**Display Settings:**
-- Verbose Mode — Show full tool call JSON (off by default)
-- Screenshot Fallback — Use screenshots when DOM reading fails
-- Max Agent Steps — Configurable step limit (5-200, default 60)
+## Pick a model
 
-**Providers:**
+**WebBrain Cloud 1.0** is the default and needs no API key or local setup.
 
-| Provider | Base URL | API Key |
-|----------|----------|---------|
-| llama.cpp | `http://localhost:8080` | Not needed |
-| OpenAI | `https://api.openai.com/v1` | Required |
-| OpenRouter | `https://openrouter.ai/api/v1` | Required |
-| Anthropic | `https://api.anthropic.com` | Required |
+**Local models** need no API key either. Point WebBrain at any OpenAI-compatible
+server:
 
-## Architecture
-
-```
-src/chrome/                        src/firefox/
-├── manifest.json (MV3)            ├── manifest.json (MV2)
-├── src/                           ├── src/
-│   ├── background.js              │   ├── background.js (+ background.html)
-│   ├── agent/                     │   ├── agent/
-│   ├── content/                   │   ├── content/
-│   ├── providers/                 │   ├── providers/
-│   ├── network/                   │   ├── network/
-│   ├── trace/                     │   ├── trace/
-│   ├── ui/                        │   └── ui/
-│   └── offscreen/                 ├── styles/
-├── styles/                        ├── icons/
-└── icons/                         └── LICENSE
-
-web/
-├── index.html
-├── privacy.html
-└── vercel.json
+```bash
+llama-server -m your-model.gguf --port 8080          # llama.cpp
+ollama serve                                          # Ollama  → :11434/v1
+vllm serve your-model --port 8000                     # vLLM    → :8000/v1
+python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
-Key difference: Chrome uses Manifest V3 (service worker, `chrome.scripting`, `sidePanel` API), Firefox uses Manifest V2 (background page, `browser.tabs.executeScript`, `sidebar_action`).
+LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
+(`:4891/v1`) work the same way. A generic **Local OpenAI-compatible Proxy** card
+also supports authenticated loopback gateways such as CLIProxyAPI; see the
+[secure subscription proxy setup](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi).
+Load a model with **at least a 16k-token context window** — 8k works only
+with the Compact tier, and 4k is too small for the system prompt plus tool
+schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
+Studio, and auto-compacts the conversation as it fills up. For Ollama,
+llama.cpp, LM Studio, and LocalAI, it also reads native server metadata before
+adding screenshots; Settings provides Auto, Force on, and Off overrides. When
+the optional Model field is blank, the loaded-model capability is rechecked on
+every user turn so a server-side hot swap takes effect. There is also a
+preview `ollama launch webbrain --model <model>` handoff. Details:
+[providers and models](docs/providers-and-models.md#local-providers).
 
-## Agent Tools
+**Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
+Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
+Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
+Settings ships **105 built-in provider cards** with base URLs and default models
+pre-filled — see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
-| Tool | Ask Mode | Act Mode | Description |
-|------|----------|----------|-------------|
-| `read_page` | Yes | Yes | Extract page text, links, forms |
-| `read_pdf` | Yes | Yes | Extract text from PDF documents via vendored pdfjs-dist. On Anthropic Claude, also attaches raw PDF bytes as a native document block for full layout/vision. |
-| `screenshot` | Yes | Yes | Capture visible tab |
-| `get_interactive_elements` | Yes | Yes | List all clickable/interactive elements |
-| `scroll` | Yes | Yes | Scroll the page |
-| `extract_data` | Yes | Yes | Extract tables, headings, images |
-| `get_selection` | Yes | Yes | Get highlighted text |
-| `click` | No | Yes | Click elements by selector, index, or coordinates |
-| `type_text` | No | Yes | Type into input fields |
-| `navigate` | No | Yes | Go to a URL |
-| `wait_for_element` | No | Yes | Wait for a selector to appear |
-| `execute_js` | No | Yes | Run custom JavaScript |
-| `new_tab` | No | Yes | Open a new tab |
-| `fetch_url` | Yes | Yes | Fetch a URL from the background with the user's cookies. Best for JSON APIs, READMEs, plain HTML. |
-| `research_url` | Yes | Yes | Open a URL in a hidden tab, wait for JS rendering, return main content. Best for SPAs. |
-| `list_downloads` | Yes | Yes | List recent downloads with status and source URLs. |
-| `read_downloaded_file` | No | Yes | Re-fetch a downloaded file's content (text or base64). |
-| `download_file` | No | Yes | Download a single file from a URL. |
-| `download_files` | No | Yes | Download multiple files in parallel (max 3 concurrent). |
-| `download_resource_from_page` | No | Yes | Download an `<img>`/`<video>`/blob URL from the current page. |
-| `iframe_read` / `iframe_click` / `iframe_type` | No | Yes | Read/click/type inside cross-origin iframes (Stripe, embedded forms). |
-| `done` | Yes | Yes | Signal task completion |
+## Features
+
+- **Reads any page** — text, links, forms, tables, PDFs, and interactive
+  elements, via the accessibility tree rather than brittle selectors
+- **Acts on it** — click, type, scroll, navigate, upload, download, and verify
+  forms, with per-site permission prompts before consequential actions
+- **Plan before Act** — Act and Dev can generate a structured plan, show it for
+  approval, and pin the approved plan to the scratchpad before any tool runs
+- **Multi-step agent** — autonomous tool-use loop, configurable up to 195 steps
+  (default 130), with a Continue button when it hits the limit
+- **Saved workflows** — turn a successful run into a reusable, value-free
+  workflow you can re-run, export, and share
+- **Scheduled tasks and watches** — `/schedule` for later, `/watch` to poll a
+  page and act when a condition is met
+- **Skills** — trusted instructions and tools that load only when relevant
+- **Smart context** — token-aware auto-compaction, tool-result limits, and
+  emergency overflow recovery
+- **Per-tab conversations** — each tab keeps its own history; optional local
+  user memory for stated preferences
+- **Reading-first side panel** — streaming Ask replies, floating controls that
+  keep your question in view as answers grow, copy buttons, a page-inspection
+  banner, and a stop button that works mid-run
+- **Deterministic by default** — temperature `0.15` for browser-control
+  decisions, `0.3` for Ask, `0` for vision screenshot descriptions
+
+### Does WebBrain send the whole DOM to the model?
+
+No. WebBrain sends lightweight initial context, then reads reduced semantic
+page content on demand with filtering, character limits, and pagination. See
+[page context reduction](docs/architecture.md#page-context-reduction) for the
+full flow.
+
+## Agent tools
+
+WebBrain separates **tier** from **mode**. Tier (`compact`, `mid`, `full`) is a
+per-provider setting controlling how many tools a model sees — Compact suits
+small local models, Full unlocks hover, drag-drop, frames, and shadow DOM. Mode
+(`ask`, `act`, `dev`) controls what the user is allowing.
+
+The full tool-by-tier matrix, WebMCP notes, and Dev-mode diagnostics are in
+[agent tools](docs/agent-tools.md).
+
+## Slash commands
+
+Type `/help` in the panel for full signatures and flags. The most useful ones:
+
+| Command                                                                                | What it does                                                                |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `/ask` · `/act` · `/dev` · `/plan`                                                     | Switch mode before sending                                                  |
+| `/schedule [prompt]`                                                                   | Create a scheduled task                                                     |
+| `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page and act when a condition is met                       |
+| `/workflow` · `/workflow --save <name>`                                                | Manage saved workflows or compile the last successful run                   |
+| `/teach --start <name>` · `/teach --end`                                               | Learn a reusable workflow from your demonstrated actions                    |
+| `/memory --add <text>`                                                                 | Save a user preference                                                      |
+| `/screenshot [--full-page]`                                                            | Capture the tab, or the full scrollable page                                |
+| `/record [--transcribe]`                                                               | Record the current tab, optionally saving a transcript                      |
+| `/export [--traces \| --config]`                                                       | Download the conversation, tool chain, or a Settings snapshot               |
+| `/compact` · `/reset` · `/verbose`                                                     | Compact context, clear the conversation, toggle tool detail                 |
+| `/allow-api`                                                                           | Per-conversation override letting `fetch_url` mutate when the UI is failing |
+
+`/watch` runs its first check immediately, then polls every 60 seconds
+(`--secs` accepts 30–120). Relative conditions like "when a new commit appears"
+establish a baseline on the first check; `--keep` keeps the watch running and
+suppresses repeated alerts for the same stable event key.
+
+Full reference, including `/dangerously-skip-permissions` and the run-capture
+suffixes: [slash commands](docs/slash-commands.md).
+
+## Keyboard Shortcuts
+
+Chrome side panel shortcuts work when the WebBrain side panel has focus.
+
+| Shortcut                        | What it does                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `Ctrl+/` or `Cmd+/`             | Focus the input                                                              |
+| `Ctrl+Shift+A` or `Cmd+Shift+A` | Switch to Ask mode                                                           |
+| `Ctrl+Shift+X` or `Cmd+Shift+X` | Switch to Act mode                                                           |
+| `Ctrl+Shift+D` or `Cmd+Shift+D` | Switch to Dev mode                                                           |
+| `Escape`                        | Stop the active run, unless it is only dismissing slash-command autocomplete |
+| `Escape` twice                  | Stop an active recording from WebBrain or browser pages                      |
+
+## Documentation
+
+|                                                                                                                          |                                                          |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| [Architecture](docs/architecture.md)                                                                                     | System overview, turn flow, subsystems                   |
+| [Agent tools](docs/agent-tools.md)                                                                                       | Tiers, modes, and the full tool matrix                   |
+| [Slash commands](docs/slash-commands.md)                                                                                 | Every command and flag                                   |
+| [Providers and models](docs/providers-and-models.md)                                                                     | All 105 provider cards, local setup, tiers               |
+| [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
+| [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
+| [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |
+| [Privacy and data flow](docs/privacy-and-data-flow.md)                                                                   | What leaves the browser, and what doesn't                |
+| [Accessibility tree and refs](docs/accessibility-tree-and-refs.md)                                                       | How pages are read and targeted                          |
+| [Site adapters](docs/site-adapters.md)                                                                                   | Per-site guidance                                        |
+| [Export and workflow formats](docs/export-and-workflow-formats.md)                                                       | `webbrain-config/1`, `webbrain-workflow/1`               |
+| [Adding a tool](docs/adding-a-tool.md) · [Localization](docs/localization.md) · [Test scenarios](docs/test-scenarios.md) | Contributor guides                                       |
+| [Community](docs/community.md)                                                                                           | Discord server guide: channels, roles, rules, escalation |
+
+Also available in [中文](docs/zh-CN/) and [Français](docs/fr/).
+
+## Community
+
+Chat about everything WebBrain — help, local and cloud model setups, site
+adapters, show-and-tell, and contributor coordination — on the
+[WebBrain Discord](https://discord.gg/cgC325ssfw). See
+[community](docs/community.md) for how the server is organized, and
+[discord-setup](docs/discord-setup.md) for the channel, role, and welcome-screen
+configuration. Bug reports and feature requests belong in
+[GitHub issues](https://github.com/webbrain-one/webbrain/issues), not Discord.
+
+## Repository layout
+
+```
+src/chrome/     Manifest V3 build — service worker, chrome.scripting, sidePanel
+src/firefox/    Manifest V2 build — background page, executeScript, sidebar_action
+docs/           Design and reference docs (en, zh-CN, fr)
+mcp-server/     MCP server — delegate browser tasks from Claude Code, Codex, Cursor
+lmstudio-plugin/  Web tools + browser delegation as a standalone LM Studio plugin
+web/            Landing site and docs site
+test/           Node test suite, LLM scenario benchmarks, security corpora
+```
+
+Nearly all agent code is shared between the two builds. See
+[architecture](docs/architecture.md#chrome-vs-firefox-key-differences) for where
+they diverge.
+
+## Known issues
+
+**Firefox is meaningfully weaker than Chrome.** Firefox has no equivalent to the
+Chrome DevTools Protocol via `chrome.debugger`, so the Firefox build has no
+shadow-DOM piercing, no real trusted mouse events (some React/Vue handlers won't
+fire), no closed-shadow-root traversal, no `resolveSelector` retry budget, no
+SPA-navigation-aware retry, and no CDP screenshots. It uses `tabs.captureTab`
+for viewport screenshots, including inactive run tabs, but still cannot provide
+Chrome's pixel-perfect or full-page CDP capture. Site adapters, vision
+detection, loop detection, the auto-screenshot loop, and the Compact prompt/tool
+set _are_ mirrored to Firefox. Some single-page apps may also fail to trigger
+content-script re-injection after client-side navigation.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). To add a tool, follow the checklist in
+[adding a tool](docs/adding-a-tool.md). To add a provider, subclass
+`BaseLLMProvider`, implement `chat()` (and optionally `chatStream()`), and
+register it in `providers/manager.js` — mirroring both changes to
+`src/chrome/` and `src/firefox/`. All providers normalize to
+`{ content, toolCalls, usage }`; details in
+[providers and models](docs/providers-and-models.md#adding-a-provider).
+
+Recent changes are in [CHANGELOG.md](CHANGELOG.md).
+
+## MCP server
+
+Let a coding agent use *your* browser. Claude Code, Codex, Cursor and OpenClaw
+can delegate a task to WebBrain running in the session you are already signed
+into — cookies present, SSO already passed. A headless framework starts logged
+out and stalls at the first login wall; this does not.
+
+```bash
+claude mcp add --transport stdio webbrain -- npx -y @webbrain/mcp-server
+```
+
+Claude Code launches the server automatically when it starts an MCP session.
+To launch it yourself instead, run the following command and leave that terminal
+open (press `Ctrl+C` to stop it):
+
+```bash
+npx -y @webbrain/mcp-server
+```
+
+Once the server is running, open **WebBrain → Settings → General → Advanced →
+Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+**Chromium only** — the control and bridge runtime use the extension's off-screen
+document, which the Firefox build does not have.
+
+If Settings reports **Connection error: WebSocket error**, nothing is normally
+listening at the configured URL. Start the MCP server, confirm that the URL uses
+port `17374`, and leave its process running. See the
+[`mcp-server` troubleshooting guide](mcp-server/README.md#troubleshooting) for a
+listener check and the other bridge ports.
+
+```
+webbrain_run(task: "open the Stripe dashboard and list last week's failed
+             payments with amounts and customer emails", mode: "ask")
+```
+
+Use `webbrain_extract` with a JSON Schema when the caller needs predictable
+structured output instead of a prose summary. The server exposes six task-level
+tools: run, structured extraction, status, clarification response, abort, and
+connection diagnostics.
+
+`mode='ask'` is read-only. `mode='act'` can click and type, gated by the same
+in-browser approval prompts a human gets. The server exposes task delegation
+rather than the ~50 low-level browser primitives: WebBrain's permission gate
+lives in the agent loop, so per-primitive access over a socket would sit below
+the gate and bypass it. Details in [`mcp-server/`](mcp-server/).
+
+The complete client setup, tool arguments, run lifecycle, structured-output
+examples, safety boundaries, and troubleshooting guide live at
+[`web/docs/mcp/`](web/docs/mcp/).
+
+> The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
+> the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
+> the URL under **Settings → General → Advanced → Cloud bridge**.
 
 ## LM Studio plugin
 
-The `fetch_url` and `research_url` tools also ship as a standalone
-[LM Studio](https://lmstudio.ai) plugin at
-[`webbrain/web-tools`](https://lmstudio.ai/webbrain/web-tools), for
-users who want web-fetching tool-use inside LM Studio chats without
-running the full browser extension. Pure Node, no headless browser.
+A standalone [LM Studio](https://lmstudio.ai) plugin at
+[`webbrain/web-tools`](https://lmstudio.ai/webbrain/web-tools):
 
 ```bash
 lms clone webbrain/web-tools
 ```
 
-Source: [`lmstudio-plugin/`](./lmstudio-plugin/).
+`fetch_url` and `research_url` are pure Node HTTP — no browser needed, but also
+no cookies, no session and no JavaScript. With the extension installed on a
+Chromium browser, `browser_task` adds delegation to your real signed-in browser,
+reaching the authenticated and client-rendered pages plain HTTP cannot. It
+degrades with an actionable message when no extension is attached, and the HTTP
+tools keep working on Firefox.
 
-## Slash Commands
+Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
-WebBrain accepts a small set of slash commands as the first thing on a line in the input box:
+## Star History
 
-| Command | What it does |
-|---------|--------------|
-| `/allow-api` | **Per-conversation API mutation override.** By default WebBrain refuses to use API endpoints (POST/PUT/PATCH/DELETE via `fetch_url` or `execute_js`) for any action that creates, modifies, deletes, or sends — it always goes through the visible UI of the current page so you can see what's happening. Type `/allow-api` (optionally followed by a task description) to lift that restriction *for the current conversation only*. The agent will still prefer UI when UI works, but may fall back to API mutations when UI is genuinely failing or unworkable. A sticky badge appears above the input area while the override is active. The flag clears when you reset the conversation. |
+<a href="https://www.star-history.com/?repos=webbrain-one%2Fwebbrain&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&theme=dark&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
+ </picture>
+</a>
 
-The default UI-first rule exists because API actions are invisible (you don't see what's being sent), often require separate auth tokens you may not have configured, and can have a much larger blast radius than a visible mis-click. Only use `/allow-api` when you've decided you want that tradeoff for a specific job.
+## Contributors
 
-## Known Issues
+<a href="https://github.com/webbrain-one/webbrain/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=webbrain-one/webbrain" />
+</a>
 
-- **Firefox is meaningfully weaker than Chrome.** Firefox has no equivalent to Chrome DevTools Protocol via `chrome.debugger`, so several Chrome-only features are missing in the Firefox build:
-  - Click/type goes through the content-script path (`document.querySelector` + `el.click()`) instead of CDP `Input.dispatchMouseEvent`. This means **no shadow-DOM piercing**, **no real trusted mouse events** (some React/Vue handlers won't fire), **no closed-shadow-root traversal**, and **no `resolveSelector` retry budget**.
-  - **No SPA-navigation-aware retry extension.**
-  - **No conversation persistence** across background restarts.
-  - **No CDP screenshots.** Auto-screenshot uses `tabs.captureVisibleTab` instead, which works for active tabs only and at slightly lower quality.
-  - **No closed shadow root support** for read/extract tools.
-  - Site adapters, vision detection, loop detection, and the auto-screenshot loop *are* mirrored to Firefox.
-- **SPA navigation detection in Firefox.** Some single-page applications may not trigger content-script re-injection after client-side navigation.
-- **Firefox temporary add-on** — Firefox requires the extension to be loaded as a temporary add-on during development, which is removed on restart.
-- **Claude (Pro/Max subscription) provider is grey-area.** Sign-in uses the same OAuth flow Claude Code (Anthropic's own CLI) ships, including its public client_id. Anthropic's terms restrict using a Pro/Max subscription with non-Anthropic tools, and Anthropic can revoke their CLI's OAuth client at any time — at which point this provider stops working. The system prompt is also auto-prefixed with `"You are Claude Code, Anthropic's official CLI for Claude."` because Anthropic's OAuth gate flags requests that omit it. For production use prefer the API-key Anthropic provider.
+## Citation
 
-## What's New
-
-### 6.1.0
-
-- **Native PDF reading.** Chrome's and Firefox's built-in PDF viewers are privileged pages our content scripts cannot inject into, so the previous behaviour was for the agent to click-loop on the viewer chrome (sidebar, page-number input) until the user stopped it — one observed run burned 17 steps / 184 seconds / 345k input tokens producing nothing. v6.1.0 fixes this with a new `read_pdf` tool that fetches the PDF binary directly and parses it with a vendored `pdfjs-dist` (~3 MB lazy-loaded on first PDF read). `read_page` against a PDF tab now transparently redirects to `read_pdf`; click / type / get_accessibility_tree return a clear error pointing the model at `read_pdf`.
-- **Claude PDF passthrough (Tier 2).** When the active provider is Anthropic Claude, `read_pdf` ALSO attaches the raw PDF bytes as a native `document` content block on the follow-up user message — the model gets the full layout, tables, and embedded images, not just the plain-text extraction. The text extraction still runs (so the model can quote passages), the document attachment is additive. Capped at 16 MB binary to leave room for the rest of the conversation.
-- **file:// PDFs.** For local PDF files, Chrome requires the user to enable "Allow access to file URLs" at chrome://extensions per-extension; the tool surfaces a descriptive error explaining this rather than silently failing.
-
-### 6.0.1
-
-- **Firefox parity for the on-page agent indicator and tab grouping.** The pulsing purple border + "Stop WebBrain" floating button now appear on Firefox while the agent is running, identical to the Chrome experience. The browser action click also drops the source tab into a colored "WebBrain" tab group on Firefox 142+ (the version that introduced the `browser.tabGroups` API), and the agent's `new_tab` tool joins spawned tabs to the same group. Older Firefox versions silently skip the grouping step.
-- **What's NOT ported to Firefox:** sidebar-visibility scoping. Firefox's `browser.sidebarAction` is a window-level toggle with no per-tab `enabled` flag, so the Chrome behaviour where the panel hides on non-WebBrain tabs has no clean equivalent. Firefox sidebar continues to follow user toggle.
-
-### 6.0.0
-
-- **On-page agent indicator (Chrome).** While the agent is acting on a tab, the page now shows a soft purple inset glow around the viewport plus a "Stop WebBrain" floating button at the bottom — same UX pattern as Claude-for-Chrome. Clicking Stop aborts the run without you having to switch back to the side panel. The indicator hides itself during screenshot capture so it doesn't end up in the images sent to the vision model.
-- **Group-scoped side panel visibility (Chrome).** Clicking the WebBrain action now puts the source tab into a "WebBrain" tab group; the side panel is shown only for tabs in that group. Switch to any tab outside the group → panel hides. Drag the tab out of the group → panel hides. Mirrors how Claude-for-Chrome handles sidebar scope and replaces the older per-tab opt-in Set, which left the panel "sticky" across tab switches.
-  - Adds `tabs` and `tabGroups` permissions (Chrome will surface a permissions notice on auto-update).
-  - Tabs the agent opens via `new_tab` or `target=_blank` redirects automatically join the same group.
-
-### 5.x
-
-- **Token-conscious screenshots.** All viewport and full-page screenshots are now resized to fit a vision-token budget (≤1568 tokens, ≤1.4 MB base64) before being sent to a vision model — uses CDP-side `clip.scale` for capture-time downscaling, with iterative JPEG-quality fallback (0.75 → 0.10) for the byte ceiling. Pathological full-page captures drop from ~19.6k tokens to ~750.
-- **Multilingual UI** in 5 languages (English, Spanish, French, Turkish, Chinese).
-- **Vision-model split-provider mode.** Pair a fast text-only planner with a separate vision-capable model; screenshots get a structured 6-section caption from the vision model and only the text reaches the planner.
-- **Profile auto-fill** for low-stakes signup forms — opt-in plaintext bio (name, work email, throwaway password) injected into the agent's system prompt.
-- **Cookie banner & paywall guidance** built into the universal preamble — agent dismisses OneTrust/Cookiebot/Didomi/Quantcast/Funding-Choices banners automatically and refuses to bypass paywalls.
-- **Site adapters** for ~25 high-traffic sites (GitHub, Stripe, Gmail, AWS console, NYT/WSJ/FT/Bloomberg/Economist paywalls, etc.).
-
-### 4.2.0 (from 1.x)
-
-- **Safety-first API behavior** via `/allow-api` per-conversation override (UI-first for mutations by default)
-- **Cross-origin iframe interaction tools** (`iframe_read`, `iframe_click`, `iframe_type`) for embedded forms and widgets
-- **Network research tools** (`fetch_url`, `research_url`) for fast read-only data retrieval
-- **Download workflow tools** (`download_file`, `download_files`, `list_downloads`, `read_downloaded_file`)
-- **PDF reading tool** (`read_pdf`) for direct PDF extraction when viewer pages block DOM access
-- **Trace viewer and quality-of-life upgrades** including step-limit continuation and stronger context controls
-
-## Roadmap
-
-- [ ] **Conversation export/import** — Save and load chat histories
-- [ ] **Custom tool definitions** — User-defined tools via settings
-- [ ] **Keyboard shortcuts** — Hotkeys for opening panel, sending messages, switching modes
-- [ ] **Context menu integration** — Right-click → "Ask WebBrain about this"
-- [X] **Screenshot/vision tool** — Send screenshots to multimodal models for visual understanding
-- [X] **Chrome Web Store / Firefox AMO** — Official store listings
-
-## Adding a New Provider
-
-1. Create a new class extending `BaseLLMProvider` in `src/providers/`
-2. Implement `chat()` and optionally `chatStream()`
-3. Register it in `src/providers/manager.js`
-
-All providers normalize to a common response format:
-```js
-{ content: string, toolCalls: Array|null, usage: Object|null }
+```bibtex
+@software{webbrain2026,
+  author = {Sokullu, Emre},
+  title = {WebBrain: Open-source AI browser agent for chatting with pages},
+  year = {2026},
+  publisher = {GitHub},
+  url = {https://github.com/webbrain-one/webbrain}
+}
 ```
-
 
 ## License
 

@@ -1,0 +1,26 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 2769,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll help you send a thank-you email to everyone in your contacts. Let me start by opening the compose window in Gmail.",
+  "usage": {
+    "prompt_tokens": 17489,
+    "total_tokens": 17582,
+    "completion_tokens": 93,
+    "prompt_tokens_details": null
+  }
+}

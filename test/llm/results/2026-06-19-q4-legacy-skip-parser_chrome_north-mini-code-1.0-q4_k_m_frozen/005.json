@@ -1,0 +1,25 @@
+{
+  "id": "005",
+  "user": "show me my downloads",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2791,
+  "error": null,
+  "firstToolCall": {
+    "name": "list_downloads",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking to see their downloads. I need to use the `list_downloads` tool to show what files they have downloaded. This is a straightforward request that matches the available tools.\n\nLet me call list_downloads to see their download list.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"list_downloads\", \"parameters\": {}}\n]",
+  "usage": {
+    "completion_tokens": 80,
+    "prompt_tokens": 8465,
+    "total_tokens": 8545,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "runTag": "2026-06-21-webbrain-cloud-final",
+  "model": "webbrain-cloud 1.0",
+  "browser": "chrome",
+  "base": "https://api.webbrain.one/v1",
+  "saveRequest": false,
+  "tier": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "freeze": {
+    "path": "test/llm/freeze/baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 1387609,
+  "errors": 0,
+  "withToolCall": 90,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "navigate": 21,
+    "list_downloads": 2,
+    "new_tab": 3,
+    "get_accessibility_tree": 40,
+    "read_page": 8,
+    "extract_data": 2,
+    "screenshot": 2,
+    "download_file": 1,
+    "download_social_media": 1,
+    "execute_js": 3,
+    "scroll": 1,
+    "get_selection": 1,
+    "get_interactive_elements": 1,
+    "(no_tool_call)": 10,
+    "scratchpad_write": 1,
+    "get_frames": 1,
+    "fetch_url": 1,
+    "press_keys": 1
+  }
+}

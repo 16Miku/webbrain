@@ -1,0 +1,38 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 30345,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have a tool to close browser tabs — the available tools only let me interact with the *current* page (click, type, navigate, scroll, etc.). Tab management (closing, pinning, moving tabs) isn't exposed to the extension.\n\nYou can close all other tabs manually:\n- **Right-click this tab** → \"Close other tabs\"\n- **Keyboard shortcut**: `Ctrl+Shift+W` (Windows/Linux) or `Cmd+Shift+W` (Mac) closes the current window; `Ctrl+W` / `Cmd+W` closes the active tab repeatedly\n- **Middle-click** each tab you want to close\n\nIf you'd like me to do something *within* this page (or navigate somewhere and act there), I'm ready.",
+  "usage": {
+    "prompt_tokens": 18368,
+    "completion_tokens": 284,
+    "total_tokens": 18652,
+    "cost": 0,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0,
+      "upstream_inference_prompt_cost": 0,
+      "upstream_inference_completions_cost": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 141,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

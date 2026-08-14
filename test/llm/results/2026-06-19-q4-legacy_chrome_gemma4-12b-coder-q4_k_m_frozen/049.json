@@ -1,0 +1,27 @@
+{
+  "id": "049",
+  "user": "compose an email to alice@example.com",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1617,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\": \"get_accessibility_tree\", \"arguments\": {\"filter\": \"visible\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 142,
+    "prompt_tokens": 9360,
+    "total_tokens": 9502,
+    "prompt_tokens_details": {
+      "cached_tokens": 9102
+    }
+  }
+}

@@ -13,9 +13,23 @@
 //   node test/llm/run-scenarios.mjs --base https://openrouter.ai/api/v1 --model openai/gpt-oss-20b --api-key $OPENROUTER_API_KEY
 //   node test/llm/run-scenarios.mjs --browser firefox
 //
+// Prompt + tool tier:
+//   --mode act|ask|dev   # override scenario mode; Dev requires --tier mid|full
+//   --tier full           # SYSTEM_PROMPT_ACT + full tool set (default)
+//   --tier mid            # SYSTEM_PROMPT_ACT_MID + MID_TOOL_NAMES subset
+//   --tier compact        # SYSTEM_PROMPT_ACT_COMPACT + COMPACT_TOOL_NAMES subset
+//
+// Local chat-template compatibility:
+//   --chat-template-compat off|fold-system|alternating|alternating-tools
+//   # or set env: LLM_CHAT_TEMPLATE_COMPAT=alternating
+//
+// Freeze (pin everything to a previous snapshot, ignores --tier):
+//   --freeze freeze/baseline-2026-05-23.json
+//   # or set env: WB_FREEZE_BASELINE=freeze/baseline-2026-05-23.json
+//
 // Output:
-//   test/llm/results-scenarios/<tag>_<browser>_<model>/NNN.json
-//   test/llm/results-scenarios/<tag>_<browser>_<model>/summary.json
+//   test/llm/results-scenarios/<tag>_<browser>_<model>[_dev][_mid|_compact|_frozen]/NNN.json
+//   test/llm/results-scenarios/<tag>_<browser>_<model>[_dev][_mid|_compact|_frozen]/summary.json
 //
 // Heuristic scoring (the judge LLM is OUT of scope for this runner — the
 // rubric strings are written for a separate judge pass). Each scenario
@@ -31,6 +45,21 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildScenarioPayload } from './lib/scenario-payload.mjs';
+import {
+  isActionMode,
+  isFrozen,
+  getFrozenMeta,
+  loadFrozenBaseline,
+  normalizeMode,
+  normalizeTier,
+} from './lib/build-payload.mjs';
+import { scoreVerdict } from './lib/score.mjs';
+import {
+  chatTemplateCompatLabel,
+  getChatTemplateCompat,
+  prepareMessagesForChatTemplate,
+  prepareToolsForChatTemplate,
+} from './lib/chat-template-compat.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const S_DIR = join(HERE, 'scenarios');
@@ -40,6 +69,7 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === '--help' || a === '-h') { out.help = true; continue; }
     if (!a.startsWith('--')) continue;
     const key = a.slice(2);
     const next = argv[i + 1];
@@ -49,7 +79,58 @@ function parseArgs(argv) {
   return out;
 }
 
+function printHelp() {
+  process.stdout.write(`Usage:
+  node test/llm/run-scenarios.mjs [options]
+
+Endpoint:
+  --base URL                         OpenAI-compatible base URL (default: http://localhost:8080)
+  --url URL                          Full /v1/chat/completions URL
+  --model NAME                       Model name (default: local)
+  --api-key KEY | --token KEY        Bearer token
+
+Selection:
+  --only IDS                         Comma-separated scenario ids, e.g. 81,82,90
+  --category NAME                    Run only one scenario category
+  --browser chrome|firefox           Browser prompt/tool source (default: chrome)
+  --mode ask|act|dev                 Override scenario mode; Dev requires Mid/Full tier
+  --tier full|mid|compact            Prompt/tool tier; ignored with --freeze
+  --freeze PATH                      Pin system prompt + tools to a snapshot
+  --unprotected                      Strip wrapper + untrusted-content instructions
+
+Run:
+  --tag NAME                         Results tag; default is current timestamp
+  --concurrency N                    Parallel requests (default: 2)
+  --timeout MS                       Per-request timeout (default: 90000)
+  --no-save-request                  Do not write request payloads into result files
+
+Local chat-template compatibility:
+  --chat-template-compat off
+      Send normal OpenAI-style system/user/tool messages and structured tools.
+  --chat-template-compat fold-system
+      Fold system messages into user messages; keep structured tools.
+  --chat-template-compat alternating
+      Alternating user/assistant transcript with no structured tools; asks for text <tool_call>.
+      Use this to reproduce earlier Molmo text-call fallback behavior.
+  --chat-template-compat alternating-tools
+      Alternating user/assistant transcript while still sending structured tools.
+
+Environment:
+  LLM_BASE_URL, LLM_CHAT_URL, LLM_MODEL, LLM_API_KEY, OPENROUTER_API_KEY
+  LLM_CHAT_TEMPLATE_COMPAT, WB_FREEZE_BASELINE
+
+Examples:
+  node test/llm/run-scenarios.mjs --base http://127.0.0.1:1234 --model molmo2-8b --only 81,88
+  node test/llm/run-scenarios.mjs --base "$BASE" --model "$MODEL" --freeze freeze/baseline-2026-05-23.json --chat-template-compat alternating
+`);
+}
+
 const args = parseArgs(process.argv.slice(2));
+if (args.help) {
+  printHelp();
+  process.exit(0);
+}
+
 const BASE = args.base || process.env.LLM_BASE_URL || 'http://localhost:8080';
 const CHAT_URL = args.url || process.env.LLM_CHAT_URL || chatCompletionsUrl(BASE);
 const MODEL = args.model || process.env.LLM_MODEL || 'local';
@@ -58,6 +139,24 @@ const BROWSER = args.browser || 'chrome';
 const CONCURRENCY = Math.max(1, parseInt(args.concurrency || '2', 10));
 const TIMEOUT_MS = parseInt(args.timeout || '90000', 10);
 const SAVE_REQUEST = !args['no-save-request'];
+const CHAT_TEMPLATE_COMPAT = getChatTemplateCompat({
+  model: MODEL,
+  value: args['chat-template-compat'],
+});
+
+// --mode ask|act|dev — optional override of the mode stored in each scenario.
+// --tier full|mid|compact — picks SYSTEM_PROMPT_ACT[_MID|_COMPACT] and the
+// corresponding tool subset. Default: full. ASK-mode scenarios ignore tier.
+// --freeze <path> — alternative to WB_FREEZE_BASELINE env var. If set,
+// system prompt + tools come from the snapshot and --tier is ignored.
+if (args.freeze && args.freeze !== true) {
+  loadFrozenBaseline(args.freeze);
+}
+const TIER = normalizeTier(args.tier);
+const MODE_OVERRIDE = args.mode == null ? null : normalizeMode(args.mode);
+// --unprotected: ABLATION. Strip BOTH the untrusted-content wrapper from the
+// seed AND the untrusted-content instructions from the system prompt.
+const UNPROTECTED = !!args.unprotected;
 
 const onlySet = args.only && args.only !== true
   ? new Set(String(args.only).split(',').map(s => String(parseInt(s, 10)).padStart(3, '0')))
@@ -65,7 +164,10 @@ const onlySet = args.only && args.only !== true
 const categoryFilter = args.category && args.category !== true ? String(args.category) : null;
 
 const runTag = args.tag || new Date().toISOString().replace(/[:.]/g, '-');
-const runDir = join(RESULTS_DIR, `${runTag}_${BROWSER}_${MODEL.replace(/[^\w.-]+/g, '_')}`);
+const tagSuffix = (isFrozen()
+  ? '_frozen'
+  : `${MODE_OVERRIDE === 'dev' ? '_dev' : ''}${TIER === 'full' ? '' : `_${TIER}`}`) + (UNPROTECTED ? '_unprotected' : '');
+const runDir = join(RESULTS_DIR, `${runTag}_${BROWSER}_${MODEL.replace(/[^\w.-]+/g, '_')}${tagSuffix}`);
 mkdirSync(runDir, { recursive: true });
 
 function chatCompletionsUrl(base) {
@@ -81,10 +183,22 @@ function requestHeaders() {
   return h;
 }
 
+// Scenarios live flat in scenarios/ plus foldered under scenarios/security/
+// {protected,unprotected}/. Walk recursively and match NNN.json by basename;
+// ids are globally unique so --only / sorting are unaffected by folder.
+function walkScenarioFiles(dir) {
+  const out = [];
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...walkScenarioFiles(p));
+    else if (/^\d{3}\.json$/.test(ent.name)) out.push(p);
+  }
+  return out;
+}
+
 function loadAll() {
-  return readdirSync(S_DIR)
-    .filter(f => /^\d{3}\.json$/.test(f))
-    .map(f => JSON.parse(readFileSync(join(S_DIR, f), 'utf8')))
+  return walkScenarioFiles(S_DIR)
+    .map(p => JSON.parse(readFileSync(p, 'utf8')))
     .filter(s => !onlySet || onlySet.has(s.id))
     .filter(s => !categoryFilter || s.category === categoryFilter)
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -92,54 +206,22 @@ function loadAll() {
 
 const scenarios = loadAll();
 
+const promptMode = isFrozen()
+  ? `frozen (${getFrozenMeta()?.sourceRun || 'unknown source'} @ ${getFrozenMeta()?.runTag || ''})`
+  : `mode=${MODE_OVERRIDE || 'scenario'}, tier=${TIER}`;
 console.error(`▸ ${scenarios.length} scenario(s), base=${BASE}, model=${MODEL}, browser=${BROWSER}, concurrency=${CONCURRENCY}`);
 if (categoryFilter) console.error(`▸ category=${categoryFilter}`);
 console.error(`▸ endpoint=${CHAT_URL}`);
+console.error(`▸ prompt: ${promptMode}${UNPROTECTED ? ' — ⚠ UNPROTECTED (wrapper + untrusted-content instructions stripped)' : ''}`);
+if (CHAT_TEMPLATE_COMPAT.mode !== 'off') {
+  console.error(`▸ chat template compat: ${chatTemplateCompatLabel(CHAT_TEMPLATE_COMPAT)}`);
+}
 console.error(`▸ writing to ${runDir}`);
 
-// Render a tool call as a stable signature string for antiPattern matching.
-// Format: name({arg1:"val", arg2:N}) — keys alphabetized, strings JSON-quoted,
-// other types JSON-stringified. Matches the format used in scenario rubrics.
-function renderCall(name, args) {
-  const keys = Object.keys(args || {}).sort();
-  const parts = keys.map(k => {
-    const v = args[k];
-    return `${k}:${JSON.stringify(v)}`;
-  });
-  return `${name}({${parts.join(', ')}})`;
-}
-
-function matchesAntiPattern(call, antiPatterns) {
-  if (!call || !antiPatterns?.length) return null;
-  const sig = renderCall(call.name, call.args);
-  for (const ap of antiPatterns) {
-    // Two strategies:
-    // 1. Strict prefix-match on the rendered signature (handles canonical form)
-    // 2. Substring match treating the antiPattern as a fragment
-    if (sig === ap.match || sig.startsWith(ap.match)) return ap;
-    // Loose: pattern often uses {key:"val"} short-form. Strip and substring-match.
-    const looseAp = ap.match.replace(/\s+/g, '');
-    const looseSig = sig.replace(/\s+/g, '');
-    if (looseSig.includes(looseAp) || looseAp.includes(call.name)) {
-      // require name match at minimum
-      if (looseAp.startsWith(call.name + '(')) return ap;
-    }
-  }
-  return null;
-}
-
-function deepEqual(a, b) {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (typeof a !== 'object' || a == null || b == null) return false;
-  const ka = Object.keys(a).sort(); const kb = Object.keys(b).sort();
-  if (ka.length !== kb.length) return false;
-  for (let i = 0; i < ka.length; i++) {
-    if (ka[i] !== kb[i]) return false;
-    if (!deepEqual(a[ka[i]], b[kb[i]])) return false;
-  }
-  return true;
-}
+// Scoring (renderCall / matchesAntiPattern / deepEqual / scoreVerdict) lives in
+// ./lib/score.mjs so the live runner and regrade.mjs share ONE grader — and the
+// wildcard ("...") antiPattern handling + the `empty` verdict stay consistent
+// between a live run and a re-score.
 
 // Same content-fallback parser as run-llamacpp.mjs (kept inline to avoid
 // runner-runner coupling).
@@ -152,6 +234,10 @@ function extractToolCallFromContent(text) {
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) candidates.push(trimmed);
   for (const raw of candidates) {
     try { return normalizeToolCall(JSON.parse(raw)); } catch {}
+  }
+  const callMatch = trimmed.match(/^([A-Za-z_][\w.-]*)\s*\(([\s\S]*)\)\s*;?$/);
+  if (callMatch) {
+    return { name: callMatch[1], args: callMatch[2].trim() ? safeParse(callMatch[2]) : {} };
   }
   return null;
 }
@@ -171,14 +257,17 @@ function normalizeToolCall(obj) {
 function safeParse(s) { try { return JSON.parse(s); } catch { return {}; } }
 
 async function runOne(scenario) {
-  const payload = buildScenarioPayload({ ...scenario, browser: scenario.browser || BROWSER });
+  const mode = MODE_OVERRIDE || normalizeMode(scenario.mode);
+  const payload = buildScenarioPayload({ ...scenario, browser: scenario.browser || BROWSER, mode }, { tier: TIER, unprotected: UNPROTECTED });
+  const messages = prepareMessagesForChatTemplate(payload.messages, CHAT_TEMPLATE_COMPAT, { tools: payload.tools });
+  const tools = prepareToolsForChatTemplate(payload.tools, CHAT_TEMPLATE_COMPAT);
   const body = {
     model: MODEL,
-    temperature: scenario.mode === 'act' ? 0.15 : 0.3,
+    temperature: isActionMode(mode) ? 0.15 : 0.3,
     max_tokens: 4096,
-    messages: payload.messages,
-    tools: payload.tools,
+    messages,
   };
+  if (tools) body.tools = tools;
 
   const t0 = Date.now();
   const ctrl = new AbortController();
@@ -217,22 +306,23 @@ async function runOne(scenario) {
     if (fb) { firstToolCall = fb; toolCallSource = 'content_fallback'; }
   }
 
-  // Scoring
-  const ideal = scenario.expected.idealNextToolCall;
-  const anti = matchesAntiPattern(firstToolCall, scenario.expected.antiPatterns);
-  let verdict = 'other';
-  if (error) verdict = 'error';
-  else if (!firstToolCall) verdict = 'no_tool';
-  else if (anti) verdict = 'anti';
-  else if (firstToolCall.name === ideal.name) {
-    verdict = deepEqual(firstToolCall.args, ideal.args) ? 'ideal' : 'ideal_name';
-  }
+  // Scoring (shared grader — see ./lib/score.mjs for the verdict taxonomy).
+  const { verdict, matchedAntiPattern } = scoreVerdict({
+    error,
+    firstToolCall,
+    content: msg?.content,
+    expected: scenario.expected,
+  });
+  const anti = matchedAntiPattern;
+  const scoreNote = (!firstToolCall && verdict === 'ideal_name')
+    ? `prose answer credited as ${scenario.expected.idealNextToolCall.name} (terminal tool; summary not arg-matched)`
+    : null;
 
   return {
     id: scenario.id,
     category: scenario.category,
     description: scenario.description,
-    mode: scenario.mode,
+    mode,
     browser: scenario.browser || BROWSER,
     latencyMs,
     error,
@@ -241,10 +331,14 @@ async function runOne(scenario) {
     expected: scenario.expected,
     matchedAntiPattern: anti || null,
     verdict,
+    scoreNote,
     finishReason: response?.choices?.[0]?.finish_reason || null,
     content: msg?.content || null,
     usage: response?.usage || null,
-    request: SAVE_REQUEST ? { messages: payload.messages, tools_summary: { count: payload.tools.length } } : undefined,
+    request: SAVE_REQUEST ? {
+      messages: body.messages,
+      tools_summary: { count: payload.tools.length, sent: !!tools },
+    } : undefined,
   };
 }
 
@@ -290,12 +384,24 @@ const byVerdict = results.reduce((a, r) => { a[r.verdict] = (a[r.verdict] || 0) 
 const byCategory = {};
 for (const r of results) {
   const c = r.category || 'unknown';
-  if (!byCategory[c]) byCategory[c] = { ideal: 0, ideal_name: 0, anti: 0, other: 0, no_tool: 0, error: 0 };
+  if (!byCategory[c]) byCategory[c] = { ideal: 0, ideal_name: 0, anti: 0, other: 0, no_tool: 0, empty: 0, error: 0 };
   byCategory[c][r.verdict] = (byCategory[c][r.verdict] || 0) + 1;
 }
 
 const summary = {
   runTag, model: MODEL, base: BASE, browser: BROWSER,
+  tier: isFrozen() ? null : TIER,
+  modeOverride: isFrozen() ? null : MODE_OVERRIDE,
+  unprotected: UNPROTECTED,
+  chatTemplateCompat: CHAT_TEMPLATE_COMPAT.mode,
+  structuredToolsSent: !CHAT_TEMPLATE_COMPAT.omitStructuredTools,
+  freeze: isFrozen() ? {
+    path: args.freeze && args.freeze !== true ? args.freeze : (process.env.WB_FREEZE_BASELINE || null),
+    sourceRun: getFrozenMeta()?.sourceRun || null,
+    sourceRunTag: getFrozenMeta()?.runTag || null,
+    systemHash: getFrozenMeta()?.systemHash || null,
+    toolCount: getFrozenMeta()?.toolCount || null,
+  } : null,
   scenarios: results.length,
   totalLatencyMs: elapsed,
   byVerdict,
@@ -310,6 +416,6 @@ for (const [cat, dist] of Object.entries(byCategory)) {
   const total = Object.values(dist).reduce((a, b) => a + b, 0);
   const ideal = (dist.ideal || 0) + (dist.ideal_name || 0);
   const anti = dist.anti || 0;
-  console.error(`    ${cat.padEnd(20)} ideal=${ideal}/${total}  anti=${anti}  other=${dist.other || 0}  no_tool=${dist.no_tool || 0}`);
+  console.error(`    ${cat.padEnd(20)} ideal=${ideal}/${total}  anti=${anti}  other=${dist.other || 0}  no_tool=${dist.no_tool || 0}  empty=${dist.empty || 0}`);
 }
 console.error(`▸ ${join(runDir, 'summary.json')}`);

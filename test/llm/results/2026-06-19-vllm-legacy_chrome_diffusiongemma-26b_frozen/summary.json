@@ -1,0 +1,35 @@
+{
+  "runTag": "2026-06-19-vllm-legacy",
+  "model": "diffusiongemma-26b",
+  "browser": "chrome",
+  "base": "http://127.0.0.1:8000",
+  "saveRequest": false,
+  "tier": null,
+  "chatTemplateCompat": "alternating",
+  "structuredToolsSent": false,
+  "freeze": {
+    "path": "test/llm/freeze/baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 37771,
+  "errors": 0,
+  "withToolCall": 79,
+  "withToolCallFromContent": 79,
+  "byTool": {
+    "navigate": 19,
+    "list_downloads": 2,
+    "(no_tool_call)": 21,
+    "new_tab": 4,
+    "get_accessibility_tree": 44,
+    "read_page": 2,
+    "extract_data": 2,
+    "download_resource_from_page": 2,
+    "download_social_media": 1,
+    "scroll": 1,
+    "execute_js": 2
+  }
+}

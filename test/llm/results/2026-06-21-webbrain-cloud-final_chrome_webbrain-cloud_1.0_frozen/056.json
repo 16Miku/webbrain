@@ -1,0 +1,42 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 13828,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "(function() {\n  // Try to get thumbnail from ytInitialPlayerResponse\n  var data = document.getElementById('yt-initial-player-response') || document.getElementById('yt-player-data');\n  if (data) {\n    try {\n      var json = JSON.parse(data.textContent || data.innerText || data.innerHTML);\n      if (json && json.videoDetails && json.videoDetails.thumbnail) {\n        return {source: 'ytInitialPlayerResponse', thumbnails: json.videoDetails.thumbnail};\n      }\n    } catch(e) {}\n  }\n  // Try meta tags\n  var meta = document.querySelector('meta[property=\"og:image\"]');\n  if (meta) {\n    return {source: 'og:image', url: meta.content};\n  }\n  // Fallback: construct from video ID\n  var videoId = new URLSearchParams(window.location.search).get('v');\n  if (videoId) {\n    return {source: 'constructed', url: 'https://img.youtube.com/vi/' + videoId + '/maxresdefault.jpg'};\n  }\n  return null;\n})()"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17764,
+    "completion_tokens": 499,
+    "total_tokens": 18263,
+    "cost": 0.00138233,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00138233,
+      "upstream_inference_prompt_cost": 0.00080848,
+      "upstream_inference_completions_cost": 0.00057385
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

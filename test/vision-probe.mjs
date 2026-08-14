@@ -6,23 +6,24 @@
 // actually capable of the terse structured caption the planner needs.
 //
 // Usage:
-//   node test/vision-probe.mjs <image-path> [endpoint] [model]
+//   node vision-probe.mjs <image-path> [endpoint] [model]
 //
 // Examples:
-//   node test/vision-probe.mjs ./screenshot.png
-//   node test/vision-probe.mjs ./screenshot.png http://127.0.0.1:8080 Gemma-4-E2B-It
-//   node test/vision-probe.mjs ./screenshot.png http://localhost:11434/v1 llava:13b
+//   node vision-probe.mjs ./screenshot.png
+//   node vision-probe.mjs ./screenshot.png http://127.0.0.1:8080 Gemma-4-E2B-It
+//   node vision-probe.mjs ./screenshot.png http://localhost:11434/v1 llava:13b
 //
 // The endpoint may be given with or without /v1 — we append /v1/chat/completions
 // if it isn't already there.
 //
-// No API key handling: this script is meant for local/offline servers. If
-// your endpoint needs a bearer token, set VISION_PROBE_KEY in the env.
+// The script defaults to unauthenticated local/offline servers. Hosted probes
+// can supply a bearer or Api-Key credential through VISION_PROBE_KEY.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
 import https from 'node:https';
+import crypto from 'node:crypto';
 import { URL } from 'node:url';
 
 // Keep these two constants in sync with src/chrome/src/agent/agent.js —
@@ -43,11 +44,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 const USER_TEXT = 'Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.';
 
 function usage() {
-  console.error(`usage: node test/vision-probe.mjs <image-path> [endpoint] [model]
+  console.error(`usage: node vision-probe.mjs <image-path> [endpoint] [model]
 
 Defaults:
   endpoint = http://127.0.0.1:8080
   model    = (omitted — the server decides)
+
+Env:
+  VISION_PROBE_KEY=<secret>  API key for hosted endpoints
+  VISION_PROBE_AUTH_SCHEME=Bearer|Api-Key
+                              Authorization scheme (default: Bearer)
+  VISION_PROBE_OUTPUT=<path> Save a machine-readable JSON result without
+                              request headers or API keys
+  VISION_PROBE_FOLD_SYSTEM=1  fold system prompt into user text for
+                              templates that reject system messages
 `);
   process.exit(2);
 }
@@ -78,21 +88,34 @@ console.error(`[info] size:     ${bytes.length} bytes  mime: ${mime}`);
 console.error(`[info] endpoint: ${endpoint}`);
 if (modelArg) console.error(`[info] model:    ${modelArg}`);
 
+const foldSystemIntoUser = process.env.VISION_PROBE_FOLD_SYSTEM
+  ? process.env.VISION_PROBE_FOLD_SYSTEM !== '0'
+  : /molmo/i.test(modelArg || '');
+if (foldSystemIntoUser) {
+  console.error('[info] system:   folded into user message for chat-template compatibility');
+}
+
+const userContent = [
+  {
+    type: 'text',
+    text: foldSystemIntoUser
+      ? `${VISION_SYSTEM_PROMPT}\n\nUser request:\n${USER_TEXT}`
+      : USER_TEXT,
+  },
+  { type: 'image_url', image_url: { url: dataUrl } },
+];
+
 // Stream the response so headers arrive immediately. With stream:false,
 // large models (300B+ at low quant) can blow past undici's 5-minute
 // headers timeout during prompt-eval and trip UND_ERR_HEADERS_TIMEOUT
 // before the first byte. Generation content is identical either way.
 const body = {
-  messages: [
-    { role: 'system', content: VISION_SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: USER_TEXT },
-        { type: 'image_url', image_url: { url: dataUrl } },
+  messages: foldSystemIntoUser
+    ? [{ role: 'user', content: userContent }]
+    : [
+        { role: 'system', content: VISION_SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
       ],
-    },
-  ],
   temperature: 0,
   max_tokens: 800,
   stream: true,
@@ -110,7 +133,8 @@ if (modelArg) body.model = modelArg;
 
 const headers = { 'Content-Type': 'application/json' };
 if (process.env.VISION_PROBE_KEY) {
-  headers['Authorization'] = `Bearer ${process.env.VISION_PROBE_KEY}`;
+  const authScheme = String(process.env.VISION_PROBE_AUTH_SCHEME || 'Bearer').trim() || 'Bearer';
+  headers['Authorization'] = `${authScheme} ${process.env.VISION_PROBE_KEY}`;
 }
 
 // Use node:http directly instead of fetch — undici's default 5-minute
@@ -136,7 +160,8 @@ req.on('error', (e) => {
 req.write(reqBody);
 req.end();
 const res = await new Promise((resolve) => req.once('response', resolve));
-console.error(`[info] status ${res.statusCode}  ${Date.now() - t0} ms (headers)`);
+const headersLatencyMs = Date.now() - t0;
+console.error(`[info] status ${res.statusCode}  ${headersLatencyMs} ms (headers)`);
 
 if (res.statusCode < 200 || res.statusCode >= 300) {
   let buf = '';
@@ -197,3 +222,42 @@ console.error(`[info] total: ${Date.now() - t0} ms`);
 if (reasoning) console.error(`[info] reasoning: ${reasoning.length} chars (suppressed; see model docs to disable)`);
 console.error(`[info] usage:   ${JSON.stringify(usage2)}`);
 if (timings) console.error(`[info] timings: prompt ${timings.prompt_n}t/${timings.prompt_ms?.toFixed(0)}ms (${timings.prompt_per_second?.toFixed(2)}t/s), predict ${timings.predicted_n}t/${timings.predicted_ms?.toFixed(0)}ms (${timings.predicted_per_second?.toFixed(2)}t/s)`);
+
+if (process.env.VISION_PROBE_OUTPUT) {
+  const outputPath = path.resolve(process.env.VISION_PROBE_OUTPUT);
+  const result = {
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    model: modelArg || null,
+    endpoint,
+    image: {
+      path: path.relative(process.cwd(), imgPath).replaceAll('\\', '/'),
+      bytes: bytes.length,
+      sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+      mime,
+    },
+    request: {
+      systemPrompt: VISION_SYSTEM_PROMPT,
+      userText: USER_TEXT,
+      temperature: body.temperature,
+      maxTokens: body.max_tokens,
+      foldSystemIntoUser,
+      chatTemplateKwargs: body.chat_template_kwargs,
+    },
+    response: {
+      status: res.statusCode,
+      content,
+      reasoningChars: reasoning.length,
+      usage: usage2,
+      timings,
+    },
+    latencyMs: {
+      headers: headersLatencyMs,
+      firstToken: firstTokenAt === null ? null : firstTokenAt - t0,
+      total: Date.now() - t0,
+    },
+  };
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  console.error(`[info] saved:   ${outputPath}`);
+}

@@ -1,0 +1,40 @@
+{
+  "id": "039",
+  "user": "verify the form is ready before submitting",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain/releases/new",
+    "title": "New Release"
+  },
+  "latencyMs": 2739,
+  "error": null,
+  "firstToolCall": {
+    "name": "verify_form",
+    "args": {}
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17887,
+    "completion_tokens": 54,
+    "total_tokens": 17941,
+    "cost": 0.001434816,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17024,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.001434816,
+      "upstream_inference_prompt_cost": 0.001365696,
+      "upstream_inference_completions_cost": 0.00006912
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 35,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

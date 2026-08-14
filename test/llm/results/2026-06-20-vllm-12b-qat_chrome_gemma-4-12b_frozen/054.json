@@ -1,0 +1,26 @@
+{
+  "id": "054",
+  "user": "download this image",
+  "tab": {
+    "url": "https://example.com/photo.jpg",
+    "title": "photo.jpg"
+  },
+  "latencyMs": 555,
+  "error": null,
+  "firstToolCall": {
+    "name": "download_social_media",
+    "args": {
+      "url": "https://example.com/photo.jpg",
+      "scroll": true
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"download_social_media\",\"arguments\":{\"url\":\"https://example.com/photo.jpg\",\"scroll\":true}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9160,
+    "total_tokens": 9199,
+    "completion_tokens": 39,
+    "prompt_tokens_details": null
+  }
+}

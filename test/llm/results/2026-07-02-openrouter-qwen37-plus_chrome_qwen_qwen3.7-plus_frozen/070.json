@@ -1,0 +1,49 @@
+{
+  "id": "070",
+  "user": "log in",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6280,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Which website or service would you like to log into?",
+      "reason": "You're on a blank new tab page — I need to know the destination site to navigate there and help you log in.",
+      "options": [
+        "Google / Gmail",
+        "GitHub",
+        "Twitter / X",
+        "Facebook"
+      ]
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "You're currently on a blank new tab page. Where would you like to log in? Could you tell me which website or service you'd like to sign into?\n\n",
+  "usage": {
+    "prompt_tokens": 17324,
+    "completion_tokens": 252,
+    "total_tokens": 17576,
+    "cost": 0.001508096,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17024,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.001508096,
+      "upstream_inference_prompt_cost": 0.001185536,
+      "upstream_inference_completions_cost": 0.00032256
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 115,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

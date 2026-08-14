@@ -1,0 +1,20 @@
+{
+  "id": "048",
+  "user": "open my inbox",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 2493,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nYour Gmail inbox is already open. You have **3 unread messages** in your inbox.\n\nWould you like me to read the messages, compose a new email, or do something else in Gmail?",
+  "usage": {
+    "prompt_tokens": 17482,
+    "total_tokens": 17584,
+    "completion_tokens": 102,
+    "prompt_tokens_details": null
+  }
+}

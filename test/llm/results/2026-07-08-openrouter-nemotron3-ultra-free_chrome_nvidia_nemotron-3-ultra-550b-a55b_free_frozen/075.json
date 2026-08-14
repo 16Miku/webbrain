@@ -1,0 +1,38 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4928,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on a fresh New Tab page with no previous context from this conversation. Could you tell me what you'd like me to do? For example:\n\n- Navigate to a specific URL\n- Work on a page you already have open in another tab\n- Perform a specific task on a website you're logged into\n\nJust let me know what you'd like me to do!",
+  "usage": {
+    "prompt_tokens": 18366,
+    "completion_tokens": 151,
+    "total_tokens": 18517,
+    "cost": 0,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17408,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0,
+      "upstream_inference_prompt_cost": 0,
+      "upstream_inference_completions_cost": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 77,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

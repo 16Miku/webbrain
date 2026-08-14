@@ -1,0 +1,20 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 517,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm not sure what you would like me to buy. You are currently on a \"New Tab\" page. Please provide the URL or the name of the item you want me to purchase.",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9193,
+    "completion_tokens": 41,
+    "prompt_tokens_details": null
+  }
+}

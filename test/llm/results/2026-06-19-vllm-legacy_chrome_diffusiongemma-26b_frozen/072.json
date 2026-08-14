@@ -1,0 +1,20 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 559,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I am currently on the \"New Tab\" page, which contains no content or items to delete. Could you please specify what you would like me to delete, or navigate to the page or item you are referring to?",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9201,
+    "completion_tokens": 49,
+    "prompt_tokens_details": null
+  }
+}

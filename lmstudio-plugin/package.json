@@ -1,20 +1,21 @@
 {
   "name": "@webbrain/lmstudio-web-tools",
   "displayName": "WebBrain Web Tools",
-  "description": "Web fetching + research tools for LM Studio. Adds fetch_url (raw HTTP, content-type aware) and research_url (extracts the readable article body) to any chat. Pure Node — no browser dependency. Ports the same network-tools the WebBrain Chrome/Firefox extension uses.",
-  "version": "0.1.0",
+  "description": "Web tools for LM Studio. fetch_url (raw HTTP, content-type aware) and research_url (readable article body) work with pure Node and no dependencies. With the WebBrain extension installed on a Chromium browser (Chrome, Edge, Brave), browser_task additionally delegates goals to your real, already-signed-in browser session — pages behind a login or rendered client-side that plain HTTP cannot reach. Firefox is not supported for browser_task: that build has no offscreen document, so it cannot host the bridge.",
+  "version": "0.2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "MIT",
   "homepage": "https://webbrain.one",
   "repository": {
     "type": "git",
-    "url": "https://github.com/esokullu/webbrain.git",
+    "url": "https://github.com/webbrain-one/webbrain.git",
     "directory": "lmstudio-plugin"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "npm run build && node --test test/browserTask.test.mjs",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -25,15 +26,19 @@
     "fetch",
     "research",
     "browser-tools",
+    "browser-agent",
+    "browser-automation",
     "webbrain"
   ],
   "dependencies": {
     "@lmstudio/sdk": "^1.0.0",
+    "ws": "^8.18.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10"
   },
   "files": [
     "dist",

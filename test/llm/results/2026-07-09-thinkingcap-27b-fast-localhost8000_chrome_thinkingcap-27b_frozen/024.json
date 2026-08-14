@@ -1,0 +1,26 @@
+{
+  "id": "024",
+  "user": "find tweets about react 19",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2975,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://x.com/search?q=React%2019&src=typed_query&f=top"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll search Twitter/X for tweets about React 19.",
+  "usage": {
+    "prompt_tokens": 17329,
+    "total_tokens": 17426,
+    "completion_tokens": 97,
+    "prompt_tokens_details": null
+  }
+}

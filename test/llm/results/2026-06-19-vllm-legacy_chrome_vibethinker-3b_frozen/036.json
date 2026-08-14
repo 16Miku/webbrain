@@ -1,0 +1,23 @@
+{
+  "id": "036",
+  "user": "submit",
+  "tab": {
+    "url": "https://forms.example.com/contact",
+    "title": "Contact form"
+  },
+  "latencyMs": 3067,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{}}",
+  "usage": {
+    "prompt_tokens": 8604,
+    "total_tokens": 9118,
+    "completion_tokens": 514,
+    "prompt_tokens_details": null
+  }
+}

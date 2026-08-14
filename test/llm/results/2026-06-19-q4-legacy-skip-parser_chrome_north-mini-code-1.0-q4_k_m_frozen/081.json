@@ -1,0 +1,27 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 3214,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to send a thank-you email to everyone in their contacts. Let me break this down:\n\n1. I need to access Gmail (the current page is https://mail.google.com/mail/u/0/#inbox)\n2. I need to look at their contacts\n3. I need to compose an email to each contact with a thank-you message\n4. I need to send those emails\n\nLet me start by reading the current page to understand the Gmail interface and see what's available.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 134,
+    "prompt_tokens": 8621,
+    "total_tokens": 8755,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

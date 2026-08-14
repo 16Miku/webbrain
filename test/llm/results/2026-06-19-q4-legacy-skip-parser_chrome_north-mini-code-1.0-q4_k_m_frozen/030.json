@@ -1,0 +1,27 @@
+{
+  "id": "030",
+  "user": "list all the visible links here",
+  "tab": {
+    "url": "https://news.ycombinator.com/",
+    "title": "Hacker News"
+  },
+  "latencyMs": 3135,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to \"list all the visible links here\" on the current page, which is https://news.ycombinator.com/ (Hacker News). \n\nAccording to the instructions, I should start by reading the current page to understand the context. The default approach is to use `get_accessibility_tree({filter: \"visible\"})` to see what's on screen.\n\nLet me start with that to see what links are visible on the Hacker News page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 126,
+    "prompt_tokens": 8545,
+    "total_tokens": 8671,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

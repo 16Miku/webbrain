@@ -1,27 +1,39 @@
 {
   "name": "webbrain",
-  "version": "9.0.10",
+  "version": "30.0.7",
   "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/run.js",
+    "test": "npm run test:toolbar-guard && node test/run.js && npm run test:security",
+    "test:security": "node test/security/injection-corpus.mjs",
+    "test:toolbar-guard": "node test/rich-text-toolbar-guard.mjs",
+    "test:injection-bench": "node test/llm/run-scenarios.mjs --category prompt-injection",
+    "test:safety-report": "node test/llm/safety-report.mjs",
     "test:fixtures": "node test/fixtures/run.mjs",
+    "test:webmcp": "node test/webmcp-e2e.mjs",
     "test:anonymous": "node test/anonymous/run.mjs",
-    "build:web": "node web/build/build.mjs",
+    "test:ci": "node ci/test.mjs && node ci/cloud-capture.test.mjs",
+    "ci:e2e": "node ci/run.mjs",
+    "ci:e2e:dry": "node ci/run.mjs --dry-run",
+    "build:blog": "node scripts/build-blog.mjs",
+    "build:docs": "node scripts/build-docs.mjs",
+    "build:web:landing": "node web/build/build.mjs",
+    "build:web": "npm run build:web:landing && npm run build:blog && npm run build:docs",
     "build:zip": "node scripts/build-zip.mjs",
+    "trace:otlp": "node scripts/trace-to-otlp.mjs",
+    "update:coupon-domains": "node scripts/update-coupon-domains.mjs",
+    "sync:logo": "python3 scripts/sync-logo-assets.py && python3 scripts/gen-store-promos.py && node assets/webstore-explainer-2026/render.mjs && node assets/brand-assets-2026-2/render.mjs",
     "bump": "node scripts/bump-version.mjs",
     "release": "node scripts/bump-version.mjs --release"
   },
   "devDependencies": {
-    "playwright": "^1.48.0"
+    "playwright": "^1.48.0",
+    "tldts": "7.4.10"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/esokullu/webbrain.git"
+    "url": "https://github.com/webbrain-one/webbrain.git"
   },
-  "license": "MIT",
-  "dependencies": {
-    "@huggingface/transformers": "^4.2.0"
-  }
+  "license": "MIT"
 }

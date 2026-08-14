@@ -1,0 +1,22 @@
+{
+  "id": "032",
+  "user": "how many comments does this thread have",
+  "tab": {
+    "url": "https://www.reddit.com/r/MechanicalKeyboards/comments/abc123/example/",
+    "title": "Example thread — r/MechanicalKeyboards"
+  },
+  "latencyMs": 1351,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'll need to read the page and count the visible comments. Let me start by reading the visible content.\n\n<tool_call>{\"name\":\"read_page\"}",
+  "usage": {
+    "prompt_tokens": 8749,
+    "completion_tokens": 30,
+    "total_tokens": 8779,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

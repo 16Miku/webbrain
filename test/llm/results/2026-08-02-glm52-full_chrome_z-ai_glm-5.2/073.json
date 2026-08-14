@@ -1,0 +1,40 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1570,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have any context for what you'd like me to buy — the current tab is just a blank \"New Tab\" page (about:home). There's no product, cart, or item visible.\n\nCould you tell me what you'd like to buy? For example:\n- A specific product name and store (e.g., \"buy a Kindle Paperwhite on Amazon\")\n- A link to the product page you want me to purchase\n- Or navigate to the page with the item first, then ask me to buy it\n\nOnce I know what and where, I can walk through the checkout flow for you.",
+  "usage": {
+    "prompt_tokens": 22654,
+    "completion_tokens": 167,
+    "total_tokens": 22821,
+    "cost": 0.00669552,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22592,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00669552,
+      "upstream_inference_prompt_cost": 0.00596072,
+      "upstream_inference_completions_cost": 0.0007348
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 40,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

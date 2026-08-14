@@ -1,14 +1,19 @@
 {
   "manifest_version": 2,
   "name": "WebBrain",
-  "version": "9.0.10",
+  "version": "30.0.7",
   "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
   "permissions": [
     "activeTab",
+    "menus",
+    "webNavigation",
+    "webRequest",
     "storage",
     "unlimitedStorage",
     "tabs",
     "tabGroups",
+    "downloads",
+    "alarms",
     "clipboardWrite",
     "clipboardRead",
     "<all_urls>"
@@ -16,7 +21,7 @@
   "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'; connect-src * data: blob: http://* ws://*;",
   "background": {
     "page": "src/background.html",
-    "persistent": false
+    "persistent": true
   },
   "sidebar_action": {
     "default_title": "WebBrain",
@@ -29,12 +34,32 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "js": ["src/content/file-picker-guard-loader.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": [
+        "src/content/rich-text-toolbar-heuristic.js",
         "src/content/accessibility-tree.js",
+        "src/content/teacher-capture.js",
         "src/content/content.js",
-        "src/content/agent-visual-indicator.js"
+        "src/content/agent-visual-indicator.js",
+        "src/content/ollama-launch-handoff.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/selection-shortcut.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/redaction-regions.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
     },
     {
       "matches": [
@@ -71,7 +96,9 @@
   "web_accessible_resources": [
     "vendor/pdfjs/pdf.mjs",
     "vendor/pdfjs/pdf.worker.mjs",
-    "src/agent/social-media-downloader.js"
+    "src/agent/social-media-downloader.js",
+    "src/content/file-picker-guard-page.js",
+    "skills/*"
   ],
   "browser_specific_settings": {
     "gecko": {
@@ -79,9 +106,40 @@
       "strict_min_version": "109.0",
       "data_collection_permissions": {
         "required": ["none"],
-        "is_exempt": true,
-        "reason": "WebBrain does not collect, store, or transmit any user data. All data flows directly between the user's browser and their chosen AI provider. No telemetry, analytics, or tracking of any kind."
+        "optional": ["personallyIdentifyingInfo", "authenticationInfo", "personalCommunications", "websiteContent", "technicalAndInteraction"]
       }
+    }
+  },
+  "commands": {
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Open WebBrain panel"
+    },
+    "switch-to-ask": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "Switch to Ask mode"
+    },
+    "switch-to-act": {
+      "suggested_key": {
+        "default": "Alt+Shift+X"
+      },
+      "description": "Switch to Act mode"
+    },
+    "switch-to-dev": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "Switch to Dev mode"
+    },
+    "focus-input": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "Focus the input"
     }
   }
 }

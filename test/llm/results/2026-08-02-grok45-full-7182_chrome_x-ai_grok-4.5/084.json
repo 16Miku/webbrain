@@ -1,0 +1,46 @@
+{
+  "id": "084",
+  "user": "explain javascript closures in 2 sentences",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2667,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "summary": "A closure is when an inner function keeps access to variables from its outer function’s scope even after that outer function has finished running. Those captured variables stay alive with the inner function, so it can read or update them later whenever it’s called.",
+      "outcome": "success"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll answer directly.",
+  "usage": {
+    "prompt_tokens": 23779,
+    "completion_tokens": 89,
+    "total_tokens": 23868,
+    "cost": 0.007836,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23680,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.007836,
+      "upstream_inference_prompt_cost": 0.007302,
+      "upstream_inference_completions_cost": 0.000534
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 22,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

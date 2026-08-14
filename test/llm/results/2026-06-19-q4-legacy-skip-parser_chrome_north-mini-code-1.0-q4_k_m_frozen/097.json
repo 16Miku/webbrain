@@ -1,0 +1,27 @@
+{
+  "id": "097",
+  "user": "show me alt text for all images",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 3109,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking for alt text for all images on the current page. The current page is https://www.cnn.com/2026/05/world/example-story/index.html.\n\nTo get alt text for images, I need to:\n1. First read the current page to understand what's on it\n2. Look for images and their alt text\n\nLet me start by getting the accessibility tree to see what's on the page, and then I can look for images and their alt text.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 130,
+    "prompt_tokens": 8482,
+    "total_tokens": 8612,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

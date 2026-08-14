@@ -1,0 +1,25 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 572,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://contacts.google.com/"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://contacts.google.com/\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9327,
+    "total_tokens": 9356,
+    "completion_tokens": 29,
+    "prompt_tokens_details": null
+  }
+}

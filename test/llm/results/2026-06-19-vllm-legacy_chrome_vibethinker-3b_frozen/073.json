@@ -1,0 +1,25 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2931,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Could you specify what you'd like to buy?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{\"question\":\"Could you specify what you'd like to buy?\"}}",
+  "usage": {
+    "prompt_tokens": 8602,
+    "total_tokens": 9093,
+    "completion_tokens": 491,
+    "prompt_tokens_details": null
+  }
+}

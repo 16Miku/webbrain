@@ -1,0 +1,25 @@
+{
+  "id": "016",
+  "user": "search youtube for lo-fi study music",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 2789,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17600,
+    "total_tokens": 17673,
+    "completion_tokens": 73,
+    "prompt_tokens_details": null
+  }
+}

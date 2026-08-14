@@ -1,0 +1,25 @@
+{
+  "id": "051",
+  "user": "mark as spam",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox/abc123",
+    "title": "Invoice from Acme — Gmail"
+  },
+  "latencyMs": 3214,
+  "error": null,
+  "firstToolCall": {
+    "name": "click",
+    "args": {
+      "text": "Flag"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"click\",\"arguments\":{\"text\":\"Flag\"}}",
+  "usage": {
+    "prompt_tokens": 8759,
+    "total_tokens": 9300,
+    "completion_tokens": 541,
+    "prompt_tokens_details": null
+  }
+}

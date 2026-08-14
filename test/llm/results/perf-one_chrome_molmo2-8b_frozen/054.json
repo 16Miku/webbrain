@@ -1,0 +1,22 @@
+{
+  "id": "054",
+  "user": "download this image",
+  "tab": {
+    "url": "https://example.com/photo.jpg",
+    "title": "photo.jpg"
+  },
+  "latencyMs": 4325,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't see a tool named \"download_resource_from_page\" in the list of available tools. However, I can see a tool named \"download_social_media\" which is designed for downloading images or videos from social media platforms. Since the current page is a photo page, I'll use the \"download_social_media\" tool to download the image.\n\nI'll call the tool with the following parameters:\n- url: https://example.com/photo.jpg\n- scroll: true\n\nThis should download the image from the photo page.",
+  "usage": {
+    "prompt_tokens": 8595,
+    "completion_tokens": 106,
+    "total_tokens": 8701,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

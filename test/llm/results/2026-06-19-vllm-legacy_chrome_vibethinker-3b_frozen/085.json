@@ -1,0 +1,25 @@
+{
+  "id": "085",
+  "user": "tell me a joke",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3546,
+  "error": null,
+  "firstToolCall": {
+    "name": "type_text",
+    "args": {
+      "text": "Why did the scarecrow become a successful speaker? Because he was outstanding in his field."
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"type_text\",\"arguments\":{\"text\":\"Why did the scarecrow become a successful speaker? Because he was outstanding in his field.\"}}",
+  "usage": {
+    "prompt_tokens": 8604,
+    "total_tokens": 9202,
+    "completion_tokens": 598,
+    "prompt_tokens_details": null
+  }
+}

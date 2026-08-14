@@ -1,0 +1,27 @@
+{
+  "id": "041",
+  "user": "tick the subscribe checkbox",
+  "tab": {
+    "url": "https://example.com/signup",
+    "title": "Sign up"
+  },
+  "latencyMs": 1626,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 104,
+    "prompt_tokens": 9193,
+    "total_tokens": 9297,
+    "prompt_tokens_details": {
+      "cached_tokens": 8928
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "034",
+  "user": "sign in",
+  "tab": {
+    "url": "https://github.com/",
+    "title": "GitHub"
+  },
+  "latencyMs": 632,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://github.com/login"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"navigate\",\n  \"arguments\": {\n    \"url\": \"https://github.com/login\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 9142,
+    "total_tokens": 9242,
+    "completion_tokens": 100,
+    "prompt_tokens_details": null
+  }
+}

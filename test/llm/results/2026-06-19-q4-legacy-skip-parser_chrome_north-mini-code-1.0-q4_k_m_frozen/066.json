@@ -1,0 +1,25 @@
+{
+  "id": "066",
+  "user": "what did i highlight",
+  "tab": {
+    "url": "https://en.wikipedia.org/wiki/Closure_(computer_programming)",
+    "title": "Closure (computer programming) — Wikipedia"
+  },
+  "latencyMs": 3088,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_selection",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking \"what did i highlight\" and the current page context shows they're on a Wikipedia page about \"Closure (computer programming)\". They want to know what they've highlighted on the page.\n\nLooking at the available tools, I can see there's a `get_selection` tool that can \"Get highlighted text\". This seems like the perfect tool to answer their question about what they've highlighted.\n\nLet me call this tool to get the highlighted text from the current page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_selection\", \"parameters\": {}}\n]",
+  "usage": {
+    "completion_tokens": 120,
+    "prompt_tokens": 8480,
+    "total_tokens": 8600,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

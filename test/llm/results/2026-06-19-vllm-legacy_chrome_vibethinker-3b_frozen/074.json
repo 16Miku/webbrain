@@ -1,0 +1,23 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 7169,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "clarify({question: \"What specific thing do you want to go back to? Is it a previous tab, a page, or something else?\"})",
+  "usage": {
+    "prompt_tokens": 8606,
+    "total_tokens": 9820,
+    "completion_tokens": 1214,
+    "prompt_tokens_details": null
+  }
+}

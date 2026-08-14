@@ -1,0 +1,25 @@
+{
+  "id": "009",
+  "user": "open chatgpt in a new tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 348,
+  "error": null,
+  "firstToolCall": {
+    "name": "new_tab",
+    "args": {
+      "url": "https://chatgpt.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"new_tab\",\"arguments\":{\"url\":\"https://chatgpt.com\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 9186,
+    "completion_tokens": 29,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "092",
+  "user": "mute this tab",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 531,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "document.querySelector('video').muted = true;"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"execute_js\",\"arguments\":{\"code\":\"document.querySelector('video').muted = true;\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9452,
+    "total_tokens": 9486,
+    "completion_tokens": 34,
+    "prompt_tokens_details": null
+  }
+}

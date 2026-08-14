@@ -1,0 +1,25 @@
+{
+  "id": "024",
+  "user": "find tweets about react 19",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2928,
+  "error": null,
+  "firstToolCall": {
+    "name": "fetch_url",
+    "args": {
+      "url": "https://twitter.com/search?q=react+19"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"fetch_url\",\n  \"arguments\": {\n    \"url\": \"https://twitter.com/search?q=react+19\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8607,
+    "total_tokens": 9098,
+    "completion_tokens": 491,
+    "prompt_tokens_details": null
+  }
+}

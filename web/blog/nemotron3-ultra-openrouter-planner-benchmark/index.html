@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nemotron 3 Ultra OpenRouter WebBrain planner benchmark - WebBrain Blog</title>
+  <meta name="description" content="We ran nvidia/nemotron-3-ultra-550b-a55b:free through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark on OpenRouter. The 550B-total MoE model completed the run, but landed well below the best planner rows.">
+  <meta name="keywords" content="WebBrain, Nemotron 3 Ultra, NVIDIA, OpenRouter, browser agent, planner benchmark, tool calling, Qwen 3.7 Plus, Agents-A1, Tencent Hy3">
+  <meta property="og:title" content="Nemotron 3 Ultra is not a WebBrain planner win">
+  <meta property="og:description" content="NVIDIA&#39;s 550B-total Nemotron 3 Ultra free endpoint completed WebBrain&#39;s frozen planner run, but trails Agents-A1, Hy3, Qwen 3.7 Plus, and older Qwen 3.6 rows.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/nemotron3-ultra-openrouter-planner-benchmark">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Nemotron 3 Ultra WebBrain planner benchmark">
+  <meta name="twitter:description" content="Nemotron 3 Ultra via OpenRouter: 81 parsed calls, 17 exact first actions, 65% Sonnet alignment, and a very slow p95.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/nemotron3-ultra-openrouter-planner-benchmark">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Nemotron 3 Ultra is huge, free, and not a WebBrain planner win",
+  "description": "We ran nvidia/nemotron-3-ultra-550b-a55b:free through WebBrain's frozen 100-case browser-agent first-tool benchmark on OpenRouter. The 550B-total MoE model completed the run, but landed well below the best planner rows.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-07-08",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/nemotron3-ultra-openrouter-planner-benchmark"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">July 8, 2026 &middot; 6 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Nemotron 3 Ultra is huge, free, and not a WebBrain planner win</h1>
+    <p class="lede">NVIDIA&#39;s <strong>Nemotron 3 Ultra 550B-A55B</strong> is exactly the kind of model name that makes a browser-agent benchmark irresistible: 550B total parameters, 55B active, a 1M-token context window, and positioning around agent orchestration, coding agents, deep research, and long-running workflows. We ran <code>nvidia/nemotron-3-ultra-550b-a55b:free</code> through WebBrain&#39;s frozen planner harness on OpenRouter. The run completed cleanly, but the planner result is underwhelming.</p>
+<h2 id="the-claim">The claim</h2>
+<p><a href="https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b%3Afree" target="_blank" rel="noopener">OpenRouter&#39;s model page</a> describes Nemotron 3 Ultra as an NVIDIA frontier-reasoning and orchestration model with 55B active parameters out of 550B total, a hybrid Transformer-Mamba MoE architecture, text input/output, and up to a 1M-token context window. It is explicitly pitched at agent orchestration, coding agents, deep research, and complex enterprise tasks.</p>
+<p>The <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16" target="_blank" rel="noopener">Hugging Face weights page</a> says the same thing in model-card language: this is a frontier-scale open model optimized for demanding multi-step agents, long-context analysis, and reasoning over code, math, and science.</p>
+<p>That is not the same as being a good browser first-tool planner. WebBrain&#39;s harness is narrower and harsher: the model sees a browser state, user instruction, and a 41-tool browser-control schema, then we score the first tool call only.</p>
+<h2 id="what-we-ran">What we ran</h2>
+<p>We used OpenRouter&#39;s free endpoint:</p>
+<pre><code class="language-text">nvidia/nemotron-3-ultra-550b-a55b:free</code></pre>
+<p>The run used the same frozen May 23, 2026 WebBrain baseline used by the recent planner posts: Claude Sonnet 4.6&#39;s system prompt and 41-tool schema, system hash <code>5c4fac1387025050</code>.</p>
+<pre><code class="language-bash">OPENROUTER_API_KEY=... node test/llm/run-llamacpp.mjs \
+  --base https://openrouter.ai/api/v1 \
+  --model nvidia/nemotron-3-ultra-550b-a55b:free \
+  --tag 2026-07-08-openrouter-nemotron3-ultra-free \
+  --concurrency 1 \
+  --timeout 180000 \
+  --no-save-request \
+  --freeze test/llm/freeze/baseline-2026-05-23.json</code></pre>
+<p>This was a native OpenAI structured-tools run. No chat-template fallback was used, and request payloads were not saved. We kept concurrency at 1 because the model is a free OpenRouter variant.</p>
+<p>Result files:</p>
+<pre><code class="language-text">test/llm/results/2026-07-08-openrouter-nemotron3-ultra-free_chrome_nvidia_nemotron-3-ultra-550b-a55b_free_frozen</code></pre>
+<h2 id="headline-result">Headline result</h2>
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>Nemotron 3 Ultra via OpenRouter</th></tr></thead><tbody><tr><td>Completed cases</td><td>100/100</td></tr><tr><td>Transport errors</td><td>0</td></tr><tr><td>Parsed tool calls</td><td>81/100</td></tr><tr><td>Valid frozen-schema tool names</td><td>81/100</td></tr><tr><td>Strict exact first-call match</td><td>17/100</td></tr><tr><td>Ideal tool-name match</td><td>33/100</td></tr><tr><td>Sonnet match, all cases</td><td>65.0%</td></tr><tr><td>Sonnet match, when Sonnet tooled</td><td>64.1%</td></tr><tr><td>Average latency</td><td>12.14s</td></tr><tr><td>Median latency</td><td>5.89s</td></tr><tr><td>p95 latency</td><td>40.6s</td></tr><tr><td>Slowest case</td><td>60.0s</td></tr><tr><td>Total wall time</td><td>1,214s at concurrency 1</td></tr><tr><td>OpenRouter reported cost</td><td>$0.00</td></tr></tbody></table></div>
+<p>The good news: the endpoint completed the full 100-case suite with zero transport errors and no rate-limit recovery work. That is better operational behavior than I expected from a free 550B-total model.</p>
+<p>The bad news: this is not a strong WebBrain planner row. The no-tool rate is high, Sonnet alignment is low for the current table, and latency is rough. The median is tolerable for a free frontier-scale model, but a 40.6s p95 makes it hard to imagine using this as an interactive browser planner.</p>
+<h2 id="against-the-nearby-hosted-rows">Against the nearby hosted rows</h2>
+<p>The obvious comparison is not the full 550B parameter count. It is the hosted planner rows WebBrain can actually call through an OpenAI-compatible API.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Parsed calls</th><th>Exact</th><th>Ideal name</th><th>Sonnet all</th><th>Sonnet tooled</th><th>Median</th><th>p95</th><th>Cost</th></tr></thead><tbody><tr><td>Qwen 3.7 Plus</td><td>95/100</td><td>19/100</td><td>41/100</td><td>75.0%</td><td>77.2%</td><td>3.74s</td><td>7.76s</td><td>$0.14</td></tr><tr><td>Agents-A1 AWQ INT4</td><td>88/100</td><td>15/100</td><td>33/100</td><td>75.0%</td><td>75.0%</td><td>1.66s</td><td>3.0s</td><td>local</td></tr><tr><td>Tencent Hy3 free</td><td>95/100</td><td>20/100</td><td>38/100</td><td>73.0%</td><td>75.0%</td><td>3.68s</td><td>9.16s</td><td>$0.00</td></tr><tr><td>Qwen 3.6 35B-A3B</td><td>90/100</td><td>18/100</td><td>38/100</td><td>70.0%</td><td>70.7%</td><td>10.3s</td><td>17.0s</td><td>local</td></tr><tr><td>Nemotron 3 Ultra free</td><td>81/100</td><td>17/100</td><td>33/100</td><td>65.0%</td><td>64.1%</td><td>5.89s</td><td>40.6s</td><td>$0.00</td></tr></tbody></table></div>
+<p>Nemotron&#39;s exact score is not terrible: 17/100 is in the neighborhood of MiniMax M3 and Qwen 3.6 35B-A3B. But every broader planner signal is worse. It emits fewer parsed calls, aligns with Sonnet less often, and has a much worse tail latency than the hosted Qwen 3.7 Plus and Hy3 rows.</p>
+<p>The Hy3 comparison is especially clean because both rows used OpenRouter free variants. Hy3 produced 95 parsed calls, 73% Sonnet alignment, and a 9.16s p95. Nemotron produced 81 parsed calls, 65% Sonnet alignment, and a 40.6s p95. For WebBrain&#39;s planner job, Hy3 is the stronger free OpenRouter candidate by a wide margin.</p>
+<h2 id="where-nemotron-is-strong">Where Nemotron is strong</h2>
+<p>The tool distribution is not broken:</p>
+<div class="table-wrap"><table><thead><tr><th>Tool or output</th><th>First calls</th></tr></thead><tbody><tr><td><code>get_accessibility_tree</code></td><td>38</td></tr><tr><td><code>navigate</code></td><td>23</td></tr><tr><td>no tool call</td><td>19</td></tr><tr><td><code>read_page</code></td><td>7</td></tr><tr><td><code>new_tab</code></td><td>3</td></tr><tr><td><code>clarify</code></td><td>2</td></tr><tr><td><code>execute_js</code></td><td>2</td></tr><tr><td><code>extract_data</code></td><td>2</td></tr><tr><td><code>download_social_media</code></td><td>1</td></tr><tr><td><code>get_selection</code></td><td>1</td></tr><tr><td><code>screenshot</code></td><td>1</td></tr><tr><td><code>scroll</code></td><td>1</td></tr></tbody></table></div>
+<p>The basic browser-work categories were decent:</p>
+<div class="table-wrap"><table><thead><tr><th>Category</th><th>Cases</th><th>Sonnet-name matches</th><th>Ideal-name matches</th></tr></thead><tbody><tr><td>Direct navigation</td><td>10</td><td>9</td><td>10</td></tr><tr><td>Search</td><td>10</td><td>9</td><td>6</td></tr><tr><td>Email</td><td>6</td><td>5</td><td>0</td></tr><tr><td>Scrolling / inspection</td><td>4</td><td>4</td><td>3</td></tr><tr><td>Translation / accessibility</td><td>3</td><td>3</td><td>1</td></tr><tr><td>Multi-page / listing</td><td>3</td><td>3</td><td>0</td></tr></tbody></table></div>
+<p>Direct navigation is the strongest point. It hit the ideal tool name in all 10 direct navigation cases, and it was often willing to call <code>navigate</code> directly instead of over-inspecting the blank tab. It also handled the small scrolling and translation/accessibility bands well.</p>
+<h2 id="where-it-loses-points">Where it loses points</h2>
+<p>The weak spots are broad:</p>
+<div class="table-wrap"><table><thead><tr><th>Category</th><th>Cases</th><th>Sonnet-name matches</th><th>No-tool turns</th><th>Pattern</th></tr></thead><tbody><tr><td>Downloads</td><td>6</td><td>2</td><td>1</td><td>Chose <code>execute_js</code>, <code>read_page</code>, and <code>navigate</code> where dedicated download/list tools were expected.</td></tr><tr><td>Forms / interactive</td><td>8</td><td>5</td><td>3</td><td>Several simple UI actions produced prose instead of a tool call.</td></tr><tr><td>Ambiguous / clarify</td><td>8</td><td>3</td><td>5</td><td>Mostly prose clarification, with one surprising <code>execute_js</code>.</td></tr><tr><td>Destructive / refusal-worthy</td><td>6</td><td>2</td><td>1</td><td>Usually inspected the page before explicit confirmation.</td></tr><tr><td>Tab management</td><td>4</td><td>2</td><td>1</td><td>Sometimes gave correct prose, but slowly and outside the tool protocol.</td></tr><tr><td>UI mutations</td><td>4</td><td>0</td><td>2</td><td>Did not match Sonnet on any of the four browser-control prompts.</td></tr></tbody></table></div>
+<p>The no-tool issue matters. In normal chat, prose can be acceptable for a vague instruction like &quot;log in&quot; or &quot;buy it.&quot; But in WebBrain&#39;s planner protocol, ambiguity should usually become a <code>clarify</code> tool. Nemotron often wrote the right sort of question in prose, but the browser-agent loop cannot treat that the same as an explicit planner action.</p>
+<p>There were also concrete tool-choice misses:</p>
+<ul><li>&quot;close the cookie banner&quot;, &quot;close this popup&quot;, and &quot;tick the subscribe checkbox&quot; produced no tool call.</li><li>&quot;download this image&quot; used <code>execute_js</code> instead of a download tool.</li><li>&quot;save this YouTube thumbnail&quot; produced no tool call instead of <code>download_social_media</code>.</li><li>&quot;list my downloads&quot; navigated to <code>about:downloads</code> instead of calling <code>list_downloads</code>.</li><li>&quot;mute this tab&quot; inspected the page for 43.7s.</li></ul>
+<p>That is the pattern: Nemotron can reason and explain, but it does not reliably behave like a browser-control planner.</p>
+<h2 id="updated-context">Updated context</h2>
+<p>Rows are ranked by all-case Sonnet match, then Sonnet-tooled match.</p>
+<div class="table-wrap"><table><thead><tr><th>#</th><th>Model</th><th>Parsed calls</th><th>Exact</th><th>Ideal name</th><th>Sonnet all</th><th>Sonnet tooled</th><th>Median</th></tr></thead><tbody><tr><td>1</td><td>Gemma 4 31B QAT w4a16</td><td>95/100</td><td>19/100</td><td>37/100</td><td>77.0%</td><td>78.3%</td><td>0.55s</td></tr><tr><td>2</td><td>Qwen 3.6 27B</td><td>92/100</td><td>18/100</td><td>37/100</td><td>77.0%</td><td>77.2%</td><td>10.2s</td></tr><tr><td>3</td><td>MiniMax M2.7</td><td>88/100</td><td>23/100</td><td>36/100</td><td>77.0%</td><td>76.1%</td><td>3.1s</td></tr><tr><td>4</td><td>Qwen 3.7 Plus</td><td>95/100</td><td>19/100</td><td>41/100</td><td>75.0%</td><td>77.2%</td><td>3.74s</td></tr><tr><td>5</td><td>Agents-A1 AWQ INT4</td><td>88/100</td><td>15/100</td><td>33/100</td><td>75.0%</td><td>75.0%</td><td>1.66s</td></tr><tr><td>6</td><td>MiniMax M3</td><td>85/100</td><td>17/100</td><td>32/100</td><td>75.0%</td><td>73.9%</td><td>3.1s</td></tr><tr><td>7</td><td>Qwen 3.6 27B NVFP4</td><td>96/100</td><td>18/100</td><td>38/100</td><td>74.0%</td><td>77.2%</td><td>1.76s</td></tr><tr><td>8</td><td>Tencent Hy3 free</td><td>95/100</td><td>20/100</td><td>38/100</td><td>73.0%</td><td>75.0%</td><td>3.68s</td></tr><tr><td>9</td><td>WebBrain Cloud 1.0</td><td>90/100</td><td>16/100</td><td>35/100</td><td>73.0%</td><td>72.8%</td><td>8.8s</td></tr><tr><td>10</td><td>Qwen 3.6 35B-A3B</td><td>90/100</td><td>18/100</td><td>38/100</td><td>70.0%</td><td>70.7%</td><td>10.3s</td></tr><tr><td>11</td><td>Nemotron 3 Ultra free</td><td>81/100</td><td>17/100</td><td>33/100</td><td>65.0%</td><td>64.1%</td><td>5.89s</td></tr></tbody></table></div>
+<p>This is a useful negative result. Nemotron 3 Ultra is bigger than every model in the local planner table by total parameter count, and OpenRouter exposes it for free, but size and availability do not translate into first-tool browser-agent quality.</p>
+<h2 id="bottom-line">Bottom line</h2>
+<p>Nemotron 3 Ultra is not a WebBrain planner shortlist model from this run. It is stable enough to complete the suite, and it is free on OpenRouter today, but the first-tool quality is behind the better hosted and local rows.</p>
+<p>For WebBrain, I would pick Qwen 3.7 Plus, Tencent Hy3, Agents-A1, Gemma 4 31B, or the older Qwen 3.6 rows before this Nemotron endpoint. Nemotron may still be interesting for long-context reasoning, research, or orchestration workloads that look more like its model-card target. In this browser-control harness, it behaves more like a capable reasoner that sometimes forgets it is inside a tool-driven agent loop.</p>
+<p>Tags: #Nemotron3Ultra #NVIDIA #OpenRouter #Qwen37 #AgentsA1 #TencentHy3 #ToolCalling #BrowserAgent #WebBrain</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

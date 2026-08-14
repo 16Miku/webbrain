@@ -1,0 +1,20 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 390,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I do not have the capability to close browser tabs. I can only interact with the content of the active tab.",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 9181,
+    "completion_tokens": 24,
+    "prompt_tokens_details": null
+  }
+}

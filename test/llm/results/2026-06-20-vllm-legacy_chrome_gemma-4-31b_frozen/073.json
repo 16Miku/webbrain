@@ -1,0 +1,25 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 950,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "text": "You said 'buy it', but you are currently on a New Tab page. What would you like me to buy, and which website should I go to?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"clarify\",\"arguments\":{\"text\":\"You said 'buy it', but you are currently on a New Tab page. What would you like me to buy, and which website should I go to?\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9206,
+    "completion_tokens": 54,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: screenshot redaction manual test (issue #312)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 1.5em; margin: 0; max-width: 900px; line-height: 1.5; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 15px; margin: 28px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    section { margin-bottom: 20px; }
+    .row { display: flex; align-items: center; gap: 12px; margin: 8px 0; flex-wrap: wrap; }
+    label { min-width: 160px; font-size: 13px; }
+    input, textarea, select { font-size: 14px; padding: 5px 8px; }
+    input[type="checkbox"], input[type="radio"] { min-width: auto; padding: 0; }
+    textarea { width: 260px; height: 50px; }
+    .expect { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+    .expect.redact { background: #fde2e2; color: #9c1c1c; }
+    .expect.skip { background: #e2f5e2; color: #1c6b1c; }
+    #banner { background: #fff4d6; border: 1px solid #e0c060; border-radius: 8px; padding: 12px 16px; font-size: 13px; }
+    #banner code { background: #fff; padding: 1px 5px; border-radius: 3px; }
+    canvas { border: 1px solid #999; display: block; }
+    iframe { border: 2px dashed #999; width: 320px; height: 190px; }
+    .noise { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Screenshot redaction manual test page (issue #312)</h1>
+  <div id="banner">
+    <strong>How to use:</strong> serve or open this file, turn on
+    <strong>Settings → Multimodal → Screenshot redaction</strong> in the
+    extension, then run <code>/screenshot</code> (or ask the agent to take a
+    screenshot / verify the page). Compare the returned image against the
+    <span class="expect redact">REDACT</span> / <span class="expect skip">SKIP</span>
+    tags below each element.
+    <br><br>
+    If opening via <code>file://</code>, enable <strong>"Allow access to file
+    URLs"</strong> for the extension (chrome://extensions or about:addons),
+    otherwise the content script won't inject and every field will
+    incorrectly show as unredacted. Easier: serve the <code>test/fixtures/</code>
+    folder with <code>python3 -m http.server</code> and open it over
+    <code>http://localhost</code> instead.
+  </div>
+
+  <section>
+    <h2>Form fields — should always be redacted (password)</h2>
+    <div class="row">
+      <label for="pw1">Password</label>
+      <input id="pw1" type="password" value="hunter2-throwaway" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Form fields — redacted when "blur text inputs" is on (default)</h2>
+    <div class="row">
+      <label for="email1">Email</label>
+      <input id="email1" type="email" value="jane.doe@example.com" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="tel1">Phone</label>
+      <input id="tel1" type="tel" value="+1 415 555 0134" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="text1">Plain text</label>
+      <input id="text1" type="text" value="John Q. Public" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="search1">Search</label>
+      <input id="search1" type="search" value="private search query" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="url1">URL</label>
+      <input id="url1" type="url" value="https://internal.example.com/acct" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="num1">Number</label>
+      <input id="num1" type="number" value="4242" autocomplete="off">
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="ta1">Textarea</label>
+      <textarea id="ta1">Free-text notes that might contain anything sensitive.</textarea>
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="ce1">contenteditable div</label>
+      <div id="ce1" contenteditable="true" style="border:1px solid #999; padding:5px 8px; width:220px;">Editable rich text field</div>
+      <span class="expect redact">REDACT</span>
+    </div>
+    <div class="row">
+      <label for="sel1">Select (dropdown)</label>
+      <select id="sel1">
+        <option>Choose an account…</option>
+        <option selected>jane.doe@example.com</option>
+      </select>
+      <span class="expect redact">REDACT</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Form fields — should NOT be redacted (excluded types)</h2>
+    <div class="row">
+      <label for="cb1">Checkbox</label>
+      <input id="cb1" type="checkbox" checked>
+      <span class="expect skip">SKIP</span>
+    </div>
+    <div class="row">
+      <label for="rb1">Radio</label>
+      <input id="rb1" type="radio" name="r" checked>
+      <span class="expect skip">SKIP</span>
+    </div>
+    <div class="row">
+      <label for="range1">Range</label>
+      <input id="range1" type="range" min="0" max="10" value="5">
+      <span class="expect skip">SKIP</span>
+    </div>
+    <div class="row">
+      <label for="color1">Color</label>
+      <input id="color1" type="color" value="#ff0000">
+      <span class="expect skip">SKIP</span>
+    </div>
+    <div class="row">
+      <label for="submit1">Submit button</label>
+      <input id="submit1" type="submit" value="Submit">
+      <span class="expect skip">SKIP</span>
+    </div>
+    <div class="row">
+      <label>Hidden input</label>
+      <input type="hidden" value="secret-token-abc123">
+      <span class="expect skip">SKIP (invisible anyway)</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Page text — detected PII patterns</h2>
+    <p>Standalone email as its own element: <b>contact.person@example.org</b></p>
+    <p class="expect redact" style="display:inline-block;">REDACT</p>
+    <p>Standalone phone as its own element: <b>(212) 555-0199</b></p>
+    <p class="expect redact" style="display:inline-block;">REDACT</p>
+  </section>
+
+  <section>
+    <h2>Page text — heuristic should skip (known limitations, by design)</h2>
+    <p class="noise">A bare 4-digit number that looks like a year: <b>2026</b></p>
+    <p class="expect skip" style="display:inline-block;">SKIP (looks like a year)</p>
+    <p class="noise">An email mentioned inside a normal sentence: "You can reach the team at
+    support@example.com if the deploy fails before Friday." (too many words around it)</p>
+    <p class="expect skip" style="display:inline-block;">SKIP (embedded in prose, not its own element)</p>
+  </section>
+
+  <section>
+    <h2>Known gap — canvas-drawn text (never redacted)</h2>
+    <p>PII rendered as pixels on a <code>&lt;canvas&gt;</code> is invisible to DOM
+    heuristics and will <strong>never</strong> be redacted by this feature —
+    this is the sharpest limitation called out in the Settings warning and FAQ.</p>
+    <canvas id="pii-canvas" width="320" height="60"></canvas>
+    <p class="expect skip" style="display:inline-block;">SKIP (cannot be fixed — canvas pixels, not DOM)</p>
+    <script>
+      const ctx = document.getElementById('pii-canvas').getContext('2d');
+      ctx.font = '16px monospace';
+      ctx.fillStyle = '#000';
+      ctx.fillText('canvas-drawn PII: alex.canvas@example.com / +1 650 555 0122', 8, 34);
+    </script>
+  </section>
+
+  <section>
+    <h2>Known gap — srcdoc iframe (not covered by match_about_blank)</h2>
+    <p>Chrome's <code>match_about_blank</code> content-script matcher does not
+    cover <code>srcdoc</code> iframes (that needs <code>match_origin_as_fallback</code>),
+    so the content script never injects here and this password field is
+    expected to leak through unredacted.</p>
+    <iframe srcdoc="&lt;body style='font-family:system-ui;padding:8px'&gt;&lt;p&gt;srcdoc frame&lt;/p&gt;&lt;input type=password value='srcdoc-leak-password' style='width:200px'&gt;&lt;/body&gt;"></iframe>
+    <p class="expect skip" style="display:inline-block;">SKIP (known gap — not fixed)</p>
+  </section>
+
+  <section>
+    <h2>Working case — same-origin nested iframe</h2>
+    <p>This iframe loads a real same-origin document; its fields should be
+    correctly mapped into the parent screenshot's coordinate space and
+    redacted (tests <code>mergeRedactionFrameRegions</code>).</p>
+    <iframe src="screenshot-redaction-manual-iframe.html"></iframe>
+  </section>
+
+</body>
+</html>

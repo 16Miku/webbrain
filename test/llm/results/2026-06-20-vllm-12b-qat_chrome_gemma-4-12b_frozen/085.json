@@ -1,0 +1,20 @@
+{
+  "id": "085",
+  "user": "tell me a joke",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 316,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Why did the web developer walk out of the restaurant?\n\nBecause of the table layout.",
+  "usage": {
+    "prompt_tokens": 9154,
+    "total_tokens": 9173,
+    "completion_tokens": 19,
+    "prompt_tokens_details": null
+  }
+}

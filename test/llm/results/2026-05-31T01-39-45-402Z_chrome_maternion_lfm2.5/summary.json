@@ -1,0 +1,30 @@
+{
+  "runTag": "2026-05-31T01-39-45-402Z",
+  "model": "maternion/lfm2.5",
+  "browser": "chrome",
+  "base": "http://localhost:11434/v1",
+  "saveRequest": true,
+  "cases": 100,
+  "totalLatencyMs": 437934,
+  "errors": 0,
+  "withToolCall": 83,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "navigate": 14,
+    "clarify": 5,
+    "new_tab": 1,
+    "list_downloads": 2,
+    "(no_tool_call)": 17,
+    "read_page": 13,
+    "research_url": 8,
+    "execute_js": 1,
+    "fetch_url": 6,
+    "download_social_media": 2,
+    "get_accessibility_tree": 23,
+    "press_keys": 2,
+    "download_file": 2,
+    "download_resource_from_page": 1,
+    "scroll": 1,
+    "full_page_screenshot": 2
+  }
+}

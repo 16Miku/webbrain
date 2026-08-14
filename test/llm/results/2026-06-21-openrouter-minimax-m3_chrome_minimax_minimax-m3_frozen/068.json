@@ -1,0 +1,37 @@
+{
+  "id": "068",
+  "user": "click that",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4920,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't see anything specific to click — you're on a blank New Tab page. Could you clarify what you'd like me to click? For example:\n\n- A specific button or link on a page (you'd need to navigate there first)\n- An element you can describe (e.g., \"the search button\", \"the Sign In link\")\n\nIf you meant something on a different page, let me know which site or page and I'll head there.",
+  "usage": {
+    "prompt_tokens": 16967,
+    "completion_tokens": 144,
+    "total_tokens": 17111,
+    "cost": 0.0105258,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0105258,
+      "upstream_inference_prompt_cost": 0.0101802,
+      "upstream_inference_completions_cost": 0.0003456
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 57,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "runTag": "2026-06-19-vllm-legacy",
+  "model": "vibethinker-3b",
+  "browser": "chrome",
+  "base": "http://127.0.0.1:8000",
+  "saveRequest": false,
+  "tier": null,
+  "chatTemplateCompat": "alternating",
+  "structuredToolsSent": false,
+  "freeze": {
+    "path": "test/llm/freeze/baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 620409,
+  "errors": 0,
+  "withToolCall": 84,
+  "withToolCallFromContent": 84,
+  "byTool": {
+    "(no_tool_call)": 16,
+    "navigate": 13,
+    "list_downloads": 2,
+    "get_accessibility_tree": 37,
+    "new_tab": 4,
+    "fetch_url": 5,
+    "research_url": 2,
+    "clarify": 11,
+    "click": 3,
+    "download_file": 1,
+    "download_social_media": 1,
+    "download_files": 1,
+    "type_text": 1,
+    "close_tab": 1,
+    "execute_js": 1,
+    "read_page": 1
+  }
+}

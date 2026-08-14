@@ -1,0 +1,20 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2500,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI'm on a new tab page (about:home). Could you clarify what you'd like me to open? For example:\n\n- A specific website URL\n- A bookmark\n- A recent page\n\nWhat would you like me to open?",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17421,
+    "completion_tokens": 97,
+    "prompt_tokens_details": null
+  }
+}

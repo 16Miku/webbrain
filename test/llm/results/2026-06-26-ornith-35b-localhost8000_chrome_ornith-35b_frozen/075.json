@@ -1,0 +1,26 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1998,
+  "error": null,
+  "firstToolCall": {
+    "name": "scratchpad_write",
+    "args": {
+      "text": "Starting fresh - checking what was being done.",
+      "replace": true
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17327,
+    "total_tokens": 17448,
+    "completion_tokens": 121,
+    "prompt_tokens_details": null
+  }
+}

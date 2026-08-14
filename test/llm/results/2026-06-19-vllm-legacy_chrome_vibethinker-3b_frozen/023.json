@@ -1,0 +1,25 @@
+{
+  "id": "023",
+  "user": "show me vegan lasagna recipes",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1335,
+  "error": null,
+  "firstToolCall": {
+    "name": "fetch_url",
+    "args": {
+      "url": "https://www.allrecipes.com/recipe/22954/vegan-lasagna/"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"fetch_url\",\n  \"arguments\": {\n    \"url\": \"https://www.allrecipes.com/recipe/22954/vegan-lasagna/\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8606,
+    "total_tokens": 8827,
+    "completion_tokens": 221,
+    "prompt_tokens_details": null
+  }
+}

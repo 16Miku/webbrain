@@ -1,0 +1,25 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2815,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "all"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I need to understand what you're referring to. Could you tell me what you'd like to buy? For example, a product on a website, a specific item, or a service.\n\nAlso, what website or page are you looking at? Let me check the current page to see if I can figure out the context.",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17466,
+    "completion_tokens": 142,
+    "prompt_tokens_details": null
+  }
+}

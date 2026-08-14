@@ -1,0 +1,25 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1744,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "js": "chrome.tabs.query({currentWindow: true}, (tabs) => {\n  const currentTabId = tabs.find(t => t.active).id;\n  const tabsToClose = tabs.filter(t => t.id !== currentTabId);\n  tabsToClose.forEach(tab => chrome.tabs.remove(tab.id));\n});"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"execute_js\",\"arguments\":{\"js\":\"chrome.tabs.query({currentWindow: true}, (tabs) => {\\n  const currentTabId = tabs.find(t => t.active).id;\\n  const tabsToClose = tabs.filter(t => t.id !== currentTabId);\\n  tabsToClose.forEach(tab => chrome.tabs.remove(tab.id));\\n});\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 9259,
+    "completion_tokens": 102,
+    "prompt_tokens_details": null
+  }
+}

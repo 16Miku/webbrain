@@ -1,0 +1,22 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3916,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't see any page or content to open. The current context shows \"about:home — Title: New Tab\", which is the default browser \"New Tab\" page. If you meant to open a different page, please provide the URL or describe what you'd like to see.",
+  "usage": {
+    "prompt_tokens": 8591,
+    "completion_tokens": 59,
+    "total_tokens": 8650,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

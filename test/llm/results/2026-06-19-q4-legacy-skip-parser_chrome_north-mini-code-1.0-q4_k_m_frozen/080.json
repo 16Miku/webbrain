@@ -1,0 +1,25 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3159,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_interactive_elements",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants to close all tabs except the current one. I'm currently on the \"New Tab\" page (about:home). To close other tabs, I need to:\n\n1. First, see what tabs are open - I can use get_interactive_elements or get_accessibility_tree to see if there's a tabs interface\n2. Then close all other tabs\n\nLet me start by checking what's available on the current page. Since this is a new tab page, there might be some default content or extensions.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_interactive_elements\", \"parameters\": {}}\n]",
+  "usage": {
+    "completion_tokens": 132,
+    "prompt_tokens": 8468,
+    "total_tokens": 8600,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

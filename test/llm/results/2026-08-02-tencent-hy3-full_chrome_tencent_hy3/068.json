@@ -1,0 +1,40 @@
+{
+  "id": "068",
+  "user": "click that",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 7129,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't see anything specific to click on the current page — it's just a New Tab (about:home), with no element, link, or screenshot referenced.\n\nCould you tell me what you'd like me to click? For example:\n- A specific link or button (by name/text)\n- Something in a particular tab or page you have open\n- A screenshot you intended to share\n\nIf you meant an element on a different page, let me know which one (or just navigate me there) and I'll click it.",
+  "usage": {
+    "prompt_tokens": 23533,
+    "completion_tokens": 306,
+    "total_tokens": 23839,
+    "cost": 0.003267924,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.003267924,
+      "upstream_inference_prompt_cost": 0.003106356,
+      "upstream_inference_completions_cost": 0.000161568
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 194,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

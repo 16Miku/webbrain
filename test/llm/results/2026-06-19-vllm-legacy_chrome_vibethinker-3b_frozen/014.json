@@ -1,0 +1,23 @@
+{
+  "id": "014",
+  "user": "show me my bookmarks",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 8338,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "navigate(url: \"about:bookmarks\")",
+  "usage": {
+    "prompt_tokens": 8604,
+    "total_tokens": 10015,
+    "completion_tokens": 1411,
+    "prompt_tokens_details": null
+  }
+}

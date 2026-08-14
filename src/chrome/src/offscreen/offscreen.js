@@ -1,28 +1,12 @@
 /**
- * Offscreen document — host for tasks the MV3 service worker can't do
- * itself.
+ * Offscreen document — fetch proxy for local network LLM servers.
  *
- *   1. `offscreen-fetch` — fetch() proxy for local network LLM servers.
- *      The SW can't always reach 192.168.* / 127.* directly due to PNA +
- *      CORS; this page context can. See providers/fetch-with-fallback.js.
- *
- *   2. `webgpu-chat` / `webgpu-probe` — runs the WebGPU + ONNX local
- *      LLM (default Qwen 3.5 0.8B) via a dedicated Web Worker spawned
- *      from this document. The Worker (inference-worker.js) owns the
- *      transformers.js pipeline; this file just proxies messages.
- *
- *      WHY a Worker: direct inference in this offscreen-doc main thread
- *      OOMs even with everything configured correctly (WebGPU EP,
- *      crossOriginIsolated, SharedArrayBuffer, asyncify wasm). Workers
- *      get their own V8 isolate with its own heap; this matches what
- *      the HuggingFace WebGPU demo space does. See the worker file's
- *      header for the full story.
- *
- *      Library is vendored under src/chrome/vendor/transformers/ — see
- *      the README there for how to drop the build in.
+ * Chrome MV3 service workers can't always reach HTTP servers on the local
+ * network (Private Network Access + CORS restrictions). This offscreen
+ * document receives fetch requests from the service worker, makes them
+ * from a regular page context (which has different networking rules),
+ * and sends the response back.
  */
-
-// ─── Local-network fetch proxy ────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type !== 'offscreen-fetch') return false;
@@ -32,26 +16,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const res = await fetch(msg.url, {
         method: msg.method || 'POST',
         headers: msg.headers || {},
-        body: msg.body || undefined,
+        body: requestBodyFromMessage(msg),
       });
 
-      if (msg.stream) {
-        // For streaming, read the full body and return it
-        // (offscreen can't stream back via sendResponse)
-        const text = await res.text();
-        sendResponse({
-          ok: res.ok,
-          status: res.status,
-          body: text,
-        });
-      } else {
-        const text = await res.text();
-        sendResponse({
-          ok: res.ok,
-          status: res.status,
-          body: text,
-        });
-      }
+      const text = await res.text();
+      sendResponse({
+        ok: res.ok,
+        status: res.status,
+        contentType: res.headers.get('content-type') || '',
+        body: text,
+      });
     } catch (e) {
       sendResponse({
         ok: false,
@@ -64,133 +38,211 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // keep sendResponse channel open for async
 });
 
-// ─── WebGPU LLM inference (proxied to worker) ─────────────────────────────
-
-let _worker = null;             // the spawned inference Worker
-let _workerInitPromise = null;  // resolves once init message has acked
-let _nextRequestId = 1;
-const _pendingRequests = new Map(); // id → {resolve, reject}
-
-/**
- * Lazily spawn the inference worker on the first webgpu-* message.
- * The worker URL must point at the packaged worker file — same-origin
- * to the offscreen doc, no special manifest declaration needed
- * (workers spawned from extension pages don't need
- * web_accessible_resources). type:'module' so the worker can use
- * dynamic import() to pull in the vendored transformers.js.
- *
- * Init message ships the extension-origin URLs the worker needs;
- * chrome.runtime.getURL() may not be available in all Chrome worker
- * contexts, so we compute them here once.
- */
-async function ensureWorker() {
-  if (_worker && _workerInitPromise) return _workerInitPromise;
-  _worker = new Worker(chrome.runtime.getURL('src/offscreen/inference-worker.js'), {
-    type: 'module',
-  });
-  _worker.addEventListener('message', onWorkerMessage);
-  _worker.addEventListener('error', (e) => {
-    // Worker hard-failed (parse error, unhandled throw at top level).
-    // Reject every in-flight request so callers see a real error
-    // instead of hanging forever.
-    console.error('[webgpu] worker error', e);
-    for (const { reject } of _pendingRequests.values()) {
-      reject(new Error('inference worker errored: ' + (e.message || 'unknown')));
-    }
-    _pendingRequests.clear();
-    _worker = null;
-    _workerInitPromise = null;
-  });
-  _workerInitPromise = sendToWorker('init', {
-    transformersUrl: chrome.runtime.getURL('vendor/transformers/transformers.web.js'),
-    wasmMjsUrl: chrome.runtime.getURL('vendor/transformers/ort-wasm-simd-threaded.asyncify.mjs'),
-    wasmUrl: chrome.runtime.getURL('vendor/transformers/ort-wasm-simd-threaded.asyncify.wasm'),
-  });
-  return _workerInitPromise;
-}
-
-/**
- * Send a typed message to the worker and await its `{ id, ok, ... }`
- * reply. Unsolicited messages (`{ type: 'progress', ... }`) have no
- * id and bypass this map — see onWorkerMessage.
- */
-function sendToWorker(type, payload) {
-  const id = _nextRequestId++;
-  return new Promise((resolve, reject) => {
-    _pendingRequests.set(id, { resolve, reject });
-    _worker.postMessage({ id, type, payload });
-  });
-}
-
-function onWorkerMessage(e) {
-  const data = e.data || {};
-  if (data.type === 'progress') {
-    // Unsolicited progress event — relay to the side panel. Same
-    // shape we used before the Worker refactor so the UI code on the
-    // sidepanel side didn't have to change.
-    chrome.runtime.sendMessage({
-      target: 'sidepanel',
-      action: 'model_download',
-      modelId: data.modelId,
-      status: data.status,
-      file: data.file,
-      loaded: data.loaded,
-      total: data.total,
-      progress: data.progress,
-    }).catch(() => { /* no listener — fine, progress UI is best-effort */ });
-    return;
+function requestBodyFromMessage(msg) {
+  if (msg?.bodyType) {
+    throw new Error(`offscreen proxy received unsupported buffered body type: ${msg.bodyType}`);
   }
-  const pending = _pendingRequests.get(data.id);
-  if (!pending) return; // late reply after error/timeout
-  _pendingRequests.delete(data.id);
-  if (data.ok) pending.resolve(data);
-  else pending.reject(new Error(data.error || 'worker reported error with no message'));
+  return msg?.body || undefined;
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type !== 'webgpu-probe') return false;
-  (async () => {
-    try {
-      await ensureWorker();
-      const res = await sendToWorker('probe', {});
-      sendResponse(res);
-    } catch (e) {
-      sendResponse({ ok: false, error: e.message });
+const fetchProxyFormDataStartupCleanup = (async () => {
+  try {
+    const storageRoot = await navigator.storage.getDirectory();
+    const dir = await storageRoot.getDirectoryHandle('fetch-proxy-form-data', { create: true });
+    for await (const filename of dir.keys()) {
+      try { await dir.removeEntry(filename); } catch {}
     }
-  })();
-  return true;
-});
+    return dir;
+  } catch {
+    return null;
+  }
+})();
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type !== 'webgpu-clear-cache') return false;
-  (async () => {
-    try {
-      await ensureWorker();
-      const res = await sendToWorker('clear-cache', {});
-      sendResponse(res);
-    } catch (e) {
-      sendResponse({ ok: false, error: e.message });
+function fetchProxyBase64Bytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function createFetchProxyFormDataState(entries) {
+  if (!Array.isArray(entries)) {
+    throw new Error('offscreen proxy received invalid FormData entries');
+  }
+  const dir = await fetchProxyFormDataStartupCleanup;
+  if (!dir) throw new Error('offscreen proxy could not open FormData staging storage');
+  const token = crypto.randomUUID();
+  const blobFiles = new Map();
+  let cleaned = false;
+
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const staged of blobFiles.values()) {
+      if (!staged.closed) {
+        try { await staged.writable.abort(); } catch {}
+      }
+      try { await dir.removeEntry(staged.stagedFilename); } catch {}
     }
-  })();
-  return true;
-});
+  };
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type !== 'webgpu-chat') return false;
-  (async () => {
+  try {
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+      const entry = entries[entryIndex];
+      if (!entry || typeof entry.name !== 'string') {
+        throw new Error('offscreen proxy received an invalid FormData field');
+      }
+      if (entry.kind === 'text') continue;
+      if (entry.kind !== 'blob') {
+        throw new Error(`offscreen proxy received an unsupported FormData field: ${entry.name}`);
+      }
+      const stagedFilename = `${token}-${entryIndex}.part`;
+      const handle = await dir.getFileHandle(stagedFilename, { create: true });
+      const writable = await handle.createWritable();
+      blobFiles.set(entryIndex, { handle, writable, stagedFilename, closed: false });
+    }
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+
+  return {
+    async write(entryIndex, value) {
+      const staged = blobFiles.get(entryIndex);
+      if (!staged || staged.closed || typeof value !== 'string') {
+        throw new Error(`offscreen proxy received an invalid FormData chunk for entry ${entryIndex}`);
+      }
+      await staged.writable.write(fetchProxyBase64Bytes(value));
+    },
+    async finish() {
+      for (const staged of blobFiles.values()) {
+        await staged.writable.close();
+        staged.closed = true;
+      }
+      const form = new FormData();
+      for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+        const entry = entries[entryIndex];
+        if (entry.kind === 'text') {
+          form.append(entry.name, String(entry.value ?? ''));
+          continue;
+        }
+        const staged = blobFiles.get(entryIndex);
+        const file = await staged.handle.getFile();
+        const blob = new Blob([file], {
+          type: typeof entry.type === 'string' && entry.type
+            ? entry.type
+            : 'application/octet-stream',
+        });
+        form.append(entry.name, blob, typeof entry.filename === 'string' && entry.filename
+          ? entry.filename
+          : 'blob');
+      }
+      return form;
+    },
+    cleanup,
+  };
+}
+
+// Streaming variant of the fetch proxy, over a long-lived port. The
+// buffered onMessage path above can only respond after the ENTIRE body
+// has been consumed, so any caller-side timeout covers time-to-last-byte
+// and streamed LLM responses arrive in one burst. Over a port we report
+// headers first — the caller's stall timeout then only covers the
+// connection phase, exactly like a direct fetch — and relay body chunks
+// as they arrive so SSE streams stay incremental and unbounded in length.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'offscreen-fetch-stream') return;
+  let formDataState = null;
+  let pendingRequest = null;
+  let requestRunning = false;
+  let fetchController = null;
+  const cleanupFormData = async () => {
+    const state = formDataState;
+    formDataState = null;
+    pendingRequest = null;
+    if (state) await state.cleanup();
+  };
+  const post = (m) => { try { port.postMessage(m); } catch {} };
+  const relayFetch = async (msg, body) => {
+    requestRunning = true;
+    fetchController = new AbortController();
     try {
-      await ensureWorker();
-      const res = await sendToWorker('chat', {
-        modelId: msg.model,
-        dtype: msg.dtype,
-        device: msg.device,
-        messages: msg.messages || [],
-        options: msg.options || {},
+      const res = await fetch(msg.url, {
+        method: msg.method || 'POST',
+        headers: msg.headers || {},
+        body,
+        signal: fetchController.signal,
       });
-      sendResponse(res);
+      await cleanupFormData();
+      post({
+        type: 'headers',
+        ok: res.ok,
+        status: res.status,
+        contentType: res.headers.get('content-type') || '',
+        hasBody: !!res.body,
+      });
+      // HEAD and null-body statuses (204/205/304) legitimately expose no
+      // ReadableStream. Headers are the complete response in that case.
+      if (!res.body) {
+        post({ type: 'done' });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        post({ type: 'chunk', text: decoder.decode(value, { stream: true }) });
+      }
+      const tail = decoder.decode();
+      if (tail) post({ type: 'chunk', text: tail });
+      post({ type: 'done' });
     } catch (e) {
-      sendResponse({ ok: false, error: e.message });
+      await cleanupFormData();
+      post({ type: 'error', error: e?.message || String(e) });
+    } finally {
+      fetchController = null;
     }
-  })();
-  return true;
+  };
+
+  port.onMessage.addListener(async (msg) => {
+    try {
+      if (msg?.type === 'form-data-chunk') {
+        if (!formDataState || requestRunning) {
+          throw new Error('offscreen proxy received a FormData chunk without an active upload');
+        }
+        await formDataState.write(msg.entryIndex, msg.value);
+        post({
+          type: 'form-data-chunk-ack',
+          entryIndex: msg.entryIndex,
+          sequence: msg.sequence,
+        });
+        return;
+      }
+      if (msg?.type === 'form-data-complete') {
+        if (!formDataState || !pendingRequest || requestRunning) {
+          throw new Error('offscreen proxy received FormData completion without an active upload');
+        }
+        const request = pendingRequest;
+        const body = await formDataState.finish();
+        await relayFetch(request, body);
+        return;
+      }
+      if (!msg?.url || requestRunning || pendingRequest) return;
+      if (msg.bodyType === 'form-data-chunked') {
+        pendingRequest = msg;
+        formDataState = await createFetchProxyFormDataState(msg.formDataEntries);
+        post({ type: 'form-data-ready' });
+        return;
+      }
+      await relayFetch(msg, requestBodyFromMessage(msg));
+    } catch (e) {
+      await cleanupFormData();
+      post({ type: 'error', error: e?.message || String(e) });
+    }
+  });
+  port.onDisconnect?.addListener(() => {
+    try { fetchController?.abort(); } catch {}
+    cleanupFormData().catch(() => {});
+  });
 });

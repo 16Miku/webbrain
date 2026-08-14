@@ -1,0 +1,27 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3341,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking \"what time is it in tokyo right now\". This is a simple question about the current time in Tokyo. \n\nLooking at my available tools, I don't see any tool that can provide current time information. The tools I have are mostly for web browsing, interacting with web pages, downloading files, etc. There's no time/date tool available.\n\nHowever, I should first check the current page to see if there's any relevant information there. The user is asking about time, so maybe there's a clock or time-related content on the current page.\n\nLet me start by reading the current page to understand the context.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 159,
+    "prompt_tokens": 8470,
+    "total_tokens": 8629,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

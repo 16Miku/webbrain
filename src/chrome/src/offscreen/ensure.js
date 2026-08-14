@@ -4,8 +4,11 @@
  * Chrome MV3 allows only ONE offscreen document per extension at a time,
  * and the set of `reasons` declared at createDocument time is fixed — you
  * cannot add reasons later. So both consumers of the offscreen document
- * (the localhost-fetch proxy in offscreen.js, and the tab-recorder in
- * recorder.js) must agree on a single createDocument call that lists
+ * (the localhost-fetch proxy in offscreen.js, local WebGPU vision worker,
+ * large-file staging in
+ * skill-download.js, the tab-recorder in recorder.js, and the cloud bridge in
+ * cloud-bridge.js) must agree on a single
+ * createDocument call that lists
  * every reason either of them might ever need.
  *
  * Callers:
@@ -13,6 +16,8 @@
  *     to a localhost LLM server fails (Private Network Access workaround).
  *   • background.js (record routes) — needs the doc to host the
  *     MediaRecorder and Web Audio mixer when recording starts.
+ *   • background.js (cloud bridge routes) — needs the doc to keep an outbound
+ *     WebSocket open to the local sidecar.
  *
  * Both call `ensureOffscreen()` lazily; whichever fires first creates the
  * doc with the unified reason set, and the second one no-ops via the
@@ -24,28 +29,40 @@ const OFFSCREEN_REASONS = [
   // Localhost fetch proxy — no perfectly matching reason, LOCAL_STORAGE is
   // what we've used historically.
   'LOCAL_STORAGE',
+  // Large validated skill downloads are staged in OPFS and exposed through a
+  // short-lived blob URL so chrome.downloads never re-fetches the remote URL.
+  'BLOBS',
   // Tab recorder needs DISPLAY_MEDIA (chrome.tabCapture stream pulls in as
   // display media) and USER_MEDIA (mic via getUserMedia).
   'DISPLAY_MEDIA',
   'USER_MEDIA',
+  // Conditional watch alerts must play when no side panel is open.
+  'AUDIO_PLAYBACK',
 ];
 const OFFSCREEN_JUSTIFICATION =
-  'Proxy fetch to localhost LLM servers; capture active tab + mic for the optional Record feature.';
+  'Proxy localhost requests; run local WebGPU vision; stage validated large downloads; capture active tab and mic; maintain a localhost cloud bridge WebSocket; play conditional watch alerts.';
 
 let ready = false;
 let inflight = null;
 
+async function offscreenDocumentExists() {
+  try {
+    return await chrome.offscreen.hasDocument();
+  } catch {
+    return null;
+  }
+}
+
 export async function ensureOffscreen() {
-  if (ready) return;
   if (inflight) return inflight;
   inflight = (async () => {
-    try {
-      const exists = await chrome.offscreen.hasDocument();
-      if (exists) {
-        ready = true;
-        return;
-      }
-    } catch { /* hasDocument missing on very old Chrome — fall through */ }
+    const exists = await offscreenDocumentExists();
+    if (exists === true) {
+      ready = true;
+      return;
+    }
+    if (exists === null && ready) return;
+    ready = false;
     try {
       await chrome.offscreen.createDocument({
         url: OFFSCREEN_URL,

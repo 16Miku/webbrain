@@ -1,0 +1,43 @@
+{
+  "id": "051",
+  "user": "mark as spam",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox/abc123",
+    "title": "Invoice from Acme — Gmail"
+  },
+  "latencyMs": 4046,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "Let me look at the current page to find the spam button for this email.\n\n",
+  "usage": {
+    "prompt_tokens": 17487,
+    "completion_tokens": 111,
+    "total_tokens": 17598,
+    "cost": 0.001379776,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17024,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.001379776,
+      "upstream_inference_prompt_cost": 0.001237696,
+      "upstream_inference_completions_cost": 0.00014208
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 50,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

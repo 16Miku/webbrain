@@ -1,0 +1,40 @@
+{
+  "id": "065",
+  "user": "take a screenshot",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 23045,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I can't capture screenshots directly — that's a user-driven command. To insert a page image into chat, type:\n\n- `/screenshot` — captures the visible viewport\n- `/screenshot --full-page` — captures the entire page top to bottom\n\nJust type either one into the side panel and it'll grab the CNN page you're on.",
+  "usage": {
+    "prompt_tokens": 21707,
+    "completion_tokens": 695,
+    "total_tokens": 22402,
+    "cost": 0.02025,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20480,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.02025,
+      "upstream_inference_prompt_cost": 0.009825,
+      "upstream_inference_completions_cost": 0.010425
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 613,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

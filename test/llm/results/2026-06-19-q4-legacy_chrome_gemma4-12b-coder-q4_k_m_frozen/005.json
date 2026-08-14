@@ -1,0 +1,27 @@
+{
+  "id": "005",
+  "user": "show me my downloads",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1750,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "chrome://downloads"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"chrome://downloads\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 134,
+    "prompt_tokens": 9189,
+    "total_tokens": 9323,
+    "prompt_tokens_details": {
+      "cached_tokens": 8931
+    }
+  }
+}

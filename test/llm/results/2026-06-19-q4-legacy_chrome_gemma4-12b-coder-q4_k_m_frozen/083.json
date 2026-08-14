@@ -1,0 +1,27 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2627,
+  "error": null,
+  "firstToolCall": {
+    "name": "fetch_url",
+    "args": {
+      "url": "http://worldtimeapi.org/api/timezone/Asia/Tokyo"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"fetch_url\",\"arguments\":{\"url\":\"http://worldtimeapi.org/api/timezone/Asia/Tokyo\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 230,
+    "prompt_tokens": 9194,
+    "total_tokens": 9424,
+    "prompt_tokens_details": {
+      "cached_tokens": 8936
+    }
+  }
+}

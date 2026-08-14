@@ -1,0 +1,20 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5887,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "{\"tool\":\"clarify\",\"arguments\":{\"question\":\"What would you like to delete? Are you trying to delete a tab, a file, or something else on the current page?\"}}",
+  "usage": {
+    "prompt_tokens": 8602,
+    "total_tokens": 9598,
+    "completion_tokens": 996,
+    "prompt_tokens_details": null
+  }
+}

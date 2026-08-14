@@ -1,0 +1,25 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2124,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Could you let me see the current page so I can help you check the time in Tokyo?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{\"question\":\"Could you let me see the current page so I can help you check the time in Tokyo?\"}}",
+  "usage": {
+    "prompt_tokens": 8610,
+    "total_tokens": 8966,
+    "completion_tokens": 356,
+    "prompt_tokens_details": null
+  }
+}

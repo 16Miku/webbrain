@@ -1,0 +1,26 @@
+{
+  "id": "068",
+  "user": "click that",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2758,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I need to see what's on the page first to know what you're referring to. Let me take a look.",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17414,
+    "completion_tokens": 90,
+    "prompt_tokens_details": null
+  }
+}

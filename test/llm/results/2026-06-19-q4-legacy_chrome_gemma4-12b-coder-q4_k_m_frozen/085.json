@@ -1,0 +1,22 @@
+{
+  "id": "085",
+  "user": "tell me a joke",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1474,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Why did the web browser go to therapy?\n\nBecause it had too many tabs open and just couldn't clear its cache.\n\nHope that gave you a laugh! Let me know if there's anything else I can help with.",
+  "usage": {
+    "completion_tokens": 110,
+    "prompt_tokens": 9189,
+    "total_tokens": 9299,
+    "prompt_tokens_details": {
+      "cached_tokens": 8936
+    }
+  }
+}

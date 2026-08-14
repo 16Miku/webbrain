@@ -1,0 +1,46 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4886,
+  "error": null,
+  "firstToolCall": {
+    "name": "fetch_url",
+    "args": {
+      "url": "https://worldtimeapi.org/api/timezone/Asia/Tokyo",
+      "maxChars": 2000
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72152,
+    "completion_tokens": 394,
+    "total_tokens": 72546,
+    "cost": 0.002068885,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59821,
+      "cache_write_tokens": 47,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.002068885,
+      "upstream_inference_prompt_cost": 0.001832485,
+      "upstream_inference_completions_cost": 0.00023640000000000003
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 260,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

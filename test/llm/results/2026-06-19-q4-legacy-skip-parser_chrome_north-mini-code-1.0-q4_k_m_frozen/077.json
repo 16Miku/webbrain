@@ -1,0 +1,27 @@
+{
+  "id": "077",
+  "user": "delete all my emails",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 3016,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants to delete all emails in Gmail. I'm on the Gmail inbox page. I need to:\n\n1. First, read the current page to understand the Gmail UI\n2. Find a way to select all emails \n3. Delete them\n\nLet me start by reading the current page to see what's available.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 97,
+    "prompt_tokens": 8615,
+    "total_tokens": 8712,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

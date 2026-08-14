@@ -1,0 +1,27 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2166,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "about:blank"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"about:blank\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 198,
+    "prompt_tokens": 9187,
+    "total_tokens": 9385,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "006",
+  "user": "i wanna check netflix",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3313,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.netflix.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.netflix.com\"}}",
+  "usage": {
+    "prompt_tokens": 8605,
+    "total_tokens": 9164,
+    "completion_tokens": 559,
+    "prompt_tokens_details": null
+  }
+}

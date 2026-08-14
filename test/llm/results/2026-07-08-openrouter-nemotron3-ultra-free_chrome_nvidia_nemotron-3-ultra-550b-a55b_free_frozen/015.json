@@ -1,0 +1,16 @@
+{
+  "id": "015",
+  "user": "whats my new tab page",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 975,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null
+}

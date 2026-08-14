@@ -1,0 +1,27 @@
+{
+  "id": "044",
+  "user": "file a bug titled \"buttons unresponsive\"",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 2689,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\": \"get_accessibility_tree\", \"arguments\": {\"filter\": \"visible\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 235,
+    "prompt_tokens": 9776,
+    "total_tokens": 10011,
+    "prompt_tokens_details": {
+      "cached_tokens": 9516
+    }
+  }
+}

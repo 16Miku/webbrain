@@ -1,0 +1,27 @@
+{
+  "id": "007",
+  "user": "open linkedin in this tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3068,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.linkedin.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to open LinkedIn in this tab. I'm currently on the \"New Tab\" page (about:home). I need to navigate to LinkedIn. I should use the navigate tool to go to LinkedIn's URL.\n\nLet me check what tools I have available:\n- navigate: Go to a URL\n\nI need to navigate to LinkedIn. The typical URL for LinkedIn is https://www.linkedin.com\n\nI should navigate to this URL.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://www.linkedin.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 128,
+    "prompt_tokens": 8466,
+    "total_tokens": 8594,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

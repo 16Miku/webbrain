@@ -1,0 +1,27 @@
+{
+  "id": "060",
+  "user": "find 3 wireless earbuds under $100",
+  "tab": {
+    "url": "https://www.amazon.com/",
+    "title": "Amazon.com"
+  },
+  "latencyMs": 3113,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to find 3 wireless earbuds under $100 on Amazon. I need to:\n\n1. First read the current page to understand what's on screen\n2. Navigate to Amazon if not already there (but the context says we're on Amazon.com)\n3. Search for wireless earbuds under $100\n4. Find 3 options and present them\n\nLet me start by reading the current page to see what's on screen.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 120,
+    "prompt_tokens": 8578,
+    "total_tokens": 8698,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

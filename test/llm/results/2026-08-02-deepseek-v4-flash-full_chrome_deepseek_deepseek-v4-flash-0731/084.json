@@ -1,0 +1,46 @@
+{
+  "id": "084",
+  "user": "explain javascript closures in 2 sentences",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2351,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "summary": "A closure is a function that \"remembers\" the variables from the scope where it was created, even after that outer scope has finished executing — so an inner function can keep accessing its outer function's variables. This is what powers patterns like private variables, function factories, and callbacks that capture state.",
+      "outcome": "success"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "A closure is a function that \"remembers\" the variables from the scope where it was created, even after that outer scope has finished executing — so an inner function can keep accessing its outer function's variables. This is what powers patterns like private variables, function factories, and callbacks that capture state.\n\n",
+  "usage": {
+    "prompt_tokens": 23506,
+    "completion_tokens": 210,
+    "total_tokens": 23716,
+    "cost": 0.000476028,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23296,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000476028,
+      "upstream_inference_prompt_cost": 0.000438228,
+      "upstream_inference_completions_cost": 0.0000378
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 38,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

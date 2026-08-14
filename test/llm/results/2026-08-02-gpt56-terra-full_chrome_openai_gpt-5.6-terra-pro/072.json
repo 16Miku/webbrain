@@ -1,0 +1,47 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 13232,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to delete? The current page is a blank New Tab, so there isn’t a visible item to remove.",
+      "options": [],
+      "reason": "No deletable target is present on the current page."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72077,
+    "completion_tokens": 1006,
+    "total_tokens": 73083,
+    "cost": 0.0422408,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 39858,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0422408,
+      "upstream_inference_prompt_cost": 0.0362048,
+      "upstream_inference_completions_cost": 0.006036
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 840,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

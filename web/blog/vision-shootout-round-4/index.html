@@ -4,39 +4,92 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance — WebBrain Blog</title>
-  <meta name="description" content="Round 4 of the vision-model shootout for browser agents. A 9B int4 Qwen 3.5 model classifies the email-chip dropdown explicitly — something the 308B MiMo IQ3_S and the larger Qwen 3.6-A3B both missed. Cheapest image tokens after Gemma. The catch: it loses the red-border visual cue and joins the 'Unknowns: None' club.">
+  <meta name="description" content="Round 4 of the vision-model shootout for browser agents. A 9B int4 Qwen 3.5 model classifies the email-chip dropdown explicitly — something the 308B MiMo IQ3_S and the larger Qwen 3.6-A3B both missed. Cheapest image tokens after Gemma. The catch: it loses the red-border visual cue and joins the &#39;Unknowns: None&#39; club.">
   <meta name="keywords" content="Qwen 3.5 9B, AutoRound int4, vLLM vision, vision model benchmark, browser agent, affordance classification, MiMo V2.5 vs Qwen, low VRAM vision model, dropdown classification, calibrated uncertainty, Intel AutoRound, llama.cpp vs vLLM">
-  <meta property="og:title" content="Round 4: Qwen 3.5-9B-int4 punches above its weight — affordance doesn't scale with size">
+  <meta property="og:title" content="Round 4: Qwen 3.5-9B-int4 punches above its weight — affordance doesn&#39;t scale with size">
   <meta property="og:description" content="A 9B int4 model classifies the dropdown explicitly while the 308B IQ3_S misses it. What small + old + int4 actually buys you on a browser screen.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://webbrain.one/blog/vision-shootout-round-4">
-  <meta property="og:image" content="https://webbrain.one/og-image.svg">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Round 4: Qwen 3.5-9B-int4 punches above its weight">
   <meta name="twitter:description" content="9B int4 beats 308B IQ3_S on affordance classification. The size-vs-capability lens for browser-agent vision.">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="canonical" href="https://webbrain.one/blog/vision-shootout-round-4">
-  <!-- Blog post is English-only; alternates point to locale homepages. -->
+  <!-- Blog is English-only; alternates point to locale homepages. -->
   <link rel="alternate" hreflang="en" href="https://webbrain.one/">
   <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
   <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
   <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
   <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
   <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --bg: #0b0e17;
       --bg-card: #111827;
+      --bg-card-hover: #1a2233;
       --surface: #161d2e;
       --border: rgba(255,255,255,0.07);
       --text: #e4e4ec;
       --text-dim: #8b8fa4;
       --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
       --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
       --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
       --radius: 12px;
+      --radius-lg: 16px;
       --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
     }
     html { scroll-behavior: smooth; }
     body {
@@ -45,25 +98,45 @@
       color: var(--text);
       line-height: 1.75;
       font-size: 17px;
+      overflow-x: hidden;
     }
     a { color: var(--accent2); text-decoration: none; }
     a:hover { text-decoration: underline; }
-
     .glow-bg {
       position: fixed;
       inset: 0;
       z-index: -1;
       pointer-events: none;
+      overflow: hidden;
     }
-    .glow-bg::before, .glow-bg::after {
-      content: ''; position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.3;
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
     }
-    .glow-bg::before { width: 500px; height: 500px; background: var(--accent); top: -200px; left: -150px; }
-    .glow-bg::after  { width: 500px; height: 500px; background: var(--accent2); bottom: -200px; right: -150px; opacity: 0.2; }
-
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
     nav {
-      position: sticky; top: 0; z-index: 100;
-      background: rgba(11,14,23,0.85);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
       backdrop-filter: saturate(160%) blur(12px);
       -webkit-backdrop-filter: saturate(160%) blur(12px);
       border-bottom: 1px solid var(--border);
@@ -71,48 +144,139 @@
     .nav-inner {
       max-width: var(--max-w);
       margin: 0 auto;
-      padding: 16px 24px;
+      padding: 14px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 20px;
     }
-    .nav-brand { font-weight: 700; font-size: 18px; color: var(--text); }
-    .nav-brand .emoji { margin-right: 4px; }
-    .nav-links a { color: var(--text-dim); margin-left: 20px; font-size: 14px; }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
-
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
     article {
       max-width: var(--max-w);
       margin: 0 auto;
       padding: 64px 24px 80px;
     }
-
-    .meta {
-      font-size: 13px;
-      color: var(--text-dim);
-      margin-bottom: 12px;
-      letter-spacing: 0.02em;
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     h1 {
       font-size: 38px;
       line-height: 1.2;
       font-weight: 700;
-      letter-spacing: -0.02em;
+      letter-spacing: 0;
       margin-bottom: 16px;
     }
     .lede {
-      font-size: 19px;
       color: var(--text-dim);
-      margin-bottom: 40px;
       line-height: 1.6;
     }
-
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
     h2 {
       font-size: 24px;
       font-weight: 700;
       margin-top: 48px;
       margin-bottom: 14px;
-      letter-spacing: -0.01em;
+      letter-spacing: 0;
     }
     h3 {
       font-size: 18px;
@@ -121,18 +285,22 @@
       margin-bottom: 10px;
       color: var(--text);
     }
-
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
     p { margin-bottom: 16px; }
     ul, ol { margin: 0 0 16px 20px; }
     li { margin-bottom: 6px; }
-
     code {
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 0.88em;
-      background: rgba(255,255,255,0.06);
+      background: var(--inline-code-bg);
       padding: 2px 6px;
       border-radius: 4px;
-      color: #e7dbff;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
     }
     pre {
       background: var(--code-bg);
@@ -143,14 +311,14 @@
       margin: 20px 0;
       font-size: 14px;
       line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
     }
     pre code {
       background: transparent;
       padding: 0;
-      color: #d7cff7;
+      color: inherit;
       font-size: inherit;
     }
-
     blockquote {
       border-left: 3px solid var(--accent);
       padding: 4px 0 4px 18px;
@@ -158,13 +326,26 @@
       color: var(--text-dim);
       font-style: italic;
     }
-
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
     .table-wrap { overflow-x: auto; margin: 24px 0; }
     table {
       width: 100%;
+      min-width: 560px;
       border-collapse: collapse;
       font-size: 14px;
-      min-width: 560px;
     }
     th, td {
       text-align: left;
@@ -177,17 +358,16 @@
       font-weight: 600;
       font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      background: rgba(255,255,255,0.02);
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
     }
     td code { font-size: 12px; }
-    .win { color: #34d399; font-weight: 600; }
-    .lose { color: #f87171; }
-    .meh { color: #fbbf24; }
-
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
     .callout {
-      background: rgba(108,99,255,0.08);
-      border: 1px solid rgba(108,99,255,0.2);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
       border-radius: var(--radius);
       padding: 16px 20px;
       margin: 24px 0;
@@ -196,7 +376,6 @@
       color: var(--text-dim);
     }
     .callout strong { color: var(--text); }
-
     .author-box {
       margin-top: 64px;
       padding-top: 32px;
@@ -204,8 +383,40 @@
       color: var(--text-dim);
       font-size: 14px;
     }
-    .author-box a { color: var(--accent2); }
-
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
     footer {
       max-width: var(--max-w);
       margin: 0 auto;
@@ -213,344 +424,213 @@
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
+      gap: 24px;
       color: var(--text-dim);
       font-size: 13px;
     }
     footer a { color: var(--text-dim); }
     footer a:hover { color: var(--text); }
-
-    @media (max-width: 640px) {
+    @media (max-width: 700px) {
       body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
       h1 { font-size: 28px; }
       .lede { font-size: 16px; }
-      article { padding: 48px 20px 64px; }
+      main, article { padding: 48px 20px 64px; }
       h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
     }
   </style>
-
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "BlogPosting",
-    "headline": "Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance",
-    "description": "Round 4 of the vision-model shootout. A 9B int4 Qwen 3.5 classifies the email-chip dropdown explicitly — something the 308B MiMo IQ3_S and the larger Qwen 3.6-A3B both missed. Cheapest image tokens after Gemma. The catch: loses the red-border visual cue and joins the 'Unknowns: None' club.",
-    "author": {
-      "@type": "Person",
-      "name": "Emre Sokullu",
-      "url": "https://emresokullu.com"
-    },
-    "datePublished": "2026-05-07",
-    "image": "https://webbrain.one/og-image.svg",
-    "publisher": {
-      "@type": "Organization",
-      "name": "WebBrain",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://webbrain.one/favicon.svg"
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
       }
-    },
-    "mainEntityOfPage": {
-      "@type": "WebPage",
-      "@id": "https://webbrain.one/blog/vision-shootout-round-4"
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance",
+  "description": "Round 4 of the vision-model shootout for browser agents. A 9B int4 Qwen 3.5 model classifies the email-chip dropdown explicitly — something the 308B MiMo IQ3_S and the larger Qwen 3.6-A3B both missed. Cheapest image tokens after Gemma. The catch: it loses the red-border visual cue and joins the 'Unknowns: None' club.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-05-07",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
     }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/vision-shootout-round-4"
   }
+}
   </script>
 </head>
 <body>
   <div class="glow-bg"></div>
-
   <nav>
     <div class="nav-inner">
-      <a href="/" class="nav-brand"><span class="emoji">🧠</span> WebBrain<span style="opacity:0.5; font-weight:400;">.one</span></a>
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
       <div class="nav-links">
         <a href="/">Home</a>
-        <a href="/blog">Blog</a>
-        <a href="https://github.com/esokullu/webbrain" target="_blank">GitHub</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
       </div>
     </div>
   </nav>
 
   <article>
-    <div class="meta">May 7, 2026 · 6 min read · <a href="/blog">← All posts</a></div>
+    <div class="meta">May 7, 2026 &middot; 6 min read &middot; <a href="/blog">&larr; All posts</a></div>
     <h1>Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance</h1>
-    <p class="lede">
-      Same probe, same screen, same prompt as <a href="/blog/vision-shootout-round-3">round 3</a>. This time: <code>Intel/Qwen3.5-9B-int4-AutoRound</code> on vLLM. Older generation than the round 1 winner, four times smaller, and aggressively quantized to int4 — yet it explicitly classifies the email-chip dropdown that MiMo V2.5 at IQ3_S (308B params!) and even Qwen 3.6-35B-A3B both missed. The affordance call doesn't scale with size. Visual cue extraction does.
-    </p>
-
-    <h2>The setup, again</h2>
-    <p>
-      Same <code>test/vision-probe.mjs</code>, same Google sign-in screenshot at <code>test/fixtures/google-signin-password-error.jpg</code>, same 6-section structured caption prompt. This time pointed at vLLM on <code>localhost:8000</code> serving <code>Intel/Qwen3.5-9B-int4-AutoRound</code> — Intel's int4 quantization of the dense Qwen 3.5-9B-VL via AutoRound. Important framing for what follows:
-    </p>
-    <ul>
-      <li><strong>Older.</strong> Round 1's headline winner was Qwen 3.6-35B-A3B. This is the previous generation, 3.5 not 3.6.</li>
-      <li><strong>Smaller.</strong> 9B dense vs 35B-A3B (~3B active). About 4× fewer params.</li>
-      <li><strong>Lower precision.</strong> int4 AutoRound — meaningfully more aggressive than the GGUF Q4_K_M / FP16 variants of the larger models.</li>
-      <li><strong>Different engine.</strong> vLLM vs llama.cpp.</li>
-    </ul>
-    <p>By any "size + recency + precision = capability" prior, this should land at the bottom of the table next to Gemma 4-E2B. It doesn't.</p>
-
-    <h2>The surprise: it classified the dropdown</h2>
-    <p>The email chip <code>esokullu@gmail.com</code> with the small chevron is structurally a dropdown — click it, you get an account picker. Across the eight models we've now tested, only three caught this and put it in §3 as a structured input the planner can act on:</p>
-    <ul>
-      <li>Nemotron Omni 30B-A3B (round 2)</li>
-      <li>Qwen 3.6-35B-A3B (round 1, but only as a parenthetical annotation under §2 — not a real §3 entry)</li>
-      <li><strong>Qwen 3.5-9B-int4 (this round)</strong></li>
-    </ul>
-    <p>Qwen 3.5-9B-int4's §3 entry, verbatim:</p>
-    <pre><code>3) Inputs:
-- Dropdown: Label "esokullu@gmail.com", value "esokullu@gmail.com",
+    <p class="lede">Same probe, same screen, same prompt as <a href="/blog/vision-shootout-round-3">round 3</a>. This time: <code>Intel/Qwen3.5-9B-int4-AutoRound</code> on vLLM. Older generation than the round 1 winner, four times smaller, and aggressively quantized to int4 — yet it explicitly classifies the email-chip dropdown that MiMo V2.5 at IQ3_S (308B params!) and even Qwen 3.6-35B-A3B both missed. The affordance call doesn't scale with size. Visual cue extraction does.</p>
+<h2 id="the-setup-again">The setup, again</h2>
+<p>Same <code>test/vision-probe.mjs</code>, same Google sign-in screenshot at <code>test/fixtures/google-signin-password-error.jpg</code>, same 6-section structured caption prompt. This time pointed at vLLM on <code>localhost:8000</code> serving <code>Intel/Qwen3.5-9B-int4-AutoRound</code> — Intel's int4 quantization of the dense Qwen 3.5-9B-VL via AutoRound. Important framing for what follows:</p>
+<ul><li><strong>Older.</strong> Round 1's headline winner was Qwen 3.6-35B-A3B. This is the previous generation, 3.5 not 3.6.</li><li><strong>Smaller.</strong> 9B dense vs 35B-A3B (~3B active). About 4× fewer params.</li><li><strong>Lower precision.</strong> int4 AutoRound — meaningfully more aggressive than the GGUF Q4<em>K</em>M / FP16 variants of the larger models.</li><li><strong>Different engine.</strong> vLLM vs llama.cpp.</li></ul>
+<p>By any "size + recency + precision = capability" prior, this should land at the bottom of the table next to Gemma 4-E2B. It doesn't.</p>
+<h2 id="the-surprise-it-classified-the-dropdown">The surprise: it classified the dropdown</h2>
+<p>The email chip <code>esokullu@gmail.com</code> with the small chevron is structurally a dropdown — click it, you get an account picker. Across the eight models we've now tested, only three caught this and put it in §3 as a structured input the planner can act on:</p>
+<ul><li>Nemotron Omni 30B-A3B (round 2)</li><li>Qwen 3.6-35B-A3B (round 1, but only as a parenthetical annotation under §2 — not a real §3 entry)</li><li><strong>Qwen 3.5-9B-int4 (this round)</strong></li></ul>
+<p>Qwen 3.5-9B-int4's §3 entry, verbatim:</p>
+<pre><code>3) Inputs:
+- Dropdown: Label &quot;esokullu@gmail.com&quot;, value &quot;esokullu@gmail.com&quot;,
   not focused, not disabled.
-- Text field: Label "Enter your password", value "", focused,
+- Text field: Label &quot;Enter your password&quot;, value &quot;&quot;, focused,
   not disabled.
-- Checkbox: Label "Show password", unchecked, not disabled.</code></pre>
-    <p>
-      Same structural framing Nemotron used. And this is a 9B int4 model. The thing the 308B MiMo at IQ3_S missed. The thing the 35B-A3B Qwen 3.6 only flagged parenthetically.
-    </p>
-    <p>
-      Best guess at why: the affordance call seems to hinge on the vision encoder family and the tile granularity it imposes, not the LLM head's parameter count. Qwen 3.5-9B-VL and Qwen 3.6 share lineage there; whatever in the encoder sees "chevron next to text → combobox" survives the int4 quant on the smaller model. Meanwhile MiMo's encoder produces 5557 prompt tokens for the same image and still doesn't put the chip in §3 — the encoder is doing more work and producing a worse structural read. The capability isn't where you'd expect it from the parameter count alone.
-    </p>
-
-    <h2>What else it got right</h2>
-    <ul>
-      <li><strong>All 12 visible strings</strong>, verbatim, including <code>esokullu@gmail.com</code>.</li>
-      <li><strong>Page purpose</strong>: "Google account password entry screen." Terse, correct.</li>
-      <li><strong>Inferred semantic blocker</strong>: "password field is empty and marked as required." Correct framing for a planner.</li>
-    </ul>
-
-    <h2>Where it slipped: the red-border visual cue</h2>
-    <p>This is where the small + int4 cost shows up. Qwen 3.5-9B-int4's §4:</p>
-    <pre><code>4) State signals:
-- Error message: "Enter a password" displayed below the password
+- Checkbox: Label &quot;Show password&quot;, unchecked, not disabled.</code></pre>
+<p>Same structural framing Nemotron used. And this is a 9B int4 model. The thing the 308B MiMo at IQ3_S missed. The thing the 35B-A3B Qwen 3.6 only flagged parenthetically.</p>
+<p>Best guess at why: the affordance call seems to hinge on the vision encoder family and the tile granularity it imposes, not the LLM head's parameter count. Qwen 3.5-9B-VL and Qwen 3.6 share lineage there; whatever in the encoder sees "chevron next to text → combobox" survives the int4 quant on the smaller model. Meanwhile MiMo's encoder produces 5557 prompt tokens for the same image and still doesn't put the chip in §3 — the encoder is doing more work and producing a worse structural read. The capability isn't where you'd expect it from the parameter count alone.</p>
+<h2 id="what-else-it-got-right">What else it got right</h2>
+<ul><li><strong>All 12 visible strings</strong>, verbatim, including <code>esokullu@gmail.com</code>.</li><li><strong>Page purpose</strong>: "Google account password entry screen." Terse, correct.</li><li><strong>Inferred semantic blocker</strong>: "password field is empty and marked as required." Correct framing for a planner.</li></ul>
+<h2 id="where-it-slipped-the-redborder-visual-cue">Where it slipped: the red-border visual cue</h2>
+<p>This is where the small + int4 cost shows up. Qwen 3.5-9B-int4's §4:</p>
+<pre><code>4) State signals:
+- Error message: &quot;Enter a password&quot; displayed below the password
   input field.
 - No loading spinners, toasts, modals, or other overlays.</code></pre>
-    <p>
-      No mention of the red border on the password field. No mention of the small red exclamation icon. The error message text is captured, but the visual treatment that makes the error visible at a glance — the colored border ring around the input — is missed entirely.
-    </p>
-    <p>
-      Compare round 1's <strong>Qwen 3.5-27B</strong> entry, which got border + icon + text. Same model family, three times the parameters, and the visual cues come back. This is a clean data point: <strong>visual state extraction does scale with size and quant</strong>, even when affordance classification doesn't. The 9B-int4 reads the structure right but misses what the colors mean.
-    </p>
-    <p>
-      For a browser agent this is recoverable — DOM cross-check confirms the validation state — but it's a real gap. If you were relying on the vision sub-call to flag "this form has an error" without round-tripping through the accessibility tree, the smaller model wouldn't tell you.
-    </p>
-
-    <h2>The §6 result you can probably guess</h2>
-    <p>Section 6 of the prompt:</p>
-    <blockquote>If you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.</blockquote>
-    <p>Qwen 3.5-9B-int4 wrote:</p>
-    <pre><code>6) Unknowns:
+<p>No mention of the red border on the password field. No mention of the small red exclamation icon. The error message text is captured, but the visual treatment that makes the error visible at a glance — the colored border ring around the input — is missed entirely.</p>
+<p>Compare round 1's <strong>Qwen 3.5-27B</strong> entry, which got border + icon + text. Same model family, three times the parameters, and the visual cues come back. This is a clean data point: <strong>visual state extraction does scale with size and quant</strong>, even when affordance classification doesn't. The 9B-int4 reads the structure right but misses what the colors mean.</p>
+<p>For a browser agent this is recoverable — DOM cross-check confirms the validation state — but it's a real gap. If you were relying on the vision sub-call to flag "this form has an error" without round-tripping through the accessibility tree, the smaller model wouldn't tell you.</p>
+<h2 id="the-6-result-you-can-probably-guess">The §6 result you can probably guess</h2>
+<p>Section 6 of the prompt:</p>
+<blockquote><p>If you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.</p></blockquote>
+<p>Qwen 3.5-9B-int4 wrote:</p>
+<pre><code>6) Unknowns:
 - None.</code></pre>
-    <p>
-      Joins the club. We're now at five models in the "wrote None even when there was something to flag" bucket (the red border ambiguity is right there to call out — it's used for both focus and error on Material-style inputs and a planner needs to know which). Across <strong>seven model variants from five families on three engines at three quant levels</strong>, only Qwen 3.6-35B-A3B does §6 honestly. That's no longer a quirk — it's the central finding of the shootout series.
-    </p>
-
-    <h2>The numbers</h2>
-
-    <ul>
-      <li><strong>Image tokens: 3379</strong> — cheapest after Gemma's 574. Beats Nemotron's 3636, well below Qwen 3.6-A3B's 4374, ~40% under MiMo IQ3_S's 5557.</li>
-      <li><strong>Latency: 10.3s end-to-end</strong> for 252 completion tokens, of which ~8 seconds is prompt-eval / TTFT and ~2.3 seconds is decode at ~110 tok/s. Slower than Qwen 3.6-A3B's 5.3s in round 2, but in a different VRAM bracket.</li>
-      <li><strong>VRAM: ~6 GB</strong> at int4 — by far the most consumer-friendly model on the table. Fits on hardware that none of the other strong contenders can touch.</li>
-      <li><strong>Headers: 615 ms.</strong> vLLM's request handling is noticeably snappier than llama.cpp's on small models — irrelevant for total latency but pleasant for interactive use.</li>
-    </ul>
-
-    <h2>The full table, updated</h2>
-
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th></th>
-            <th>Gemma 4-E2B</th>
-            <th>Gemma 4-31B</th>
-            <th>Qwen 3.6-27B</th>
-            <th>Qwen 3.6-35B-A3B</th>
-            <th>Nemotron Omni 30B</th>
-            <th>MiMo V2.5 IQ3_S</th>
-            <th>Qwen 3.5-9B-int4</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Architecture</td>
-            <td>Dense ~2B</td>
-            <td>Dense 31B</td>
-            <td>Dense 27B</td>
-            <td>MoE 35B / ~3B active</td>
-            <td>MoE 30B / ~3B active</td>
-            <td>MoE 308B (omni)</td>
-            <td>Dense 9B</td>
-          </tr>
-          <tr>
-            <td>Engine</td>
-            <td>llama.cpp</td>
-            <td>llama.cpp</td>
-            <td>vLLM int4</td>
-            <td>llama.cpp</td>
-            <td>vLLM NVFP4</td>
-            <td>llama.cpp IQ3_S</td>
-            <td>vLLM int4 AR</td>
-          </tr>
-          <tr>
-            <td>Latency</td>
-            <td><span class="win">1.5s</span></td>
-            <td>4.6s</td>
-            <td>5.9s</td>
-            <td><span class="win">5.3s</span></td>
-            <td>12.0s</td>
-            <td><span class="lose">61s / 209t</span></td>
-            <td>10.3s / 252t</td>
-          </tr>
-          <tr>
-            <td>Prompt tokens (image)</td>
-            <td><span class="win">574</span></td>
-            <td><span class="win">574</span></td>
-            <td><span class="lose">5570</span></td>
-            <td>4374</td>
-            <td>3636</td>
-            <td><span class="lose">5557</span></td>
-            <td><span class="win">3379</span></td>
-          </tr>
-          <tr>
-            <td>Email chip OCR</td>
-            <td><span class="lose">❌</span></td>
-            <td><span class="lose">❌</span></td>
-            <td><span class="win">✓</span></td>
-            <td><span class="win">✓</span></td>
-            <td><span class="win">✓</span></td>
-            <td><span class="win">✓</span></td>
-            <td><span class="win">✓</span></td>
-          </tr>
-          <tr>
-            <td>All 12 visible strings</td>
-            <td><span class="lose">5/12</span></td>
-            <td><span class="win">12</span></td>
-            <td><span class="win">12</span></td>
-            <td><span class="win">12</span></td>
-            <td><span class="meh">11 (email moved to §3)</span></td>
-            <td><span class="win">12</span></td>
-            <td><span class="win">12</span></td>
-          </tr>
-          <tr>
-            <td>Affordance: chip = dropdown</td>
-            <td><span class="lose">missed</span></td>
-            <td><span class="lose">missed</span></td>
-            <td><span class="lose">missed</span></td>
-            <td><span class="meh">parenthetical</span></td>
-            <td><span class="win">explicit</span></td>
-            <td><span class="lose">missed</span></td>
-            <td><span class="win">explicit</span></td>
-          </tr>
-          <tr>
-            <td>Red error state</td>
-            <td><span class="lose">missed</span></td>
-            <td>text only</td>
-            <td><span class="win">border + icon + text</span></td>
-            <td><span class="win">border + icon + text + flag</span></td>
-            <td><span class="win">border + icon + text</span></td>
-            <td><span class="win">border + icon + text</span></td>
-            <td><span class="meh">text only</span></td>
-          </tr>
-          <tr>
-            <td>Inferred blocker</td>
-            <td><span class="lose">no</span></td>
-            <td>no</td>
-            <td><span class="win">yes</span></td>
-            <td><span class="win">yes</span></td>
-            <td><span class="win">yes</span></td>
-            <td><span class="win">yes</span></td>
-            <td><span class="win">yes</span></td>
-          </tr>
-          <tr>
-            <td>Honest "Unknowns" §6</td>
-            <td><span class="lose">no</span></td>
-            <td><span class="lose">no</span></td>
-            <td><span class="lose">no</span></td>
-            <td><span class="win">YES — only model</span></td>
-            <td><span class="lose">no</span></td>
-            <td><span class="lose">no</span></td>
-            <td><span class="lose">no</span></td>
-          </tr>
-          <tr>
-            <td>Multilingual</td>
-            <td>weak</td>
-            <td>partial</td>
-            <td><span class="win">native</span></td>
-            <td><span class="win">native</span></td>
-            <td><span class="lose">English-only</span></td>
-            <td><span class="win">native (untested)</span></td>
-            <td><span class="win">native (untested)</span></td>
-          </tr>
-          <tr>
-            <td>VRAM bracket</td>
-            <td>~3 GB</td>
-            <td>~20 GB</td>
-            <td>~16 GB</td>
-            <td>~22 GB</td>
-            <td>~18 GB</td>
-            <td>~110 GB</td>
-            <td><span class="win">~6 GB</span></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h2>What this rounds out about size, quant, and capability</h2>
-    <p>
-      Four rounds in, the capability axes are starting to separate cleanly:
-    </p>
-    <ul>
-      <li>
-        <strong>Affordance classification (chip = dropdown) is encoder-driven, not size-driven.</strong> Three of the eight model variants got it. They span 9B–308B parameters, three families, three engines, three quants. Common factor isn't size — it looks more like a property of how the vision tokenizer / encoder treats small UI sub-components like a chevron-with-text.
-      </li>
-      <li>
-        <strong>Visual state extraction (red border, focus rings, error icons) does scale with size and quant.</strong> The 9B-int4 reads form structure correctly but loses the colored cues; the same family at 27B gets them back. This matters for surface-level error detection — though it's recoverable from the DOM.
-      </li>
-      <li>
-        <strong>OCR fidelity scales coarsely.</strong> Above ~9B, every model now reads the email correctly. Below that, Gemma 4-E2B mangles identifiers. There's a knee somewhere around 7-9B; below it, you can't trust the model on names, IDs, or amounts.
-      </li>
-      <li>
-        <strong>Calibrated uncertainty (§6) is a model-level behavior, not a size or quant artifact.</strong> Eight variants tested, exactly one does it. Until proven otherwise, this is intrinsic to the Qwen 3.6-A3B post-training mix — not something you get for free by going larger.
-      </li>
-    </ul>
-
-    <h2>Verdict for VRAM-budget operators</h2>
-
-    <p>
-      <strong>If you have ≤8 GB of VRAM</strong> and need a self-hosted vision sub-call for a browser agent, Qwen 3.5-9B-int4 on vLLM is suddenly the most interesting option on this list. It nails what matters most for navigating browser forms — find the dropdown, OCR the strings, identify the blocker — while sacrificing what matters least: the precise visual cue surfacing, which is recoverable from the DOM. <strong>It does not replace Qwen 3.6-35B-A3B</strong> for users with the VRAM headroom — the §6 calibration is the difference, and it's the single most important difference on the table for browser-agent reliability — but on a 6-8 GB GPU, this is a much more capable model than its specs suggest.
-    </p>
-
-    <p>For a routing policy, the rough shape is now:</p>
-    <ul>
-      <li><strong>≥22 GB VRAM</strong>: Qwen 3.6-35B-A3B. Wins on §6 calibration, fast, multilingual.</li>
-      <li><strong>~16 GB</strong>: Qwen 3.6-27B dense. Trades §6 for fewer params; still gets visual cues.</li>
-      <li><strong>~6-8 GB</strong>: Qwen 3.5-9B-int4 on vLLM. Surprisingly competent on structure / OCR / blocker; lose the colored cues.</li>
-      <li><strong>Hosted, English-only, paying per token</strong>: Nemotron Omni 30B is the cheapest with strong affordance. <a href="/blog/vision-shootout-round-2">Round 2</a> covers the tradeoffs.</li>
-      <li><strong>Speculative / omni-modal coverage needed</strong>: <a href="/blog/mimo-v25-pro-vs-flash">MiMo V2.5</a> behind a feature flag, but not as the default — see <a href="/blog/vision-shootout-round-3">round 3</a>.</li>
-    </ul>
-
-    <h2>What's next</h2>
-    <ul>
-      <li><strong>Quant ladder for Qwen 3.5-9B.</strong> int4 AutoRound vs Q4_K_M GGUF vs Q6_K vs Q8_0 vs FP16. Does the red-border miss recover at higher precision, or is it a 9B-vs-27B capability gap? This is the cleanest controlled experiment we can run on this board.</li>
-      <li><strong>Multilingual screenshots.</strong> Qwen 3.5 is multilingual on paper; no test on this board uses non-English UI yet.</li>
-      <li>The follow-ups already promised in <a href="/blog/vision-shootout-round-3">round 3</a> still stand: MiMo quant ladder, Qwen 3.6-A3B §6-collapse threshold, cold-start measurement.</li>
-    </ul>
-
-    <p>The probe is unchanged from round 3 (and unchanged from rounds 1-2 in everything that affects model behavior — same prompt, same temperature, same max tokens). Three lines:</p>
-    <pre><code>node test/vision-probe.mjs ./shot.png http://127.0.0.1:8000 qwen3.5-9b
+<p>Joins the club. We're now at five models in the "wrote None even when there was something to flag" bucket (the red border ambiguity is right there to call out — it's used for both focus and error on Material-style inputs and a planner needs to know which). Across <strong>seven model variants from five families on three engines at three quant levels</strong>, only Qwen 3.6-35B-A3B does §6 honestly. That's no longer a quirk — it's the central finding of the shootout series.</p>
+<h2 id="the-numbers">The numbers</h2>
+<ul><li><strong>Image tokens: 3379</strong> — cheapest after Gemma's 574. Beats Nemotron's 3636, well below Qwen 3.6-A3B's 4374, ~40% under MiMo IQ3_S's 5557.</li><li><strong>Latency: 10.3s end-to-end</strong> for 252 completion tokens, of which ~8 seconds is prompt-eval / TTFT and ~2.3 seconds is decode at ~110 tok/s. Slower than Qwen 3.6-A3B's 5.3s in round 2, but in a different VRAM bracket.</li><li><strong>VRAM: ~6 GB</strong> at int4 — by far the most consumer-friendly model on the table. Fits on hardware that none of the other strong contenders can touch.</li><li><strong>Headers: 615 ms.</strong> vLLM's request handling is noticeably snappier than llama.cpp's on small models — irrelevant for total latency but pleasant for interactive use.</li></ul>
+<h2 id="the-full-table-updated">The full table, updated</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>Gemma 4-E2B</th><th>Gemma 4-31B</th><th>Qwen 3.6-27B</th><th>Qwen 3.6-35B-A3B</th><th>Nemotron Omni 30B</th><th>MiMo V2.5 IQ3_S</th><th>Qwen 3.5-9B-int4</th></tr></thead><tbody><tr><td>Architecture</td><td>Dense ~2B</td><td>Dense 31B</td><td>Dense 27B</td><td>MoE 35B / ~3B active</td><td>MoE 30B / ~3B active</td><td>MoE 308B (omni)</td><td>Dense 9B</td></tr><tr><td>Engine</td><td>llama.cpp</td><td>llama.cpp</td><td>vLLM int4</td><td>llama.cpp</td><td>vLLM NVFP4</td><td>llama.cpp IQ3_S</td><td>vLLM int4 AR</td></tr><tr><td>Latency</td><td><span class="win">1.5s</span></td><td>4.6s</td><td>5.9s</td><td><span class="win">5.3s</span></td><td>12.0s</td><td><span class="lose">61s / 209t</span></td><td>10.3s / 252t</td></tr><tr><td>Prompt tokens (image)</td><td><span class="win">574</span></td><td><span class="win">574</span></td><td><span class="lose">5570</span></td><td>4374</td><td>3636</td><td><span class="lose">5557</span></td><td><span class="win">3379</span></td></tr><tr><td>Email chip OCR</td><td><span class="lose">❌</span></td><td><span class="lose">❌</span></td><td><span class="win">✓</span></td><td><span class="win">✓</span></td><td><span class="win">✓</span></td><td><span class="win">✓</span></td><td><span class="win">✓</span></td></tr><tr><td>All 12 visible strings</td><td><span class="lose">5/12</span></td><td><span class="win">12</span></td><td><span class="win">12</span></td><td><span class="win">12</span></td><td><span class="meh">11 (email moved to §3)</span></td><td><span class="win">12</span></td><td><span class="win">12</span></td></tr><tr><td>Affordance: chip = dropdown</td><td><span class="lose">missed</span></td><td><span class="lose">missed</span></td><td><span class="lose">missed</span></td><td><span class="meh">parenthetical</span></td><td><span class="win">explicit</span></td><td><span class="lose">missed</span></td><td><span class="win">explicit</span></td></tr><tr><td>Red error state</td><td><span class="lose">missed</span></td><td>text only</td><td><span class="win">border + icon + text</span></td><td><span class="win">border + icon + text + flag</span></td><td><span class="win">border + icon + text</span></td><td><span class="win">border + icon + text</span></td><td><span class="meh">text only</span></td></tr><tr><td>Inferred blocker</td><td><span class="lose">no</span></td><td>no</td><td><span class="win">yes</span></td><td><span class="win">yes</span></td><td><span class="win">yes</span></td><td><span class="win">yes</span></td><td><span class="win">yes</span></td></tr><tr><td>Honest "Unknowns" §6</td><td><span class="lose">no</span></td><td><span class="lose">no</span></td><td><span class="lose">no</span></td><td><span class="win">YES — only model</span></td><td><span class="lose">no</span></td><td><span class="lose">no</span></td><td><span class="lose">no</span></td></tr><tr><td>Multilingual</td><td>weak</td><td>partial</td><td><span class="win">native</span></td><td><span class="win">native</span></td><td><span class="lose">English-only</span></td><td><span class="win">native (untested)</span></td><td><span class="win">native (untested)</span></td></tr><tr><td>VRAM bracket</td><td>~3 GB</td><td>~20 GB</td><td>~16 GB</td><td>~22 GB</td><td>~18 GB</td><td>~110 GB</td><td><span class="win">~6 GB</span></td></tr></tbody></table></div>
+<h2 id="what-this-rounds-out-about-size-quant-and-capability">What this rounds out about size, quant, and capability</h2>
+<p>Four rounds in, the capability axes are starting to separate cleanly:</p>
+<ul><li><strong>Affordance classification (chip = dropdown) is encoder-driven, not size-driven.</strong> Three of the eight model variants got it. They span 9B–308B parameters, three families, three engines, three quants. Common factor isn't size — it looks more like a property of how the vision tokenizer / encoder treats small UI sub-components like a chevron-with-text.</li><li><strong>Visual state extraction (red border, focus rings, error icons) does scale with size and quant.</strong> The 9B-int4 reads form structure correctly but loses the colored cues; the same family at 27B gets them back. This matters for surface-level error detection — though it's recoverable from the DOM.</li><li><strong>OCR fidelity scales coarsely.</strong> Above ~9B, every model now reads the email correctly. Below that, Gemma 4-E2B mangles identifiers. There's a knee somewhere around 7-9B; below it, you can't trust the model on names, IDs, or amounts.</li><li><strong>Calibrated uncertainty (§6) is a model-level behavior, not a size or quant artifact.</strong> Eight variants tested, exactly one does it. Until proven otherwise, this is intrinsic to the Qwen 3.6-A3B post-training mix — not something you get for free by going larger.</li></ul>
+<h2 id="verdict-for-vrambudget-operators">Verdict for VRAM-budget operators</h2>
+<p><strong>If you have ≤8 GB of VRAM</strong> and need a self-hosted vision sub-call for a browser agent, Qwen 3.5-9B-int4 on vLLM is suddenly the most interesting option on this list. It nails what matters most for navigating browser forms — find the dropdown, OCR the strings, identify the blocker — while sacrificing what matters least: the precise visual cue surfacing, which is recoverable from the DOM. <strong>It does not replace Qwen 3.6-35B-A3B</strong> for users with the VRAM headroom — the §6 calibration is the difference, and it's the single most important difference on the table for browser-agent reliability — but on a 6-8 GB GPU, this is a much more capable model than its specs suggest.</p>
+<p>For a routing policy, the rough shape is now:</p>
+<ul><li><strong>≥22 GB VRAM</strong>: Qwen 3.6-35B-A3B. Wins on §6 calibration, fast, multilingual.</li><li><strong>~16 GB</strong>: Qwen 3.6-27B dense. Trades §6 for fewer params; still gets visual cues.</li><li><strong>~6-8 GB</strong>: Qwen 3.5-9B-int4 on vLLM. Surprisingly competent on structure / OCR / blocker; lose the colored cues.</li><li><strong>Hosted, English-only, paying per token</strong>: Nemotron Omni 30B is the cheapest with strong affordance. <a href="/blog/vision-shootout-round-2">Round 2</a> covers the tradeoffs.</li><li><strong>Speculative / omni-modal coverage needed</strong>: <a href="/blog/mimo-v25-pro-vs-flash">MiMo V2.5</a> behind a feature flag, but not as the default — see <a href="/blog/vision-shootout-round-3">round 3</a>.</li></ul>
+<h2 id="what-s-next">What's next</h2>
+<ul><li><strong>Quant ladder for Qwen 3.5-9B.</strong> int4 AutoRound vs Q4<em>K</em>M GGUF vs Q6<em>K vs Q8</em>0 vs FP16. Does the red-border miss recover at higher precision, or is it a 9B-vs-27B capability gap? This is the cleanest controlled experiment we can run on this board.</li><li><strong>Multilingual screenshots.</strong> Qwen 3.5 is multilingual on paper; no test on this board uses non-English UI yet.</li><li>The follow-ups already promised in <a href="/blog/vision-shootout-round-3">round 3</a> still stand: MiMo quant ladder, Qwen 3.6-A3B §6-collapse threshold, cold-start measurement.</li></ul>
+<p>The probe is unchanged from round 3 (and unchanged from rounds 1-2 in everything that affects model behavior — same prompt, same temperature, same max tokens). Three lines:</p>
+<pre><code>node test/vision-probe.mjs ./shot.png http://127.0.0.1:8000 qwen3.5-9b
 node test/vision-probe.mjs ./shot.png http://127.0.0.1:8080 MiMo-V2.5-IQ3_S
 node test/vision-probe.mjs ./shot.png http://127.0.0.1:8080 Qwen3.6-35B-A3B</code></pre>
-
-    <div class="callout">
-      <strong>Methodology caveat, again.</strong> Still one screenshot, still one fixture, now eight model variants. The reason the same Google sign-in screen keeps doing useful work as we add models is that it surfaces every axis we care about: OCR identifiers, structured affordances, visual state cues, ambiguity. Different pages will surface different weaknesses; if a model passes here and fails on a Stripe dashboard, that's worth knowing before you wire it in.
-    </div>
+<div class="callout">
+<strong>Methodology caveat, again.</strong> Still one screenshot, still one fixture, now eight model variants. The reason the same Google sign-in screen keeps doing useful work as we add models is that it surfaces every axis we care about: OCR identifiers, structured affordances, visual state cues, ambiguity. Different pages will surface different weaknesses; if a model passes here and fails on a Stripe dashboard, that's worth knowing before you wire it in.
+</div>
 
     <div class="author-box">
-      Written by <a href="https://emresokullu.com" target="_blank">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/esokullu/webbrain" target="_blank">GitHub</a> — the probe lives at <code>test/vision-probe.mjs</code>, file an issue if you've benched a model worth adding.
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
     </div>
   </article>
 
   <footer>
-    <div>© 2026 WebBrain · <a href="/privacy">Privacy</a></div>
-    <div><a href="https://github.com/esokullu/webbrain" target="_blank">GitHub</a></div>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
   </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
 </body>
 </html>

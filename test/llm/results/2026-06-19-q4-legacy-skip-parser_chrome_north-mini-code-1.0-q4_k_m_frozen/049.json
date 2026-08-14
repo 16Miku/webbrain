@@ -1,0 +1,27 @@
+{
+  "id": "049",
+  "user": "compose an email to alice@example.com",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 3126,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to compose an email to alice@example.com. I'm currently on Gmail's inbox page. I need to:\n\n1. Click the \"Compose\" button to open a new email window\n2. Fill in the recipient field with alice@example.com\n3. The user didn't specify a subject or body, so I should probably ask about those or just leave them blank\n\nLet me start by reading the current page to see what's available.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 123,
+    "prompt_tokens": 8618,
+    "total_tokens": 8741,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

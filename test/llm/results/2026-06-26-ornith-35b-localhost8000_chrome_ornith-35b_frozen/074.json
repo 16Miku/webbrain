@@ -1,0 +1,20 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3374,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI don't have any prior context about what \"that other thing\" refers to — this is a fresh conversation. Could you clarify which page or site you'd like to go back to?",
+  "usage": {
+    "prompt_tokens": 17328,
+    "total_tokens": 17471,
+    "completion_tokens": 143,
+    "prompt_tokens_details": null
+  }
+}

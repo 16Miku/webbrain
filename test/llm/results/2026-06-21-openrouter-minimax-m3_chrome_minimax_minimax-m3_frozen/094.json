@@ -1,0 +1,42 @@
+{
+  "id": "094",
+  "user": "make text bigger",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 20294,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "\n(() => {\n  // Remove any previous zoom style we added\n  const existing = document.getElementById('webbrain-zoom-style');\n  if (existing) existing.remove();\n\n  // Determine current zoom level (default 1)\n  let currentZoom = 1;\n  if (existing) {\n    const m = existing.textContent.match(/zoom:\\s*([\\d.]+)/);\n    if (m) currentZoom = parseFloat(m[1]);\n  }\n\n  // Increase by 25% each time, cap at 2x\n  const newZoom = Math.min(currentZoom * 1.25, 2);\n\n  const style = document.createElement('style');\n  style.id = 'webbrain-zoom-style';\n  style.textContent = `html { zoom: ${newZoom} !important; }`;\n  document.head.appendChild(style);\n\n  return { previousZoom: currentZoom, newZoom };\n})();\n"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll increase the text size on this CNN page by injecting CSS that scales the content up (similar to browser zoom).",
+  "usage": {
+    "prompt_tokens": 16983,
+    "completion_tokens": 896,
+    "total_tokens": 17879,
+    "cost": 0.0123402,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0123402,
+      "upstream_inference_prompt_cost": 0.0101898,
+      "upstream_inference_completions_cost": 0.0021504
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 787,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

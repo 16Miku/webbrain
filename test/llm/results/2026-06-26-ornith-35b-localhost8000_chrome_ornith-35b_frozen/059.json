@@ -1,0 +1,23 @@
+{
+  "id": "059",
+  "user": "list my downloads",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1205,
+  "error": null,
+  "firstToolCall": {
+    "name": "list_downloads",
+    "args": {}
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17325,
+    "total_tokens": 17360,
+    "completion_tokens": 35,
+    "prompt_tokens_details": null
+  }
+}

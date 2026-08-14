@@ -1,0 +1,49 @@
+{
+  "id": "051",
+  "user": "mark as spam",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox/abc123",
+    "title": "Invoice from Acme — Gmail"
+  },
+  "latencyMs": 4225,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 74028,
+    "completion_tokens": 239,
+    "total_tokens": 74267,
+    "cost": 0.020872250000000002,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 60805,
+      "cache_write_tokens": 539,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.020872250000000002,
+      "upstream_inference_prompt_cost": 0.01943825,
+      "upstream_inference_completions_cost": 0.001434
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 96,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

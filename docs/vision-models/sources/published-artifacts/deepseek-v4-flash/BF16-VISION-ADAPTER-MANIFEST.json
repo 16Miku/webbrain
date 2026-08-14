@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "package_kind": "vision_adapter_source_overlay",
+  "complete_text_checkpoint": false,
+  "full_text_backbone_dtype": null,
+  "text_reference": {
+    "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+    "revision": "60d8d70770c6776ff598c94bb586a859a38244f1",
+    "duplicated_in_this_repo": false,
+    "published_as_full_bf16": false
+  },
+  "vision_tower": {
+    "filename": "vision_tower.safetensors",
+    "source_model": "moonshotai/Kimi-K2.6",
+    "source_revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb",
+    "source_prefix": "vision_tower.",
+    "tensor_count": 329,
+    "dtypes": ["BF16"],
+    "size_bytes": 833765768,
+    "sha256": "1382c41f1a4afc91791ade630e2b1e1cef68cc5a1e09668a45970a5d5e1b8f15"
+  },
+  "projector": {
+    "filename": "mm_projector.safetensors",
+    "tensor_count": 6,
+    "dtypes": ["BF16"],
+    "parameter_count": 40119040,
+    "size_bytes": 80238568,
+    "sha256": "7024d9d5c9714c7abbc09abda015f083b7d7b107745eb78879f019bf4721577a"
+  },
+  "routing": {
+    "policy": "palette_cycle",
+    "palette_file": "configs/routing/deepseek-v4-flash-60d8d707-palette64.json",
+    "palette_size": 64
+  },
+  "serving": {
+    "integration": "custom_sglang_external_model_and_processor",
+    "sglang_source_commit": "fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1",
+    "requires_source_patch": true,
+    "stock_sglang_supported": false,
+    "openai_multimodal_chat_supported": false,
+    "native_generate_target": true,
+    "gpu_validated_in_this_package": false
+  },
+  "packaging_source": {
+    "model_id": "webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4",
+    "revision": "970dbcf866f06a1bd66b23bf14d7acf30f0c095b",
+    "nvfp4_text_shards_included": false
+  }
+}

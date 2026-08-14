@@ -1,0 +1,22 @@
+{
+  "id": "042",
+  "user": "create a release tagged v2.0.0",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 2229,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"/esokullu/webbrain/releases/new\"}}",
+  "usage": {
+    "prompt_tokens": 9151,
+    "completion_tokens": 20,
+    "total_tokens": 9171,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

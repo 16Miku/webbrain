@@ -1,0 +1,25 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1950,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_frames",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_frames\",\"arguments\":{}}</tool_call>",
+  "usage": {
+    "completion_tokens": 156,
+    "prompt_tokens": 9191,
+    "total_tokens": 9347,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

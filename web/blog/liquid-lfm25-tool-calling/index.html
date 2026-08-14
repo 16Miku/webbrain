@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Liquid LFM 2.5-8B-A1B on browser tool calling: an on-device MoE meets WebBrain — WebBrain Blog</title>
+  <meta name="description" content="We added Liquid AI&#39;s LFM 2.5-8B-A1B (8.3B total / 1.5B active MoE) to our browser-agent tool-calling benchmark. Against Claude Sonnet 4.6 it beats both small Qwens but loses to Gemma 4-E2B. Plus: a tool-schema drift bug that changes how we score everything, and why the license asymmetry (LFM&#39;s $10M revenue cliff vs Gemma 4&#39;s plain Apache 2.0) tilts the distillation call to Gemma.">
+  <meta name="keywords" content="LFM 2.5, LFM2.5-8B-A1B, Liquid AI, on-device LLM, MoE, tool calling, browser agent, Claude Sonnet 4.6, WebBrain, Liquid Foundation Model, sparse mixture of experts">
+  <meta property="og:title" content="Liquid LFM 2.5-8B-A1B on browser tool calling: where it fits">
+  <meta property="og:description" content="Liquid AI&#39;s 8B/1.5B-active on-device MoE in our browser-agent benchmark — and the methodology bug it caught.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/liquid-lfm25-tool-calling">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Liquid LFM 2.5-8B-A1B on browser tool calling: where it fits">
+  <meta name="twitter:description" content="An on-device 8B/1.5B-active MoE vs Sonnet 4.6. Plus: a tool-schema drift bug that retroactively changes how we score every future benchmark.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/liquid-lfm25-tool-calling">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Liquid LFM 2.5-8B-A1B on browser tool calling: where the new on-device MoE fits",
+  "description": "We added Liquid AI's LFM 2.5-8B-A1B (8.3B total / 1.5B active MoE) to our browser-agent tool-calling benchmark. Against Claude Sonnet 4.6 it beats both small Qwens but loses to Gemma 4-E2B. Plus: a tool-schema drift bug that changes how we score everything, and why the license asymmetry (LFM's $10M revenue cliff vs Gemma 4's plain Apache 2.0) tilts the distillation call to Gemma.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-05-31",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/liquid-lfm25-tool-calling"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">May 31, 2026 &middot; 7 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Liquid LFM 2.5-8B-A1B on browser tool calling: where the new on-device MoE fits</h1>
+    <p class="lede">We added Liquid AI’s <strong>LFM 2.5-8B-A1B</strong> — their just-released on-device sparse Mixture-of-Experts model — to our browser-agent tool-calling benchmark. Against Claude Sonnet 4.6 it beats both small Qwens (0.8B and 2B) and lands within reach of Gemma 4-E2B, despite activating only 1.5B parameters per token. The same run also surfaced a methodology bug that retroactively changes how we score every future benchmark: when the WebBrain tool schema drifts between runs, the “vs Sonnet” score becomes unfair. We fixed it by freezing the schema.</p>
+<h2 id="what-is-lfm-2-58ba1b">What is LFM 2.5-8B-A1B?</h2>
+<p>Liquid AI shipped <a href="https://www.liquid.ai/blog/lfm2-5-8b-a1b" target="_blank" rel="noopener">LFM 2.5-8B-A1B</a> on May 28, 2026 — days before this benchmark. It is a hybrid sparse-MoE built for on-device deployment: <strong>8.3B total parameters, 1.5B active per token</strong> (the “A1B” in the name signals roughly 1B active). The architecture pairs Liquid’s LFM2 backbone (24 layers: 18 gated short-convolution “LIV” blocks and 6 grouped-query-attention blocks) with per-layer sparse-MoE FFNs from layer 3 onward — 32 experts per layer with top-4 routing via normalized-sigmoid gating. Context window is 131,072 tokens. Pretraining: 38T tokens, plus large-scale RL post-training that explicitly targets instruction following, tool use, math, and knowledge reasoning.</p>
+<p>The lab spun out of MIT’s liquid-neural-networks research and has built the LFM series around efficiency at the edge — phones, laptops, NPUs — rather than chasing frontier-scale accuracy. The 8B-A1B variant is also explicitly a <em>reasoning</em> model: it produces an explicit chain of thought before its final answer. That detail turns out to be important for how the model behaves on browser tasks. Open weights are on <a href="https://huggingface.co/LiquidAI" target="_blank" rel="noopener">Hugging Face</a>. We tested through the <code>maternion/lfm2.5</code> Ollama package on <code>localhost:11434</code> — same harness as the rest of our benchmark.</p>
+<p>What caught our attention: Liquid AI claims the 2.5 line leads peer small models on IFEval and IFBench, and they highlighted tool use as a first-class RL training objective. Browser tool calling is a stricter test — the model has to pick the right tool from a large schema and pass valid arguments. We wanted to see whether the tool-use training claim holds up when the schema is real WebBrain tools.</p>
+<h2 id="the-bug-we-caught-and-what-we-changed">The bug we caught (and what we changed)</h2>
+<p>The first LFM 2.5 run looked terrible — 34% match with Sonnet, ranked dead last among 14 models. We were about to write that up when we noticed something suspicious: the system prompt and tool list that LFM 2.5 saw were not the same ones Sonnet had seen a week earlier.</p>
+<p>WebBrain’s tool schema lives in <code>src/chrome/src/agent/tools.js</code> and evolves between releases. Between the May 23 baseline run (which Sonnet defined) and the May 30 LFM run, two tools had been removed (<code>execute_js</code>, <code>download_file</code>) and three added (<code>drag_drop</code>, <code>hover</code>, <code>wait_for_stable</code>). The system prompt had also changed. So 8 of Sonnet’s 100 picks were tools LFM 2.5 didn’t even have access to. Scoring “match with Sonnet” against a different schema is invalid.</p>
+<p>We fixed this by adding a <strong>frozen baseline</strong> mode to the benchmark runner: a snapshot of the system prompt and tools array from Sonnet’s run, replayed verbatim for every comparison. The runner now accepts <code>--freeze freeze/baseline-2026-05-23.json</code> and pins the schema. Re-running LFM 2.5 under the frozen baseline:</p>
+<pre><code>node test/llm/run-llamacpp.mjs \
+  --freeze freeze/baseline-2026-05-23.json \
+  --base http://localhost:11434/v1 \
+  --model maternion/lfm2.5</code></pre>
+<div class="callout">
+<strong>The freeze isn’t cosmetic.</strong> Adding it lifted LFM 2.5 from <strong>34% → 40%</strong> match with Sonnet. Six percentage points came back just from giving the model the same tool list and system prompt the reference saw. That is the size of the methodology error we were running before, and it would have been baked into any future comparison too. Every benchmark we publish from this point uses the frozen baseline.
+</div>
+<h2 id="how-lfm-2-5-compares">How LFM 2.5 compares</h2>
+<p>Under the frozen baseline, LFM 2.5 lands at 40% match with Sonnet, 38% on the stricter “match when Sonnet picked a tool” metric (which excludes the 8 cases Sonnet returned no tool), and 83% tool-call rate. Here is where it slots into the leaderboard:</p>
+<div class="table-wrap"><table><thead><tr><th>#</th><th>Model</th><th>Match vs Sonnet</th><th>Match (tool only)</th><th>Tool-call rate</th><th>Class</th></tr></thead><tbody><tr><td>—</td><td><strong>Claude Sonnet 4.6</strong> <span class="badge badge-good">reference</span></td><td>100%</td><td>100%</td><td>92%</td><td>API</td></tr><tr><td>1</td><td>Qwen 3.6-27B</td><td>77.0%</td><td>77.2%</td><td>92%</td><td>27B dense</td></tr><tr><td>2</td><td>MiniMax M2.7</td><td>77.0%</td><td>76.1%</td><td>88%</td><td>API</td></tr><tr><td>3</td><td>Intel Gemma 4-31B-it-int4</td><td>74.0%</td><td>72.8%</td><td>88%</td><td>31B int4</td></tr><tr><td>4</td><td>Qwen 3.5-4B</td><td>73.0%</td><td>71.7%</td><td>82%</td><td>4B dense</td></tr><tr><td>5</td><td>Gemma 4-26B-A4B</td><td>71.0%</td><td>70.7%</td><td>87%</td><td>26B / 4B-act</td></tr><tr><td>6</td><td>Qwen 3.6-35B-A3B</td><td>70.0%</td><td>70.7%</td><td>90%</td><td>35B / 3B-act</td></tr><tr><td>7</td><td>Qwen 3.5-9B</td><td>70.0%</td><td>69.6%</td><td>90%</td><td>9B dense</td></tr><tr><td>8</td><td>Gemma 4-E4B</td><td>68.0%</td><td>68.5%</td><td>87%</td><td>4.5B eff</td></tr><tr><td>9</td><td>Nemotron Omni 30B</td><td>67.0%</td><td>68.5%</td><td>93%</td><td>30B</td></tr><tr><td>10</td><td>Gemma 4-E2B</td><td>63.0%</td><td>60.9%</td><td>76%</td><td>2.3B eff</td></tr><tr><td>11</td><td>Browser-Use 30B-A3B</td><td>43.0%</td><td>45.7%</td><td>93%</td><td>30B / 3B-act</td></tr><tr><td>12</td><td><strong>Liquid LFM 2.5-8B-A1B</strong> <span class="badge badge-new">new</span></td><td>40.0%</td><td>38.0%</td><td>83%</td><td><strong>8.3B / 1.5B-act</strong></td></tr><tr><td>13</td><td>Qwen 3.5-0.8B</td><td>37.0%</td><td>34.8%</td><td>90%</td><td>0.8B dense</td></tr><tr><td>14</td><td>Qwen 3.5-2B</td><td>36.0%</td><td>34.8%</td><td>89%</td><td>2B dense</td></tr></tbody></table></div>
+<h2 id="the-right-comparison-by-active-effective-compute">The right comparison: by active / effective compute</h2>
+<p>Raw rank (12 of 14) is misleading because the “total parameters” column is doing very different things across these models. LFM 2.5-8B-A1B has 8.3B stored weights but only 1.5B fire per token. Gemma 4 E-series uses MatFormer + Per-Layer Embeddings so that “2.3B effective” really is the runtime cost despite a larger stored footprint. Qwen 3.5 small models are plain dense. The honest comparison is by <em>active or effective parameters at inference time</em>:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Active / effective</th><th>Stored</th><th>Match vs Sonnet</th><th>Tool-call rate</th></tr></thead><tbody><tr><td>Gemma 4-E2B</td><td>2.3B eff</td><td>~5.1B</td><td>63.0%</td><td>76%</td></tr><tr><td>Qwen 3.5-2B (dense)</td><td>2.0B</td><td>2.0B</td><td>36.0%</td><td>89%</td></tr><tr><td><strong>Liquid LFM 2.5-8B-A1B</strong></td><td>1.5B active</td><td>8.3B</td><td>40.0%</td><td>83%</td></tr><tr><td>Qwen 3.5-0.8B (dense)</td><td>0.8B</td><td>0.8B</td><td>37.0%</td><td>90%</td></tr></tbody></table></div>
+<p>In the 1–2.5B-active-parameter band, Gemma 4-E2B remains the clear browser-agent champion at 63% — nothing in this weight class comes close. LFM 2.5 lands second among them at 40%, beating both small Qwens by 3–4 points with comparable active compute. Worth noting: LFM 2.5 has the highest <em>stored</em> footprint in this group (8.3 GB of weights at fp16, or about 4.6 GB at int4), so it is small at runtime but not small on disk — the MoE trade-off.</p>
+<p>The Liquid AI claim that the 2.5 line is tuned for tool use is partially supported by the data. The tool-call rate at 83% sits between the “tool-confident-but-wrong” small Qwens (89–90%) and Sonnet’s more measured 92%. The model has learned to <em>reach for</em> tools at the right rate. Where it falls short is in tool <em>selection</em> — picking the right tool for a given DOM-driving task. We suspect part of this is the reasoning-only training: a CoT-first model burns tokens deliberating before acting, which can look like “no tool call” on a one-shot benchmark even when the underlying decision would have been correct on a second turn.</p>
+<h2 id="where-lfm-2-5-disagrees-with-sonnet">Where LFM 2.5 disagrees with Sonnet</h2>
+<p>Looking at the per-task breakdown, the divergence is systematic, not random. LFM 2.5 has a clear tool-preference bias compared to Sonnet:</p>
+<ul><li><strong>Under-uses <code>get_accessibility_tree</code>:</strong> 18 picks vs Sonnet’s 32. The accessibility tree is the canonical “look at the page structure before acting” tool, and Sonnet reaches for it more than any other.</li><li><strong>Under-uses <code>navigate</code>:</strong> 14 vs Sonnet’s 23. LFM 2.5 sometimes goes to <code>new_tab</code> or <code>research_url</code> where Sonnet simply navigates the current tab.</li><li><strong>Over-uses <code>read_page</code> and <code>research_url</code>:</strong> 13 + 9 vs Sonnet’s 5 + 0. Sonnet never picks <code>research_url</code> in these 100 cases. LFM 2.5 reaches for content-reading tools as a default response.</li><li><strong>Returns no-tool more often:</strong> 17 cases where LFM 2.5 emitted text only, vs Sonnet’s 8. Thirteen of those overlap with cases where Sonnet picked a real tool.</li></ul>
+<p>This reads less like “the model can’t reason about browser actions” and more like “the model has a different theory of what to do first.” Its instinct is to read content before acting on it; Sonnet’s instinct is to inspect the page structure first. Both are coherent strategies. They are just different.</p>
+<h2 id="where-lfm-2-5-fits-for-webbrain">Where LFM 2.5 fits for WebBrain</h2>
+<p>With 1.5B active parameters per token, LFM 2.5-8B-A1B sits in a useful niche for on-device inference: comparable runtime cost to Gemma 4-E2B (2.3B effective), open weights, designed from day one for laptops and NPUs, and tuned for tool use. We have <a href="/blog/llm-tool-calling-benchmark">written before</a> about wanting to ship in-browser inference in upcoming WebBrain releases via WebGPU, and the model-selection problem for that path is fundamentally different from the “best model on a beefy GPU” question. You want something whose <em>per-token compute</em> stays low, fits in available browser memory budgets, and degrades gracefully when the user’s machine is under load. By that lens, an MoE that activates only 1.5B at a time is exactly the architecture you want — you pay a one-time weight-load cost, then run cheap.</p>
+<p>For pure tool routing on browser tasks today, Gemma 4-E2B is still the small-model pick at 63%. LFM 2.5 is the runner-up in its compute class at 40%, and the model is brand new — this is the first WebBrain measurement we have on it. Liquid AI’s focus on on-device deployment also means the inference story (quantization, mobile NPU paths, deterministic latency) is taken more seriously by them than by labs targeting cloud-scale serving. That matters for our use case.</p>
+<p>Two concrete things we will try next: (1) adjust the WebBrain system prompt to nudge tool selection toward inspect-first rather than read-first — that change alone might recover several points without retraining anything; (2) re-run with a multi-turn agent loop instead of single-shot scoring, since a CoT-reasoning model is probably under-credited by “first-tool-call” evaluation.</p>
+<h2 id="bottom-line-still-gemma-4e2b-for-distillation">Bottom line: still Gemma 4-E2B for distillation</h2>
+<p>For anyone picking a small model to <em>build on</em> — distill, fine-tune, ship inside an extension or app — the call right now isn’t close. Gemma 4-E2B is the better pick, and not only for the 23-point browser-tool-calling gap (63% vs 40% against Sonnet).</p>
+<p>The licensing matters too. Gemma 4 ships under <a href="https://ai.google.dev/gemma/terms" target="_blank" rel="noopener">plain Apache 2.0</a> — a real change from earlier Gemma generations, which carried a custom restricted license. No revenue thresholds, no usage caveats, no obligation to come back and re-negotiate. You can fine-tune Gemma 4, redistribute the derivative commercially, and even compete with Google’s own products without asking anyone.</p>
+<p>LFM 2.5 ships under the <a href="https://www.liquid.ai/lfm-license" target="_blank" rel="noopener">LFM Open License v1.0</a>, which is Apache-2.0-derived but adds one consequential clause: commercial use is free <em>only while your annual revenue is below $10M USD</em>. Cross the threshold and the commercial grant terminates — you have to contact <code>sales@liquid.ai</code> for a paid license. This makes complete sense from Liquid’s side. They don’t have Google’s research-as-loss-leader budget, and the $10M floor is calibrated to let hobbyists, researchers, and pre-revenue startups use the models freely while monetizing the enterprise tail. It is a reasonable business model for a young lab.</p>
+<p>But if you’re a startup or an open-source project deciding which model to distill onto your own hardware target, that $10M cliff is a future-self problem worth thinking about. If your project succeeds and crosses the threshold three years from now, you will be in the position of either re-negotiating mid-flight or rewriting your stack onto a different base. Gemma 4 has none of that risk — the license you start with is the license you keep.</p>
+<p>So: LFM 2.5 is an interesting on-device architecture from a lab worth watching, and we will retest the line as it evolves. For WebBrain’s small-model slot today, we’re sticking with Gemma 4-E2B.</p>
+<h2 id="reproducibility">Reproducibility</h2>
+<p>The frozen baseline (system prompt + tool array from Sonnet’s May 23 run, 41 tools, system hash <code>5c4fac1387025050</code>) and the runner patch are in the repo. To reproduce this LFM 2.5 result against your own Ollama instance:</p>
+<pre><code>ollama pull maternion/lfm2.5
+export WB_FREEZE_BASELINE=test/llm/freeze/baseline-2026-05-23.json
+node test/llm/run-llamacpp.mjs \
+  --base http://localhost:11434/v1 \
+  --model maternion/lfm2.5</code></pre>
+<p>You should see a banner like:</p>
+<pre><code>▸ FROZEN baseline loaded: test/llm/freeze/baseline-2026-05-23.json
+  source: anthropic/claude-sonnet-4.6 @ 2026-05-23T18-47-31-246Z
+  tools=41, systemBytes=35242, systemHash=5c4fac1387025050…</code></pre>
+<p>If you don’t see that banner, the run is on the live (drifting) schema and the numbers are not comparable.</p>
+<p>All data and the interactive explorer:</p>
+<ul><li><a href="https://github.com/webbrain-one/webbrain/tree/main/test/llm/analysis" target="_blank" rel="noopener">github.com/webbrain-one/webbrain/tree/main/test/llm/analysis</a> — spreadsheets and the per-task HTML matrix</li><li><a href="https://github.com/webbrain-one/webbrain/blob/main/test/llm/freeze/baseline-2026-05-23.json" target="_blank" rel="noopener">freeze/baseline-2026-05-23.json</a> — the snapshot the runner pins to</li></ul>
+<p>Tags: #LFM2.5 #LiquidAI #SmallLanguageModel #ToolCalling #BrowserAgent #OnDeviceAI</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 720,
+  "error": null,
+  "firstToolCall": {
+    "name": "download_social_media",
+    "args": {
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "scroll": true
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"download_social_media\",\"arguments\":{\"url\":\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\",\"scroll\":true}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9453,
+    "total_tokens": 9503,
+    "completion_tokens": 50,
+    "prompt_tokens_details": null
+  }
+}

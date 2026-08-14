@@ -1,0 +1,27 @@
+{
+  "id": "068",
+  "user": "click that",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2202,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 187,
+    "prompt_tokens": 9187,
+    "total_tokens": 9374,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

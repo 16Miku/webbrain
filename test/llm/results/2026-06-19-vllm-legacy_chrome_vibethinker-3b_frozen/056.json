@@ -1,0 +1,25 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 10762,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Could you let me know what type of project you have in mind (e.g., a web app with a specific framework, a backend service, etc.) and which environment tools you need to set up?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{\"question\":\"Could you let me know what type of project you have in mind (e.g., a web app with a specific framework, a backend service, etc.) and which environment tools you need to set up?\"}}",
+  "usage": {
+    "prompt_tokens": 8883,
+    "total_tokens": 10703,
+    "completion_tokens": 1820,
+    "prompt_tokens_details": null
+  }
+}

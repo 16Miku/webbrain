@@ -1,0 +1,27 @@
+{
+  "id": "001",
+  "user": "go to firefox extensions management pagr",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1816,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "about:addons"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"about:addons\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 149,
+    "prompt_tokens": 9192,
+    "total_tokens": 9341,
+    "prompt_tokens_details": {
+      "cached_tokens": 9191
+    }
+  }
+}

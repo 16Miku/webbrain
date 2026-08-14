@@ -1,0 +1,22 @@
+{
+  "id": "036",
+  "user": "submit",
+  "tab": {
+    "url": "https://forms.example.com/contact",
+    "title": "Contact form"
+  },
+  "latencyMs": 1735,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't see a contact form or any form to submit on the current page at https://forms.example.com/contact. The page title is \"Contact form\", but I cannot locate any visible form or submit button. If you can describe what you see or clarify what you want to do, I can help further.",
+  "usage": {
+    "prompt_tokens": 8593,
+    "completion_tokens": 64,
+    "total_tokens": 8657,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

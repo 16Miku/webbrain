@@ -1,0 +1,25 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 6497,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll start by checking the current page state and then figure out how to get your contacts list.",
+  "usage": {
+    "prompt_tokens": 17489,
+    "total_tokens": 17849,
+    "completion_tokens": 360,
+    "prompt_tokens_details": null
+  }
+}

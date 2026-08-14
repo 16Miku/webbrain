@@ -17,8 +17,8 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 // User-configurable connection-phase timeout for LLM HTTP requests.
 //
 // Lives in chrome.storage.local under `requestTimeoutMs`. Default 120s —
-// errs on the local-model side (llama.cpp / Ollama / LM Studio with a
-// large model + long context can take 60–180s before the first byte).
+// errs on the local-model side (llama.cpp / Ollama / LM Studio / Jan / vLLM /
+// SGLang with a large model + long context can take 60–180s before the first byte).
 // Cloud providers (OpenAI / Anthropic / Gemini) start their SSE stream
 // within a couple seconds, so the higher default costs them nothing —
 // the timer only ever fires for genuinely stalled endpoints. Users bump
@@ -31,8 +31,11 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 // reconstruction.
 let _cachedTimeoutMs = 120000;
 let _timeoutInitialized = false;
+let _storageListener = null;
 const TIMEOUT_FLOOR_MS = 5000;        // 5s — anything lower than this is a typo
 const TIMEOUT_CEILING_MS = 600000;    // 10 min — well past any reasonable first-byte wait
+const OFFSCREEN_FORM_DATA_CHUNK_BYTES = 256 * 1024;
+const IDEMPOTENT_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'TRACE']);
 
 async function _ensureTimeoutInitialized() {
   if (_timeoutInitialized) return;
@@ -47,17 +50,17 @@ async function _ensureTimeoutInitialized() {
     if (typeof v === 'number' && v >= TIMEOUT_FLOOR_MS && v <= TIMEOUT_CEILING_MS) {
       _cachedTimeoutMs = v;
     }
-    // Live refresh when the user edits the setting.
-    if (api.storage.onChanged?.addListener) {
-      api.storage.onChanged.addListener((changes, area) => {
+    if (api.storage.onChanged?.addListener && !_storageListener) {
+      _storageListener = (changes, area) => {
         if (area !== 'local' || !changes.requestTimeoutMs) return;
         const next = changes.requestTimeoutMs.newValue;
         if (typeof next === 'number' && next >= TIMEOUT_FLOOR_MS && next <= TIMEOUT_CEILING_MS) {
           _cachedTimeoutMs = next;
         } else if (next == null) {
-          _cachedTimeoutMs = 120000; // setting was cleared — back to default
+          _cachedTimeoutMs = 120000;
         }
-      });
+      };
+      api.storage.onChanged.addListener(_storageListener);
     }
   } catch { /* keep the hardcoded default */ }
 }
@@ -79,27 +82,58 @@ async function _ensureTimeoutInitialized() {
  */
 export async function fetchWithFallback(url, options = {}) {
   await _ensureTimeoutInitialized();
-  const { timeoutMs = _cachedTimeoutMs, ...fetchOptions } = options;
+  const { timeoutMs = _cachedTimeoutMs, signal: callerSignal, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const canUseOffscreenProxy = typeof chrome !== 'undefined'
+    && typeof chrome?.runtime?.connect === 'function';
+
+  // A network-level fetch rejection does not prove that the server never
+  // received the request (CORS/PNA can reject after it was processed). Sending
+  // a POST/PATCH again through the proxy can therefore duplicate a billed
+  // generation or upload. Route non-idempotent requests through exactly one
+  // transport from the outset; only idempotent methods use direct-then-proxy.
+  if (!IDEMPOTENT_HTTP_METHODS.has(method) && canUseOffscreenProxy) {
+    await ensureOffscreen();
+    return _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal);
+  }
 
   // Fast path: try direct fetch first, with a connection-phase timeout.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let connectionTimedOut = false;
+  const abortDirectFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortDirectFromCaller();
+  else callerSignal?.addEventListener('abort', abortDirectFromCaller, { once: true });
+  const timeoutId = setTimeout(() => {
+    connectionTimedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     clearTimeout(timeoutId);
+    // Keep the caller signal linked after headers arrive: aborting the fetch
+    // must also cancel a response body that stalls while the caller reads it.
     return res;
   } catch (directError) {
     clearTimeout(timeoutId);
+    callerSignal?.removeEventListener('abort', abortDirectFromCaller);
+
+    if (callerSignal?.aborted) {
+      throw callerSignal.reason instanceof Error
+        ? callerSignal.reason
+        : new DOMException('The operation was aborted', 'AbortError');
+    }
 
     // If we aborted on timeout, surface that directly — don't fall through to
     // the offscreen proxy, since the same endpoint is likely unresponsive.
-    if (directError.name === 'AbortError') {
+    if (connectionTimedOut) {
       throw new Error(
         `Request to ${url} timed out after ${timeoutMs}ms. ` +
         `The endpoint may be unreachable, blocked by CORS, or stalled. ` +
         `Check the URL/credentials and that the server is responding.`
       );
     }
+    if (directError.name === 'AbortError') throw directError;
+    if (!IDEMPOTENT_HTTP_METHODS.has(method)) throw directError;
 
     // Network error (Failed to fetch) — try offscreen proxy
     console.warn(
@@ -108,43 +142,14 @@ export async function fetchWithFallback(url, options = {}) {
 
     try {
       await ensureOffscreen();
-
-      // Race the proxy round-trip against the same timeout, since
-      // chrome.runtime.sendMessage has no native cancellation.
-      const proxyResult = await Promise.race([
-        chrome.runtime.sendMessage({
-          type: 'offscreen-fetch',
-          url,
-          method: fetchOptions.method || 'POST',
-          headers: fetchOptions.headers || {},
-          body: fetchOptions.body || undefined,
-          stream: false,
-        }),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`offscreen proxy timed out after ${timeoutMs}ms`)),
-            timeoutMs
-          )
-        ),
-      ]);
-
-      if (proxyResult.error) {
-        throw new Error(
-          `Both direct fetch and offscreen proxy failed for ${url}. ` +
-          `Direct: ${directError.message}. Proxy: ${proxyResult.error}`
-        );
-      }
-
-      // Wrap the proxy response to look like a fetch Response
-      return new Response(proxyResult.body, {
-        status: proxyResult.status,
-        statusText: proxyResult.ok ? 'OK' : 'Error',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return await _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal);
     } catch (proxyError) {
       // Offscreen proxy also failed — throw the most useful error
-      if (proxyError.message?.includes('Both direct')) {
-        throw proxyError;
+      if (proxyError.bothFailed) {
+        throw new Error(
+          `Both direct fetch and offscreen proxy failed for ${url}. ` +
+          `Direct: ${directError.message}. Proxy: ${proxyError.message}`
+        );
       }
       throw new Error(
         `Could not reach ${url}. Direct: ${directError.message}. ` +
@@ -154,4 +159,290 @@ export async function fetchWithFallback(url, options = {}) {
       );
     }
   }
+}
+
+/**
+ * Fetch through the offscreen document over a streaming port.
+ *
+ * Mirrors the direct path's timeout semantics: `timeoutMs` only covers the
+ * connection phase (time-to-headers). Once the offscreen document reports
+ * response headers, the timer is cleared and the body may stream for as
+ * long as it needs — essential because this proxy exists for local LLM
+ * servers whose generations routinely run for many minutes. (The previous
+ * buffered sendMessage round-trip raced the WHOLE body against the
+ * timeout, killing any stream longer than timeoutMs and delivering all
+ * chunks in one burst.)
+ */
+async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal) {
+  const preparedBody = _prepareOffscreenRequestBody(fetchOptions.body);
+  return await new Promise((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: 'offscreen-fetch-stream' });
+    let settled = false;           // true once headers are in (or we've failed)
+    let streamController = null;   // non-null while the body is streaming
+    let bodyUploadStarted = false;
+    let pendingBodyChunkAck = null;
+    const encoder = new TextEncoder();
+
+    const callerAbortError = () => callerSignal?.reason instanceof Error
+      ? callerSignal.reason
+      : new DOMException('The operation was aborted', 'AbortError');
+    const cleanupCallerSignal = () => callerSignal?.removeEventListener('abort', onCallerAbort);
+    const rejectPendingBodyChunk = (error) => {
+      if (!pendingBodyChunkAck) return;
+      const pending = pendingBodyChunkAck;
+      pendingBodyChunkAck = null;
+      pending.reject(error);
+    };
+    const onCallerAbort = () => {
+      const error = callerAbortError();
+      clearTimeout(timeoutId);
+      rejectPendingBodyChunk(error);
+      if (!settled) {
+        settled = true;
+        cleanupCallerSignal();
+        try { port.disconnect(); } catch {}
+        reject(error);
+        return;
+      }
+      if (streamController) {
+        const sc = streamController;
+        streamController = null;
+        try { sc.error(error); } catch {}
+      }
+      cleanupCallerSignal();
+      try { port.disconnect(); } catch {}
+    };
+
+    let timeoutId = null;
+    const armTimeout = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (settled) return;
+        const error = new Error(`offscreen proxy timed out after ${timeoutMs}ms`);
+        settled = true;
+        cleanupCallerSignal();
+        rejectPendingBodyChunk(error);
+        try { port.disconnect(); } catch {}
+        reject(error);
+      }, timeoutMs);
+    };
+    armTimeout();
+
+    const failBeforeHeaders = (message, { bothFailed = false } = {}) => {
+      if (settled) return;
+      settled = true;
+      const error = Object.assign(new Error(message), { bothFailed });
+      clearTimeout(timeoutId);
+      cleanupCallerSignal();
+      rejectPendingBodyChunk(error);
+      try { port.disconnect(); } catch {}
+      reject(error);
+    };
+
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timeoutId);
+      cleanupCallerSignal();
+      rejectPendingBodyChunk(new Error('offscreen proxy disconnected'));
+      if (streamController) {
+        const sc = streamController;
+        streamController = null;
+        try { sc.error(new Error('offscreen proxy disconnected mid-stream')); } catch {}
+      } else if (!settled) {
+        failBeforeHeaders('offscreen proxy disconnected before responding');
+      }
+    });
+
+    if (callerSignal?.aborted) {
+      onCallerAbort();
+      return;
+    }
+    callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
+
+    port.onMessage.addListener((msg) => {
+      if (msg?.type === 'form-data-ready') {
+        if (!preparedBody.blobEntries || bodyUploadStarted || settled) return;
+        bodyUploadStarted = true;
+        armTimeout();
+        _uploadFormDataBlobs(port, preparedBody.blobEntries, {
+          callerSignal,
+          isSettled: () => settled,
+          waitForAck(entryIndex, sequence, send) {
+            return new Promise((resolveAck, rejectAck) => {
+              pendingBodyChunkAck = { entryIndex, sequence, resolve: resolveAck, reject: rejectAck };
+              try {
+                send();
+              } catch (error) {
+                pendingBodyChunkAck = null;
+                rejectAck(error);
+              }
+            });
+          },
+        }).then(() => {
+          if (settled) return;
+          armTimeout();
+          port.postMessage({ type: 'form-data-complete' });
+        }).catch((error) => {
+          failBeforeHeaders(`offscreen proxy body upload failed: ${error.message}`);
+        });
+        return;
+      }
+      if (msg?.type === 'form-data-chunk-ack') {
+        const pending = pendingBodyChunkAck;
+        if (!pending
+            || pending.entryIndex !== msg.entryIndex
+            || pending.sequence !== msg.sequence) return;
+        pendingBodyChunkAck = null;
+        armTimeout();
+        pending.resolve();
+        return;
+      }
+      if (msg?.type === 'headers') {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        const responseInit = {
+          status: msg.status,
+          statusText: msg.ok ? 'OK' : 'Error',
+          headers: { 'Content-Type': msg.contentType || 'application/json' },
+        };
+        // The Response constructor rejects a non-null body for 204, 205,
+        // and 304. HEAD responses can also have status 200 with no body, so
+        // honor the explicit signal from the offscreen fetch as well. When
+        // headers already settled the connection phase, a constructor throw
+        // used to leave the caller hanging forever with no active timeout.
+        if (msg.hasBody === false || [204, 205, 304].includes(msg.status)) {
+          streamController = null;
+          cleanupCallerSignal();
+          try {
+            resolve(new Response(null, responseInit));
+          } catch (e) {
+            try { port.disconnect(); } catch {}
+            reject(new Error(`offscreen proxy returned invalid response headers: ${e.message}`));
+            return;
+          }
+          try { port.disconnect(); } catch {}
+          return;
+        }
+        const stream = new ReadableStream({
+          start(controller) { streamController = controller; },
+          cancel() { try { port.disconnect(); } catch {} },
+        });
+        try {
+          resolve(new Response(stream, responseInit));
+        } catch (e) {
+          if (streamController) {
+            const sc = streamController;
+            streamController = null;
+            try { sc.error(e); } catch {}
+          }
+          try { port.disconnect(); } catch {}
+          reject(new Error(`offscreen proxy returned invalid response headers: ${e.message}`));
+        }
+        return;
+      }
+      if (msg?.type === 'error') {
+        // Network-level failure inside the offscreen document. Before
+        // headers this is the "both paths failed" case; mid-stream it
+        // terminates the body with an error.
+        if (!settled) {
+          failBeforeHeaders(msg.error || 'offscreen proxy fetch failed', { bothFailed: true });
+          return;
+        }
+        if (streamController) {
+          const sc = streamController;
+          streamController = null;
+          try { sc.error(new Error(msg.error || 'offscreen proxy fetch failed')); } catch {}
+          try { port.disconnect(); } catch {}
+        }
+        return;
+      }
+      if (!streamController) return;
+      if (msg?.type === 'chunk') {
+        try { streamController.enqueue(encoder.encode(msg.text || '')); } catch {}
+      } else if (msg?.type === 'done') {
+        const sc = streamController;
+        streamController = null;
+        cleanupCallerSignal();
+        try { sc.close(); } catch {}
+        try { port.disconnect(); } catch {}
+      }
+    });
+
+    try {
+      port.postMessage({
+        url,
+        method: fetchOptions.method || 'POST',
+        headers: fetchOptions.headers || {},
+        ...preparedBody.message,
+      });
+    } catch (e) {
+      failBeforeHeaders(`offscreen proxy postMessage failed: ${e.message}`);
+    }
+  });
+}
+
+function _prepareOffscreenRequestBody(body) {
+  if (!(typeof FormData !== 'undefined' && body instanceof FormData)) {
+    return { message: { body: body || undefined }, blobEntries: null };
+  }
+
+  const formDataEntries = [];
+  const blobEntries = [];
+  for (const [name, value] of body.entries()) {
+    if (typeof value === 'string') {
+      formDataEntries.push({ name, kind: 'text', value });
+      continue;
+    }
+    if (!(typeof Blob !== 'undefined' && value instanceof Blob)) {
+      throw new Error(`Unsupported FormData value for offscreen proxy field ${name}`);
+    }
+    const entryIndex = formDataEntries.length;
+    formDataEntries.push({
+      name,
+      kind: 'blob',
+      type: value.type || 'application/octet-stream',
+      filename: typeof value.name === 'string' && value.name ? value.name : 'blob',
+    });
+    blobEntries.push({ entryIndex, blob: value });
+  }
+  return {
+    message: { bodyType: 'form-data-chunked', formDataEntries },
+    blobEntries,
+  };
+}
+
+async function _uploadFormDataBlobs(port, blobEntries, {
+  callerSignal,
+  isSettled,
+  waitForAck,
+}) {
+  let sequence = 0;
+  for (const { entryIndex, blob } of blobEntries) {
+    for (let offset = 0; offset < blob.size; offset += OFFSCREEN_FORM_DATA_CHUNK_BYTES) {
+      if (isSettled() || callerSignal?.aborted) {
+        throw callerSignal?.reason instanceof Error
+          ? callerSignal.reason
+          : new DOMException('The operation was aborted', 'AbortError');
+      }
+      const bytes = new Uint8Array(await blob
+        .slice(offset, offset + OFFSCREEN_FORM_DATA_CHUNK_BYTES)
+        .arrayBuffer());
+      const currentSequence = sequence++;
+      await waitForAck(entryIndex, currentSequence, () => port.postMessage({
+        type: 'form-data-chunk',
+        entryIndex,
+        sequence: currentSequence,
+        value: _bytesToBase64(bytes),
+      }));
+    }
+  }
+}
+
+function _bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }

@@ -62,7 +62,7 @@
  * hashing because their args don't have multiple equivalent forms.
  */
 export const URL_FAMILY_TOOLS = new Set([
-  'fetch_url', 'research_url', 'download_file', 'read_downloaded_file',
+  'fetch_url', 'research_url', 'read_page_source', 'download_file', 'read_downloaded_file',
 ]);
 
 /**
@@ -156,7 +156,27 @@ export function bucketArgsKey(name, args) {
   if (URL_FAMILY_TOOLS.has(name) && args && args.url) {
     const bucket = resourceBucket(args.url);
     const method = (args.method || 'GET').toUpperCase();
-    return `url:${bucket}|${method}`;
+    const pageSourceRange = name === 'read_page_source' ? _pageSourceRangeKey(args) : '';
+    const fetchTextWindow = name === 'fetch_url' ? _fetchTextWindowKey(args) : '';
+    return `url:${bucket}|${method}${pageSourceRange}${fetchTextWindow}`;
   }
   return JSON.stringify(args || {});
+}
+
+function _pageSourceRangeKey(args) {
+  const offset = _nonNegativeInteger(args.offset, 0);
+  const maxChars = args.maxChars == null ? '' : _nonNegativeInteger(args.maxChars, 0);
+  return `|offset:${offset}|maxChars:${maxChars}`;
+}
+
+function _fetchTextWindowKey(args) {
+  const find = String(args.find ?? '').trim().toLowerCase().slice(0, 200);
+  if (find) return `|find:${find}`;
+  return `|offset:${_nonNegativeInteger(args.offset, 0)}`;
+}
+
+function _nonNegativeInteger(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.floor(n));
 }

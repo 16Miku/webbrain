@@ -1,0 +1,25 @@
+{
+  "id": "065",
+  "user": "take a screenshot",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 2969,
+  "error": null,
+  "firstToolCall": {
+    "name": "screenshot",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to take a screenshot. According to the instructions, I should start by reading the current page to understand the context. The current page is https://www.cnn.com/2026/05/world/example-story/index.html with title \"Example story — CNN\".\n\nThe user specifically asked for a screenshot, so I should take one. Let me do that first.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"screenshot\", \"parameters\": {}}\n]",
+  "usage": {
+    "completion_tokens": 102,
+    "prompt_tokens": 8478,
+    "total_tokens": 8580,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

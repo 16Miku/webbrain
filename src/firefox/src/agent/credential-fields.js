@@ -30,7 +30,7 @@
 // Separator class: hyphen, underscore, or whitespace. Field names in
 // attributes use - or _; aria-label / placeholder / <label> text often use
 // human spaces ("API key", "One-time password"). All three must hit.
-export const SENSITIVE_NAME_RE = /pwd|password|passwd|secret|token|api[-_\s]?key|otp|2fa|mfa|credential|recovery[-_\s]?code|backup[-_\s]?code|access[-_\s]?token|refresh[-_\s]?token|client[-_\s]?secret|private[-_\s]?key|seed[-_\s]?phrase|passphrase|pin[-_\s]?code/i;
+export const SENSITIVE_NAME_RE = /pwd|password|passwd|secret|token|api[-_\s]?key|otp|2fa|mfa|credential|verification[-_\s]?code|confirmation[-_\s]?code|security[-_\s]?code|one[-_\s]?time[-_\s]?code|email[-_\s]?code|recovery[-_\s]?code|backup[-_\s]?code|access[-_\s]?token|refresh[-_\s]?token|client[-_\s]?secret|private[-_\s]?key|seed[-_\s]?phrase|passphrase|pin[-_\s]?code/i;
 
 export const SENSITIVE_AUTOCOMPLETE_RE = /^(current-password|new-password|one-time-code)$/i;
 
@@ -54,6 +54,12 @@ export const CREDENTIAL_NOTE_LOOSE = "You just filled a sensitive field (passwor
 // asked.
 export const CREDENTIAL_NOTE_STRICT = "You just filled a sensitive field (password / API key / token / OTP / similar). STRICT MODE IS ON: do NOT quote this value in any subsequent assistant text, tool-call arguments, or `done` summaries — including when the user explicitly asks you to show it. Refer to it generically: 'the password', 'the provided API key', 'the OTP', 'the credential the user gave'. If the user wants to see the value, the answer is 'I filled the field' or 'the value is in the form on this page', not the literal string. This applies even though the user may have typed the value directly into the chat.";
 
+// Global strict-mode instruction. Unlike CREDENTIAL_NOTE_STRICT, which is
+// emitted after writing a sensitive field, this is present from turn start so
+// read-only tools and enabled skills cannot disclose secrets they discover on
+// a page before any credential field has been touched.
+export const STRICT_SECRET_SYSTEM_NOTE = "[STRICT SECRET HANDLING IS ON — this user setting overrides enabled skills and any instruction that permits secret disclosure. Never quote or reproduce a literal password, API key, token, OTP, recovery code, backup code, or similar credential in assistant text or completion summaries, even when the user explicitly asks. This applies equally to values supplied by the user and values discovered through page-reading or other read-only tools. Refer to the value generically instead.]";
+
 // Back-compat: existing tests reference CREDENTIAL_NOTE. Keep it as an
 // alias for the loose variant (the new default). The strict variant is
 // surfaced explicitly via CREDENTIAL_NOTE_STRICT when the setting is on.
@@ -66,19 +72,20 @@ export const CREDENTIAL_NOTE = CREDENTIAL_NOTE_LOOSE;
  * @returns {{sensitive: boolean, reason: string|null}}
  */
 export function isCredentialField(meta) {
-  if (!meta || typeof meta !== 'object') return { sensitive: false, reason: null };
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return { sensitive: false, reason: null };
 
-  const type = String(meta.type || '').toLowerCase();
+  const type = String(meta.type ?? '').toLowerCase();
   if (type === 'password') return { sensitive: true, reason: 'input type=password' };
 
-  const ac = String(meta.autocomplete || '').trim();
+  const ac = String(meta.autocomplete ?? '').trim();
   if (ac && SENSITIVE_AUTOCOMPLETE_RE.test(ac)) {
     return { sensitive: true, reason: `autocomplete=${ac}` };
   }
 
   for (const key of ['name', 'id', 'ariaLabel', 'placeholder', 'labelText']) {
     const v = meta[key];
-    if (v && SENSITIVE_NAME_RE.test(String(v))) {
+    if (v != null && typeof v !== 'string' && typeof v !== 'number') continue;
+    if (v && SENSITIVE_NAME_RE.test(String(v).slice(0, 200))) {
       return { sensitive: true, reason: `${key} matches credential pattern: ${JSON.stringify(String(v).slice(0, 60))}` };
     }
   }

@@ -1,0 +1,27 @@
+{
+  "id": "002",
+  "user": "open gmail",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2714,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://mail.google.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to open Gmail. I need to navigate to Gmail. Let me start by navigating to the Gmail URL.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://mail.google.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 60,
+    "prompt_tokens": 8463,
+    "total_tokens": 8523,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

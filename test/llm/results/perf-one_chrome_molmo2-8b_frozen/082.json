@@ -1,0 +1,22 @@
+{
+  "id": "082",
+  "user": "whats the capital of france",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4848,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have access to the internet or real-time data, so I can't provide the current capital of France. However, I can tell you that Paris has been the capital of France since 1598. If you need the most up-to-date information, I recommend checking a reliable news source or a government website.",
+  "usage": {
+    "prompt_tokens": 8595,
+    "completion_tokens": 68,
+    "total_tokens": 8663,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

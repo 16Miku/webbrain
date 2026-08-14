@@ -1,0 +1,20 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5941,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Could you let me know which specific Netflix tab you’d like to switch to—its URL or any visible identifier (like a tab title or class)?",
+  "usage": {
+    "prompt_tokens": 8606,
+    "total_tokens": 9609,
+    "completion_tokens": 1003,
+    "prompt_tokens_details": null
+  }
+}

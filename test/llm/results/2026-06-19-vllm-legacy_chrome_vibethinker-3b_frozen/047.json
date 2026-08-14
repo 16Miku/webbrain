@@ -1,0 +1,23 @@
+{
+  "id": "047",
+  "user": "show me the latest commit",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 6370,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "get_accessibility_tree({filter: \"visible\"})",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 10232,
+    "completion_tokens": 1075,
+    "prompt_tokens_details": null
+  }
+}

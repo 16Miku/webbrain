@@ -1,0 +1,16 @@
+{
+  "id": "037",
+  "user": "close the cookie banner",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.theguardian.com/uk",
+    "title": "The Guardian"
+  },
+  "latencyMs": 706,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null
+}

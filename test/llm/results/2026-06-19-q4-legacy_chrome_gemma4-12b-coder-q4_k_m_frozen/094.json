@@ -1,0 +1,22 @@
+{
+  "id": "094",
+  "user": "make text bigger",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 2798,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"execute_js\",\"arguments\":{\"code\":\"(function() {const style = document.createElement('style');style.innerHTML = 'body { font-size: 24px !important; }';document.head.appendChild(style);})\"}}}</tool_call>",
+  "usage": {
+    "completion_tokens": 245,
+    "prompt_tokens": 9212,
+    "total_tokens": 9457,
+    "prompt_tokens_details": {
+      "cached_tokens": 8960
+    }
+  }
+}

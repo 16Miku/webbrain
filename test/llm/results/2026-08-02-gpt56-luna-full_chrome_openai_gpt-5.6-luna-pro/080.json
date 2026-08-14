@@ -1,0 +1,40 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5981,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I can’t close other browser tabs because this environment doesn’t provide a tab-management control. Please use your browser’s “Close other tabs” command on this tab.",
+  "usage": {
+    "prompt_tokens": 72257,
+    "completion_tokens": 597,
+    "total_tokens": 72854,
+    "cost": 0.00220037,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59817,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00220037,
+      "upstream_inference_prompt_cost": 0.00184217,
+      "upstream_inference_completions_cost": 0.00035820000000000003
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 454,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

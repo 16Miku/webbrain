@@ -1,0 +1,40 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1646,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Could you clarify what you'd like me to open? For example:\n\n- A specific URL or link?\n- A file from your downloads?\n- A tab or page from earlier in this session?\n- Something on the current page?\n\nWhat is \"it\"?",
+  "usage": {
+    "prompt_tokens": 21475,
+    "completion_tokens": 116,
+    "total_tokens": 21591,
+    "cost": 0.0023263,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 21376,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0023263,
+      "upstream_inference_prompt_cost": 0.0021871,
+      "upstream_inference_completions_cost": 0.0001392
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 60,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

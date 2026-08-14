@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MiniMax M3 and WebBrain Cloud 1.0 WebBrain planner benchmark - WebBrain Blog</title>
+  <meta name="description" content="We ran MiniMax M3 through OpenRouter and WebBrain Cloud 1.0 through api.webbrain.one against WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark, then updated the Sonnet 4.6 comparison table.">
+  <meta name="keywords" content="WebBrain, MiniMax M3, WebBrain Cloud, OpenRouter, browser agent, tool calling, Claude Sonnet, LLM benchmark">
+  <meta property="og:title" content="MiniMax M3 and WebBrain Cloud 1.0 in WebBrain&#39;s frozen planner bench">
+  <meta property="og:description" content="Two new hosted OpenAI-compatible runs join the WebBrain first-tool benchmark: MiniMax M3 via OpenRouter and WebBrain Cloud 1.0 via api.webbrain.one.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/minimax-m3-webbrain-cloud-tool-calling">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MiniMax M3 and WebBrain Cloud 1.0 planner benchmark">
+  <meta name="twitter:description" content="MiniMax M3: 75% Sonnet alignment. WebBrain Cloud 1.0: 73%. Same frozen 41-tool WebBrain harness.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/minimax-m3-webbrain-cloud-tool-calling">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "MiniMax M3 and WebBrain Cloud 1.0 enter the frozen WebBrain planner benchmark",
+  "description": "We ran MiniMax M3 through OpenRouter and WebBrain Cloud 1.0 through api.webbrain.one against WebBrain's frozen 100-case browser-agent first-tool benchmark, then updated the Sonnet 4.6 comparison table.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-06-21",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/minimax-m3-webbrain-cloud-tool-calling"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">June 21, 2026 &middot; 6 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>MiniMax M3 and WebBrain Cloud 1.0 enter the frozen WebBrain planner benchmark</h1>
+    <p class="lede">We added two hosted OpenAI-compatible planner runs to WebBrain&#39;s frozen first-tool benchmark: <strong>minimax/minimax-m3</strong> through OpenRouter and <strong>webbrain-cloud 1.0</strong> through <code>https://api.webbrain.one/v1</code>. The surprise is that MiniMax M3 does not beat the older MiniMax M2.7 result in this harness. WebBrain Cloud lands close behind M3 on Sonnet alignment, costs much less for the replay, but was much slower on this endpoint path.</p>
+<h2 id="what-we-ran">What we ran</h2>
+<p>Both runs used the same 100 single-turn browser-agent prompts and the same frozen baseline we use for comparable planner results:</p>
+<pre><code class="language-bash">node test/llm/run-llamacpp.mjs \
+  --base https://openrouter.ai/api/v1 \
+  --model minimax/minimax-m3 \
+  --tag 2026-06-21-openrouter-minimax-m3 \
+  --concurrency 2 \
+  --timeout 180000 \
+  --no-save-request \
+  --freeze test/llm/freeze/baseline-2026-05-23.json
+
+node test/llm/run-llamacpp.mjs \
+  --base https://api.webbrain.one/v1 \
+  --model &quot;webbrain-cloud 1.0&quot; \
+  --tag 2026-06-21-webbrain-cloud-final \
+  --concurrency 1 \
+  --timeout 180000 \
+  --no-save-request \
+  --freeze test/llm/freeze/baseline-2026-05-23.json</code></pre>
+<p>The compatibility anchor is the frozen May 23, 2026 Sonnet 4.6 WebBrain prompt and 41-tool schema, system hash <code>5c4fac1387025050</code>. These hosted endpoints both support native OpenAI structured tools, so the published runs used the old frozen toolset as native <code>tools</code>, not the text-call fallback used for local chat-template compatibility experiments.</p>
+<p>Result files:</p>
+<pre><code class="language-text">test/llm/results/2026-06-21-openrouter-minimax-m3_chrome_minimax_minimax-m3_frozen
+test/llm/results/2026-06-21-webbrain-cloud-final_chrome_webbrain-cloud_1.0_frozen</code></pre>
+<h2 id="headline-results">Headline results</h2>
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>MiniMax M3 via OpenRouter</th><th>WebBrain Cloud 1.0</th></tr></thead><tbody><tr><td>Completed cases</td><td>100/100</td><td>100/100</td></tr><tr><td>Transport errors</td><td>0</td><td>0</td></tr><tr><td>Parsed tool calls</td><td>85/100</td><td>90/100</td></tr><tr><td>Strict exact first-call match</td><td>17/100</td><td>16/100</td></tr><tr><td>Tool-name match vs ideal</td><td>32/100</td><td>35/100</td></tr><tr><td>Sonnet match, all cases</td><td>75.0%</td><td>73.0%</td></tr><tr><td>Sonnet match, when Sonnet tooled</td><td>73.9%</td><td>72.8%</td></tr><tr><td>Median latency</td><td>3.1s</td><td>8.8s</td></tr><tr><td>p95 latency</td><td>8.2s</td><td>47.1s</td></tr><tr><td>Total wall time</td><td>214s at concurrency 2</td><td>1,388s at concurrency 1</td></tr><tr><td>Reported run cost</td><td>$1.06</td><td>$0.12</td></tr></tbody></table></div>
+<p>The clean read: MiniMax M3 is a solid hosted planner, but it is not an upgrade over our saved MiniMax M2.7 result for this specific first-tool benchmark. WebBrain Cloud 1.0 is slightly weaker on Sonnet alignment, but it is cheaper in the reported usage fields and produced more parsed tool calls.</p>
+<p>Latency needs one caveat. MiniMax M3 ran with concurrency 2, matching the older OpenRouter-style run. WebBrain Cloud had to run with concurrency 1; a concurrency-2 attempt produced transport failures from this environment. So compare the median per-case latency directly, but treat wall time as endpoint-path-specific.</p>
+<h2 id="minimax-m3-vs-minimax-m2-7">MiniMax M3 vs MiniMax M2.7</h2>
+<p>This is the comparison I cared about most.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Parsed calls</th><th>Exact</th><th>Name</th><th>Sonnet all</th><th>Sonnet tooled</th><th>Median</th><th>Cost</th></tr></thead><tbody><tr><td>MiniMax M2.7</td><td>88/100</td><td>23%</td><td>36%</td><td>77.0%</td><td>76.1%</td><td>3.1s</td><td>$0.16</td></tr><tr><td>MiniMax M3</td><td>85/100</td><td>17%</td><td>32%</td><td>75.0%</td><td>73.9%</td><td>3.1s</td><td>$1.06</td></tr></tbody></table></div>
+<p>M3 did not regress catastrophically. It still tracks Sonnet better than most local runs. But the older M2.7 result remains stronger on every quality metric we publish here: more parsed tool calls, more exact first actions, higher tool-name agreement, and better Sonnet alignment. M3 also reported a much higher cost for this replay.</p>
+<p>That does not mean M3 is the weaker model in general. This is a narrow first-tool browser-agent routing harness, frozen to an older WebBrain schema. It does mean we should not silently replace M2.7 with M3 in the planner table just because the model name is newer.</p>
+<h2 id="webbrain-cloud-1-0">WebBrain Cloud 1.0</h2>
+<p>WebBrain Cloud 1.0 came in just below MiniMax M3 on Sonnet alignment:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Parsed calls</th><th>Exact</th><th>Name</th><th>Sonnet all</th><th>Sonnet tooled</th><th>Median</th><th>Cost</th></tr></thead><tbody><tr><td>MiniMax M3</td><td>85/100</td><td>17%</td><td>32%</td><td>75.0%</td><td>73.9%</td><td>3.1s</td><td>$1.06</td></tr><tr><td>WebBrain Cloud 1.0</td><td>90/100</td><td>16%</td><td>35%</td><td>73.0%</td><td>72.8%</td><td>8.8s</td><td>$0.12</td></tr></tbody></table></div>
+<p>The profile is different. WebBrain Cloud produced more tool calls and a slightly better ideal tool-name score than M3, but it aligned less often with Sonnet&#39;s first-tool choices and had much higher latency in this run. It also reported a much lower cost for the 100-case replay.</p>
+<p>For product use, this is a reasonable default-cloud profile: cheap, OpenAI-compatible, native tool-capable, and close enough to the top hosted planner tier to be useful. For the benchmark leaderboard, it sits below MiniMax M3 and above the Qwen 3.5 4B row on the all-case Sonnet score.</p>
+<h2 id="updated-sonnet-4-6-comparison">Updated Sonnet 4.6 comparison</h2>
+<p>This table uses the saved Claude Sonnet 4.6 run as the first-tool reference. &quot;Match all&quot; counts all 100 prompts. &quot;Match when Sonnet tooled&quot; counts only the 92 prompts where Sonnet emitted a tool call. &quot;Exact&quot; and &quot;Name&quot; are the stricter replay against <code>expected/NNN.json</code>, not the Sonnet reference.</p>
+<div class="table-wrap"><table><thead><tr><th>#</th><th>Model</th><th>Match all</th><th>Match when Sonnet tooled</th><th>Tool-call rate</th><th>Valid-name rate</th><th>Exact</th><th>Name</th><th>Median</th></tr></thead><tbody><tr><td>ref</td><td>Claude Sonnet 4.6</td><td>100.0%</td><td>100.0%</td><td>92%</td><td>92%</td><td>19%</td><td>41%</td><td>2.8s</td></tr><tr><td>1</td><td>Gemma 4 31B QAT w4a16</td><td>77.0%</td><td>78.3%</td><td>95%</td><td>95%</td><td>19%</td><td>37%</td><td>0.55s</td></tr><tr><td>2</td><td>Qwen 3.6 27B</td><td>77.0%</td><td>77.2%</td><td>92%</td><td>92%</td><td>18%</td><td>37%</td><td>10.2s</td></tr><tr><td>3</td><td>MiniMax M2.7</td><td>77.0%</td><td>76.1%</td><td>88%</td><td>88%</td><td>23%</td><td>36%</td><td>3.1s</td></tr><tr><td>4</td><td>MiniMax M3</td><td>75.0%</td><td>73.9%</td><td>85%</td><td>85%</td><td>17%</td><td>32%</td><td>3.1s</td></tr><tr><td>5</td><td>Intel Gemma 4 31B int4 AutoRound</td><td>74.0%</td><td>72.8%</td><td>88%</td><td>88%</td><td>14%</td><td>34%</td><td>0.63s</td></tr><tr><td>6</td><td>WebBrain Cloud 1.0</td><td>73.0%</td><td>72.8%</td><td>90%</td><td>90%</td><td>16%</td><td>35%</td><td>8.8s</td></tr><tr><td>7</td><td>Qwen 3.5 4B</td><td>73.0%</td><td>71.7%</td><td>82%</td><td>82%</td><td>12%</td><td>33%</td><td>5.5s</td></tr><tr><td>8</td><td>Gemma 4 26B-A4B</td><td>71.0%</td><td>70.7%</td><td>87%</td><td>87%</td><td>13%</td><td>30%</td><td>1.4s</td></tr><tr><td>9</td><td>Qwen 3.6 35B-A3B</td><td>70.0%</td><td>70.7%</td><td>90%</td><td>90%</td><td>18%</td><td>38%</td><td>10.3s</td></tr><tr><td>10</td><td>Qwen 3.5 9B</td><td>70.0%</td><td>69.6%</td><td>90%</td><td>90%</td><td>15%</td><td>35%</td><td>0.91s</td></tr><tr><td>11</td><td>Gemma 4 E4B</td><td>68.0%</td><td>68.5%</td><td>87%</td><td>87%</td><td>14%</td><td>35%</td><td>4.5s</td></tr><tr><td>12</td><td>Nemotron Omni 30B</td><td>67.0%</td><td>68.5%</td><td>93%</td><td>93%</td><td>16%</td><td>36%</td><td>2.6s</td></tr><tr><td>13</td><td>Gemma 4 12B QAT w4a16</td><td>67.0%</td><td>67.4%</td><td>92%</td><td>92%</td><td>14%</td><td>33%</td><td>0.43s</td></tr><tr><td>14</td><td>DiffusionGemma 26B-A4B</td><td>67.0%</td><td>64.1%</td><td>79%</td><td>79%</td><td>10%</td><td>26%</td><td>0.35s</td></tr><tr><td>15</td><td>Gemma 4 E2B</td><td>63.0%</td><td>60.9%</td><td>76%</td><td>76%</td><td>12%</td><td>31%</td><td>4s</td></tr><tr><td>16</td><td>Gemma 4 12B Coder Fable5 Composer 2.5</td><td>61.0%</td><td>62.0%</td><td>94%</td><td>94%</td><td>9%</td><td>26%</td><td>1.9s</td></tr><tr><td>17</td><td>Cohere North-Mini-Code 1.0</td><td>59.0%</td><td>58.7%</td><td>93%</td><td>93%</td><td>9%</td><td>24%</td><td>3.2s</td></tr><tr><td>18</td><td>Browser-Use Qwen 30B-A3B Q4</td><td>43.0%</td><td>45.7%</td><td>93%</td><td>88%</td><td>12%</td><td>35%</td><td>0.48s</td></tr><tr><td>19</td><td>LFM 2.5</td><td>40.0%</td><td>38.0%</td><td>83%</td><td>83%</td><td>4%</td><td>23%</td><td>6s</td></tr><tr><td>20</td><td>Qwen 3.5 0.8B</td><td>37.0%</td><td>34.8%</td><td>90%</td><td>90%</td><td>7%</td><td>15%</td><td>0.45s</td></tr><tr><td>21</td><td>Qwen 3.5 2B</td><td>36.0%</td><td>34.8%</td><td>89%</td><td>89%</td><td>4%</td><td>7%</td><td>0.78s</td></tr><tr><td>22</td><td>VibeThinker 3B BF16</td><td>33.0%</td><td>32.6%</td><td>84%</td><td>83%</td><td>2%</td><td>19%</td><td>5s</td></tr><tr><td>23</td><td>Molmo2 8B</td><td>8.0%</td><td>0.0%</td><td>2%</td><td>1%</td><td>0%</td><td>0%</td><td>1.7s</td></tr></tbody></table></div>
+<p>The top of the table is getting crowded, but the conclusion did not change. The best saved Sonnet-alignment result is still the Gemma 4 31B QAT / Qwen 3.6 27B / MiniMax M2.7 cluster. MiniMax M3 joins just below that cluster. Because M3 is roughly double the size of M2.7, that result is hard to justify for this job: larger, more expensive, and weaker on the frozen planner run is not a worthwhile trade.</p>
+<p>WebBrain Cloud 1.0 sits one row lower, but it is the more useful product story here. It is a good entrant with a free tier, and it gives people a working WebBrain path when they do not have a local LLM ready. It should also keep improving as we tune the browser-side optimizations around the hosted route.</p>
+<h2 id="what-changes">What changes</h2>
+<p>For hosted planner routing, I would keep MiniMax M2.7 in the table ahead of MiniMax M3 until M3 wins a rerun with a newer prompt or a different tool format. M3 is good, but the frozen WebBrain result does not justify a default-model change, especially when the newer model is about twice the size.</p>
+<p>For WebBrain Cloud, the result is more product-facing than leaderboard-facing. It passed the old structured tool interface cleanly, completed all 100 cases without transport errors in the final run, and stayed close to the hosted MiniMax tier on Sonnet alignment. The latency needs endpoint work, but the quality/cost shape is usable, and the free tier makes it a practical default for anyone who wants to try WebBrain before setting up a local model.</p>
+<p>The next fair test is the current production prompt and tool schema, not the May 23 frozen one. The frozen run answers &quot;how does it compare with our historical rows?&quot; The live-schema run answers &quot;what should WebBrain route to today?&quot;</p>
+<p>Tags: #MiniMaxM3 #WebBrainCloud #OpenRouter #ToolCalling #BrowserAgent #LLMBenchmark</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "id": "004",
+  "user": "open my github",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2913,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to open their GitHub. I'm currently on the \"New Tab\" page (about:home). I need to navigate to GitHub. Let me check what the current page is and then navigate to GitHub.\n\nFirst, I should read the current page to understand the context, then navigate to GitHub.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 100,
+    "prompt_tokens": 8464,
+    "total_tokens": 8564,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

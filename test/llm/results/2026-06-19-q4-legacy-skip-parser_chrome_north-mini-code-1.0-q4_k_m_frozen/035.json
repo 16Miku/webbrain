@@ -1,0 +1,27 @@
+{
+  "id": "035",
+  "user": "fill the email field with bob@example.com",
+  "tab": {
+    "url": "https://github.com/login",
+    "title": "Sign in to GitHub"
+  },
+  "latencyMs": 3216,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to fill the email field with bob@example.com. Looking at the current page context, I'm on https://github.com/login — the GitHub sign-in page.\n\nI need to:\n1. First read the current page to understand what's there\n2. Find the email field\n3. Fill it with bob@example.com\n\nLet me start by reading the current page to see what's available.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 115,
+    "prompt_tokens": 8999,
+    "total_tokens": 9114,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

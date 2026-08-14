@@ -1,0 +1,42 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4942,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to open? Could you share the URL, file name, or describe what you're referring to?"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'm not sure what you'd like me to open — could you clarify what \"it\" refers to? For example, a specific website URL, a file, or something else?\n\n",
+  "usage": {
+    "prompt_tokens": 17324,
+    "completion_tokens": 146,
+    "total_tokens": 17470,
+    "cost": 0.001372416,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17024,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.001372416,
+      "upstream_inference_prompt_cost": 0.001185536,
+      "upstream_inference_completions_cost": 0.00018688
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 53,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2855,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "// Get all open tabs\nconst tabs = await chrome.tabs.query({});\nreturn tabs.map(t => ({id: t.id, url: t.url, title: t.title}));"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17329,
+    "total_tokens": 17437,
+    "completion_tokens": 108,
+    "prompt_tokens_details": null
+  }
+}

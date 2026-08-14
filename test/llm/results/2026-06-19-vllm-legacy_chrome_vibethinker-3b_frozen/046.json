@@ -1,0 +1,25 @@
+{
+  "id": "046",
+  "user": "fork it",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 1320,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://github.com/esokullu/webbrain/repo"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"navigate\",\n  \"arguments\": {\n    \"url\": \"https://github.com/esokullu/webbrain/repo\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 9154,
+    "total_tokens": 9372,
+    "completion_tokens": 218,
+    "prompt_tokens_details": null
+  }
+}

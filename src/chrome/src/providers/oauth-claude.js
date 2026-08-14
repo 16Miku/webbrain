@@ -202,10 +202,15 @@ async function exchangeCodeForTokens(code, codeVerifier) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Token exchange failed (HTTP ${res.status}): ${text.slice(0, 400)}`);
+    let errMsg = '';
+    try { errMsg = (await res.text()).slice(0, 200); } catch {}
+    errMsg = errMsg.replace(/[A-Za-z0-9_-]{40,}/g, '[REDACTED]');
+    throw new Error(`Token exchange failed (HTTP ${res.status}): ${errMsg}`);
   }
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); } catch {
+    throw new Error('Token exchange returned invalid JSON.');
+  }
   return await persistTokens(data);
 }
 
@@ -233,8 +238,25 @@ async function persistTokens(data, fallbackRefreshToken = null) {
  * On a hard failure (refresh token invalid / revoked), wipes the stored
  * tokens and throws — the caller should surface a "please sign in
  * again" state in the UI.
+ *
+ * All callers are deduplicated onto one in-flight request: Anthropic
+ * rotates refresh tokens on every refresh, so two concurrent refreshes
+ * would present the SAME refresh token twice — the first succeeds, the
+ * second gets HTTP 400, and the error handler would then wipe the
+ * freshly-persisted tokens, spuriously signing the user out.
  */
-export async function refreshClaudeAccessToken() {
+let _inflightRefresh = null;
+
+export function refreshClaudeAccessToken() {
+  if (!_inflightRefresh) {
+    _inflightRefresh = _doRefreshClaudeAccessToken().finally(() => {
+      _inflightRefresh = null;
+    });
+  }
+  return _inflightRefresh;
+}
+
+async function _doRefreshClaudeAccessToken() {
   const stored = await chrome.storage.local.get([STORAGE_KEY]);
   const tokens = stored[STORAGE_KEY];
   if (!tokens?.refreshToken) throw new Error('No Claude refresh token on file — sign in first.');
@@ -258,9 +280,18 @@ export async function refreshClaudeAccessToken() {
       await chrome.storage.local.remove([STORAGE_KEY]);
       throw new Error('Claude refresh token rejected — please sign in again.');
     }
-    throw new Error(`Token refresh failed (HTTP ${res.status}): ${text.slice(0, 400)}`);
+    if (res.status === 429) {
+      const retryAfter = res.headers.get('retry-after');
+      const waitHint = retryAfter ? ` (retry-after: ${retryAfter}s)` : '';
+      throw new Error(`Token refresh rate-limited (HTTP 429)${waitHint}. Try again in a moment.`);
+    }
+    const safeText = text.slice(0, 200).replace(/[A-Za-z0-9_-]{40,}/g, '[REDACTED]');
+    throw new Error(`Token refresh failed (HTTP ${res.status}): ${safeText}`);
   }
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); } catch {
+    throw new Error('Token refresh returned invalid JSON.');
+  }
   return await persistTokens(data, tokens.refreshToken);
 }
 

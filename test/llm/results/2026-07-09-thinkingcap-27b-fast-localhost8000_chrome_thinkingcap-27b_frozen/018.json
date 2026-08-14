@@ -1,0 +1,29 @@
+{
+  "id": "018",
+  "user": "find typescript repos with most stars",
+  "mode": "act",
+  "tab": {
+    "url": "https://github.com/",
+    "title": "GitHub"
+  },
+  "latencyMs": 2978,
+  "error": null,
+  "firstToolCall": {
+    "name": "set_field",
+    "args": {
+      "text": "typescript stars:>10000",
+      "ref_id": "ref_10",
+      "clear": true,
+      "submit": true
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17879,
+    "total_tokens": 17976,
+    "completion_tokens": 97,
+    "prompt_tokens_details": null
+  }
+}

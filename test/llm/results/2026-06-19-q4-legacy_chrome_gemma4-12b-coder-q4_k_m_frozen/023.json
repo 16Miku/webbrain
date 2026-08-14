@@ -1,0 +1,27 @@
+{
+  "id": "023",
+  "user": "show me vegan lasagna recipes",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1918,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.google.com\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 132,
+    "prompt_tokens": 9190,
+    "total_tokens": 9322,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

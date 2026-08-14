@@ -31,8 +31,14 @@
 
 import { htmlToText } from "../util/htmlToText.js";
 import { safeFetch, readBodyCapped } from "../util/safeFetch.js";
+import {
+  compactText,
+  normalizeTextLimit,
+  type CompactionMetadata,
+} from "../util/compactText.js";
 
 const RESEARCH_TEXT_LIMIT = 16_000;
+const RESEARCH_MAX_CHARS_CAP = 60_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 // Hard byte ceiling for the streamed body. Slightly larger than
 // fetchUrl's 4 MB because research_url is biased toward whole HTML
@@ -46,6 +52,16 @@ export interface ResearchUrlArgs {
   timeout?: number;
   /** Allow RFC1918 / loopback targets. Off by default. */
   allowPrivate?: boolean;
+  /**
+   * Maximum characters returned in the main text field after compaction.
+   * Defaults to 16k; capped at 60k.
+   */
+  maxChars?: number;
+  /**
+   * When true (default), long article text is compacted with a
+   * head/middle/tail extractive pass. Set false for head-only truncation.
+   */
+  compact?: boolean;
 }
 
 export interface ResearchUrlLink {
@@ -59,12 +75,50 @@ export interface ResearchUrlResult {
   title?: string;
   text?: string;
   truncated?: boolean;
+  /** True when the plugin performed extractive text compaction. */
+  compacted?: boolean;
+  /** Details about the compaction/truncation strategy. */
+  compaction?: CompactionMetadata;
   originalLength?: number;
   /** Up to 30 outbound links extracted by regex from the source HTML. */
   links?: ResearchUrlLink[];
   error?: string;
   /** True if the fetched HTML looked SPA-shaped (almost no body content). */
   spaSuspected?: boolean;
+}
+
+function prepareResearchText(
+  raw: string,
+  args: Pick<ResearchUrlArgs, "maxChars" | "compact">,
+): { text: string; compacted: boolean; compaction?: CompactionMetadata } {
+  const maxChars = normalizeTextLimit(args.maxChars, RESEARCH_TEXT_LIMIT, RESEARCH_MAX_CHARS_CAP);
+  if (raw.length <= maxChars) return { text: raw, compacted: false };
+
+  if (args.compact === false) {
+    const text = raw.slice(0, maxChars);
+    return {
+      text,
+      compacted: false,
+      compaction: {
+        strategy: "head-truncate",
+        maxChars,
+        originalLength: raw.length,
+        outputLength: text.length,
+        omittedChars: raw.length - text.length,
+      },
+    };
+  }
+
+  const compacted = compactText(raw, {
+    maxChars,
+    label: "article text",
+    hardCap: RESEARCH_MAX_CHARS_CAP,
+  });
+  return {
+    text: compacted.text,
+    compacted: compacted.compacted,
+    ...(compacted.compaction ? { compaction: compacted.compaction } : {}),
+  };
 }
 
 /**
@@ -194,13 +248,16 @@ export async function researchUrl(args: ResearchUrlArgs): Promise<ResearchUrlRes
     const spaSuspected = text.length < 300 && html.length > 5000;
 
     const links = extractLinks(html, finalUrl);
+    const prepared = prepareResearchText(text, args);
 
     return {
       success: true,
       url: finalUrl,
       title,
-      text: text.slice(0, RESEARCH_TEXT_LIMIT),
-      truncated: text.length > RESEARCH_TEXT_LIMIT || bodyTruncated,
+      text: prepared.text,
+      truncated: prepared.text.length < text.length || bodyTruncated,
+      compacted: prepared.compacted,
+      ...(prepared.compaction ? { compaction: prepared.compaction } : {}),
       originalLength: text.length,
       links,
       ...(spaSuspected ? { spaSuspected: true } : {}),

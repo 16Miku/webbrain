@@ -1,0 +1,27 @@
+{
+  "id": "003",
+  "user": "take me to youtube",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2726,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.youtube.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants to go to YouTube. I need to navigate to youtube.com. Let me use the navigate tool to go to YouTube.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://www.youtube.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 64,
+    "prompt_tokens": 8465,
+    "total_tokens": 8529,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "024",
+  "user": "find tweets about react 19",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 865,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://x.com/search?q=react%2019&src=typed_query&f=live"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://x.com/search?q=react%2019&src=typed_query&f=live\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9157,
+    "total_tokens": 9204,
+    "completion_tokens": 47,
+    "prompt_tokens_details": null
+  }
+}

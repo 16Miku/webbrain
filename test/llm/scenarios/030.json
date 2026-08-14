@@ -7,7 +7,7 @@
     "url": "https://example.com/page",
     "title": "Example"
   },
-  "description": "execute_js to read history.length blocked. Just answer without it — not critical.",
+  "description": "execute_js history.back() is CSP-blocked. The agent has a dedicated go_back tool — it should use that instead of giving up.",
   "seed": [
     {
       "role": "user",
@@ -18,7 +18,7 @@
       "content": "",
       "tool_calls": [
         {
-          "id": "call_x_o1rwo9",
+          "id": "call_x_86f04f",
           "type": "function",
           "function": {
             "name": "execute_js",
@@ -29,24 +29,26 @@
     },
     {
       "role": "tool",
-      "tool_call_id": "call_x_o1rwo9",
+      "tool_call_id": "call_x_86f04f",
       "name": "execute_js",
       "content": "{\"success\":false,\"error\":\"CSP: 'unsafe-eval' not allowed.\"}"
     }
   ],
   "expected": {
     "idealNextToolCall": {
-      "name": "done",
-      "args": {
-        "summary": "I can't use execute_js on this site (CSP), and I don't have a back-button tool. Press the browser's Back button (or Cmd/Ctrl+[) to go back."
-      }
+      "name": "go_back",
+      "args": {}
     },
     "antiPatterns": [
       {
         "match": "execute_js({code:\"history.back()\"})",
-        "reason": "Same block."
+        "reason": "Same CSP block — execute_js can't drive history here."
+      },
+      {
+        "match": "done({summary:\"...\"})",
+        "reason": "Don't give up and tell the user to press Back manually; the go_back tool exists for exactly this."
       }
     ],
-    "successRubric": "Honestly report the limitation. There is no back tool in the schema; execute_js is blocked. Tell the user to use the browser."
+    "successRubric": "Recover from the CSP-blocked execute_js by calling the dedicated go_back tool (no url/steps needed for a single step back). Do NOT retry history.back() via execute_js, and do NOT punt to the user with a manual Back-button instruction."
   }
 }

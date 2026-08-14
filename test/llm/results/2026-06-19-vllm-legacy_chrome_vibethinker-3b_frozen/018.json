@@ -1,0 +1,25 @@
+{
+  "id": "018",
+  "user": "find typescript repos with most stars",
+  "tab": {
+    "url": "https://github.com/",
+    "title": "GitHub"
+  },
+  "latencyMs": 2582,
+  "error": null,
+  "firstToolCall": {
+    "name": "fetch_url",
+    "args": {
+      "url": "https://github.com/search?q=typescript&repos=starred"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"fetch_url\",\n  \"arguments\": {\n    \"url\": \"https://github.com/search?q=typescript&repos=starred\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 9147,
+    "total_tokens": 9575,
+    "completion_tokens": 428,
+    "prompt_tokens_details": null
+  }
+}

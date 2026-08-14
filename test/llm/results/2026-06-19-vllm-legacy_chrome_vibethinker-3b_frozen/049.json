@@ -1,0 +1,25 @@
+{
+  "id": "049",
+  "user": "compose an email to alice@example.com",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 2543,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://mail.google.com/mail/u/0/subject/Compose"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"navigate\",\n  \"arguments\": {\n    \"url\": \"https://mail.google.com/mail/u/0/subject/Compose\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8758,
+    "total_tokens": 9185,
+    "completion_tokens": 427,
+    "prompt_tokens_details": null
+  }
+}

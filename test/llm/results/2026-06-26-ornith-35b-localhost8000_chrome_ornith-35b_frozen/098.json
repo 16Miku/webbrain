@@ -1,0 +1,20 @@
+{
+  "id": "098",
+  "user": "compare these two products",
+  "tab": {
+    "url": "https://www.amazon.com/dp/B0EXAMPLE",
+    "title": "Acme Earbuds — Amazon"
+  },
+  "latencyMs": 3962,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI see you want to compare two products. I can see the first product is the **Acme Earbuds** on Amazon.\n\nWhat's the second product you'd like to compare it with? Please share the Amazon URL or product name for the second item.",
+  "usage": {
+    "prompt_tokens": 17451,
+    "total_tokens": 17605,
+    "completion_tokens": 154,
+    "prompt_tokens_details": null
+  }
+}

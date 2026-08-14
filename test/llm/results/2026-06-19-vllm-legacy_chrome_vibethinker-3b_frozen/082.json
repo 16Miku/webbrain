@@ -1,0 +1,23 @@
+{
+  "id": "082",
+  "user": "whats the capital of france",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6967,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "get_accessibility_tree({filter: \"visible\"})",
+  "usage": {
+    "prompt_tokens": 8606,
+    "total_tokens": 9786,
+    "completion_tokens": 1180,
+    "prompt_tokens_details": null
+  }
+}

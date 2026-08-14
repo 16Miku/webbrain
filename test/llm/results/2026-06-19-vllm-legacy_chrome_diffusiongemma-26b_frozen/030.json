@@ -1,0 +1,25 @@
+{
+  "id": "030",
+  "user": "list all the visible links here",
+  "tab": {
+    "url": "https://news.ycombinator.com/",
+    "title": "Hacker News"
+  },
+  "latencyMs": 403,
+  "error": null,
+  "firstToolCall": {
+    "name": "extract_data",
+    "args": {
+      "type": "links"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"extract_data\",\"arguments\":{\"type\":\"links\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9243,
+    "total_tokens": 9268,
+    "completion_tokens": 25,
+    "prompt_tokens_details": null
+  }
+}

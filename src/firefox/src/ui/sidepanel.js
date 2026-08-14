@@ -5,32 +5,2442 @@
 
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
+import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './markdown-render.js';
+import { applyMode, loadMode, watch } from './theme.js';
+import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
+import { createContextMenuPromptHandler } from './context-menu-prompts.js';
+import {
+  formatSelectionPromptForDisplay,
+  normalizeSelectionAction,
+  normalizeSelectionSourceGrounding,
+  SELECTION_CONTEXT_SOURCE_GROUNDING,
+  SELECTION_ONLY_SOURCE_GROUNDING,
+} from '../context-menu-storage.js';
+import {
+  deleteChatHistoryRecord,
+  repairChatHistoryRecordMessages,
+  saveChatHistoryRecord,
+} from './chat-history-store.js';
+import { historyTextFromElement } from './history-text.js';
+import { claimRunError } from './run-error-dedupe.js';
+import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
+import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
+import { formatErrorMessage } from '../error-format.js';
+import { escapeHtml } from './utils.js';
+import {
+  isBackgroundConnectionError,
+  runDetachedWithReconnect,
+  sendPlanResponseWithReconnect,
+} from '../run-reconnect.js';
+import {
+  STORAGE_KEY as STORE_REVIEW_STORAGE_KEY,
+  recordSuccessfulTask,
+  shouldShowPrompt as shouldShowStoreReviewPrompt,
+  markPromptShown,
+  markDismissed,
+  markRated,
+  markReviewOpened,
+  markFeedbackSubmitted,
+  positiveRating,
+  getStoreUrl,
+  buildFeedbackUrl,
+  normalizeState as normalizeStoreReviewState,
+} from './store-review-prompt.js';
+import { providerIconUrl } from './provider-icons.js';
+import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
+import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
+import { visionProviderKind } from '../providers/vision-capabilities.js';
+import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandForWindow,
+} from '../shortcut-command.js';
+import {
+  clearStagedScreenshots,
+  loadStagedScreenshots,
+  markStagedScreenshots,
+  removeStagedScreenshot,
+  removeStagedScreenshots,
+  saveStagedScreenshot,
+} from './staged-screenshot-store.js';
+
+const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
+
+// Hydrate the theme from browser.storage.local (the inline <head> bootstrap
+// only sees localStorage; if the user changes the theme on another device
+// or page, sync it in here) and subscribe to live changes so the panel
+// re-paints when the Settings page flips it.
+let currentThemeMode = 'system';
+loadMode().then((mode) => {
+  currentThemeMode = mode;
+  applyMode(mode, { syncStorage: false });
+});
+watch(() => currentThemeMode);
+if (globalThis.browser?.storage?.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.themeMode) {
+      currentThemeMode = changes.themeMode.newValue || 'system';
+    }
+  });
+}
+
+// ─── Onboarding (first-launch wizard) ───────────────────────────────
+(async function initOnboarding() {
+  const stored = await browser.storage.local.get('onboardingComplete');
+  if (stored.onboardingComplete) return;
+
+  const overlay = document.getElementById('onboarding');
+  if (!overlay) return;
+
+  applyDOMTranslations(overlay);
+  overlay.classList.remove('hidden');
+
+  const steps = overlay.querySelectorAll('.ob-step');
+  const dots = overlay.querySelectorAll('.ob-step-dot');
+  const nextBtn = document.getElementById('ob-next');
+  const backBtn = document.getElementById('ob-back');
+  const settingsBtn = document.getElementById('ob-open-settings');
+  const skipBtn = document.getElementById('ob-skip');
+  const providerBody = document.getElementById('ob-provider-body');
+  const providerStatus = document.getElementById('ob-provider-status');
+  const providerList = document.getElementById('ob-provider-list');
+  const localModels = document.getElementById('ob-local-models');
+  const localModelList = document.getElementById('ob-local-model-list');
+  const totalSteps = steps.length;
+  const LOCAL_PROVIDER_ORDER = ['local_openai_proxy', 'jan', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  let current = 0;
+  let localScanStarted = false;
+  let localModelChoices = [];
+  let selectedLocalModelIndex = 0;
+  let cloudReady = false;
+
+  async function dismissOnboarding() {
+    await browser.storage.local.set({ onboardingComplete: true }).catch(() => {});
+    overlay.classList.add('hidden');
+  }
+
+  function setProviderStatus(key, params) {
+    if (providerStatus) providerStatus.textContent = t(key, params);
+  }
+
+  function openProviderSettings() {
+    try {
+      browser.tabs.create({ url: browser.runtime.getURL('src/ui/settings.html#providers') });
+    } catch {
+      browser.runtime.openOptionsPage();
+    }
+  }
+
+  function providerSortIndex(id) {
+    const idx = LOCAL_PROVIDER_ORDER.indexOf(id);
+    return idx === -1 ? LOCAL_PROVIDER_ORDER.length : idx;
+  }
+
+  function withTimeout(promise, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Timed out')), timeoutMs);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  function showProviderFallback(statusKey = 'ob.tokens.none_status') {
+    cloudReady = false;
+    localModelChoices = [];
+    if (providerBody) providerBody.textContent = t('ob.tokens.body');
+    providerList?.classList.remove('hidden');
+    localModels?.classList.add('hidden');
+    setProviderStatus(statusKey);
+    settingsBtn.textContent = t('ob.btn.settings');
+    settingsBtn.disabled = false;
+  }
+
+  function showLocalChoices(choices) {
+    cloudReady = false;
+    localModelChoices = choices;
+    selectedLocalModelIndex = 0;
+    if (providerBody) providerBody.textContent = t('ob.tokens.local_body');
+    if (localModelList) {
+      localModelList.replaceChildren();
+      choices.forEach((choice, index) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ob-local-model-option';
+        btn.setAttribute('role', 'option');
+        btn.dataset.index = String(index);
+        btn.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+
+        const iconSrc = providerIconUrl(choice.providerId);
+        if (iconSrc) {
+          const img = document.createElement('img');
+          img.className = 'provider-icon';
+          img.src = iconSrc;
+          img.alt = '';
+          img.width = 18;
+          img.height = 18;
+          img.decoding = 'async';
+          img.draggable = false;
+          btn.appendChild(img);
+        }
+
+        const text = document.createElement('div');
+        text.className = 'ob-local-model-text';
+        const providerEl = document.createElement('div');
+        providerEl.className = 'ob-local-model-provider';
+        providerEl.textContent = choice.providerLabel || choice.providerId;
+        const modelEl = document.createElement('div');
+        modelEl.className = 'ob-local-model-name';
+        modelEl.textContent = choice.model;
+        modelEl.title = choice.model;
+        text.append(providerEl, modelEl);
+        btn.appendChild(text);
+
+        btn.addEventListener('click', () => {
+          selectedLocalModelIndex = index;
+          localModelList.querySelectorAll('.ob-local-model-option').forEach((el) => {
+            el.setAttribute('aria-selected', el.dataset.index === String(index) ? 'true' : 'false');
+          });
+        });
+
+        localModelList.appendChild(btn);
+      });
+    }
+    providerList?.classList.add('hidden');
+    localModels?.classList.remove('hidden');
+    setProviderStatus('ob.tokens.local_status', { count: choices.length });
+    settingsBtn.textContent = t('ob.btn.use_local');
+    settingsBtn.disabled = false;
+  }
+
+  function showCloudReady() {
+    cloudReady = true;
+    localModelChoices = [];
+    if (providerBody) {
+      providerBody.textContent = t('ob.cloud.body');
+    }
+    if (providerStatus) {
+      providerStatus.textContent = '';
+      const changeLink = document.createElement('a');
+      changeLink.href = browser.runtime.getURL('src/ui/settings.html#providers');
+      changeLink.target = '_blank';
+      changeLink.rel = 'noopener noreferrer';
+      changeLink.textContent = t('ob.cloud.change');
+      changeLink.addEventListener('click', async (event) => {
+        event.preventDefault();
+        openProviderSettings();
+        await dismissOnboarding();
+      });
+      providerStatus.append(
+        document.createTextNode(`${t('ob.cloud.using').trimEnd()} `),
+        changeLink,
+        document.createTextNode('.')
+      );
+    }
+    providerList?.classList.add('hidden');
+    localModels?.classList.add('hidden');
+    settingsBtn.textContent = t('ob.btn.start');
+    settingsBtn.disabled = false;
+  }
+
+  async function scanLocalModels() {
+    localModelChoices = [];
+    settingsBtn.disabled = true;
+    settingsBtn.textContent = t('ob.btn.detecting');
+    providerList?.classList.add('hidden');
+    localModels?.classList.add('hidden');
+    if (providerBody) providerBody.textContent = t('ob.tokens.body');
+    setProviderStatus('ob.tokens.scanning');
+
+    try {
+      const { providers = {}, active } = await sendToBackground('get_providers');
+      if (active === 'webbrain_cloud' && providers.webbrain_cloud?.enabled !== false) {
+        showCloudReady();
+        return;
+      }
+      const localProviderIds = Object.keys(providers)
+        .filter((id) => providers[id]?.category === 'local' || LOCAL_PROVIDER_ORDER.includes(id))
+        .sort((a, b) => providerSortIndex(a) - providerSortIndex(b) || a.localeCompare(b));
+
+      const detected = await Promise.all(localProviderIds.map(async (providerId) => {
+        try {
+          // Upper bound only — this does NOT freeze the UI. Probes run in
+          // parallel: a reachable server answers in well under a second, and a
+          // closed port fails fast. 5s just caps a slow/stalled server. (Kept
+          // equal to the Chrome build for parity.)
+          const res = await withTimeout(
+            sendToBackground('list_provider_models', { providerId }),
+            5000
+          );
+          if (res?.ok && Array.isArray(res.models)) {
+            const choices = res.models
+              .map((model) => (typeof model === 'string' ? model.trim() : ''))
+              .filter(Boolean)
+              .map((model) => ({
+                providerId,
+                providerLabel: providers[providerId]?.label || providerId,
+                model,
+              }));
+            return { choices, error: null };
+          }
+          return { choices: [], error: res?.error || 'unknown error' };
+        } catch (e) {
+          return { choices: [], error: e?.message || String(e || 'timeout') };
+        }
+      }));
+
+      const choices = detected.flatMap((d) => d.choices);
+      const errors = detected.map((d) => d.error).filter(Boolean);
+      if (choices.length > 0) {
+        showLocalChoices(choices);
+      } else if (errors.length > 0) {
+        // A local server was probed but unreadable. By far the most common
+        // cause is CORS being disabled on the local server (Jan / LM Studio /
+        // Ollama / llama.cpp / vLLM / SGLang): curl works but the browser blocks the
+        // cross-origin request. The browser reports "blocked" and "not
+        // running" as the same generic network error, so we can't tell them
+        // apart — the hint is phrased conditionally. Log the real underlying
+        // errors so they're visible in the console for debugging.
+        console.warn('[WebBrain] onboarding local-model scan failed:', errors);
+        showProviderFallback('ob.tokens.none_blocked');
+      } else {
+        showProviderFallback();
+      }
+    } catch {
+      showProviderFallback('ob.tokens.detect_failed');
+    }
+  }
+
+  function goTo(idx) {
+    steps[current].classList.remove('active');
+    dots[current].classList.remove('active');
+    dots[current].classList.add('done');
+
+    current = idx;
+
+    steps[current].classList.add('active');
+    dots.forEach((d, i) => {
+      d.classList.toggle('active', i === current);
+      d.classList.toggle('done', i < current);
+    });
+
+    const isLast = current === totalSteps - 1;
+    backBtn.classList.toggle('hidden', current === 0);
+    nextBtn.classList.toggle('hidden', isLast);
+    settingsBtn.classList.toggle('hidden', !isLast);
+    skipBtn.classList.toggle('hidden', !isLast);
+    if (!isLast) nextBtn.textContent = t('ob.btn.next');
+    if (isLast && !localScanStarted) {
+      localScanStarted = true;
+      scanLocalModels();
+    }
+  }
+
+  nextBtn.addEventListener('click', () => {
+    if (current < totalSteps - 1) goTo(current + 1);
+  });
+
+  backBtn.addEventListener('click', () => {
+    if (current > 0) goTo(current - 1);
+  });
+
+  settingsBtn.addEventListener('click', async () => {
+    if (cloudReady) {
+      await dismissOnboarding();
+      inputEl?.focus();
+      return;
+    }
+
+    if (localModelChoices.length > 0) {
+      const choice = localModelChoices[selectedLocalModelIndex] || localModelChoices[0];
+      settingsBtn.disabled = true;
+      settingsBtn.textContent = t('ob.btn.enabling');
+      setProviderStatus('ob.tokens.enabling');
+      try {
+        await sendToBackground('update_provider', {
+          providerId: choice.providerId,
+          config: { enabled: true, model: choice.model },
+        });
+        await sendToBackground('set_active_provider', { providerId: choice.providerId });
+        await loadProviders();
+        if (providerSelect) {
+          providerSelect.value = choice.providerId;
+          syncProviderPickerButton();
+        }
+        await testConnection({ providerId: choice.providerId });
+        dismissOnboarding();
+        inputEl?.focus();
+      } catch (e) {
+        settingsBtn.disabled = false;
+        settingsBtn.textContent = t('ob.btn.use_local');
+        setProviderStatus('ob.tokens.enable_failed', { error: e?.message || String(e || 'unknown error') });
+      }
+      return;
+    }
+
+    openProviderSettings();
+    await dismissOnboarding();
+  });
+
+  skipBtn.addEventListener('click', async () => {
+    await dismissOnboarding();
+  });
+})();
 
 const messagesEl = document.getElementById('messages');
+const chatContainerEl = document.getElementById('chat-container');
+const chatNavigationEl = document.getElementById('chat-navigation');
+const chatNavigationActionEl = document.getElementById('chat-navigation-action');
+const chatNavigationDismissEl = document.getElementById('chat-navigation-dismiss');
+const chatNavigationLabelEl = document.getElementById('chat-navigation-label');
 const inputEl = document.getElementById('user-input');
+const inputHighlightEl = document.getElementById('input-highlight');
 const sendBtn = document.getElementById('btn-send');
+const micBtn = document.getElementById('btn-mic');
 const clearBtn = document.getElementById('btn-clear');
+const appEl = document.getElementById('app');
+const newConversationConfirmEl = document.getElementById('new-conversation-confirm');
+const newConversationConfirmCancelBtn = document.getElementById('new-conversation-confirm-cancel');
+const newConversationConfirmAcceptBtn = document.getElementById('new-conversation-confirm-accept');
+const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
+const selectionScopeTitleEl = document.getElementById('selection-scope-title');
+const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
+const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
+const historyBtn = document.getElementById('btn-history');
+const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
+const providerPickerBtn = document.getElementById('provider-picker-btn');
+const providerPickerMenu = document.getElementById('provider-picker-menu');
+const providerPickerLabel = document.getElementById('provider-picker-label');
+const languageSelect = document.getElementById('language-select');
+const languagePickerBtn = document.getElementById('language-picker-btn');
+const languagePickerMenu = document.getElementById('language-picker-menu');
+const languagePickerFlag = document.getElementById('language-picker-flag');
+const languagePickerCode = document.getElementById('language-picker-code');
+const MORE_PROVIDERS_OPTION_VALUE = '__more_providers__';
 const statusDot = document.getElementById('status-dot');
+// Short labels for the closed picker button (menu rows keep the longer status text).
+const providerPickerLabelById = new Map();
+let languagePickerTypeahead = '';
+let languagePickerTypeaheadTimer = null;
 const agentActivity = document.getElementById('agent-activity');
 const activityText = document.getElementById('activity-text');
 const modeAskBtn = document.getElementById('btn-mode-ask');
 const modeActBtn = document.getElementById('btn-mode-act');
+const modeDevBtn = document.getElementById('btn-mode-dev');
+const modeToggleEl = document.getElementById('mode-toggle');
+const modeToggleHighlight = (() => {
+  const el = document.createElement('div');
+  el.className = 'mode-toggle-highlight instant';
+  el.setAttribute('aria-hidden', 'true');
+  modeToggleEl?.prepend(el);
+  return el;
+})();
 const actWarning = document.getElementById('act-warning');
+const actWarningDismiss = document.getElementById('act-warning-dismiss');
 const inputArea = document.getElementById('input-area');
+const slashCommandMenuEl = document.getElementById('slash-command-menu');
+const queuedMessagesEl = document.getElementById('queued-messages');
+const recommendedActionsEl = document.getElementById('recommended-actions');
+const recommendedActionsToggleEl = document.getElementById('recommended-actions-toggle');
+const recommendedActionsListEl = document.getElementById('recommended-actions-list');
+const storeReviewEl = document.getElementById('store-review-prompt');
+const storeReviewFeedbackEl = document.getElementById('store-review-feedback');
+const scheduledJobsEl = document.getElementById('scheduled-jobs');
 const stopBtn = document.getElementById('btn-stop');
+const RECOMMENDED_ACTIONS_COLLAPSED_KEY = 'recommendedActionsCollapsed';
+const WEBBRAIN_PROMOTION_ACTION_IDS = new Set(['tweet-webbrain', 'post-webbrain-linkedin']);
+const PLACEHOLDER_ROTATION_INTERVAL_MS = 10_000;
+const ASK_PLACEHOLDER_KEYS = [
+  'sp.input.ask_placeholder',
+  'sp.input.placeholder_tip.help',
+];
+const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
+const SLASH_COMMANDS = [
+  { value: '/help', usage: '/help', descriptionKey: 'sp.slash.help', action: 'show', outOfBand: true },
+  {
+    value: '/schedule',
+    usage: '/schedule [prompt] | /schedule --list',
+    descriptionKey: 'sp.slash.schedule',
+    action: 'create',
+    acceptsPayload: true,
+    options: [
+      { value: '--list', descriptionKey: 'sp.slash.list_schedules', action: 'list', outOfBand: true, disallowPayload: true },
+    ],
+  },
+  {
+    value: '/watch',
+    usage: '/watch [--keep] [--secs <30-120>] [--long | --short] <condition and action> [/beep]',
+    descriptionKey: 'sp.slash.watch',
+    action: 'create',
+    acceptsPayload: true,
+    outOfBand: true,
+    options: [
+      { value: '--keep', descriptionKey: 'sp.slash.watch_keep' },
+      { value: '--secs', valueLabel: '<30-120>', descriptionKey: 'sp.slash.watch_secs' },
+      { value: '--long', descriptionKey: 'sp.slash.watch_long', exclusiveGroup: 'watch-beep-style' },
+      { value: '--short', descriptionKey: 'sp.slash.watch_short', exclusiveGroup: 'watch-beep-style' },
+    ],
+  },
+  { value: '/progress', usage: '/progress', descriptionKey: 'sp.slash.check_progress', action: 'show', outOfBand: true },
+  {
+    value: '/scratchpad',
+    usage: '/scratchpad [--append <text> | --clear]',
+    descriptionKey: 'sp.slash.show_scratchpad',
+    action: 'show',
+    outOfBand: true,
+    options: [
+      { value: '--append', valueLabel: '<text>', descriptionKey: 'sp.slash.edit_scratchpad', action: 'append', takesRemainder: true, outOfBand: false, exclusiveGroup: 'scratchpad-action' },
+      { value: '--clear', descriptionKey: 'sp.slash.clear_scratchpad', action: 'clear', disallowPayload: true, outOfBand: false, exclusiveGroup: 'scratchpad-action' },
+    ],
+  },
+  {
+    value: '/memory',
+    usage: '/memory [--add <text> | --forget <id>]',
+    descriptionKey: 'sp.slash.show_memory',
+    action: 'show',
+    outOfBand: true,
+    options: [
+      { value: '--add', valueLabel: '<text>', descriptionKey: 'sp.slash.remember', action: 'add', takesRemainder: true, outOfBand: false, exclusiveGroup: 'memory-action' },
+      { value: '--forget', valueLabel: '<id>', descriptionKey: 'sp.slash.forget_memory', action: 'forget', takesRemainder: true, outOfBand: false, exclusiveGroup: 'memory-action' },
+    ],
+  },
+  {
+    value: '/workflow',
+    usage: '/workflow [--save <name> | --run <id> | --delete <id> | --export <id> | --import --file]',
+    descriptionKey: 'sp.slash.workflows',
+    action: 'list',
+    outOfBand: true,
+    options: [
+      { value: '--save', valueLabel: '<name>', descriptionKey: 'sp.slash.save_workflow', action: 'save', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--run', valueLabel: '<id>', descriptionKey: 'sp.slash.run_workflow', action: 'run', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--delete', valueLabel: '<id>', descriptionKey: 'sp.slash.delete_workflow', action: 'delete', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--export', valueLabel: '<id>', descriptionKey: 'sp.slash.workflows', action: 'export', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--import', descriptionKey: 'sp.slash.workflows', action: 'import', outOfBand: true, exclusiveGroup: 'workflow-action', requires: '--file' },
+      { value: '--file', descriptionKey: 'sp.slash.import_config_file', disallowPayload: true, requires: '--import' },
+    ],
+  },
+  {
+    value: '/teach',
+    usage: '/teach [--start <name> | --end]',
+    descriptionKey: 'sp.slash.teach',
+    action: 'status',
+    outOfBand: true,
+    options: [
+      { value: '--start', valueLabel: '<name>', descriptionKey: 'sp.slash.teach', action: 'start', takesRemainder: true, outOfBand: true, exclusiveGroup: 'teach-action' },
+      { value: '--end', descriptionKey: 'sp.slash.teach', action: 'end', disallowPayload: true, outOfBand: true, exclusiveGroup: 'teach-action' },
+    ],
+  },
+  { value: '/allow-api', usage: '/allow-api [prompt]', descriptionKey: 'sp.slash.allow_api', action: 'enable', acceptsPayload: true },
+  { value: '/foreground', usage: '/foreground [prompt]', descriptionKey: 'sp.slash.foreground', action: 'enable', acceptsPayload: true },
+  { value: '/dangerously-skip-permissions', usage: '/dangerously-skip-permissions [prompt]', descriptionKey: 'sp.slash.dangerously_skip_permissions', action: 'disable', acceptsPayload: true, outOfBand: true },
+  { value: '/compact', usage: '/compact [prompt]', descriptionKey: 'sp.slash.compact', action: 'compact', acceptsPayload: true },
+  { value: '/verbose', usage: '/verbose', descriptionKey: 'sp.slash.verbose', action: 'toggle', outOfBand: true },
+  { value: '/reset', usage: '/reset', descriptionKey: 'sp.slash.reset', action: 'reset' },
+  {
+    value: '/screenshot',
+    usage: '/screenshot',
+    descriptionKey: 'sp.slash.screenshot',
+    action: 'viewport',
+    outOfBand: true,
+    options: [
+      { value: '--full-page', descriptionKey: 'sp.slash.full_page_screenshot', action: 'full-page', unsupported: true, unsupportedUsage: '/screenshot --full-page', disallowPayload: true },
+    ],
+  },
+  {
+    value: '/record',
+    usage: '/record [--full-screen] [--transcribe]',
+    descriptionKey: 'sp.slash.record',
+    action: 'tab',
+    unsupported: true,
+    options: [
+      { value: '--full-screen', descriptionKey: 'sp.slash.record_full_screen', action: 'full-screen' },
+      { value: '--transcribe', descriptionKey: 'sp.slash.record_transcribe' },
+    ],
+  },
+  {
+    value: '/export',
+    usage: '/export [--traces | --config]',
+    descriptionKey: 'sp.slash.export',
+    action: 'conversation',
+    outOfBand: true,
+    options: [
+      { value: '--traces', descriptionKey: 'sp.slash.export_traces', action: 'traces', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
+      { value: '--config', descriptionKey: 'sp.slash.export_config', action: 'config', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
+    ],
+  },
+  {
+    value: '/import',
+    usage: '/import <json> | /import --file',
+    descriptionKey: 'sp.slash.import_config',
+    action: 'json',
+    acceptsPayload: true,
+    options: [
+      { value: '--file', descriptionKey: 'sp.slash.import_config_file', action: 'file', disallowPayload: true },
+    ],
+  },
+  { value: '/profile', usage: '/profile', descriptionKey: 'sp.slash.profile', action: 'toggle' },
+  { value: '/vision', usage: '/vision', descriptionKey: 'sp.slash.vision', action: 'toggle' },
+  { value: '/ask', usage: '/ask [prompt]', descriptionKey: 'sp.slash.ask', action: 'ask', acceptsPayload: true },
+  { value: '/act', usage: '/act [prompt]', descriptionKey: 'sp.slash.act', action: 'act', acceptsPayload: true },
+  { value: '/dev', usage: '/dev [prompt]', descriptionKey: 'sp.slash.dev', action: 'dev', acceptsPayload: true },
+  { value: '/plan', usage: '/plan [prompt]', descriptionKey: 'sp.slash.plan', action: 'plan', acceptsPayload: true },
+];
+const SLASH_HELP_OPTION = {
+  value: '--help',
+  descriptionKey: 'sp.slash.help',
+  action: 'help',
+  outOfBand: true,
+  disallowPayload: true,
+};
+
+function slashCommandOptions(command) {
+  return [...(command?.options || []), SLASH_HELP_OPTION];
+}
+
+function slashCommandIsDiscoverable(command) {
+  return command?.unsupported !== true;
+}
+
+function slashOptionIsDiscoverable(option) {
+  return option?.unsupported !== true;
+}
+
+function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
+  return slashOptionIsDiscoverable(option)
+    && !selectedValues.has(option.value)
+    && !selectedValues.has(SLASH_HELP_OPTION.value)
+    && (option.value !== SLASH_HELP_OPTION.value || selectedValues.size === 0)
+    && (!option.exclusiveGroup || !selectedGroups.has(option.exclusiveGroup));
+}
+
+function findSlashCommand(value) {
+  const needle = String(value || '').toLowerCase();
+  return SLASH_COMMANDS.find((command) => command.value === needle) || null;
+}
+
+function parseSlashInvocation(value) {
+  const text = String(value || '').trimStart();
+  if (!text.startsWith('/')) return null;
+
+  const commandToken = text.match(/^\S+/)?.[0] || '';
+  const command = findSlashCommand(commandToken);
+  if (!command) return { error: 'unknown-command', commandToken };
+
+  const selectedOptions = [];
+  const selectedValues = new Set();
+  const selectedGroups = new Set();
+  let payload = '';
+  let valueOption = null;
+  let rest = text.slice(commandToken.length).trimStart();
+
+  while (rest) {
+    if (!rest.startsWith('--')) {
+      payload = rest;
+      break;
+    }
+
+    const optionToken = rest.match(/^\S+/)?.[0] || '';
+    if (optionToken === '--') {
+      if (!command.acceptsPayload) {
+        return { error: 'invalid-usage', command, commandToken };
+      }
+      payload = rest.slice(optionToken.length).trimStart();
+      rest = '';
+      break;
+    }
+
+    const optionValue = optionToken.toLowerCase();
+    const option = slashCommandOptions(command).find((candidate) => candidate.value === optionValue);
+    if (!option || selectedValues.has(optionValue)) {
+      return { error: 'invalid-usage', command, commandToken };
+    }
+    if (optionValue === SLASH_HELP_OPTION.value ? selectedOptions.length > 0 : selectedValues.has(SLASH_HELP_OPTION.value)) {
+      return { error: 'invalid-usage', command, commandToken };
+    }
+    if (option.exclusiveGroup && selectedGroups.has(option.exclusiveGroup)) {
+      return { error: 'invalid-usage', command, commandToken };
+    }
+
+    selectedOptions.push(option);
+    selectedValues.add(optionValue);
+    if (option.exclusiveGroup) selectedGroups.add(option.exclusiveGroup);
+    rest = rest.slice(optionToken.length).trimStart();
+
+    if (option.takesRemainder) {
+      valueOption = option;
+      if (rest.startsWith('--')) {
+        const nextToken = rest.match(/^\S+/)?.[0] || '';
+        if (nextToken !== '--') {
+          return { error: 'invalid-usage', command, commandToken };
+        }
+        rest = rest.slice(nextToken.length).trimStart();
+      }
+      payload = rest;
+      rest = '';
+      break;
+    }
+  }
+
+  if (valueOption && !payload) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (payload && !valueOption && !command.acceptsPayload) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (payload && selectedOptions.some((option) => option.disallowPayload)) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (selectedOptions.some((option) => option.requires && !selectedValues.has(option.requires))) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+
+  const actionOption = selectedOptions.find((option) => option.action);
+  const unsupportedOption = selectedOptions.find((option) => option.unsupported);
+  return {
+    command,
+    action: actionOption?.action || command.action,
+    options: selectedOptions,
+    optionValues: selectedValues,
+    payload,
+    unsupported: command.unsupported === true || !!unsupportedOption,
+    unsupportedUsage: unsupportedOption?.unsupportedUsage || command.usage,
+  };
+}
+
+function slashInvocationIsOutOfBand(invocation) {
+  if (!invocation) return false;
+  if (invocation.error || invocation.unsupported) return true;
+  const actionOption = invocation.options.find((option) => option.action);
+  return (actionOption?.outOfBand ?? invocation.command.outOfBand) === true;
+}
+
+function buildSlashCommandHelpHtml() {
+  const lines = [`<strong>${escapeHtml(t('sp.slash.commands_label'))}</strong>`];
+  for (const command of SLASH_COMMANDS.filter(slashCommandIsDiscoverable)) {
+    lines.push(`<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`);
+    for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
+      const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
+      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+    }
+  }
+  const shortcuts = t('sp.help.shortcuts_html');
+  if (shortcuts && shortcuts !== 'sp.help.shortcuts_html') {
+    lines.push('', shortcuts);
+  }
+  return lines.join('<br>');
+}
+
+function buildSlashCommandDetailHtml(command) {
+  if (!command) return buildSlashCommandHelpHtml();
+  const lines = [
+    `<strong><code>${escapeHtml(command.value)}</code></strong>`,
+    `<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`,
+  ];
+  for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
+    const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
+    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+  }
+  return lines.join('<br>');
+}
+
+// Hidden run-capture suffixes. These deliberately stay out of SLASH_COMMANDS,
+// autocomplete, and /help: they modify a normal prompt instead of acting as
+// standalone commands. Examples:
+//   Update the checkout form /record
+//   Test the menu /screenshot --save-as menu-test.png
+function parseTrailingRunCaptureDirective(value) {
+  const text = String(value || '').trim();
+  const match = /(?:^|[ \t\r\n])(\/record|\/screenshot)(?:[ \t]+(--save-as)(?:[ \t]+([^\r\n]+))?)?[ \t]*$/i.exec(text);
+  if (!match) return null;
+
+  const prompt = text.slice(0, match.index).trimEnd();
+  // Preserve the existing standalone /record and /screenshot behavior.
+  if (!prompt) return null;
+
+  const kind = match[1].slice(1).toLowerCase();
+  if (!match[2]) return { kind, prompt, saveAs: null };
+
+  const rawSaveAs = String(match[3] || '').trim();
+  if (!rawSaveAs) return { kind, prompt, saveAs: null, error: 'missing-save-as' };
+
+  const quote = rawSaveAs[0];
+  let saveAs = rawSaveAs;
+  if (quote === '"' || quote === "'") {
+    if (rawSaveAs.length < 2 || rawSaveAs.at(-1) !== quote) {
+      return { kind, prompt, saveAs: null, error: 'invalid-save-as' };
+    }
+    saveAs = rawSaveAs.slice(1, -1).trim();
+  }
+  if (!saveAs) return { kind, prompt, saveAs: null, error: 'missing-save-as' };
+  return { kind, prompt, saveAs };
+}
+
+function trailingRunCaptureUsage(kind) {
+  return `/${kind === 'record' ? 'record' : 'screenshot'} [--save-as <filename>]`;
+}
+
+function sanitizeRunCaptureSaveAs(value) {
+  const filename = String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .split(/[\\/]/)
+    .pop()
+    .trim()
+    .replace(/[<>:"|?*]/g, '-')
+    .replace(/[. ]+$/g, '');
+  if (!filename || filename === '.' || filename === '..') return '';
+  return filename.slice(0, 180);
+}
+
+function runCaptureTimestamp(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, '-').replace(/T/, '_').slice(0, 19);
+}
+
+function buildRunScreenshotFilenames(saveAs, date = new Date()) {
+  const requested = sanitizeRunCaptureSaveAs(saveAs);
+  const stem = (requested.replace(/\.png$/i, '') || `webbrain-run-${runCaptureTimestamp(date)}`).slice(0, 170);
+  return {
+    before: `${stem}-before.png`,
+    after: `${stem}-after.png`,
+  };
+}
+
+function buildRunRecordingFilename(saveAs) {
+  const requested = sanitizeRunCaptureSaveAs(saveAs);
+  if (!requested) return null;
+  const stem = requested.replace(/\.webm$/i, '').replace(/[. ]+$/g, '') || 'webbrain-recording';
+  return `${stem.slice(0, 175)}.webm`;
+}
+
+function showSlashInvocationError(invocation) {
+  if (invocation?.error === 'unknown-command') {
+    showComposerToast(t('sp.slash.unknown_command', { command: invocation.commandToken }), { duration: 5000 });
+    return;
+  }
+  if (invocation?.unsupported) {
+    showComposerToast(t('sp.slash.unsupported', { usage: invocation.unsupportedUsage }), { duration: 5000 });
+    return;
+  }
+  showComposerToast(t('sp.slash.invalid_usage', { usage: invocation?.command?.usage || '/help' }), { duration: 5000 });
+}
+
+function normalizeScreenshotRequestText(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u0131/g, 'i')
+    .replace(/[.!?]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function isPlainScreenshotRequest(text) {
+  const s = normalizeScreenshotRequestText(text);
+  if (!s || s.startsWith('/')) return false;
+  return /^(?:please |pls )?(?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
+    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this |current )?(?:screen ?shot|screenshot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
+    || /^(?:lutfen )?(?:screenshot|screen ?shot|ekran goruntusu)(?: (?:al|cek|goster|at))?$/.test(s)
+    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sekmenin|sayfanin|ekranin) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
+}
+
+function normalizeScreenshotCommandText(text) {
+  if (isPlainScreenshotRequest(text)) return '/screenshot';
+  return text;
+}
+
+const SLASH_COMMAND_OPTION_ID_PREFIX = 'slash-command-option-';
+const BUSY_SLASH_NOTICE_COOLDOWN_MS = 3000;
+let placeholderRotationIndex = 0;
+let placeholderRotationTimer = null;
 
 let currentTabId = null;
+let renderedTabId = null;
+const pendingAttachmentsByTab = new Map(); // tabId -> [{ kind: 'image'|'document'|'text', name, dataUrl?, textContent? }]
+const attachmentReadCountsByTab = new Map();
+const attachmentGenerationByTab = new Map();
+let tabSwitchTransitionId = null;
+let tabSwitchGeneration = 0;
+let queuedTabSwitchMessages = [];
 let isProcessing = false;
 let currentAssistantEl = null;
 let verboseMode = false;
-let agentMode = 'ask'; // 'ask' or 'act'
+let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
 let abortRequested = false;
+const awaitingPlanReviewTabs = new Set();
+const processingTabs = new Set();
+const abortRequestedTabs = new Set();
+const clearingConversationTabs = new Set();
+const selectionGroundingByTab = new Map();
+let newConversationConfirmationState = null;
+const localRunRequestIds = new Map();
+const localRunFollowers = new Map();
+const cancelledRunRecoveryRequestIds = new Set();
+const adoptedRunRecoveryRequestIds = new Set();
+const clearedConversationRunRequestIds = new Set();
+let recommendationsRequestId = 0;
+let providerSelectionRequestId = 0;
+let providerTestRequestId = 0;
+let selectedProviderId = 'webbrain_cloud';
+let recommendedActionsCollapsed = false;
+let webbrainPromotionHasAnimated = false;
+let slashCommandMatches = [];
+let slashCommandSelectedIndex = 0;
+let busySlashNoticeLastShownAt = 0;
+let composerToastTimer = null;
+let retryPayloadSeq = 0;
+const activeChatPayloadsByTab = new Map();
+const retryAttachmentPayloads = new Map();
+const retryAttachmentIdsByTab = new Map();
 
-// Per-tab chat history (stores innerHTML of messages container)
+function setTabProcessing(tabId, processing) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  if (processing) processingTabs.add(numericTabId);
+  else processingTabs.delete(numericTabId);
+  if (sameTabId(currentTabId, numericTabId)) isProcessing = !!processing;
+}
+
+function isTabProcessing(tabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && processingTabs.has(numericTabId);
+}
+
+function setConversationClearInProgress(tabId, clearing) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  if (clearing) clearingConversationTabs.add(numericTabId);
+  else clearingConversationTabs.delete(numericTabId);
+  if (sameTabId(currentTabId, numericTabId)) syncSendButtonState();
+}
+
+function isConversationClearInProgress(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && clearingConversationTabs.has(numericTabId);
+}
+
+function isSelectionGroundedForTab(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && selectionGroundingByTab.has(numericTabId);
+}
+
+function selectionGroundingForTab(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId)
+    ? normalizeSelectionSourceGrounding(selectionGroundingByTab.get(numericTabId))
+    : '';
+}
+
+function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding = null) {
+  if (mode !== 'act' && mode !== 'dev') return false;
+  if (!normalizeSelectionSourceGrounding(sourceGrounding)
+      && !isSelectionGroundedForTab(tabId)) return false;
+  showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+  return true;
+}
+
+function syncSelectionScopeUi() {
+  const scoped = isSelectionGroundedForTab(currentTabId);
+  const sourceGrounding = selectionGroundingForTab(currentTabId);
+  selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
+  if (selectionScopeTitleEl) {
+    selectionScopeTitleEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_title'
+      : 'sp.selection_scope.title');
+  }
+  if (selectionScopeDescriptionEl) {
+    selectionScopeDescriptionEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_description'
+      : 'sp.selection_scope.description');
+  }
+  for (const button of [modeActBtn, modeDevBtn]) {
+    if (!button) continue;
+    button.classList.toggle('selection-scope-unavailable', scoped);
+    button.setAttribute('aria-disabled', scoped ? 'true' : 'false');
+    button.title = scoped
+      ? t('sp.selection_scope.description')
+      : t(button === modeActBtn ? 'sp.mode.act.title' : 'sp.mode.dev.title');
+  }
+  if (scoped && agentMode !== 'ask') setMode('ask');
+  else resetInputPlaceholderRotation();
+}
+
+function setSelectionGroundedForTab(
+  tabId,
+  grounded,
+  sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING,
+) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const normalizedSourceGrounding = grounded
+    ? normalizeSelectionSourceGrounding(sourceGrounding) || SELECTION_ONLY_SOURCE_GROUNDING
+    : '';
+  const changed = selectionGroundingForTab(numericTabId) !== normalizedSourceGrounding;
+  if (normalizedSourceGrounding) selectionGroundingByTab.set(numericTabId, normalizedSourceGrounding);
+  else selectionGroundingByTab.delete(numericTabId);
+  if (changed && sameTabId(currentTabId, numericTabId)) syncSelectionScopeUi();
+}
+
+function applyConversationScopeState(tabId, state) {
+  if (!state || !Object.prototype.hasOwnProperty.call(state, 'sourceGrounding')) return;
+  const sourceGrounding = normalizeSelectionSourceGrounding(state.sourceGrounding);
+  setSelectionGroundedForTab(
+    tabId,
+    !!sourceGrounding,
+    sourceGrounding,
+  );
+}
+
+function reconcileFailedSelectionGroundedStart(tabId, {
+  sourceGrounding,
+  selectionGroundedBeforeSend,
+  accepted,
+}) {
+  if (accepted || (!sourceGrounding && !selectionGroundedBeforeSend)) return;
+  void restoreActiveRunState(tabId);
+}
+
+function settleNewConversationConfirmation(confirmed, { restoreFocus = true } = {}) {
+  const state = newConversationConfirmationState;
+  if (!state) return;
+  newConversationConfirmationState = null;
+  newConversationConfirmEl?.classList.add('hidden');
+  if (appEl) appEl.inert = state.appWasInert;
+  if (restoreFocus && state.previouslyFocusedElement?.isConnected
+      && typeof state.previouslyFocusedElement.focus === 'function') {
+    state.previouslyFocusedElement.focus({ preventScroll: true });
+  }
+  state.resolve(!!confirmed);
+}
+
+function requestNewConversationConfirmation(tabId) {
+  if (newConversationConfirmationState || !appEl || !newConversationConfirmEl
+      || !newConversationConfirmCancelBtn || !newConversationConfirmAcceptBtn) {
+    return Promise.resolve(false);
+  }
+
+  let resolveConfirmation;
+  const promise = new Promise((resolve) => {
+    resolveConfirmation = resolve;
+  });
+  newConversationConfirmationState = {
+    tabId: Number(tabId),
+    promise,
+    resolve: resolveConfirmation,
+    appWasInert: appEl.inert,
+    previouslyFocusedElement: document.activeElement,
+  };
+
+  applyDOMTranslations(newConversationConfirmEl);
+  appEl.inert = true;
+  newConversationConfirmEl.classList.remove('hidden');
+  newConversationConfirmCancelBtn.focus({ preventScroll: true });
+  return promise;
+}
+
+function handleNewConversationConfirmKeydown(event) {
+  if (!newConversationConfirmationState) return false;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    settleNewConversationConfirmation(false);
+  } else if (event.key === 'Tab') {
+    const focusable = Array.from(newConversationConfirmEl.querySelectorAll(
+      '[data-new-conversation-confirm-action]:not([disabled])',
+    ));
+    if (!focusable.length) {
+      event.preventDefault();
+      newConversationConfirmEl.focus({ preventScroll: true });
+    } else {
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === first || !newConversationConfirmEl.contains(activeElement))) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && (activeElement === last || !newConversationConfirmEl.contains(activeElement))) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  event.stopImmediatePropagation();
+  return true;
+}
+
+document.addEventListener('keydown', handleNewConversationConfirmKeydown, true);
+newConversationConfirmCancelBtn?.addEventListener('click', () => {
+  settleNewConversationConfirmation(false);
+});
+newConversationConfirmAcceptBtn?.addEventListener('click', () => {
+  settleNewConversationConfirmation(true);
+});
+newConversationConfirmEl?.addEventListener('click', (event) => {
+  if (event.target === newConversationConfirmEl) settleNewConversationConfirmation(false);
+});
+
+function setTabAbortRequested(tabId, requested) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  if (requested) abortRequestedTabs.add(numericTabId);
+  else abortRequestedTabs.delete(numericTabId);
+  if (sameTabId(currentTabId, numericTabId)) abortRequested = !!requested;
+}
+
+function isTabAbortRequested(tabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && abortRequestedTabs.has(numericTabId);
+}
+
+function syncCurrentTabRunFlags() {
+  const numericTabId = Number(currentTabId);
+  isProcessing = Number.isFinite(numericTabId) && processingTabs.has(numericTabId);
+  abortRequested = Number.isFinite(numericTabId) && abortRequestedTabs.has(numericTabId);
+}
+
+function createRunRequestId(tabId) {
+  return `req_${tabId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+const {
+  acceptContextMenuPrompt,
+  drainQueuedContextMenuPrompts,
+  consumePendingContextMenuPrompt,
+  clearQueuedForTab,
+} = createContextMenuPromptHandler({
+  getCurrentTabId: () => currentTabId,
+  getIsProcessing: () => isProcessing || isConversationClearInProgress(),
+  getAgentMode: () => agentMode,
+  setMode,
+  getInputEl: () => inputEl,
+  autoResizeInput,
+  sendMessage,
+  sendToBackground,
+  getIsDocumentVisible: () => document.visibilityState !== 'hidden',
+});
+// Completion notification + success celebration. Default on; togglable via Settings.
+let notifySoundEnabled = true;
+let completionConfettiEnabled = true;
+let notifyAudioContext = null;
+let completionConfettiTimer = null;
+browser.storage.local.get(['notifySound', 'completionConfetti']).then((stored) => {
+  if (stored && stored.notifySound === false) notifySoundEnabled = false;
+  if (stored && stored.completionConfetti === false) completionConfettiEnabled = false;
+}).catch(() => {});
+browser.storage.onChanged.addListener((changes) => {
+  if (changes.notifySound) {
+    notifySoundEnabled = changes.notifySound.newValue !== false;
+  }
+  if (changes.completionConfetti) {
+    completionConfettiEnabled = changes.completionConfetti.newValue !== false;
+  }
+});
+
+/**
+ * Play a short chime when the agent finishes a task. Firefox builds do not
+ * bundle the Chrome mp3 asset, so this uses a tiny generated tone.
+ */
+function playCompletionSound() {
+  if (!notifySoundEnabled) return;
+  try {
+    const AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!AudioContextCtor) return;
+    if (!notifyAudioContext) notifyAudioContext = new AudioContextCtor();
+    const ctx = notifyAudioContext;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, now);
+    oscillator.frequency.exponentialRampToValueAtTime(1175, now + 0.08);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    oscillator.connect(gain).connect(ctx.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.2);
+  } catch { /* ignore */ }
+}
+
+function triggerCompletionConfetti() {
+  if (!completionConfettiEnabled) return;
+  if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
+  try {
+    document.querySelector('.completion-confetti')?.remove();
+    if (completionConfettiTimer) {
+      clearTimeout(completionConfettiTimer);
+      completionConfettiTimer = null;
+    }
+
+    const layer = document.createElement('div');
+    layer.className = 'completion-confetti';
+    layer.setAttribute('aria-hidden', 'true');
+    const colors = ['#4caf50', '#6c63ff', '#ffb703', '#ef476f', '#00b4d8', '#f77f00'];
+    for (let i = 0; i < 42; i += 1) {
+      const piece = document.createElement('span');
+      piece.className = 'confetti-piece';
+      piece.style.setProperty('--x', `${Math.random() * 100}%`);
+      piece.style.setProperty('--drift', `${Math.round((Math.random() - 0.5) * 160)}px`);
+      piece.style.setProperty('--delay', `${Math.random() * 0.28}s`);
+      piece.style.setProperty('--duration', `${1.55 + Math.random() * 0.95}s`);
+      piece.style.setProperty('--rotation', `${Math.round(240 + Math.random() * 600)}deg`);
+      const size = 5 + Math.random() * 5;
+      piece.style.setProperty('--size', `${size}px`);
+      piece.style.setProperty('--height', `${size * 1.7}px`);
+      piece.style.backgroundColor = colors[i % colors.length];
+      layer.appendChild(piece);
+    }
+    document.body.appendChild(layer);
+    completionConfettiTimer = setTimeout(() => {
+      layer.remove();
+      completionConfettiTimer = null;
+    }, 3000);
+  } catch { /* ignore */ }
+}
+
+function notifyCompletion({ success = false, storeReviewSuccess = success } = {}) {
+  playCompletionSound();
+  if (success) triggerCompletionConfetti();
+  if (storeReviewSuccess) void maybePromptStoreReviewAfterSuccess();
+}
+
+function getExtensionStoreKey() {
+  return (typeof browser !== 'undefined' && typeof browser.runtime?.getBrowserInfo === 'function')
+    ? 'firefox'
+    : 'chrome';
+}
+
+let storeReviewState = normalizeStoreReviewState(null);
+let storeReviewSelectedRating = null;
+
+async function loadStoreReviewState() {
+  const stored = await browser.storage.local.get(STORE_REVIEW_STORAGE_KEY);
+  storeReviewState = normalizeStoreReviewState(stored[STORE_REVIEW_STORAGE_KEY]);
+  return storeReviewState;
+}
+
+async function saveStoreReviewState(next) {
+  storeReviewState = normalizeStoreReviewState(next);
+  await browser.storage.local.set({ [STORE_REVIEW_STORAGE_KEY]: storeReviewState }).catch(() => {});
+}
+
+function hideStoreReviewPrompt() {
+  storeReviewEl?.classList.add('hidden');
+}
+
+function showStoreReviewStep(step) {
+  for (const id of ['rating', 'positive', 'negative', 'thanks']) {
+    document.getElementById(`store-review-step-${id}`)?.classList.toggle('hidden', id !== step);
+  }
+  storeReviewEl?.classList.remove('hidden');
+  scrollToBottom({ force: true });
+}
+
+function setStoreReviewStarPreview(rating) {
+  const stars = Number.isFinite(Number(rating)) ? Number(rating) : 0;
+  document.querySelectorAll('.store-review-star').forEach((btn) => {
+    btn.classList.toggle('active', Number(btn.dataset.rating) <= stars);
+  });
+}
+
+async function openStoreReviewPrompt() {
+  if (!storeReviewEl || isProcessing) return;
+  storeReviewSelectedRating = null;
+  if (storeReviewFeedbackEl) storeReviewFeedbackEl.value = '';
+  setStoreReviewStarPreview(null);
+  showStoreReviewStep('rating');
+  applyDOMTranslations(storeReviewEl);
+  const next = markPromptShown(storeReviewState);
+  await saveStoreReviewState(next);
+}
+
+async function maybePromptStoreReviewAfterSuccess() {
+  if (isProcessing || !storeReviewEl) return;
+  await loadStoreReviewState();
+  const onboardingStored = await browser.storage.local.get('onboardingComplete');
+  const updated = recordSuccessfulTask(storeReviewState);
+  await saveStoreReviewState(updated);
+  if (shouldShowStoreReviewPrompt(updated, { onboardingComplete: !!onboardingStored.onboardingComplete })) {
+    await openStoreReviewPrompt();
+  }
+}
+
+async function handleStoreReviewRating(rating) {
+  storeReviewSelectedRating = rating;
+  setStoreReviewStarPreview(rating);
+  const next = markRated(storeReviewState, rating);
+  await saveStoreReviewState(next);
+  showStoreReviewStep(positiveRating(rating) ? 'positive' : 'negative');
+}
+
+async function dismissStoreReview({ neverAsk = false } = {}) {
+  const next = markDismissed(storeReviewState, { neverAsk });
+  await saveStoreReviewState(next);
+  hideStoreReviewPrompt();
+}
+
+async function handleStoreReviewOpenStore() {
+  try {
+    browser.tabs.create({ url: getStoreUrl(getExtensionStoreKey()) });
+  } catch { /* ignore */ }
+  const next = markReviewOpened(storeReviewState);
+  await saveStoreReviewState(next);
+  showStoreReviewStep('thanks');
+  setTimeout(() => hideStoreReviewPrompt(), 2500);
+}
+
+async function handleStoreReviewSendFeedback() {
+  const rating = storeReviewSelectedRating || storeReviewState.rating || 3;
+  const comment = storeReviewFeedbackEl?.value || '';
+  try {
+    browser.tabs.create({ url: buildFeedbackUrl({ rating, comment }) });
+  } catch { /* ignore */ }
+  const next = markFeedbackSubmitted(storeReviewState);
+  await saveStoreReviewState(next);
+  showStoreReviewStep('thanks');
+  setTimeout(() => hideStoreReviewPrompt(), 2500);
+}
+
+function initStoreReviewPrompt() {
+  if (!storeReviewEl) return;
+  applyDOMTranslations(storeReviewEl);
+  storeReviewEl.querySelectorAll('.store-review-star').forEach((btn) => {
+    const previewRating = () => {
+      const rating = Number(btn.dataset.rating);
+      if (Number.isFinite(rating)) setStoreReviewStarPreview(rating);
+    };
+    btn.addEventListener('mouseenter', previewRating);
+    btn.addEventListener('focus', previewRating);
+    btn.addEventListener('mouseleave', () => setStoreReviewStarPreview(storeReviewSelectedRating));
+    btn.addEventListener('blur', () => setStoreReviewStarPreview(storeReviewSelectedRating));
+    btn.addEventListener('click', () => {
+      const rating = Number(btn.dataset.rating);
+      if (Number.isFinite(rating)) void handleStoreReviewRating(rating);
+    });
+  });
+  document.getElementById('store-review-open-store')?.addEventListener('click', () => {
+    void handleStoreReviewOpenStore();
+  });
+  document.getElementById('store-review-send-feedback')?.addEventListener('click', () => {
+    void handleStoreReviewSendFeedback();
+  });
+  document.getElementById('store-review-not-now')?.addEventListener('click', () => {
+    void dismissStoreReview({ neverAsk: false });
+  });
+  document.getElementById('store-review-never')?.addEventListener('click', () => {
+    void dismissStoreReview({ neverAsk: true });
+  });
+  document.getElementById('store-review-close')?.addEventListener('click', () => {
+    void dismissStoreReview({ neverAsk: false });
+  });
+}
+
+initStoreReviewPrompt();
+void loadStoreReviewState();
+
+function isSuccessfulDoneUpdate(update) {
+  const result = update?.data?.result;
+  return update?.type === 'tool_result' &&
+    update?.data?.name === 'done' &&
+    result?.done === true &&
+    result?.outcome === 'success' &&
+    result?.success !== false &&
+    !result?.error &&
+    !result?.blockedDone;
+}
+
+function updatesContainSuccessfulDone(updates) {
+  return Array.isArray(updates) && updates.some(isSuccessfulDoneUpdate);
+}
+
+function updatesContainStoreReviewFailure(updates) {
+  return Array.isArray(updates) && updates.some((u) => (
+    u?.type === 'error' ||
+    u?.type === 'attachment_rejected' ||
+    u?.type === 'max_steps_reached' ||
+    u?.error ||
+    u?.data?.error
+  ));
+}
+
+function isSuccessfulAskCompletion(mode, response) {
+  if (mode !== 'ask') return false;
+  if (!response || response.success === false || response.ok === false) return false;
+  if (updatesContainStoreReviewFailure(response.updates)) return false;
+  const content = typeof response.content === 'string' ? response.content.trim() : '';
+  return !!content && !parseSubscribeError(content) && !parseCostAllowanceError(content);
+}
+
+// Act-mode risk banner is only meaningful when the permission gate is OFF.
+// With "Ask before consequential actions" ON (the default) the user is
+// prompted per consequential action, so the standing banner is redundant —
+// only surface it in Act mode when the gate is disabled.
+const PERMISSION_GATE_KEY = 'askBeforeConsequentialActions';
+const ACT_WARNING_DISMISSED_KEY = 'actWarningDismissed';
+const PERMISSION_EDUCATION_KEY = 'permissionPromptEducation';
+const PERMISSION_EDUCATION_THRESHOLD = 2;
+let askBeforeConsequential = true; // gate ON by default
+let actWarningDismissed = false;
+let actWarningPreferenceLoaded = false;
+let permissionEducationState = { promptCount: 0, hintShown: false };
+
+function normalizePermissionEducationState(value) {
+  return {
+    promptCount: Math.max(0, Math.floor(Number(value?.promptCount) || 0)),
+    hintShown: value?.hintShown === true,
+  };
+}
+
+const permissionEducationReady = browser.storage.local.get(PERMISSION_EDUCATION_KEY).then((stored) => {
+  permissionEducationState = normalizePermissionEducationState(stored?.[PERMISSION_EDUCATION_KEY]);
+  updateInputPlaceholder();
+}).catch(() => {});
+
+function persistPermissionEducationState() {
+  return browser.storage.local.set({
+    [PERMISSION_EDUCATION_KEY]: permissionEducationState,
+  }).catch(() => {});
+}
+
+function normalizePermissionSkipTabId(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function permissionSkipCommandContextFromCard(card) {
+  const composerTabId = normalizePermissionSkipTabId(currentTabId);
+  const targetTabId = normalizePermissionSkipTabId(
+    card?.dataset?.scheduledTabId ?? card?.dataset?.tabId,
+  );
+  const clarifyId = String(card?.dataset?.clarifyId || '');
+  if (composerTabId == null || targetTabId == null || !clarifyId) return null;
+  return { composerTabId, targetTabId, clarifyId };
+}
+
+function isPermissionSkipCommandDraft(text) {
+  return /^\/dangerously-skip-permissions(?:\s|$)/i.test(String(text || '').trimStart());
+}
+
+function permissionSkipCommandContextForDraft(tabId, text) {
+  const numericTabId = normalizePermissionSkipTabId(tabId);
+  if (numericTabId == null || !isPermissionSkipCommandDraft(text)) return null;
+  return permissionSkipCommandContextsByTab.get(numericTabId) || null;
+}
+
+function insertPermissionSkipCommand(card) {
+  if (!inputEl) return;
+  if (inputEl.value.trim()) {
+    showComposerToast(t('sp.perm.skip_hint_draft'), { duration: 5000 });
+    inputEl.focus();
+    return;
+  }
+  const command = '/dangerously-skip-permissions';
+  const context = permissionSkipCommandContextFromCard(card);
+  if (context) permissionSkipCommandContextsByTab.set(context.composerTabId, context);
+  resetComposerHistoryNavigation(currentTabId);
+  inputEl.value = command;
+  inputEl.setSelectionRange(command.length, command.length);
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+  inputEl.focus();
+}
+
+function bindPermissionEducationAction(btn) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', () => insertPermissionSkipCommand(btn.closest('.clarify-card')));
+}
+
+async function maybeShowPermissionEducationHint(card) {
+  await permissionEducationReady;
+  if (!askBeforeConsequential || !card) return;
+
+  permissionEducationState = {
+    ...permissionEducationState,
+    promptCount: Math.min(
+      PERMISSION_EDUCATION_THRESHOLD,
+      permissionEducationState.promptCount + 1,
+    ),
+  };
+  updateInputPlaceholder();
+
+  const shouldShow = !permissionEducationState.hintShown
+    && permissionEducationState.promptCount >= PERMISSION_EDUCATION_THRESHOLD
+    && card.isConnected
+    && !card.classList.contains('clarify-answered');
+  if (shouldShow) permissionEducationState = { ...permissionEducationState, hintShown: true };
+  void persistPermissionEducationState();
+  if (!shouldShow) return;
+
+  const hint = document.createElement('div');
+  hint.className = 'permission-education-hint';
+
+  const copy = document.createElement('div');
+  copy.className = 'permission-education-copy';
+  copy.textContent = t('sp.perm.skip_hint');
+
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'permission-education-action';
+  action.textContent = t('sp.perm.insert_skip_command');
+  bindPermissionEducationAction(action);
+
+  hint.append(copy, action);
+  card.appendChild(hint);
+  scrollToBottom();
+}
+
+browser.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]).then((stored) => {
+  if (stored && stored[PERMISSION_GATE_KEY] === false) askBeforeConsequential = false;
+  actWarningDismissed = stored?.[ACT_WARNING_DISMISSED_KEY] === true;
+  actWarningPreferenceLoaded = true;
+  updateActWarning();
+  updateInputPlaceholder();
+}).catch(() => {});
+browser.storage.onChanged.addListener((changes) => {
+  if (changes[PERMISSION_EDUCATION_KEY]) {
+    permissionEducationState = normalizePermissionEducationState(
+      changes[PERMISSION_EDUCATION_KEY].newValue,
+    );
+    updateInputPlaceholder();
+  }
+  if (changes[PERMISSION_GATE_KEY]) {
+    askBeforeConsequential = changes[PERMISSION_GATE_KEY].newValue !== false;
+    updateActWarning();
+    updateInputPlaceholder();
+  }
+  if (changes[ACT_WARNING_DISMISSED_KEY]) {
+    actWarningDismissed = changes[ACT_WARNING_DISMISSED_KEY].newValue === true;
+    actWarningPreferenceLoaded = true;
+    updateActWarning();
+  }
+});
+
+function updateActWarning() {
+  if (!actWarning) return;
+  const show = actWarningPreferenceLoaded
+    && !actWarningDismissed
+    && agentMode !== 'ask'
+    && !askBeforeConsequential;
+  actWarning.classList.toggle('hidden', !show);
+}
+
+actWarningDismiss?.addEventListener('click', () => {
+  actWarningDismissed = true;
+  updateActWarning();
+  void browser.storage.local.set({ [ACT_WARNING_DISMISSED_KEY]: true }).catch(() => {});
+});
+
+// Per-tab chat history (stores innerHTML of messages container).
+// Also mirrored to browser.storage.session keyed `tabChat:<tabId>` so the
+// conversation survives the sidebar being closed and reopened.
 const tabChats = new Map();
+const TAB_CHAT_LOAD_FAILED = Symbol('tab-chat-load-failed');
+const tabChatOperations = new Map();
+const tabChatHandoffGenerations = new Map();
+const tabChatHandoffOwnerId = `sidepanel-chat-${
+  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}`;
+const tabInputDrafts = new Map();
+const permissionSkipCommandContextsByTab = new Map();
+const queuedComposerMessagesByTab = new Map();
+const composerHistoryNavigationByTab = new Map();
+let queuedComposerMessageSeq = 0;
+
+function enqueueTabChatOperation(tabId, fn) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return Promise.resolve({ ok: true });
+  const previous = tabChatOperations.get(numericTabId) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(() => fn(numericTabId));
+  tabChatOperations.set(numericTabId, operation);
+  operation.finally(() => {
+    if (tabChatOperations.get(numericTabId) === operation) tabChatOperations.delete(numericTabId);
+  }).catch(() => {});
+  return operation;
+}
+
+async function loadTabChat(tabId, { waitForHandoff = false } = {}) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return null;
+  if (!waitForHandoff && !tabChatOperations.has(numericTabId) && tabChats.has(numericTabId)) {
+    return tabChats.get(numericTabId);
+  }
+  try {
+    return await enqueueTabChatOperation(numericTabId, async (queuedTabId) => {
+      if (!waitForHandoff && tabChats.has(queuedTabId)) return tabChats.get(queuedTabId);
+      const stored = await sendToBackground('load_tab_chat', {
+        tabId: queuedTabId,
+        waitForHandoff,
+        handoffOwnerId: tabChatHandoffOwnerId,
+      });
+      if (stored?.handoffOwnerId === tabChatHandoffOwnerId
+          && Number.isFinite(Number(stored?.handoffGeneration))) {
+        tabChatHandoffGenerations.set(queuedTabId, Number(stored.handoffGeneration));
+      }
+      const html = stored?.found ? stored.html : null;
+      if (typeof html === 'string') {
+        tabChats.set(queuedTabId, html);
+        return html;
+      }
+      tabChats.delete(queuedTabId);
+      return null;
+    });
+  } catch (e) {
+    if (waitForHandoff) return TAB_CHAT_LOAD_FAILED;
+  }
+  return null;
+}
+
+function persistTabChat(tabId, html, { allowHidden = false } = {}) {
+  if (tabId == null || (document.visibilityState === 'hidden' && !allowHidden)) {
+    return Promise.resolve({ ok: false, skipped: true });
+  }
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return Promise.resolve({ ok: false, error: 'No tab ID' });
+  const handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+  const payload = {
+    tabId: numericTabId,
+    html,
+    handoffOwnerId: tabChatHandoffOwnerId,
+  };
+  if (Number.isFinite(handoffGeneration)) payload.handoffGeneration = handoffGeneration;
+  if (document.visibilityState === 'hidden' && allowHidden) {
+    // Do not wait behind this document's local queue. The shared background
+    // coordinator orders this authoritative handoff behind any earlier write
+    // and ahead of the newly visible document's restore.
+    tabChats.set(numericTabId, html);
+    return sendToBackground('persist_tab_chat', payload);
+  }
+  return enqueueTabChatOperation(tabId, async (numericTabId) => {
+    // Keep the live transcript lossless. The background may compact only the
+    // storage.session copy when the shared quota requires it.
+    tabChats.set(numericTabId, html);
+    return sendToBackground('persist_tab_chat', payload);
+  });
+}
+
+async function flushRenderedTabChat({ allowHidden = false } = {}) {
+  const tabId = renderedTabId;
+  if (tabId == null) return;
+  if (persistTimer && persistTimerTabId === tabId) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+    persistTimerTabId = null;
+  }
+  flushPendingStreamedAssistantMarkdownRenders();
+  const html = messagesEl.innerHTML;
+  if (document.visibilityState !== 'hidden') {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+  }
+  await persistTabChat(tabId, html, { allowHidden });
+}
+
+function clearCachedTabChat(tabId) {
+  if (tabId == null) return;
+  if (persistTimer && persistTimerTabId === tabId) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+    persistTimerTabId = null;
+  }
+  if (lastVisibleTabChatSnapshot
+      && sameTabId(lastVisibleTabChatSnapshot.tabId, tabId)) {
+    lastVisibleTabChatSnapshot = null;
+  }
+  tabChats.delete(tabId);
+  return enqueueTabChatOperation(tabId, async (numericTabId) => {
+    tabChats.delete(numericTabId);
+    let handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+    let clearResult = null;
+    while (true) {
+      if (!Number.isFinite(handoffGeneration) || clearResult?.reason === 'stale-handoff') {
+        const ownership = await sendToBackground('load_tab_chat', {
+          tabId: numericTabId,
+          waitForHandoff: true,
+          handoffOwnerId: tabChatHandoffOwnerId,
+        });
+        if (ownership?.handoffOwnerId === tabChatHandoffOwnerId
+            && Number.isFinite(Number(ownership?.handoffGeneration))) {
+          handoffGeneration = Number(ownership.handoffGeneration);
+          tabChatHandoffGenerations.set(numericTabId, handoffGeneration);
+        }
+      }
+      clearResult = await sendToBackground('clear_tab_chat', {
+        tabId: numericTabId,
+        handoffOwnerId: tabChatHandoffOwnerId,
+        handoffGeneration,
+      });
+      if (!clearResult?.skipped || clearResult.reason !== 'stale-handoff') {
+        if (clearResult?.handoffOwnerId === tabChatHandoffOwnerId
+            && Number.isFinite(Number(clearResult?.handoffGeneration))) {
+          tabChatHandoffGenerations.set(numericTabId, Number(clearResult.handoffGeneration));
+        }
+        return clearResult;
+      }
+    }
+  });
+}
+
+// Save current tab's chat to storage on a debounced cadence — we don't want
+// to thrash storage on every keystroke / streamed token.
+let persistTimer = null;
+let persistTimerTabId = null;
+let visibleStateRefreshPending = false;
+let visibleStateRefreshPromise = Promise.resolve();
+let visibleStateRefreshInProgress = false;
+let visibleStateRefreshGeneration = 0;
+let lastVisibleTabChatSnapshot = null;
+const TAB_CHAT_HANDOFF_RETRY_MS = 250;
+
+function waitForTabChatHandoffRetry() {
+  return new Promise(resolve => setTimeout(resolve, TAB_CHAT_HANDOFF_RETRY_MS));
+}
+
+async function waitForVisibleSidePanelStateRefresh() {
+  let pendingRefresh;
+  do {
+    pendingRefresh = visibleStateRefreshPromise;
+    await pendingRefresh.catch(() => {});
+    if (tabSwitchTransitionId != null || visibleStateRefreshInProgress) {
+      await waitForTabChatHandoffRetry();
+    }
+  } while (pendingRefresh !== visibleStateRefreshPromise
+      || tabSwitchTransitionId != null
+      || visibleStateRefreshInProgress);
+}
+
+function schedulePersist() {
+  if (document.visibilityState === 'hidden') return;
+  if (persistTimer) clearTimeout(persistTimer);
+  const tabId = renderedTabId;
+  const html = messagesEl.innerHTML;
+  if (tabId != null) {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+    tabChats.set(Number(tabId), html);
+  }
+  persistTimerTabId = tabId;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    persistTimerTabId = null;
+    if (tabId != null) persistTabChat(tabId, html);
+  }, 400);
+  if (tabId != null) scheduleHistoryPersist(tabId);
+}
+
+function assistantMessageHasRenderableContent(msgEl) {
+  const contentEl = msgEl?.querySelector?.('.message-content');
+  if (!contentEl) return false;
+  if (contentEl.textContent.trim()) return true;
+  return !!contentEl.querySelector(
+    'img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress',
+  );
+}
+
+function syncAssistantMessageVisibility() {
+  for (const msgEl of messagesEl.querySelectorAll('.message.assistant')) {
+    msgEl.classList.toggle(
+      'assistant-awaiting-content',
+      !assistantMessageHasRenderableContent(msgEl),
+    );
+  }
+}
+
+// Observe the messages container so any DOM mutation (new message, streamed
+// delta, tool step update) both reveals populated assistant output and
+// eventually gets persisted. Attribute changes are not observed, so toggling
+// the visibility class here cannot recurse.
+const persistObserver = new MutationObserver(() => {
+  syncAssistantMessageVisibility();
+  schedulePersist();
+});
+
+// Durable offline chat history. The live per-tab restore above stays in
+// storage.session; this writes a compact, queryable record to IndexedDB so
+// finished conversations remain available after browser restarts.
+const chatHistoryRecordIdsByTab = new Map();
+const chatHistoryConversationIdsByTab = new Map();
+const chatHistoryCreatedAtByTab = new Map();
+const chatHistoryTabInfoByTab = new Map();
+const chatHistorySaveSeqByTab = new Map();
+let chatHistoryFallbackSeq = 0;
+let chatHistorySaveSeq = 0;
+let historyPersistTimer = null;
+let historyPersistTimerTabId = null;
+
+function normalizeHistoryText(value) {
+  return String(value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function roleFromMessageElement(el) {
+  if (el.classList.contains('user')) return 'user';
+  if (el.classList.contains('assistant')) return 'assistant';
+  if (el.classList.contains('error')) return 'error';
+  if (el.classList.contains('system')) return 'system';
+  return 'unknown';
+}
+
+function extractChatHistoryMessages(root = messagesEl) {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll(':scope > .message')).map((msgEl, index) => {
+    const clone = msgEl.cloneNode(true);
+    clone.querySelectorAll('button, input, textarea, select, .msg-copy-btn, .code-copy-btn, .error-retry-btn')
+      .forEach((el) => el.remove());
+    const textEl = clone.querySelector('.message-text') || clone.querySelector('.message-content') || clone;
+    const role = roleFromMessageElement(msgEl);
+    const format = role === 'assistant' || role === 'error' ? 'markdown' : 'text';
+    const attachments = role === 'user' ? messageAttachmentMetadata(msgEl) : [];
+    return {
+      role,
+      text: normalizeHistoryText(historyTextFromElement(textEl, { markdown: format === 'markdown' })),
+      format,
+      index,
+      createdAt: Date.now(),
+      ...(attachments.length ? { attachments } : {}),
+    };
+  }).filter((message) => message.text || message.attachments?.length);
+}
+
+function chatHistoryHtmlHasUserMessage(html) {
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = String(html || '');
+  return Array.from(wrapper.children).some((el) => (
+    el.classList?.contains('message') && el.classList.contains('user')
+  ));
+}
+
+async function hydrateRestoredChatHistory(tabId, html) {
+  if (!html || !chatHistoryHtmlHasUserMessage(html)) return;
+  await hydrateChatHistoryIdentity(tabId, agentMode);
+}
+
+function fallbackHistoryRecordId(tabId) {
+  const numericTabId = Number(tabId);
+  if (!chatHistoryRecordIdsByTab.has(numericTabId)) {
+    chatHistoryRecordIdsByTab.set(
+      numericTabId,
+      `local_${numericTabId || 'tab'}_${Date.now()}_${++chatHistoryFallbackSeq}`,
+    );
+  }
+  return chatHistoryRecordIdsByTab.get(numericTabId);
+}
+
+function nextChatHistorySaveSeqForTab(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return 0;
+  chatHistorySaveSeq += 1;
+  chatHistorySaveSeqByTab.set(numericTabId, chatHistorySaveSeq);
+  return chatHistorySaveSeq;
+}
+
+async function getTabInfoForHistory(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return { url: '', tabTitle: '' };
+  try {
+    const tab = await browser.tabs.get(numericTabId);
+    return { url: tab?.url || '', tabTitle: tab?.title || '' };
+  } catch {
+    return chatHistoryTabInfoByTab.get(numericTabId) || { url: '', tabTitle: '' };
+  }
+}
+
+async function hydrateChatHistoryIdentity(tabId, mode = agentMode, { allowFallback = false, refreshTabInfo = false } = {}) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return null;
+  if (!chatHistoryCreatedAtByTab.has(numericTabId)) {
+    chatHistoryCreatedAtByTab.set(numericTabId, Date.now());
+  }
+  const existingConversationId = chatHistoryConversationIdsByTab.get(numericTabId);
+  if (existingConversationId && !chatHistoryRecordIdsByTab.has(numericTabId)) {
+    chatHistoryRecordIdsByTab.set(numericTabId, existingConversationId);
+  }
+  const needsIdentity = !chatHistoryConversationIdsByTab.has(numericTabId);
+  const needsTabInfo = refreshTabInfo || !chatHistoryTabInfoByTab.has(numericTabId);
+  const [identity, tabInfo] = await Promise.all([
+    needsIdentity
+      ? sendToBackground('ensure_conversation_id', { tabId: numericTabId, mode }).catch(() => null)
+      : Promise.resolve(null),
+    needsTabInfo ? getTabInfoForHistory(numericTabId) : Promise.resolve(null),
+  ]);
+  if (identity?.conversationId) {
+    chatHistoryConversationIdsByTab.set(numericTabId, identity.conversationId);
+    chatHistoryRecordIdsByTab.set(numericTabId, identity.conversationId);
+  } else if (allowFallback && !chatHistoryRecordIdsByTab.has(numericTabId)) {
+    fallbackHistoryRecordId(numericTabId);
+  }
+  applyConversationScopeState(numericTabId, identity);
+  if (tabInfo) chatHistoryTabInfoByTab.set(numericTabId, tabInfo);
+  return chatHistoryConversationIdsByTab.get(numericTabId) || null;
+}
+
+async function prepareChatHistoryForTurn(tabId, mode) {
+  await hydrateChatHistoryIdentity(tabId, mode, { allowFallback: true, refreshTabInfo: true });
+}
+
+async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {
+  const numericTabId = Number(tabId);
+  if (document.visibilityState === 'hidden'
+      || !Number.isFinite(numericTabId)
+      || renderedTabId !== numericTabId) return;
+  const messages = extractChatHistoryMessages(messagesEl);
+  if (!messages.some((message) => message.role === 'user')) return;
+  const saveSeq = nextChatHistorySaveSeqForTab(numericTabId);
+  if (!chatHistoryCreatedAtByTab.has(numericTabId)) {
+    chatHistoryCreatedAtByTab.set(numericTabId, Date.now());
+  }
+  await hydrateChatHistoryIdentity(numericTabId, agentMode, { refreshTabInfo });
+  if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return;
+  const tabInfo = chatHistoryTabInfoByTab.get(numericTabId) || {};
+  const recordId = chatHistoryRecordIdsByTab.get(numericTabId) || fallbackHistoryRecordId(numericTabId);
+  const conversationId = chatHistoryConversationIdsByTab.get(numericTabId) || null;
+  await saveChatHistoryRecord({
+    id: recordId,
+    conversationId,
+    tabId: numericTabId,
+    url: tabInfo.url || '',
+    tabTitle: tabInfo.tabTitle || '',
+    mode: agentMode,
+    providerId: providerSelect?.value || '',
+    providerLabel: providerSelect?.selectedOptions?.[0]?.textContent || '',
+    createdAt: chatHistoryCreatedAtByTab.get(numericTabId),
+    updatedAt: Date.now(),
+    messages,
+  }).catch((error) => {
+    console.warn('[WebBrain] failed to save chat history:', error);
+  });
+}
+
+async function repairRestoredChatHistorySnapshot(tabId) {
+  const numericTabId = Number(tabId);
+  if (document.visibilityState === 'hidden'
+      || !Number.isFinite(numericTabId)
+      || renderedTabId !== numericTabId) return;
+  const recordId = chatHistoryRecordIdsByTab.get(numericTabId);
+  if (!recordId) return;
+  const messages = extractChatHistoryMessages(messagesEl);
+  if (!messages.some((message) => message.role === 'user')) return;
+  await repairChatHistoryRecordMessages(recordId, messages).catch((error) => {
+    console.warn('[WebBrain] failed to repair restored chat history:', error);
+  });
+}
+
+function scheduleHistoryPersist(tabId) {
+  if (historyPersistTimer) clearTimeout(historyPersistTimer);
+  historyPersistTimerTabId = tabId;
+  historyPersistTimer = setTimeout(() => {
+    const targetTabId = historyPersistTimerTabId;
+    historyPersistTimer = null;
+    historyPersistTimerTabId = null;
+    void persistChatHistorySnapshot(targetTabId);
+  }, 1200);
+}
+
+async function flushChatHistorySnapshot(tabId, options = {}) {
+  if (historyPersistTimer && sameTabId(historyPersistTimerTabId, tabId)) {
+    clearTimeout(historyPersistTimer);
+    historyPersistTimer = null;
+    historyPersistTimerTabId = null;
+  }
+  await persistChatHistorySnapshot(tabId, options);
+}
+
+async function resetChatHistoryStateForTab(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  if (historyPersistTimer && sameTabId(historyPersistTimerTabId, numericTabId)) {
+    clearTimeout(historyPersistTimer);
+    historyPersistTimer = null;
+    historyPersistTimerTabId = null;
+  }
+  nextChatHistorySaveSeqForTab(numericTabId);
+  if (
+    !chatHistoryRecordIdsByTab.has(numericTabId) &&
+    !chatHistoryConversationIdsByTab.has(numericTabId) &&
+    sameTabId(renderedTabId, numericTabId) &&
+    extractChatHistoryMessages(messagesEl).some((message) => message.role === 'user')
+  ) {
+    await hydrateChatHistoryIdentity(numericTabId, agentMode);
+  }
+  const recordIdsToDelete = new Set([
+    chatHistoryRecordIdsByTab.get(numericTabId),
+    chatHistoryConversationIdsByTab.get(numericTabId),
+  ].filter(Boolean));
+  await Promise.all(Array.from(recordIdsToDelete).map((recordId) => (
+    deleteChatHistoryRecord(recordId).catch((error) => {
+      console.warn('[WebBrain] failed to delete chat history:', error);
+    })
+  )));
+  chatHistoryRecordIdsByTab.delete(numericTabId);
+  chatHistoryConversationIdsByTab.delete(numericTabId);
+  chatHistoryCreatedAtByTab.delete(numericTabId);
+  chatHistoryTabInfoByTab.delete(numericTabId);
+  chatHistorySaveSeqByTab.delete(numericTabId);
+}
+
+function saveInputDraftForTab(tabId, text) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const draft = String(text || '');
+  if (!isPermissionSkipCommandDraft(draft)) {
+    permissionSkipCommandContextsByTab.delete(numericTabId);
+  }
+  if (draft.trim()) {
+    tabInputDrafts.set(numericTabId, draft);
+  } else {
+    tabInputDrafts.delete(numericTabId);
+  }
+}
+
+function captureInputDraftForTab(tabId) {
+  if (!inputEl) return;
+  saveInputDraftForTab(tabId, inputEl.value || '');
+}
+
+function restoreInputDraftForTab(tabId) {
+  if (!inputEl) return;
+  const numericTabId = Number(tabId);
+  const draft = Number.isFinite(numericTabId) ? tabInputDrafts.get(numericTabId) || '' : '';
+  inputEl.value = draft;
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+}
+
+function sameTabId(a, b) {
+  return a != null && b != null && String(a) === String(b);
+}
+
+function normalizePlanReviewTabId(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) ? numericTabId : null;
+}
+
+function isAwaitingPlanReviewForTab(tabId = currentTabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  return numericTabId != null && awaitingPlanReviewTabs.has(numericTabId);
+}
+
+function setPlanReviewAwaiting(tabId, awaiting, assistantEl = null) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return;
+  if (awaiting) awaitingPlanReviewTabs.add(numericTabId);
+  else awaitingPlanReviewTabs.delete(numericTabId);
+  if (sameTabId(currentTabId, numericTabId)) {
+    if (awaiting) {
+      if (assistantEl) currentAssistantEl = assistantEl;
+      setTabProcessing(numericTabId, true);
+      setTabAbortRequested(numericTabId, false);
+      hideRecommendedActions();
+    }
+    syncSendButtonState();
+  }
+}
+
+function normalizeRetryAttachmentTabId(tabId = renderedTabId ?? currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) ? numericTabId : null;
+}
+
+function trackRetryAttachmentId(tabId, retryId) {
+  if (!retryId) return;
+  const numericTabId = normalizeRetryAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  let ids = retryAttachmentIdsByTab.get(numericTabId);
+  if (!ids) {
+    ids = new Set();
+    retryAttachmentIdsByTab.set(numericTabId, ids);
+  }
+  ids.add(retryId);
+}
+
+function releaseRetryAttachmentPayload(retryId) {
+  if (!retryId) return;
+  retryAttachmentPayloads.delete(retryId);
+  for (const [tabId, ids] of retryAttachmentIdsByTab) {
+    ids.delete(retryId);
+    if (!ids.size) retryAttachmentIdsByTab.delete(tabId);
+  }
+}
+
+function releaseRetryAttachmentsInTree(root) {
+  if (!root) return;
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]')) {
+    releaseRetryAttachmentPayload(root.dataset.retryId);
+  }
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]').forEach((btn) => {
+    releaseRetryAttachmentPayload(btn.dataset.retryId);
+  });
+}
+
+function clearRetryAttachmentsForTab(tabId) {
+  const numericTabId = normalizeRetryAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const ids = retryAttachmentIdsByTab.get(numericTabId);
+  if (!ids) return;
+  ids.forEach((retryId) => retryAttachmentPayloads.delete(retryId));
+  retryAttachmentIdsByTab.delete(numericTabId);
+}
+
+function getQueuedComposerMessages(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return [];
+  return queuedComposerMessagesByTab.get(numericTabId) || [];
+}
+
+function setQueuedComposerMessages(tabId, messages) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  if (messages.length) {
+    queuedComposerMessagesByTab.set(numericTabId, messages);
+    resetComposerHistoryNavigation(numericTabId);
+  } else {
+    queuedComposerMessagesByTab.delete(numericTabId);
+  }
+  if (sameTabId(currentTabId, numericTabId)) renderQueuedComposerMessages(numericTabId);
+}
+
+function queuedComposerButton(className, action, queueId, labelKey, svgPath) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `queued-message-action ${className}`;
+  btn.dataset.queueAction = action;
+  btn.dataset.queueId = queueId;
+  btn.title = t(labelKey);
+  btn.setAttribute('aria-label', t(labelKey));
+  btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${svgPath}</svg>`;
+  return btn;
+}
+
+function renderQueuedComposerMessages(tabId = currentTabId) {
+  if (!queuedMessagesEl) return;
+  const messages = getQueuedComposerMessages(tabId);
+  queuedMessagesEl.replaceChildren();
+  queuedMessagesEl.classList.toggle('hidden', messages.length === 0);
+  if (!messages.length) return;
+
+  messages.forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'queued-message';
+    row.dataset.queueId = item.id;
+    row.setAttribute('role', 'listitem');
+
+    const label = document.createElement('span');
+    label.className = 'queued-message-label';
+    label.textContent = messages.length > 1
+      ? t('sp.queue.label_numbered', { index: index + 1 })
+      : t('sp.queue.label');
+
+    const text = document.createElement('span');
+    text.className = 'queued-message-text';
+    text.textContent = item.text;
+    text.title = item.text;
+
+    const edit = queuedComposerButton(
+      'queued-message-edit',
+      'edit',
+      item.id,
+      'sp.queue.edit',
+      '<path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>',
+    );
+    const remove = queuedComposerButton(
+      'queued-message-delete',
+      'delete',
+      item.id,
+      'sp.queue.delete',
+      '<path d="M18 6L6 18"></path><path d="M6 6l12 12"></path>',
+    );
+
+    row.append(label, text, edit, remove);
+    queuedMessagesEl.appendChild(row);
+  });
+}
+
+function shiftQueuedComposerMessage(tabId) {
+  const queue = getQueuedComposerMessages(tabId);
+  if (!queue.length) return null;
+  const [item, ...remaining] = queue;
+  setQueuedComposerMessages(tabId, remaining);
+  return item;
+}
+
+function removeQueuedComposerMessage(tabId, queueId) {
+  const queue = getQueuedComposerMessages(tabId);
+  const index = queue.findIndex((item) => item.id === queueId);
+  if (index === -1) return null;
+  const nextQueue = queue.slice();
+  const [item] = nextQueue.splice(index, 1);
+  setQueuedComposerMessages(tabId, nextQueue);
+  return item;
+}
+
+function enqueueQueuedComposerMessage(tabId, text) {
+  const numericTabId = Number(tabId);
+  const queuedText = String(text || '').trim();
+  if (!Number.isFinite(numericTabId) || !queuedText) return false;
+  const queue = getQueuedComposerMessages(numericTabId).slice();
+  queue.push({
+    id: `queued-${Date.now()}-${++queuedComposerMessageSeq}`,
+    text: queuedText,
+  });
+  setQueuedComposerMessages(numericTabId, queue);
+  if (sameTabId(currentTabId, numericTabId)) {
+    saveInputDraftForTab(numericTabId, '');
+    hideSlashCommandAutocomplete();
+    inputEl.value = '';
+    autoResizeInput();
+    syncSendButtonState();
+  }
+  return true;
+}
+
+function editQueuedComposerMessage(tabId, queueId) {
+  if (!sameTabId(currentTabId, tabId)) return;
+  const item = removeQueuedComposerMessage(tabId, queueId);
+  if (!item) return;
+  resetComposerHistoryNavigation(tabId);
+  inputEl.value = item.text;
+  saveInputDraftForTab(tabId, item.text);
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+}
+
+function editLastQueuedComposerMessageForCurrentTab() {
+  if (!inputEl || currentTabId == null) return false;
+  const atStart = inputEl.selectionStart === 0 && inputEl.selectionEnd === 0;
+  if (inputEl.value !== '' || !atStart) return false;
+  const queue = getQueuedComposerMessages(currentTabId);
+  const item = queue[queue.length - 1];
+  if (!item) return false;
+  editQueuedComposerMessage(currentTabId, item.id);
+  return true;
+}
+
+function resetComposerHistoryNavigation(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  composerHistoryNavigationByTab.delete(numericTabId);
+}
+
+function getComposerHistoryTextFromMessage(messageEl) {
+  const protectedText = messageEl.dataset.composerHistoryText;
+  if (typeof protectedText === 'string') return protectedText;
+
+  const displayText = String(messageEl.querySelector('.message-text')?.textContent || '');
+  // Older saved selection bubbles predate the protected recall payload. Their
+  // display text no longer contains the untrusted-content boundary, so omit
+  // those ambiguous entries rather than resend page text as a trusted prompt.
+  const isLegacySelectionDisplay = messageEl.dataset.composerHistoryVerbatim !== 'true'
+    && /(?:^|\n\n)Selected text:\n/.test(displayText);
+  return isLegacySelectionDisplay ? '' : displayText;
+}
+
+function getComposerHistoryEntriesForCurrentTab() {
+  if (!messagesEl || !sameTabId(currentTabId, renderedTabId)) return [];
+  return Array.from(messagesEl.querySelectorAll(':scope > .message.user'))
+    .map(getComposerHistoryTextFromMessage)
+    .filter((text) => text.trim());
+}
+
+const COMPOSER_MIRROR_STYLE_PROPERTIES = [
+  'direction',
+  'fontFamily',
+  'fontSize',
+  'fontStyle',
+  'fontVariant',
+  'fontWeight',
+  'letterSpacing',
+  'lineHeight',
+  'overflowWrap',
+  'paddingBottom',
+  'paddingLeft',
+  'paddingRight',
+  'paddingTop',
+  'tabSize',
+  'textAlign',
+  'textIndent',
+  'textTransform',
+  'whiteSpace',
+  'wordBreak',
+  'wordSpacing',
+];
+
+function measureComposerCaretTop(position, computedStyle) {
+  const mirror = document.createElement('div');
+  for (const property of COMPOSER_MIRROR_STYLE_PROPERTIES) {
+    mirror.style[property] = computedStyle[property];
+  }
+  mirror.style.position = 'fixed';
+  mirror.style.left = '-100000px';
+  mirror.style.top = '0';
+  mirror.style.boxSizing = 'border-box';
+  mirror.style.width = `${inputEl.clientWidth}px`;
+  mirror.style.height = 'auto';
+  mirror.style.minHeight = '0';
+  mirror.style.maxHeight = 'none';
+  mirror.style.margin = '0';
+  mirror.style.border = '0';
+  mirror.style.overflow = 'hidden';
+  mirror.style.visibility = 'hidden';
+  mirror.style.pointerEvents = 'none';
+  mirror.textContent = inputEl.value.slice(0, position);
+
+  const marker = document.createElement('span');
+  marker.textContent = inputEl.value.slice(position) || '\u200b';
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+  const top = marker.offsetTop;
+  mirror.remove();
+  return top;
+}
+
+function getComposerCaretRowBoundary() {
+  if (!inputEl || inputEl.selectionStart !== inputEl.selectionEnd || inputEl.clientWidth <= 0) {
+    return null;
+  }
+  const computedStyle = getComputedStyle(inputEl);
+  const caretTop = measureComposerCaretTop(inputEl.selectionStart, computedStyle);
+  const firstTop = measureComposerCaretTop(0, computedStyle);
+  const lastTop = measureComposerCaretTop(inputEl.value.length, computedStyle);
+  const parsedLineHeight = Number.parseFloat(computedStyle.lineHeight);
+  const parsedFontSize = Number.parseFloat(computedStyle.fontSize);
+  const lineHeight = Number.isFinite(parsedLineHeight)
+    ? parsedLineHeight
+    : (Number.isFinite(parsedFontSize) ? parsedFontSize * 1.4 : 16);
+  const tolerance = Math.max(1, lineHeight / 3);
+  return {
+    atFirstRow: Math.abs(caretTop - firstTop) < tolerance,
+    atLastRow: Math.abs(caretTop - lastTop) < tolerance,
+  };
+}
+
+function applyComposerHistoryText(tabId, text) {
+  inputEl.value = text;
+  saveInputDraftForTab(tabId, text);
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+}
+
+function navigateComposerHistory(direction) {
+  if (!inputEl || currentTabId == null || !sameTabId(currentTabId, renderedTabId)) return false;
+  const numericTabId = Number(currentTabId);
+  if (!Number.isFinite(numericTabId)) return false;
+  if (getQueuedComposerMessages(numericTabId).length) {
+    resetComposerHistoryNavigation(numericTabId);
+    return false;
+  }
+
+  let state = composerHistoryNavigationByTab.get(numericTabId);
+  if (!state) {
+    if (direction !== -1 || inputEl.value !== '') return false;
+    const entries = getComposerHistoryEntriesForCurrentTab();
+    if (!entries.length) return false;
+    state = { entries, index: entries.length };
+    composerHistoryNavigationByTab.set(numericTabId, state);
+  } else {
+    const expectedText = state.entries[state.index] ?? '';
+    if (inputEl.value !== expectedText) {
+      resetComposerHistoryNavigation(numericTabId);
+      return false;
+    }
+  }
+
+  const boundary = getComposerCaretRowBoundary();
+  if (!boundary) return false;
+  if (direction === -1) {
+    if (!boundary.atFirstRow) return false;
+    if (state.index === 0) return true;
+    state.index -= 1;
+    applyComposerHistoryText(numericTabId, state.entries[state.index]);
+    return true;
+  }
+  if (direction === 1) {
+    if (!boundary.atLastRow || state.index >= state.entries.length) return false;
+    if (state.index === state.entries.length - 1) {
+      resetComposerHistoryNavigation(numericTabId);
+      applyComposerHistoryText(numericTabId, '');
+      return true;
+    }
+    state.index += 1;
+    applyComposerHistoryText(numericTabId, state.entries[state.index]);
+    return true;
+  }
+  return false;
+}
+
+function deleteQueuedComposerMessage(tabId, queueId) {
+  removeQueuedComposerMessage(tabId, queueId);
+}
+
+function clearQueuedComposerMessagesForTab(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  queuedComposerMessagesByTab.delete(numericTabId);
+  if (sameTabId(currentTabId, numericTabId)) renderQueuedComposerMessages(numericTabId);
+}
+
+function drainQueuedComposerMessageForCurrentTab() {
+  if (isProcessing || currentTabId == null || renderedTabId !== currentTabId) return false;
+  if (inputEl.value !== '') return false;
+  const item = shiftQueuedComposerMessage(currentTabId);
+  if (!item) return false;
+  resetComposerHistoryNavigation(currentTabId);
+  inputEl.value = item.text;
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+  Promise.resolve().then(() => sendMessage()).catch((e) => {
+    addMessage('error', t('sp.error_prefix', { msg: e?.message || String(e) }));
+  });
+  return true;
+}
+
+async function renderClearedConversationForTab(tabId) {
+  setSelectionGroundedForTab(tabId, false);
+  const clearResult = await clearCachedTabChat(tabId);
+  if (!clearResult?.ok || clearResult?.skipped) {
+    throw new Error(clearResult?.error || 'Unable to clear tab chat.');
+  }
+  resetComposerHistoryNavigation(tabId);
+  saveInputDraftForTab(tabId, '');
+  clearPendingAttachmentsForTab(tabId);
+  clearQueuedComposerMessagesForTab(tabId);
+  if (sameTabId(currentTabId, tabId)) releaseRetryAttachmentsInTree(messagesEl);
+  clearRetryAttachmentsForTab(tabId);
+  setApiMutationsAllowedForTab(tabId, false);
+  await resetChatHistoryStateForTab(tabId);
+  if (currentTabId !== tabId) return;
+  resetChatNavigation();
+  renderedTabId = tabId;
+  messagesEl.innerHTML = '';
+  inputEl.value = '';
+  autoResizeInput();
+  syncSendButtonState();
+  addMessage('system', t('sp.cleared_message'));
+  const clearedHtml = messagesEl.innerHTML;
+  lastVisibleTabChatSnapshot = { tabId: Number(tabId), html: clearedHtml };
+  tabChats.set(Number(tabId), clearedHtml);
+  await persistTabChat(tabId, clearedHtml, { allowHidden: true }).catch(() => {});
+  refreshScheduledJobs({ tabId });
+  refreshRecommendedActions();
+}
 
 // Tool names → i18n key for the human-friendly label. Resolved at render
 // time so language changes take effect without a reload.
@@ -41,12 +2451,18 @@ const TOOL_KEYS = {
   type_text: 'tool.type_text',
   scroll: 'tool.scroll',
   navigate: 'tool.navigate',
+  go_back: 'tool.go_back',
+  go_forward: 'tool.go_forward',
   extract_data: 'tool.extract_data',
+  inspect_element_styles: 'tool.inspect_element_styles',
+  read_page_source: 'tool.read_page_source',
   wait_for_element: 'tool.wait_for_element',
   get_selection: 'tool.get_selection',
   execute_js: 'tool.execute_js',
   new_tab: 'tool.new_tab',
-  screenshot: 'tool.screenshot',
+  promote_iframe: 'tool.navigate',
+  schedule_resume: 'tool.schedule_resume',
+  schedule_task: 'tool.schedule_task',
   done: 'tool.done',
 };
 
@@ -57,6 +2473,7 @@ function friendlyToolLabel(name, args) {
   if (name === 'type_text' && args?.text) return t('tool.type_text.text', { text: truncate(args.text, 25) });
   if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
   if (name === 'new_tab' && args?.url) return t('tool.new_tab.url', { url: truncate(args.url, 35) });
+  if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });
   if (name === 'wait_for_element' && args?.selector) return t('tool.wait_for_element.selector', { selector: truncate(args.selector, 30) });
@@ -64,23 +2481,1509 @@ function friendlyToolLabel(name, args) {
   return key ? t(key) : name;
 }
 
+function formatScheduledTime(value) {
+  const ms = Date.parse(value || '');
+  if (!Number.isFinite(ms)) return t('sp.scheduled.time_unknown');
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toLocaleString();
+  }
+}
+
+function scheduledStatusLabel(status) {
+  return t(`sp.scheduled.status.${status || 'pending'}`);
+}
+
+function scheduledJobTitle(job) {
+  return String(job?.title || (job?.kind === 'resume' ? t('sp.scheduled.resume_title') : t('sp.scheduled.task_title')));
+}
+
+function scheduledJobMeta(job) {
+  const parts = [scheduledStatusLabel(job.status)];
+  if (job.nextRunAt && ['pending', 'queued', 'paused'].includes(job.status)) {
+    parts.push(t('sp.scheduled.next', { time: formatScheduledTime(job.nextRunAt) }));
+  }
+  if (job?.source === 'watch') {
+    const seconds = Number(job.watch?.intervalSeconds);
+    if (Number.isFinite(seconds)) parts.push(`${seconds}s`);
+    parts.push(job.watch?.keep ? t('sp.scheduled.watch_keep') : t('sp.scheduled.watch_once'));
+    if (job.watch?.beep) parts.push(`🔔 ${job.watch?.beepStyle || 'default'}`);
+    if (job.watch?.lastObservation && job.status !== 'completed') {
+      parts.push(truncate(String(job.watch.lastObservation), 80));
+    }
+    if (job.watch?.lastAlertWarning) {
+      parts.push(truncate(String(job.watch.lastAlertWarning), 80));
+    }
+  } else if (job.schedule?.type === 'recurring' && job.schedule?.interval_minutes) {
+    parts.push(t('sp.scheduled.recurring', { minutes: job.schedule.interval_minutes }));
+  }
+  if (job.status === 'needs_user_input' && job.pendingClarify?.question) {
+    parts.push(truncate(String(job.pendingClarify.question), 80));
+  }
+  if (job.status === 'completed' && job.lastResult) {
+    parts.push(truncate(String(job.lastResult), 80));
+  }
+  if (job.lastError) {
+    parts.push(truncate(String(job.lastError), 80));
+  }
+  return parts.filter(Boolean).join(' · ');
+}
+
+function scheduledJobActions(job) {
+  const actions = [];
+  if (job.status === 'paused') {
+    actions.push(['resume', t('sp.scheduled.resume')], ['delete', t('sp.scheduled.delete')]);
+  } else if (['pending', 'queued', 'needs_user_input'].includes(job.status)) {
+    actions.push(['run', t('sp.scheduled.run_now')], ['pause', t('sp.scheduled.pause')], ['cancel', t('sp.scheduled.cancel')]);
+  } else if (job.status === 'running') {
+    actions.push(['cancel', t('sp.scheduled.cancel')]);
+  } else if (['failed', 'completed', 'cancelled'].includes(job.status)) {
+    actions.push(['delete', t('sp.scheduled.delete')]);
+  }
+  return actions;
+}
+
+const SCHEDULED_VISIBLE_STATUSES = new Set(['pending', 'queued', 'paused', 'running', 'needs_user_input', 'failed', 'completed']);
+const COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS = 15 * 1000;
+const pinnedCompletedScheduledJobIds = new Set();
+let scheduledJobAutoHideTimer = null;
+
+function visibleScheduledJobs(jobs = []) {
+  const now = Date.now();
+  return jobs.filter((job) => {
+    if (!SCHEDULED_VISIBLE_STATUSES.has(job.status)) return false;
+    if (job.status !== 'completed') return true;
+    if (pinnedCompletedScheduledJobIds.has(String(job.id || ''))) return true;
+    const completedAt = Date.parse(job?.completedAt || job?.updatedAt || job?.lastRunAt || '');
+    if (!Number.isFinite(completedAt)) return true;
+    return now - completedAt < COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS;
+  });
+}
+
+function scheduleCompletedJobAutoHide(jobs = []) {
+  if (scheduledJobAutoHideTimer) {
+    clearTimeout(scheduledJobAutoHideTimer);
+    scheduledJobAutoHideTimer = null;
+  }
+  const now = Date.now();
+  let nextDelay = Infinity;
+  for (const job of jobs) {
+    if (job?.status !== 'completed') continue;
+    if (pinnedCompletedScheduledJobIds.has(String(job.id || ''))) continue;
+    const completedAt = Date.parse(job?.completedAt || job?.updatedAt || job?.lastRunAt || '');
+    if (!Number.isFinite(completedAt)) continue;
+    const remaining = COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS - (now - completedAt);
+    if (remaining > 0) nextDelay = Math.min(nextDelay, remaining);
+  }
+  if (Number.isFinite(nextDelay)) {
+    scheduledJobAutoHideTimer = setTimeout(() => {
+      scheduledJobAutoHideTimer = null;
+      refreshScheduledJobs();
+    }, Math.max(0, Math.ceil(nextDelay)));
+  }
+}
+
+function scheduledJobTabId(job) {
+  const tabId = job?.tabId ?? job?.target?.tabId ?? null;
+  if (tabId == null) return null;
+  const numeric = Number(tabId);
+  return Number.isFinite(numeric) ? numeric : tabId;
+}
+
+function isUrlTargetScheduledJob(job) {
+  return job?.kind === 'task' && job?.target?.type === 'url';
+}
+
+function findScheduledClarifyCard(jobId, clarifyId) {
+  for (const card of messagesEl?.querySelectorAll?.('.clarify-card[data-scheduled-job-id]') || []) {
+    if (card.dataset.scheduledJobId === String(jobId) && card.dataset.clarifyId === String(clarifyId)) {
+      return card;
+    }
+  }
+  return null;
+}
+
+function findScheduledClarifyCardForJob(jobId) {
+  for (const card of messagesEl?.querySelectorAll?.('.clarify-card[data-scheduled-job-id]') || []) {
+    if (card.dataset.scheduledJobId === String(jobId)) return card;
+  }
+  return null;
+}
+
+function findScheduledAssistantMessageForJob(jobId) {
+  const id = String(jobId || '');
+  if (!id) return null;
+  for (const msgEl of messagesEl?.querySelectorAll?.('.message.assistant[data-scheduled-job-id]') || []) {
+    if (msgEl.dataset.scheduledJobId === id) return msgEl;
+  }
+  const card = findScheduledClarifyCardForJob(id);
+  const msgEl = card?.closest?.('.message.assistant');
+  if (msgEl) return msgEl;
+  if (currentAssistantEl?.dataset?.scheduledJobId === id) return currentAssistantEl;
+  return null;
+}
+
+function ensureScheduledTerminalMessage(job) {
+  const jobId = job?.id ? String(job.id) : '';
+  if (!jobId || !isUrlTargetScheduledJob(job)) return null;
+  const existing = findScheduledAssistantMessageForJob(jobId);
+  if (existing) return existing;
+  resetChatNavigation();
+  const msgEl = addMessage('assistant', '');
+  msgEl.dataset.scheduledJobId = jobId;
+  return msgEl;
+}
+
+function ensureScheduledClarifyCards(jobs = []) {
+  if (!messagesEl) return;
+  for (const job of jobs) {
+    const pending = job?.pendingClarify;
+    if (job?.status !== 'needs_user_input' || !pending?.clarifyId) continue;
+    const jobTabId = scheduledJobTabId(job);
+    if (!isUrlTargetScheduledJob(job) && jobTabId != null && currentTabId != null && String(jobTabId) !== String(currentTabId)) continue;
+    if (findScheduledClarifyCard(job.id, pending.clarifyId)) continue;
+    renderClarifyCard({
+      ...pending,
+      scheduledJobId: job.id,
+      scheduledTabId: jobTabId,
+      forceNewScheduledCard: true,
+    });
+  }
+}
+
+function renderScheduledJobs(jobs = []) {
+  if (!scheduledJobsEl) return;
+  const visible = visibleScheduledJobs(jobs);
+  scheduleCompletedJobAutoHide(jobs);
+  scheduledJobsEl.replaceChildren();
+  scheduledJobsEl.classList.toggle('hidden', visible.length === 0);
+  for (const job of visible) {
+    const card = document.createElement('div');
+    card.className = 'scheduled-job-card';
+    card.dataset.jobId = job.id;
+    card.dataset.status = job.status;
+    card.dataset.source = job.source || '';
+
+    const title = document.createElement('div');
+    title.className = 'scheduled-job-title';
+    title.textContent = scheduledJobTitle(job);
+    card.appendChild(title);
+
+    const actions = document.createElement('div');
+    actions.className = 'scheduled-job-actions';
+    for (const [action, label] of scheduledJobActions(job)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.action = action;
+      btn.dataset.jobId = job.id;
+      btn.textContent = label;
+      actions.appendChild(btn);
+    }
+    card.appendChild(actions);
+
+    const meta = document.createElement('div');
+    meta.className = 'scheduled-job-meta';
+    meta.textContent = scheduledJobMeta(job);
+    card.appendChild(meta);
+
+    scheduledJobsEl.appendChild(card);
+  }
+  ensureScheduledClarifyCards(visible);
+}
+
+async function refreshScheduledJobs({ tabId = null } = {}) {
+  if (!scheduledJobsEl) return;
+  try {
+    const response = await sendToBackground('list_scheduled_jobs', { all: true });
+    const jobs = response?.jobs || [];
+    if (tabId != null && currentTabId !== tabId) return jobs;
+    renderScheduledJobs(jobs);
+    return jobs;
+  } catch (e) {
+    console.warn('[WebBrain] failed to refresh scheduled jobs:', e);
+    return [];
+  }
+}
+
+async function scheduledJobAction(action, jobId) {
+  const actionMap = {
+    run: 'run_scheduled_job_now',
+    pause: 'pause_scheduled_job',
+    resume: 'resume_scheduled_job',
+    cancel: 'cancel_scheduled_job',
+    delete: 'delete_scheduled_job',
+  };
+  const bgAction = actionMap[action];
+  if (!bgAction || !jobId) return;
+  const tabId = currentTabId;
+  try {
+    const response = await sendToBackground(bgAction, { jobId });
+    if (response && (response.ok === false || response.success === false)) {
+      if (currentTabId === tabId) {
+        addMessage('error', t('sp.error_prefix', { msg: response.error || 'Scheduled job action failed.' }));
+      }
+    }
+    await refreshScheduledJobs({ tabId });
+  } catch (e) {
+    if (currentTabId === tabId) {
+      addMessage('error', t('sp.error_prefix', { msg: e.message }));
+    }
+  }
+}
+
+async function drainQueuedPromptsAfterRunSettles() {
+  if (drainQueuedComposerMessageForCurrentTab()) return;
+  drainQueuedContextMenuPrompts();
+}
+
+function queueAgentUpdateDuringTabSwitch(msg) {
+  const tabId = msg?.tabId;
+  if (tabSwitchTransitionId == null || tabId == null) return false;
+  // Never render into a DOM whose tab is changing. Target-tab events are
+  // queued so updates newer than the fetched journal snapshot are not lost;
+  // sequence de-duplication drops events the snapshot already replayed.
+  if (tabId === tabSwitchTransitionId) queuedTabSwitchMessages.push(msg);
+  return true;
+}
+
+function drainQueuedAgentUpdatesForTab(tabId) {
+  if (!queuedTabSwitchMessages.length) return;
+  const replay = [];
+  const remaining = [];
+  for (const msg of queuedTabSwitchMessages) {
+    if (msg?.tabId === tabId) replay.push(msg);
+    else remaining.push(msg);
+  }
+  queuedTabSwitchMessages = remaining;
+  replay.forEach((msg) => handleAgentUpdateMessage(msg));
+}
+
+async function settleScheduledRun(event, job, tabId = currentTabId) {
+  const runTabId = normalizePlanReviewTabId(tabId);
+  const assistantEl = job?.id ? findScheduledAssistantMessageForJob(job.id) : currentAssistantEl;
+  if (assistantEl) {
+    finalizeSteps(assistantEl);
+    const textEl = assistantEl.querySelector('.message-text');
+    const watchPollEvent = ['polled', 'triggered'].includes(event);
+    if (textEl && (watchPollEvent || !textEl.textContent.trim()) && (
+      ['completed', 'clarification_required'].includes(event)
+      || watchPollEvent
+    ) && job?.lastResult) {
+      textEl.innerHTML = formatMarkdown(job.lastResult);
+      addMessageCopyButton(assistantEl);
+    }
+  }
+  const ownsActiveRun = !currentAssistantEl || currentAssistantEl === assistantEl;
+  if (runTabId != null) {
+    setTabProcessing(runTabId, false);
+    setTabAbortRequested(runTabId, false);
+  }
+  if (ownsActiveRun && sameTabId(currentTabId, runTabId)) {
+    syncSendButtonState();
+    hideActivity();
+    if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+    if (renderedTabId != null) await flushRenderedTabChat();
+    await drainQueuedPromptsAfterRunSettles();
+  }
+  if (event === 'completed' && job?.source !== 'watch') {
+    notifyCompletion({ success: job?.lastOutcome === 'success' });
+  }
+}
+
+async function handleScheduledJobEvent(data, tabId) {
+  refreshScheduledJobs({ tabId: currentTabId });
+  const event = data?.event;
+  const job = data?.job;
+  if (!event || !job) return;
+
+  const sameTab = tabId == null || tabId === currentTabId;
+  const runTabId = normalizePlanReviewTabId(tabId ?? currentTabId);
+  const jobId = job?.id ? String(job.id) : '';
+  const terminalScheduledEvent = ['completed', 'failed', 'clarification_required'].includes(event);
+  const watchPollEvent = ['polled', 'triggered'].includes(event);
+  const crossPanelScheduledEvent = isUrlTargetScheduledJob(job) && (
+    event === 'needs_user_input' ||
+    terminalScheduledEvent ||
+    watchPollEvent
+  );
+  if (!sameTab && !crossPanelScheduledEvent) return;
+  const scopeChangingScheduledEvent = event === 'running'
+    || terminalScheduledEvent
+    || watchPollEvent
+    || event === 'needs_user_input';
+  if (scopeChangingScheduledEvent && runTabId != null) {
+    await refreshConversationScopeState(runTabId);
+  }
+
+  const title = scheduledJobTitle(job);
+  if (event === 'created') {
+    addMessage('system', systemHtml(tSystemHtml('sp.scheduled.created', { title, time: formatScheduledTime(job.nextRunAt || job.scheduledAt) })));
+  } else if (event === 'running') {
+    clearActiveChatPayloadForTab(runTabId);
+    setTabProcessing(runTabId, true);
+    setTabAbortRequested(runTabId, false);
+    syncSendButtonState();
+    if (job?.source === 'watch') {
+      hideRecommendedActions();
+      resetChatNavigation();
+      currentAssistantEl = ensureScheduledTerminalMessage(job);
+    } else {
+      hideRecommendedActions();
+      resetChatNavigation();
+      currentAssistantEl = addMessage('assistant', '');
+    }
+    if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
+    showActivity(t('sp.scheduled.running', { title }));
+  } else if (event === 'completed') {
+    ensureScheduledTerminalMessage(job);
+    settleScheduledRun(event, job, runTabId);
+  } else if (event === 'polled' || event === 'triggered') {
+    ensureScheduledTerminalMessage(job);
+    settleScheduledRun(event, job, runTabId);
+  } else if (event === 'failed') {
+    settleScheduledRun(event, job, runTabId);
+    addMessage('error', t('sp.scheduled.failed', { title, msg: job.lastError || t('sp.scheduled.unknown_error') }));
+  } else if (event === 'clarification_required') {
+    ensureScheduledTerminalMessage(job);
+    settleScheduledRun(event, job, runTabId);
+  } else if (event === 'needs_user_input') {
+    ensureScheduledClarifyCards([job]);
+    hideActivity();
+    setTabAbortRequested(runTabId, false);
+    if (currentAssistantEl) {
+      clearActiveChatPayloadForTab(runTabId);
+      setTabProcessing(runTabId, true);
+      syncSendButtonState();
+      hideRecommendedActions();
+    } else {
+      setTabProcessing(runTabId, false);
+      syncSendButtonState();
+      addMessage('system', systemHtml(tSystemHtml('sp.scheduled.needs_user_input', { title })));
+      drainQueuedPromptsAfterRunSettles();
+    }
+  }
+}
+
+if (scheduledJobsEl) {
+  scheduledJobsEl.addEventListener('click', (e) => {
+    const card = e.target.closest('.scheduled-job-card[data-job-id]');
+    if (card?.dataset.status === 'completed') {
+      pinnedCompletedScheduledJobIds.add(String(card.dataset.jobId || ''));
+    }
+    const btn = e.target.closest('button[data-action][data-job-id]');
+    if (!btn) return;
+    scheduledJobAction(btn.dataset.action, btn.dataset.jobId);
+  });
+}
+
+function datetimeLocalValue(ms) {
+  const d = new Date(ms);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function isHttpScheduleUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+async function getCurrentScheduleUrl(tabId = currentTabId) {
+  if (tabId == null) return '';
+  try {
+    const tab = await browser.tabs.get(tabId);
+    return tab?.url || '';
+  } catch {
+    return '';
+  }
+}
+
+function addScheduleField(form, labelText, control) {
+  const label = document.createElement('label');
+  label.className = 'schedule-field';
+  const span = document.createElement('span');
+  span.textContent = labelText;
+  label.appendChild(span);
+  label.appendChild(control);
+  form.appendChild(label);
+  return label;
+}
+
+function getScheduleComposerControls(form) {
+  return {
+    titleInput: form?.querySelector('.schedule-title'),
+    promptInput: form?.querySelector('.schedule-prompt'),
+    scheduleType: form?.querySelector('.schedule-type'),
+    timeMode: form?.querySelector('.schedule-time-mode'),
+    afterInput: form?.querySelector('.schedule-after'),
+    runAtInput: form?.querySelector('.schedule-run-at'),
+    intervalInput: form?.querySelector('.schedule-interval'),
+    targetType: form?.querySelector('.schedule-target-type'),
+    urlInput: form?.querySelector('.schedule-url'),
+    modeInput: form?.querySelector('.schedule-mode'),
+    errorEl: form?.querySelector('.schedule-error'),
+    submit: form?.querySelector('.schedule-submit'),
+    cancel: form?.querySelector('.schedule-cancel'),
+  };
+}
+
+function getScheduleComposerTabId(form) {
+  const rawTabId = form?.dataset?.tabId;
+  const parsed = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
+  return Number.isFinite(parsed) ? parsed : currentTabId;
+}
+
+function updateScheduleComposerVisibility(form) {
+  const { scheduleType, timeMode, afterInput, runAtInput, intervalInput, targetType, urlInput } = getScheduleComposerControls(form);
+  afterInput?.closest('.schedule-field')?.classList.toggle('hidden', timeMode?.value !== 'after');
+  runAtInput?.closest('.schedule-field')?.classList.toggle('hidden', timeMode?.value !== 'at');
+  intervalInput?.closest('.schedule-field')?.classList.toggle('hidden', scheduleType?.value !== 'recurring');
+  urlInput?.closest('.schedule-field')?.classList.toggle('hidden', targetType?.value !== 'url');
+}
+
+async function submitScheduleComposer(e, form) {
+  e.preventDefault();
+  const {
+    titleInput,
+    promptInput,
+    scheduleType,
+    timeMode,
+    afterInput,
+    runAtInput,
+    intervalInput,
+    targetType,
+    urlInput,
+    modeInput,
+    errorEl,
+    submit,
+  } = getScheduleComposerControls(form);
+  const tabId = getScheduleComposerTabId(form);
+  if (tabId == null || !promptInput || !scheduleType || !timeMode || !afterInput || !runAtInput || !intervalInput || !targetType || !urlInput || !modeInput || !errorEl || !submit) {
+    return;
+  }
+
+  errorEl.textContent = '';
+  const prompt = promptInput.value.trim();
+  if (!prompt) {
+    errorEl.textContent = t('sp.schedule_form.error_prompt');
+    return;
+  }
+
+  const schedule = { type: scheduleType.value };
+  if (timeMode.value === 'after') {
+    const minutes = Number(afterInput.value);
+    if (!Number.isFinite(minutes) || minutes < 0) {
+      errorEl.textContent = t('sp.schedule_form.error_time');
+      return;
+    }
+    schedule.after_seconds = Math.round(minutes * 60);
+  } else {
+    const runAtMs = Date.parse(runAtInput.value);
+    if (!Number.isFinite(runAtMs)) {
+      errorEl.textContent = t('sp.schedule_form.error_time');
+      return;
+    }
+    schedule.run_at = new Date(runAtMs).toISOString();
+  }
+  if (schedule.type === 'recurring') {
+    const interval = Number(intervalInput.value);
+    if (!Number.isFinite(interval) || interval < 1) {
+      errorEl.textContent = t('sp.schedule_form.error_interval');
+      return;
+    }
+    schedule.interval_minutes = Math.floor(interval);
+  }
+
+  const target = { type: targetType.value };
+  if (target.type === 'url') {
+    const url = urlInput.value.trim();
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('bad protocol');
+      target.url = parsed.href;
+    } catch {
+      errorEl.textContent = t('sp.schedule_form.error_url');
+      return;
+    }
+  }
+
+  submit.disabled = true;
+  try {
+    const title = titleInput?.value?.trim() || prompt.slice(0, 80) || t('sp.scheduled.task_title');
+    const res = await sendToBackground('create_scheduled_job', {
+      tabId,
+      job: { title, prompt, schedule, target, mode: modeInput.value },
+    });
+    if (res?.success === false || res?.ok === false || !res?.scheduledAt) {
+      throw new Error(res?.error || 'Could not create scheduled job.');
+    }
+    const createdHtml = tSystemHtml('sp.schedule_form.created', {
+      title,
+      time: formatScheduledTime(res.scheduledAt),
+    });
+    if (currentTabId !== tabId) {
+      replaceCachedScheduleComposer(tabId, form.dataset.composerId, createdHtml);
+      return;
+    }
+    const msgEl = form.closest('.message');
+    form.remove();
+    const textEl = msgEl?.querySelector('.message-text');
+    if (textEl) {
+      textEl.innerHTML = createdHtml;
+    }
+    await refreshScheduledJobs({ tabId });
+  } catch (err) {
+    if (currentTabId !== tabId) {
+      updateCachedScheduleComposerError(tabId, form.dataset.composerId, err.message);
+      return;
+    }
+    submit.disabled = false;
+    errorEl.textContent = err.message;
+  }
+}
+
+function bindScheduleComposer(form) {
+  if (!form || form.dataset.bound) return;
+  const { scheduleType, timeMode, targetType, cancel } = getScheduleComposerControls(form);
+  form.dataset.bound = 'true';
+  scheduleType?.addEventListener('change', () => updateScheduleComposerVisibility(form));
+  timeMode?.addEventListener('change', () => updateScheduleComposerVisibility(form));
+  targetType?.addEventListener('change', () => updateScheduleComposerVisibility(form));
+  updateScheduleComposerVisibility(form);
+  cancel?.addEventListener('click', () => form.closest('.message')?.remove());
+  form.addEventListener('submit', (e) => submitScheduleComposer(e, form));
+}
+
+function replaceCachedScheduleComposer(tabId, composerId, html) {
+  const cached = tabChats.get(tabId);
+  if (typeof cached !== 'string' || !composerId) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = cached;
+  const form = wrapper.querySelector(`form.schedule-composer[data-composer-id="${composerId}"]`);
+  const textEl = form?.closest('.message')?.querySelector('.message-text');
+  if (!form || !textEl) return;
+  form.remove();
+  textEl.innerHTML = html;
+  persistTabChat(tabId, wrapper.innerHTML);
+}
+
+function updateCachedScheduleComposerError(tabId, composerId, message) {
+  const cached = tabChats.get(tabId);
+  if (typeof cached !== 'string' || !composerId) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = cached;
+  const form = wrapper.querySelector(`form.schedule-composer[data-composer-id="${composerId}"]`);
+  const submit = form?.querySelector('.schedule-submit');
+  const errorEl = form?.querySelector('.schedule-error');
+  if (!form || !submit || !errorEl) return;
+  submit.disabled = false;
+  errorEl.textContent = message || '';
+  persistTabChat(tabId, wrapper.innerHTML);
+}
+
+async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) {
+  if (tabId == null) return;
+  const initialScheduleUrl = await getCurrentScheduleUrl(tabId);
+  if (currentTabId !== tabId) return;
+
+  const msgEl = addMessage('system', t('sp.schedule_form.opened'));
+  const content = msgEl.querySelector('.message-content');
+  const form = document.createElement('form');
+  form.className = 'schedule-composer';
+  form.dataset.tabId = String(tabId);
+  form.dataset.composerId = `schedule-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'schedule-title';
+  titleInput.maxLength = 200;
+  titleInput.placeholder = t('sp.schedule_form.title_placeholder');
+  addScheduleField(form, t('sp.schedule_form.title'), titleInput);
+
+  const promptInput = document.createElement('textarea');
+  promptInput.className = 'schedule-prompt';
+  promptInput.rows = 4;
+  promptInput.required = true;
+  promptInput.maxLength = 8000;
+  promptInput.placeholder = t('sp.schedule_form.prompt_placeholder');
+  promptInput.value = prefillPrompt;
+  addScheduleField(form, t('sp.schedule_form.prompt'), promptInput);
+
+  const row = document.createElement('div');
+  row.className = 'schedule-row';
+
+  const scheduleType = document.createElement('select');
+  scheduleType.className = 'schedule-type';
+  scheduleType.innerHTML = `<option value="once">${escapeHtml(t('sp.schedule_form.once'))}</option><option value="recurring">${escapeHtml(t('sp.schedule_form.recurring'))}</option>`;
+  addScheduleField(row, t('sp.schedule_form.type'), scheduleType);
+
+  const timeMode = document.createElement('select');
+  timeMode.className = 'schedule-time-mode';
+  timeMode.innerHTML = `<option value="after">${escapeHtml(t('sp.schedule_form.in_minutes'))}</option><option value="at">${escapeHtml(t('sp.schedule_form.at_time'))}</option>`;
+  addScheduleField(row, t('sp.schedule_form.when'), timeMode);
+  form.appendChild(row);
+
+  const afterInput = document.createElement('input');
+  afterInput.type = 'number';
+  afterInput.min = '0';
+  afterInput.max = '10080';
+  afterInput.step = '1';
+  afterInput.value = '10';
+  afterInput.className = 'schedule-after';
+  addScheduleField(form, t('sp.schedule_form.after_minutes'), afterInput);
+
+  const runAtInput = document.createElement('input');
+  runAtInput.type = 'datetime-local';
+  runAtInput.value = datetimeLocalValue(Date.now() + 10 * 60 * 1000);
+  runAtInput.className = 'schedule-run-at';
+  addScheduleField(form, t('sp.schedule_form.run_at'), runAtInput);
+
+  const intervalInput = document.createElement('input');
+  intervalInput.type = 'number';
+  intervalInput.min = '1';
+  intervalInput.step = '1';
+  intervalInput.value = '60';
+  intervalInput.className = 'schedule-interval';
+  addScheduleField(form, t('sp.schedule_form.interval_minutes'), intervalInput);
+
+  const targetType = document.createElement('select');
+  targetType.className = 'schedule-target-type';
+  targetType.innerHTML = `<option value="current_tab">${escapeHtml(t('sp.schedule_form.current_tab'))}</option><option value="url">${escapeHtml(t('sp.schedule_form.url'))}</option>`;
+  addScheduleField(form, t('sp.schedule_form.target'), targetType);
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.className = 'schedule-url';
+  urlInput.placeholder = 'https://example.com/';
+  addScheduleField(form, t('sp.schedule_form.target_url'), urlInput);
+  if (isHttpScheduleUrl(initialScheduleUrl)) {
+    urlInput.value = initialScheduleUrl;
+    targetType.value = 'url';
+  }
+
+  const modeInput = document.createElement('select');
+  modeInput.className = 'schedule-mode';
+  modeInput.innerHTML = `<option value="act">${escapeHtml(t('sp.mode.act'))}</option><option value="ask">${escapeHtml(t('sp.mode.ask'))}</option><option value="dev">${escapeHtml(t('sp.mode.dev'))}</option>`;
+  modeInput.value = agentMode === 'dev' ? 'dev' : (agentMode === 'ask' ? 'ask' : 'act');
+  addScheduleField(form, t('sp.schedule_form.mode'), modeInput);
+
+  const errorEl = document.createElement('div');
+  errorEl.className = 'schedule-error';
+  form.appendChild(errorEl);
+
+  const actions = document.createElement('div');
+  actions.className = 'schedule-form-actions';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'schedule-submit';
+  submit.textContent = t('sp.schedule_form.create');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'schedule-cancel';
+  cancel.textContent = t('sp.schedule_form.cancel');
+  actions.appendChild(submit);
+  actions.appendChild(cancel);
+  form.appendChild(actions);
+
+  bindScheduleComposer(form);
+  content.appendChild(form);
+  promptInput.focus();
+  scrollToBottom();
+}
+
+async function showScratchpad(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_scratchpad', { tabId });
+    if (currentTabId !== tabId) return;
+    const body = String(res?.body || '').trim();
+    if (!res?.exists || !body || body === '(empty)') {
+      addPersistentSlashMessage(t('sp.scratchpad.empty'));
+      return;
+    }
+    const msgEl = addPersistentSlashMessage(systemHtml(`${t('sp.scratchpad.title_html')}<pre class="scratchpad-dump">${escapeHtml(body)}</pre>`));
+    addScratchpadCopyButton(msgEl);
+  } catch (e) {
+    if (currentTabId !== tabId) return;
+    addPersistentSlashMessage(systemHtml(tSystemHtml('sp.scratchpad.error', { msg: e.message })));
+  }
+}
+
+const USER_MEMORY_FAILURE_REASON_KEYS = {
+  invalid_or_sensitive: 'sp.memory.reason.invalid_or_sensitive',
+  not_found: 'sp.memory.reason.not_found',
+};
+
+function userMemoryFailureMessage(res) {
+  const reasonKey = USER_MEMORY_FAILURE_REASON_KEYS[res?.reason];
+  if (reasonKey) return t(reasonKey);
+  return t('sp.memory.error', { msg: res?.reason || res?.error || 'unknown error' });
+}
+
+async function showUserMemory(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_user_memory');
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      addPersistentSlashMessage(systemHtml(tSystemHtml('sp.memory.error', { msg: res?.error || 'unknown error' })));
+      return;
+    }
+    const records = (Array.isArray(res.records) ? res.records : [])
+      .filter((record) => record && !record.archivedAt && record.text);
+    if (!records.length) {
+      addPersistentSlashMessage(t('sp.memory.empty'));
+      return;
+    }
+    const body = records.map((record) => {
+      const kind = record.kind || 'preference';
+      return `${record.id} [${kind}] ${record.text}`;
+    }).join('\n');
+    const msgEl = addPersistentSlashMessage(systemHtml(`${t('sp.memory.title_html')}<pre class="scratchpad-dump">${escapeHtml(body)}</pre>`));
+    addScratchpadCopyButton(msgEl);
+  } catch (e) {
+    if (currentTabId !== tabId) return;
+    addPersistentSlashMessage(systemHtml(tSystemHtml('sp.memory.error', { msg: e.message })));
+  }
+}
+
+async function rememberUserMemory(note, tabId = currentTabId) {
+  const text = String(note || '').trim();
+  if (!text) {
+    if (currentTabId !== tabId) return;
+    showComposerToast(t('sp.memory.remember_empty'), { duration: 5000 });
+    return;
+  }
+  try {
+    const res = await sendToBackground('add_user_memory', { text });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(userMemoryFailureMessage(res), { duration: 5000 });
+      return;
+    }
+    showComposerToast(t('sp.memory.remembered'));
+  } catch (e) {
+    if (currentTabId !== tabId) return;
+    showComposerToast(t('sp.memory.error', { msg: e.message }), { duration: 5000 });
+  }
+}
+
+async function forgetUserMemory(id, tabId = currentTabId) {
+  const memoryId = String(id || '').trim();
+  if (!memoryId) {
+    if (currentTabId !== tabId) return;
+    showComposerToast(t('sp.memory.forget_empty'), { duration: 5000 });
+    return;
+  }
+  try {
+    const res = await sendToBackground('delete_user_memory', { id: memoryId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(userMemoryFailureMessage(res), { duration: 5000 });
+      return;
+    }
+    showComposerToast(t('sp.memory.forgotten'));
+  } catch (e) {
+    if (currentTabId !== tabId) return;
+    showComposerToast(t('sp.memory.error', { msg: e.message }), { duration: 5000 });
+  }
+}
+
+const SAVED_WORKFLOW_FAILURE_REASON_KEYS = {
+  conversation_required: 'sp.workflows.reason.no_trace',
+  no_successful_trace: 'sp.workflows.reason.no_trace',
+  successful_run_required: 'sp.workflows.reason.no_trace',
+  no_replayable_steps: 'sp.workflows.reason.no_steps',
+  not_found: 'sp.workflows.reason.not_found',
+  name_required: 'sp.workflows.reason.name_required',
+  http_start_url_required: 'sp.workflows.reason.http_start_url',
+  normalization_failed: 'sp.workflows.reason.normalization_failed',
+  invalid_workflow: 'sp.workflows.reason.normalization_failed',
+};
+
+const MAX_PORTABLE_WORKFLOW_FILE_BYTES = 1024 * 1024;
+
+function savedWorkflowFailureMessage(res) {
+  if (res?.reason === 'workflow_too_large') {
+    return t('sp.workflows.error', { msg: 'portable workflow files must not exceed 1 MiB' });
+  }
+  if (res?.reason === 'workflow_limit') {
+    return t('sp.workflows.error', { msg: 'the saved workflow limit of 100 has been reached' });
+  }
+  const reasonKey = SAVED_WORKFLOW_FAILURE_REASON_KEYS[res?.reason];
+  return reasonKey
+    ? t(reasonKey)
+    : t('sp.workflows.error', { msg: res?.reason || res?.error || 'unknown error' });
+}
+
+const boundSavedWorkflowManagers = new WeakSet();
+
+function setSavedWorkflowButtonLabel(button, label, workflowName = '') {
+  button.textContent = label;
+  button.title = label;
+  if (workflowName) button.setAttribute('aria-label', `${label}: ${workflowName}`);
+}
+
+function savedWorkflowManagerActionButton(action, label, workflowName = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.setAttribute('data-workflow-action', action);
+  setSavedWorkflowButtonLabel(button, label, workflowName);
+  return button;
+}
+
+function renderSavedWorkflowManager(manager, workflows, tabId) {
+  manager.replaceChildren();
+  manager.className = 'workflow-manager';
+  manager.dataset.tabId = String(tabId);
+
+  for (const workflow of workflows) {
+    const card = document.createElement('section');
+    card.className = 'workflow-card';
+    card.dataset.workflowId = workflow.id;
+
+    const title = document.createElement('div');
+    title.className = 'workflow-card-title';
+    title.textContent = workflow.name;
+
+    const meta = document.createElement('div');
+    meta.className = 'workflow-card-meta';
+    meta.textContent = t('sp.workflows.meta', {
+      id: workflow.id,
+      steps: workflow.steps?.length || 0,
+      parameters: workflow.parameters?.length || 0,
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'workflow-card-actions';
+    if (!isStandaloneWindow) {
+      actions.append(savedWorkflowManagerActionButton('run', t('sp.scheduled.run_now'), workflow.name));
+    }
+    actions.append(
+      savedWorkflowManagerActionButton('rename', t('sp.workflows.rename'), workflow.name),
+      savedWorkflowManagerActionButton('export', t('st.memory.export'), workflow.name),
+      savedWorkflowManagerActionButton('delete', t('sp.scheduled.delete'), workflow.name),
+    );
+
+    const renameForm = document.createElement('form');
+    renameForm.className = 'workflow-rename-form hidden';
+    const renameInput = document.createElement('input');
+    renameInput.type = 'text';
+    renameInput.required = true;
+    renameInput.maxLength = 80;
+    renameInput.value = workflow.name;
+    renameInput.setAttribute('aria-label', t('sp.workflows.rename'));
+    const renameSubmit = document.createElement('button');
+    renameSubmit.type = 'submit';
+    renameSubmit.textContent = t('st.providers.save');
+    const renameCancel = savedWorkflowManagerActionButton('cancel-rename', t('sp.schedule_form.cancel'), workflow.name);
+    renameForm.append(renameInput, renameSubmit, renameCancel);
+
+    card.append(title, meta, actions, renameForm);
+    manager.appendChild(card);
+  }
+  bindSavedWorkflowManager(manager);
+}
+
+async function refreshSavedWorkflowManager(manager, tabId) {
+  const res = await sendToBackground('list_saved_workflows');
+  if (currentTabId !== tabId || !manager.isConnected) return;
+  if (!res?.ok) throw new Error(res?.error || 'unknown error');
+  const workflows = Array.isArray(res.workflows) ? res.workflows : [];
+  if (!workflows.length) {
+    manager.replaceChildren();
+    const empty = document.createElement('div');
+    empty.className = 'workflow-manager-empty';
+    empty.textContent = t('sp.workflows.empty');
+    manager.appendChild(empty);
+    return;
+  }
+  renderSavedWorkflowManager(manager, workflows, tabId);
+}
+
+function bindSavedWorkflowManager(manager) {
+  if (!manager || boundSavedWorkflowManagers.has(manager)) return;
+  boundSavedWorkflowManagers.add(manager);
+  manager.addEventListener('click', async (event) => {
+    const button = event.target?.closest?.('button[data-workflow-action]');
+    if (!button || !manager.contains(button)) return;
+    const card = button.closest('.workflow-card');
+    const workflowId = String(card?.dataset?.workflowId || '');
+    const tabId = Number(manager.dataset.tabId);
+    if (!card || !workflowId || !Number.isFinite(tabId)) return;
+    const action = button.dataset.workflowAction;
+    const form = card.querySelector('.workflow-rename-form');
+    const workflowName = card.querySelector('.workflow-card-title')?.textContent || workflowId;
+    if (action === 'rename' || action === 'cancel-rename') {
+      form?.classList.toggle('hidden', action !== 'rename');
+      if (action === 'rename') {
+        const input = form?.querySelector('input');
+        input?.focus();
+        input?.select();
+      }
+      return;
+    }
+    if (action === 'delete' && button.dataset.deleteArmed !== 'true') {
+      button.dataset.deleteArmed = 'true';
+      button.classList.add('confirm-delete');
+      setSavedWorkflowButtonLabel(button, t('sp.workflows.delete_confirm'), workflowName);
+      setTimeout(() => {
+        if (!button.isConnected || button.disabled) return;
+        button.dataset.deleteArmed = 'false';
+        button.classList.remove('confirm-delete');
+        setSavedWorkflowButtonLabel(button, t('sp.scheduled.delete'), workflowName);
+      }, 4000);
+      return;
+    }
+    button.disabled = true;
+    try {
+      if (action === 'run') await prepareSavedWorkflowRun(workflowId, tabId);
+      else if (action === 'export') await exportSavedWorkflow(workflowId, tabId);
+      else if (action === 'delete' && await deleteSavedWorkflow(workflowId, tabId)) {
+        await refreshSavedWorkflowManager(manager, tabId);
+      }
+    } catch (error) {
+      if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        if (action === 'delete') {
+          button.dataset.deleteArmed = 'false';
+          button.classList.remove('confirm-delete');
+          setSavedWorkflowButtonLabel(button, t('sp.scheduled.delete'), workflowName);
+        }
+      }
+    }
+  });
+  manager.addEventListener('submit', async (event) => {
+    const form = event.target?.closest?.('form.workflow-rename-form');
+    if (!form || !manager.contains(form)) return;
+    event.preventDefault();
+    const card = form.closest('.workflow-card');
+    const workflowId = String(card?.dataset?.workflowId || '');
+    const tabId = Number(manager.dataset.tabId);
+    const input = form.querySelector('input');
+    const submit = form.querySelector('button[type="submit"]');
+    if (!workflowId || !Number.isFinite(tabId) || !input || !submit) return;
+    input.value = input.value.trim();
+    if (!input.value) {
+      input.reportValidity();
+      return;
+    }
+    submit.disabled = true;
+    try {
+      if (await renameSavedWorkflow(workflowId, input.value, tabId)) {
+        await refreshSavedWorkflowManager(manager, tabId);
+      }
+    } catch (error) {
+      if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+}
+
+function teacherModeFailureMessage(res) {
+  if (res?.reason === 'already_active') return t('sp.teach.already_active');
+  if (res?.reason === 'no_active_session') return t('sp.teach.inactive');
+  if (res?.reason === 'agent_running') return t('sp.teach.agent_running');
+  if (res?.reason === 'capture_unavailable') return t('sp.teach.capture_unavailable');
+  return savedWorkflowFailureMessage(res);
+}
+
+async function showTeacherModeStatus(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_teacher_mode', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) throw new Error(res?.error || res?.reason || 'unknown error');
+    addPersistentSlashMessage(res.session?.active
+      ? t('sp.teach.status', { name: res.session.name, count: res.session.actionCount || 0 })
+      : t('sp.teach.inactive'));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function startTeacherMode(name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('start_teacher_mode', { tabId, name });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(teacherModeFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    addPersistentSlashMessage(t('sp.teach.started', { name: res.session?.name || name }));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function endTeacherMode(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('end_teacher_mode', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(teacherModeFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const message = t('sp.teach.saved', {
+      name: res.workflow?.name || '',
+      count: res.workflow?.steps?.length || 0,
+    });
+    const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+    addPersistentSlashMessage(warnings.length ? `${message} ${warnings.join(' ')}` : message);
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function showSavedWorkflows(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('list_saved_workflows');
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) throw new Error(res?.error || 'unknown error');
+    const workflows = Array.isArray(res.workflows) ? res.workflows : [];
+    if (!workflows.length) {
+      addPersistentSlashMessage(t('sp.workflows.empty'));
+      return;
+    }
+    const msgEl = addPersistentSlashMessage(systemHtml(t('sp.workflows.title_html')));
+    const manager = document.createElement('div');
+    manager.className = 'workflow-manager';
+    msgEl.querySelector('.message-text')?.appendChild(manager);
+    renderSavedWorkflowManager(manager, workflows, tabId);
+  } catch (error) {
+    if (currentTabId === tabId) addPersistentSlashMessage(t('sp.workflows.error', { msg: error.message }));
+  }
+}
+
+async function saveLatestWorkflow(name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('save_latest_workflow', { tabId, name });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const savedMessage = t('sp.workflows.saved', { name: res.workflow?.name || name });
+    const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+    showComposerToast(warnings.length ? `${savedMessage} ${warnings.join(' ')}` : savedMessage, {
+      duration: warnings.length ? 10000 : 3500,
+    });
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function deleteSavedWorkflow(id, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('delete_saved_workflow', { id: String(id || '').trim() });
+    if (currentTabId !== tabId) return false;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return false;
+    }
+    showComposerToast(t('sp.workflows.deleted', { name: res.workflow?.name || id }));
+    return true;
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+    return false;
+  }
+}
+
+async function renameSavedWorkflow(id, name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('rename_saved_workflow', {
+      id: String(id || '').trim(),
+      name: String(name || '').trim(),
+    });
+    if (currentTabId !== tabId) return false;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return false;
+    }
+    showComposerToast(t('sp.workflows.saved', { name: res.workflow?.name || name }));
+    return true;
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+    return false;
+  }
+}
+
+function savedWorkflowDownloadFilename(name) {
+  const stem = String(name || 'workflow')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 120) || 'workflow';
+  return `${stem}.webbrain-workflow.json`;
+}
+
+async function exportSavedWorkflow(id, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('export_saved_workflow', { id: String(id || '').trim() });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok || !res.workflow) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const json = JSON.stringify(res.workflow);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = savedWorkflowDownloadFilename(res.workflow.name);
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 7000);
+    }
+    showComposerToast(savedWorkflowDownloadFilename(res.workflow.name));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function importSavedWorkflowDefinition(definition, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('import_saved_workflow', { definition });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok || !res.workflow) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    showComposerToast(t('sp.workflows.saved', { name: res.workflow.name }), { duration: 5000 });
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+function requestSavedWorkflowFile(tabId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.webbrain-workflow.json,application/json';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_PORTABLE_WORKFLOW_FILE_BYTES) {
+      showComposerToast(savedWorkflowFailureMessage({ reason: 'workflow_too_large' }), { duration: 7000 });
+      return;
+    }
+    file.text()
+      .then((json) => {
+        if (new TextEncoder().encode(json).byteLength > MAX_PORTABLE_WORKFLOW_FILE_BYTES) {
+          throw Object.assign(new Error('workflow_too_large'), { workflowReason: 'workflow_too_large' });
+        }
+        return JSON.parse(json);
+      })
+      .then((definition) => importSavedWorkflowDefinition(definition, tabId))
+      .catch((error) => {
+        if (currentTabId !== tabId) return;
+        const reason = error?.workflowReason || 'invalid_workflow';
+        showComposerToast(savedWorkflowFailureMessage({ reason }), { duration: 7000 });
+      });
+  }, { once: true });
+  input.click();
+}
+
+const boundWorkflowParameterForms = new WeakSet();
+
+function rejectStandaloneWorkflowRun() {
+  if (!isStandaloneWindow) return false;
+  showComposerToast(t('sp.workflows.standalone_unavailable'), { duration: 6000 });
+  return true;
+}
+
+async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
+  if (!workflow?.id || currentTabId !== tabId) return false;
+  if (rejectStandaloneWorkflowRun()) return false;
+  if (!(await ensureActMode())) return false;
+  inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
+  autoResizeInput();
+  return sendMessage({
+    __mode: 'act',
+    workflowId: workflow.id,
+    workflowParameters: parameters,
+  });
+}
+
+async function submitSavedWorkflowParameters(event, form) {
+  event.preventDefault();
+  const tabId = Number(form?.dataset?.tabId);
+  const workflowId = String(form?.dataset?.workflowId || '');
+  const errorEl = form?.querySelector('.schedule-error');
+  const submit = form?.querySelector('.schedule-submit');
+  if (!Number.isFinite(tabId) || !workflowId || !errorEl || !submit) return;
+  errorEl.textContent = '';
+  submit.disabled = true;
+  try {
+    const res = await sendToBackground('get_saved_workflow', { id: workflowId });
+    if (!res?.ok || !res.workflow) throw new Error(savedWorkflowFailureMessage(res));
+    const inputs = new Map(Array.from(form.querySelectorAll('[data-workflow-parameter-id]'))
+      .map((input) => [input.dataset.workflowParameterId, input]));
+    const parameters = {};
+    for (const descriptor of res.workflow.parameters || []) {
+      const input = inputs.get(descriptor.id);
+      if (!input) throw new Error(t('sp.workflows.error', { msg: 'parameter form is incomplete' }));
+      if (descriptor.required !== false && input.value === '') {
+        throw new Error(t('sp.workflows.parameter_required', { name: descriptor.label || descriptor.id }));
+      }
+      parameters[descriptor.id] = input.value;
+    }
+    inputs.forEach((input) => { input.value = ''; });
+    form.closest('.message')?.remove();
+    setTimeout(() => {
+      startSavedWorkflowRun(res.workflow, parameters, tabId)
+        .catch((error) => showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 }));
+    }, 0);
+  } catch (error) {
+    submit.disabled = false;
+    errorEl.textContent = error.message;
+  }
+}
+
+function bindSavedWorkflowParameterForm(form) {
+  if (!form || boundWorkflowParameterForms.has(form)) return;
+  boundWorkflowParameterForms.add(form);
+  form.querySelector('.schedule-cancel')?.addEventListener('click', () => form.closest('.message')?.remove());
+  form.addEventListener('submit', (event) => submitSavedWorkflowParameters(event, form));
+}
+
+function renderSavedWorkflowParameterForm(workflow, tabId = currentTabId) {
+  if (!workflow?.id || currentTabId !== tabId) return;
+  const parameterMessage = t('sp.workflows.parameters_for', { name: workflow.name });
+  const msgEl = addMessage('system', parameterMessage);
+  const content = msgEl.querySelector('.message-content');
+  const form = document.createElement('form');
+  form.className = 'schedule-composer workflow-parameter-form';
+  form.dataset.tabId = String(tabId);
+  form.dataset.workflowId = workflow.id;
+  for (const parameter of workflow.parameters || []) {
+    const input = document.createElement('input');
+    input.type = parameter.sensitive ? 'password' : 'text';
+    input.autocomplete = 'off';
+    input.maxLength = 10000;
+    input.required = parameter.required !== false;
+    input.dataset.workflowParameterId = parameter.id;
+    addScheduleField(form, parameter.label || parameter.id, input);
+  }
+  const errorEl = document.createElement('div');
+  errorEl.className = 'schedule-error';
+  form.appendChild(errorEl);
+  const actions = document.createElement('div');
+  actions.className = 'schedule-form-actions';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'schedule-submit';
+  submit.textContent = t('sp.scheduled.run_now');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'schedule-cancel';
+  cancel.textContent = t('sp.schedule_form.cancel');
+  actions.append(submit, cancel);
+  form.appendChild(actions);
+  bindSavedWorkflowParameterForm(form);
+  content.appendChild(form);
+  form.querySelector('input')?.focus();
+  scrollToBottom();
+}
+
+async function prepareSavedWorkflowRun(id, tabId = currentTabId) {
+  if (rejectStandaloneWorkflowRun()) return false;
+  try {
+    const res = await sendToBackground('get_saved_workflow', { id: String(id || '').trim() });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok || !res.workflow) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return;
+    }
+    if (res.workflow.parameters?.length) {
+      renderSavedWorkflowParameterForm(res.workflow, tabId);
+      return;
+    }
+    setTimeout(() => {
+      startSavedWorkflowRun(res.workflow, {}, tabId)
+        .catch((error) => showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 }));
+    }, 0);
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function showProgress(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_progress', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok && !res?.success) {
+      addPersistentSlashMessage(systemHtml(tSystemHtml('sp.progress.error', { msg: res?.error || 'unknown error' })));
+      return;
+    }
+    const rows = Array.isArray(res.rows) ? res.rows : [];
+    const counts = res.counts || {};
+    if (!rows.length) {
+      addPersistentSlashMessage(t('sp.progress.empty'));
+      return;
+    }
+    const summary = [
+      `sessionId: ${res.sessionId || '(active session)'}`,
+      `total: ${counts.total ?? rows.length}`,
+      `pending: ${counts.pending ?? 0}`,
+      `acted: ${counts.acted ?? 0}`,
+      `processed: ${counts.processed ?? 0}`,
+      `skipped: ${counts.skipped ?? 0}`,
+      `failed: ${counts.failed ?? 0}`,
+      `unresolved: ${counts.unresolved ?? 0}`,
+    ].join('\n');
+    const body = JSON.stringify(rows, null, 2);
+    addPersistentSlashMessage(systemHtml(`${t('sp.progress.title_html')}<pre class="scratchpad-dump">${escapeHtml(summary)}\n\n${escapeHtml(body)}</pre>`));
+  } catch (e) {
+    if (currentTabId !== tabId) return;
+    addPersistentSlashMessage(systemHtml(tSystemHtml('sp.progress.error', { msg: e.message })));
+  }
+}
+
+async function editScratchpad(note, tabId = currentTabId) {
+  const text = String(note || '').trim();
+  if (!text) {
+    if (currentTabId !== tabId) return;
+    showComposerToast(t('sp.scratchpad.edit_empty'), { duration: 5000 });
+    return;
+  }
+  try {
+    const res = await sendToBackground('write_scratchpad', { tabId, text });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok && !res?.success) {
+      showComposerToast(t('sp.scratchpad.error', { msg: res?.error || 'unknown error' }), { duration: 5000 });
+      return;
+    }
+    showComposerToast(t('sp.scratchpad.updated'));
+  } catch (e) {
+    if (currentTabId !== tabId) return;
+    showComposerToast(t('sp.scratchpad.error', { msg: e.message }), { duration: 5000 });
+  }
+}
+
+function clearScratchpad(tabId = currentTabId) {
+  sendToBackground('clear_scratchpad', { tabId })
+    .then((res) => {
+      if (currentTabId !== tabId) return;
+      if (!res?.ok && !res?.success) {
+        showComposerToast(t('sp.scratchpad.error', { msg: res?.error || 'unknown error' }), { duration: 5000 });
+        return;
+      }
+      showComposerToast(t('sp.scratchpad.cleared'));
+    })
+    .catch((e) => {
+      if (currentTabId !== tabId) return;
+      showComposerToast(t('sp.scratchpad.error', { msg: e.message }), { duration: 5000 });
+    });
+}
+
 
 // --- Initialization ---
 
 async function init() {
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  const initialWindow = await browser.windows.getCurrent().catch(() => null);
+  const initialWindowId = initialWindow?.id ?? null;
+  const [tab] = await browser.tabs.query(initialWindowId != null
+    ? { active: true, windowId: initialWindowId }
+    : { active: true, currentWindow: true });
   currentTabId = tab?.id;
+  renderedTabId = currentTabId;
 
-  // Load verbose setting
-  const stored = await browser.storage.local.get('verboseMode');
-  verboseMode = stored.verboseMode || false;
-
-  await loadProviders();
-  await testConnection();
+  // Tab-activation events are extension-wide — every browser window fires
+  // them, and each window has its own side panel instance. Without
+  // scoping, activity in window B would silently retarget window A's
+  // panel to B's tab.
+  const windowScope = createSidePanelWindowScope({
+    browserApi: browser,
+    initialWindowId: initialWindowId ?? tab?.windowId ?? null,
+    getCurrentTabId: () => currentTabId,
+    getRenderedTabId: () => renderedTabId,
+    switchToTab,
+  });
 
   browser.tabs.onActivated.addListener(async (info) => {
-    switchToTab(info.tabId);
+    await windowScope.handleActivated(info);
   });
+
+  browser.tabs.onDetached.addListener((tabId, detachInfo) => {
+    windowScope.handleDetached(tabId, detachInfo);
+  });
+
+  browser.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+    await windowScope.handleAttached(tabId, attachInfo);
+  });
+
+  browser.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
+    if (tabId !== currentTabId || isProcessing) return;
+    if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
+      refreshRecommendedActions();
+    }
+  });
+
+  // Load settings that affect the composer state.
+  const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
+  verboseMode = stored.verboseMode || false;
+  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === true;
+  syncApiMutationsAllowedForCurrentTab();
+
+  // Restore prior conversation for this tab (if any) — survives close/reopen.
+  const restoreTabId = currentTabId;
+  if (restoreTabId != null) {
+    visibleStateRefreshInProgress = true;
+    syncSendButtonState();
+    try {
+      let html = TAB_CHAT_LOAD_FAILED;
+      while (html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId) {
+        html = await loadTabChat(restoreTabId, { waitForHandoff: true });
+        if (html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId) {
+          await waitForTabChatHandoffRetry();
+        }
+      }
+      if (currentTabId === restoreTabId && html && html !== TAB_CHAT_LOAD_FAILED) {
+        await hydrateRestoredChatHistory(restoreTabId, html);
+        if (currentTabId === restoreTabId) {
+          messagesEl.innerHTML = html;
+          messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+          rebindRestoredMessageControls();
+        }
+      }
+    } finally {
+      visibleStateRefreshInProgress = false;
+      syncSendButtonState();
+    }
+  }
+
+  // Normalize restored markup before the first paint, then observe later
+  // streamed text, tool steps, and interactive cards.
+  syncAssistantMessageVisibility();
+  persistObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
+  await restoreActiveRunState(restoreTabId);
+  if (restoreTabId != null && currentTabId === restoreTabId) {
+    // Repair only stored message formatting; opening the panel must not make a
+    // conversation look newer or replace its original mode/page metadata.
+    await repairRestoredChatHistorySnapshot(restoreTabId);
+  }
+  restoreLatestChatTurnPosition();
+
+  await loadProviders();
+  await testConnection({ skipWebBrainCloud: true });
+  await windowScope.syncActiveTab();
+  refreshScheduledJobs({ tabId: currentTabId });
+  refreshRecommendedActions();
+  await consumePendingContextMenuPrompt();
+  drainQueuedContextMenuPrompts();
 
   // Listen for setting changes (from options page)
   if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
@@ -89,6 +3992,13 @@ async function init() {
     if (changes.verboseMode) {
       verboseMode = changes.verboseMode.newValue;
       if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+    }
+    if (changes.alwaysAllowApiMutations) {
+      alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
+      syncApiMutationsAllowedForCurrentTab();
+    }
+    if (changes.providers || changes.activeProvider) {
+      void loadProviders();
     }
   });
 }
@@ -134,169 +4044,4261 @@ if (verboseBtn) {
     // Normal click → toggle verbose mode
     verboseMode = !verboseMode;
     verboseBtn.classList.toggle('active', verboseMode);
-    browser.storage.local.set({ verboseMode }).catch(() => {});
+    await browser.storage.local.set({ verboseMode }).catch(() => {});
   });
 }
 
-function switchToTab(newTabId) {
-  if (newTabId === currentTabId) return;
-  if (isProcessing) return; // don't switch while agent is running
-
-  // Save current tab's chat
-  if (currentTabId != null) {
-    tabChats.set(currentTabId, messagesEl.innerHTML);
+async function switchToTab(newTabId) {
+  if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  if (newConversationConfirmationState
+      && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
+    settleNewConversationConfirmation(false, { restoreFocus: false });
   }
+  const switchGeneration = ++tabSwitchGeneration;
+  tabSwitchTransitionId = newTabId;
+  queuedTabSwitchMessages = [];
+  syncSendButtonState();
+  // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
+  // chat and run journals. Clear the outgoing tab's transient status before
+  // any async restore work can yield; restoreActiveRunState (or a queued target
+  // update) will show it again if the destination tab is actually running.
+  hideActivity();
 
-  currentTabId = newTabId;
+  try {
+    // Save the tab currently represented by the DOM. During an async restore,
+    // currentTabId may already point at the target while the DOM is still older.
+    if (renderedTabId != null) {
+      const outgoingTabId = renderedTabId;
+      await flushRenderedTabChat();
+      if (switchGeneration !== tabSwitchGeneration) return;
+      await flushChatHistorySnapshot(outgoingTabId);
+      if (switchGeneration !== tabSwitchGeneration) return;
+      captureInputDraftForTab(outgoingTabId);
+    }
 
-  // Restore new tab's chat or start fresh
-  if (tabChats.has(newTabId)) {
-    messagesEl.innerHTML = tabChats.get(newTabId);
-  } else {
+    currentTabId = newTabId;
+    currentAssistantEl = null;
+    resetChatNavigation();
+    syncCurrentTabRunFlags();
+    syncApiMutationsAllowedForCurrentTab();
+    syncSelectionScopeUi();
+
+    // Acquire shared handoff ownership for the destination before its DOM can
+    // render or persist. Retry transient background failures while this remains
+    // the current tab-switch generation.
+    let html = TAB_CHAT_LOAD_FAILED;
+    while (html === TAB_CHAT_LOAD_FAILED) {
+      html = await loadTabChat(newTabId, { waitForHandoff: true });
+      if (html !== TAB_CHAT_LOAD_FAILED) break;
+      if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
+      await waitForTabChatHandoffRetry();
+    }
+    if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
+    if (html) {
+      await hydrateRestoredChatHistory(newTabId, html);
+      if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
+    }
+    renderedTabId = newTabId;
+    if (html) {
+      messagesEl.innerHTML = html;
+      messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+      rebindRestoredMessageControls();
+    } else {
+      messagesEl.innerHTML = '';
+      addMessage('system', t('sp.help_message'));
+    }
+    restoreInputDraftForTab(newTabId);
+    renderAttachmentPreviews();
+    renderQueuedComposerMessages(newTabId);
+    await restoreActiveRunState(newTabId);
+    if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
+    restoreLatestChatTurnPosition();
+    refreshScheduledJobs({ tabId: newTabId });
+    refreshRecommendedActions();
+  } finally {
+    if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;
+    syncSendButtonState();
+  }
+  drainQueuedAgentUpdatesForTab(newTabId);
+  consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
+}
+
+async function refreshVisibleSidePanelState() {
+  if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
+  const tabId = Number(currentTabId);
+  if (!Number.isFinite(tabId)) return;
+
+  // A browser can preserve more than one sidebar document across tab/window
+  // changes. Reload shared session state before a previously hidden document
+  // becomes eligible to persist this tab again.
+  tabChats.delete(tabId);
+  const html = await loadTabChat(tabId, { waitForHandoff: true });
+  if (html === TAB_CHAT_LOAD_FAILED) return false;
+  if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+  renderedTabId = tabId;
+  if (html && html !== messagesEl.innerHTML) {
+    await hydrateRestoredChatHistory(tabId, html);
+    if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+    messagesEl.innerHTML = html;
+    messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+    rebindRestoredMessageControls();
+  } else if (!html) {
     messagesEl.innerHTML = '';
     addMessage('system', t('sp.help_message'));
   }
+  await restoreActiveRunState(tabId);
+  return document.visibilityState !== 'hidden' && sameTabId(currentTabId, tabId);
+}
+
+function requestVisibleSidePanelStateRefresh() {
+  if (document.visibilityState === 'hidden') return;
+  visibleStateRefreshPending = true;
+  visibleStateRefreshInProgress = true;
+  const refreshGeneration = ++visibleStateRefreshGeneration;
+  syncSendButtonState();
+  visibleStateRefreshPromise = visibleStateRefreshPromise.catch(() => {}).then(async () => {
+    if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
+    visibleStateRefreshPending = false;
+    let refreshed = await refreshVisibleSidePanelState();
+    while (refreshed === false
+        && document.visibilityState !== 'hidden'
+        && tabSwitchTransitionId == null) {
+      visibleStateRefreshPending = true;
+      syncSendButtonState();
+      await waitForTabChatHandoffRetry();
+      if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
+      visibleStateRefreshPending = false;
+      refreshed = await refreshVisibleSidePanelState();
+    }
+    return refreshed;
+  });
+  const refreshPromise = visibleStateRefreshPromise;
+  refreshPromise.finally(() => {
+    if (refreshGeneration !== visibleStateRefreshGeneration) return;
+    visibleStateRefreshInProgress = false;
+    syncSendButtonState();
+  }).catch(() => {});
+  refreshPromise.then((refreshed) => {
+    if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
+    consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  }).catch(() => {});
+}
+
+async function refreshConversationScopeState(tabId = currentTabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return null;
+  let state = null;
+  try {
+    state = await sendToBackground('agent_run_state', { tabId: numericTabId });
+  } catch {
+    return null;
+  }
+  applyConversationScopeState(numericTabId, state);
+  return state;
+}
+
+async function restoreActiveRunState(tabId = currentTabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return;
+  const state = await refreshConversationScopeState(numericTabId);
+  if (!state) return;
+  await applyActiveRunState(numericTabId, state);
+  void adoptRestoredRunState(numericTabId, state);
+}
+
+function isTerminalRunUiStatus(status) {
+  return ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(String(status || ''));
+}
+
+async function adoptRestoredRunState(tabId, state) {
+  const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  const requestId = String(runUi?.requestId || '');
+  if (!requestId
+      || isTerminalRunUiStatus(runUi.status)
+      || runUi.status === 'awaiting_plan'
+      || localRunRequestIds.has(Number(tabId))
+      || adoptedRunRecoveryRequestIds.has(requestId)) return;
+
+  adoptedRunRecoveryRequestIds.add(requestId);
+  localRunRequestIds.set(Number(tabId), requestId);
+  setTabProcessing(tabId, true);
+  setTabAbortRequested(tabId, false);
+  syncSendButtonState();
+  if (sameTabId(currentTabId, tabId)) showActivity('Reconnecting…');
+  const assistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(requestId)}"]`)
+    || currentAssistantEl;
+  const mode = ['ask', 'act', 'dev'].includes(runUi.mode)
+    ? runUi.mode
+    : (['ask', 'act', 'dev'].includes(assistantEl?.dataset?.runMode) ? assistantEl.dataset.runMode : agentMode);
+
+  try {
+    const res = await sendRunWithReconnect('continue_start', {
+      tabId,
+      requestId,
+      mode,
+      foreground: runUi.foreground === true,
+    }, {
+      probeFirst: true,
+      requireDurableSubmittedTurn: runUi.kind !== 'continue',
+    });
+    const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
+    if (returnedPlannerFailure && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+      renderPlannerRequestFailure(
+        assistantEl,
+        returnedPlannerFailure.data,
+        retryPayloadForRunAssistant(assistantEl),
+      );
+    }
+    const returnedErrorUpdate = Array.isArray(res?.updates)
+      ? res.updates.find(update => update?.type === 'error')
+      : null;
+    if (returnedErrorUpdate && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+      renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
+        submittedTurnDurable: res.submittedTurnDurable,
+      });
+    }
+  } catch (error) {
+    if (sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+      renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
+    }
+  } finally {
+    adoptedRunRecoveryRequestIds.delete(requestId);
+    if (localRunRequestIds.get(Number(tabId)) === requestId) {
+      localRunRequestIds.delete(Number(tabId));
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+    }
+    if (sameTabId(currentTabId, tabId)) {
+      if (assistantEl) finalizeSteps(assistantEl);
+      syncSendButtonState();
+      hideActivity();
+      if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+      if (sameTabId(renderedTabId, tabId)) {
+        await flushRenderedTabChat();
+        await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
+      }
+    }
+  }
+}
+
+async function applyActiveRunState(numericTabId, state) {
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) return;
+  const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  if (runUi?.requestId) {
+    const runAssistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(runUi.requestId))}"]`)
+      || messagesEl.querySelector('.message.assistant:last-of-type')
+      || addMessage('assistant', '');
+    currentAssistantEl = runAssistantEl;
+    runAssistantEl.dataset.runRequestId = String(runUi.requestId);
+    runAssistantEl.dataset.retryForeground = runUi.foreground === true ? 'true' : 'false';
+    if (runUi.runId) runAssistantEl.dataset.runId = String(runUi.runId);
+    let lastRenderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
+    const replayEvents = Array.isArray(runUi.events) ? runUi.events : [];
+    const snapshotStreamedText = runUi.streamedTextTruncated === true
+      ? ''
+      : String(runUi.streamedText || '');
+    const streamedTextStartSeq = Number(runUi.streamedTextStartSeq || 0);
+    const streamedTextSeq = Number(runUi.streamedTextSeq || 0);
+    const shouldRestoreStreamedText = !!snapshotStreamedText
+      && Number(runUi.seq || 0) >= lastRenderedSeq
+      && (
+        !isTerminalRunUiStatus(runUi.status)
+        || lastRenderedSeq < Number(runUi.seq || 0)
+      );
+    const hasReplayableStreamStart = shouldRestoreStreamedText
+      && streamedTextStartSeq > lastRenderedSeq
+      && replayEvents.some((event) => (
+        event?.type === 'text_delta'
+        && Number(event.seq || 0) === streamedTextStartSeq
+      ));
+    let restoredSnapshotStream = false;
+    const restoreSnapshotStream = () => {
+      if (!shouldRestoreStreamedText || restoredSnapshotStream) return;
+      const textEl = runAssistantEl.querySelector('.message-text');
+      if (!textEl) return;
+      streamedAssistantTextByEl.set(textEl, snapshotStreamedText);
+      textEl.dataset.streamedAssistantActive = 'true';
+      renderStreamedAssistantMarkdownNow(textEl);
+      restoredSnapshotStream = true;
+    };
+    if (!hasReplayableStreamStart) restoreSnapshotStream();
+    const unavailableBeforeSeq = runUiUnavailableBeforeSeq(runUi);
+    const replayGapNoted = runAssistantEl.dataset.replayGapNoted === 'true'
+      || Number(runAssistantEl.dataset.replayGapBeforeSeq || 0) > 0;
+    if (unavailableBeforeSeq > lastRenderedSeq
+        && !replayGapNoted) {
+      addRunProgressReplayGapNote();
+      // Keep replay-loss notice deduplication separate from the rendered-event
+      // cursor. A terminal snapshot can be fully acknowledged (and therefore
+      // absent from events) while finalContent still needs to be restored.
+      runAssistantEl.dataset.replayGapNoted = 'true';
+    }
+    for (const event of replayEvents) {
+      if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
+      const eventSeq = Number(event.seq || 0);
+      const representedBySnapshotStream = shouldRestoreStreamedText
+        && event.type === 'text_delta'
+        && eventSeq >= streamedTextStartSeq
+        && eventSeq <= streamedTextSeq;
+      if (representedBySnapshotStream) {
+        restoreSnapshotStream();
+        runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
+        continue;
+      }
+      handleAgentUpdateMessage({
+        target: 'sidepanel', action: 'agent_update', tabId: numericTabId,
+        requestId: runUi.requestId, runId: runUi.runId, seq: event.seq,
+        type: event.type,
+        data: event.type === 'run_complete'
+          ? {
+              ...event.data,
+              submittedTurnDurable: state?.submittedTurnDurable === true,
+            }
+          : event.data,
+      });
+      runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
+    }
+    reconcileRunMessageAttachmentState(
+      numericTabId,
+      runAssistantEl,
+      runUi.attachmentDeliveryState,
+      { persist: true },
+    );
+    await reconcilePersistedStagedScreenshots(
+      numericTabId,
+      runUi.requestId,
+      runUi.attachmentDeliveryState,
+    );
+    const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
+    if (renderedSeq > Number(runUi.ackedSeq || 0)) {
+      await sendToBackground('agent_run_ack', {
+        tabId: numericTabId,
+        requestId: runUi.requestId,
+        seq: renderedSeq,
+      }).catch(() => {});
+    }
+  }
+  const pendingPlan = state?.pendingPlan;
+  const lastPlanLifecycleEvent = [...(Array.isArray(runUi?.events) ? runUi.events : [])]
+    .reverse()
+    .find(event => event?.type === 'plan_review' || event?.type === 'plan_resolved');
+  const pendingPlanMatchesRun = !!pendingPlan?.planId
+    && runUi?.status === 'awaiting_plan'
+    && (String(runUi.pendingPlanId || '') === String(pendingPlan.planId)
+      || (lastPlanLifecycleEvent?.type === 'plan_review'
+        && String(lastPlanLifecycleEvent.data?.planId || '') === String(pendingPlan.planId)));
+  if (pendingPlanMatchesRun) {
+    renderPlanReviewCard({ ...pendingPlan, tabId: numericTabId, requestId: runUi?.requestId || null, runId: runUi?.runId || null });
+    return;
+  }
+  const restoredPlanResolution = lastPlanLifecycleEvent?.type === 'plan_resolved'
+    ? lastPlanLifecycleEvent.data
+    : runUi?.lastPlanResolution;
+  if (restoredPlanResolution?.decision === 'timeout') {
+    expirePlanReviewCards({
+      tabId: numericTabId,
+      planId: restoredPlanResolution.planId,
+      requestId: runUi?.requestId,
+      runId: runUi?.runId,
+      retryPayload: retryPayloadForRunAssistant(currentAssistantEl),
+    });
+  }
+  // Always sweep the tab: a run that died without a plan_resolved leaves a card
+  // with a different planId that expirePlanReviewCards' filter never matches,
+  // and its Approve/Cancel would post a decision the background has no plan for.
+  // The card just expired above is skipped by invalidatePlanReviewCards' guard.
+  invalidatePlanReviewCards({ tabId: numericTabId });
+  if (state?.running || state?.starting) {
+    setTabProcessing(numericTabId, true);
+    setTabAbortRequested(numericTabId, false);
+    hideRecommendedActions();
+    showActivity(t('sp.activity.thinking'));
+    syncSendButtonState();
+  } else {
+    setPlanReviewAwaiting(numericTabId, false);
+    setTabProcessing(numericTabId, false);
+    setTabAbortRequested(numericTabId, false);
+    const restoredAllowanceCardMissing = !!parseCostAllowanceError(runUi?.finalContent)
+      && !currentAssistantEl?.querySelector('.cost-allowance-error');
+    if (runUi && ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(runUi.status)
+        && (Number(currentAssistantEl?.dataset.lastRenderedSeq || 0) < Number(runUi.seq || 0)
+          || restoredAllowanceCardMissing)) {
+      handleAgentUpdateMessage({
+        tabId: numericTabId, requestId: runUi.requestId, runId: runUi.runId,
+        ...(restoredAllowanceCardMissing ? {} : { seq: runUi.seq }), type: 'run_complete',
+        data: {
+          status: runUi.status,
+          finalContent: runUi.finalContent,
+          submittedTurnDurable: state?.submittedTurnDurable === true,
+          attachmentDeliveryState: runUi.attachmentDeliveryState || '',
+        },
+      });
+    }
+    // Terminal snapshots may already be fully acknowledged, so no replayed
+    // run_complete event remains to clear the shared activity strip. Make the
+    // destination tab's idle state authoritative even in that case.
+    hideActivity();
+    syncSendButtonState();
+  }
+}
+
+function conversationHasUserMessages() {
+  return messagesEl.querySelector('.message.user') != null;
+}
+
+function hideRecommendedActions() {
+  recommendationsRequestId += 1;
+  if (!recommendedActionsEl || !recommendedActionsListEl) return;
+  recommendedActionsListEl.replaceChildren();
+  recommendedActionsEl.classList.add('hidden');
+}
+
+function createWebbrainPromotionIcon(actionId) {
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.classList.add('recommended-action-icon');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', actionId === 'post-webbrain-linkedin'
+    ? 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 1 1 0-4.124 2.062 2.062 0 0 1 0 4.124zM7.119 20.452H3.555V9H7.12v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0z'
+    : 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z');
+  icon.appendChild(path);
+  return icon;
+}
+
+function animateWebbrainPromotionOnce() {
+  if (webbrainPromotionHasAnimated || recommendedActionsCollapsed) return;
+  const promotionAction = recommendedActionsListEl?.querySelector('.recommended-action-chip-promotion');
+  if (!promotionAction) return;
+  promotionAction.classList.add('recommended-action-chip-promotion-enter');
+  webbrainPromotionHasAnimated = true;
+}
+
+function updateRecommendedActionsCollapsedState() {
+  if (!recommendedActionsEl) return;
+  recommendedActionsEl.classList.toggle('collapsed', recommendedActionsCollapsed);
+  if (!recommendedActionsToggleEl) return;
+
+  const labelKey = recommendedActionsCollapsed ? 'sp.recommended.expand' : 'sp.recommended.collapse';
+  const label = t(labelKey);
+  recommendedActionsToggleEl.dataset.i18nTitle = labelKey;
+  recommendedActionsToggleEl.dataset.i18nAriaLabel = labelKey;
+  recommendedActionsToggleEl.title = label;
+  recommendedActionsToggleEl.setAttribute('aria-label', label);
+  recommendedActionsToggleEl.setAttribute('aria-expanded', String(!recommendedActionsCollapsed));
+}
+
+function setRecommendedActionsCollapsed(collapsed, { persist = true } = {}) {
+  recommendedActionsCollapsed = Boolean(collapsed);
+  updateRecommendedActionsCollapsedState();
+  animateWebbrainPromotionOnce();
+  if (persist) {
+    void browser.storage.local.set({ [RECOMMENDED_ACTIONS_COLLAPSED_KEY]: recommendedActionsCollapsed }).catch(() => {});
+  }
+}
+
+if (recommendedActionsToggleEl) {
+  recommendedActionsToggleEl.addEventListener('click', async () => {
+    const next = !recommendedActionsCollapsed;
+    setRecommendedActionsCollapsed(next, { persist: false });
+    await browser.storage.local.set({ [RECOMMENDED_ACTIONS_COLLAPSED_KEY]: next }).catch(() => {});
+  });
+}
+
+browser.storage.local.get(RECOMMENDED_ACTIONS_COLLAPSED_KEY).then((stored) => {
+  setRecommendedActionsCollapsed(stored?.[RECOMMENDED_ACTIONS_COLLAPSED_KEY] === true, { persist: false });
+}).catch(() => updateRecommendedActionsCollapsedState());
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area && area !== 'local') return;
+  if (changes[RECOMMENDED_ACTIONS_COLLAPSED_KEY]) {
+    setRecommendedActionsCollapsed(changes[RECOMMENDED_ACTIONS_COLLAPSED_KEY].newValue === true, { persist: false });
+  }
+});
+
+document.addEventListener('wb-locale-changed', () => {
+  updateRecommendedActionsCollapsedState();
+  void refreshRecommendedActions();
+});
+
+async function refreshRecommendedActions() {
+  const requestId = ++recommendationsRequestId;
+  if (!recommendedActionsEl || !recommendedActionsListEl || !shouldShowRecommendedActions({
+    tabId: currentTabId,
+    isProcessing,
+    hasUserMessages: conversationHasUserMessages(),
+  })) {
+    hideRecommendedActions();
+    return;
+  }
+
+  const tabId = currentTabId;
+  try {
+    const pageInfo = await sendToBackground('get_page_info', { tabId });
+    if (requestId !== recommendationsRequestId || currentTabId !== tabId || isProcessing) return;
+    const sourceUrl = typeof pageInfo?.url === 'string' ? pageInfo.url : '';
+    const webbrainPromotionVariant = Math.random() < 0.5 ? 'linkedin' : 'x';
+    const actions = buildRecommendedActions(pageInfo, { max: 4, webbrainPromotionVariant });
+    recommendedActionsListEl.replaceChildren();
+    actions.forEach((action) => {
+      const actionForClick = sourceUrl ? { ...action, sourceUrl } : action;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'recommended-action-chip';
+      btn.textContent = action.label;
+      btn.dataset.actionId = action.id;
+      if (WEBBRAIN_PROMOTION_ACTION_IDS.has(action.id)) {
+        btn.classList.add('recommended-action-chip-promotion');
+        btn.prepend(createWebbrainPromotionIcon(action.id));
+      }
+      btn.dataset.prompt = action.prompt;
+      btn.addEventListener('click', () => runRecommendedAction(actionForClick));
+      recommendedActionsListEl.appendChild(btn);
+    });
+    recommendedActionsEl.classList.toggle('hidden', actions.length === 0);
+    animateWebbrainPromotionOnce();
+  } catch {
+    if (requestId === recommendationsRequestId) hideRecommendedActions();
+  }
+}
+
+async function recommendedActionSourceStillCurrent(action, tabId) {
+  const sourceUrl = typeof action?.sourceUrl === 'string' ? action.sourceUrl : '';
+  if (!sourceUrl) return true;
+  try {
+    const tab = await browser.tabs.get(tabId);
+    return (tab?.url || '') === sourceUrl;
+  } catch {
+    return false;
+  }
+}
+
+async function runRecommendedAction(action) {
+  const prompt = typeof action === 'string' ? action : action?.prompt;
+  const displayText = typeof action === 'string'
+    ? prompt
+    : String(action?.label || prompt || '').trim();
+  const tabId = currentTabId;
+  if (!prompt || tabId == null || isProcessing) return;
+  if (!displayText) return;
+  if (!(await recommendedActionSourceStillCurrent(action, tabId)) || currentTabId !== tabId || isProcessing) {
+    hideRecommendedActions();
+    return;
+  }
+  if (action?.mode === 'act') {
+    const ok = await ensureActMode();
+    if (!ok) return;
+    if (!(await recommendedActionSourceStillCurrent(action, tabId)) || currentTabId !== tabId || isProcessing) {
+      hideRecommendedActions();
+      return;
+    }
+  }
+  inputEl.value = displayText;
+  autoResizeInput();
+  sendMessage(recommendedActionSendParams(action, { tabId, displayText }));
+}
+
+function recommendedActionSendParams(action, { tabId = null, displayText = '' } = {}) {
+  const params = action?.runOptions ? { recommendedAction: action.runOptions } : {};
+  if (typeof action?.prompt === 'string' && action.prompt.trim()) {
+    params.__agentPrompt = action.prompt.trim();
+    params.__agentDisplayText = String(displayText || '').trim();
+    params.__agentTabId = tabId;
+  }
+  if (['ask', 'act', 'dev'].includes(action?.mode)) {
+    params.__mode = action.mode;
+  }
+  return params;
+}
+
+// After restoring innerHTML the copy buttons need their click handlers re-bound,
+// since serialized HTML loses listeners.
+function rebindCopyButtons() {
+  document.querySelectorAll('.msg-copy-btn').forEach(btn => {
+    bindMessageCopyButton(btn);
+  });
+  document.querySelectorAll('.code-copy-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = 'true';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wrapper = btn.closest('.code-block-wrapper');
+      const codeEl = wrapper?.querySelector('pre code');
+      if (codeEl) {
+        navigator.clipboard.writeText(codeEl.textContent).then(() => {
+          btn.textContent = t('sp.copied');
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = t('sp.copy'); btn.classList.remove('copied'); }, 1500);
+        });
+      }
+    });
+  });
+}
+
+function bindCompactStepDetailsToggle(toggle) {
+  if (!toggle || toggle.dataset.bound) return;
+  toggle.dataset.bound = 'true';
+  toggle.type = 'button';
+  const currentDetails = toggle.closest('.step-item')?.nextElementSibling;
+  toggle.setAttribute('aria-expanded', String(
+    !!currentDetails?.classList.contains('step-details')
+      && currentDetails.classList.contains('open'),
+  ));
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const details = toggle.closest('.step-item')?.nextElementSibling;
+    if (!details?.classList.contains('step-details')) return;
+    const open = details.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+}
+
+function rebindCompactStepDetailsToggles() {
+  messagesEl.querySelectorAll('.step-details-toggle').forEach(bindCompactStepDetailsToggle);
+}
+
+function rebindContinueButtons() {
+  document.querySelectorAll('.continue-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = 'true';
+    btn.addEventListener('click', () => continueAgent({
+      foreground: btn.dataset.foreground === 'true',
+    }));
+  });
+}
+
+function rebindClarifyCards() {
+  document.querySelectorAll('.clarify-card').forEach(card => {
+    if (card.classList.contains('clarify-answered')) return;
+    const clarifyId = String(card.dataset.clarifyId || '');
+    if (!clarifyId) return;
+    const rawTabId = card.dataset.scheduledTabId ?? card.dataset.tabId;
+    const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
+    if (tabId == null || Number.isNaN(tabId)) return;
+
+    card.querySelectorAll('.permission-education-action').forEach(bindPermissionEducationAction);
+
+    card.querySelectorAll('.clarify-option').forEach(btn => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = 'true';
+      btn.addEventListener('click', () => {
+        submitClarify(card, tabId, clarifyId, btn.dataset.value || btn.textContent, 'option');
+      });
+    });
+
+    card.querySelectorAll('.clarify-input').forEach(input => {
+      if (input.dataset.bound) return;
+      input.dataset.bound = 'true';
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && input.value.trim()) {
+          e.preventDefault();
+          submitClarify(card, tabId, clarifyId, input.value.trim(), 'text');
+        }
+      });
+    });
+
+    card.querySelectorAll('.clarify-submit').forEach(btn => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = 'true';
+      btn.addEventListener('click', () => {
+        const input = card.querySelector('.clarify-input');
+        const value = input?.value?.trim();
+        if (value) submitClarify(card, tabId, clarifyId, value, 'text');
+      });
+    });
+
+    // Restart countdown after HTML restore when timeout metadata survived on
+    // the card. Skip permission/form-submit cards (they never auto-timeout).
+    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1') return;
+    const deadlineTs = Number(card.dataset.deadlineTs);
+    if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
+    const firstOption = card.dataset.firstOption
+      || card.querySelector('.clarify-option')?.dataset?.value
+      || card.querySelector('.clarify-option')?.textContent
+      || '(no response — timed out)';
+    startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption });
+  });
+}
+
+function planReviewDisplayFields(plan, fallbackMarkdown = '') {
+  const localized = plan?.localized && typeof plan.localized === 'object' ? plan.localized : null;
+  const summary = String(localized?.summary || plan?.summary || '').trim();
+  const stepsSource = Array.isArray(localized?.steps) && localized.steps.length
+    ? localized.steps
+    : (Array.isArray(plan?.steps) ? plan.steps : []);
+  const steps = stepsSource
+    .map((step, index) => ({
+      id: String(step?.id || index + 1).replace(/\.$/, '') || String(index + 1),
+      action: String(step?.action || '').trim(),
+    }))
+    .filter((step) => step.action);
+  const risksSource = Array.isArray(localized?.risks) && localized.risks.length
+    ? localized.risks
+    : (Array.isArray(plan?.risks) ? plan.risks : []);
+  const risks = risksSource.map((risk) => String(risk || '').trim()).filter(Boolean);
+  if (!steps.length && !summary && fallbackMarkdown) {
+    return parsePlanMarkdownToDraft(fallbackMarkdown);
+  }
+  return { summary, steps, risks };
+}
+
+function serializePlanDraftToMarkdown(draft) {
+  const lines = [];
+  const summary = String(draft?.summary || '').trim();
+  if (summary) lines.push(`**${summary}**`, '');
+  const steps = Array.isArray(draft?.steps) ? draft.steps : [];
+  let stepNum = 0;
+  for (const step of steps) {
+    const action = String(step?.action || '').trim();
+    if (!action) continue;
+    stepNum += 1;
+    lines.push(`${stepNum}. ${action}`);
+  }
+  const risks = Array.isArray(draft?.risks)
+    ? draft.risks.map((risk) => String(risk || '').trim()).filter(Boolean)
+    : [];
+  if (risks.length) {
+    if (stepNum) lines.push('');
+    for (const risk of risks) lines.push(`- ⚠️ ${risk}`);
+  }
+  return lines.join('\n').trim();
+}
+
+// Tool names that may appear in verbose step suffixes like "Click Save (click, type)".
+const PLAN_STEP_TOOL_SUFFIX_RE = /^(?:click|type|press|scroll|navigate|find|wait|select|hover|drag|upload|download|screenshot|extract|read|write|fill|submit|focus|blur|tab|enter|escape|key|keys|js|eval|api|fetch|http|network|clipboard|permission|schedule|resume|tool|get|set|new|go|execute|inspect|inject|remove|patch|revert|list|progress|research|shadow|iframe|highlight|scratchpad|done)(?:_[a-z0-9]+)*$/i;
+
+function stripVerbosePlanStepToolSuffix(action) {
+  const text = String(action || '').trim();
+  const match = text.match(/^([\s\S]*?)\s+\(([^()]*)\)\s*$/);
+  if (!match) return text;
+  const suffix = match[2].trim();
+  // Only strip parentheticals that look like planner tool lists, not user text
+  // like "Open invoice (March)" or "Choose plan (annual)".
+  const toolNames = suffix.split(',').map((name) => name.trim()).filter(Boolean);
+  if (!toolNames.length || !toolNames.every((name) => PLAN_STEP_TOOL_SUFFIX_RE.test(name))) return text;
+  return match[1].trim();
+}
+
+function looksLikeVerbosePlanMarkdown(text) {
+  const raw = String(text || '');
+  return /(?:^|\n)\s*Confidence:\s*\d/i.test(raw)
+    || /(?:^|\n)\s*###\s+Completion requirements\b/i.test(raw)
+    || /(?:^|\n)\s*###\s+Skills to activate\b/i.test(raw)
+    || /(?:^|\n)\s*###\s+Memory strategy\b/i.test(raw)
+    || /(?:^|\n)\s*###\s+Scheduling\b/i.test(raw);
+}
+
+function parsePlanMarkdownToDraft(text) {
+  const lines = String(text || '').split('\n');
+  let summary = '';
+  const steps = [];
+  const risks = [];
+  // Ignore planner execution-metadata sections so "Done" from verbose raw mode
+  // does not ingest skill IDs / memory bullets as risks.
+  let section = 'body'; // body | steps | risks | meta
+  let activeStep = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (section === 'steps' && activeStep) activeStep.action += '\n';
+      continue;
+    }
+
+    const heading = trimmed.match(/^###\s+(.+)$/i);
+    if (heading) {
+      const title = heading[1].trim().toLowerCase();
+      if (/^steps\b/.test(title)) section = 'steps';
+      else if (/^risks?\b/.test(title) || /notes\b/.test(title)) section = 'risks';
+      else if (
+        /completion requirements|skills to activate|memory strategy|scheduling|planner execution metadata/
+          .test(title)
+      ) {
+        section = 'meta';
+      } else {
+        section = 'meta';
+      }
+      activeStep = null;
+      continue;
+    }
+
+    if (section === 'meta') {
+      activeStep = null;
+      continue;
+    }
+    if (/^confidence:\s*/i.test(trimmed)) continue;
+    if (/^(submission required|scratchpad|progress ledger)\b/i.test(trimmed)) continue;
+
+    const bold = trimmed.match(/^\*\*(.+)\*\*$/);
+    if (bold && !summary) {
+      summary = bold[1].trim();
+      activeStep = null;
+      continue;
+    }
+
+    const stepMatch = trimmed.match(/^(\d+)[\.)]\s+(.+)$/);
+    if (stepMatch) {
+      activeStep = {
+        id: stepMatch[1],
+        action: stepMatch[2].trim(),
+      };
+      steps.push(activeStep);
+      section = 'steps';
+      continue;
+    }
+
+    const riskMatch = trimmed.match(/^[-*]\s+(?:⚠️\s*)?(.+)$/);
+    if (riskMatch) {
+      const riskText = riskMatch[1].replace(/^⚠️\s*/, '').trim();
+      if (!riskText) continue;
+      // Only accept risk bullets that are explicitly marked, or that appear
+      // under a Risks heading. Plain metadata bullets never qualify.
+      const explicitRisk = /⚠️/.test(trimmed) || section === 'risks';
+      if (section === 'steps' && activeStep && !explicitRisk) {
+        activeStep.action += `\n${line.trimEnd()}`;
+        continue;
+      }
+      activeStep = null;
+      if (!explicitRisk) continue;
+      if (/^skills?\s+to\s+activate/i.test(riskText)) continue;
+      if (/^(submission required|scratchpad|progress ledger)\b/i.test(riskText)) continue;
+      risks.push(riskText);
+      continue;
+    }
+
+    if (section === 'steps' && activeStep) {
+      activeStep.action += `\n${line.trimEnd()}`;
+      continue;
+    }
+
+    if (!summary && section === 'body' && !/^(confidence|submission required|scratchpad|progress ledger)/i.test(trimmed)) {
+      summary = trimmed.replace(/^#+\s*/, '');
+    }
+  }
+  return {
+    summary,
+    steps: steps
+      .map((step) => ({ ...step, action: stripVerbosePlanStepToolSuffix(step.action) }))
+      .filter((step) => step.action),
+    risks: risks.filter(Boolean),
+  };
+}
+
+function resolveSavedPlanReviewEdit(card) {
+  if (card?.dataset?.planDirty !== 'true' || card.dataset.planEditSource !== 'raw') return null;
+  const editedText = String(card.dataset.editedText || '').trim();
+  if (!editedText) return null;
+  return {
+    editedText,
+    markdownMode: looksLikeVerbosePlanMarkdown(editedText) ? 'verbose' : 'compact',
+  };
+}
+
+function setPlanReviewStructuredControlsDisabled(card, disabled) {
+  const controls = card?.querySelectorAll?.(
+    '.plan-review-summary-input, .plan-review-step-input, .plan-review-add-step, .plan-review-step-number, .plan-review-step-remove',
+  ) || [];
+  for (const control of controls) control.disabled = Boolean(disabled);
+}
+
+const planReviewScrollRestoreFrames = new WeakMap();
+const planReviewScrollSnapshots = new WeakMap();
+const planReviewAutosizeFrames = new WeakMap();
+const planReviewContainerWidths = new WeakMap();
+
+function restorePlanReviewScrollTop(container, scrollTop) {
+  const previousScrollBehavior = container.style.scrollBehavior;
+  container.style.scrollBehavior = 'auto';
+  container.scrollTop = scrollTop;
+  container.style.scrollBehavior = previousScrollBehavior;
+}
+
+function currentPlanReviewScrollSnapshot(el) {
+  const container = el?.closest?.('#chat-container') || null;
+  if (!container || document.activeElement !== el) return null;
+  if (container.scrollHeight - container.scrollTop - container.clientHeight <= 2) return null;
+  return { container, scrollTop: container.scrollTop };
+}
+
+function capturePlanReviewScrollSnapshot(el) {
+  const snapshot = currentPlanReviewScrollSnapshot(el);
+  if (snapshot) planReviewScrollSnapshots.set(el, snapshot);
+  else planReviewScrollSnapshots.delete(el);
+}
+
+function takePlanReviewScrollSnapshot(el) {
+  const snapshot = planReviewScrollSnapshots.get(el) || null;
+  planReviewScrollSnapshots.delete(el);
+  if (snapshot?.container?.isConnected && document.activeElement === el) return snapshot;
+  return currentPlanReviewScrollSnapshot(el);
+}
+
+function autosizePlanReviewField(el) {
+  if (!el || el.tagName !== 'TEXTAREA') return;
+  const snapshot = takePlanReviewScrollSnapshot(el);
+
+  el.style.height = 'auto';
+  el.style.height = `${Math.max(el.scrollHeight, 28)}px`;
+
+  if (!snapshot) return;
+  const { container, scrollTop } = snapshot;
+  restorePlanReviewScrollTop(container, scrollTop);
+  const pendingFrame = planReviewScrollRestoreFrames.get(el);
+  if (pendingFrame != null) cancelAnimationFrame(pendingFrame);
+  const frame = requestAnimationFrame(() => {
+    planReviewScrollRestoreFrames.delete(el);
+    if (container.isConnected && document.activeElement === el) {
+      restorePlanReviewScrollTop(container, scrollTop);
+    }
+  });
+  planReviewScrollRestoreFrames.set(el, frame);
+}
+
+function autosizePlanReviewFields(root) {
+  root?.querySelectorAll?.('.plan-review-summary-input, .plan-review-step-input')
+    .forEach(autosizePlanReviewField);
+}
+
+function schedulePlanReviewFieldsAutosize(root) {
+  if (!root?.querySelectorAll || planReviewAutosizeFrames.has(root)) return;
+  const frame = requestAnimationFrame(() => {
+    planReviewAutosizeFrames.delete(root);
+    autosizePlanReviewFields(root);
+  });
+  planReviewAutosizeFrames.set(root, frame);
+}
+
+function handlePlanReviewContainerResize(entries) {
+  for (const entry of entries || []) {
+    const root = entry?.target;
+    if (!root?.querySelectorAll) continue;
+    const width = Number(entry?.contentRect?.width);
+    if (Number.isFinite(width)) {
+      if (planReviewContainerWidths.get(root) === width) continue;
+      planReviewContainerWidths.set(root, width);
+    }
+    schedulePlanReviewFieldsAutosize(root);
+  }
+}
+
+function getPlanReviewDraftFromDom(card) {
+  const summary = String(card?.querySelector?.('.plan-review-summary-input')?.value || '').trim();
+  const steps = [...(card?.querySelectorAll?.('.plan-review-step-input') || [])]
+    .map((input, index) => ({
+      id: String(index + 1),
+      action: String(input.value || '').trim(),
+    }))
+    .filter((step) => step.action);
+  let risks = [];
+  try {
+    risks = JSON.parse(card?.dataset?.planRisks || '[]');
+  } catch {
+    risks = [];
+  }
+  if (!Array.isArray(risks)) risks = [];
+  risks = risks.map((risk) => String(risk || '').trim()).filter(Boolean);
+  return { summary, steps, risks };
+}
+
+function planReviewOriginalMarkdown(card) {
+  return String(card?.dataset?.originalMarkdown || card?.querySelector?.('.plan-review-edit')?.defaultValue || '').trim();
+}
+
+function syncPlanReviewDraft(card, { fromRaw = false } = {}) {
+  if (!card) return getPlanReviewDraftFromDom(card);
+  const rawTextarea = card.querySelector('.plan-review-edit');
+  let draft;
+  if (fromRaw && rawTextarea) {
+    draft = parsePlanMarkdownToDraft(rawTextarea.value);
+    applyPlanDraftToEditor(card, draft, { preserveFocus: false });
+  } else {
+    draft = getPlanReviewDraftFromDom(card);
+  }
+  const serialized = serializePlanDraftToMarkdown(draft);
+  const original = planReviewOriginalMarkdown(card);
+  const originalCompact = String(card.dataset.originalCompactMarkdown || '').trim();
+  const rawMode = card.dataset.editing === 'true';
+  const currentText = rawMode && rawTextarea
+    ? String(rawTextarea.value || '').trim()
+    : serialized;
+  // Dirty relative to the text the user was shown, or to the compact baseline
+  // for structured edits (so verbose display without changes stays clean).
+  const dirty = rawMode
+    ? currentText !== original
+    : serialized !== originalCompact;
+  card.dataset.planDirty = dirty ? 'true' : 'false';
+  if (dirty) {
+    card.dataset.editedText = currentText;
+    if (!fromRaw) card.dataset.planEditSource = 'structured';
+  } else {
+    delete card.dataset.editedText;
+    delete card.dataset.planEditSource;
+  }
+  if (!rawMode && rawTextarea && document.activeElement !== rawTextarea) {
+    // Keep the hidden raw buffer aligned with structured state when dirty;
+    // otherwise leave the original display text (important for verbose).
+    rawTextarea.value = dirty ? (serialized || original) : original;
+  }
+  const emptyNote = card.querySelector('.plan-review-empty-steps');
+  if (emptyNote) {
+    emptyNote.hidden = draft.steps.length > 0;
+  }
+  schedulePersist();
+  return draft;
+}
+
+function renumberPlanReviewSteps(card) {
+  const list = card?.querySelector?.('.plan-review-steps');
+  if (!list) return;
+  [...list.querySelectorAll('.plan-review-step')].forEach((item, index) => {
+    const number = item.querySelector('.plan-review-step-number');
+    if (number) {
+      const stepNumber = String(index + 1);
+      const reorderLabel = typeof t === 'function'
+        ? t('sp.plan.reorder_step', { step: stepNumber })
+        : `Drag to reorder step ${stepNumber}`;
+      number.textContent = stepNumber;
+      number.setAttribute('aria-label', reorderLabel);
+      number.title = reorderLabel;
+    }
+  });
+}
+
+const planReviewDraggedSteps = new WeakMap();
+
+function clearPlanReviewDropTargets(card) {
+  card?.querySelectorAll?.('.plan-review-step-drop-before, .plan-review-step-drop-after')
+    .forEach((item) => item.classList.remove('plan-review-step-drop-before', 'plan-review-step-drop-after'));
+}
+
+function finishPlanReviewStepDrag(card) {
+  const dragged = planReviewDraggedSteps.get(card);
+  dragged?.classList?.remove('plan-review-step-dragging');
+  planReviewDraggedSteps.delete(card);
+  clearPlanReviewDropTargets(card);
+}
+
+function movePlanReviewStep(card, item, target, placeAfter = false) {
+  const list = card?.querySelector?.('.plan-review-steps');
+  if (!list || !item || !target || item === target) return false;
+  const items = [...list.querySelectorAll('.plan-review-step')];
+  const fromIndex = items.indexOf(item);
+  const targetIndex = items.indexOf(target);
+  if (fromIndex < 0 || targetIndex < 0) return false;
+  const insertionIndex = targetIndex + (placeAfter ? 1 : 0) - (targetIndex > fromIndex ? 1 : 0);
+  if (insertionIndex === fromIndex) return false;
+  const reference = placeAfter ? target.nextElementSibling : target;
+  list.insertBefore(item, reference || null);
+  renumberPlanReviewSteps(card);
+  syncPlanReviewDraft(card);
+  return true;
+}
+
+function bindPlanReviewStepRow(card, item) {
+  if (!card || !item) return;
+  let number = item.querySelector('.plan-review-step-number');
+  const action = item.querySelector('.plan-review-step-input');
+  const removeBtn = item.querySelector('.plan-review-step-remove');
+
+  // Upgrade persisted cards created before step numbers became buttons.
+  if (number && number.tagName !== 'BUTTON') {
+    const handle = document.createElement('button');
+    handle.type = 'button';
+    handle.className = 'plan-review-step-number';
+    handle.textContent = number.textContent;
+    number.replaceWith(handle);
+    number = handle;
+  }
+
+  if (removeBtn && !removeBtn.dataset.bound) {
+    removeBtn.dataset.bound = 'true';
+    removeBtn.addEventListener('click', () => {
+      item.remove();
+      renumberPlanReviewSteps(card);
+      syncPlanReviewDraft(card);
+      const remaining = card.querySelector('.plan-review-step-input');
+      if (remaining) {
+        try { remaining.focus(); } catch {}
+      }
+    });
+  }
+
+  if (action && !action.dataset.bound) {
+    action.dataset.bound = 'true';
+    action.addEventListener('beforeinput', () => capturePlanReviewScrollSnapshot(action));
+    action.addEventListener('input', () => {
+      autosizePlanReviewField(action);
+      syncPlanReviewDraft(card);
+    });
+    autosizePlanReviewField(action);
+  }
+
+  if (number && !number.dataset.bound) {
+    number.dataset.bound = 'true';
+    number.draggable = true;
+    number.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+    number.addEventListener('dragstart', (event) => {
+      planReviewDraggedSteps.set(card, item);
+      item.classList.add('plan-review-step-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', number.textContent || '');
+      }
+    });
+    number.addEventListener('dragend', () => finishPlanReviewStepDrag(card));
+    number.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      const target = event.key === 'ArrowUp' ? item.previousElementSibling : item.nextElementSibling;
+      if (!target?.classList?.contains('plan-review-step')) return;
+      event.preventDefault();
+      if (movePlanReviewStep(card, item, target, event.key === 'ArrowDown')) {
+        try { number.focus(); } catch {}
+      }
+    });
+  }
+
+  if (!item.dataset.bound) {
+    item.dataset.bound = 'true';
+    item.addEventListener('dragover', (event) => {
+      const dragged = planReviewDraggedSteps.get(card);
+      if (!dragged || dragged === item) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const bounds = item.getBoundingClientRect();
+      const placeAfter = event.clientY >= bounds.top + (bounds.height / 2);
+      clearPlanReviewDropTargets(card);
+      item.classList.add(placeAfter ? 'plan-review-step-drop-after' : 'plan-review-step-drop-before');
+    });
+    item.addEventListener('drop', (event) => {
+      const dragged = planReviewDraggedSteps.get(card);
+      if (!dragged || dragged === item) return;
+      event.preventDefault();
+      const bounds = item.getBoundingClientRect();
+      const placeAfter = event.clientY >= bounds.top + (bounds.height / 2);
+      const movedHandle = dragged.querySelector('.plan-review-step-number');
+      movePlanReviewStep(card, dragged, item, placeAfter);
+      finishPlanReviewStepDrag(card);
+      try { movedHandle?.focus(); } catch {}
+    });
+  }
+}
+
+function createPlanReviewStepRow(card, step, index) {
+  const item = document.createElement('div');
+  item.className = 'plan-review-step';
+  item.setAttribute('role', 'listitem');
+
+  const number = document.createElement('button');
+  number.type = 'button';
+  number.className = 'plan-review-step-number';
+  number.textContent = String(step?.id || index + 1).replace(/\.$/, '') || String(index + 1);
+
+  const action = document.createElement('textarea');
+  action.className = 'plan-review-step-input plan-review-step-action';
+  action.rows = 1;
+  action.value = String(step?.action || '');
+  action.placeholder = typeof t === 'function' ? t('sp.plan.step_placeholder') : 'Step action';
+  action.setAttribute('aria-label', typeof t === 'function' ? t('sp.plan.step_placeholder') : 'Step action');
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'plan-review-step-remove';
+  removeBtn.setAttribute('aria-label', typeof t === 'function' ? t('sp.plan.remove_step') : 'Remove step');
+  removeBtn.title = typeof t === 'function' ? t('sp.plan.remove_step') : 'Remove step';
+  removeBtn.textContent = '×';
+
+  item.appendChild(number);
+  item.appendChild(action);
+  item.appendChild(removeBtn);
+  bindPlanReviewStepRow(card, item);
+  queueMicrotask(() => autosizePlanReviewField(action));
+  return item;
+}
+
+function renderPlanReviewRisks(view, risks) {
+  if (!view) return;
+  const list = Array.isArray(risks)
+    ? risks.map((risk) => String(risk || '').trim()).filter(Boolean)
+    : [];
+  let risksEl = view.querySelector('.plan-review-risks');
+  if (!list.length) {
+    risksEl?.remove();
+    return;
+  }
+  if (!risksEl) {
+    risksEl = document.createElement('div');
+    risksEl.className = 'plan-review-risks';
+    // Keep risks above skills when present.
+    const skills = view.querySelector('.plan-review-skills');
+    if (skills) view.insertBefore(risksEl, skills);
+    else view.appendChild(risksEl);
+  }
+  risksEl.replaceChildren();
+  for (const risk of list) {
+    const riskItem = document.createElement('div');
+    riskItem.className = 'plan-review-risk';
+    riskItem.textContent = `⚠️ ${risk}`;
+    risksEl.appendChild(riskItem);
+  }
+}
+
+function applyPlanDraftToEditor(card, draft, { preserveFocus = true } = {}) {
+  const view = card?.querySelector?.('.plan-review-view');
+  if (!view) return;
+  const summaryInput = view.querySelector('.plan-review-summary-input');
+  if (summaryInput && (!preserveFocus || document.activeElement !== summaryInput)) {
+    summaryInput.value = String(draft?.summary || '');
+    autosizePlanReviewField(summaryInput);
+  }
+  const list = view.querySelector('.plan-review-steps');
+  if (!list) return;
+  const active = document.activeElement;
+  const activeIndex = preserveFocus && active?.classList?.contains('plan-review-step-input')
+    ? [...list.querySelectorAll('.plan-review-step-input')].indexOf(active)
+    : -1;
+  const selectionStart = activeIndex >= 0 ? active.selectionStart : null;
+  const selectionEnd = activeIndex >= 0 ? active.selectionEnd : null;
+  list.replaceChildren();
+  const steps = Array.isArray(draft?.steps) && draft.steps.length
+    ? draft.steps
+    : [{ id: '1', action: '' }];
+  steps.forEach((step, index) => {
+    list.appendChild(createPlanReviewStepRow(card, step, index));
+  });
+  renumberPlanReviewSteps(card);
+  const risks = Array.isArray(draft?.risks) ? draft.risks : [];
+  card.dataset.planRisks = JSON.stringify(risks);
+  renderPlanReviewRisks(view, risks);
+  if (activeIndex >= 0) {
+    const next = list.querySelectorAll('.plan-review-step-input')[activeIndex];
+    if (next) {
+      try {
+        next.focus();
+        if (selectionStart != null) next.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
+      } catch {}
+    }
+  }
+}
+
+function renderPlanReviewSkills(skillIds) {
+  const skills = document.createElement('div');
+  skills.className = 'plan-review-skills';
+  const label = document.createElement('div');
+  label.className = 'plan-review-skills-label';
+  label.textContent = typeof t === 'function' ? t('sp.plan.skills') : 'Skills to activate';
+  skills.appendChild(label);
+  const values = document.createElement('div');
+  values.className = 'plan-review-skill-list';
+  for (const skillId of skillIds) {
+    const value = document.createElement('code');
+    value.className = 'plan-review-skill';
+    value.textContent = skillId;
+    values.appendChild(value);
+  }
+  skills.appendChild(values);
+  return skills;
+}
+
+function renderPlanReviewView(plan, fallbackMarkdown = '') {
+  const view = document.createElement('div');
+  view.className = 'plan-review-view';
+  const draft = planReviewDisplayFields(plan, fallbackMarkdown);
+  const skillIds = Array.isArray(plan?.skill_ids)
+    ? plan.skill_ids.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+
+  const summaryInput = document.createElement('textarea');
+  summaryInput.className = 'plan-review-summary-input plan-review-summary';
+  summaryInput.rows = 1;
+  summaryInput.value = draft.summary;
+  summaryInput.placeholder = typeof t === 'function' ? t('sp.plan.summary_placeholder') : 'Plan summary';
+  summaryInput.setAttribute('aria-label', typeof t === 'function' ? t('sp.plan.summary_placeholder') : 'Plan summary');
+  view.appendChild(summaryInput);
+
+  const list = document.createElement('div');
+  list.className = 'plan-review-steps';
+  list.setAttribute('role', 'list');
+  view.appendChild(list);
+
+  const reorderHint = document.createElement('div');
+  reorderHint.className = 'plan-review-reorder-hint';
+  const reorderIcon = document.createElement('span');
+  reorderIcon.className = 'plan-review-reorder-icon';
+  reorderIcon.setAttribute('aria-hidden', 'true');
+  reorderIcon.textContent = '↕';
+  const reorderText = document.createElement('span');
+  reorderText.textContent = typeof t === 'function'
+    ? t('sp.plan.reorder_hint')
+    : 'Drag step numbers to reorder';
+  reorderHint.append(reorderIcon, reorderText);
+  view.appendChild(reorderHint);
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'plan-review-add-step';
+  addBtn.textContent = typeof t === 'function' ? t('sp.plan.add_step') : 'Add step';
+  view.appendChild(addBtn);
+
+  const emptyNote = document.createElement('div');
+  emptyNote.className = 'plan-review-empty-steps';
+  emptyNote.hidden = true;
+  emptyNote.textContent = typeof t === 'function'
+    ? t('sp.plan.empty_steps')
+    : 'Add at least one step before approving.';
+  view.appendChild(emptyNote);
+
+  if (skillIds.length) {
+    view.appendChild(renderPlanReviewSkills(skillIds));
+  }
+  // Risks render after skills placeholder so renderPlanReviewRisks can insert
+  // above skills once the view is mounted with the full draft.
+  renderPlanReviewRisks(view, draft.risks);
+
+  // Steps are filled after the view is attached to the card so remove handlers
+  // can reach the card root via apply/create helpers called from bind.
+  view._initialPlanDraft = draft;
+  return view;
+}
+
+function mountPlanReviewEditor(card, view) {
+  if (!card || !view) return;
+  if (view.dataset.mounted === 'true') {
+    // Rebind path: only re-wire controls if the restored markup already has them.
+    bindPlanReviewEditorControls(card, view);
+    return;
+  }
+  view.dataset.mounted = 'true';
+  const draft = view._initialPlanDraft || getPlanReviewDraftFromDom(card);
+  delete view._initialPlanDraft;
+  card.dataset.planRisks = JSON.stringify(Array.isArray(draft.risks) ? draft.risks : []);
+  applyPlanDraftToEditor(card, draft, { preserveFocus: false });
+  bindPlanReviewEditorControls(card, view);
+}
+
+function bindPlanReviewEditorControls(card, view) {
+  view.querySelectorAll('.plan-review-step').forEach((item) => bindPlanReviewStepRow(card, item));
+
+  const summaryInput = view.querySelector('.plan-review-summary-input');
+  if (summaryInput && !summaryInput.dataset.bound) {
+    summaryInput.dataset.bound = 'true';
+    summaryInput.addEventListener('beforeinput', () => capturePlanReviewScrollSnapshot(summaryInput));
+    summaryInput.addEventListener('input', () => {
+      autosizePlanReviewField(summaryInput);
+      syncPlanReviewDraft(card);
+    });
+    autosizePlanReviewField(summaryInput);
+  }
+
+  const addBtn = view.querySelector('.plan-review-add-step');
+  if (addBtn && !addBtn.dataset.bound) {
+    addBtn.dataset.bound = 'true';
+    addBtn.addEventListener('click', () => {
+      const list = view.querySelector('.plan-review-steps');
+      if (!list) return;
+      const index = list.querySelectorAll('.plan-review-step').length;
+      const row = createPlanReviewStepRow(card, { id: String(index + 1), action: '' }, index);
+      list.appendChild(row);
+      renumberPlanReviewSteps(card);
+      syncPlanReviewDraft(card);
+      const input = row.querySelector('.plan-review-step-input');
+      try { input?.focus(); } catch {}
+    });
+  }
+
+  // Cards are initially mounted while detached, and restored cards can be
+  // rebound before layout settles. Measure on the next frame in both cases.
+  schedulePlanReviewFieldsAutosize(card);
+}
+
+function setPlanReviewRawEditing(card, enabled, { focus = false } = {}) {
+  const textarea = card?.querySelector?.('.plan-review-edit');
+  const changeBtn = card?.querySelector?.('.plan-review-change');
+  if (!textarea) return;
+  if (enabled) {
+    // Prefer original display text when clean (especially verbose). Only push
+    // structured serialization when the user already dirtied the draft.
+    const original = planReviewOriginalMarkdown(card);
+    if (card.dataset.planDirty === 'true') {
+      const draft = getPlanReviewDraftFromDom(card);
+      const serialized = serializePlanDraftToMarkdown(draft);
+      textarea.value = card.dataset.editedText || serialized || original;
+    } else {
+      textarea.value = original;
+    }
+    card.dataset.editing = 'true';
+    if (changeBtn) {
+      changeBtn.textContent = typeof t === 'function' ? t('sp.plan.done_editing_text') : 'Done';
+    }
+    if (focus) {
+      try {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      } catch {}
+    }
+  } else {
+    // Collapse raw mode. If the buffer still matches the original display
+    // text, skip re-parse so verbose metadata is never ingested as risks.
+    const original = planReviewOriginalMarkdown(card);
+    const current = String(textarea.value || '').trim();
+    if (current && current !== original) {
+      syncPlanReviewDraft(card, { fromRaw: true });
+    } else {
+      // Restore clean structured state from the compact baseline.
+      const compact = String(card.dataset.originalCompactMarkdown || original).trim();
+      if (compact) {
+        applyPlanDraftToEditor(card, parsePlanMarkdownToDraft(compact), { preserveFocus: false });
+      }
+      card.dataset.planDirty = 'false';
+      delete card.dataset.editedText;
+      delete card.dataset.planEditSource;
+      textarea.value = original;
+    }
+    card.dataset.editing = 'false';
+    if (changeBtn) {
+      changeBtn.textContent = typeof t === 'function' ? t('sp.plan.edit_as_text') : 'Edit as text';
+    }
+  }
+  // The raw buffer is authoritative while visible. Disable the parallel
+  // structured controls so they cannot collect edits that raw approval/Done
+  // would discard. Re-enable them as soon as raw mode collapses.
+  setPlanReviewStructuredControlsDisabled(card, enabled);
+  schedulePersist();
+}
+
+function revealPlanReviewEditor(card, focus = false) {
+  setPlanReviewRawEditing(card, true, { focus });
+}
+
+function resolvePlanReviewApprovalText(card) {
+  const original = planReviewOriginalMarkdown(card);
+  const rawTextarea = card.querySelector('.plan-review-edit');
+  const rawMode = card.dataset.editing === 'true';
+  const displayMode = String(card.dataset.planMarkdownMode || 'compact');
+
+  if (rawMode) {
+    const current = String(rawTextarea?.value || '').trim();
+    if (!current || current === original) {
+      // Unchanged raw buffer — pin original plan object (skills intact).
+      return { editedText: '', markdownMode: displayMode };
+    }
+    // Compact-shaped buffers (or structured serialization after step edits)
+    // must approve as compact so the agent re-appends execution metadata and
+    // does not fail-close skill_ids via verbosePlanEdited.
+    // Verbose-looking buffers keep verbose mode so the agent parses metadata
+    // from the approved text.
+    const markdownMode = looksLikeVerbosePlanMarkdown(current) ? 'verbose' : 'compact';
+    return { editedText: current, markdownMode };
+  }
+
+  // "Done" collapses raw mode after syncing its parsed fields into the
+  // structured editor. Keep the exact dirty buffer as the approval source so
+  // edits to verbose-only metadata (skills, scheduling, submission, etc.) are
+  // not replaced by the lossy structured serialization. A later structured
+  // edit overwrites dataset.editedText with compact markdown via syncPlanReviewDraft.
+  const savedEdit = resolveSavedPlanReviewEdit(card);
+  if (savedEdit) return savedEdit;
+  const draft = getPlanReviewDraftFromDom(card);
+  if (!draft.steps.length) {
+    return { editedText: '', markdownMode: displayMode, emptySteps: true };
+  }
+  const serialized = serializePlanDraftToMarkdown(draft);
+  // Structured edits always approve as compact so the agent re-appends
+  // execution metadata and keeps skill activation from the planner object.
+  // Tradeoff: removing skill-related steps in the structured UI does not
+  // clear planner skill_ids; only verbose raw edits fail-close that path.
+  if (serialized && serialized !== String(card.dataset.originalCompactMarkdown || '').trim()) {
+    return { editedText: serialized, markdownMode: 'compact' };
+  }
+  // Verbose display with no structured changes: leave empty so the agent pins
+  // the original plan object (skills/metadata intact).
+  return { editedText: '', markdownMode: displayMode };
+}
+
+function planReviewViewNeedsHydration(view, savedText = '') {
+  const stepInputs = [...(view?.querySelectorAll?.('.plan-review-step-input') || [])];
+  const hasLiveBindings = view?.querySelector?.('.plan-review-summary-input')?.dataset?.bound === 'true';
+  if (hasLiveBindings) return false;
+  return stepInputs.length === 0
+    || !stepInputs.some((el) => String(el.value || '').trim())
+    || String(savedText || '') !== '';
+}
+
+function bindPlanReviewCard(card) {
+  if (!card || card.classList.contains('plan-reviewed')) return;
+  const planId = String(card.dataset.planId || '');
+  if (!planId) return;
+  const rawTabId = card.dataset.tabId;
+  const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
+  if (tabId == null || Number.isNaN(tabId)) return;
+
+  const view = card.querySelector('.plan-review-view');
+  if (view) {
+    // Restored cards lose live textarea values (only defaultValue survives
+    // innerHTML). Prefer dataset.editedText, else rebuild from the original
+    // compact plan so empty restored inputs do not wipe the draft.
+    const saved = card.dataset.editedText;
+    const needsHydrate = planReviewViewNeedsHydration(view, saved);
+    if (needsHydrate) {
+      const sourceText = (saved != null && saved !== '')
+        ? saved
+        : String(card.dataset.originalCompactMarkdown || planReviewOriginalMarkdown(card) || '').trim();
+      if (sourceText) {
+        applyPlanDraftToEditor(card, parsePlanMarkdownToDraft(sourceText), { preserveFocus: false });
+      } else if (view._initialPlanDraft) {
+        applyPlanDraftToEditor(card, view._initialPlanDraft, { preserveFocus: false });
+        delete view._initialPlanDraft;
+      }
+      if (saved != null && saved !== '') card.dataset.planDirty = 'true';
+      view.dataset.mounted = 'true';
+    } else if (view.dataset.mounted !== 'true') {
+      mountPlanReviewEditor(card, view);
+    }
+    bindPlanReviewEditorControls(card, view);
+  }
+
+  const textarea = card.querySelector('.plan-review-edit');
+  const changeBtn = card.querySelector('.plan-review-change');
+
+  // A <textarea>'s live `.value` is NOT captured when the conversation is
+  // persisted via innerHTML (only its defaultValue / child text is), so edits
+  // made before a tab switch would be lost on restore — and silently pinned
+  // un-edited on approval. Mirror live edits into a data attribute on the card
+  // (which DOES survive the persist→restore round-trip) and rehydrate the
+  // textarea from it on rebind. (#3)
+  if (textarea) {
+    const saved = card.dataset.editedText;
+    if (saved != null && saved !== '' && card.dataset.editing === 'true') {
+      textarea.value = saved;
+    }
+    if (!textarea.dataset.bound) {
+      textarea.dataset.bound = 'true';
+      textarea.addEventListener('input', () => {
+        card.dataset.editedText = textarea.value;
+        card.dataset.planDirty = 'true';
+        card.dataset.planEditSource = 'raw';
+        // The persist observer only watches childList/characterData, not
+        // attributes, so the data attribute above won't trigger a save on its
+        // own — schedule one so the edit reaches storage before a panel reload.
+        schedulePersist();
+      });
+    }
+  }
+
+  if (card.dataset.editing === 'true') {
+    setPlanReviewRawEditing(card, true, { focus: false });
+  } else if (changeBtn) {
+    changeBtn.textContent = typeof t === 'function' ? t('sp.plan.edit_as_text') : 'Edit as text';
+  }
+
+  if (changeBtn && !changeBtn.dataset.bound) {
+    changeBtn.dataset.bound = 'true';
+    changeBtn.addEventListener('click', () => {
+      const enableRaw = card.dataset.editing !== 'true';
+      setPlanReviewRawEditing(card, enableRaw, { focus: enableRaw });
+    });
+  }
+
+  const approveBtn = card.querySelector('.plan-review-approve');
+  if (approveBtn && !approveBtn.dataset.bound) {
+    approveBtn.dataset.bound = 'true';
+    approveBtn.addEventListener('click', () => {
+      const resolution = resolvePlanReviewApprovalText(card);
+      if (resolution.emptySteps) {
+        const emptyNote = card.querySelector('.plan-review-empty-steps');
+        if (emptyNote) emptyNote.hidden = false;
+        return;
+      }
+      // Persist the markdown mode used for this approval (structured edits force
+      // compact so planner execution metadata is re-appended server-side).
+      card.dataset.planMarkdownMode = resolution.markdownMode;
+      submitPlanReview(card, tabId, planId, 'approve', resolution.editedText);
+    });
+  }
+
+  const cancelBtn = card.querySelector('.plan-review-cancel');
+  if (cancelBtn && !cancelBtn.dataset.bound) {
+    cancelBtn.dataset.bound = 'true';
+    cancelBtn.addEventListener('click', () => {
+      submitPlanReview(card, tabId, planId, 'reject', '');
+    });
+  }
+}
+
+function reattachPlanReviewActiveRun(card) {
+  const assistantEl = card?.closest?.('.message.assistant');
+  if (!assistantEl) return null;
+  const tabId = Number(card?.dataset?.tabId || currentTabId);
+  clearActiveChatPayloadForTab(tabId);
+  currentAssistantEl = assistantEl;
+  setTabProcessing(tabId, true);
+  setTabAbortRequested(tabId, false);
+  sendBtn.disabled = true;
+  hideRecommendedActions();
+  showActivity(t('sp.activity.thinking'));
+  return assistantEl;
+}
+
+function clearPlanReviewActiveRun(assistantEl, tabId = currentTabId) {
+  if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+  setTabProcessing(tabId, false);
+  setTabAbortRequested(tabId, false);
+  if (sameTabId(currentTabId, tabId)) {
+    sendBtn.disabled = false;
+    hideActivity();
+  }
+  drainQueuedPromptsAfterRunSettles();
+  refreshRecommendedActions();
+}
+
+function planReviewConfidenceText(plan) {
+  const confidence = Number(plan?.confidence);
+  if (!Number.isFinite(confidence)) return '';
+  return `${Math.round(Math.max(0, Math.min(1, confidence)) * 100)}%`;
+}
+
+function rebindPlanReviewCards() {
+  document.querySelectorAll('.plan-review-card').forEach(card => {
+    bindPlanReviewCard(card);
+  });
+}
+
+function rebindScheduleComposers() {
+  document.querySelectorAll('form.schedule-composer').forEach(form => {
+    bindScheduleComposer(form);
+  });
+}
+
+function resumeAfterSubscription(btn) {
+  if (isProcessing) {
+    showComposerToast(t('sp.retry.busy'), { duration: 4000 });
+    return;
+  }
+  const mode = ['ask', 'act', 'dev'].includes(btn?.dataset?.resumeMode)
+    ? btn.dataset.resumeMode
+    : agentMode;
+  if (rejectSelectionScopedMode(mode)) return;
+  setMode(mode);
+  void continueAgent({
+    mode,
+    foreground: btn?.dataset?.resumeForeground === 'true',
+  });
+}
+
+function rebindSubscribeButtons() {
+  document.querySelectorAll('.subscribe-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = 'true';
+    btn.addEventListener('click', () => openSubscribeUrl(btn.dataset.subscribeUrl));
+  });
+  document.querySelectorAll('.subscribe-resume-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = 'true';
+    btn.addEventListener('click', () => resumeAfterSubscription(btn));
+  });
+}
+
+function rebindCostAllowanceButtons() {
+  document.querySelectorAll('.cost-allowance-bump-btn').forEach(bindCostAllowanceButton);
+  document.querySelectorAll('.cost-allowance-retry-btn').forEach(bindErrorRetryButton);
+  document.querySelectorAll('.cost-allowance-continue-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = 'true';
+    btn.addEventListener('click', () => resumeAfterSubscription(btn));
+  });
+}
+
+function retryPayloadFromButton(btn) {
+  const text = String(btn?.dataset?.retryText || '').trim();
+  if (!text) return null;
+  const displayText = String(btn?.dataset?.retryDisplayText || text).trim() || text;
+  const mode = ['ask', 'act', 'dev'].includes(btn.dataset.retryMode)
+    ? btn.dataset.retryMode
+    : agentMode;
+  const retryId = btn.dataset.retryId || '';
+  const attachments = retryAttachmentPayloads.get(retryId) || [];
+  const attachmentCount = Number(btn.dataset.retryAttachmentCount || 0) || 0;
+  const sourceGrounding = normalizeSelectionSourceGrounding(btn.dataset.retrySourceGrounding) || null;
+  const selectionAction = sourceGrounding
+    ? normalizeSelectionAction(btn.dataset.retrySelectionAction)
+    : '';
+  return {
+    text,
+    displayText,
+    mode,
+    apiMutationsAllowed: btn.dataset.retryApiMutationsAllowed === 'true',
+    foreground: btn.dataset.retryForeground === 'true',
+    ...(sourceGrounding ? { sourceGrounding } : {}),
+    ...(selectionAction ? { selectionAction } : {}),
+    attachments,
+    missingAttachments: attachmentCount > 0 && attachments.length === 0,
+  };
+}
+
+function bindErrorRetryButton(btn) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isProcessing) {
+      showComposerToast(t('sp.retry.busy'), { duration: 4000 });
+      return;
+    }
+    const payload = retryPayloadFromButton(btn);
+    if (!payload) return;
+    if (rejectSelectionScopedMode(payload.mode, currentTabId, payload.sourceGrounding)) return;
+    if (payload.missingAttachments) {
+      showComposerToast(t('sp.retry.attachments_unavailable'), { duration: 5000 });
+    }
+    setMode(payload.mode);
+    if (payload.apiMutationsAllowed) {
+      grantApiMutationsForTab(currentTabId);
+    }
+    inputEl.value = payload.displayText;
+    autoResizeInput();
+    hideSlashCommandAutocomplete();
+    const accepted = await sendMessage({
+      ...(payload.displayText !== payload.text ? {
+        __agentPrompt: payload.text,
+        __agentDisplayText: payload.displayText,
+        __agentTabId: currentTabId,
+      } : {}),
+      __retry: {
+        mode: payload.mode,
+        apiMutationsAllowed: payload.apiMutationsAllowed,
+        foreground: payload.foreground,
+        ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
+        ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
+        attachments: payload.attachments,
+      },
+    });
+    if (accepted) {
+      releaseRetryAttachmentPayload(btn.dataset.retryId);
+      btn.disabled = true;
+    }
+  });
+}
+
+function rebindRetryButtons() {
+  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn').forEach(bindErrorRetryButton);
+}
+
+function rebindPlanReviewRetryButtons() {
+  document.querySelectorAll('.plan-review-retry').forEach(bindErrorRetryButton);
+}
+
+function createActiveChatPayloadState(retryPayload, requestId = '') {
+  return {
+    retryPayload,
+    requestId: String(requestId || ''),
+    renderedErrorMessages: new Set(),
+  };
+}
+
+function activeRetryPayloadForRequest(tabId, requestId = '') {
+  const state = activeChatPayloadsByTab.get(tabId);
+  if (!state) return null;
+  const cleanRequestId = String(requestId || '');
+  if (cleanRequestId && state.requestId !== cleanRequestId) return null;
+  return state.retryPayload || null;
+}
+
+function retryPayloadForRunAssistant(assistantEl) {
+  const userEl = userMessageForRunAssistant(assistantEl);
+  const displayText = String(userEl ? getComposerHistoryTextFromMessage(userEl) : '').trim();
+  if (!displayText) return null;
+  const internalPrompt = String(assistantEl?.dataset.retryAgentPrompt || '').trim();
+  const text = internalPrompt || displayText;
+  const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
+  const selectionAction = sourceGrounding
+    ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
+    : '';
+  return {
+    text,
+    displayText,
+    mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
+      ? assistantEl.dataset.runMode
+      : agentMode,
+    apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
+    foreground: assistantEl?.dataset.retryForeground === 'true',
+    ...(sourceGrounding ? { sourceGrounding } : {}),
+    ...(selectionAction ? { selectionAction } : {}),
+    attachments: [],
+    attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+  };
+}
+
+function userMessageForRunAssistant(assistantEl) {
+  let userEl = assistantEl?.previousElementSibling || null;
+  while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
+  return userEl;
+}
+
+function plannerRequestFailureUpdate(updates = []) {
+  if (!Array.isArray(updates)) return null;
+  return updates.find(update => (
+    update?.type === 'warning'
+    && update?.data?.code === 'planner_request_failed'
+  )) || null;
+}
+
+function bindPlannerProviderSettingsButton(btn) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    btn.disabled = true;
+    try {
+      await openProvidersSettingsPage();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function rebindPlannerRequestFailureControls() {
+  document.querySelectorAll('.planner-request-failure-provider-btn')
+    .forEach(bindPlannerProviderSettingsButton);
+}
+
+function renderPlannerRequestFailure(assistantEl, data, retryPayload = null) {
+  if (!assistantEl || data?.code !== 'planner_request_failed') return false;
+  const textEl = assistantEl.querySelector('.message-text');
+  if (!textEl) return false;
+  if (textEl.querySelector('.planner-request-failure-actions')) return true;
+
+  clearAssistantTextStreamState(assistantEl);
+  assistantEl.classList.add('planner-request-failure');
+  textEl.classList.add('planner-request-failure-content');
+  textEl.replaceChildren();
+  // Set the role on the empty container first: screen readers announce
+  // content inserted into an existing live region, not a region that arrives
+  // already populated. A restored card stays silent, which is what we want.
+  textEl.setAttribute('role', 'alert');
+
+  const message = document.createElement('div');
+  message.className = 'planner-request-failure-message';
+  message.textContent = data.message || 'Planner request failed before a valid response was available.';
+  // Name the provider that failed — with several configured, "open Providers"
+  // is only actionable if the user knows which one to look at. The label is a
+  // proper noun, so it needs no translation.
+  if (data.provider) {
+    const providerName = document.createElement('div');
+    providerName.className = 'planner-request-failure-provider';
+    providerName.textContent = data.provider;
+    message.appendChild(providerName);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'planner-request-failure-actions';
+
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'planner-request-failure-action planner-request-failure-retry-btn';
+  retryBtn.textContent = t('sp.retry');
+  retryBtn.title = t('sp.retry');
+  retryBtn.setAttribute('aria-label', t('sp.retry'));
+  const retryReady = configureRetryButton(retryBtn, retryPayload);
+
+  const providerBtn = document.createElement('button');
+  providerBtn.type = 'button';
+  providerBtn.className = 'planner-request-failure-action planner-request-failure-provider-btn';
+  providerBtn.textContent = t('st.tab.providers');
+  providerBtn.title = `${t('sp.btn.settings')}: ${t('st.tab.providers')}`;
+  providerBtn.setAttribute('aria-label', providerBtn.title);
+  bindPlannerProviderSettingsButton(providerBtn);
+
+  const orderedActions = data.failureKind === 'auth'
+    ? [providerBtn, retryReady ? retryBtn : null]
+    : [retryReady ? retryBtn : null, providerBtn];
+  const visibleActions = orderedActions.filter(Boolean);
+  visibleActions[0]?.classList.add('primary');
+  visibleActions.forEach(btn => actions.appendChild(btn));
+
+  textEl.append(message, actions);
+  addMessageCopyButton(assistantEl);
   scrollToBottom();
+  return true;
+}
+
+function clearActiveChatPayloadForTab(tabId) {
+  if (tabId != null) activeChatPayloadsByTab.delete(tabId);
+}
+
+function takeActiveRetryPayloadForError(tabId, requestId, message) {
+  const state = activeChatPayloadsByTab.get(tabId);
+  const scopedRequestId = String(requestId || state?.requestId || '');
+  const stateMatchesRequest = !!state && (!scopedRequestId || state.requestId === scopedRequestId);
+  const renderedErrors = Array.from(messagesEl.querySelectorAll('.message.error')).map(el => ({
+    tabId: el.dataset.tabId,
+    requestId: el.dataset.runRequestId,
+    key: el.dataset.errorMessageKey,
+  }));
+  const claim = claimRunError({
+    seenErrors: stateMatchesRequest ? state.renderedErrorMessages : null,
+    renderedErrors,
+    tabId,
+    requestId: scopedRequestId,
+    message,
+  });
+  return { ...claim, retryPayload: stateMatchesRequest ? state.retryPayload : null };
+}
+
+function scheduleActiveChatPayloadCleanup(tabId, state) {
+  setTimeout(() => {
+    if (activeChatPayloadsByTab.get(tabId) === state) {
+      activeChatPayloadsByTab.delete(tabId);
+    }
+  }, 30000);
+}
+
+function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', options = {}) {
+  const message = formatErrorMessage(data?.message ?? data?.error ?? data);
+  // Allowance routing depends on terminal durable-turn proof. Live error
+  // updates arrive before that proof, so the run_complete/direct response
+  // path owns the single actionable card.
+  if (parseCostAllowanceError(message)) return;
+  const active = takeActiveRetryPayloadForError(tabId, requestId, message);
+  if (active.duplicate) return;
+  const msgEl = addMessage('error', t('sp.error_prefix', { msg: message }), {
+    retryPayload: isTabAbortRequested(tabId) ? null : active.retryPayload,
+    subscribeResumeMode: active.retryPayload?.mode,
+    costAllowanceResume: {
+      submittedTurnDurable: options.submittedTurnDurable,
+      retryPayload: active.retryPayload,
+    },
+  });
+  if (active.requestId) {
+    msgEl.dataset.tabId = active.tabId;
+    msgEl.dataset.runRequestId = active.requestId;
+    msgEl.dataset.errorMessageKey = active.key;
+  }
+}
+
+function rebindRestoredMessageControls() {
+  restoreStagedScreenshotAttachments();
+  rebindCopyButtons();
+  rebindCompactStepDetailsToggles();
+  rebindScreenshotSaveButtons();
+  rebindRetryButtons();
+  rebindPlanReviewRetryButtons();
+  rebindPlannerRequestFailureControls();
+  rebindContinueButtons();
+  rebindClarifyCards();
+  rebindPlanReviewCards();
+  rebindScheduleComposers();
+  document.querySelectorAll('.workflow-manager').forEach(bindSavedWorkflowManager);
+  document.querySelectorAll('form.workflow-parameter-form').forEach(bindSavedWorkflowParameterForm);
+  rebindSubscribeButtons();
+  rebindCostAllowanceButtons();
+}
+
+function getProviderPickerOptions() {
+  if (!providerPickerMenu) return [];
+  return Array.from(providerPickerMenu.querySelectorAll('.provider-picker-option'));
+}
+
+function setProviderPickerOpen(open) {
+  if (!providerPickerMenu || !providerPickerBtn) return;
+  if (open) setLanguagePickerOpen(false);
+  providerPickerMenu.classList.toggle('hidden', !open);
+  providerPickerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) {
+    const selected = getProviderPickerOptions().find((btn) => btn.getAttribute('aria-selected') === 'true')
+      || getProviderPickerOptions()[0];
+    setPickerMenuHighlight(providerPickerMenu, selected, { instant: true });
+    // Focus the selected (or first) option so keyboard users can arrow immediately.
+    queueMicrotask(() => selected?.focus());
+  } else {
+    setPickerMenuHighlight(providerPickerMenu, null);
+  }
+}
+
+function moveProviderPickerFocus(delta) {
+  const options = getProviderPickerOptions();
+  if (!options.length) return;
+  const active = document.activeElement;
+  let idx = options.indexOf(active);
+  if (idx < 0) idx = options.findIndex((btn) => btn.getAttribute('aria-selected') === 'true');
+  if (idx < 0) idx = 0;
+  const next = options[Math.max(0, Math.min(options.length - 1, idx + delta))];
+  next?.focus();
+}
+
+function activateFocusedProviderPickerOption() {
+  const active = document.activeElement;
+  if (active?.classList?.contains('provider-picker-option')) {
+    active.click();
+  }
+}
+
+function ensurePickerMenuHighlight(menu) {
+  if (!menu) return null;
+  let highlight = menu.querySelector(':scope > .picker-menu-highlight');
+  if (highlight) return highlight;
+  highlight = document.createElement('div');
+  highlight.className = 'picker-menu-highlight';
+  highlight.setAttribute('aria-hidden', 'true');
+  menu.prepend(highlight);
+  return highlight;
+}
+
+function selectedPickerMenuOption(menu) {
+  return menu?.querySelector('.provider-picker-option[aria-selected="true"]') || null;
+}
+
+function setPickerMenuHighlight(menu, option, { instant = false } = {}) {
+  const highlight = ensurePickerMenuHighlight(menu);
+  if (!highlight) return;
+  if (!option || !menu.contains(option)) {
+    highlight.classList.remove('visible');
+    delete highlight.dataset.targetValue;
+    return;
+  }
+  const targetValue = option.dataset.value || '';
+  if (highlight.dataset.targetValue === targetValue && highlight.classList.contains('visible')) return;
+  highlight.dataset.targetValue = targetValue;
+  if (instant) highlight.classList.add('instant');
+  highlight.style.left = `${option.offsetLeft}px`;
+  highlight.style.width = `${option.offsetWidth}px`;
+  highlight.style.height = `${option.offsetHeight}px`;
+  highlight.style.transform = `translate3d(0, ${option.offsetTop}px, 0)`;
+  highlight.classList.add('visible');
+  if (instant) requestAnimationFrame(() => highlight.classList.remove('instant'));
+}
+
+function bindPickerMenuHighlight(menu) {
+  if (!menu || menu.dataset.highlightBound === 'true') return;
+  menu.dataset.highlightBound = 'true';
+  menu.addEventListener('pointerover', (event) => {
+    const option = event.target.closest?.('.provider-picker-option');
+    setPickerMenuHighlight(menu, option && menu.contains(option) ? option : null);
+  });
+  menu.addEventListener('pointerleave', () => {
+    setPickerMenuHighlight(menu, selectedPickerMenuOption(menu));
+  });
+  menu.addEventListener('focusin', (event) => {
+    const option = event.target.closest?.('.provider-picker-option');
+    if (option && menu.contains(option)) setPickerMenuHighlight(menu, option);
+  });
+  menu.addEventListener('focusout', () => {
+    queueMicrotask(() => {
+      if (!menu.contains(document.activeElement)) {
+        setPickerMenuHighlight(menu, selectedPickerMenuOption(menu));
+      }
+    });
+  });
+}
+
+bindPickerMenuHighlight(providerPickerMenu);
+bindPickerMenuHighlight(languagePickerMenu);
+
+function syncProviderPickerButton() {
+  if (!providerSelect || !providerPickerLabel) return;
+  const id = providerSelect.value;
+  const shortLabel = providerPickerLabelById.get(id)
+    || providerSelect.selectedOptions?.[0]?.textContent
+    || id
+    || '';
+  providerPickerLabel.textContent = shortLabel;
+  if (providerPickerBtn) {
+    providerPickerBtn.title = providerSelect.selectedOptions?.[0]?.textContent || shortLabel;
+  }
+  if (providerPickerMenu) {
+    providerPickerMenu.querySelectorAll('.provider-picker-option').forEach((btn) => {
+      btn.setAttribute('aria-selected', btn.dataset.value === id ? 'true' : 'false');
+    });
+  }
+}
+
+function appendProviderPickerGroup(label) {
+  if (!providerPickerMenu || !label) return;
+  const el = document.createElement('div');
+  el.className = 'provider-picker-group-label';
+  el.textContent = label;
+  providerPickerMenu.appendChild(el);
+}
+
+function appendProviderPickerOption(id, name, meta) {
+  if (!providerPickerMenu) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'provider-picker-option';
+  btn.setAttribute('role', 'option');
+  btn.dataset.value = id;
+  btn.setAttribute('aria-selected', 'false');
+
+  // Icons only in the open menu — closed header stays text-only so the
+  // WebBrain mark (and other brand chips) don't compete with the chrome.
+  const iconSrc = providerIconUrl(id);
+  if (iconSrc) {
+    const img = document.createElement('img');
+    img.className = 'provider-icon provider-icon-sm';
+    img.src = iconSrc;
+    img.alt = '';
+    img.width = 16;
+    img.height = 16;
+    img.decoding = 'async';
+    img.draggable = false;
+    btn.appendChild(img);
+  }
+
+  const text = document.createElement('span');
+  text.className = 'provider-picker-option-text';
+  text.textContent = name;
+  btn.appendChild(text);
+
+  if (meta) {
+    const metaEl = document.createElement('span');
+    metaEl.className = 'provider-picker-option-meta';
+    metaEl.textContent = meta;
+    btn.appendChild(metaEl);
+  }
+
+  btn.addEventListener('click', () => {
+    setProviderPickerOpen(false);
+    if (!providerSelect || providerSelect.value === id) {
+      // Re-selecting "More providers…" should still open settings.
+      if (id === MORE_PROVIDERS_OPTION_VALUE) {
+        providerSelect.value = id;
+        providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return;
+    }
+    providerSelect.value = id;
+    syncProviderPickerButton();
+    providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
+  providerPickerMenu.appendChild(btn);
+}
+
+function getLanguagePickerOptions() {
+  if (!languagePickerMenu) return [];
+  return Array.from(languagePickerMenu.querySelectorAll('.language-picker-option'));
+}
+
+function setLanguagePickerOpen(open) {
+  if (!languagePickerMenu || !languagePickerBtn) return;
+  if (open) setProviderPickerOpen(false);
+  languagePickerMenu.classList.toggle('hidden', !open);
+  languagePickerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) {
+    const selected = getLanguagePickerOptions().find((btn) => btn.getAttribute('aria-selected') === 'true')
+      || getLanguagePickerOptions()[0];
+    setPickerMenuHighlight(languagePickerMenu, selected, { instant: true });
+    queueMicrotask(() => selected?.focus());
+  } else {
+    setPickerMenuHighlight(languagePickerMenu, null);
+    languagePickerTypeahead = '';
+    if (languagePickerTypeaheadTimer) clearTimeout(languagePickerTypeaheadTimer);
+    languagePickerTypeaheadTimer = null;
+  }
+}
+
+function moveLanguagePickerFocus(delta) {
+  const options = getLanguagePickerOptions();
+  if (!options.length) return;
+  const active = document.activeElement;
+  let idx = options.indexOf(active);
+  if (idx < 0) idx = options.findIndex((btn) => btn.getAttribute('aria-selected') === 'true');
+  if (idx < 0) idx = 0;
+  options[Math.max(0, Math.min(options.length - 1, idx + delta))]?.focus();
+}
+
+function activateFocusedLanguagePickerOption() {
+  const active = document.activeElement;
+  if (active?.classList?.contains('language-picker-option')) active.click();
+}
+
+function focusLanguagePickerByPrefix(key) {
+  if (key.length !== 1 || !key.trim()) return false;
+  languagePickerTypeahead += key.toLocaleLowerCase();
+  if (languagePickerTypeaheadTimer) clearTimeout(languagePickerTypeaheadTimer);
+  languagePickerTypeaheadTimer = setTimeout(() => {
+    languagePickerTypeahead = '';
+    languagePickerTypeaheadTimer = null;
+  }, 700);
+
+  const options = getLanguagePickerOptions();
+  const activeIndex = Math.max(0, options.indexOf(document.activeElement));
+  const ordered = [...options.slice(activeIndex + 1), ...options.slice(0, activeIndex + 1)];
+  const matches = (btn, query) => (btn.dataset.search || '')
+    .split('\n')
+    .some((part) => part.startsWith(query));
+  let match = ordered.find((btn) => matches(btn, languagePickerTypeahead));
+  if (!match && languagePickerTypeahead.length > 1) {
+    languagePickerTypeahead = key.toLocaleLowerCase();
+    match = ordered.find((btn) => matches(btn, languagePickerTypeahead));
+  }
+  match?.focus();
+  return !!match;
+}
+
+function languageFlagSrc(flagCode) {
+  return `../../icons/flags/${flagCode}.svg`;
+}
+
+function syncLanguagePicker() {
+  if (!languageSelect) return;
+  const code = languageSelect.value || getLocale();
+  const language = LANGUAGES.find((item) => item.code === code);
+  if (languagePickerFlag && language?.flagCode) languagePickerFlag.src = languageFlagSrc(language.flagCode);
+  if (languagePickerCode) languagePickerCode.textContent = code.toUpperCase();
+  if (languagePickerBtn) {
+    const controlLabel = `${t('sp.btn.language')}: ${language?.label || code}`;
+    languagePickerBtn.title = controlLabel;
+    languagePickerBtn.setAttribute('aria-label', controlLabel);
+  }
+  getLanguagePickerOptions().forEach((btn) => {
+    btn.setAttribute('aria-selected', btn.dataset.value === code ? 'true' : 'false');
+  });
+}
+
+function appendLanguagePickerSeparator() {
+  if (!languagePickerMenu) return;
+  const separator = document.createElement('div');
+  separator.className = 'language-picker-separator';
+  separator.setAttribute('role', 'separator');
+  languagePickerMenu.appendChild(separator);
+}
+
+function appendLanguagePickerOption(language) {
+  if (!languagePickerMenu) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'provider-picker-option language-picker-option';
+  btn.setAttribute('role', 'option');
+  btn.setAttribute('aria-selected', 'false');
+  btn.dataset.value = language.code;
+  btn.dataset.search = [language.code, language.label, language.englishLabel]
+    .filter(Boolean)
+    .map((part) => String(part).toLocaleLowerCase())
+    .join('\n');
+
+  const flag = document.createElement('img');
+  flag.className = 'language-picker-option-flag';
+  flag.src = languageFlagSrc(language.flagCode);
+  flag.alt = '';
+  flag.setAttribute('aria-hidden', 'true');
+  btn.appendChild(flag);
+
+  const copy = document.createElement('span');
+  copy.className = 'language-picker-option-copy';
+  const nativeName = document.createElement('span');
+  nativeName.className = 'language-picker-option-native';
+  nativeName.textContent = language.label;
+  nativeName.dir = 'auto';
+  copy.appendChild(nativeName);
+  if (language.englishLabel && language.englishLabel !== language.label) {
+    const englishName = document.createElement('span');
+    englishName.className = 'language-picker-option-english';
+    englishName.textContent = language.englishLabel;
+    englishName.dir = 'ltr';
+    copy.appendChild(englishName);
+  }
+  btn.appendChild(copy);
+
+  const codeLabel = document.createElement('span');
+  codeLabel.className = 'language-picker-option-code';
+  codeLabel.textContent = language.code.toUpperCase();
+  codeLabel.dir = 'ltr';
+  btn.appendChild(codeLabel);
+
+  const check = document.createElement('span');
+  check.className = 'language-picker-check';
+  check.textContent = '✓';
+  check.setAttribute('aria-hidden', 'true');
+  btn.appendChild(check);
+
+  btn.addEventListener('click', () => {
+    setLanguagePickerOpen(false);
+    languagePickerBtn?.focus();
+    if (!languageSelect || languageSelect.value === language.code) return;
+    languageSelect.value = language.code;
+    syncLanguagePicker();
+    languageSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  languagePickerMenu.appendChild(btn);
+}
+
+function initializeLanguagePicker() {
+  if (!languageSelect) return;
+  languageSelect.replaceChildren();
+  languagePickerMenu?.replaceChildren();
+  LANGUAGES.forEach((language, index) => {
+    const option = document.createElement('option');
+    option.value = language.code;
+    option.textContent = language.label;
+    languageSelect.appendChild(option);
+    if (index === 2) appendLanguagePickerSeparator();
+    appendLanguagePickerOption(language);
+  });
+  languageSelect.value = getLocale();
+  syncLanguagePicker();
 }
 
 async function loadProviders() {
   try {
     const res = await sendToBackground('get_providers');
-    providerSelect.innerHTML = '';
-    for (const [id, config] of Object.entries(res.providers)) {
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = config.label || id;
-      if (id === res.active) opt.selected = true;
-      providerSelect.appendChild(opt);
+    providerSelect.replaceChildren();
+    providerPickerMenu?.replaceChildren();
+    providerPickerLabelById.clear();
+
+    const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Cloud' };
+    const cloudLabel = cloudConfig.label || 'WebBrain Cloud';
+    const cloudGroup = document.createElement('optgroup');
+    cloudGroup.label = t('sp.providers.no_setup_group');
+    const cloudOption = document.createElement('option');
+    cloudOption.value = 'webbrain_cloud';
+    cloudOption.textContent = `${cloudLabel} — ${t('sp.providers.no_setup')}`;
+    cloudGroup.appendChild(cloudOption);
+    providerSelect.appendChild(cloudGroup);
+    providerPickerLabelById.set('webbrain_cloud', cloudLabel);
+    appendProviderPickerGroup(cloudGroup.label);
+    appendProviderPickerOption('webbrain_cloud', cloudLabel, t('sp.providers.no_setup'));
+
+    const configuredEntries = Object.entries(res.providers)
+      .filter(([id, config]) => id !== 'webbrain_cloud' && config?.configured === true);
+    if (configuredEntries.length) {
+      const activeGroup = document.createElement('optgroup');
+      activeGroup.label = t('sp.providers.active_group');
+      appendProviderPickerGroup(activeGroup.label);
+      for (const [id, config] of configuredEntries) {
+        const name = config.label || id;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = `${name} — ${t('sp.providers.active')}`;
+        activeGroup.appendChild(opt);
+        providerPickerLabelById.set(id, name);
+        appendProviderPickerOption(id, name, t('sp.providers.active'));
+      }
+      providerSelect.appendChild(activeGroup);
     }
+
+    const moreOption = document.createElement('option');
+    moreOption.value = MORE_PROVIDERS_OPTION_VALUE;
+    moreOption.textContent = t('sp.providers.more');
+    providerSelect.appendChild(moreOption);
+    appendProviderPickerOption(MORE_PROVIDERS_OPTION_VALUE, t('sp.providers.more'), '');
+
+    const selectableProviderIds = new Set(['webbrain_cloud', ...configuredEntries.map(([id]) => id)]);
+    selectedProviderId = selectableProviderIds.has(res.active) ? res.active : 'webbrain_cloud';
+    providerSelect.value = selectedProviderId;
+    syncProviderPickerButton();
   } catch (e) {
     console.error('Failed to load providers:', e);
   }
 }
 
-async function testConnection() {
+async function openProvidersSettingsPage() {
+  const url = browser.runtime.getURL('src/ui/settings.html#providers');
+  try {
+    await browser.tabs.create({ url });
+  } catch {
+    browser.runtime.openOptionsPage();
+  }
+}
+
+function isWebBrainCloudProviderSelected() {
+  return providerSelect?.value === 'webbrain_cloud';
+}
+
+function markSelectedProviderUntested() {
+  statusDot.className = 'status-dot';
+  statusDot.title = providerSelect?.selectedOptions?.[0]?.textContent || providerSelect?.value || '';
+}
+
+function markSelectedProviderFailed(error) {
+  const msg = error?.message || t('sp.status.failed');
+  statusDot.className = 'status-dot offline';
+  statusDot.title = t('sp.status.error', { msg });
+}
+
+async function testConnection(options = {}) {
+  const providerId = options.providerId || providerSelect.value;
+  const requestId = ++providerTestRequestId;
+  if (options.skipWebBrainCloud && providerId === 'webbrain_cloud') {
+    if (requestId === providerTestRequestId && providerSelect.value === providerId) {
+      markSelectedProviderUntested();
+    }
+    return;
+  }
   statusDot.className = 'status-dot connecting';
   try {
     const res = await sendToBackground('test_provider', {
-      providerId: providerSelect.value,
+      providerId,
     });
+    if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
     statusDot.className = `status-dot ${res.ok ? 'online' : 'offline'}`;
     statusDot.title = res.ok
-      ? t('sp.status.connected', { model: res.model || providerSelect.value })
+      ? t('sp.status.connected', { model: res.model || providerId })
       : t('sp.status.error', { msg: res.error });
   } catch {
+    if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
     statusDot.className = 'status-dot offline';
     statusDot.title = t('sp.status.failed');
   }
 }
 
-// --- Message Sending ---
+function getSlashAutocompleteContext() {
+  if (!inputEl) return null;
+  const value = inputEl.value;
+  const selectionStart = inputEl.selectionStart ?? value.length;
+  const selectionEnd = inputEl.selectionEnd ?? selectionStart;
+  if (selectionStart !== selectionEnd) return null;
 
-// Per-conversation API mutation override (set via /allow-api).
-let apiMutationsAllowed = false;
+  const beforeCursor = value.slice(0, selectionStart);
+  const afterCursor = value.slice(selectionStart);
+  if (afterCursor.trim()) return null;
 
-function parseSlashCommands(text) {
-  const m = text.match(/^\/allow-api\b\s*/i);
-  if (m) {
-    const wasAlreadyAllowed = apiMutationsAllowed;
-    apiMutationsAllowed = true;
-    updateApiBadge();
-    if (!wasAlreadyAllowed) {
-      addMessage('system', t('sp.api.enabled_html'));
-    }
-    return text.slice(m[0].length).trim();
+  if (/^\/[a-z-]*$/i.test(beforeCursor)) {
+    return {
+      kind: 'command',
+      query: beforeCursor.toLowerCase(),
+      completionStart: 0,
+      completionEnd: selectionStart,
+    };
   }
-  return text;
+
+  const optionMatch = beforeCursor.match(/^(\/[a-z-]+)\s+(.*)$/i);
+  if (!optionMatch) return null;
+  const command = findSlashCommand(optionMatch[1]);
+  if (!command || !slashCommandIsDiscoverable(command)) return null;
+
+  const args = optionMatch[2];
+  const trailingWhitespace = !args || /\s$/.test(args);
+  const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+  const query = trailingWhitespace ? '' : (tokens.pop() || '');
+  if (query && !query.startsWith('--')) return null;
+
+  const selected = new Set();
+  const selectedGroups = new Set();
+  for (const token of tokens) {
+    if (!token.startsWith('--') || token === '--') return null;
+    const option = slashCommandOptions(command).find((candidate) => candidate.value === token.toLowerCase());
+    if (!option || !slashOptionIsAvailable(option, selected, selectedGroups) || option.takesRemainder) return null;
+    selected.add(option.value);
+    if (option.exclusiveGroup) selectedGroups.add(option.exclusiveGroup);
+  }
+
+  return {
+    kind: 'option',
+    command,
+    query: query.toLowerCase(),
+    selected,
+    selectedGroups,
+    completionStart: selectionStart - query.length,
+    completionEnd: selectionStart,
+  };
 }
 
-function updateApiBadge() {
-  let badge = document.getElementById('api-badge');
-  if (apiMutationsAllowed) {
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.id = 'api-badge';
-      badge.className = 'api-badge';
-      badge.innerHTML = t('sp.api.badge_html');
-      const inputArea = document.getElementById('input-area');
-      inputArea?.parentNode?.insertBefore(badge, inputArea);
-    }
-  } else if (badge) {
-    badge.remove();
-  }
+function slashCommandSelectionIsExecutable(command, selectedValues) {
+  return [...selectedValues].every((value) => {
+    const option = slashCommandOptions(command).find((candidate) => candidate.value === value);
+    return !option?.requires || selectedValues.has(option.requires);
+  });
 }
 
-async function sendMessage() {
-  let text = inputEl.value.trim();
-  if (!text || isProcessing) return;
+function buildSlashAutocompleteMatches(context) {
+  if (!context) return [];
+  const candidates = context.kind === 'command'
+    ? SLASH_COMMANDS.filter(slashCommandIsDiscoverable)
+    : slashCommandOptions(context.command)
+      .filter((option) => slashOptionIsAvailable(option, context.selected, context.selectedGroups))
+      .map((option) => option === SLASH_HELP_OPTION
+        ? { ...option, descriptionKey: context.command.descriptionKey }
+        : option);
+  const matches = candidates
+    .filter((candidate) => candidate.value.startsWith(context.query))
+    .map((candidate) => ({
+      ...candidate,
+      kind: context.kind,
+      completionStart: context.completionStart,
+      completionEnd: context.completionEnd,
+    }));
+  if (context.kind === 'option'
+      && !context.query
+      && slashCommandSelectionIsExecutable(context.command, context.selected)) {
+    const selectedAction = slashCommandOptions(context.command)
+      .find((option) => context.selected.has(option.value) && option.action);
+    matches.unshift({
+      value: context.command.value,
+      label: '↵ Enter',
+      descriptionKey: selectedAction?.descriptionKey || context.command.descriptionKey,
+      kind: 'base-action',
+    });
+  }
+  return matches;
+}
 
-  text = parseSlashCommands(text);
-  if (!text) {
-    inputEl.value = '';
-    autoResizeInput();
+function getRecognizedSlashCommandPrefix(value) {
+  const leadingWhitespace = value.match(/^\s*/)?.[0] || '';
+  const text = value.slice(leadingWhitespace.length);
+  const lowerText = text.toLowerCase();
+  const command = SLASH_COMMANDS.find((candidate) => {
+    if (!lowerText.startsWith(candidate.value)) return false;
+    const next = text.charAt(candidate.value.length);
+    return !next || /\s/.test(next);
+  });
+  if (!command) return null;
+  return {
+    start: leadingWhitespace.length,
+    end: leadingWhitespace.length + command.value.length,
+  };
+}
+
+function syncSlashCommandHighlightScroll() {
+  if (!inputEl || !inputHighlightEl) return;
+  inputHighlightEl.scrollTop = inputEl.scrollTop;
+  inputHighlightEl.scrollLeft = inputEl.scrollLeft;
+}
+
+function updateSlashCommandHighlight() {
+  if (!inputEl || !inputHighlightEl) return;
+  const value = inputEl.value;
+  const commandRange = getRecognizedSlashCommandPrefix(value);
+  if (!commandRange) {
+    inputHighlightEl.textContent = value;
+    syncSlashCommandHighlightScroll();
     return;
   }
 
-  isProcessing = true;
-  abortRequested = false;
-  sendBtn.disabled = true;
+  const before = escapeHtml(value.slice(0, commandRange.start));
+  const command = escapeHtml(value.slice(commandRange.start, commandRange.end));
+  const after = escapeHtml(value.slice(commandRange.end));
+  inputHighlightEl.innerHTML = `${before}<span class="input-highlight-command">${command}</span>${after}`;
+  syncSlashCommandHighlightScroll();
+}
+
+function scrollSlashCommandOptionIntoView(option) {
+  if (!slashCommandMenuEl || !option) return;
+
+  const menuRect = slashCommandMenuEl.getBoundingClientRect();
+  const optionRect = option.getBoundingClientRect();
+  if (optionRect.top < menuRect.top) {
+    slashCommandMenuEl.scrollTop -= menuRect.top - optionRect.top;
+  } else if (optionRect.bottom > menuRect.bottom) {
+    slashCommandMenuEl.scrollTop += optionRect.bottom - menuRect.bottom;
+  }
+}
+
+function updateSlashCommandActiveOption() {
+  const options = slashCommandMenuEl?.querySelectorAll('.slash-command-option') || [];
+  let selectedOption = null;
+  options.forEach((option, index) => {
+    const selected = index === slashCommandSelectedIndex;
+    option.classList.toggle('selected', selected);
+    option.setAttribute('aria-selected', String(selected));
+    if (selected) selectedOption = option;
+  });
+  const activeId = `${SLASH_COMMAND_OPTION_ID_PREFIX}${slashCommandSelectedIndex}`;
+  inputEl?.setAttribute('aria-activedescendant', activeId);
+  scrollSlashCommandOptionIntoView(selectedOption);
+}
+
+function renderSlashCommandAutocomplete() {
+  if (!slashCommandMenuEl || !inputEl || slashCommandMatches.length === 0) return;
+  slashCommandMenuEl.replaceChildren();
+  slashCommandMenuEl.setAttribute('aria-label', t('sp.slash.commands_label'));
+
+  slashCommandMatches.forEach((command, index) => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.id = `${SLASH_COMMAND_OPTION_ID_PREFIX}${index}`;
+    option.className = 'slash-command-option';
+    option.classList.toggle('slash-command-base-action', command.kind === 'base-action');
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(index === slashCommandSelectedIndex));
+
+    const name = document.createElement('span');
+    name.className = 'slash-command-name';
+    name.textContent = command.label || command.value;
+
+    const description = document.createElement('span');
+    description.className = 'slash-command-description';
+    description.textContent = t(command.descriptionKey);
+
+    option.append(name, description);
+    option.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (command.kind === 'base-action') activateSlashCommandBaseAction(index);
+      else applySlashCommandCompletion(index);
+    });
+    option.addEventListener('mousemove', () => setSlashCommandSelectedIndex(index));
+    slashCommandMenuEl.appendChild(option);
+  });
+
+  slashCommandMenuEl.classList.remove('hidden');
+  inputEl.setAttribute('aria-autocomplete', 'list');
+  inputEl.setAttribute('aria-controls', slashCommandMenuEl.id);
+  inputEl.setAttribute('aria-expanded', 'true');
+  updateSlashCommandActiveOption();
+}
+
+function hideSlashCommandAutocomplete() {
+  slashCommandMatches = [];
+  slashCommandSelectedIndex = 0;
+  slashCommandMenuEl?.classList.add('hidden');
+  slashCommandMenuEl?.replaceChildren();
+  inputEl?.setAttribute('aria-expanded', 'false');
+  inputEl?.removeAttribute('aria-activedescendant');
+}
+
+function updateSlashCommandAutocomplete() {
+  const context = getSlashAutocompleteContext();
+  if (!context) {
+    hideSlashCommandAutocomplete();
+    return;
+  }
+
+  const previouslySelected = slashCommandMatches[slashCommandSelectedIndex]?.value;
+  const matches = buildSlashAutocompleteMatches(context);
+  if (matches.length === 0) {
+    hideSlashCommandAutocomplete();
+    return;
+  }
+
+  slashCommandMatches = matches;
+  const selectedIndex = matches.findIndex((command) => command.value === previouslySelected);
+  slashCommandSelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+  renderSlashCommandAutocomplete();
+}
+
+function setSlashCommandSelectedIndex(index) {
+  if (slashCommandMatches.length === 0) return;
+  slashCommandSelectedIndex = (index + slashCommandMatches.length) % slashCommandMatches.length;
+  updateSlashCommandActiveOption();
+}
+
+function applySlashCommandCompletion(index = slashCommandSelectedIndex) {
+  const match = slashCommandMatches[index];
+  if (!match || !inputEl) return false;
+  const before = inputEl.value.slice(0, match.completionStart);
+  const after = inputEl.value.slice(match.completionEnd);
+  resetComposerHistoryNavigation(currentTabId);
+  inputEl.value = `${before}${match.value} ${after}`;
+  const cursor = before.length + match.value.length + 1;
+  inputEl.setSelectionRange(cursor, cursor);
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+  inputEl.focus();
+  return true;
+}
+
+function activateSlashCommandBaseAction(index = slashCommandSelectedIndex) {
+  const match = slashCommandMatches[index];
+  if (match?.kind !== 'base-action' || !inputEl) return false;
+  resetComposerHistoryNavigation(currentTabId);
+  inputEl.value = inputEl.value.trimEnd();
+  hideSlashCommandAutocomplete();
+  autoResizeInput();
+  syncSendButtonState();
+  inputEl.focus();
+  void sendMessage();
+  return true;
+}
+
+function isExactSlashCommandQuery() {
+  const invocation = parseSlashInvocation(inputEl?.value || '');
+  return !!invocation && !invocation.error;
+}
+
+function handleSlashCommandKeydown(e) {
+  if (!slashCommandMatches.length || slashCommandMenuEl?.classList.contains('hidden')) {
+    return false;
+  }
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    setSlashCommandSelectedIndex(slashCommandSelectedIndex + 1);
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    setSlashCommandSelectedIndex(slashCommandSelectedIndex - 1);
+    return true;
+  }
+  if (e.key === 'Tab') {
+    const match = slashCommandMatches[slashCommandSelectedIndex];
+    const completionIndex = match?.kind === 'base-action'
+      ? slashCommandSelectedIndex + 1
+      : slashCommandSelectedIndex;
+    if (!slashCommandMatches[completionIndex]) return false;
+    e.preventDefault();
+    return applySlashCommandCompletion(completionIndex);
+  }
+  if (e.key === 'Enter') {
+    const match = slashCommandMatches[slashCommandSelectedIndex];
+    if (match?.kind === 'base-action') {
+      e.preventDefault();
+      return activateSlashCommandBaseAction();
+    }
+    if (match?.kind === 'option' || !isExactSlashCommandQuery()) {
+      e.preventDefault();
+      return applySlashCommandCompletion();
+    }
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    hideSlashCommandAutocomplete();
+    return true;
+  }
+  return false;
+}
+
+function handleInput() {
+  resetComposerHistoryNavigation(currentTabId);
+  if (!isPermissionSkipCommandDraft(inputEl?.value)) {
+    const tabId = normalizePermissionSkipTabId(currentTabId);
+    if (tabId != null) permissionSkipCommandContextsByTab.delete(tabId);
+  }
+  autoResizeInput();
+  updateSlashCommandAutocomplete();
+  syncSendButtonState();
+}
+
+// --- Message Sending ---
+
+// Per-conversation API mutation override (set via /allow-api). A grant is
+// reported only by the system message in the transcript, so every grant goes
+// through grantApiMutationsForTab().
+let alwaysAllowApiMutations = false;
+let apiMutationsAllowed = false;
+const apiMutationsAllowedByTab = new Map();
+
+function isApiMutationsAllowedForTab(tabId) {
+  return tabId != null && apiMutationsAllowedByTab.get(tabId) === true;
+}
+
+// Grants API mutations for a tab and announces the grant. Setting the per-tab
+// flag directly re-enables POST/PUT/PATCH/DELETE for the whole conversation
+// with nothing on screen. Note the bubble goes to the transcript currently
+// rendered, which is not tabId when a slash command runs for a background tab.
+function grantApiMutationsForTab(tabId) {
+  const wasAlreadyAllowed = isApiMutationsAllowedForTab(tabId);
+  setApiMutationsAllowedForTab(tabId, true);
+  if (!wasAlreadyAllowed) {
+    addPersistentSlashMessage(systemHtml(t('sp.api.enabled_html')));
+  }
+  return !wasAlreadyAllowed;
+}
+
+function setApiMutationsAllowedForTab(tabId, allowed) {
+  if (tabId == null) return;
+  if (allowed) {
+    apiMutationsAllowedByTab.set(tabId, true);
+  } else {
+    apiMutationsAllowedByTab.delete(tabId);
+  }
+  if (currentTabId === tabId) syncApiMutationsAllowedForCurrentTab();
+}
+
+function syncApiMutationsAllowedForCurrentTab() {
+  apiMutationsAllowed = alwaysAllowApiMutations || isApiMutationsAllowedForTab(currentTabId);
+}
+
+function isOutOfBandSlashDraft(value) {
+  return slashInvocationIsOutOfBand(parseSlashInvocation(value));
+}
+
+function syncSendButtonState() {
+  if (!sendBtn) return;
+  const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
+  if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
+    sendBtn.disabled = true;
+    return;
+  }
+  if (isAwaitingPlanReviewForTab()) {
+    sendBtn.disabled = true;
+    return;
+  }
+  if (isConversationClearInProgress()) {
+    sendBtn.disabled = true;
+    return;
+  }
+  if (!isProcessing) {
+    sendBtn.disabled = isAttachmentReadPendingForTab();
+    return;
+  }
+  if (!draft) {
+    sendBtn.disabled = true;
+    return;
+  }
+  sendBtn.disabled = draft.startsWith('/') && !isOutOfBandSlashDraft(draft);
+}
+
+function showBusySlashCommandNotice() {
+  const now = Date.now();
+  if (now - busySlashNoticeLastShownAt < BUSY_SLASH_NOTICE_COOLDOWN_MS) return;
+  busySlashNoticeLastShownAt = now;
+  showComposerToast(t('sp.slash.busy_only_oob'), { duration: 5000 });
+}
+
+function showComposerToast(message, { duration = 2600, effect = '' } = {}) {
+  if (!message) return;
+  let toast = document.getElementById('composer-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'composer-toast';
+    toast.className = 'composer-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    inputArea?.parentNode?.insertBefore(toast, inputArea);
+  }
+  if (isSystemHtml(message)) toast.innerHTML = message.__systemHtml;
+  else toast.textContent = message;
+  toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
+  if (effect === 'memory') {
+    toast.classList.add('memory-update-cue');
+    if (!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      void toast.offsetWidth;
+      toast.classList.add('memory-update-cue-enter');
+    }
+  }
+  toast.classList.remove('hidden');
+  clearTimeout(composerToastTimer);
+  composerToastTimer = setTimeout(() => {
+    toast.classList.add('hidden');
+    toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
+  }, duration);
+}
+
+function addPersistentSlashMessage(content) {
+  const msgEl = addMessage('system', content, { beforeCurrentAssistant: true });
+  scrollToBottom({ force: true });
+  return msgEl;
+}
+
+function screenshotFilenamePrefix(pageUrl) {
+  try {
+    const url = new URL(String(pageUrl || ''));
+    if (!/^https?:$/.test(url.protocol)) return '';
+    const hostname = url.hostname.replace(/^www\./i, '');
+    let pathname = url.pathname;
+    try { pathname = decodeURIComponent(pathname); } catch {}
+    const raw = `${hostname}${pathname === '/' ? '' : `-${pathname.replace(/^\/+|\/+$/g, '')}`}`;
+    return raw
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\p{L}\p{N}._-]+/gu, '-')
+      .slice(0, 160)
+      .replace(/[-.]+$/g, '');
+  } catch {
+    return '';
+  }
+}
+
+function screenshotDownloadFilename(pageUrl = '', fullPage = false) {
+  const prefix = screenshotFilenamePrefix(pageUrl) || 'webbrain';
+  return `${prefix}-${fullPage ? 'full-page-' : ''}screenshot.png`;
+}
+
+function renderScreenshotResult(dataUrl, {
+  fullPage = false,
+  warning = '',
+  pageUrl = '',
+  stagedAttachment = null,
+} = {}) {
+  const warningHtml = warning
+    ? `<div class="screenshot-warning"><strong>⚠️ ${escapeHtml(warning)}</strong></div>`
+    : '';
+  const imageClass = fullPage
+    ? 'screenshot-result-image screenshot-result-image-full-page'
+    : 'screenshot-result-image';
+  const filename = screenshotDownloadFilename(pageUrl, fullPage);
+  const saveLabel = t('sp.screenshot.save_as');
+  const stagedLabel = t('sp.screenshot.staged_next_message');
+  const imageAlt = t(fullPage ? 'sp.screenshot.full_page_alt' : 'sp.screenshot.alt');
+  const stagedMetadata = stagedAttachment ? encodeStagedScreenshotMetadata(stagedAttachment) : '';
+  const stagedAttributes = stagedAttachment && stagedMetadata
+    ? ` data-screenshot-attachment-id="${escapeHtml(stagedAttachment.stagedAttachmentId)}" data-staged-screenshot="${escapeHtml(stagedMetadata)}"`
+    : '';
+  const stagedHtml = stagedAttachment
+    ? `<div class="screenshot-attachment-note" role="status" aria-label="${escapeHtml(stagedLabel)}">📎 ${escapeHtml(stagedLabel)} · ${escapeHtml(stagedAttachment.name)}</div>`
+    : '';
+  return `
+    <div class="screenshot-result"${stagedAttributes}>
+      ${warningHtml}
+      <img src="${escapeHtml(dataUrl)}" class="${imageClass}" alt="${escapeHtml(imageAlt)}"/>
+      ${stagedHtml}
+      <div class="screenshot-result-actions">
+        <button type="button" class="screenshot-save-btn" data-filename="${escapeHtml(filename)}" aria-label="${escapeHtml(saveLabel)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 3v12"></path>
+            <path d="m7 10 5 5 5-5"></path>
+            <path d="M5 21h14"></path>
+          </svg>
+          <span>${escapeHtml(saveLabel)}</span>
+        </button>
+      </div>
+    </div>`;
+}
+
+function bindScreenshotSaveButton(btn) {
+  if (!btn || btn.__wbScreenshotSaveBound) return;
+  btn.__wbScreenshotSaveBound = true;
+  btn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const result = btn.closest('.screenshot-result');
+    const dataUrl = result?.querySelector('.screenshot-result-image')?.getAttribute('src') || '';
+    if (!/^data:image\/png;base64,/i.test(dataUrl)) return;
+
+    const label = btn.querySelector('span');
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    if (label) label.textContent = t('sp.screenshot.saving');
+    try {
+      await browser.downloads.download({
+        url: dataUrl,
+        filename: btn.dataset.filename || screenshotDownloadFilename(
+          '',
+          result?.querySelector('.screenshot-result-image-full-page') != null,
+        ),
+        saveAs: true,
+        conflictAction: 'uniquify',
+      });
+    } catch (error) {
+      const message = error?.message || String(error);
+      // Closing the native Save As dialog is an ordinary user choice.
+      if (!/cancel(?:led|ed)/i.test(message)) {
+        showComposerToast(t('sp.screenshot.save_failed', { msg: message }), { duration: 5000 });
+      }
+    } finally {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      if (label) label.textContent = t('sp.screenshot.save_as');
+    }
+  });
+}
+
+function rebindScreenshotSaveButtons(root = document) {
+  root.querySelectorAll?.('.screenshot-save-btn').forEach(bindScreenshotSaveButton);
+}
+
+function addScreenshotResultMessage(dataUrl, options = {}) {
+  const msgEl = addPersistentSlashMessage(systemHtml(renderScreenshotResult(dataUrl, options)));
+  rebindScreenshotSaveButtons(msgEl);
+  return msgEl;
+}
+
+function resolvePendingPermissionPromptForContext(context) {
+  const targetTabId = normalizePermissionSkipTabId(context?.targetTabId);
+  const targetClarifyId = String(context?.clarifyId || '');
+  if (targetTabId == null || !targetClarifyId) return false;
+  for (const card of document.querySelectorAll('.clarify-card[data-permission="1"]')) {
+    if (card.classList.contains('clarify-answered')) continue;
+    if (String(card.dataset.tabId || '') !== String(targetTabId)) continue;
+    if (String(card.dataset.clarifyId || '') !== targetClarifyId) continue;
+    submitClarify(card, targetTabId, targetClarifyId, 'once', 'slash-command');
+    return true;
+  }
+  return false;
+}
+
+function resolvePendingPermissionPromptsForTab(tabId) {
+  if (tabId == null) return 0;
+  const targetTabId = String(tabId);
+  let resolved = 0;
+  for (const card of document.querySelectorAll('.clarify-card[data-permission="1"]')) {
+    if (card.classList.contains('clarify-answered')) continue;
+    if (String(card.dataset.tabId || '') !== targetTabId) continue;
+    const clarifyId = String(card.dataset.clarifyId || '');
+    if (!clarifyId) continue;
+    submitClarify(card, tabId, clarifyId, 'once', 'slash-command');
+    resolved += 1;
+  }
+  return resolved;
+}
+
+async function importConfigurationJson(json, tabId) {
+  try {
+    const res = await sendToBackground('import_config', { json });
+    await loadProviders();
+    if (currentTabId === tabId) {
+      addPersistentSlashMessage(t('sp.import_config.done', { count: res?.settingCount || 0 }));
+    }
+  } catch (error) {
+    if (currentTabId === tabId) {
+      addPersistentSlashMessage(t('sp.import_config.error', { error: error?.message || 'invalid configuration' }));
+    }
+  }
+}
+
+function requestConfigurationFile(tabId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    file.text()
+      .then((json) => importConfigurationJson(json, tabId))
+      .catch((error) => {
+        if (currentTabId === tabId) {
+          addPersistentSlashMessage(t('sp.import_config.error', { error: error?.message || 'file read failed' }));
+        }
+      });
+  }, { once: true });
+  input.click();
+}
+
+function toggledVisionProviderConfig(providerId, config) {
+  if (providerId === 'ollama') {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  if (visionProviderKind(providerId, config)) {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  const enabled = !config.supportsVision;
+  return { enabled, config: { ...config, supportsVision: enabled } };
+}
+
+async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
+  if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
+    const watchArgs = parseWatchSlashCommand(text);
+    if (!watchArgs.ok) {
+      showComposerToast(t('sp.slash.invalid_usage', { usage: WATCH_COMMAND_USAGE }), { duration: 5000 });
+      return '';
+    }
+    try {
+      const res = await sendToBackground('create_watch_job', {
+        tabId,
+        watch: {
+          prompt: watchArgs.prompt,
+          keep: watchArgs.keep,
+          interval_seconds: watchArgs.intervalSeconds,
+          beep: watchArgs.beep,
+          beep_style: watchArgs.beepStyle,
+        },
+      });
+      if (res?.success === false || res?.ok === false || !res?.scheduledAt) {
+        throw new Error(res?.error || 'Could not create watch.');
+      }
+      if (currentTabId === tabId) {
+        addPersistentSlashMessage(res?.deduped
+          ? t('sp.watch.exists')
+          : t('sp.watch.created', { seconds: watchArgs.intervalSeconds }));
+        await refreshScheduledJobs({ tabId });
+      }
+    } catch (error) {
+      if (currentTabId === tabId) {
+        addPersistentSlashMessage(t('sp.watch.error', { error: error?.message || 'unknown error' }));
+      }
+    }
+    return '';
+  }
+  const invocation = parseSlashInvocation(text);
+  if (!invocation) return text;
+  if (invocation.error || invocation.unsupported) {
+    showSlashInvocationError(invocation);
+    return '';
+  }
+  const { command, action, payload } = invocation;
+
+  if (action === 'help') {
+    addPersistentSlashMessage(systemHtml(buildSlashCommandDetailHtml(command)));
+    return '';
+  }
+
+  if (command.value === '/help') {
+    addPersistentSlashMessage(systemHtml(buildSlashCommandHelpHtml()));
+    return '';
+  }
+
+  if ((command.value === '/screenshot' || command.value === '/record')
+      && isSelectionGroundedForTab(tabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return '';
+  }
+
+  if (command.value === '/schedule' && action === 'list') {
+    const jobs = await refreshScheduledJobs({ tabId });
+    if (currentTabId !== tabId) return '';
+    addPersistentSlashMessage(visibleScheduledJobs(jobs).length
+      ? t('sp.schedule_form.list_refreshed')
+      : t('sp.schedule_form.none'));
+    return '';
+  }
+
+  if (command.value === '/progress') {
+    await showProgress(tabId);
+    return '';
+  }
+
+  if (command.value === '/scratchpad' && action === 'show') {
+    await showScratchpad(tabId);
+    return '';
+  }
+
+  if (command.value === '/memory' && action === 'add') {
+    await rememberUserMemory(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/memory' && action === 'show') {
+    await showUserMemory(tabId);
+    return '';
+  }
+
+  if (command.value === '/memory' && action === 'forget') {
+    await forgetUserMemory(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'status') {
+    await showTeacherModeStatus(tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'start') {
+    await startTeacherMode(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'end') {
+    await endTeacherMode(tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'list') {
+    await showSavedWorkflows(tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'save') {
+    await saveLatestWorkflow(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'run') {
+    await prepareSavedWorkflowRun(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'delete') {
+    await deleteSavedWorkflow(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'export') {
+    await exportSavedWorkflow(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'import') {
+    requestSavedWorkflowFile(tabId);
+    return '';
+  }
+
+  if (command.value === '/scratchpad' && action === 'append') {
+    await editScratchpad(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/scratchpad' && action === 'clear') {
+    clearScratchpad(tabId);
+    return '';
+  }
+
+  if (command.value === '/schedule' && action === 'create') {
+    await renderScheduleComposer(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/allow-api') {
+    grantApiMutationsForTab(tabId);
+    return payload;
+  }
+
+  if (command.value === '/foreground') {
+    return payload;
+  }
+
+  if (command.value === '/dangerously-skip-permissions') {
+    await browser.storage.local.set({ [PERMISSION_GATE_KEY]: false }).catch(() => {});
+    askBeforeConsequential = false;
+    updateActWarning();
+    updateInputPlaceholder();
+    if (options.permissionSkipContext) {
+      resolvePendingPermissionPromptForContext(options.permissionSkipContext);
+    } else {
+      resolvePendingPermissionPromptsForTab(tabId);
+    }
+    addPersistentSlashMessage(systemHtml(t('sp.permissions.disabled_html')));
+    return payload;
+  }
+
+  if (command.value === '/compact') {
+    const remainder = payload;
+    const res = await sendToBackground('compact_conversation', { tabId });
+    if (currentTabId !== tabId) return remainder;
+    if (res?.ok && res.compacted) {
+      addContextCompactedNote({ ...res, manual: true });
+    } else if (res?.ok && res.reason === 'busy') {
+      showComposerToast(t('sp.compact.busy'), { duration: 5000 });
+    } else if (res?.ok) {
+      showComposerToast(t('sp.compact.nothing_to_compact'), { duration: 5000 });
+    } else {
+      showComposerToast(tSystemHtml('sp.compact.failed', { error: res?.error || 'unknown error' }), { duration: 5000 });
+    }
+    return remainder;
+  }
+
+  if (command.value === '/verbose') {
+    verboseMode = !verboseMode;
+    if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+    await browser.storage.local.set({ verboseMode }).catch(() => {});
+    if (currentTabId !== tabId) return '';
+    showComposerToast(systemHtml(verboseMode
+      ? t('sp.compact.verbose_on')
+      : t('sp.compact.verbose_off')));
+    return '';
+  }
+
+  if (command.value === '/reset') {
+    setConversationClearInProgress(tabId, true);
+    try {
+      suppressRunUpdatesForClearedConversation(tabId);
+      if (isTabProcessing(tabId)) await abortRun(tabId);
+      await sendToBackground('clear_conversation', { tabId });
+      await renderClearedConversationForTab(tabId);
+    } finally {
+      setConversationClearInProgress(tabId, false);
+    }
+    return '';
+  }
+
+  if (command.value === '/screenshot' && action === 'viewport') {
+    try {
+      const tab = tabId == null ? null : await browser.tabs.get(tabId);
+      if (currentTabId !== tabId || !tab?.active) return '';
+      const res = await sendToBackground('capture_viewport_screenshot', { tabId });
+      if (currentTabId !== tabId) return '';
+      if (!res?.ok || !res.dataUrl) {
+        addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: res?.error || 'unknown error' })));
+        return '';
+      }
+      const stagedAttachment = await stageScreenshotAttachment(tabId, res.dataUrl, {
+        pageUrl: tab.url,
+        redactionSnapshotReady: res.redactionSnapshotReady === true,
+        redactionSnapshot: res.redactionSnapshot,
+        modelRedactionReady: res.modelRedactionReady === true,
+        modelDataUrl: res.modelDataUrl,
+      });
+      if (currentTabId !== tabId) return '';
+      addScreenshotResultMessage(res.dataUrl, { pageUrl: tab.url, stagedAttachment });
+    } catch (e) {
+      if (currentTabId !== tabId) return '';
+      addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
+    }
+    return '';
+  }
+
+  if (command.value === '/import' && action === 'file') {
+    requestConfigurationFile(tabId);
+    return '';
+  }
+
+  if (command.value === '/import' && action === 'json') {
+    await importConfigurationJson(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/export' && action === 'config') {
+    try {
+      const res = await sendToBackground('export_config', { locale: getLocale() });
+      if (!res?.ok || !res.json) throw new Error(res?.error || 'empty configuration');
+      const blob = new Blob([res.json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `webbrain-config-${Date.now()}.json`;
+      document.body.appendChild(a);
+      try {
+        a.click();
+      } finally {
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 7000);
+      }
+      addPersistentSlashMessage(t('sp.export_config.done'));
+    } catch (error) {
+      addPersistentSlashMessage(t('sp.export_config.error', { error: error?.message || 'unknown error' }));
+    }
+    return '';
+  }
+
+  if (command.value === '/export' && action === 'traces') {
+    let res;
+    try {
+      res = await sendToBackground('export_traces', { tabId });
+    } catch (e) {
+      addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
+      return '';
+    }
+    if (!res?.ok) {
+      addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
+      return '';
+    }
+    if (!res.markdown || res.turnCount === 0) {
+      addPersistentSlashMessage(
+        res.reason === 'no-conversation'
+          ? t('sp.export_traces.no_conversation')
+          : t('sp.export_traces.none'),
+      );
+      return '';
+    }
+    const blob = new Blob([res.markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `webbrain-traces-${Date.now()}.md`;
+    document.body.appendChild(a);
+    try {
+      a.click();
+    } finally {
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 7000);
+    }
+    if (res.partial) {
+      addPersistentSlashMessage(t('sp.export_traces.partial'));
+    } else if (res.truncated) {
+      addPersistentSlashMessage(t('sp.export_traces.truncated'));
+    } else {
+      addPersistentSlashMessage(t('sp.export_traces.done'));
+    }
+    return '';
+  }
+
+  if (command.value === '/export' && action === 'conversation') {
+    const messages = messagesEl.querySelectorAll('.message');
+    const webbrainVersion = browser.runtime.getManifest().version || 'unknown';
+    let md = `# WebBrain Conversation\n\n_Exported with WebBrain v${webbrainVersion}_\n\n`;
+    for (const msg of messages) {
+      const textEl = msg.querySelector('.message-text');
+      if (!textEl) continue;
+      const content = textEl.textContent.trim();
+      if (!content) continue;
+      if (msg.classList.contains('user')) {
+        md += `**You:** ${content}\n\n`;
+      } else if (msg.classList.contains('assistant')) {
+        md += `**WebBrain:** ${content}\n\n`;
+      } else if (msg.classList.contains('system')) {
+        md += `*${content}*\n\n`;
+      }
+    }
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `webbrain-chat-${Date.now()}.md`;
+    document.body.appendChild(a);
+    try {
+      a.click();
+    } finally {
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 7000);
+    }
+    addPersistentSlashMessage(t('sp.export.done'));
+    return '';
+  }
+
+  if (command.value === '/profile') {
+    const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
+    const newState = !stored.profileEnabled;
+    await browser.storage.local.set({ profileEnabled: newState });
+    if (currentTabId !== tabId) return '';
+    showComposerToast(systemHtml(newState
+      ? t('sp.profile.on')
+      : t('sp.profile.off')));
+    return '';
+  }
+
+  if (command.value === '/ask') {
+    setMode('ask');
+    return payload;
+  }
+
+  if (command.value === '/act') {
+    const ok = await ensureActMode();
+    return ok ? payload : '';
+  }
+
+  if (command.value === '/dev') {
+    const ok = await ensureDevMode();
+    return ok ? payload : '';
+  }
+
+  if (command.value === '/plan') {
+    setMode('ask');
+    return payload ? `Plan the following step by step: ${payload}` : '';
+  }
+
+  if (command.value === '/vision') {
+    try {
+      const { providers, active } = await sendToBackground('get_providers');
+      const config = providers[active];
+      if (config) {
+        const toggled = toggledVisionProviderConfig(active, config);
+        await sendToBackground('update_provider', {
+          providerId: active,
+          config: toggled.config,
+        });
+        if (currentTabId !== tabId) return '';
+        showComposerToast(systemHtml(toggled.enabled
+          ? t('sp.vision.on')
+          : t('sp.vision.off')));
+      }
+    } catch (e) {
+      if (currentTabId !== tabId) return '';
+      showComposerToast(systemHtml(tSystemHtml('sp.vision.error', { msg: e.message })), { duration: 5000 });
+    }
+    return '';
+  }
+
+  showSlashInvocationError({ error: 'invalid-usage', command });
+  return '';
+}
+
+function modeForMessageText(text) {
+  if (isStandaloneWindow) return 'ask';
+  const invocation = parseSlashInvocation(text);
+  if (invocation?.command?.value === '/ask' || invocation?.command?.value === '/plan') return 'ask';
+  if (invocation?.command?.value === '/act') return 'act';
+  if (invocation?.command?.value === '/dev') return 'dev';
+  return agentMode;
+}
+
+function reportTrailingRunCaptureError(directive, error, tabId) {
+  if (currentTabId !== tabId || renderedTabId !== tabId) return;
+  const message = error?.message || String(error || 'unknown error');
+  const html = directive?.kind === 'record'
+    ? tSystemHtml('sp.record.error', { error: message })
+    : tSystemHtml('sp.screenshot.error', { msg: message });
+  addPersistentSlashMessage(systemHtml(html));
+}
+
+async function sendMessage(extraChatParams = {}) {
+  if (isStandaloneWindow) {
+    if (extraChatParams?.workflowId) {
+      rejectStandaloneWorkflowRun();
+      return false;
+    }
+    const retryOptions = extraChatParams?.__retry;
+    extraChatParams = {
+      ...(extraChatParams || {}),
+      __mode: 'ask',
+      ...(retryOptions ? { __retry: { ...retryOptions, mode: 'ask' } } : {}),
+    };
+  }
+  const retryOptions = extraChatParams?.__retry || null;
+  const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
+  const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
+    ? extraChatParams.__onContextMenuClaimRejected
+    : null;
+  const chatExtraParams = { ...(extraChatParams || {}) };
+  const agentPrompt = typeof chatExtraParams.__agentPrompt === 'string'
+    ? chatExtraParams.__agentPrompt.trim()
+    : '';
+  const agentDisplayText = typeof chatExtraParams.__agentDisplayText === 'string'
+    ? chatExtraParams.__agentDisplayText.trim()
+    : '';
+  const rawAgentTabId = Number(chatExtraParams.__agentTabId);
+  const agentTabId = Number.isFinite(rawAgentTabId) ? rawAgentTabId : null;
+  delete chatExtraParams.__retry;
+  delete chatExtraParams.__mode;
+  delete chatExtraParams.__onContextMenuClaimRejected;
+  delete chatExtraParams.__agentPrompt;
+  delete chatExtraParams.__agentDisplayText;
+  delete chatExtraParams.__agentTabId;
+  const isWorkflowRun = !!chatExtraParams.workflowId;
+  const contextMenuClaim = chatExtraParams.contextMenuClaim;
+  let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
+  const claimedContextMenuTabId = contextMenuClaimOwned
+    ? Number(chatExtraParams.contextMenuClear?.tabId ?? currentTabId)
+    : null;
+  const releaseOwnedContextMenuClaim = async (
+    rejection = { reason: 'panel-hidden', retryAfterMs: 250 },
+  ) => {
+    if (!contextMenuClaimOwned) return;
+    contextMenuClaimOwned = false;
+    try {
+      await sendToBackground('release_context_menu_prompt_claim', {
+        tabId: claimedContextMenuTabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch { /* the durable lease still expires if release fails */ }
+    onContextMenuClaimRejected?.(rejection);
+  };
+  const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
+  const sourceGrounding = normalizeSelectionSourceGrounding(requestedSourceGrounding) || null;
+  delete chatExtraParams.sourceGrounding;
+  if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
+  // The shortcut action rides along only on the turn that started the scope,
+  // or on an explicit retry of that same turn. Later follow-ups have none: the
+  // agent reads the action off the durable selected-text scope instead.
+  const requestedSelectionAction = retryOptions?.selectionAction ?? chatExtraParams.selectionAction;
+  const selectionAction = sourceGrounding ? normalizeSelectionAction(requestedSelectionAction) : '';
+  delete chatExtraParams.selectionAction;
+  if (selectionAction) chatExtraParams.selectionAction = selectionAction;
+  await waitForVisibleSidePanelStateRefresh();
+  if (agentPrompt && (
+    !agentDisplayText
+    || agentTabId == null
+    || !sameTabId(currentTabId, agentTabId)
+    || !sameTabId(renderedTabId, agentTabId)
+    || inputEl.value.trim() !== agentDisplayText
+  )) return false;
+  if (agentPrompt && isProcessing) return false;
+  if (contextMenuClaimOwned
+      && (document.visibilityState === 'hidden'
+        || !sameTabId(currentTabId, claimedContextMenuTabId)
+        || !sameTabId(renderedTabId, claimedContextMenuTabId))) {
+    await releaseOwnedContextMenuClaim();
+    return false;
+  }
+  stopListening();
+  let text = inputEl.value.trim();
+  const submittedText = text;
+  if (!text) {
+    if (contextMenuClaimOwned) {
+      await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
+      return false;
+    }
+    return;
+  }
+  if (agentPrompt) text = agentPrompt;
+  const tabId = currentTabId;
+  if (isConversationClearInProgress(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
+    return false;
+  }
+  const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
+  const requestId = createRunRequestId(tabId);
+  text = normalizeScreenshotCommandText(text);
+  if (isAwaitingPlanReviewForTab(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'plan-review-pending', retryAfterMs: 1_000 });
+    showComposerToast(t('sp.plan.awaiting_review'), { duration: 5000 });
+    syncSendButtonState();
+    return false;
+  }
+  if (!retryOptions && !sourceGrounding && !isWorkflowRun
+      && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'attachment-read-pending', retryAfterMs: 1_000 });
+    syncSendButtonState();
+    return false;
+  }
+  if (isProcessing) {
+    if (contextMenuClaimOwned) {
+      await releaseOwnedContextMenuClaim({ reason: 'run-active', retryAfterMs: 1_000 });
+      return false;
+    }
+    if (isOutOfBandSlashDraft(text)) {
+      resetComposerHistoryNavigation(tabId);
+      saveInputDraftForTab(tabId, '');
+      hideSlashCommandAutocomplete();
+      inputEl.value = '';
+      autoResizeInput();
+      syncSendButtonState();
+      await parseSlashCommands(text, tabId, { permissionSkipContext });
+      if (currentTabId === tabId) {
+        scrollToBottom({ force: true });
+        if (!inputEl.value.trim() || inputEl.value.trim() === text) {
+          inputEl.value = '';
+          autoResizeInput();
+        }
+        syncSendButtonState();
+      }
+      return true;
+    }
+    if (text.startsWith('/')) {
+      showBusySlashCommandNotice();
+      return false;
+    }
+    return enqueueQueuedComposerMessage(tabId, text);
+  }
+  let runCaptureDirective = null;
+  if (!retryOptions) {
+    if (sourceGrounding && /^\s*\/(?:screenshot|record)(?:\s|$)/i.test(text)) {
+      showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+      return false;
+    }
+    runCaptureDirective = parseTrailingRunCaptureDirective(text);
+    if (runCaptureDirective?.error) {
+      showComposerToast(t('sp.slash.invalid_usage', {
+        usage: trailingRunCaptureUsage(runCaptureDirective.kind),
+      }), { duration: 5000 });
+      return false;
+    }
+    if (runCaptureDirective
+        && (sourceGrounding || isSelectionGroundedForTab(tabId))) {
+      showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+      return false;
+    }
+    if (runCaptureDirective) text = runCaptureDirective.prompt;
+  }
+  const modeForSend = retryOptions?.mode || modeOverride || modeForMessageText(text);
+  if (rejectSelectionScopedMode(modeForSend, tabId, sourceGrounding)) return false;
+  const apiMutationsAllowedForSend = retryOptions
+    ? !!retryOptions.apiMutationsAllowed
+    : isApiMutationsAllowedForTab(tabId) || /^\/allow-api\b/i.test(text);
+  const foregroundForSend = retryOptions
+    ? !!retryOptions.foreground
+    : /^\/foreground\b/i.test(text);
+  resetComposerHistoryNavigation(tabId);
+  saveInputDraftForTab(tabId, '');
+  hideSlashCommandAutocomplete();
+
+  if (!retryOptions && text.startsWith('/')) {
+    inputEl.value = '';
+    autoResizeInput();
+    syncSendButtonState();
+  }
+
+  if (!retryOptions) text = await parseSlashCommands(text, tabId, { permissionSkipContext });
+  let renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
+  if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
+    return false;
+  }
+  if (!text) {
+    await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
+    scrollToBottom({ force: true });
+    inputEl.value = '';
+    autoResizeInput();
+    syncSendButtonState();
+    return;
+  }
+  setTabProcessing(tabId, true);
+  setTabAbortRequested(tabId, false);
   inputEl.value = '';
   autoResizeInput();
+  syncSendButtonState();
 
-  addMessage('user', text);
-  showActivity(t('sp.activity.thinking'));
+  await prepareChatHistoryForTurn(tabId, modeForSend);
+  if (isTabAbortRequested(tabId)) {
+    await releaseOwnedContextMenuClaim();
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    return false;
+  }
+  renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
+  if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    return false;
+  }
 
-  currentAssistantEl = addMessage('assistant', '');
+  if (contextMenuClaim?.promptId && contextMenuClaim?.claimantId) {
+    let renewedClaim = null;
+    try {
+      renewedClaim = await sendToBackground('claim_context_menu_prompt', {
+        tabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch {
+      renewedClaim = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
+    }
+    contextMenuClaimOwned = renewedClaim?.claimed === true;
+    const claimStillVisible = document.visibilityState !== 'hidden'
+      && sameTabId(currentTabId, tabId)
+      && sameTabId(renderedTabId, tabId);
+    if (contextMenuClaimOwned && !claimStillVisible) {
+      await releaseOwnedContextMenuClaim();
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+      if (sameTabId(currentTabId, tabId)) syncSendButtonState();
+      return false;
+    }
+    if (!renewedClaim?.claimed) {
+      onContextMenuClaimRejected?.(renewedClaim || {
+        reason: 'claim-lost',
+        retryAfterMs: 1_000,
+      });
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+      if (sameTabId(currentTabId, tabId)) syncSendButtonState();
+      return false;
+    }
+  }
 
-  try {
-    const res = await sendToBackground('chat', {
-      tabId: currentTabId,
-      text,
-      mode: agentMode,
-      apiMutationsAllowed,
+  renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
+  if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    return false;
+  }
+
+  let userEl = null;
+  let assistantEl = null;
+  // Selection-only shortcuts and saved workflow replay must not inherit
+  // attachment chips prepared for a later ordinary chat turn.
+  const attachmentsForSend = sourceGrounding || isWorkflowRun
+    ? []
+    : retryOptions
+      ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
+      : getPendingAttachmentsForTab(tabId, { create: false }).slice();
+  const stagedScreenshotsReady = await markStagedScreenshots(
+    browser.storage.local,
+    tabId,
+    attachmentsForSend,
+    { deliveryState: 'sending', requestId },
+  ).catch(() => false);
+  if (!stagedScreenshotsReady) {
+    await releaseOwnedContextMenuClaim({ reason: 'attachment-persistence', retryAfterMs: 1_000 });
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    if (sameTabId(currentTabId, tabId) && !inputEl.value.trim()) {
+      inputEl.value = submittedText;
+      saveInputDraftForTab(tabId, submittedText);
+      autoResizeInput();
+      updateSlashCommandAutocomplete();
+    }
+    showComposerToast(t('sp.persistence.unavailable'));
+    syncSendButtonState();
+    return false;
+  }
+  const retryPayload = {
+    text,
+    displayText: agentPrompt ? submittedText : text,
+    mode: modeForSend,
+    apiMutationsAllowed: apiMutationsAllowedForSend,
+    foreground: foregroundForSend,
+    ...(sourceGrounding ? { sourceGrounding } : {}),
+    ...(selectionAction ? { selectionAction } : {}),
+    attachments: attachmentsForSend,
+  };
+  if (renderToCurrentTab) {
+    setTabProcessing(tabId, true);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    hideRecommendedActions();
+    if (!sourceGrounding && !isWorkflowRun) {
+      if (retryOptions) consumePendingAttachmentsForTab(tabId, attachmentsForSend);
+      else clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots: true });
+      renderAttachmentPreviews();
+    }
+    resetChatNavigation();
+    userEl = addMessage('user', agentPrompt ? submittedText : text, {
+      attachments: attachmentsForSend,
+      attachmentState: attachmentsForSend.length ? 'sending' : '',
     });
+    showActivity(t('sp.activity.thinking'));
+    assistantEl = addMessage('assistant', '');
+    assistantEl.dataset.runRequestId = requestId;
+    assistantEl.dataset.runMode = modeForSend;
+    assistantEl.dataset.retryApiMutationsAllowed = apiMutationsAllowedForSend ? 'true' : 'false';
+    assistantEl.dataset.retryForeground = foregroundForSend ? 'true' : 'false';
+    assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
+    assistantEl.dataset.retrySelectionAction = selectionAction;
+    assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
+    if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
+    userEl.dataset.runRequestId = requestId;
+    assistantEl.dataset.lastRenderedSeq = '0';
+    currentAssistantEl = assistantEl;
+    if (beginReadingFirstTurn(userEl, assistantEl)) {
+      scrollChatToQuestion({ smooth: false });
+    }
+  }
+  const activePayloadState = createActiveChatPayloadState(retryPayload, requestId);
+  activeChatPayloadsByTab.set(tabId, activePayloadState);
+  localRunRequestIds.set(tabId, requestId);
 
-    if (abortRequested) {
-      // Agent was stopped — show what we got so far
-      const textEl = currentAssistantEl?.querySelector('.message-text');
-      if (textEl && !textEl.textContent.trim()) {
-        textEl.innerHTML = formatMarkdown(res?.content || t('sp.stopped_by_user'));
-        addMessageCopyButton(currentAssistantEl);
+  let accepted = false;
+  let captureStartFailed = false;
+  let contextMenuReservationRejected = false;
+  let completedSuccessfully = false;
+  let promptEligibleCompletion = false;
+  const selectionGroundedBeforeSend = isSelectionGroundedForTab(tabId);
+  if (sourceGrounding) setSelectionGroundedForTab(tabId, true, sourceGrounding);
+  try {
+    const res = await sendRunWithReconnect('chat_start', {
+      tabId,
+      requestId,
+      text,
+      mode: modeForSend,
+      locale: getLocale(),
+      intentFailureMessage: t('sp.plan.intent_unavailable'),
+      apiMutationsAllowed: apiMutationsAllowedForSend,
+      foreground: foregroundForSend,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
+      ...(runCaptureDirective ? {
+        runCapture: {
+          kind: runCaptureDirective.kind,
+          saveAs: runCaptureDirective.saveAs,
+        },
+      } : {}),
+      ...(attachmentsForSend.length ? { attachments: attachmentsForSend } : {}),
+      ...chatExtraParams,
+    });
+    applyConversationScopeState(tabId, res);
+    if (res?.conversationId) {
+      chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
+      chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
+    }
+    accepted = true;
+    completedSuccessfully = res?.successfulDone === true || updatesContainSuccessfulDone(res?.updates);
+    promptEligibleCompletion = completedSuccessfully || isSuccessfulAskCompletion(modeForSend, res);
+    const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
+    if (returnedPlannerFailure
+        && renderToCurrentTab
+        && currentTabId === tabId
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
+      renderPlannerRequestFailure(assistantEl, returnedPlannerFailure.data, retryPayload);
+    }
+    const returnedErrorUpdate = Array.isArray(res?.updates)
+      ? res.updates.find(u => u?.type === 'error')
+      : null;
+    if (returnedErrorUpdate
+        && renderToCurrentTab
+        && currentTabId === tabId
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
+      renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
+        submittedTurnDurable: res.submittedTurnDurable,
+      });
+    }
+
+    // An unsupported-attachment rejection never records the turn in history;
+    // the agent signals it via a structured 'attachment_rejected' update (not
+    // by matching the error copy, which could false-positive on a genuine
+    // assistant answer). We optimistically cleared the chips on send, so
+    // re-add them here — otherwise "switch providers and try again" is
+    // impossible without re-picking every file.
+    const attachmentsRejected = attachmentsForSend.length
+      && res?.updates?.some(u => u?.type === 'attachment_rejected');
+    if (attachmentsRejected) {
+      setMessageAttachmentState(userEl, 'not-sent');
+      await persistMessageAttachmentState(tabId, userEl);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      // Restore the prompt only if the user hasn't started typing a new one
+      // while the rejected turn was in flight.
+      if (currentTabId === tabId && !inputEl.value.trim()) {
+        inputEl.value = agentPrompt ? submittedText : text;
+        saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
+        autoResizeInput();
+        updateSlashCommandAutocomplete();
       }
-    } else if (res.content && currentAssistantEl) {
-      const textEl = currentAssistantEl.querySelector('.message-text');
+    } else if (attachmentsForSend.length) {
+      const deliveryState = res?.submittedTurnDurable === true ? 'included' : 'unknown';
+      // Only a confirmed inclusion may delete the durable pixels. An
+      // unconfirmed turn most likely never reached history, and this record is
+      // the only copy left, so hand it back to the composer exactly as
+      // reconcilePersistedStagedScreenshots does on the reconnect path. The
+      // message card keeps its "delivery not confirmed" marker either way.
+      if (deliveryState === 'included') {
+        await removePersistedStagedAttachments(tabId, attachmentsForSend);
+      } else {
+        await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      }
+      setMessageAttachmentState(userEl, deliveryState);
+      await persistMessageAttachmentState(tabId, userEl);
+    }
+
+    if (renderToCurrentTab && currentTabId === tabId && isTabAbortRequested(tabId)) {
+      // Agent was stopped — show what we got so far
+      const textEl = assistantEl?.querySelector('.message-text');
       if (textEl && !textEl.textContent.trim()) {
-        textEl.innerHTML = formatMarkdown(res.content);
-        addMessageCopyButton(currentAssistantEl);
+        textEl.innerHTML = t('sp.stopped_by_user_html');
+        addMessageCopyButton(assistantEl);
+      }
+    } else if (renderToCurrentTab && currentTabId === tabId && res?.content && assistantEl
+        && !(assistantEl.querySelector('.plan-review-expired')
+          && isPlanReviewTimeoutTerminal(res.content))) {
+      const textEl = assistantEl.querySelector('.message-text');
+      if (textEl && parseCostAllowanceError(res.content)) {
+        if (!textEl.classList.contains('cost-allowance-error')) {
+          renderCostAllowanceError(textEl, res.content, modeForSend, {
+            submittedTurnDurable: res.submittedTurnDurable,
+            retryPayload,
+          });
+        }
+        addMessageCopyButton(assistantEl);
+      } else if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
+        renderAssistantTextUpdate(assistantEl, res.content);
+      } else if (textEl && !textEl.textContent.trim()) {
+        if (!renderCostAllowanceError(textEl, res.content, modeForSend, {
+              submittedTurnDurable: res.submittedTurnDurable,
+              retryPayload,
+            })
+            && !renderSubscribeError(textEl, res.content, modeForSend)) {
+          textEl.innerHTML = formatMarkdown(res.content);
+        }
+        addMessageCopyButton(assistantEl);
       }
     }
   } catch (e) {
-    if (!abortRequested) {
-      addMessage('error', t('sp.error_prefix', { msg: e.message }));
+    reconcileFailedSelectionGroundedStart(tabId, {
+      sourceGrounding,
+      selectionGroundedBeforeSend,
+      accepted,
+    });
+    captureStartFailed = !!runCaptureDirective
+      && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
+    contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';
+    if (contextMenuReservationRejected) {
+      const rejection = {
+        reason: e.reason || 'claim-lost',
+        leaseExpiresAt: e.leaseExpiresAt,
+        retryAfterMs: e.retryAfterMs || 1_000,
+      };
+      if (contextMenuClaimOwned) await releaseOwnedContextMenuClaim(rejection);
+      else onContextMenuClaimRejected?.(rejection);
+      userEl?.remove();
+      assistantEl?.remove();
+      if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+    } else if (captureStartFailed) {
+      const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
+      reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      if (renderToCurrentTab && currentTabId === tabId) {
+        userEl?.remove();
+        assistantEl?.remove();
+        if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+        if (!inputEl.value.trim()) {
+          inputEl.value = submittedText;
+          saveInputDraftForTab(tabId, submittedText);
+          autoResizeInput();
+          updateSlashCommandAutocomplete();
+        }
+        syncSendButtonState();
+      }
+    } else {
+      if (attachmentsForSend.length) {
+        const deliveryUnknown = isBackgroundConnectionError(e);
+        setMessageAttachmentState(userEl, deliveryUnknown ? 'unknown' : 'not-sent');
+        await persistMessageAttachmentState(tabId, userEl);
+        // Neither outcome is a confirmed inclusion, so the durable pixels stay
+        // recoverable. A torn-down service worker is precisely when this record
+        // is the only copy the user has left.
+        await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      }
+      if (renderToCurrentTab
+          && currentTabId === tabId
+          && !isTabAbortRequested(tabId)
+          && !clearedConversationRunRequestIds.has(requestId)) {
+        renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+      }
     }
   } finally {
-    finalizeSteps();
-    isProcessing = false;
-    abortRequested = false;
-    sendBtn.disabled = false;
-    hideActivity();
-    currentAssistantEl = null;
-    scrollToBottom();
+    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    cancelledRunRecoveryRequestIds.delete(requestId);
+    if (activeChatPayloadsByTab.get(tabId) === activePayloadState) {
+      scheduleActiveChatPayloadCleanup(tabId, activePayloadState);
+    }
+    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
+    clearAssistantTextStreamState(assistantEl);
+    const wasAborted = isTabAbortRequested(tabId);
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    if (renderToCurrentTab && currentTabId === tabId) {
+      syncSendButtonState();
+      hideActivity();
+    }
+    if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+    if (renderToCurrentTab && currentTabId === tabId) {
+      scrollToBottom();
+      refreshRecommendedActions();
+    }
+    if (renderToCurrentTab && renderedTabId === tabId) await flushRenderedTabChat();
+    if (renderToCurrentTab && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
+    if (renderToCurrentTab && !wasAborted && !captureStartFailed && !contextMenuReservationRejected) {
+      notifyCompletion({
+        success: currentTabId === tabId && completedSuccessfully,
+        storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
+      });
+    }
+    await drainQueuedPromptsAfterRunSettles();
   }
+  return accepted;
 }
 
 // --- Listen for Agent Updates ---
 
-// Model-download progress (WebGPU provider — currently stubbed on
-// Firefox, but the listener stays so the parity with chrome is real
-// once the Firefox WebGPU path lands).
 browser.runtime.onMessage.addListener((msg) => {
-  if (msg.target !== 'sidepanel' || msg.action !== 'model_download') return;
-  renderModelDownloadProgress(msg);
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'user_memory_created'
+      || document.visibilityState === 'hidden') return;
+  showComposerToast(t('sp.memory.remembered'), { duration: 3200, effect: 'memory' });
 });
 
 browser.runtime.onMessage.addListener((msg) => {
-  if (msg.target !== 'sidepanel' || msg.action !== 'agent_update') return;
+  if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_prompt') return;
+  acceptContextMenuPrompt(msg.prompt || msg);
+});
+
+// --- Keyboard shortcut commands from background script ---
+// Firefox browser.commands custom shortcuts fire in the background script
+// (browser.commands.onCommand). The background dispatches them via
+// storage.local so the side panel can receive them reliably even when
+// runtime.sendMessage would miss the panel.
+const shortcutWindowIdPromise = browser.windows.getCurrent()
+  .then(windowInfo => Number.isInteger(windowInfo?.id) ? windowInfo.id : null)
+  .catch(() => null);
+browser.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName !== 'local' || !changes[SHORTCUT_COMMAND_STORAGE_KEY]?.newValue) return;
+  const windowId = await shortcutWindowIdPromise;
+  const command = shortcutCommandForWindow(
+    changes[SHORTCUT_COMMAND_STORAGE_KEY].newValue,
+    windowId,
+  );
+  switch (command) {
+    case 'switch-to-ask':
+      if (!isProcessing) setMode('ask');
+      break;
+    case 'switch-to-act':
+      if (!isProcessing) ensureActMode();
+      break;
+    case 'switch-to-dev':
+      if (!isProcessing) ensureDevMode();
+      break;
+    case 'focus-input':
+      // Firefox won't allow inputEl.focus() if the sidebar panel doesn't
+      // have focus — window.focus() acquires it first so the input focus
+      // actually takes effect.
+      window.focus();
+      inputEl.focus();
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+      break;
+  }
+});
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'tab_chat_handoff_request'
+      || String(msg.ownerId || '') !== tabChatHandoffOwnerId) return;
+  const snapshot = lastVisibleTabChatSnapshot;
+  if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)) return;
+  sendResponse({
+    ok: true,
+    tabId: Number(snapshot.tabId),
+    ownerId: tabChatHandoffOwnerId,
+    generation: Number(msg.generation),
+    html: snapshot.html,
+  });
+});
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'tab_chat_cleared'
+      || msg.handoffOwnerId === tabChatHandoffOwnerId
+      || document.visibilityState === 'hidden'
+      || !sameTabId(currentTabId, msg.tabId)) return;
+  tabChats.delete(Number(msg.tabId));
+  if (lastVisibleTabChatSnapshot
+      && sameTabId(lastVisibleTabChatSnapshot.tabId, msg.tabId)) {
+    lastVisibleTabChatSnapshot = null;
+  }
+  requestVisibleSidePanelStateRefresh();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    visibleStateRefreshPending = false;
+    // This document was authoritative immediately before it became hidden.
+    // Bypass the hidden-writer guard exactly once so the next visible panel
+    // cannot restore the older pre-debounce storage snapshot.
+    const snapshot = lastVisibleTabChatSnapshot;
+    if (snapshot && persistTimer && sameTabId(persistTimerTabId, snapshot.tabId)) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      persistTimerTabId = null;
+    }
+    if (snapshot) {
+      persistTabChat(snapshot.tabId, snapshot.html, { allowHidden: true }).catch(() => {});
+    }
+    return;
+  }
+  requestVisibleSidePanelStateRefresh();
+});
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_tab_navigated') return;
+  clearQueuedForTab(msg.tabId);
+});
+
+function ensureCurrentRunAssistant(msg) {
+  if (!msg?.requestId) return currentAssistantEl;
+  const requestId = String(msg.requestId);
+  let assistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(requestId)}"]`);
+  if (!assistantEl && currentAssistantEl
+      && (!currentAssistantEl.dataset.runRequestId || currentAssistantEl.dataset.runRequestId === requestId)) {
+    assistantEl = currentAssistantEl;
+  }
+  if (!assistantEl) {
+    resetChatNavigation();
+    assistantEl = addMessage('assistant', '');
+  }
+  assistantEl.dataset.runRequestId = requestId;
+  if (msg.runId) assistantEl.dataset.runId = String(msg.runId);
+  currentAssistantEl = assistantEl;
+  return assistantEl;
+}
+
+function suppressRunUpdatesForClearedConversation(tabId) {
+  const requestId = String(
+    localRunRequestIds.get(Number(tabId))
+      || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
+      || '',
+  );
+  if (!requestId) return;
+  // Runtime messages are delivered asynchronously. Keep recently cleared
+  // request IDs so a terminal update already queued by the background cannot
+  // recreate an assistant bubble after the empty conversation is rendered.
+  clearedConversationRunRequestIds.delete(requestId);
+  clearedConversationRunRequestIds.add(requestId);
+  while (clearedConversationRunRequestIds.size > 100) {
+    clearedConversationRunRequestIds.delete(clearedConversationRunRequestIds.values().next().value);
+  }
+}
+
+function isPlanReviewTimeoutTerminal(content) {
+  return String(content || '').trim() === 'Task cancelled — plan was not approved.';
+}
+
+function expirePlanReviewCards({
+  tabId = currentTabId,
+  planId = '',
+  requestId = '',
+  runId = '',
+  retryPayload = null,
+} = {}) {
+  for (const card of messagesEl.querySelectorAll('.plan-review-card')) {
+    if (tabId != null && String(card.dataset.tabId || '') !== String(tabId)) continue;
+    if (planId && String(card.dataset.planId || '') !== String(planId)) continue;
+    if (requestId && card.dataset.runRequestId && card.dataset.runRequestId !== String(requestId)) continue;
+    if (runId && card.dataset.runId && card.dataset.runId !== String(runId)) continue;
+
+    setPlanReviewAwaiting(tabId, false);
+    card.classList.add('plan-reviewed', 'plan-review-expired');
+    card.dataset.planResolution = 'timeout';
+    // Skip the timeout footer: a repeat expire pass (journal replay, panel
+    // reopen) must not disable the Retry button an earlier pass appended.
+    card.querySelectorAll('button, textarea').forEach(el => {
+      if (el.closest('.plan-review-timeout-footer')) return;
+      el.disabled = true;
+    });
+    card.querySelectorAll('[draggable="true"]').forEach(el => { el.draggable = false; });
+    card.querySelector('.plan-review-view')?.setAttribute('inert', '');
+
+    const assistantEl = card.closest('.message.assistant');
+    const textEl = assistantEl?.querySelector('.message-text');
+    if (textEl && !textEl.querySelector('.plan-review-timeout-history-note')) {
+      // extractChatHistoryMessages drops assistant messages whose .message-text
+      // is empty, and every path that would render the terminal cancellation
+      // suppresses it once the card is expired. Without a marker the turn
+      // disappears from saved and exported history. The marker cannot wait for
+      // that text either: _waitForPlanReview emits plan_resolved before its
+      // caller returns the string, so on a live timeout the text is still empty
+      // here and only the restore path ever sees it.
+      const historyNote = document.createElement('span');
+      historyNote.className = 'plan-review-timeout-history-note';
+      historyNote.textContent = t('sp.plan.timed_out');
+      if (isPlanReviewTimeoutTerminal(textEl.textContent)) {
+        textEl.replaceChildren(historyNote);
+        assistantEl.querySelector('.msg-copy-btn')?.remove();
+      } else {
+        // Anything already streamed before the plan card is real output; keep it.
+        textEl.appendChild(historyNote);
+      }
+    }
+
+    let footer = card.querySelector('.plan-review-timeout-footer');
+    if (!footer) {
+      footer = document.createElement('div');
+      footer.className = 'plan-review-timeout-footer';
+      footer.setAttribute('role', 'status');
+
+      const title = document.createElement('div');
+      title.className = 'plan-review-timeout-title';
+      title.textContent = t('sp.plan.timed_out');
+
+      const hint = document.createElement('div');
+      hint.className = 'plan-review-timeout-hint';
+      hint.textContent = t('sp.plan.timed_out_hint');
+
+      footer.append(title, hint);
+      card.appendChild(footer);
+    }
+
+    let retryBtn = footer.querySelector('.plan-review-retry');
+    if (!retryBtn && retryPayload?.text) {
+      retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'plan-review-retry';
+      retryBtn.textContent = t('sp.retry');
+      retryBtn.title = t('sp.retry');
+      retryBtn.setAttribute('aria-label', t('sp.retry'));
+      if (configureRetryButton(retryBtn, retryPayload)) footer.appendChild(retryBtn);
+    } else if (retryBtn) {
+      // Restored from persisted HTML, where an earlier disabled state may have
+      // been serialized along with the button.
+      retryBtn.disabled = false;
+      bindErrorRetryButton(retryBtn);
+    }
+  }
+}
+
+function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestId = '', runId = '', remove = true } = {}) {
+  for (const card of messagesEl.querySelectorAll('.plan-review-card')) {
+    if (tabId != null && String(card.dataset.tabId || '') !== String(tabId)) continue;
+    if (planId && String(card.dataset.planId || '') !== String(planId)) continue;
+    if (requestId && card.dataset.runRequestId && card.dataset.runRequestId !== String(requestId)) continue;
+    if (runId && card.dataset.runId && card.dataset.runId !== String(runId)) continue;
+    setPlanReviewAwaiting(tabId, false);
+    if (remove && card.classList.contains('plan-review-expired')) continue;
+    if (remove) card.remove();
+    else {
+      card.classList.add('plan-reviewed');
+      card.querySelectorAll('button, textarea').forEach(el => { el.disabled = true; });
+    }
+  }
+}
+
+function handleAgentUpdateMessage(msg) {
+  if (msg.type === 'conversation_scope') {
+    applyConversationScopeState(msg.tabId, msg.data);
+    return;
+  }
+  if (msg.type === 'scheduled_job') {
+    handleScheduledJobEvent(msg.data, msg.tabId).catch((err) => {
+      console.warn('[WebBrain] failed to handle scheduled job event:', err);
+    });
+    return;
+  }
+
+  if (msg.requestId && clearedConversationRunRequestIds.has(String(msg.requestId))) return;
 
   // Drop updates that belong to a different tab's run. agent_update is a
   // window-wide broadcast (browser.runtime.sendMessage has no per-tab
@@ -307,55 +8309,81 @@ browser.runtime.onMessage.addListener((msg) => {
   // keeps backward compat for any in-flight events from a pre-tabId build.
   if (msg.tabId != null && msg.tabId !== currentTabId) return;
 
+  const eventTabId = msg.tabId ?? currentTabId;
+  const localRequestId = localRunRequestIds.get(Number(eventTabId));
+  if (localRequestId && msg.requestId && localRequestId !== String(msg.requestId)) return;
+  const locallyOwnedEvent = !!localRequestId
+    && (!msg.requestId || localRequestId === String(msg.requestId));
+  const sequencedRequestAssistantEl = msg.requestId && Number.isFinite(Number(msg.seq))
+    ? messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(msg.requestId))}"]`)
+    : null;
+  if (sequencedRequestAssistantEl
+      && Number(sequencedRequestAssistantEl.dataset.lastRenderedSeq || 0) >= Number(msg.seq)) return;
+  const eventAssistantEl = ensureCurrentRunAssistant(msg);
+  if (eventAssistantEl && Number.isFinite(Number(msg.seq))
+      && Number(eventAssistantEl.dataset.lastRenderedSeq || 0) >= Number(msg.seq)) return;
+
   const { type, data } = msg;
 
   switch (type) {
     case 'thinking':
-      showActivity(t('sp.activity.thinking_step', { step: data.step }));
+      if (data?.note) {
+        // Keep the step indicator alongside the note when there's real
+        // progress (step > 0) so a slow call still shows movement; the planner
+        // emits step 0, so it shows just "Planning…". (#4)
+        const note = String(data.note);
+        showActivity(
+          data.step
+            ? `${note} · ${t('sp.activity.thinking_step', { step: data.step })}`
+            : note,
+        );
+      } else {
+        showActivity(t('sp.activity.thinking_step', { step: data.step }));
+      }
       break;
 
     case 'text':
-      // Empty content means "the model returned nothing new at this step".
-      // Don't wipe any previously-rendered assistant text — earlier steps
-      // may already have put useful intermediate prose in the bubble.
-      if (currentAssistantEl && data.content) {
-        const textEl = currentAssistantEl.querySelector('.message-text');
-        if (textEl) {
-          if (verboseMode) {
-            // Verbose mode: append each turn's reasoning as its own
-            // paragraph so intermediate prose ("I'll click X", "the modal
-            // is still open", "page changed, retrying") is preserved
-            // alongside the steps log instead of being overwritten by the
-            // next turn's blurb.
-            const para = document.createElement('div');
-            para.className = 'reasoning-step';
-            para.innerHTML = formatMarkdown(data.content);
-            textEl.appendChild(para);
-          } else {
-            // Compact mode keeps only the latest blurb. Toggle Verbose
-            // (V button) to retain the full reasoning trail.
-            textEl.innerHTML = formatMarkdown(data.content);
-          }
-          // Add copy button if not already present
-          if (!currentAssistantEl.querySelector('.msg-copy-btn')) {
-            addMessageCopyButton(currentAssistantEl);
-          }
-        }
+      // Empty content usually means "nothing new" — keep prior prose. Exception:
+      // replace:true with empty content clears a rejected streamed terminal
+      // (e.g. plan-only recovery) so the bubble is free for the real summary.
+      if (currentAssistantEl && (data.content || data.replace === true)) {
+        renderAssistantTextUpdate(currentAssistantEl, data.content || '', { replace: data.replace === true });
       }
       break;
 
     case 'text_delta':
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
-        if (textEl) textEl.textContent += data.content;
+        if (textEl && textEl.dataset.suppressToolCallStream !== 'true') {
+          // Keep the raw Markdown separate from the rendered DOM. Reading back
+          // textContent would discard markers such as ** and backticks after
+          // the first incremental render, corrupting every later chunk. A
+          // restored chat intentionally persists only an active-stream marker,
+          // while the background journal normally rehydrates the raw source.
+          // Use visible text only as a legacy/overflow fallback so a new chunk
+          // cannot erase the existing response before the authoritative
+          // terminal render restores exact Markdown formatting.
+          const previousText = getStreamedAssistantText(textEl)
+            || (hasStreamedAssistantText(textEl) ? textEl.innerText || textEl.textContent : '');
+          const nextText = previousText + String(data.content || '');
+          if (looksLikeRawToolCallText(nextText)) {
+            textEl.textContent = '';
+            clearStreamedAssistantText(textEl);
+            textEl.dataset.suppressToolCallStream = 'true';
+          } else {
+            streamedAssistantTextByEl.set(textEl, nextText);
+            textEl.dataset.streamedAssistantActive = 'true';
+            scheduleStreamedAssistantMarkdownRender(textEl);
+          }
+        }
       }
-      scrollToBottom();
       break;
 
     case 'tool_call':
       showActivity(friendlyToolLabel(data.name, data.args));
       showInspectionBanner(data.name);
       if (currentAssistantEl) {
+        clearTransientAssistantTextForToolCall();
         if (verboseMode) {
           appendVerboseToolCall(data.name, data.args);
         } else {
@@ -376,21 +8404,142 @@ browser.runtime.onMessage.addListener((msg) => {
       scrollToBottom();
       break;
 
+    case 'run_capture_warning':
+      if (data?.kind === 'record' && data?.message) {
+        addPersistentSlashMessage(systemHtml(tSystemHtml('sp.record.mic_unavailable', {
+          error: data.message,
+        })));
+      }
+      break;
+
+    case 'run_capture_complete':
+      if (data?.kind === 'screenshot' && Array.isArray(data.filenames)) {
+        showComposerToast(t('sp.record.saved', {
+          filename: data.filenames.join(', '),
+        }), { duration: 6000 });
+      }
+      break;
+
+    case 'run_capture_error':
+      reportTrailingRunCaptureError({ kind: data?.kind }, new Error(data?.message || 'unknown error'), eventTabId);
+      break;
+
     case 'error':
       hideActivity();
       if (currentAssistantEl) markLastStepFailed();
-      addMessage('error', t('sp.error_prefix', { msg: data.message }));
+      renderAgentErrorUpdate(data, currentTabId, msg.requestId);
       break;
 
     case 'max_steps_reached':
       hideActivity();
       // Don't gate on currentAssistantEl — race with sendResponse means it
       // may already be null by the time this fires.
-      showContinueButton();
+      {
+        const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
+          || retryPayloadForRunAssistant(eventAssistantEl);
+        showContinueButton({ foreground: retryPayload?.foreground === true });
+      }
       break;
 
     case 'warning':
       hideActivity();
+      if (data?.code === 'planner_request_failed') {
+        const targetAssistantEl = eventAssistantEl || currentAssistantEl;
+        const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
+          || retryPayloadForRunAssistant(targetAssistantEl);
+        renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
+      } else if (data?.code === 'planner_failed_continue_act') {
+        showComposerToast(data?.message || t('sp.plan.intent_unavailable'), { duration: 10000 });
+      } else if (data?.code === 'ask_stream_fallback') {
+        showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
+      } else if (data?.code === 'persistence_degraded') {
+        showComposerToast(t('sp.persistence.unavailable'), { duration: 10000 });
+      }
+      break;
+
+    case 'workflow_healed':
+      showComposerToast(t('sp.workflows.healing.saved', {
+        name: data?.workflowName || '',
+        count: data?.count || 0,
+      }), { duration: 7000 });
+      break;
+
+    case 'workflow_healing_not_saved':
+      showComposerToast(t('sp.workflows.healing.not_saved', {
+        name: data?.workflowName || '',
+      }), { duration: 9000 });
+      break;
+
+    case 'run_complete':
+      if (currentAssistantEl) finalizeSteps(currentAssistantEl);
+      reconcileRunMessageAttachmentState(
+        eventTabId,
+        eventAssistantEl || currentAssistantEl,
+        data?.attachmentDeliveryState,
+        { persist: true },
+      );
+      void reconcilePersistedStagedScreenshots(
+        eventTabId,
+        msg.requestId,
+        data?.attachmentDeliveryState,
+      );
+      invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
+      const suppressTimedOutPlanTerminal = !!(eventAssistantEl || currentAssistantEl)
+        ?.querySelector('.plan-review-expired')
+        && isPlanReviewTimeoutTerminal(data?.finalContent);
+      if (currentAssistantEl && data?.finalContent && !suppressTimedOutPlanTerminal) {
+        const textEl = currentAssistantEl.querySelector('.message-text');
+        const streamedText = getStreamedAssistantText(textEl);
+        const hasStreamedText = hasStreamedAssistantText(textEl);
+        const visibleStreamedText = streamedText
+          || (hasStreamedText ? textEl?.innerText || textEl?.textContent || '' : '');
+        if (textEl && parseCostAllowanceError(data.finalContent)) {
+          clearAssistantTextStreamState(currentAssistantEl);
+          if (!textEl.classList.contains('cost-allowance-error')) {
+            renderCostAllowanceError(textEl, data.finalContent, '', {
+              submittedTurnDurable: data.submittedTurnDurable,
+              retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId)
+                || retryPayloadForRunAssistant(currentAssistantEl),
+            });
+          }
+          addMessageCopyButton(currentAssistantEl);
+        } else if (textEl && hasStreamedText) {
+          // Background/restored runs do not necessarily reach the local
+          // sendRunWithReconnect response handler. Finalize their lightweight
+          // live Markdown here, cancelling any queued frame and enabling the
+          // terminal-only syntax, math, and copy enhancements. Preserve useful
+          // partial text when the user stopped the run; otherwise the terminal
+          // snapshot is authoritative if it differs from the live stream.
+          const terminalContent = data.status === 'stopped' || data.status === 'cancelled'
+            ? visibleStreamedText
+            : String(data.finalContent);
+          renderAssistantTextUpdate(currentAssistantEl, terminalContent, {
+            replace: terminalContent !== streamedText,
+          });
+        } else if (textEl && !textEl.textContent.trim()) {
+          clearAssistantTextStreamState(currentAssistantEl);
+          if (data.status === 'stopped' || data.status === 'cancelled') textEl.innerHTML = t('sp.stopped_by_user_html');
+          else if (!renderCostAllowanceError(textEl, data.finalContent, '', {
+                submittedTurnDurable: data.submittedTurnDurable,
+                retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId),
+              })
+              && !renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent);
+          addMessageCopyButton(currentAssistantEl);
+        }
+      }
+      setPlanReviewAwaiting(msg.tabId ?? currentTabId, false);
+      if (!locallyOwnedEvent) {
+        clearPlanReviewActiveRun(currentAssistantEl, eventTabId);
+      }
+      schedulePersist();
+      scrollToBottom();
+      break;
+
+    case 'context_compacted':
+      // The agent auto-summarized older turns to stay within the model's
+      // context window. Show a subtle inline separator so the user knows
+      // earlier history was compacted (not lost to a bug).
+      addContextCompactedNote(data);
       break;
 
     case 'clarify':
@@ -400,91 +8549,60 @@ browser.runtime.onMessage.addListener((msg) => {
       // the bg.
       renderClarifyCard(data);
       break;
-  }
-});
 
-/**
- * Render / update the WebGPU model-download progress card. See
- * chrome/sidepanel.js for the design notes. Currently inert on Firefox
- * (the WebGPU provider is a stub) but the listener + rendering stay so
- * the cut-over is one-line when the Firefox WebGPU path lands.
- */
-const _modelDownloadState = {
-  cardEl: null,
-  files: new Map(),
-  dismissTimer: null,
-};
+    case 'clarify_auto':
+      // Agent auto-selected an answer after the clarify timeout. Lock the
+      // matching card in the UI (agent already resolved the pending Promise).
+      lockClarifyCardFromAuto(data);
+      break;
 
-function renderModelDownloadProgress(msg) {
-  const { status, file, loaded, total, modelId } = msg;
+    case 'upload_picker':
+      renderUploadPickerCard(data, msg.tabId ?? currentTabId);
+      break;
 
-  if (file) {
-    const prev = _modelDownloadState.files.get(file) || { loaded: 0, total: 0 };
-    _modelDownloadState.files.set(file, {
-      loaded: status === 'done' ? (prev.total || prev.loaded) : (loaded || prev.loaded),
-      total: total || prev.total,
-      status,
-    });
-  }
+    case 'plan_review':
+      invalidatePlanReviewCards({
+        tabId: msg.tabId ?? currentTabId,
+        requestId: msg.requestId,
+      });
+      renderPlanReviewCard({ ...data, tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
+      break;
 
-  if (!_modelDownloadState.cardEl) {
-    const card = document.createElement('div');
-    card.className = 'model-download-card';
-    card.innerHTML = `
-      <div class="model-download-headline"></div>
-      <div class="model-download-bar"><div class="model-download-bar-fill"></div></div>
-      <div class="model-download-detail"></div>
-    `;
-    if (messagesEl) messagesEl.prepend(card);
-    _modelDownloadState.cardEl = card;
-  }
-  const card = _modelDownloadState.cardEl;
-  const headline = card.querySelector('.model-download-headline');
-  const fill = card.querySelector('.model-download-bar-fill');
-  const detail = card.querySelector('.model-download-detail');
-
-  if (status === 'ready') {
-    headline.textContent = (typeof t === 'function' ? t('sp.model_download.ready', { model: modelId }) : `${modelId} ready`) || `${modelId} ready`;
-    fill.style.width = '100%';
-    fill.classList.add('done');
-    detail.textContent = '';
-    if (_modelDownloadState.dismissTimer) clearTimeout(_modelDownloadState.dismissTimer);
-    _modelDownloadState.dismissTimer = setTimeout(() => {
-      if (_modelDownloadState.cardEl) {
-        _modelDownloadState.cardEl.remove();
-        _modelDownloadState.cardEl = null;
-        _modelDownloadState.files.clear();
+    case 'plan_resolved':
+      if (data?.decision === 'timeout') {
+        expirePlanReviewCards({
+          tabId: msg.tabId ?? currentTabId,
+          planId: data?.planId,
+          requestId: msg.requestId,
+          runId: msg.runId,
+          retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId)
+            || retryPayloadForRunAssistant(eventAssistantEl || currentAssistantEl),
+        });
+      } else {
+        invalidatePlanReviewCards({
+          tabId: msg.tabId ?? currentTabId,
+          planId: data?.planId,
+          requestId: msg.requestId,
+          runId: msg.runId,
+        });
       }
-    }, 1800);
-    scrollToBottom();
-    return;
+      schedulePersist();
+      break;
+
+    case 'plan_auto_approved':
+      addPlanAutoApprovedNote(data);
+      break;
   }
-
-  let totalLoaded = 0;
-  let totalSize = 0;
-  for (const f of _modelDownloadState.files.values()) {
-    totalLoaded += f.loaded || 0;
-    totalSize += f.total || 0;
+  if (eventAssistantEl && Number.isFinite(Number(msg.seq))) {
+    eventAssistantEl.dataset.lastRenderedSeq = String(msg.seq);
   }
-  const pct = totalSize > 0 ? Math.min(100, Math.round((totalLoaded / totalSize) * 100)) : 0;
-  fill.style.width = `${pct}%`;
-  fill.classList.remove('done');
-
-  const headlineText = (typeof t === 'function'
-    ? t('sp.model_download.headline', { model: modelId, mb: Math.round(totalLoaded / 1048576), total_mb: Math.round(totalSize / 1048576) || '?' })
-    : null) || `Downloading ${modelId} — ${Math.round(totalLoaded / 1048576)} / ${Math.round(totalSize / 1048576) || '?'} MB`;
-  headline.textContent = headlineText;
-
-  if (status === 'progress' || status === 'download') {
-    detail.textContent = file || '';
-  } else if (status === 'initiate') {
-    detail.textContent = (typeof t === 'function' ? t('sp.model_download.queued') : 'Queued') + (file ? ` · ${file}` : '');
-  } else if (status === 'done') {
-    detail.textContent = (typeof t === 'function' ? t('sp.model_download.file_done') : 'File complete') + (file ? ` · ${file}` : '');
-  }
-
-  scrollToBottom();
 }
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg.target !== 'sidepanel' || msg.action !== 'agent_update') return;
+  if (queueAgentUpdateDuringTabSwitch(msg)) return;
+  handleAgentUpdateMessage(msg);
+});
 
 /**
  * Render a clarify() prompt inside the current assistant message. Shows
@@ -493,25 +8611,208 @@ function renderModelDownloadProgress(msg) {
  * the card and routes the answer to the background. UI stays visible
  * after answering so the user can see what they chose.
  */
+function workflowHealingTargetLabel(target) {
+  const role = String(target?.role || 'element').slice(0, 40);
+  const primary = String(
+    target?.name || target?.label || target?.ariaLabel || target?.placeholder
+      || target?.fieldName || target?.id || target?.href || '',
+  ).trim().slice(0, 180);
+  const identity = [
+    target?.label && target.label !== primary ? `label=${String(target.label).slice(0, 80)}` : '',
+    target?.ariaLabel && target.ariaLabel !== primary ? `aria-label=${String(target.ariaLabel).slice(0, 80)}` : '',
+    target?.id ? `id=${String(target.id).slice(0, 80)}` : '',
+    target?.fieldName ? `name=${String(target.fieldName).slice(0, 80)}` : '',
+    target?.type ? `type=${String(target.type).slice(0, 40)}` : '',
+    target?.href && target.href !== primary ? `href=${String(target.href).slice(0, 120)}` : '',
+  ].filter(Boolean).join(', ');
+  return `${role}${primary ? ` “${primary}”` : ''}${identity ? ` (${identity})` : ''}`;
+}
+
 function renderClarifyCard(data) {
   hideActivity();
-  if (!currentAssistantEl) return;
-  const tabId = currentTabId;
-  if (!tabId) return;
+  const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
+  if (tabId == null) return;
+  const scheduledJobId = data?.scheduledJobId ? String(data.scheduledJobId) : '';
+  if (scheduledJobId) hideRecommendedActions();
+  let assistantEl = currentAssistantEl;
+  if (scheduledJobId && data.forceNewScheduledCard) {
+    resetChatNavigation();
+    assistantEl = addMessage('assistant', '');
+  } else if (scheduledJobId && !assistantEl) {
+    resetChatNavigation();
+    assistantEl = addMessage('assistant', '');
+    currentAssistantEl = assistantEl;
+  } else if (!assistantEl) {
+    return;
+  }
+  if (scheduledJobId) {
+    assistantEl.dataset.scheduledJobId = scheduledJobId;
+  }
   const clarifyId = String(data.clarifyId || '');
   if (!clarifyId) return;
 
-  const content = currentAssistantEl.querySelector('.message-content');
+  const content = assistantEl.querySelector('.message-content');
   if (!content) return;
 
   const card = document.createElement('div');
   card.className = 'clarify-card';
   card.dataset.clarifyId = clarifyId;
+  card.dataset.tabId = String(tabId);
+  card.dataset.memorySource = scheduledJobId
+    ? 'scheduled_clarification'
+    : data.workflowHealing
+      ? ''
+      : data.submitConfirmation
+        ? 'form_confirmation'
+        : data.permission
+          ? 'permission'
+          : 'clarification_response';
+  if (card.dataset.memorySource === 'clarification_response') {
+    card.dataset.memoryQuestion = String(data.question || '').slice(0, 600);
+  }
+  if (scheduledJobId) {
+    card.dataset.scheduledJobId = scheduledJobId;
+  }
+  if (data.scheduledTabId != null) {
+    card.dataset.scheduledTabId = String(data.scheduledTabId);
+  }
+  // Persist timeout metadata on the card so chat HTML restore / rebind can
+  // restart the countdown after the panel is closed and reopened.
+  const timeoutSec = Number(data.timeoutSec);
+  const deadlineTs = Number(data.deadlineTs);
+  if (Number.isFinite(timeoutSec) && timeoutSec > 0 && Number.isFinite(deadlineTs) && deadlineTs > 0) {
+    card.dataset.timeoutSec = String(Math.floor(timeoutSec));
+    card.dataset.deadlineTs = String(Math.floor(deadlineTs));
+  }
 
   const qEl = document.createElement('div');
   qEl.className = 'clarify-question';
   qEl.textContent = String(data.question || '').slice(0, 600);
   card.appendChild(qEl);
+
+  if (data.workflowHealing) {
+    card.dataset.workflowHealing = '1';
+    const healing = data.workflowHealing;
+    qEl.textContent = t('sp.workflows.healing.question', {
+      name: String(healing.workflowName || '').slice(0, 80),
+      step: Number(healing.stepNumber) || 1,
+    });
+    const previousEl = document.createElement('div');
+    previousEl.className = 'clarify-reason';
+    previousEl.textContent = t('sp.workflows.healing.previous', {
+      target: workflowHealingTargetLabel(healing.previousTarget),
+    });
+    card.appendChild(previousEl);
+
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const candidate of Array.isArray(healing.candidates) ? healing.candidates.slice(0, 5) : []) {
+      if (!/^candidate_[0-4]$/.test(String(candidate?.id || ''))) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'clarify-option';
+      button.textContent = t('sp.workflows.healing.use', {
+        target: workflowHealingTargetLabel(candidate.target),
+      });
+      button.dataset.value = candidate.id;
+      button.addEventListener('click', () => submitClarify(
+        card, tabId, clarifyId, candidate.id, 'option',
+      ));
+      optionsEl.appendChild(button);
+    }
+    const deny = document.createElement('button');
+    deny.type = 'button';
+    deny.className = 'clarify-option';
+    deny.textContent = t('sp.workflows.healing.keep');
+    deny.dataset.value = 'deny';
+    deny.addEventListener('click', () => submitClarify(card, tabId, clarifyId, 'deny', 'option'));
+    optionsEl.appendChild(deny);
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  if (data.submitConfirmation) {
+    card.dataset.submitConfirmation = '1';
+    const submit = data.submitConfirmation || {};
+    const host = String(submit.host || '').slice(0, 300) || 'this site';
+    qEl.textContent = String(data.question || `WebBrain wants to submit this form on ${host}.`).slice(0, 600);
+
+    const summary = String(submit.summary || '').trim();
+    if (summary) {
+      const summaryEl = document.createElement('div');
+      summaryEl.className = 'clarify-reason';
+      summaryEl.textContent = summary.slice(0, 1200);
+      card.appendChild(summaryEl);
+    } else if (Array.isArray(submit.changedFields) && submit.changedFields.length) {
+      const fieldsEl = document.createElement('div');
+      fieldsEl.className = 'clarify-reason';
+      fieldsEl.textContent = submit.changedFields
+        .slice(0, 6)
+        .map(field => `${String(field.label || 'Field').slice(0, 80)}: ${String(field.value || '').slice(0, 120) || '(blank)'}`)
+        .join('; ');
+      card.appendChild(fieldsEl);
+    }
+
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    const choices = [
+      ['once', 'Submit once'],
+      ['deny', 'Do not submit'],
+    ];
+    for (const [value, label] of choices) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = label;
+      b.dataset.value = value;
+      b.addEventListener('click', () => submitClarify(card, tabId, clarifyId, value, 'option'));
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Permission-prompt mode: localized question + three fixed choices that
+  // return a stable VALUE ('once'/'always'/'deny'), and NO free-text input —
+  // so there's nothing to parse and no English/locale dependency.
+  if (data.permission && data.permission.capability) {
+    card.dataset.permission = '1';
+    const host = String(data.permission.host || '');
+    const cap = String(data.permission.capability || '');
+    const verb = t('sp.perm.verb.' + cap);
+    qEl.textContent = t('sp.perm.question', { verb, host });
+
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = t('sp.perm.reason');
+    card.appendChild(reasonEl);
+
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    const choices = [
+      ['once', t('sp.perm.allow_once')],
+      ['always', t('sp.perm.always_allow', { host })],
+      ['deny', t('sp.perm.dont_allow')],
+    ];
+    for (const [value, label] of choices) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 200);
+      b.dataset.value = value;
+      b.addEventListener('click', () => submitClarify(card, tabId, clarifyId, value, 'option'));
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    void maybeShowPermissionEducationHint(card);
+    scrollToBottom({ force: true });
+    return;
+  }
 
   if (data.reason) {
     const reasonEl = document.createElement('div');
@@ -561,22 +8862,453 @@ function renderClarifyCard(data) {
   row.appendChild(submitBtn);
   card.appendChild(row);
 
+  // Countdown for auto-select (agent is authoritative; UI is display + backup).
+  const firstOption = options[0] || '(no response — timed out)';
+  if (firstOption) card.dataset.firstOption = String(firstOption).slice(0, 200);
+  if (data.timeoutSec > 0 && data.deadlineTs) {
+    startClarifyCountdown(card, {
+      tabId,
+      clarifyId,
+      deadlineTs: Number(data.deadlineTs),
+      firstOption,
+    });
+  }
+
+  content.appendChild(card);
+  scrollToBottom({ force: true });
+  try { input.focus(); } catch {}
+}
+
+function clearClarifyCountdown(card) {
+  if (!card) return;
+  if (card._clarifyCountdownTimer) {
+    try { clearInterval(card._clarifyCountdownTimer); } catch {}
+    card._clarifyCountdownTimer = null;
+  }
+  const timerEl = card.querySelector('.clarify-timeout');
+  if (timerEl) timerEl.remove();
+}
+
+/**
+ * Show a live countdown on a regular clarify card. When the deadline hits,
+ * lock the card and post the first option as a backup if the agent timer
+ * already fired, submitClarifyResponse is a no-op.
+ */
+function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption }) {
+  if (!card || !deadlineTs || deadlineTs <= 0) return;
+  clearClarifyCountdown(card);
+
+  const timerEl = document.createElement('div');
+  timerEl.className = 'clarify-timeout';
+  card.appendChild(timerEl);
+
+  const tick = () => {
+    if (card.classList.contains('clarify-answered')) {
+      clearClarifyCountdown(card);
+      return;
+    }
+    const remainingMs = Math.max(0, deadlineTs - Date.now());
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    timerEl.textContent = typeof t === 'function'
+      ? t('sp.clarify.auto_timeout', { seconds: remainingSec })
+      : `Auto-selects in ${remainingSec}s`;
+    if (remainingMs <= 0) {
+      clearClarifyCountdown(card);
+      // Backup path: if agent already settled, this is a no-op on the agent
+      // side; still locks the card for the user.
+      submitClarify(card, tabId, clarifyId, firstOption, 'timeout');
+    }
+  };
+  tick();
+  card._clarifyCountdownTimer = setInterval(tick, 250);
+}
+
+/**
+ * Lock a clarify card after the agent auto-selected (timeout). Does not re-send
+ * clarify_response — the agent already resolved its pending Promise.
+ */
+/**
+ * Lock a clarify card after the agent auto-selected (timeout or Instant).
+ * Does not re-send clarify_response — the agent already resolved its pending Promise.
+ */
+function lockClarifyCardFromAuto(data) {
+  const clarifyId = String(data?.clarifyId || '');
+  if (!clarifyId) return;
+  const answer = String(data?.answer || '').trim();
+  const source = String(data?.source || 'timeout');
+  for (const card of document.querySelectorAll('.clarify-card')) {
+    if (String(card.dataset.clarifyId || '') !== clarifyId) continue;
+    if (card.classList.contains('clarify-answered')) return;
+    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1') return;
+    clearClarifyCountdown(card);
+    card.classList.add('clarify-answered');
+    for (const el of card.querySelectorAll('button, input')) {
+      el.disabled = true;
+    }
+    const answered = document.createElement('div');
+    answered.className = 'clarify-your-answer';
+    const prefix = source === 'auto'
+      ? (typeof t === 'function' ? t('sp.clarify.auto_selected_instant') : 'Auto-selected (Instant):')
+      : (typeof t === 'function' ? t('sp.clarify.auto_selected') : 'Auto-selected (timed out):');
+    answered.textContent = `${prefix} ${answer}`;
+    card.appendChild(answered);
+    placeAnsweredClarifyCardInTimeline(card);
+    scrollToBottom();
+    return;
+  }
+}
+
+function renderUploadPickerCard(data, tabId) {
+  if (tabId == null) return;
+  const pickerId = String(data.pickerId || '');
+  if (!pickerId || !currentAssistantEl) return;
+
+  const content = currentAssistantEl.querySelector('.message-content');
+  if (!content) return;
+
+  const card = document.createElement('div');
+  card.className = 'clarify-card';
+  card.dataset.pickerId = pickerId;
+  card.dataset.tabId = String(tabId);
+
+  const qEl = document.createElement('div');
+  qEl.className = 'clarify-question';
+  qEl.textContent = t('sp.upload_picker.question', { selector: data.selector || 'the page' });
+  card.appendChild(qEl);
+
+  const btnsEl = document.createElement('div');
+  btnsEl.className = 'clarify-options';
+
+  const chooseBtn = document.createElement('button');
+  chooseBtn.className = 'clarify-option-btn';
+  chooseBtn.textContent = t('sp.upload_picker.choose_file');
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'clarify-option-btn';
+  cancelBtn.textContent = t('sp.upload_picker.cancel');
+
+  // Per-card file input so concurrent pickers do not share onchange handlers.
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.hidden = true;
+  card.appendChild(input);
+
+  let settled = false;
+  const settleStatus = (messageKey, params) => {
+    if (settled) return false;
+    settled = true;
+    card.classList.add('clarify-answered');
+    chooseBtn.disabled = true;
+    cancelBtn.disabled = true;
+    try { input.value = ''; } catch {}
+    card.textContent = '';
+    const statusEl = document.createElement('div');
+    statusEl.className = 'clarify-question';
+    statusEl.textContent = t(messageKey, params);
+    card.appendChild(statusEl);
+    return true;
+  };
+
+  chooseBtn.addEventListener('click', () => {
+    if (settled || card.classList.contains('clarify-answered')) return;
+    input.value = '';
+    input.onchange = () => {
+      if (settled) return;
+      const file = input.files && input.files[0];
+      if (!file) return;
+      if (file.size > 25 * 1024 * 1024) {
+        if (!settleStatus('sp.upload_picker.too_large')) return;
+        sendToBackground('upload_picker_response', {
+          tabId,
+          pickerId,
+          cancelled: true,
+          reason: 'Selected file exceeds 25MB limit',
+        });
+        return;
+      }
+      // Lock UI before async read so Cancel cannot race with onload.
+      chooseBtn.disabled = true;
+      cancelBtn.disabled = true;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (settled) return;
+        const base64Str = String(reader.result || '');
+        const commaIdx = base64Str.indexOf(',');
+        const base64 = commaIdx >= 0 ? base64Str.slice(commaIdx + 1) : base64Str;
+        if (!base64) {
+          if (!settleStatus('sp.upload_picker.read_failed')) return;
+          sendToBackground('upload_picker_response', {
+            tabId,
+            pickerId,
+            cancelled: true,
+            reason: 'Failed to read selected file',
+          });
+          return;
+        }
+        if (!settleStatus('sp.upload_picker.selected', { name: file.name, size: file.size })) return;
+        sendToBackground('upload_picker_response', {
+          tabId,
+          pickerId,
+          base64,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+        });
+      };
+      reader.onerror = () => {
+        if (!settleStatus('sp.upload_picker.read_failed')) return;
+        sendToBackground('upload_picker_response', {
+          tabId,
+          pickerId,
+          cancelled: true,
+          reason: 'Failed to read selected file',
+        });
+      };
+      reader.onabort = () => {
+        if (!settleStatus('sp.upload_picker.read_failed')) return;
+        sendToBackground('upload_picker_response', {
+          tabId,
+          pickerId,
+          cancelled: true,
+          reason: 'File read cancelled',
+        });
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    if (!settleStatus('sp.upload_picker.cancelled')) return;
+    sendToBackground('upload_picker_response', {
+      tabId,
+      pickerId,
+      cancelled: true,
+      reason: 'User cancelled file selection',
+    });
+  });
+
+  btnsEl.appendChild(chooseBtn);
+  btnsEl.appendChild(cancelBtn);
+  card.appendChild(btnsEl);
   content.appendChild(card);
   scrollToBottom();
-  try { input.focus(); } catch {}
+}
+
+function renderPlanReviewCard(data) {
+  hideActivity();
+  const tabId = data?.tabId ?? currentTabId;
+  if (tabId == null) return;
+  let assistantEl = currentAssistantEl;
+  if (!assistantEl) {
+    resetChatNavigation();
+    assistantEl = addMessage('assistant', '');
+    currentAssistantEl = assistantEl;
+    const questionEl = precedingUserMessage(assistantEl);
+    beginReadingFirstTurn(questionEl, assistantEl);
+  }
+
+  const planId = String(data.planId || '');
+  if (!planId) return;
+
+  const existing = [...messagesEl.querySelectorAll('.plan-review-card')]
+    .find(card => String(card.dataset.planId || '') === planId
+      && String(card.dataset.tabId || '') === String(tabId)
+      && (!data.requestId || card.dataset.runRequestId === String(data.requestId))
+      && (!data.runId || card.dataset.runId === String(data.runId)));
+  if (existing) {
+    if (!existing.classList.contains('plan-reviewed')) {
+      bindPlanReviewCard(existing);
+      setPlanReviewAwaiting(tabId, true, existing.closest('.message.assistant'));
+    }
+    return;
+  }
+
+  const content = assistantEl.querySelector('.message-content');
+  if (!content) return;
+
+  const card = document.createElement('div');
+  card.className = 'plan-review-card';
+  card.dataset.planId = planId;
+  card.dataset.tabId = String(tabId);
+  if (data.requestId) card.dataset.runRequestId = String(data.requestId);
+  if (data.runId) card.dataset.runId = String(data.runId);
+  card.dataset.editing = 'false';
+
+  const header = document.createElement('div');
+  header.className = 'plan-review-header';
+  const titleEl = document.createElement('div');
+  titleEl.className = 'plan-review-title';
+  titleEl.textContent = typeof t === 'function' ? t('sp.plan.title') : 'Review plan';
+  header.appendChild(titleEl);
+  const confidenceText = planReviewConfidenceText(data.plan);
+  if (confidenceText) {
+    const confidenceEl = document.createElement('div');
+    confidenceEl.className = 'plan-review-confidence';
+    confidenceEl.textContent = typeof t === 'function'
+      ? t('sp.plan.confidence', { confidence: confidenceText })
+      : `Confidence ${confidenceText}`;
+    header.appendChild(confidenceEl);
+  }
+  card.appendChild(header);
+
+  // Match the agent-side scratchpad cap (formatPlanScratchpad keeps up to 8000
+  // chars). A lower display cap would silently drop the plan's tail the moment
+  // the user edits a long plan, since the edited textarea becomes the pinned
+  // text. (#5)
+  const compactMarkdown = String(data.markdown || data.plan?.summary || '').slice(0, 8000);
+  const verboseMarkdown = String(data.verboseMarkdown || compactMarkdown).slice(0, 8000);
+  const useVerbosePlan = verboseMode && !!data.verboseMarkdown;
+  const originalMarkdown = useVerbosePlan ? verboseMarkdown : compactMarkdown;
+  card.dataset.planMarkdownMode = useVerbosePlan ? 'verbose' : 'compact';
+  card.dataset.originalMarkdown = originalMarkdown;
+  // Structured dirty checks always compare against compact display text so
+  // step edits do not look "clean" relative to a verbose original blob.
+  card.dataset.originalCompactMarkdown = compactMarkdown;
+  card.dataset.planDirty = 'false';
+
+  const view = renderPlanReviewView(data.plan, compactMarkdown);
+  card.appendChild(view);
+
+  const editHint = document.createElement('div');
+  editHint.className = 'plan-review-hint';
+  editHint.textContent = typeof t === 'function' ? t('sp.plan.edit_hint') : 'Optional: edit the plan as markdown';
+  card.appendChild(editHint);
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'plan-review-edit';
+  textarea.rows = useVerbosePlan ? 8 : 5;
+  textarea.value = originalMarkdown;
+  textarea.defaultValue = originalMarkdown;
+  card.appendChild(textarea);
+
+  const actions = document.createElement('div');
+  actions.className = 'plan-review-actions';
+
+  const approveBtn = document.createElement('button');
+  approveBtn.type = 'button';
+  approveBtn.className = 'plan-review-approve';
+  approveBtn.textContent = typeof t === 'function' ? t('sp.plan.approve') : 'Run';
+
+  const changeBtn = document.createElement('button');
+  changeBtn.type = 'button';
+  changeBtn.className = 'plan-review-change';
+  changeBtn.textContent = typeof t === 'function' ? t('sp.plan.edit_as_text') : 'Edit as text';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'plan-review-cancel';
+  cancelBtn.textContent = typeof t === 'function' ? t('sp.plan.cancel') : 'Cancel';
+
+  actions.appendChild(approveBtn);
+  actions.appendChild(changeBtn);
+  actions.appendChild(cancelBtn);
+  card.appendChild(actions);
+  mountPlanReviewEditor(card, view);
+  // Anchor dirty-checks to the structured serializer's output, not the
+  // planner markdown string, so renumbering/whitespace alone is not an edit.
+  const initialSerialized = serializePlanDraftToMarkdown(getPlanReviewDraftFromDom(card));
+  card.dataset.originalCompactMarkdown = initialSerialized;
+  if (!useVerbosePlan) {
+    card.dataset.originalMarkdown = initialSerialized;
+    textarea.value = initialSerialized;
+    textarea.defaultValue = initialSerialized;
+  }
+  bindPlanReviewCard(card);
+
+  content.appendChild(card);
+  setPlanReviewAwaiting(tabId, true, assistantEl);
+  scrollToBottom({ force: true });
+}
+
+function submitPlanReview(card, tabId, planId, action, editedText) {
+  if (card.classList.contains('plan-reviewed')) return;
+  const activeAssistantEl = action === 'approve' ? reattachPlanReviewActiveRun(card) : null;
+  const markdownMode = String(card.dataset.planMarkdownMode || 'compact') === 'verbose' ? 'verbose' : 'compact';
+  card.classList.add('plan-reviewed');
+  setPlanReviewAwaiting(tabId, false);
+  if (action !== 'approve') {
+    const requestId = String(card.dataset.runRequestId || '');
+    if (requestId) cancelledRunRecoveryRequestIds.add(requestId);
+    setTabAbortRequested(tabId, true);
+    card.remove();
+    scrollToBottom();
+    sendPlanReviewDecisionWithReconnect({
+      tabId, planId, decision: action, editedText, markdownMode,
+    }, requestId).catch(() => {});
+    return;
+  }
+  for (const el of card.querySelectorAll('button, textarea')) {
+    el.disabled = true;
+  }
+  const note = document.createElement('div');
+  note.className = 'plan-review-note';
+  const expiredText = () => (typeof t === 'function' ? t('sp.plan.expired') : 'This plan is no longer awaiting review — the run was cancelled.');
+  const failureText = (error) => isBackgroundConnectionError(error)
+    ? 'WebBrain reloaded or the background worker stopped before this plan could be approved. Reload the sidebar and try again.'
+    : expiredText();
+
+  sendPlanReviewDecisionWithReconnect(
+    { tabId, planId, decision: action, editedText, markdownMode },
+    String(card.dataset.runRequestId || ''),
+  )
+    .then((res) => {
+      if (action !== 'approve') return;
+      if (res?.matched) {
+        card.remove();
+        void restoreActiveRunState(tabId);
+      } else {
+        note.textContent = expiredText();
+        card.appendChild(note);
+        setPlanReviewAwaiting(tabId, false);
+        if (activeAssistantEl) clearPlanReviewActiveRun(activeAssistantEl, tabId);
+      }
+      scrollToBottom();
+    })
+    .catch((error) => {
+      if (action === 'approve') {
+        note.textContent = failureText(error);
+        card.appendChild(note);
+        card.classList.remove('plan-reviewed');
+        for (const el of card.querySelectorAll('button, textarea')) {
+          el.disabled = false;
+        }
+        setPlanReviewAwaiting(tabId, true, activeAssistantEl || card.closest('.message.assistant'));
+        scrollToBottom();
+      }
+    });
 }
 
 function submitClarify(card, tabId, clarifyId, answer, source) {
   if (card.classList.contains('clarify-answered')) return;
   card.classList.add('clarify-answered');
-  for (const el of card.querySelectorAll('button, input')) {
-    el.disabled = true;
+  clearClarifyCountdown(card);
+
+  // Permission cards are transient: once the user chooses, remove the card
+  // entirely so it doesn't linger at the bottom of the conversation (it could
+  // otherwise render below the run's final result). General clarify cards stay
+  // visible, locked, with the chosen answer shown.
+  if (card.dataset.permission === '1') {
+    card.remove();
+  } else {
+    for (const el of card.querySelectorAll('button, input')) {
+      el.disabled = true;
+    }
+    const answered = document.createElement('div');
+    answered.className = 'clarify-your-answer';
+    let prefix;
+    if (source === 'timeout') {
+      prefix = typeof t === 'function' ? t('sp.clarify.auto_selected') : 'Auto-selected (timed out):';
+    } else if (source === 'auto') {
+      prefix = typeof t === 'function' ? t('sp.clarify.auto_selected_instant') : 'Auto-selected (Instant):';
+    } else {
+      prefix = typeof t === 'function' ? t('sp.clarify.your_answer') : 'Your answer:';
+    }
+    answered.textContent = `${prefix} ${answer}`;
+    card.appendChild(answered);
+    placeAnsweredClarifyCardInTimeline(card);
+    scrollToBottom();
   }
-  const answered = document.createElement('div');
-  answered.className = 'clarify-your-answer';
-  answered.textContent = (typeof t === 'function' ? t('sp.clarify.your_answer') : 'Your answer:') + ' ' + answer;
-  card.appendChild(answered);
-  scrollToBottom();
 
   // IMPORTANT: include `target: 'background'`. Without it, background's
   // message router (browser.runtime.onMessage in background.js) silently
@@ -586,8 +9318,42 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
   // run stuck after the user answers. Use sendToBackground() rather than
   // browser.runtime.sendMessage directly so the target field is always
   // injected.
-  sendToBackground('clarify_response', { tabId, clarifyId, answer, source })
-    .catch(() => { /* background may be torn down — clarify state already lives there */ });
+  const isScheduledClarify = !!card.dataset.scheduledJobId;
+  if (isScheduledClarify) {
+    clearActiveChatPayloadForTab(tabId);
+    const msgEl = card.closest('.message.assistant');
+    const scheduledJobId = card.dataset.scheduledJobId;
+    if (msgEl && (!currentAssistantEl || currentAssistantEl.dataset?.scheduledJobId === scheduledJobId)) {
+      currentAssistantEl = msgEl;
+    }
+    setTabProcessing(tabId, true);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    hideRecommendedActions();
+    showActivity(t('sp.activity.thinking'));
+  }
+  const clarifyPayload = { tabId, clarifyId, answer, source };
+  // Timeout / Instant auto-selects are not user-authored answers — skip user-memory.
+  const isAutoClarify = source === 'timeout' || source === 'auto';
+  if (!isAutoClarify && card.dataset.memorySource) {
+    clarifyPayload.memorySource = card.dataset.memorySource;
+  }
+  if (!isAutoClarify && card.dataset.memoryQuestion) {
+    clarifyPayload.question = card.dataset.memoryQuestion;
+  }
+  sendToBackground('clarify_response', clarifyPayload)
+    .catch(() => {
+      if (isScheduledClarify) {
+        setTabProcessing(tabId, false);
+        setTabAbortRequested(tabId, false);
+        if (sameTabId(currentTabId, tabId)) {
+          syncSendButtonState();
+          hideActivity();
+        }
+        drainQueuedPromptsAfterRunSettles();
+      }
+      /* background may be torn down — clarify state already lives there */
+    });
 }
 
 
@@ -595,26 +9361,75 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
 // COMPACT MODE (default) — shows tool steps as a tidy activity log
 // ==========================================================================
 
+function placeAnsweredClarifyCardInTimeline(card) {
+  const content = card?.closest('.message-content');
+  if (!content || card.parentElement !== content) return;
+  const textEl = [...content.children]
+    .find(child => child.classList.contains('message-text')) || null;
+  if (!textEl) return;
+
+  // Clarify prompts are appended after the text element so the blocking card
+  // is always the live edge while it awaits input. Once answered, move the
+  // card immediately before that text cursor. Verbose tool calls already
+  // insert at the cursor; compact mode creates a fresh steps segment there,
+  // keeping resumed activity and the final answer after the Q&A in time order.
+  content.insertBefore(card, textEl);
+}
+
 function getOrCreateStepsContainer() {
   if (!currentAssistantEl) return null;
   const content = currentAssistantEl.querySelector('.message-content');
-  let container = content.querySelector('.steps-container');
+  const textEl = [...content.children]
+    .find(child => child.classList.contains('message-text')) || null;
+  if (!textEl) return null;
+
+  // Each answered clarification is a timeline boundary. Reusing a compact
+  // steps container from before that boundary would place resumed events above
+  // the Q&A, so only reuse a segment between the latest answered card and the
+  // final-text cursor.
+  const latestAnsweredCard = [...content.children]
+    .reverse()
+    .find(child => child.matches('.clarify-card.clarify-answered')) || null;
+  let candidate = latestAnsweredCard
+    ? latestAnsweredCard.nextElementSibling
+    : content.firstElementChild;
+  let container = null;
+  while (candidate && candidate !== textEl) {
+    if (candidate.classList.contains('steps-container')) {
+      container = candidate;
+      break;
+    }
+    candidate = candidate.nextElementSibling;
+  }
   if (!container) {
     container = document.createElement('div');
     container.className = 'steps-container';
-    // Insert before the text element
-    const textEl = content.querySelector('.message-text');
     content.insertBefore(container, textEl);
   }
   return container;
+}
+
+function findLastActiveCompactStep(toolName = '') {
+  if (!currentAssistantEl) return null;
+  const activeSteps = [...currentAssistantEl.querySelectorAll('.steps-container .step-item.active')];
+  if (toolName) {
+    const matchingStep = activeSteps
+      .slice()
+      .reverse()
+      .find(step => step.dataset.tool === toolName);
+    return matchingStep || null;
+  }
+  return activeSteps.at(-1) || null;
 }
 
 function appendCompactStep(toolName, args) {
   const container = getOrCreateStepsContainer();
   if (!container) return;
 
-  // Mark previous active step as done if still spinning
-  const prev = container.querySelector('.step-item.active');
+  // A previous call may live before an answered clarification boundary while
+  // this call belongs to the new segment after it. Never leave the old spinner
+  // active merely because the timeline now has more than one steps container.
+  const prev = findLastActiveCompactStep();
   if (prev) {
     prev.classList.remove('active');
     prev.classList.add('done');
@@ -638,13 +9453,6 @@ function appendCompactStep(toolName, args) {
   const toggle = document.createElement('button');
   toggle.className = 'step-details-toggle';
   toggle.textContent = t('sp.step.details');
-  toggle.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const details = step.nextElementSibling;
-    if (details && details.classList.contains('step-details')) {
-      details.classList.toggle('open');
-    }
-  });
 
   step.appendChild(icon);
   step.appendChild(label);
@@ -656,13 +9464,14 @@ function appendCompactStep(toolName, args) {
   details.className = 'step-details';
   details.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.input_label'))}</div><div class="detail-args">${escapeHtml(JSON.stringify(args, null, 2))}</div>`;
   container.appendChild(details);
+  bindCompactStepDetailsToggle(toggle);
 }
 
 function markLastStepDone(toolName, result) {
-  const container = getOrCreateStepsContainer();
-  if (!container) return;
-
-  const active = container.querySelector('.step-item.active');
+  // A blocking clarify/confirmation tool emits its result only after its card
+  // is answered. Settle that original pre-card step; do not create or search a
+  // post-card container until a later tool_call actually starts there.
+  const active = findLastActiveCompactStep(toolName);
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
@@ -685,9 +9494,7 @@ function markLastStepDone(toolName, result) {
 }
 
 function markLastStepFailed() {
-  const container = getOrCreateStepsContainer();
-  if (!container) return;
-  const active = container.querySelector('.step-item.active');
+  const active = findLastActiveCompactStep();
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
@@ -696,15 +9503,169 @@ function markLastStepFailed() {
   }
 }
 
-function finalizeSteps() {
-  if (!currentAssistantEl) return;
-  const actives = currentAssistantEl.querySelectorAll('.step-item.active');
+function finalizeSteps(assistantEl = currentAssistantEl) {
+  if (!assistantEl) return;
+  const actives = assistantEl.querySelectorAll('.step-item.active');
   actives.forEach(step => {
     step.classList.remove('active');
     step.classList.add('done');
     const icon = step.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
   });
+}
+
+function looksLikeRawToolCallText(text) {
+  return /<\/?(?:tool_call|function|parameter)\b|<\|\/?tool_call|ref_id\s*["']?\s*[:=]\s*["']?ref_\d+/i.test(String(text || ''));
+}
+
+const streamedAssistantTextByEl = new WeakMap();
+const streamedAssistantRenderFrameByEl = new WeakMap();
+
+function getStreamedAssistantText(textEl) {
+  return streamedAssistantTextByEl.get(textEl) || textEl?.dataset?.streamedAssistantText || '';
+}
+
+function hasStreamedAssistantText(textEl) {
+  return !!textEl && (
+    streamedAssistantTextByEl.has(textEl)
+    || textEl.dataset.streamedAssistantActive === 'true'
+    || !!textEl.dataset.streamedAssistantText
+  );
+}
+
+function clearStreamedAssistantText(textEl) {
+  if (!textEl) return;
+  const frame = streamedAssistantRenderFrameByEl.get(textEl);
+  if (frame != null) cancelAnimationFrame(frame);
+  streamedAssistantRenderFrameByEl.delete(textEl);
+  streamedAssistantTextByEl.delete(textEl);
+  delete textEl.dataset.streamedAssistantActive;
+  delete textEl.dataset.streamedAssistantText;
+}
+
+function renderStreamedAssistantMarkdownNow(textEl) {
+  if (!textEl || textEl.dataset.suppressToolCallStream === 'true') return;
+  const streamedText = getStreamedAssistantText(textEl);
+  if (!streamedText) return;
+  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false });
+  scrollToBottom();
+}
+
+function scheduleStreamedAssistantMarkdownRender(textEl) {
+  if (!textEl || streamedAssistantRenderFrameByEl.has(textEl)) return;
+  const frame = requestAnimationFrame(() => {
+    if (streamedAssistantRenderFrameByEl.get(textEl) !== frame) return;
+    streamedAssistantRenderFrameByEl.delete(textEl);
+    renderStreamedAssistantMarkdownNow(textEl);
+  });
+  streamedAssistantRenderFrameByEl.set(textEl, frame);
+}
+
+function flushPendingStreamedAssistantMarkdownRenders(root = messagesEl) {
+  root?.querySelectorAll?.('.message-text[data-streamed-assistant-active="true"]').forEach((textEl) => {
+    const frame = streamedAssistantRenderFrameByEl.get(textEl);
+    if (frame == null) return;
+    cancelAnimationFrame(frame);
+    streamedAssistantRenderFrameByEl.delete(textEl);
+    renderStreamedAssistantMarkdownNow(textEl);
+  });
+}
+
+function clearAssistantTextStreamState(assistantEl) {
+  const textEl = assistantEl?.querySelector('.message-text');
+  if (!textEl) return;
+  clearStreamedAssistantText(textEl);
+  delete textEl.dataset.suppressToolCallStream;
+}
+
+function renderAssistantTextUpdate(assistantEl, content, options = {}) {
+  const textEl = assistantEl.querySelector('.message-text');
+  if (!textEl) return;
+
+  if (isStoppedByUserStatus(content)) {
+    textEl.innerHTML = t('sp.stopped_by_user_html');
+    clearStreamedAssistantText(textEl);
+    delete textEl.dataset.suppressToolCallStream;
+    if (!assistantEl.querySelector('.msg-copy-btn')) addMessageCopyButton(assistantEl);
+    return;
+  }
+
+  // Cost-limit text can stream before the terminal snapshot tells us whether
+  // Retry or Continue is safe. Keep the bubble empty so the terminal renderer
+  // can build the card with authoritative resume context.
+  if (parseCostAllowanceError(content)) {
+    textEl.replaceChildren();
+    clearStreamedAssistantText(textEl);
+    delete textEl.dataset.suppressToolCallStream;
+    return;
+  }
+
+  if (renderSubscribeError(textEl, content)) {
+    clearStreamedAssistantText(textEl);
+    delete textEl.dataset.suppressToolCallStream;
+    if (!assistantEl.querySelector('.msg-copy-btn')) addMessageCopyButton(assistantEl);
+    return;
+  }
+
+  const streamedText = getStreamedAssistantText(textEl);
+  const hasStreamedText = hasStreamedAssistantText(textEl);
+  const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;
+
+  if (options.replace === true || restoredStreamNeedsReplacement) {
+    // A rejected streamed terminal must replace its already-rendered deltas
+    // even in Verbose mode; appending would leave the invalid plan visible.
+    // Empty content clears the bubble (plan-only retry before recovery tools).
+    if (content) {
+      textEl.innerHTML = formatMarkdown(content);
+      streamedAssistantTextByEl.set(textEl, String(content));
+    } else {
+      textEl.textContent = '';
+      clearStreamedAssistantText(textEl);
+    }
+  } else if (verboseMode && !hasStreamedText) {
+    // Verbose mode: append each non-streamed turn as its own paragraph so
+    // intermediate prose is preserved alongside the steps log. Streaming
+    // finals are already visible live, so format the authoritative terminal
+    // content in place even when cleanup changed it from the raw stream.
+    const para = document.createElement('div');
+    para.className = 'reasoning-step';
+    para.innerHTML = formatMarkdown(content);
+    textEl.appendChild(para);
+  } else {
+    // Compact mode keeps only the latest blurb. A streamed final lands here
+    // too for one authoritative render with terminal-only enhancements.
+    textEl.innerHTML = formatMarkdown(content);
+  }
+
+  clearStreamedAssistantText(textEl);
+  delete textEl.dataset.suppressToolCallStream;
+
+  // Add copy button if not already present
+  if (!assistantEl.querySelector('.msg-copy-btn')) {
+    addMessageCopyButton(assistantEl);
+  }
+}
+
+function isStoppedByUserStatus(content) {
+  const text = String(content || '')
+    .replace(/<\/?(?:[\w-]+:)?think\b[^>]*>/gi, '')
+    .trim();
+  return /^\[Stopped by user\]?$/i.test(text);
+}
+
+function clearTransientAssistantTextForToolCall() {
+  if (!currentAssistantEl) return;
+  const textEl = currentAssistantEl.querySelector('.message-text');
+  if (!textEl) return;
+  const text = textEl.textContent || '';
+  if (!text.trim()) {
+    clearStreamedAssistantText(textEl);
+    delete textEl.dataset.suppressToolCallStream;
+    return;
+  }
+  textEl.textContent = '';
+  clearStreamedAssistantText(textEl);
+  delete textEl.dataset.suppressToolCallStream;
 }
 
 
@@ -715,13 +9676,37 @@ function finalizeSteps() {
 function appendVerboseToolCall(name, args) {
   if (!currentAssistantEl) return;
   const content = currentAssistantEl.querySelector('.message-content');
+  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
+    tool.dataset.awaitingResult = 'false';
+  });
+
+  if (name === 'done') {
+    const priorRejected = content.querySelector('.tool-call[data-tool-name="done"][data-rejected-completion="true"]');
+    if (priorRejected) {
+      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
+      priorRejected.querySelector('.tool-result')?.remove();
+      const priorLabel = priorRejected.querySelector('.tool-call-name');
+      if (priorLabel) priorLabel.textContent = t('sp.tool.done.completed');
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      priorRejected.dataset.awaitingResult = 'true';
+      return;
+    }
+  }
 
   const el = document.createElement('div');
   el.className = 'tool-call';
+  el.dataset.toolName = name || '';
+  el.dataset.awaitingResult = 'true';
 
   const header = document.createElement('div');
   header.className = 'tool-call-header';
-  header.innerHTML = `<span class="icon">\u26A1</span> ${name}`;
+  const icon = document.createElement('span');
+  icon.className = 'icon';
+  icon.textContent = '\u26A1';
+  const nameLabel = document.createElement('span');
+  nameLabel.className = 'tool-call-name';
+  nameLabel.textContent = ` ${name || ''}`;
+  header.append(icon, nameLabel);
 
   const body = document.createElement('div');
   body.className = 'tool-call-body';
@@ -737,12 +9722,23 @@ function appendVerboseToolCall(name, args) {
 function appendVerboseToolResult(name, result) {
   if (!currentAssistantEl) return;
   const content = currentAssistantEl.querySelector('.message-content');
-  const lastTool = content.querySelector('.tool-call:last-of-type');
+  const lastTool = content.querySelector('.tool-call[data-awaiting-result="true"]');
   if (lastTool) {
     const resultEl = document.createElement('div');
     resultEl.className = 'tool-result';
     resultEl.textContent = truncate(JSON.stringify(result), 200);
     lastTool.appendChild(resultEl);
+    if (name === 'done') {
+      const rejected = result?.blockedDone === true;
+      const failed = result?.outcome === 'failed'
+        || (result?.success === false && (result?.done === true || result?.planOnlyTerminal === true));
+      lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
+      const nameLabel = lastTool.querySelector('.tool-call-name');
+      if (nameLabel) nameLabel.textContent = rejected
+        ? t('sp.tool.done.rejected')
+        : (failed ? t('sp.tool.done.failed') : t('sp.tool.done.completed'));
+    }
+    lastTool.dataset.awaitingResult = 'false';
   }
 }
 
@@ -751,7 +9747,368 @@ function appendVerboseToolResult(name, result) {
 // UI Helpers
 // ==========================================================================
 
-function addMessage(role, content) {
+// WebBrain Cloud returns a 402 with a trailing "Subscribe for more usage: <url>"
+// line once the free daily allowance runs out. Detect that shape so we can turn
+// the bare URL into a real Subscribe button instead of making the user copy it.
+const SUBSCRIBE_ERROR_RE = /Subscribe for more usage:\s*(https?:\/\/\S+)/i;
+const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
+const COST_ALLOWANCE_BUMP_USD = 10;
+
+function parseCostAllowanceError(content) {
+  if (typeof content !== 'string') return null;
+  const match = content.match(COST_ALLOWANCE_ERROR_RE);
+  if (!match) return null;
+  const limitUsd = Number(match[2]);
+  if (!Number.isFinite(limitUsd) || limitUsd < 0) return null;
+  return {
+    scope: match[1].toLowerCase() === 'this session' ? 'session' : 'total',
+    limitUsd,
+    message: content.replace(/\s*Increase or reset the allowance in Settings\.\s*$/i, '').trim(),
+  };
+}
+
+function formatCostAllowanceUsd(value) {
+  const amount = Number(value);
+  return '$' + (Number.isFinite(amount) && amount >= 0 ? amount : 0).toFixed(2);
+}
+
+function bindCostAllowanceButton(btn) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', async () => {
+    if (btn.disabled) return;
+    const scope = btn.dataset.costAllowanceScope === 'session' ? 'session' : 'total';
+    const storageKey = scope === 'session' ? 'costAllowanceSessionUsd' : 'costAllowanceTotalUsd';
+    const parsedLimit = Number(btn.dataset.costAllowanceLimit);
+    btn.disabled = true;
+    btn.textContent = '…';
+    btn.setAttribute('aria-busy', 'true');
+
+    try {
+      const stored = await browser.storage.local.get([storageKey]);
+      const storedLimit = Number(stored?.[storageKey]);
+      const currentLimit = Number.isFinite(storedLimit) && storedLimit >= 0
+        ? storedLimit
+        : (Number.isFinite(parsedLimit) && parsedLimit >= 0 ? parsedLimit : COST_ALLOWANCE_BUMP_USD);
+      const nextLimit = Math.round((currentLimit + COST_ALLOWANCE_BUMP_USD) * 100) / 100;
+      await browser.storage.local.set({ [storageKey]: nextLimit });
+
+      btn.dataset.costAllowanceLimit = String(nextLimit);
+      btn.textContent = `✓ ${formatCostAllowanceUsd(nextLimit)}`;
+      btn.setAttribute('aria-busy', 'false');
+      btn.classList.add('cost-allowance-bumped');
+      const card = btn.closest('.cost-allowance-error');
+      const resumeBtn = card?.querySelector('.cost-allowance-retry-btn, .cost-allowance-continue-btn');
+      if (resumeBtn) resumeBtn.hidden = false;
+      const status = card?.querySelector('.cost-allowance-status');
+      const scopeLabel = t(scope === 'session'
+        ? 'st.display.cost_session_limit.label'
+        : 'st.display.cost_total_limit.label');
+      const success = `${scopeLabel}: ${formatCostAllowanceUsd(nextLimit)}`;
+      if (status) status.textContent = success;
+      showComposerToast(success, { duration: 5000 });
+      schedulePersist();
+    } catch (error) {
+      btn.disabled = false;
+      btn.textContent = '+ $10';
+      btn.setAttribute('aria-busy', 'false');
+      const failure = t('sp.error_prefix', {
+        msg: error?.message || String(error || 'unknown error'),
+      });
+      const status = btn.closest('.cost-allowance-error')?.querySelector('.cost-allowance-status');
+      if (status) status.textContent = failure;
+      showComposerToast(failure, { duration: 5000 });
+    }
+  });
+}
+
+function parseSubscribeError(content) {
+  if (typeof content !== 'string') return null;
+  const m = content.match(SUBSCRIBE_ERROR_RE);
+  if (!m) return null;
+  // Strip trailing punctuation that markdown/markup might have appended.
+  const url = m[1].replace(/[)\].,"'>]+$/, '');
+  const message = content.slice(0, m.index).replace(/\s+$/, '').trim();
+  return { url, message };
+}
+
+function openSubscribeUrl(url) {
+  if (!url) return;
+  try { browser.tabs.create({ url }); }
+  catch { window.open(url, '_blank', 'noopener'); }
+}
+
+// Render the quota error as a card with Subscribe and explicit resume actions. Returns
+// true when `content` matched and the card was rendered into `textEl`, so the
+// caller can skip its normal markdown rendering. The URL is stashed on the
+// button's dataset so it survives chat-history restore (messagesEl.innerHTML),
+// where the click closure is lost and rebindSubscribeButtons re-attaches it.
+function renderSubscribeError(textEl, content, resumeMode = '') {
+  const parsed = parseSubscribeError(content);
+  if (!parsed) return false;
+
+  textEl.replaceChildren();
+  textEl.classList.add('subscribe-error');
+
+  const msg = document.createElement('div');
+  msg.className = 'subscribe-error-text';
+  msg.textContent = parsed.message || t('sp.subscribe.allowance_used');
+  textEl.appendChild(msg);
+
+  const actions = document.createElement('div');
+  actions.className = 'subscribe-actions';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'subscribe-btn';
+  btn.textContent = t('sp.subscribe.btn');
+  btn.dataset.subscribeUrl = parsed.url;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', () => openSubscribeUrl(btn.dataset.subscribeUrl));
+  actions.appendChild(btn);
+
+  const resumeBtn = document.createElement('button');
+  resumeBtn.type = 'button';
+  resumeBtn.className = 'subscribe-resume-btn';
+  resumeBtn.textContent = t('sp.subscribe.resume');
+  resumeBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
+    ? resumeMode
+    : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
+  resumeBtn.dataset.resumeForeground = textEl.closest('.message.assistant')?.dataset.retryForeground === 'true'
+    ? 'true'
+    : 'false';
+  resumeBtn.dataset.bound = 'true';
+  resumeBtn.addEventListener('click', () => resumeAfterSubscription(resumeBtn));
+  actions.appendChild(resumeBtn);
+
+  textEl.appendChild(actions);
+  return true;
+}
+
+function renderCostAllowanceError(textEl, content, resumeMode = '', resumeOptions = {}) {
+  const parsed = parseCostAllowanceError(content);
+  if (!parsed) return false;
+
+  textEl.replaceChildren();
+  textEl.classList.add('cost-allowance-error');
+
+  const msg = document.createElement('div');
+  msg.className = 'cost-allowance-error-text';
+  msg.textContent = parsed.message;
+  textEl.appendChild(msg);
+
+  const actions = document.createElement('div');
+  actions.className = 'cost-allowance-actions';
+
+  const bumpBtn = document.createElement('button');
+  bumpBtn.type = 'button';
+  bumpBtn.className = 'cost-allowance-bump-btn';
+  bumpBtn.textContent = '+ $10';
+  bumpBtn.dataset.costAllowanceScope = parsed.scope;
+  bumpBtn.dataset.costAllowanceLimit = String(parsed.limitUsd);
+  const allowanceLabel = t(parsed.scope === 'session'
+    ? 'st.display.cost_session_limit.label'
+    : 'st.display.cost_total_limit.label');
+  bumpBtn.title = `${allowanceLabel}: +$10`;
+  bumpBtn.setAttribute('aria-label', bumpBtn.title);
+  bindCostAllowanceButton(bumpBtn);
+  actions.appendChild(bumpBtn);
+
+  const canContinue = resumeOptions?.submittedTurnDurable === true;
+  const requiresRetry = !canContinue;
+  if (requiresRetry && resumeOptions?.retryPayload?.text) {
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'cost-allowance-retry-btn';
+    retryBtn.textContent = t('sp.retry');
+    retryBtn.hidden = true;
+    configureRetryButton(retryBtn, resumeOptions.retryPayload);
+    actions.appendChild(retryBtn);
+  } else if (canContinue) {
+    const continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.className = 'cost-allowance-continue-btn';
+    continueBtn.textContent = t('sp.continue_btn');
+    continueBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
+      ? resumeMode
+      : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
+    continueBtn.dataset.resumeForeground = resumeOptions?.retryPayload?.foreground === true
+      || textEl.closest('.message.assistant')?.dataset.retryForeground === 'true'
+      ? 'true'
+      : 'false';
+    continueBtn.hidden = true;
+    continueBtn.dataset.bound = 'true';
+    continueBtn.addEventListener('click', () => resumeAfterSubscription(continueBtn));
+    actions.appendChild(continueBtn);
+  }
+
+  textEl.appendChild(actions);
+
+  const status = document.createElement('div');
+  status.className = 'cost-allowance-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  textEl.appendChild(status);
+  return true;
+}
+
+function configureRetryButton(btn, retryPayload) {
+  if (!btn || !retryPayload?.text) return false;
+  const retryId = `retry-${Date.now()}-${++retryPayloadSeq}`;
+  const attachments = Array.isArray(retryPayload.attachments) ? retryPayload.attachments.slice() : [];
+  if (attachments.length) {
+    retryAttachmentPayloads.set(retryId, attachments);
+    trackRetryAttachmentId(renderedTabId ?? currentTabId, retryId);
+  }
+  btn.dataset.retryId = retryId;
+  btn.dataset.retryText = String(retryPayload.text || '');
+  btn.dataset.retryDisplayText = String(retryPayload.displayText || retryPayload.text || '');
+  btn.dataset.retryMode = retryPayload.mode || 'ask';
+  btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
+  btn.dataset.retryForeground = retryPayload.foreground ? 'true' : 'false';
+  btn.dataset.retrySourceGrounding = normalizeSelectionSourceGrounding(retryPayload.sourceGrounding);
+  btn.dataset.retrySelectionAction = btn.dataset.retrySourceGrounding
+    ? normalizeSelectionAction(retryPayload.selectionAction)
+    : '';
+  const attachmentCount = Number.isFinite(Number(retryPayload.attachmentCount))
+    ? Math.max(0, Number(retryPayload.attachmentCount))
+    : attachments.length;
+  btn.dataset.retryAttachmentCount = String(attachmentCount);
+  bindErrorRetryButton(btn);
+  return true;
+}
+
+function addErrorRetryButton(msgEl, retryPayload) {
+  if (!msgEl || !retryPayload?.text
+      || msgEl.querySelector('.error-retry-btn, .cost-allowance-retry-btn, .planner-request-failure-retry-btn')) return;
+  msgEl.classList.add('retryable');
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'error-retry-btn';
+  btn.title = t('sp.retry');
+  btn.setAttribute('aria-label', t('sp.retry'));
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <polyline points="23 4 23 10 17 10"></polyline>
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+    </svg>`;
+  if (configureRetryButton(btn, retryPayload)) {
+    msgEl.querySelector('.message-content')?.appendChild(btn);
+  }
+}
+
+const MESSAGE_ATTACHMENT_STATES = new Set(['sending', 'included', 'not-sent', 'unknown']);
+
+function attachmentDataUrlBytes(dataUrl) {
+  const encoded = String(dataUrl || '').split(',', 2)[1] || '';
+  if (!encoded) return 0;
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((encoded.length * 3) / 4) - padding);
+}
+
+function attachmentMetadata(att, deliveryState = 'included') {
+  const state = MESSAGE_ATTACHMENT_STATES.has(deliveryState) ? deliveryState : 'included';
+  return {
+    kind: ['image', 'document', 'text'].includes(att?.kind) ? att.kind : 'document',
+    name: String(att?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240) || 'attachment',
+    mimeType: String(att?.mimeType || '').slice(0, 120),
+    size: Number.isFinite(Number(att?.size)) ? Math.max(0, Number(att.size)) : 0,
+    source: att?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+    deliveryState: state,
+  };
+}
+
+function attachmentStateLabel(state) {
+  if (state === 'included') return { symbol: '✓', label: t('sp.attach.state.included') };
+  if (state === 'not-sent') return { symbol: '!', label: t('sp.attach.state.not_sent') };
+  if (state === 'unknown') return { symbol: '?', label: t('sp.attach.state.unknown') };
+  return { symbol: '…', label: t('sp.attach.state.sending') };
+}
+
+function renderMessageAttachments(msgEl, attachments, state = 'included') {
+  if (!msgEl || !Array.isArray(attachments) || !attachments.length) return;
+  const list = document.createElement('div');
+  list.className = 'message-attachments';
+  for (const attachment of attachments) {
+    const meta = attachmentMetadata(attachment, state);
+    const item = document.createElement('div');
+    item.className = `message-attachment message-attachment-${meta.deliveryState}`;
+    item.dataset.kind = meta.kind;
+    item.dataset.name = meta.name;
+    item.dataset.mimeType = meta.mimeType;
+    item.dataset.size = String(meta.size);
+    item.dataset.source = meta.source;
+    item.dataset.deliveryState = meta.deliveryState;
+
+    const icon = document.createElement('span');
+    icon.className = 'message-attachment-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = meta.kind === 'image' ? '▧' : meta.kind === 'text' ? '≡' : '▤';
+
+    const name = document.createElement('span');
+    name.className = 'message-attachment-name';
+    name.textContent = meta.name;
+
+    const stateEl = document.createElement('span');
+    stateEl.className = 'message-attachment-state';
+    stateEl.setAttribute('aria-hidden', 'true');
+    const stateInfo = attachmentStateLabel(meta.deliveryState);
+    stateEl.textContent = stateInfo.symbol;
+    item.title = `${meta.name} — ${stateInfo.label}`;
+    item.setAttribute('aria-label', `${meta.name}: ${stateInfo.label}`);
+    item.append(icon, name, stateEl);
+    list.appendChild(item);
+  }
+  msgEl.querySelector('.message-content')?.appendChild(list);
+}
+
+function setMessageAttachmentState(msgEl, state) {
+  if (!msgEl || !MESSAGE_ATTACHMENT_STATES.has(state)) return false;
+  let changed = false;
+  msgEl.querySelectorAll('.message-attachment').forEach((item) => {
+    if (item.dataset.deliveryState !== state) changed = true;
+    for (const known of MESSAGE_ATTACHMENT_STATES) item.classList.remove(`message-attachment-${known}`);
+    item.classList.add(`message-attachment-${state}`);
+    item.dataset.deliveryState = state;
+    const info = attachmentStateLabel(state);
+    const name = item.dataset.name || 'attachment';
+    item.querySelector('.message-attachment-state')?.replaceChildren(info.symbol);
+    item.title = `${name} — ${info.label}`;
+    item.setAttribute('aria-label', `${name}: ${info.label}`);
+  });
+  return changed;
+}
+
+async function persistMessageAttachmentState(tabId, msgEl) {
+  if (!msgEl?.isConnected || !sameTabId(renderedTabId, tabId)) return;
+  const html = messagesEl.innerHTML;
+  tabChats.set(Number(tabId), html);
+  if (document.visibilityState !== 'hidden') {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+  }
+  await persistTabChat(tabId, html, { allowHidden: true }).catch(() => {});
+  if (document.visibilityState !== 'hidden') scheduleHistoryPersist(tabId);
+}
+
+function reconcileRunMessageAttachmentState(tabId, assistantEl, state, { persist = false } = {}) {
+  if (!MESSAGE_ATTACHMENT_STATES.has(state)) return false;
+  const userEl = userMessageForRunAssistant(assistantEl);
+  const changed = setMessageAttachmentState(userEl, state);
+  if (changed && persist) void persistMessageAttachmentState(tabId, userEl);
+  return changed;
+}
+
+function messageAttachmentMetadata(msgEl) {
+  return Array.from(msgEl?.querySelectorAll?.('.message-attachment') || []).map((item) => attachmentMetadata({
+    kind: item.dataset.kind,
+    name: item.dataset.name,
+    mimeType: item.dataset.mimeType,
+    size: Number(item.dataset.size),
+    source: item.dataset.source,
+  }, item.dataset.deliveryState));
+}
+
+function addMessage(role, content, options = {}) {
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
 
@@ -761,17 +10118,55 @@ function addMessage(role, content) {
   const textEl = document.createElement('div');
   textEl.className = 'message-text';
   if (role === 'user') {
-    textEl.textContent = content;
-  } else {
+    // Selection/context-menu prompts include model-only untrusted wrappers;
+    // show a clean version in the bubble while still sending the full prompt.
+    const userText = String(content || '');
+    const displayText = formatSelectionPromptForDisplay(userText);
+    textEl.textContent = displayText;
+    if (displayText === userText) {
+      msgEl.dataset.composerHistoryVerbatim = 'true';
+    } else {
+      // Keep the model-facing boundary intact when the bubble is recalled.
+      // Dataset assignment is inert and survives messagesEl.innerHTML restore.
+      msgEl.dataset.composerHistoryText = userText;
+    }
+  } else if (role === 'system') {
+    if (isSystemHtml(content)) textEl.innerHTML = content.__systemHtml;
+    else textEl.textContent = content || '';
+  } else if (!renderCostAllowanceError(
+    textEl,
+    content,
+    options.subscribeResumeMode,
+    options.costAllowanceResume,
+  )
+      && !renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
     textEl.innerHTML = content ? formatMarkdown(content) : '';
   }
 
   contentEl.appendChild(textEl);
   msgEl.appendChild(contentEl);
-  messagesEl.appendChild(msgEl);
+  if (role === 'assistant' && !assistantMessageHasRenderableContent(msgEl)) {
+    // Keep the node as the run's event target, but do not paint its bordered
+    // shell until text, a tool step, or an interactive card arrives.
+    msgEl.classList.add('assistant-awaiting-content');
+  }
+  if (role === 'user' && Array.isArray(options.attachments) && options.attachments.length) {
+    renderMessageAttachments(msgEl, options.attachments, options.attachmentState || 'included');
+  }
+  if (options.beforeCurrentAssistant && currentAssistantEl?.parentNode === messagesEl) {
+    messagesEl.insertBefore(msgEl, currentAssistantEl);
+  } else {
+    messagesEl.appendChild(msgEl);
+  }
 
-  // Add copy button to assistant messages
-  if (role === 'assistant' && content) {
+  if (role === 'error' && options.retryPayload
+      && !textEl.classList.contains('cost-allowance-error')) {
+    addErrorRetryButton(msgEl, options.retryPayload);
+  }
+
+  // Add copy button to assistant messages, and to user messages too (Firefox
+  // only — manual select-and-copy is unreliable in the Firefox sidebar panel).
+  if ((role === 'assistant' || role === 'user') && content) {
     addMessageCopyButton(msgEl);
   }
 
@@ -780,70 +10175,203 @@ function addMessage(role, content) {
   return msgEl;
 }
 
-function showContinueButton() {
+function addPlanAutoApprovedNote(data) {
+  const note = document.createElement('div');
+  note.className = 'plan-auto-approved-note';
+  const confidence = planReviewConfidenceText(data) || '—';
+  note.textContent = typeof t === 'function'
+    ? t('sp.plan.auto_approved', { confidence })
+    : `Plan auto-approved (confidence ${confidence}) — running…`;
+  const stepsContainer = getOrCreateStepsContainer();
+  if (stepsContainer) {
+    stepsContainer.appendChild(note);
+  } else {
+    messagesEl.appendChild(note);
+  }
+  scrollToBottom();
+}
+
+/**
+ * Render the "Context automatically compacted" notice as a centered inline
+ * separator in the conversation. Fired by the agent's onUpdate('context_compacted')
+ * when older turns were summarized to stay within the model's context window.
+ */
+function addContextCompactedNote(data) {
+  const note = document.createElement('div');
+  note.className = 'context-compacted-note';
+  note.textContent = t(data?.manual ? 'sp.context_compacted_manual' : 'sp.context_compacted');
+  if (data && data.summarized != null && data.remaining != null) {
+    note.title = t('sp.context_compacted_detail', {
+      summarized: data.summarized,
+      remaining: data.remaining,
+    });
+  }
+  // Insert into the active assistant bubble's steps log so the separator lands
+  // at the actual compaction point, interleaved with the tool steps. Appending
+  // to messagesEl would drop it *after* the still-open bubble — i.e. before the
+  // text/tool output that the same bubble keeps receiving post-compaction.
+  const stepsContainer = getOrCreateStepsContainer();
+  if (stepsContainer) {
+    stepsContainer.appendChild(note);
+  } else {
+    messagesEl.appendChild(note);
+  }
+  scrollToBottom();
+}
+
+/**
+ * Run-journal replay loss is UI history loss, not model-context compaction.
+ * Keep the styling subtle but use a distinct class and unambiguous copy.
+ */
+function addRunProgressReplayGapNote() {
+  const note = document.createElement('div');
+  note.className = 'context-compacted-note run-progress-replay-gap-note';
+  note.textContent = t('sp.run_progress_replay_gap');
+  const stepsContainer = getOrCreateStepsContainer();
+  if (stepsContainer) {
+    stepsContainer.appendChild(note);
+  } else {
+    messagesEl.appendChild(note);
+  }
+  scrollToBottom();
+}
+
+const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
+
+function displayMaxAgentSteps(value) {
+  const n = Number(value);
+  if (Number.isFinite(n) && (n === 0 || n >= MAX_AGENT_STEPS_UNLIMITED_SENTINEL)) return '∞';
+  return Number.isFinite(n) && n > 0 ? String(Math.floor(n)) : '130';
+}
+
+function showContinueButton(options = {}) {
   document.querySelectorAll('.continue-bar').forEach(el => el.remove());
+  resetChatNavigation();
 
   const bar = document.createElement('div');
   bar.className = 'continue-bar';
   bar.innerHTML = `
-    <span class="continue-text">${escapeHtml(t('sp.continue_bar', { steps: agent_maxSteps || 130 }))}</span>
+    <span class="continue-text">${escapeHtml(t('sp.continue_bar', { steps: displayMaxAgentSteps(agent_maxSteps) }))}</span>
     <button class="continue-btn" id="btn-continue">${escapeHtml(t('sp.continue_btn'))}</button>
   `;
   messagesEl.appendChild(bar);
-  scrollToBottom();
+  scrollToBottom({ force: true });
 
-  document.getElementById('btn-continue').addEventListener('click', continueAgent);
+  const continueBtn = document.getElementById('btn-continue');
+  continueBtn.dataset.foreground = options?.foreground === true ? 'true' : 'false';
+  continueBtn.dataset.bound = 'true';
+  continueBtn.addEventListener('click', () => continueAgent({
+    foreground: continueBtn.dataset.foreground === 'true',
+  }));
 }
 
-async function continueAgent() {
-  document.querySelectorAll('.continue-bar').forEach(el => el.remove());
+async function continueAgent(options = {}) {
+  if (isStandaloneWindow) options = { ...options, mode: 'ask' };
+  const tabId = currentTabId;
+  const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
+  if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
+  const requestId = createRunRequestId(tabId);
+  const foregroundForSend = options?.foreground === true;
+  clearActiveChatPayloadForTab(tabId);
 
-  isProcessing = true;
-  abortRequested = false;
-  sendBtn.disabled = true;
+  setTabProcessing(tabId, true);
+  setTabAbortRequested(tabId, false);
+  syncSendButtonState();
 
-  currentAssistantEl = addMessage('assistant', '');
-  showActivity(t('sp.activity.continuing'));
+  let assistantEl = null;
 
   try {
-    const res = await sendToBackground('continue', {
-      tabId: currentTabId,
-      mode: agentMode,
-    });
+    await prepareChatHistoryForTurn(tabId, modeForSend);
+    if (isTabAbortRequested(tabId)) return false;
+    if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return false;
 
-    if (res.content && currentAssistantEl) {
-      const textEl = currentAssistantEl.querySelector('.message-text');
-      if (textEl && !textEl.textContent.trim()) {
-        textEl.innerHTML = formatMarkdown(res.content);
-        addMessageCopyButton(currentAssistantEl);
+    document.querySelectorAll('.continue-bar').forEach(el => el.remove());
+
+    resetChatNavigation();
+    assistantEl = addMessage('assistant', '');
+    assistantEl.dataset.runRequestId = requestId;
+    assistantEl.dataset.runMode = modeForSend;
+    assistantEl.dataset.retryForeground = foregroundForSend ? 'true' : 'false';
+    assistantEl.dataset.lastRenderedSeq = '0';
+    currentAssistantEl = assistantEl;
+    const questionEl = precedingUserMessage(assistantEl);
+    if (beginReadingFirstTurn(questionEl, assistantEl)) {
+      scrollChatToQuestion({ smooth: false });
+    }
+    showActivity(t('sp.activity.continuing'));
+    localRunRequestIds.set(tabId, requestId);
+
+    const res = await sendRunWithReconnect('continue_start', {
+      tabId,
+      requestId,
+      mode: modeForSend,
+      foreground: foregroundForSend,
+    });
+    applyConversationScopeState(tabId, res);
+    if (res?.conversationId) {
+      chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
+      chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
+    }
+
+    if (currentTabId === tabId && res?.content && assistantEl) {
+      const textEl = assistantEl.querySelector('.message-text');
+      if (textEl && parseCostAllowanceError(res.content)) {
+        if (!textEl.classList.contains('cost-allowance-error')) {
+          renderCostAllowanceError(textEl, res.content, modeForSend, {
+            submittedTurnDurable: res.submittedTurnDurable,
+          });
+        }
+        addMessageCopyButton(assistantEl);
+      } else if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
+        renderAssistantTextUpdate(assistantEl, res.content);
+      } else if (textEl && !textEl.textContent.trim()) {
+        if (!renderCostAllowanceError(textEl, res.content, modeForSend, {
+              submittedTurnDurable: res.submittedTurnDurable,
+            })
+            && !renderSubscribeError(textEl, res.content)) {
+          textEl.innerHTML = formatMarkdown(res.content);
+        }
+        addMessageCopyButton(assistantEl);
       }
     }
   } catch (e) {
-    if (!abortRequested) {
+    if (currentTabId === tabId
+        && assistantEl
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
       addMessage('error', t('sp.error_prefix', { msg: e.message }));
     }
   } finally {
-    finalizeSteps();
-    isProcessing = false;
-    abortRequested = false;
-    sendBtn.disabled = false;
-    hideActivity();
-    currentAssistantEl = null;
-    scrollToBottom();
+    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    cancelledRunRecoveryRequestIds.delete(requestId);
+    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
+    clearAssistantTextStreamState(assistantEl);
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    if (currentTabId === tabId) {
+      syncSendButtonState();
+      hideActivity();
+    }
+    if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+    if (currentTabId === tabId) scrollToBottom();
+    if (currentTabId === tabId && renderedTabId === tabId) await flushRenderedTabChat();
+    if (currentTabId === tabId && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
+    await drainQueuedPromptsAfterRunSettles();
   }
 }
 
 let agent_maxSteps = 130;
-browser.storage.local.get('maxAgentSteps').then(s => { agent_maxSteps = s.maxAgentSteps || 130; });
+browser.storage.local.get('maxAgentSteps').then(s => { agent_maxSteps = s.maxAgentSteps ?? 130; });
 browser.storage.onChanged.addListener((changes) => {
   if (changes.maxAgentSteps) agent_maxSteps = changes.maxAgentSteps.newValue;
 });
 
 // Page inspection banner
-const PAGE_TOOLS = new Set(['read_page', 'get_interactive_elements', 'click', 'type_text', 'scroll', 'extract_data', 'wait_for_element', 'get_selection', 'execute_js', 'screenshot']);
+const PAGE_TOOLS = new Set(['read_page', 'read_page_source', 'get_interactive_elements', 'click', 'type_text', 'scroll', 'extract_data', 'inspect_element_styles', 'wait_for_element', 'get_selection', 'execute_js']);
 let inspectionBannerShown = false;
 
 function showInspectionBanner(toolName) {
+  return;
   if (inspectionBannerShown || !PAGE_TOOLS.has(toolName)) return;
   inspectionBannerShown = true;
 
@@ -855,6 +10383,7 @@ function showInspectionBanner(toolName) {
 }
 
 function hideInspectionBanner() {
+  return;
   inspectionBannerShown = false;
   const banner = document.getElementById('inspection-banner');
   if (banner) banner.classList.add('hidden');
@@ -871,9 +10400,315 @@ function hideActivity() {
   hideInspectionBanner();
 }
 
-function scrollToBottom() {
-  const container = document.getElementById('chat-container');
+// A new turn is reading-first: its question stays put while the answer grows.
+// Auto-follow resumes only after the reader deliberately reaches the bottom;
+// the floating control provides explicit shortcuts between both turn anchors.
+const CHAT_SCROLL_EDGE_PX = 24;
+const CHAT_TURN_VISIBILITY_PX = 8;
+const CHAT_USER_SCROLL_SETTLE_MS = 160;
+let scrollToBottomFrame = null;
+let chatNavigationFrame = null;
+let chatNavigationRestoreFrame = null;
+let chatNavigationTurn = null;
+let chatAutoFollow = true;
+let chatUserScrollActive = false;
+let chatUserScrollSettleTimer = null;
+let chatUserChoseReadingPosition = false;
+let chatNavigationDismissedAssistantEl = null;
+let chatNavigationInsetAssistantEl = null;
+
+function precedingUserMessage(assistantEl) {
+  let candidate = assistantEl?.previousElementSibling || null;
+  while (candidate) {
+    if (candidate.matches?.('.message.user')) return candidate;
+    candidate = candidate.previousElementSibling;
+  }
+  return null;
+}
+
+function latestChatTurn() {
+  const latestMessageEl = [...(messagesEl?.querySelectorAll?.(':scope > .message') || [])].at(-1) || null;
+  if (!latestMessageEl?.matches?.('.message.assistant')) return null;
+  const assistantEl = latestMessageEl;
+  // Scheduled runs intentionally have no user-message anchor. Do not infer one
+  // from an unrelated older turn when restoring a tab or panel session.
+  if (assistantEl?.dataset?.scheduledJobId) return null;
+  const userEl = precedingUserMessage(assistantEl);
+  return assistantEl && userEl ? { userEl, assistantEl } : null;
+}
+
+function chatHasPendingInteraction() {
+  return !!messagesEl?.querySelector?.(
+    '.clarify-card:not(.clarify-answered), .plan-review-card:not(.plan-reviewed), .continue-bar',
+  );
+}
+
+function chatTurnIsConnected(turn = chatNavigationTurn) {
+  return !!turn?.userEl?.isConnected && !!turn?.assistantEl?.isConnected;
+}
+
+function chatTurnIsRunning(turn = chatNavigationTurn) {
+  return !!turn && isProcessing && currentAssistantEl === turn.assistantEl;
+}
+
+function setChatNavigationVisible(visible) {
+  const insetAssistantEl = visible && chatTurnIsConnected()
+    ? chatNavigationTurn.assistantEl
+    : null;
+  if (chatNavigationInsetAssistantEl !== insetAssistantEl) {
+    chatNavigationInsetAssistantEl?.classList.remove('chat-navigation-inset');
+    insetAssistantEl?.classList.add('chat-navigation-inset');
+    chatNavigationInsetAssistantEl = insetAssistantEl;
+  }
+  chatNavigationEl?.classList.toggle('hidden', !visible);
+}
+
+function resetChatNavigation() {
+  chatNavigationTurn = null;
+  chatAutoFollow = true;
+  chatUserScrollActive = false;
+  chatUserChoseReadingPosition = false;
+  if (chatUserScrollSettleTimer != null) clearTimeout(chatUserScrollSettleTimer);
+  chatUserScrollSettleTimer = null;
+  if (scrollToBottomFrame != null) cancelAnimationFrame(scrollToBottomFrame);
+  if (chatNavigationFrame != null) cancelAnimationFrame(chatNavigationFrame);
+  if (chatNavigationRestoreFrame != null) cancelAnimationFrame(chatNavigationRestoreFrame);
+  scrollToBottomFrame = null;
+  chatNavigationFrame = null;
+  chatNavigationRestoreFrame = null;
+  setChatNavigationVisible(false);
+  chatNavigationEl?.removeAttribute('data-direction');
+  chatNavigationEl?.removeAttribute('data-action');
+}
+
+function setChatNavigationTurn(userEl, assistantEl, { autoFollow = false } = {}) {
+  if (!userEl?.isConnected || !assistantEl?.isConnected) {
+    resetChatNavigation();
+    return false;
+  }
+  if (chatNavigationDismissedAssistantEl !== assistantEl) {
+    chatNavigationDismissedAssistantEl = null;
+  }
+  chatNavigationTurn = { userEl, assistantEl };
+  chatAutoFollow = autoFollow;
+  chatUserChoseReadingPosition = false;
+  scheduleChatNavigationUpdate();
+  return true;
+}
+
+function beginReadingFirstTurn(userEl, assistantEl) {
+  return setChatNavigationTurn(userEl, assistantEl, { autoFollow: false });
+}
+
+function chatTurnNeedsReadingNavigation(turn = chatNavigationTurn) {
+  if (!chatContainerEl || !chatTurnIsConnected(turn)) return false;
+  const userRect = turn.userEl.getBoundingClientRect();
+  const assistantRect = turn.assistantEl.getBoundingClientRect();
+  return assistantRect.bottom - userRect.top > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
+}
+
+function prefersReducedChatMotion() {
+  return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+}
+
+function scrollChatToQuestion({ smooth = true } = {}) {
+  if (!chatContainerEl || !chatTurnIsConnected()) return;
+  chatAutoFollow = false;
+  if (smooth) chatUserChoseReadingPosition = true;
+  const containerRect = chatContainerEl.getBoundingClientRect();
+  const questionRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const targetTop = Math.max(
+    0,
+    chatContainerEl.scrollTop + questionRect.top - containerRect.top - CHAT_TURN_VISIBILITY_PX,
+  );
+  chatContainerEl.scrollTo({
+    top: targetTop,
+    behavior: smooth && !prefersReducedChatMotion() ? 'smooth' : 'auto',
+  });
+  scheduleChatNavigationUpdate();
+}
+
+function renderChatNavigation() {
+  if (!chatContainerEl || !chatNavigationEl || !chatNavigationActionEl
+      || !chatNavigationLabelEl || !chatTurnIsConnected()
+      || chatNavigationDismissedAssistantEl === chatNavigationTurn.assistantEl) {
+    setChatNavigationVisible(false);
+    return;
+  }
+
+  const containerRect = chatContainerEl.getBoundingClientRect();
+  const userRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const assistantRect = chatNavigationTurn.assistantEl.getBoundingClientRect();
+  const responseContinuesBelow = assistantRect.bottom > containerRect.bottom + CHAT_TURN_VISIBILITY_PX;
+  const questionIsAbove = userRect.bottom < containerRect.top + CHAT_TURN_VISIBILITY_PX;
+  let action = '';
+  let labelKey = '';
+  let direction = '';
+
+  if (responseContinuesBelow) {
+    action = 'latest';
+    direction = 'down';
+    labelKey = chatTurnIsRunning() ? 'sp.chat.follow_response' : 'sp.chat.jump_latest';
+  } else if (questionIsAbove) {
+    action = 'question';
+    direction = 'up';
+    labelKey = 'sp.chat.back_to_question';
+  }
+
+  if (!action) {
+    setChatNavigationVisible(false);
+    return;
+  }
+
+  const label = t(labelKey);
+  chatNavigationEl.dataset.action = action;
+  chatNavigationEl.dataset.direction = direction;
+  chatNavigationActionEl.setAttribute('aria-label', label);
+  chatNavigationActionEl.title = label;
+  chatNavigationLabelEl.textContent = label;
+  setChatNavigationVisible(true);
+}
+
+function scheduleChatNavigationUpdate() {
+  if (chatNavigationFrame != null) return;
+  chatNavigationFrame = requestAnimationFrame(() => {
+    chatNavigationFrame = null;
+    renderChatNavigation();
+  });
+}
+
+function restoreLatestChatTurnPosition() {
+  if (chatNavigationRestoreFrame != null) cancelAnimationFrame(chatNavigationRestoreFrame);
+  chatNavigationRestoreFrame = requestAnimationFrame(() => {
+    chatNavigationRestoreFrame = null;
+    if (chatHasPendingInteraction()) {
+      resetChatNavigation();
+      scrollToBottom({ force: true });
+      return;
+    }
+    const turn = latestChatTurn();
+    if (!turn) {
+      resetChatNavigation();
+      scrollToBottom({ force: true });
+      return;
+    }
+    setChatNavigationTurn(turn.userEl, turn.assistantEl, { autoFollow: true });
+    if (chatTurnIsRunning(turn) || chatTurnNeedsReadingNavigation(turn)) {
+      chatAutoFollow = false;
+      scrollChatToQuestion({ smooth: false });
+    } else {
+      scrollToBottom({ force: true });
+    }
+  });
+}
+
+function settleChatUserScrollIntent() {
+  if (chatUserScrollSettleTimer != null) clearTimeout(chatUserScrollSettleTimer);
+  chatUserScrollSettleTimer = setTimeout(() => {
+    chatUserScrollSettleTimer = null;
+    chatUserScrollActive = false;
+  }, CHAT_USER_SCROLL_SETTLE_MS);
+}
+
+function markChatUserScrollIntent() {
+  // Scroll events also fire for our own pin/jump calls. Once direct input
+  // starts a scroll sequence, keep it user-driven until scrolling settles so
+  // touch and trackpad momentum can still engage follow at the bottom edge.
+  chatUserScrollActive = true;
+  settleChatUserScrollIntent();
+}
+
+function pinChatToBottom(container) {
+  // The chat container uses smooth scrolling for user-visible navigation.
+  // During streaming, though, repeatedly assigning scrollTop while that
+  // animation is still running makes the viewport lag behind the growing
+  // conversation. Temporarily bypass smooth behavior for auto-follow.
+  const previousScrollBehavior = container.style.scrollBehavior;
+  container.style.scrollBehavior = 'auto';
   container.scrollTop = container.scrollHeight;
+  container.style.scrollBehavior = previousScrollBehavior;
+}
+
+function scrollToBottom({ force = false } = {}) {
+  const container = chatContainerEl;
+  if (!container) return;
+  // A forced jump deliberately takes the reader to the live edge (blocking
+  // prompts, slash-command output, or the navigation pill). Keep subsequent
+  // deltas visible until the reader scrolls upward again.
+  if (force && chatTurnIsConnected()) {
+    chatAutoFollow = true;
+    chatUserChoseReadingPosition = false;
+  }
+  if (!force && chatTurnIsConnected() && !chatAutoFollow
+      && (chatUserChoseReadingPosition || chatTurnIsRunning() || chatTurnNeedsReadingNavigation())) {
+    scheduleChatNavigationUpdate();
+    return;
+  }
+
+  pinChatToBottom(container);
+  if (scrollToBottomFrame != null) cancelAnimationFrame(scrollToBottomFrame);
+  scrollToBottomFrame = requestAnimationFrame(() => {
+    scrollToBottomFrame = null;
+    if (container.isConnected && (force || chatAutoFollow || !chatTurnIsConnected())) {
+      pinChatToBottom(container);
+    }
+    scheduleChatNavigationUpdate();
+  });
+}
+
+chatContainerEl?.addEventListener('wheel', markChatUserScrollIntent, { passive: true });
+chatContainerEl?.addEventListener('touchmove', markChatUserScrollIntent, { passive: true });
+chatContainerEl?.addEventListener('pointerdown', markChatUserScrollIntent, { passive: true });
+chatContainerEl?.addEventListener('pointermove', (event) => {
+  if (event.buttons) markChatUserScrollIntent();
+}, { passive: true });
+chatContainerEl?.addEventListener('scroll', () => {
+  if (chatTurnIsConnected() && chatUserScrollActive) {
+    const distanceToBottom = chatContainerEl.scrollHeight
+      - chatContainerEl.scrollTop
+      - chatContainerEl.clientHeight;
+    chatAutoFollow = distanceToBottom <= CHAT_SCROLL_EDGE_PX;
+    chatUserChoseReadingPosition = !chatAutoFollow;
+    settleChatUserScrollIntent();
+  }
+  scheduleChatNavigationUpdate();
+}, { passive: true });
+
+document.addEventListener('keydown', (event) => {
+  if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return;
+  const target = event.target;
+  if (target?.matches?.('input, textarea, select, button, [contenteditable="true"]')) return;
+  markChatUserScrollIntent();
+});
+
+chatNavigationActionEl?.addEventListener('click', () => {
+  if (!chatTurnIsConnected()) return;
+  if (chatNavigationEl.dataset.action === 'question') {
+    scrollChatToQuestion();
+    return;
+  }
+  chatAutoFollow = true;
+  scrollToBottom({ force: true });
+});
+
+chatNavigationDismissEl?.addEventListener('click', () => {
+  if (!chatTurnIsConnected()) return;
+  chatNavigationDismissedAssistantEl = chatNavigationTurn.assistantEl;
+  setChatNavigationVisible(false);
+});
+
+function scheduleSidepanelResponsiveUpdates() {
+  scheduleChatNavigationUpdate();
+  schedulePlanReviewFieldsAutosize(messagesEl);
+}
+
+globalThis.addEventListener?.('resize', scheduleSidepanelResponsiveUpdates);
+if (globalThis.ResizeObserver && messagesEl) {
+  const chatNavigationResizeObserver = new ResizeObserver((entries) => {
+    scheduleChatNavigationUpdate();
+    handlePlanReviewContainerResize(entries);
+  });
+  chatNavigationResizeObserver.observe(messagesEl);
 }
 
 // Debounce math rendering so streaming updates don't re-walk the DOM
@@ -909,12 +10744,14 @@ function scheduleMathRender() {
   }, 50);
 }
 
-function formatMarkdown(text) {
+function formatMarkdown(text, options = {}) {
   if (!text) return '';
+  const enhance = options.enhance !== false;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];
-  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+  text = text.replace(/```[ \t]*([^`\r\n]*)\r?\n([\s\S]*?)```/g, (_match, info, code) => {
+    const lang = codeFenceLanguage(info);
     const id = `__CODEBLOCK_${codeBlocks.length}__`;
     codeBlocks.push({ lang: lang || '', code });
     return id;
@@ -934,10 +10771,10 @@ function formatMarkdown(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // 4. Inline formatting (bold + italic), then markdown link sanitization,
-  // then newline → <br>. Links are handled by the dedicated markdown-link
-  // module (unit-tested in test/run.js) — see that file for the rationale
-  // and threat model.
+  // 4. Block headings, inline formatting, markdown link sanitization, then
+  // newline → <br>. Code and inline-code placeholders were extracted above,
+  // so Markdown-looking source inside them is not interpreted here.
+  text = renderMarkdownHeadings(text);
   text = text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -947,26 +10784,35 @@ function formatMarkdown(text) {
   // 5. Restore inline code
   inlineCodes.forEach((code, i) => {
     const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    text = text.replace(`__INLINE_${i}__`, `<code>${escaped}</code>`);
+    // Function replacer: a string replacement would interpret `$&`, `$\``, etc.
+    // in code that contains literal `$` sequences (shell, jQuery, regex), mangling it.
+    text = text.replace(`__INLINE_${i}__`, () => `<code>${escaped}</code>`);
   });
 
   // 6. Restore fenced code blocks with copy button
   codeBlocks.forEach((block, i) => {
-    const escaped = block.code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Re-highlighting every accumulated token is expensive and can visibly
+    // flicker. Keep live code escaped/plain, then highlight it once when the
+    // authoritative terminal response arrives.
+    const highlighted = enhance ? highlightCode(block.code, block.lang) : escapeHtml(block.code);
     const langLabel = block.lang ? `<span class="code-lang">${escapeHtml(block.lang)}</span>` : '';
-    const copyBtn = `<button class="code-copy-btn" data-code-index="${i}" title="${escapeHtml(t('sp.copy.code.title'))}">${escapeHtml(t('sp.copy'))}</button>`;
-    const header = `<div class="code-block-header">${langLabel}${copyBtn}</div>`;
+    const copyBtn = enhance
+      ? `<button class="code-copy-btn" data-code-index="${i}" title="${escapeHtml(t('sp.copy.code.title'))}">${escapeHtml(t('sp.copy'))}</button>`
+      : '';
+    const header = langLabel || copyBtn
+      ? `<div class="code-block-header">${langLabel}${copyBtn}</div>`
+      : '';
     text = text.replace(
       `__CODEBLOCK_${i}__`,
-      `<div class="code-block-wrapper">${header}<pre><code>${escaped}</code></pre></div>`
+      () => `<div class="code-block-wrapper">${header}<pre><code>${highlighted}</code></pre></div>`
     );
   });
 
   // Schedule KaTeX rendering of any math expressions in the messages area.
-  scheduleMathRender();
+  if (enhance) scheduleMathRender();
 
   // Store raw code for copy buttons to use
-  if (codeBlocks.length > 0) {
+  if (enhance && codeBlocks.length > 0) {
     setTimeout(() => {
       document.querySelectorAll('.code-copy-btn').forEach(btn => {
         if (btn.dataset.bound) return;
@@ -995,25 +10841,76 @@ function addMessageCopyButton(msgEl) {
   if (!msgEl) return;
   const content = msgEl.querySelector('.message-content');
   if (!content) return;
+  const existing = content.querySelector('.msg-copy-btn:not(.scratchpad-copy-btn)');
+  if (existing) {
+    bindMessageCopyButton(existing);
+    return existing;
+  }
   const btn = document.createElement('button');
   btn.className = 'msg-copy-btn';
   btn.textContent = t('sp.copy');
-  btn.title = t('sp.copy.code.title');
-  btn.addEventListener('click', () => {
-    const textEl = content.querySelector('.message-text');
-    if (textEl) {
-      navigator.clipboard.writeText(textEl.innerText).then(() => {
-        btn.textContent = t('sp.copied');
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = t('sp.copy'); btn.classList.remove('copied'); }, 1500);
-      });
-    }
-  });
+  btn.title = t('sp.copy.message.title');
+  bindMessageCopyButton(btn);
   content.appendChild(btn);
+  return btn;
 }
 
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function addScratchpadCopyButton(msgEl) {
+  if (!msgEl) return;
+  const content = msgEl.querySelector('.message-content');
+  const pre = content?.querySelector('pre.scratchpad-dump');
+  if (!content || !pre) return;
+  const existing = content.querySelector('.scratchpad-copy-btn');
+  if (existing) {
+    bindMessageCopyButton(existing);
+    return existing;
+  }
+  const btn = document.createElement('button');
+  btn.className = 'msg-copy-btn scratchpad-copy-btn';
+  btn.textContent = t('sp.copy');
+  btn.title = t('sp.copy.code.title');
+  bindMessageCopyButton(btn);
+  content.appendChild(btn);
+  return btn;
+}
+
+function getMessageCopyText(btn) {
+  const content = btn?.closest('.message-content');
+  if (!content) return null;
+  if (btn.classList.contains('scratchpad-copy-btn')) {
+    return content.querySelector('pre.scratchpad-dump')?.textContent || '';
+  }
+  return content.querySelector('.message-text')?.innerText || null;
+}
+
+function bindMessageCopyButton(btn) {
+  if (!btn || btn.__wbCopyBound) return;
+  btn.__wbCopyBound = true;
+  btn.addEventListener('click', () => {
+    const text = getMessageCopyText(btn);
+    if (text == null) return;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = t('sp.copied');
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = t('sp.copy'); btn.classList.remove('copied'); }, 1500);
+    });
+  });
+}
+
+function systemHtml(html) {
+  return { __systemHtml: String(html == null ? '' : html) };
+}
+
+function isSystemHtml(content) {
+  return !!content && typeof content === 'object' && Object.prototype.hasOwnProperty.call(content, '__systemHtml');
+}
+
+function tSystemHtml(key, params) {
+  const safeParams = {};
+  for (const [name, value] of Object.entries(params || {})) {
+    safeParams[name] = escapeHtml(value);
+  }
+  return t(key, safeParams);
 }
 
 function truncate(str, len) {
@@ -1021,77 +10918,359 @@ function truncate(str, len) {
 }
 
 function autoResizeInput() {
+  const maxHeight = 120;
   inputEl.style.height = 'auto';
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+  if (!inputEl.value) {
+    inputEl.style.height = '';
+    inputEl.style.overflowY = 'hidden';
+    updateSlashCommandHighlight();
+    return;
+  }
+  // Measure unconstrained height first; only scroll once past max-height so a
+  // single-line / empty composer does not show a dead vertical scrollbar.
+  const contentHeight = inputEl.scrollHeight;
+  inputEl.style.height = Math.min(contentHeight, maxHeight) + 'px';
+  inputEl.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
+  updateSlashCommandHighlight();
+}
+
+function getInputPlaceholderKeys() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    return ['sp.input.selection_placeholder'];
+  }
+  let keys;
+  if (agentMode === 'ask') keys = ASK_PLACEHOLDER_KEYS;
+  else if (agentMode === 'dev') keys = ['sp.input.dev_placeholder'];
+  else keys = ['sp.input.act_placeholder'];
+  if (askBeforeConsequential && permissionEducationState.promptCount > 0) {
+    return [...keys, PERMISSION_REMINDER_PLACEHOLDER_KEY];
+  }
+  return keys;
+}
+
+function updateInputPlaceholder() {
+  const keys = getInputPlaceholderKeys();
+  const key = keys[placeholderRotationIndex % keys.length];
+  inputEl.placeholder = t(key);
+  inputEl.dataset.i18nPlaceholder = key;
+}
+
+function resetInputPlaceholderRotation() {
+  placeholderRotationIndex = 0;
+  updateInputPlaceholder();
+}
+
+function startInputPlaceholderRotation() {
+  if (placeholderRotationTimer) return;
+  placeholderRotationTimer = setInterval(() => {
+    placeholderRotationIndex += 1;
+    updateInputPlaceholder();
+  }, PLACEHOLDER_ROTATION_INTERVAL_MS);
 }
 
 // --- Communication ---
 
+function sendPlanReviewDecisionWithReconnect(payload, requestId = '') {
+  const tabId = Number(payload?.tabId);
+  return sendPlanResponseWithReconnect({
+    payload,
+    requestId,
+    send: nextPayload => sendToBackground('plan_response', nextPayload),
+    probe: ({ requestId: probedRequestId } = {}) => sendToBackground('agent_run_state', {
+      tabId,
+      requestId: probedRequestId || requestId,
+    }),
+    isConnectionError: isBackgroundConnectionError,
+    onState: state => applyActiveRunState(tabId, state),
+    onStatus: ({ phase }) => {
+      if (!sameTabId(currentTabId, tabId)) return;
+      if (phase === 'reconnecting') showActivity('Reconnecting…');
+      if (phase === 'reconnected' && !isAwaitingPlanReviewForTab(tabId)) {
+        showActivity('Reconnected — continuing…');
+      }
+    },
+  });
+}
+
+async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}) {
+  const tabId = Number(payload?.tabId);
+  const requestId = String(payload?.requestId || '');
+  cancelledRunRecoveryRequestIds.delete(requestId);
+  const promise = runDetachedWithReconnect({
+    initialAction,
+    payload,
+    start: (action, nextPayload) => sendToBackground(action, nextPayload),
+    probe: ({ requestId: probedRequestId } = {}) => sendToBackground('agent_run_state', {
+      tabId,
+      requestId: probedRequestId || requestId,
+    }),
+    isConnectionError: isBackgroundConnectionError,
+    onState: state => {
+      applyConversationScopeState(tabId, state);
+      return applyActiveRunState(tabId, state);
+    },
+    shouldResume: () => !isTabAbortRequested(tabId)
+      && !cancelledRunRecoveryRequestIds.has(requestId),
+    onStatus: ({ phase }) => {
+      if (!sameTabId(currentTabId, tabId)) return;
+      if (phase === 'reconnecting' || phase === 'retrying_start') {
+        showActivity('Reconnecting…');
+      } else if (phase === 'resuming') {
+        showActivity('Reconnected — resuming…');
+      } else if (phase === 'reconnected' && !isAwaitingPlanReviewForTab(tabId)) {
+        showActivity('Reconnected — continuing…');
+      }
+    },
+    ...recoveryOptions,
+  });
+  const follower = { requestId, promise };
+  localRunFollowers.set(tabId, follower);
+  try {
+    return await promise;
+  } finally {
+    if (localRunFollowers.get(tabId) === follower) localRunFollowers.delete(tabId);
+  }
+}
+
+function formatBackgroundSendError(action, message) {
+  if (isBackgroundConnectionError(message)) {
+    return `WebBrain extension connection was lost while sending "${action}". Reload the sidebar/extension and try again.`;
+  }
+  return message;
+}
+
 async function sendToBackground(action, data = {}) {
-  const response = await browser.runtime.sendMessage(
-    { target: 'background', action, ...data }
-  );
+  let response;
+  try {
+    response = await browser.runtime.sendMessage(
+      { target: 'background', action, ...data }
+    );
+  } catch (error) {
+    throw new Error(formatBackgroundSendError(action, error?.message || String(error || 'Unknown background error')));
+  }
+  if (response == null) {
+    throw new Error(`No response from WebBrain background for "${action}". The background script may have restarted or crashed; reload the sidebar/extension and check the Firefox extension console for the original error.`);
+  }
   if (response?.error) {
     throw new Error(response.error);
   }
   return response;
 }
 
+async function handleGlobalKeydown(e) {
+  if (e.defaultPrevented) return;
+
+  // Don't steal shortcuts from other input elements (e.g. schedule form fields)
+  const tag = e.target?.tagName;
+  const isOtherFormField = e.target !== inputEl && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+
+  if (e.key === 'Escape') {
+    // IME Escape cancels a composition candidate — never abort the run for that.
+    if (e.isComposing) return;
+    const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
+    if (slashMenuOpen) return;
+    // Provider/language pickers close on Escape in bubble/target handlers; do not
+    // abort the active run while those listboxes are open.
+    const providerPickerOpen = !!providerPickerMenu && !providerPickerMenu.classList.contains('hidden');
+    if (providerPickerOpen) return;
+    const languagePickerOpen = !!languagePickerMenu && !languagePickerMenu.classList.contains('hidden');
+    if (languagePickerOpen) return;
+    if (isProcessing) {
+      e.preventDefault();
+      abortRun();
+      return;
+    }
+    if (isOtherFormField) return;
+  }
+
+  if (isOtherFormField) return;
+  // AltGr (Ctrl+Alt) and Option chords type international characters — never
+  // treat them as Ctrl/Cmd shortcuts.
+  if (e.altKey || e.getModifierState?.('AltGraph')) return;
+
+  const mod = e.ctrlKey || e.metaKey;
+
+  // Ctrl+/ (Cmd+/ on Mac): focus input
+  if (mod && e.key === '/') {
+    e.preventDefault();
+    inputEl.focus();
+    inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    return;
+  }
+  // Ctrl+Shift+A: switch to Ask mode (blocked while agent is running)
+  if (mod && e.shiftKey && e.key === 'A' && !isProcessing) {
+    e.preventDefault();
+    setMode('ask');
+    return;
+  }
+  // Ctrl+Shift+X: switch to Act mode (blocked while agent is running)
+  if (mod && e.shiftKey && e.key === 'X' && !isProcessing) {
+    e.preventDefault();
+    await ensureActMode();
+    return;
+  }
+  // Ctrl+Shift+D: switch to Dev mode (blocked while agent is running)
+  if (mod && e.shiftKey && e.key === 'D' && !isProcessing) {
+    e.preventDefault();
+    await ensureDevMode();
+    return;
+  }
+}
+
 // --- Mode Toggle ---
 
+function positionModeHighlight(btn, { instant = false } = {}) {
+  if (!modeToggleHighlight || !btn) return;
+  if (instant) modeToggleHighlight.classList.add('instant');
+  modeToggleHighlight.style.width = `${btn.offsetWidth}px`;
+  modeToggleHighlight.style.transform = `translate3d(${btn.offsetLeft}px, 0, 0)`;
+  if (instant) requestAnimationFrame(() => modeToggleHighlight.classList.remove('instant'));
+}
+
 function setMode(mode) {
+  mode = normalizeAgentMode(mode);
   agentMode = mode;
 
-  if (mode === 'ask') {
-    modeAskBtn.classList.add('active');
-    modeAskBtn.classList.remove('act');
-    modeActBtn.classList.remove('active', 'act');
-    actWarning.classList.add('hidden');
-    inputArea.classList.remove('act-mode');
-    inputEl.placeholder = t('sp.input.ask_placeholder');
-    inputEl.dataset.i18nPlaceholder = 'sp.input.ask_placeholder';
-  } else {
-    modeActBtn.classList.add('active', 'act');
-    modeAskBtn.classList.remove('active');
-    actWarning.classList.remove('hidden');
-    inputArea.classList.add('act-mode');
-    inputEl.placeholder = t('sp.input.act_placeholder');
-    inputEl.dataset.i18nPlaceholder = 'sp.input.act_placeholder';
+  modeAskBtn.classList.toggle('active', mode === 'ask');
+  modeAskBtn.classList.remove('act');
+  modeActBtn.classList.toggle('active', mode === 'act');
+  modeActBtn.classList.toggle('act', mode === 'act');
+  modeDevBtn?.classList.toggle('active', mode === 'dev');
+  modeDevBtn?.classList.toggle('act', mode === 'dev');
+  inputArea.classList.toggle('act-mode', mode !== 'ask');
+
+  // Slide the highlight pill to the active button
+  const activeBtn = mode === 'ask' ? modeAskBtn : mode === 'act' ? modeActBtn : modeDevBtn;
+  modeToggleHighlight?.classList.toggle('act', mode !== 'ask');
+  positionModeHighlight(activeBtn);
+
+  updateActWarning();
+  resetInputPlaceholderRotation();
+}
+
+function normalizeAgentMode(mode) {
+  if (isStandaloneWindow) return 'ask';
+  return mode === 'act' || mode === 'dev' ? mode : 'ask';
+}
+
+async function ensureActMode() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return false;
   }
+  if (agentMode === 'act') return true;
+  setMode('act');
+  return true;
+}
+
+async function ensureDevMode() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return false;
+  }
+  if (agentMode === 'dev') return true;
+  try {
+    const tierInfo = await sendToBackground('get_active_prompt_tier');
+    if (tierInfo?.tier === 'compact') {
+      addMessage('system', systemHtml(tSystemHtml('sp.mode.dev.compact_blocked', {
+        provider: tierInfo.name || tierInfo.providerId || 'active provider',
+      })));
+      return false;
+    }
+  } catch (e) {
+    // The agent also enforces this server-side; don't block Dev on a stale
+    // sidepanel/background lookup failure.
+  }
+  setMode('dev');
+  return true;
 }
 
 modeAskBtn.addEventListener('click', () => setMode('ask'));
 
 modeActBtn.addEventListener('click', async () => {
-  if (agentMode === 'act') return; // already active
-  try {
-    const stored = await browser.storage.local.get('actConfirmed');
-    if (!stored.actConfirmed) {
-      const ok = confirm(t('sp.mode.act.confirm'));
-      if (!ok) return;
-      browser.storage.local.set({ actConfirmed: true }).catch(() => {});
-    }
-  } catch (e) { /* ignore */ }
-  setMode('act');
+  await ensureActMode();
 });
 
+modeDevBtn?.addEventListener('click', async () => {
+  await ensureDevMode();
+});
+
+// Set initial highlight position without animation
+requestAnimationFrame(() => positionModeHighlight(modeAskBtn, { instant: true }));
+
+// Recalculate highlight when the toggle resizes (e.g. side panel drag)
+if (modeToggleEl) {
+  new ResizeObserver(() => {
+    const activeBtn = modeToggleEl.querySelector('.mode-btn.active');
+    if (activeBtn) positionModeHighlight(activeBtn, { instant: true });
+  }).observe(modeToggleEl);
+}
+
+// Reposition highlight when document direction changes (RTL locale switch)
+new MutationObserver(() => {
+  requestAnimationFrame(() => {
+    const activeBtn = modeToggleEl?.querySelector('.mode-btn.active');
+    if (activeBtn) positionModeHighlight(activeBtn, { instant: true });
+  });
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['dir'] });
 
 // --- Stop / Abort ---
 
-stopBtn.addEventListener('click', async () => {
-  if (!isProcessing) return;
-  abortRequested = true;
-  showActivity(t('sp.activity.stopping'));
+async function abortRun(tabId = currentTabId) {
+  if (!isTabProcessing(tabId)) return;
+  const requestId = String(
+    localRunRequestIds.get(Number(tabId))
+      || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
+      || '',
+  );
+  const follower = localRunFollowers.get(Number(tabId));
+  if (requestId) cancelledRunRecoveryRequestIds.add(requestId);
+  setTabAbortRequested(tabId, true);
+  if (sameTabId(currentTabId, tabId)) showActivity(t('sp.activity.stopping'));
 
-  try {
-    await sendToBackground('abort', { tabId: currentTabId });
-  } catch {
-    // Best effort
-  }
-
-  // Force UI to settle even if background doesn't respond cleanly
-  setTimeout(() => {
-    if (abortRequested) {
+  let fallbackTimer = null;
+  let fallbackCancelled = false;
+  let fallbackProbeFailures = 0;
+  const maxFallbackProbeFailures = 5;
+  const fallbackPromise = new Promise(resolve => {
+    const settleWhenInactive = async () => {
+      if (fallbackCancelled) {
+        resolve();
+        return;
+      }
+      if (!isTabAbortRequested(tabId)) {
+        resolve();
+        return;
+      }
+      let state;
+      try {
+        state = await sendToBackground('agent_run_state', { tabId, requestId });
+      } catch {
+        state = null;
+      }
+      if (fallbackCancelled) {
+        resolve();
+        return;
+      }
+      if (!state) {
+        fallbackProbeFailures += 1;
+        // A local follower has its own bounded reconnect policy and remains
+        // authoritative. Without one, eventually release a panel whose
+        // background disappeared instead of polling "Stopping…" forever.
+        if (follower?.requestId === requestId
+            || fallbackProbeFailures < maxFallbackProbeFailures) {
+          fallbackTimer = setTimeout(settleWhenInactive, 1000);
+          return;
+        }
+      } else if (state.running || state.starting) {
+        fallbackProbeFailures = 0;
+        fallbackTimer = setTimeout(settleWhenInactive, 1000);
+        return;
+      }
+      if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) {
+        resolve();
+        return;
+      }
       finalizeSteps();
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
@@ -1099,61 +11278,1038 @@ stopBtn.addEventListener('click', async () => {
           textEl.innerHTML = t('sp.stopped_by_user_html');
         }
       }
-      isProcessing = false;
-      sendBtn.disabled = false;
+      setTabProcessing(tabId, false);
+      syncSendButtonState();
       hideActivity();
       currentAssistantEl = null;
-      abortRequested = false;
-    }
-  }, 3000); // safety timeout if background takes too long
-});
+      setTabAbortRequested(tabId, false);
+      await flushRenderedTabChat();
+      await drainQueuedPromptsAfterRunSettles();
+      resolve();
+    };
+    fallbackTimer = setTimeout(settleWhenInactive, 3000);
+  });
 
+  try {
+    await sendToBackground('abort', { tabId });
+  } catch {
+    // Best effort
+  }
+  if (follower?.requestId === requestId) {
+    await Promise.race([
+      follower.promise.catch(() => {}),
+      fallbackPromise,
+    ]);
+    // A stopped background run can become inactive before this reconnect
+    // follower consumes its terminal journal. New conversation awaits
+    // abortRun(), so do not let it clear that journal until the follower has
+    // observed the terminal snapshot (or reached its bounded failure).
+    await follower.promise.catch(() => {});
+    fallbackCancelled = true;
+    clearTimeout(fallbackTimer);
+  }
+}
+
+stopBtn.addEventListener('click', () => abortRun());
+
+// --- Voice input (mic dictation, issue #210) ---
+// Web Speech API: well-supported in Chrome, absent in stock Firefox (which
+// lacks window.SpeechRecognition entirely). The mic button stays visible
+// either way — a hidden button gives the user no signal as to WHY voice
+// input doesn't work. Instead it's shown grayed out with a tooltip and an
+// in-chat message on click explaining the reason: unsupported browser, or
+// disabled via the "Voice input" toggle in Settings.
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+let speechRecognition = null;
+let isListening = false;
+let micInterimText = ''; // the interim transcript tail we last appended to the input
+let voiceInputSettingEnabled = true; // mirrors storage 'voiceInputEnabled', on by default
+let micDisabledReason = null; // null | 'unsupported' | 'settings'
+
+function updateMicButtonState() {
+  if (!micBtn) return;
+  micDisabledReason = !SpeechRecognitionImpl ? 'unsupported'
+    : !voiceInputSettingEnabled ? 'settings'
+    : null;
+  micBtn.classList.toggle('mic-disabled', !!micDisabledReason);
+  micBtn.title = micDisabledReason === 'unsupported' ? t('sp.mic.unsupported')
+    : micDisabledReason === 'settings' ? t('sp.mic.disabled_settings')
+    : (isListening ? t('sp.btn.mic_stop') : t('sp.btn.mic'));
+}
+
+function stopListening() {
+  if (!isListening) return;
+  isListening = false;
+  micBtn?.classList.remove('listening');
+  updateMicButtonState();
+  // Detach handlers before stop(): the engine can fire a trailing
+  // onresult/onend *after* stop() for buffered audio. Left attached, that
+  // late onresult would repaint the input (resurrecting just-sent text), and
+  // a stale onend would clobber the state of a freshly-started session.
+  const recognition = speechRecognition;
+  speechRecognition = null;
+  micInterimText = '';
+  if (recognition) {
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    try { recognition.stop(); } catch { /* ignore */ }
+  }
+}
+
+function startListening() {
+  if (!SpeechRecognitionImpl || !inputEl) return;
+  const recognition = new SpeechRecognitionImpl();
+  speechRecognition = recognition;
+  recognition.lang = getLocale();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  micInterimText = '';
+
+  // Append transcripts to whatever is currently in the box, replacing only
+  // the interim tail we ourselves appended. This preserves text the user
+  // types by hand during dictation instead of overwriting it.
+  recognition.onresult = (e) => {
+    if (!isListening || speechRecognition !== recognition) return;
+    // Strip our previous interim tail only if it's still the suffix — a
+    // manual edit after it means the user took over, so leave it alone.
+    if (micInterimText && inputEl.value.endsWith(micInterimText)) {
+      inputEl.value = inputEl.value.slice(0, inputEl.value.length - micInterimText.length);
+    }
+    let interimTranscript = '';
+    let finalTranscript = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const transcript = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalTranscript += transcript;
+      else interimTranscript += transcript;
+    }
+    if (finalTranscript) {
+      const sep = inputEl.value && !/\s$/.test(inputEl.value) ? ' ' : '';
+      inputEl.value += sep + finalTranscript;
+    }
+    if (interimTranscript) {
+      const sep = inputEl.value && !/\s$/.test(inputEl.value) ? ' ' : '';
+      micInterimText = sep + interimTranscript;
+      inputEl.value += micInterimText;
+    } else {
+      micInterimText = '';
+    }
+    handleInput();
+  };
+
+  recognition.onerror = (e) => {
+    stopListening();
+    // Surface permission denials instead of stopping silently — otherwise
+    // the button just "mysteriously stops" (matches the Chrome behavior).
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      addMessage('system', t('sp.mic.permission_denied'));
+    }
+  };
+  recognition.onend = () => {
+    if (speechRecognition !== recognition) return; // superseded by a newer session
+    isListening = false;
+    speechRecognition = null;
+    micInterimText = '';
+    micBtn?.classList.remove('listening');
+    updateMicButtonState();
+  };
+
+  isListening = true;
+  micBtn?.classList.add('listening');
+  updateMicButtonState();
+  recognition.start();
+}
+
+if (micBtn) {
+  browser.storage.local.get('voiceInputEnabled').then((stored) => {
+    voiceInputSettingEnabled = stored?.voiceInputEnabled ?? true;
+    updateMicButtonState();
+  }).catch(() => {});
+  browser.storage.onChanged.addListener((changes) => {
+    if (changes.voiceInputEnabled) {
+      voiceInputSettingEnabled = changes.voiceInputEnabled.newValue ?? true;
+      if (!voiceInputSettingEnabled) stopListening();
+      updateMicButtonState();
+    }
+  });
+  micBtn.addEventListener('click', () => {
+    if (micDisabledReason === 'unsupported') {
+      addMessage('system', t('sp.mic.unsupported'));
+      return;
+    }
+    if (micDisabledReason === 'settings') {
+      addMessage('system', t('sp.mic.disabled_settings'));
+      return;
+    }
+    if (isListening) stopListening();
+    else startListening();
+  });
+  updateMicButtonState();
+}
+
+// --- File attachments (+ button, issue #220) ---
+// Images go through the OpenAI-style image_url content block (works with any
+// vision-capable provider, validated in agent.js against provider.supportsVision).
+// PDFs go through Anthropic's {type:'document'} block (Anthropic-only —
+// agent.js returns a clear chat error for other providers via
+// provider.supportsDocuments). Both are read client-side as data URLs and
+// sent as-is; agent.js strips the data: prefix when building the PDF block.
+const attachBtn = document.getElementById('btn-attach');
+const fileAttachInput = document.getElementById('file-attach-input');
+const attachmentPreviewList = document.getElementById('attachment-preview-list');
+const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024; // matches PDF_PASSTHROUGH_MAX_BYTES (pdf-tools.js)
+// Text files are injected VERBATIM into the prompt as a text block (no
+// server-side processing like PDFs), so the 16MB binary cap would blow any
+// context window — cap them far lower.
+const MAX_TEXT_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+function normalizeAttachmentTabId(tabId = currentTabId) {
+  if (tabId == null || tabId === '') return null;
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) ? numericTabId : null;
+}
+
+function newStagedScreenshotAttachmentId() {
+  try {
+    const id = globalThis.crypto?.randomUUID?.();
+    if (id) return `screenshot-${id}`;
+  } catch {}
+  return `screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function encodeStagedScreenshotMetadata(attachment) {
+  try {
+    return encodeURIComponent(JSON.stringify({
+      version: 1,
+      stagedAttachmentId: String(attachment?.stagedAttachmentId || ''),
+      name: String(attachment?.name || '').slice(0, 240),
+      mimeType: String(attachment?.mimeType || '').slice(0, 120),
+      size: Number(attachment?.size) || 0,
+      capturedAt: Number(attachment?.capturedAt) || 0,
+      fullPage: attachment?.fullPage === true,
+      redactionSnapshotReady: attachment?.redactionSnapshotReady === true,
+      ...(attachment?.redactionSnapshot ? { redactionSnapshot: attachment.redactionSnapshot } : {}),
+      ...(attachment?.captureBounds ? { captureBounds: attachment.captureBounds } : {}),
+    }));
+  } catch {
+    return '';
+  }
+}
+
+function decodeStagedScreenshotMetadata(value, dataUrl, storedRecord = null) {
+  try {
+    const metadata = JSON.parse(decodeURIComponent(String(value || '')));
+    const stagedAttachmentId = String(metadata?.stagedAttachmentId || '');
+    const size = Number(metadata?.size);
+    const actualSize = attachmentDataUrlBytes(dataUrl);
+    const modelDataUrl = String(storedRecord?.modelDataUrl || '');
+    if (metadata?.version !== 1
+        || !/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
+        || !(Number.isFinite(size) && size > 0 && size <= MAX_ATTACHMENT_BYTES)
+        || actualSize !== size
+        || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) {
+      return null;
+    }
+    return {
+      kind: 'image',
+      name: String(metadata.name || 'webbrain-screenshot.png').slice(0, 240),
+      dataUrl,
+      mimeType: String(metadata.mimeType || '').startsWith('image/jpeg') ? 'image/jpeg' : 'image/png',
+      size,
+      source: 'slash_screenshot',
+      stagedAttachmentId,
+      capturedAt: Number(metadata.capturedAt) || Date.now(),
+      fullPage: metadata.fullPage === true,
+      redactionSnapshotReady: metadata.redactionSnapshotReady === true,
+      ...(storedRecord ? { modelRedactionReady: storedRecord.modelRedactionReady === true } : {}),
+      ...(storedRecord?.modelRedactionReady === true && /^data:image\/(?:png|jpeg);base64,/i.test(modelDataUrl)
+        ? { modelDataUrl }
+        : {}),
+      ...(metadata.redactionSnapshot ? { redactionSnapshot: metadata.redactionSnapshot } : {}),
+      ...(metadata.fullPage === true && metadata.captureBounds ? { captureBounds: metadata.captureBounds } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function findStagedScreenshotResult(stagedAttachmentId, root = document) {
+  const id = String(stagedAttachmentId || '');
+  if (!id) return null;
+  return Array.from(root.querySelectorAll?.('.screenshot-result[data-screenshot-attachment-id]') || [])
+    .find(result => result.dataset.screenshotAttachmentId === id) || null;
+}
+
+function setScreenshotAttachmentStaged(tabId, attachment, staged) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !sameTabId(currentTabId, numericTabId)) return;
+  const result = findStagedScreenshotResult(attachment?.stagedAttachmentId, messagesEl);
+  if (!result) return;
+  const note = result.querySelector('.screenshot-attachment-note');
+  if (!staged) {
+    delete result.dataset.stagedScreenshot;
+    note?.remove();
+    return;
+  }
+  const metadata = encodeStagedScreenshotMetadata(attachment);
+  if (!metadata) return;
+  result.dataset.stagedScreenshot = metadata;
+  if (!note) {
+    const restoredNote = document.createElement('div');
+    const label = t('sp.screenshot.staged_next_message');
+    restoredNote.className = 'screenshot-attachment-note';
+    restoredNote.setAttribute('role', 'status');
+    restoredNote.setAttribute('aria-label', label);
+    restoredNote.textContent = `📎 ${label} · ${attachment.name}`;
+    result.querySelector('.screenshot-result-actions')?.before(restoredNote);
+  }
+}
+
+async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = renderedTabId ?? currentTabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  updateAttachmentReadCount(numericTabId, 1);
+  try {
+    const results = Array.from(root.querySelectorAll?.('.screenshot-result') || []);
+    const pendingScreenshotIdsBeforeLoad = new Set(getPendingAttachmentsForTab(
+      numericTabId,
+      { create: false },
+    ).filter(attachment => attachment?.source === 'slash_screenshot')
+      .map(attachment => attachment.stagedAttachmentId));
+    const storedAttachments = await loadStagedScreenshots(browser.storage.local, numericTabId);
+    if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
+    const pendingStoredAttachments = storedAttachments.filter(attachment => attachment.deliveryState === 'pending');
+    const storedById = new Map(pendingStoredAttachments.map(attachment => [attachment.stagedAttachmentId, attachment]));
+    const restored = [];
+    let changed = false;
+    for (const result of results) {
+      const persistedMetadata = result.dataset.stagedScreenshot;
+      const note = result.querySelector('.screenshot-attachment-note');
+      if (!persistedMetadata) {
+        if (note) {
+          note.remove();
+          changed = true;
+        }
+        continue;
+      }
+      const stagedAttachmentId = String(result.dataset.screenshotAttachmentId || '');
+      const stored = storedById.get(stagedAttachmentId);
+      const attachment = decodeStagedScreenshotMetadata(persistedMetadata, stored?.dataUrl || '', stored);
+      if (!attachment || attachment.stagedAttachmentId !== stagedAttachmentId) {
+        delete result.dataset.stagedScreenshot;
+        note?.remove();
+        changed = true;
+        continue;
+      }
+      restored.push({ result, attachment });
+    }
+
+    // Records without a pending result card may belong to a send whose card
+    // was persisted after its staged marker was cleared. Terminal run state,
+    // explicit removal, conversation clear, or tab close owns their cleanup.
+    const restoredIds = new Set(restored.map(item => item.attachment.stagedAttachmentId));
+    const pending = getPendingAttachmentsForTab(numericTabId).filter(attachment => (
+      attachment?.source !== 'slash_screenshot'
+      || restoredIds.has(attachment.stagedAttachmentId)
+      // A capture may finish while storage is being read. It is not part of
+      // this restore snapshot and must remain staged for the next message.
+      || !pendingScreenshotIdsBeforeLoad.has(attachment.stagedAttachmentId)
+    ));
+    for (const { result, attachment } of restored) {
+      const image = result.querySelector('.screenshot-result-image');
+      if (image?.getAttribute('src') !== attachment.dataUrl) image?.setAttribute('src', attachment.dataUrl);
+      if (!pending.some(candidate => candidate?.stagedAttachmentId === attachment.stagedAttachmentId)) {
+        pending.push(attachment);
+      }
+    }
+    if (pending.length) pendingAttachmentsByTab.set(numericTabId, pending);
+    else pendingAttachmentsByTab.delete(numericTabId);
+    if (normalizeAttachmentTabId() === numericTabId) renderAttachmentPreviews();
+    if (changed) schedulePersist();
+  } catch {
+    if (sameTabId(renderedTabId ?? currentTabId, numericTabId)) {
+      for (const result of root.querySelectorAll?.('.screenshot-result[data-staged-screenshot]') || []) {
+        delete result.dataset.stagedScreenshot;
+        result.querySelector('.screenshot-attachment-note')?.remove();
+      }
+      const pending = getPendingAttachmentsForTab(numericTabId, { create: false })
+        .filter(attachment => attachment?.source !== 'slash_screenshot');
+      if (pending.length) pendingAttachmentsByTab.set(numericTabId, pending);
+      else pendingAttachmentsByTab.delete(numericTabId);
+      renderAttachmentPreviews();
+      schedulePersist();
+    }
+  } finally {
+    updateAttachmentReadCount(numericTabId, -1);
+  }
+}
+
+function getPendingAttachmentsForTab(tabId = currentTabId, { create = true } = {}) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return [];
+  let attachments = pendingAttachmentsByTab.get(numericTabId);
+  if (!attachments && create) {
+    attachments = [];
+    pendingAttachmentsByTab.set(numericTabId, attachments);
+  }
+  return attachments || [];
+}
+
+function getAttachmentGeneration(tabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return 0;
+  return attachmentGenerationByTab.get(numericTabId) || 0;
+}
+
+function bumpAttachmentGeneration(tabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  attachmentGenerationByTab.set(numericTabId, getAttachmentGeneration(numericTabId) + 1);
+}
+
+function isAttachmentReadPendingForTab(tabId = currentTabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  return numericTabId != null && (attachmentReadCountsByTab.get(numericTabId) || 0) > 0;
+}
+
+function updateAttachmentReadCount(tabId, delta) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const next = Math.max(0, (attachmentReadCountsByTab.get(numericTabId) || 0) + delta);
+  if (next) attachmentReadCountsByTab.set(numericTabId, next);
+  else attachmentReadCountsByTab.delete(numericTabId);
+  if (normalizeAttachmentTabId() === numericTabId) syncSendButtonState();
+}
+
+function clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots = false } = {}) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
+  pending.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
+  if (!preserveStoredScreenshots) {
+    clearStagedScreenshots(browser.storage.local, numericTabId).catch(() => {});
+  }
+  pendingAttachmentsByTab.delete(numericTabId);
+  bumpAttachmentGeneration(numericTabId);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+}
+
+async function restorePendingAttachmentsForTab(tabId, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return;
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const screenshotsPersisted = await markStagedScreenshots(
+    browser.storage.local,
+    numericTabId,
+    attachments,
+    { deliveryState: 'pending' },
+  ).catch(() => false);
+  const restorable = screenshotsPersisted
+    ? attachments
+    : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
+  const pending = getPendingAttachmentsForTab(numericTabId);
+  const pendingScreenshotIds = new Set(pending
+    .filter(attachment => attachment?.source === 'slash_screenshot')
+    .map(attachment => attachment.stagedAttachmentId));
+  pending.unshift(...restorable.filter(attachment => (
+    !pending.includes(attachment)
+    && (attachment?.source !== 'slash_screenshot'
+      || !pendingScreenshotIds.has(attachment.stagedAttachmentId))
+  )));
+  restorable.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, true));
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+}
+
+async function removePersistedStagedAttachments(tabId, attachments) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !Array.isArray(attachments)) return;
+  await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
+}
+
+async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !['included', 'not-sent', 'unknown'].includes(deliveryState)) return;
+  const stored = await loadStagedScreenshots(browser.storage.local, numericTabId).catch(() => []);
+  const matching = stored.filter(attachment => (
+    attachment.deliveryState === 'sending'
+    && String(attachment.requestId || '') === String(requestId || '')
+  ));
+  if (!matching.length) return;
+  // 'unknown' means the background could not confirm the turn was persisted, so
+  // the turn most likely never landed and these pixels are the only copy left.
+  // Return it to the composer like an outright rejection rather than deleting
+  // the capture: leaving the record 'sending' would preserve the bytes but the
+  // remount restore only re-adopts 'pending' records, so they would be
+  // unreachable. The message card still carries its "delivery not confirmed"
+  // marker, so the user sees both signals and decides whether to re-send.
+  if (deliveryState === 'included') {
+    await removePersistedStagedAttachments(numericTabId, matching);
+  } else {
+    await restorePendingAttachmentsForTab(numericTabId, matching);
+  }
+}
+
+function consumePendingAttachmentsForTab(tabId, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return;
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
+  if (!pending.length) return;
+  const consumed = new Set(attachments);
+  // A staged screenshot can be re-entered as a fresh object loaded back from
+  // storage, so object identity alone leaves the old chip in the composer and
+  // wedges every later send on the markStagedScreenshots guard. Match the same
+  // durable id the restore paths key on.
+  const consumedScreenshotIds = new Set(attachments
+    .filter(attachment => attachment?.source === 'slash_screenshot' && attachment.stagedAttachmentId)
+    .map(attachment => attachment.stagedAttachmentId));
+  const remaining = pending.filter(attachment => !consumed.has(attachment)
+    && !(attachment?.source === 'slash_screenshot'
+      && consumedScreenshotIds.has(attachment.stagedAttachmentId)));
+  attachments.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
+  if (remaining.length) pendingAttachmentsByTab.set(numericTabId, remaining);
+  else pendingAttachmentsByTab.delete(numericTabId);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+}
+
+async function stageScreenshotAttachment(tabId, dataUrl, {
+  fullPage = false,
+  pageUrl = '',
+  captureBounds = null,
+  redactionSnapshotReady = false,
+  redactionSnapshot = null,
+  modelRedactionReady = false,
+  modelDataUrl = null,
+} = {}) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
+  const size = attachmentDataUrlBytes(dataUrl);
+  const name = screenshotDownloadFilename(pageUrl, fullPage);
+  if (size > MAX_ATTACHMENT_BYTES) {
+    if (normalizeAttachmentTabId() === numericTabId) {
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max: '16MB' })));
+    }
+    return null;
+  }
+  const attachment = {
+    kind: 'image',
+    name,
+    dataUrl,
+    mimeType: String(dataUrl).startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png',
+    size,
+    source: 'slash_screenshot',
+    stagedAttachmentId: newStagedScreenshotAttachmentId(),
+    capturedAt: Date.now(),
+    fullPage: !!fullPage,
+    redactionSnapshotReady: redactionSnapshotReady === true,
+    ...(redactionSnapshot ? { redactionSnapshot } : {}),
+    modelRedactionReady: modelRedactionReady === true,
+    ...(modelRedactionReady === true && modelDataUrl ? { modelDataUrl } : {}),
+    ...(fullPage && captureBounds ? { captureBounds } : {}),
+  };
+  let persisted = false;
+  try {
+    persisted = await saveStagedScreenshot(browser.storage.local, numericTabId, attachment);
+  } catch {}
+  if (!persisted) {
+    if (normalizeAttachmentTabId() === numericTabId) showComposerToast(t('sp.persistence.unavailable'));
+    return null;
+  }
+  if (normalizeAttachmentTabId() !== numericTabId) {
+    await removeStagedScreenshot(browser.storage.local, numericTabId, attachment.stagedAttachmentId).catch(() => {});
+    return null;
+  }
+  getPendingAttachmentsForTab(numericTabId).push(attachment);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+  return attachment;
+}
+
+function renderAttachmentPreviews() {
+  if (!attachmentPreviewList) return;
+  const previewTabId = normalizeAttachmentTabId();
+  const pendingAttachments = getPendingAttachmentsForTab(previewTabId, { create: false });
+  attachmentPreviewList.innerHTML = '';
+  attachmentPreviewList.classList.toggle('hidden', pendingAttachments.length === 0);
+  pendingAttachments.forEach((att, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'attachment-chip';
+    const label = document.createElement('span');
+    label.className = 'attachment-chip-name';
+    label.textContent = att.name;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'attachment-chip-remove';
+    removeBtn.setAttribute('aria-label', t('sp.attach.remove'));
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', () => {
+      const attachments = getPendingAttachmentsForTab(previewTabId, { create: false });
+      removeStagedScreenshot(
+        browser.storage.local,
+        previewTabId,
+        attachments[i]?.stagedAttachmentId,
+      ).catch(() => {});
+      setScreenshotAttachmentStaged(previewTabId, attachments[i], false);
+      attachments.splice(i, 1);
+      if (attachments.length === 0 && previewTabId != null) pendingAttachmentsByTab.delete(previewTabId);
+      renderAttachmentPreviews();
+      syncSendButtonState();
+    });
+    chip.append(label, removeBtn);
+    attachmentPreviewList.appendChild(chip);
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+async function handleAttachedFiles(fileList, tabId = currentTabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const generation = getAttachmentGeneration(numericTabId);
+  updateAttachmentReadCount(numericTabId, 1);
+  try {
+    for (const file of files) {
+      const isImage = file.type.startsWith('image/');
+      const isPdf = file.type === 'application/pdf';
+      // The reported MIME type for text files is OS-registry dependent and
+      // often empty — fall back to the extension.
+      const isTextFile = file.type === 'application/json'
+        || file.type === 'text/plain'
+        || file.type === 'text/csv'
+        || (!isImage && !isPdf && /\.(json|txt|csv)$/i.test(file.name || ''));
+      if (!isImage && !isPdf && !isTextFile) {
+        if (normalizeAttachmentTabId() === numericTabId) {
+          addMessage('system', systemHtml(tSystemHtml('sp.attach.unsupported_type', { name: file.name })));
+        }
+        continue;
+      }
+      const maxBytes = isTextFile ? MAX_TEXT_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+      if (file.size > maxBytes) {
+        if (normalizeAttachmentTabId() === numericTabId) {
+          addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name: file.name, max: isTextFile ? '5MB' : '16MB' })));
+        }
+        continue;
+      }
+      try {
+        if (isTextFile) {
+          // Keep the decoded text for model context and the original bytes for
+          // an exact upload_file replay (encoding/BOM and MIME must survive).
+          const [textContent, dataUrl] = await Promise.all([
+            readFileAsText(file),
+            readFileAsDataUrl(file),
+          ]);
+          if (generation !== getAttachmentGeneration(numericTabId)) continue;
+          getPendingAttachmentsForTab(numericTabId).push({
+            kind: 'text',
+            name: file.name,
+            textContent,
+            dataUrl,
+            mimeType: file.type || '',
+            size: file.size,
+            source: 'user_upload',
+          });
+        } else {
+          const dataUrl = await readFileAsDataUrl(file);
+          if (generation !== getAttachmentGeneration(numericTabId)) continue;
+          getPendingAttachmentsForTab(numericTabId).push({
+            kind: isImage ? 'image' : 'document',
+            name: file.name,
+            dataUrl,
+            mimeType: file.type || (isPdf ? 'application/pdf' : ''),
+            size: file.size,
+            source: 'user_upload',
+          });
+        }
+      } catch {
+        if (generation === getAttachmentGeneration(numericTabId) && normalizeAttachmentTabId() === numericTabId) {
+          addMessage('system', systemHtml(tSystemHtml('sp.attach.read_failed', { name: file.name })));
+        }
+      }
+    }
+  } finally {
+    updateAttachmentReadCount(numericTabId, -1);
+    if (generation === getAttachmentGeneration(numericTabId) && normalizeAttachmentTabId() === numericTabId) {
+      renderAttachmentPreviews();
+    }
+  }
+}
+
+if (attachBtn && fileAttachInput) {
+  attachBtn.addEventListener('click', () => fileAttachInput.click());
+  fileAttachInput.addEventListener('change', () => {
+    handleAttachedFiles(fileAttachInput.files, currentTabId);
+    fileAttachInput.value = ''; // allow re-selecting the same file
+  });
+}
 
 // --- Event Listeners ---
 
 sendBtn.addEventListener('click', sendMessage);
 
+document.addEventListener('keydown', handleGlobalKeydown, true);
+
+queuedMessagesEl?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-queue-action][data-queue-id]');
+  if (!btn) return;
+  const action = btn.dataset.queueAction;
+  const queueId = btn.dataset.queueId;
+  if (action === 'edit') {
+    editQueuedComposerMessage(currentTabId, queueId);
+  } else if (action === 'delete') {
+    deleteQueuedComposerMessage(currentTabId, queueId);
+  }
+});
+
 inputEl.addEventListener('keydown', (e) => {
+  if (handleSlashCommandKeydown(e)) return;
+  const isPlainArrow = !e.isComposing && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  if (isPlainArrow) {
+    if (e.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab()) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'ArrowUp' && navigateComposerHistory(-1)) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'ArrowDown' && navigateComposerHistory(1)) {
+      e.preventDefault();
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 });
 
-inputEl.addEventListener('input', autoResizeInput);
+inputEl.addEventListener('input', handleInput);
+inputEl.addEventListener('scroll', syncSlashCommandHighlightScroll);
+inputEl.addEventListener('focus', updateSlashCommandAutocomplete);
+inputEl.addEventListener('blur', () => setTimeout(hideSlashCommandAutocomplete, 120));
+document.addEventListener('wb-locale-changed', () => {
+  if (slashCommandMatches.length) renderSlashCommandAutocomplete();
+  renderQueuedComposerMessages();
+  syncSelectionScopeUi();
+  void loadProviders();
+});
+
+async function startNewConversationForTab(tabId) {
+  if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return false;
+  if (!await requestNewConversationConfirmation(tabId)) return false;
+  if (!sameTabId(currentTabId, tabId)) return false;
+  setConversationClearInProgress(tabId, true);
+  try {
+    suppressRunUpdatesForClearedConversation(tabId);
+    clearQueuedComposerMessagesForTab(tabId);
+    clearQueuedForTab(tabId);
+    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
+    if (isTabProcessing(tabId)) await abortRun(tabId);
+    await sendToBackground('clear_conversation', { tabId });
+    await renderClearedConversationForTab(tabId);
+    return true;
+  } finally {
+    setConversationClearInProgress(tabId, false);
+  }
+}
 
 clearBtn.addEventListener('click', async () => {
-  await sendToBackground('clear_conversation', { tabId: currentTabId });
-  messagesEl.innerHTML = '';
-  addMessage('system', t('sp.cleared_message'));
-  apiMutationsAllowed = false;
-  updateApiBadge();
+  await startNewConversationForTab(currentTabId);
+});
+
+selectionScopeNewConversationBtn?.addEventListener('click', async () => {
+  await startNewConversationForTab(currentTabId);
 });
 
 providerSelect.addEventListener('change', async () => {
-  await sendToBackground('set_active_provider', { providerId: providerSelect.value });
-  await testConnection();
+  const providerId = providerSelect.value;
+  if (providerId === MORE_PROVIDERS_OPTION_VALUE) {
+    providerSelect.value = selectedProviderId;
+    syncProviderPickerButton();
+    await openProvidersSettingsPage();
+    return;
+  }
+  syncProviderPickerButton();
+  const requestId = ++providerSelectionRequestId;
+  providerTestRequestId += 1;
+  try {
+    await sendToBackground('set_active_provider', { providerId });
+  } catch (e) {
+    if (requestId === providerSelectionRequestId && providerSelect.value === providerId) {
+      markSelectedProviderFailed(e);
+    }
+    return;
+  }
+  if (requestId !== providerSelectionRequestId || providerSelect.value !== providerId) {
+    const latestProviderId = providerSelect.value;
+    if (latestProviderId && latestProviderId !== providerId) {
+      sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});
+    }
+    return;
+  }
+  selectedProviderId = providerId;
+  await testConnection({ providerId });
+});
+
+providerPickerBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const open = providerPickerMenu?.classList.contains('hidden') !== false;
+  setProviderPickerOpen(open);
+});
+
+// Open with keyboard from the closed trigger (combobox-ish).
+providerPickerBtn?.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    if (providerPickerMenu?.classList.contains('hidden')) {
+      setProviderPickerOpen(true);
+      if (event.key === 'ArrowUp') {
+        const options = getProviderPickerOptions();
+        options[options.length - 1]?.focus();
+      }
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      setProviderPickerOpen(false);
+    }
+  }
+});
+
+providerPickerMenu?.addEventListener('keydown', (event) => {
+  if (providerPickerMenu.classList.contains('hidden')) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveProviderPickerFocus(1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveProviderPickerFocus(-1);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    getProviderPickerOptions()[0]?.focus();
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    const options = getProviderPickerOptions();
+    options[options.length - 1]?.focus();
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    activateFocusedProviderPickerOption();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    setProviderPickerOpen(false);
+    providerPickerBtn?.focus();
+  } else if (event.key === 'Tab') {
+    // Let Tab move focus out; focusout closes the menu.
+    setProviderPickerOpen(false);
+  }
+});
+
+document.addEventListener('click', (event) => {
+  if (!providerPickerMenu || providerPickerMenu.classList.contains('hidden')) return;
+  const root = document.getElementById('provider-picker');
+  if (root && !root.contains(event.target)) setProviderPickerOpen(false);
+});
+
+document.getElementById('provider-picker')?.addEventListener('focusout', (event) => {
+  if (!providerPickerMenu || providerPickerMenu.classList.contains('hidden')) return;
+  const root = document.getElementById('provider-picker');
+  const next = event.relatedTarget;
+  // relatedTarget is null when focus leaves the document; still close.
+  if (!root) return;
+  if (next && root.contains(next)) return;
+  // Defer so option click (focus move then click) still registers.
+  queueMicrotask(() => {
+    if (!providerPickerMenu || providerPickerMenu.classList.contains('hidden')) return;
+    if (root.contains(document.activeElement)) return;
+    setProviderPickerOpen(false);
+  });
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && providerPickerMenu && !providerPickerMenu.classList.contains('hidden')) {
+    setProviderPickerOpen(false);
+    providerPickerBtn?.focus();
+  }
+});
+
+async function openChatHistoryPage() {
+  let url = browser.runtime.getURL('src/ui/history.html');
+  try {
+    const tabInfo = await getTabInfoForHistory(currentTabId);
+    if (tabInfo?.url) {
+      const pageUrl = new URL(url);
+      pageUrl.searchParams.set('url', tabInfo.url);
+      url = pageUrl.toString();
+    }
+  } catch {
+    // Opening the unfiltered history page is still useful.
+  }
+  try {
+    await browser.tabs.create({ url });
+  } catch {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+historyBtn?.addEventListener('click', () => {
+  void openChatHistoryPage();
 });
 
 settingsBtn.addEventListener('click', () => {
   browser.runtime.openOptionsPage();
 });
 
-// --- Language selector (globe icon in header) ---
-const languageSelect = document.getElementById('language-select');
+function standaloneWindowBounds(display = window.screen) {
+  const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);
+  const availableHeight = Math.max(1, Number(display?.availHeight) || 800);
+  const availableLeft = Number(display?.availLeft) || 0;
+  const availableTop = Number(display?.availTop) || 0;
+  const width = Math.min(availableWidth, Math.max(360, Math.round(availableWidth * 0.9)));
+  const height = Math.min(availableHeight, Math.max(560, Math.round(availableHeight * 0.9)));
+  return {
+    width,
+    height,
+    left: availableLeft + Math.round((availableWidth - width) / 2),
+    top: availableTop + Math.round((availableHeight - height) / 2),
+  };
+}
+
+if (expandBtn) {
+  if (isStandaloneWindow) {
+    expandBtn.style.display = 'none';
+  } else {
+    expandBtn.addEventListener('click', () => {
+      const standaloneUrl = browser.runtime.getURL('src/ui/sidepanel.html?mode=ask&standalone=true');
+      browser.windows.create({
+        url: standaloneUrl,
+        type: 'popup',
+        ...standaloneWindowBounds(),
+      });
+    });
+  }
+}
+
+// --- Language picker (compact trigger + accessible custom listbox) ---
 if (languageSelect) {
-  languageSelect.innerHTML = LANGUAGES
-    .map((l) => `<option value="${l.code}">${l.label}</option>`)
-    .join('');
-  languageSelect.value = getLocale();
-  languageSelect.addEventListener('change', () => {
-    setLocale(languageSelect.value);
+  initializeLanguagePicker();
+  languageSelect.addEventListener('change', async () => {
+    await setLocale(languageSelect.value);
     applyDOMTranslations(document);
+    syncLanguagePicker();
+    updateInputPlaceholder();
+    syncSelectionScopeUi();
+    scheduleChatNavigationUpdate();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
+    syncLanguagePicker();
+    updateInputPlaceholder();
+    syncSelectionScopeUi();
+    scheduleChatNavigationUpdate();
   });
 }
 
+languagePickerBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const open = languagePickerMenu?.classList.contains('hidden') !== false;
+  setLanguagePickerOpen(open);
+});
+
+languagePickerBtn?.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    if (languagePickerMenu?.classList.contains('hidden')) {
+      setLanguagePickerOpen(true);
+      if (event.key === 'ArrowUp') {
+        queueMicrotask(() => {
+          const options = getLanguagePickerOptions();
+          options[options.length - 1]?.focus();
+        });
+      }
+    }
+  }
+});
+
+languagePickerMenu?.addEventListener('keydown', (event) => {
+  if (languagePickerMenu.classList.contains('hidden')) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveLanguagePickerFocus(1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveLanguagePickerFocus(-1);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    getLanguagePickerOptions()[0]?.focus();
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    const options = getLanguagePickerOptions();
+    options[options.length - 1]?.focus();
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    activateFocusedLanguagePickerOption();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    setLanguagePickerOpen(false);
+    languagePickerBtn?.focus();
+  } else if (event.key === 'Tab') {
+    setLanguagePickerOpen(false);
+  } else if (!event.ctrlKey && !event.metaKey && !event.altKey && focusLanguagePickerByPrefix(event.key)) {
+    event.preventDefault();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  if (!languagePickerMenu || languagePickerMenu.classList.contains('hidden')) return;
+  const root = document.getElementById('language-picker');
+  if (root && !root.contains(event.target)) setLanguagePickerOpen(false);
+});
+
+document.getElementById('language-picker')?.addEventListener('focusout', (event) => {
+  if (!languagePickerMenu || languagePickerMenu.classList.contains('hidden')) return;
+  const root = document.getElementById('language-picker');
+  const next = event.relatedTarget;
+  if (!root || (next && root.contains(next))) return;
+  queueMicrotask(() => {
+    if (!languagePickerMenu || languagePickerMenu.classList.contains('hidden')) return;
+    if (root.contains(document.activeElement)) return;
+    setLanguagePickerOpen(false);
+  });
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && languagePickerMenu && !languagePickerMenu.classList.contains('hidden')) {
+    setLanguagePickerOpen(false);
+    languagePickerBtn?.focus();
+  }
+});
+
 // --- Start ---
+startInputPlaceholderRotation();
 init();

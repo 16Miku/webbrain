@@ -1,0 +1,20 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 673,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "The current time in Tokyo, Japan, is 5:45 AM (Saturday, February 22, 2025).",
+  "usage": {
+    "prompt_tokens": 9159,
+    "total_tokens": 9189,
+    "completion_tokens": 30,
+    "prompt_tokens_details": null
+  }
+}

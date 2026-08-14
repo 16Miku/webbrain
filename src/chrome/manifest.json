@@ -1,18 +1,21 @@
 {
   "manifest_version": 3,
   "name": "WebBrain",
-  "version": "9.0.10",
+  "version": "30.0.7",
   "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
   "permissions": [
     "sidePanel",
     "activeTab",
+    "contextMenus",
     "tabs",
     "tabGroups",
     "scripting",
     "storage",
     "webNavigation",
+    "webRequest",
     "debugger",
     "downloads",
+    "alarms",
     "unlimitedStorage",
     "offscreen",
     "privateNetworkAccess",
@@ -29,8 +32,6 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src * data: blob:;"
   },
-  "cross_origin_embedder_policy": { "value": "require-corp" },
-  "cross_origin_opener_policy": { "value": "same-origin" },
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
@@ -38,12 +39,33 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "js": ["src/content/file-picker-guard-page.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": [
+        "src/content/rich-text-toolbar-heuristic.js",
         "src/content/accessibility-tree.js",
+        "src/content/teacher-capture.js",
         "src/content/content.js",
-        "src/content/agent-visual-indicator.js"
+        "src/content/agent-visual-indicator.js",
+        "src/content/ollama-launch-handoff.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/selection-shortcut.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/redaction-regions.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
     },
     {
       "matches": [
@@ -75,9 +97,17 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Open WebBrain panel"
+    }
+  },
   "web_accessible_resources": [
     {
-      "resources": ["vendor/pdfjs/pdf.mjs", "vendor/pdfjs/pdf.worker.mjs"],
+      "resources": ["vendor/pdfjs/pdf.mjs", "vendor/pdfjs/pdf.worker.mjs", "skills/*"],
       "matches": ["<all_urls>"]
     }
   ]

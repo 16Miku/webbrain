@@ -1,0 +1,25 @@
+{
+  "id": "039",
+  "user": "verify the form is ready before submitting",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain/releases/new",
+    "title": "New Release"
+  },
+  "latencyMs": 3367,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"get_accessibility_tree\",\n  \"arguments\": {\n    \"filter\": \"visible\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 9155,
+    "total_tokens": 9717,
+    "completion_tokens": 562,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "071",
+  "user": "send it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 15911,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on the New Tab page and don't have any context about what you'd like me to send. Could you clarify what \"it\" refers to? For example:\n\n- An email?\n- A message on a specific site?\n- A form submission?\n- Something else?\n\nLet me know and I'll help you send it.",
+  "usage": {
+    "prompt_tokens": 17479,
+    "completion_tokens": 134,
+    "total_tokens": 17613,
+    "cost": 0.00090558,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00090558,
+      "upstream_inference_prompt_cost": 0.00075148,
+      "upstream_inference_completions_cost": 0.0001541
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

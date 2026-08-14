@@ -1,0 +1,38 @@
+{
+  "runTag": "2026-06-19-q4-legacy-skip-parser",
+  "model": "north-mini-code-1.0-q4_k_m",
+  "browser": "chrome",
+  "base": "http://127.0.0.1:8081",
+  "saveRequest": false,
+  "tier": null,
+  "chatTemplateCompat": "alternating",
+  "structuredToolsSent": false,
+  "freeze": {
+    "path": "test/llm/freeze/baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 330208,
+  "errors": 0,
+  "withToolCall": 93,
+  "withToolCallFromContent": 93,
+  "byTool": {
+    "navigate": 13,
+    "get_accessibility_tree": 59,
+    "list_downloads": 2,
+    "new_tab": 3,
+    "research_url": 1,
+    "read_page": 6,
+    "(no_tool_call)": 7,
+    "download_file": 1,
+    "download_social_media": 2,
+    "scroll": 1,
+    "screenshot": 1,
+    "get_selection": 1,
+    "get_interactive_elements": 2,
+    "execute_js": 1
+  }
+}

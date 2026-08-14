@@ -1,0 +1,37 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 11885,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on the New Tab page and I don't see any product or item to buy. Could you tell me what you'd like me to purchase? For example:\n\n- A specific product on a website (share the link or describe it)\n- Something from your cart on a shopping site\n- A subscription or service\n\nLet me know the details and I'll help you buy it!",
+  "usage": {
+    "prompt_tokens": 17479,
+    "completion_tokens": 147,
+    "total_tokens": 17626,
+    "cost": 0.00092053,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00092053,
+      "upstream_inference_prompt_cost": 0.00075148,
+      "upstream_inference_completions_cost": 0.00016905
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

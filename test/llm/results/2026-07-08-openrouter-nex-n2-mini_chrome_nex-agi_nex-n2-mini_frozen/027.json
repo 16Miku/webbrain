@@ -1,0 +1,38 @@
+{
+  "id": "027",
+  "user": "tldr",
+  "mode": "act",
+  "tab": {
+    "url": "https://en.wikipedia.org/wiki/Closure_(computer_programming)",
+    "title": "Closure (computer programming) — Wikipedia"
+  },
+  "latencyMs": 2263,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "A **closure** is a function that “remembers” variables from the place where it was created, even after that place has finished running.\n\nExample:\n\n```js\nfunction makeGreeting(name) {\n  return function () {\n    return `Hello, ${name}`;\n  };\n}\n\nconst sayHi = makeGreeting(\"Ada\");\n\nsayHi(); // \"Hello, Ada\"\n```\n\nEven though `makeGreeting()` has already finished, the inner function still remembers `name`.\n\nIn short: **a closure is a function plus the lexical environment it was created in.**",
+  "usage": {
+    "prompt_tokens": 17468,
+    "completion_tokens": 130,
+    "total_tokens": 17598,
+    "cost": 0.0004497,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0004497,
+      "upstream_inference_prompt_cost": 0.0004367,
+      "upstream_inference_completions_cost": 0.000013
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

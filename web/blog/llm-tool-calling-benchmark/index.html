@@ -7,48 +7,89 @@
   <meta name="description" content="We benchmarked 13 local and API LLMs on 100 real browser-agent tool-calling tasks against both consensus voting and Claude Sonnet 4.6. The winner depends on which question you ask.">
   <meta name="keywords" content="LLM benchmark, tool calling, browser agent, Qwen 3.6, Claude Sonnet, consensus voting, WebBrain, self-hosted LLM, MoE, Gemma 4">
   <meta property="og:title" content="13 LLMs, 100 Browser Tasks: Which Model Picks the Right Tool?">
-  <meta property="og:description" content="Benchmarking 13 models on real browser-agent tasks against consensus voting and Claude Sonnet 4.6. The consensus winner isn't the Sonnet-match winner.">
+  <meta property="og:description" content="Benchmarking 13 models on real browser-agent tasks against consensus voting and Claude Sonnet 4.6. The consensus winner isn&#39;t the Sonnet-match winner.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://webbrain.one/blog/llm-tool-calling-benchmark">
-  <meta property="og:image" content="https://webbrain.one/og-image.svg">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="13 LLMs, 100 Browser Tasks: Which Model Picks the Right Tool?">
   <meta name="twitter:description" content="Consensus winner ≠ Sonnet-match winner. Full data and interactive explorer included.">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="canonical" href="https://webbrain.one/blog/llm-tool-calling-benchmark">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
   <link rel="alternate" hreflang="en" href="https://webbrain.one/">
   <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
   <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
   <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
   <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
   <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "BlogPosting",
-    "headline": "13 LLMs, 100 Browser Tasks, Two Baselines: Which Model Actually Picks the Right Tool?",
-    "description": "Benchmarking 13 local and API LLMs on 100 real browser-agent tool-calling tasks against consensus voting and Claude Sonnet 4.6.",
-    "author": { "@type": "Person", "name": "Emre Sokullu", "url": "https://github.com/esokullu" },
-    "datePublished": "2026-05-23",
-    "image": "https://webbrain.one/og-image.svg",
-    "publisher": { "@type": "Organization", "name": "WebBrain", "url": "https://webbrain.one" },
-    "mainEntityOfPage": { "@type": "WebPage", "@id": "https://webbrain.one/blog/llm-tool-calling-benchmark" }
-  }
-  </script>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
       --surface: #161d2e;
       --border: rgba(255,255,255,0.07);
       --text: #e4e4ec;
-      --text-dim: #9aa0b5;
+      --text-dim: #8b8fa4;
       --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
       --accent2: #a78bfa;
-      --good: #22c55e;
-      --warn: #eab308;
-      --bad: #ef4444;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
       --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
     }
     html { scroll-behavior: smooth; }
     body {
@@ -56,284 +97,527 @@
       background: var(--bg);
       color: var(--text);
       line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
     }
     a { color: var(--accent2); text-decoration: none; }
     a:hover { text-decoration: underline; }
-
-    .glow-bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
-    .glow-bg::before, .glow-bg::after {
-      content: ''; position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.35;
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
     }
-    .glow-bg::before { width: 500px; height: 500px; background: var(--accent); top: -200px; left: -150px; }
-    .glow-bg::after  { width: 500px; height: 500px; background: var(--accent2); bottom: -200px; right: -150px; opacity: 0.25; }
-
-    .nav {
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
       border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
     }
-    .nav a { color: var(--text); }
-
-    main {
+    .nav-inner {
       max-width: var(--max-w);
       margin: 0 auto;
-      padding: 56px 24px 80px;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
     }
     .meta {
       font-size: 13px;
       color: var(--text-dim);
-      margin-bottom: 10px;
-    }
-    h1 {
-      font-size: 36px;
-      line-height: 1.2;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin: 0 0 14px;
-    }
-    .lede {
-      font-size: 19px;
-      color: var(--text-dim);
-      margin-bottom: 34px;
-      line-height: 1.6;
+      margin-bottom: 12px;
+      letter-spacing: 0;
     }
     h2 {
       font-size: 24px;
-      font-weight: 600;
-      margin: 40px 0 14px;
-      letter-spacing: -0.01em;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
     }
     h3 {
       font-size: 18px;
       font-weight: 600;
-      margin: 28px 0 10px;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
     }
     p { margin-bottom: 16px; }
-    ul, ol { margin: 0 0 18px 22px; }
+    ul, ol { margin: 0 0 16px 20px; }
     li { margin-bottom: 6px; }
-
-    .callout {
-      background: rgba(108,99,255,0.1);
-      border: 1px solid rgba(108,99,255,0.28);
-      border-radius: 12px;
-      padding: 16px 18px;
-      margin: 20px 0;
-      font-size: 15px;
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
     }
-
-    .table-wrap {
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
       overflow-x: auto;
       margin: 20px 0;
-      border: 1px solid var(--border);
-      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
     }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
     table {
       width: 100%;
+      min-width: 560px;
       border-collapse: collapse;
-      font-size: 13px;
+      font-size: 14px;
     }
     th, td {
-      padding: 10px 12px;
       text-align: left;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--border);
-      white-space: nowrap;
+      vertical-align: top;
     }
     th {
-      background: rgba(22,29,46,0.9);
       color: var(--text-dim);
       font-weight: 600;
       font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
     }
-    td { vertical-align: middle; }
-    tr:hover td { background: rgba(108,99,255,0.04); }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .win { color: var(--good); font-weight: 600; }
-    .lose { color: var(--bad); }
-    .meh { color: var(--warn); }
-    .ref-row td { background: rgba(167,139,250,0.1); }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 11px;
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
       font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
     }
-    .badge-good { background: rgba(34,197,94,0.15); color: #86efac; }
-    .badge-warn { background: rgba(234,179,8,0.15); color: #fde047; }
-    .badge-bad  { background: rgba(239,68,68,0.15); color: #fca5a5; }
-
-    blockquote {
-      border-left: 3px solid var(--accent);
-      padding: 8px 0 8px 18px;
-      margin: 18px 0;
+    .post-excerpt {
       color: var(--text-dim);
       font-size: 15px;
+      line-height: 1.6;
     }
-
-    code {
-      background: rgba(255,255,255,0.06);
-      padding: 2px 6px;
-      border-radius: 4px;
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
       font-size: 13px;
-      font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
     }
-
-    .author-box {
-      margin-top: 48px;
-      padding-top: 20px;
-      border-top: 1px solid var(--border);
-      font-size: 14px;
-      color: var(--text-dim);
-    }
-    .foot {
-      border-top: 1px solid var(--border);
-      margin-top: 52px;
-      padding-top: 20px;
-      color: var(--text-dim);
-      font-size: 14px;
-    }
-
-    @media (max-width: 640px) {
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
       h1 { font-size: 28px; }
       .lede { font-size: 16px; }
-      main { padding: 40px 18px 60px; }
-      th, td { padding: 8px 8px; font-size: 12px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
     }
   </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "13 LLMs, 100 browser tasks, two baselines: which model actually picks the right tool?",
+  "description": "We benchmarked 13 local and API LLMs on 100 real browser-agent tool-calling tasks against both consensus voting and Claude Sonnet 4.6. The winner depends on which question you ask.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-05-23",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/llm-tool-calling-benchmark"
+  }
+}
+  </script>
 </head>
 <body>
   <div class="glow-bg"></div>
-  <div class="nav"><a href="/blog">&larr; Blog</a></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
 
-  <main>
+  <article>
     <div class="meta">May 23, 2026 &middot; 8 min read &middot; <a href="/blog">&larr; All posts</a></div>
     <h1>13 LLMs, 100 browser tasks, two baselines: which model actually picks the right tool?</h1>
-    <p class="lede">Our previous blog posts focused on vision &mdash; which model reads a screenshot best. This one is about the other half of a browser agent: <strong>tool use and reasoning</strong>. We ran 13 models through 100 real WebBrain prompts and scored them two ways: against majority-vote consensus and against Claude Sonnet 4.6. The consensus winner is not the Sonnet-match winner &mdash; and that gap tells you something useful about what &ldquo;correct&rdquo; means for tool calling.</p>
-
-    <h2>The setup</h2>
-    <p>WebBrain routes browser automation through tool calls &mdash; <code>click</code>, <code>type</code>, <code>scroll</code>, <code>navigate</code>, and so on. The planner LLM sees a page description and a user prompt, then picks a tool and its arguments. We collected 100 representative prompts from real sessions and ran them through 13 models, most self-hosted on local hardware via llama.cpp and vLLM, plus one API model (MiniMax M2.7 through OpenRouter).</p>
-    <p>Each model got the same system prompt, the same page context, and the same user instruction. We recorded the first tool pick, latency, token counts, and cost.</p>
-
-    <h2>Two ways to score</h2>
-    <p>There is no hand-labeled ground truth for these 100 prompts. Instead we used two reference signals:</p>
-    <ul>
-      <li><strong>Consensus voting</strong> &mdash; for each prompt, take the tool that the majority of all 13 models chose. Then score each model by how often it agreed with the majority.</li>
-      <li><strong>Sonnet 4.6 match</strong> &mdash; use Claude Sonnet 4.6 (via API) as a strong reference. Score each model by how often its pick matched Sonnet&rsquo;s pick.</li>
-    </ul>
-    <p>Neither is perfect. Consensus rewards popularity, not correctness &mdash; if most models make the same mistake, the consensus is wrong. Sonnet is a strong model but not infallible, and it may have stylistic preferences that differ from equally valid alternatives. Using both baselines surfaces models that are <em>robust</em> (agree with the crowd) versus models that are <em>aligned with a strong reference</em> (track Sonnet&rsquo;s judgment).</p>
-
-    <h2>Results: consensus leaderboard</h2>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Model</th>
-            <th class="num">Agreement</th>
-            <th class="num">Tool-call rate</th>
-            <th class="num">Valid-tool rate</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>1</td><td><strong>Qwen 3.6-35B-A3B</strong></td><td class="num win">94.2%</td><td class="num">93%</td><td class="num">93%</td></tr>
-          <tr><td>2</td><td>Qwen 3.6-27B</td><td class="num">87.0%</td><td class="num">87%</td><td class="num">87%</td></tr>
-          <tr><td>3</td><td>Intel Gemma 4-31B-it-int4</td><td class="num">87.3%</td><td class="num">87%</td><td class="num">87%</td></tr>
-          <tr><td>4</td><td>Qwen 3.5-4B</td><td class="num">85.8%</td><td class="num">85%</td><td class="num">85%</td></tr>
-          <tr><td>5</td><td>MiniMax M2.7</td><td class="num">84.1%</td><td class="num">90%</td><td class="num">90%</td></tr>
-          <tr><td>6</td><td>Gemma 4-26B-A4B</td><td class="num">81.7%</td><td class="num">89%</td><td class="num">89%</td></tr>
-          <tr><td>7</td><td>Gemma 4-E2B</td><td class="num">81.5%</td><td class="num">85%</td><td class="num">84%</td></tr>
-          <tr><td>8</td><td>Gemma 4-E4B</td><td class="num">80.5%</td><td class="num">85%</td><td class="num">85%</td></tr>
-          <tr><td>9</td><td>Qwen 3.5-9B</td><td class="num">80.0%</td><td class="num">82%</td><td class="num">82%</td></tr>
-          <tr><td>10</td><td>Browser-Use Qwen 30B-A3B</td><td class="num">78.2%</td><td class="num">84%</td><td class="num">84%</td></tr>
-          <tr><td>11</td><td>Nemotron Omni 30B</td><td class="num meh">52.8%</td><td class="num">76%</td><td class="num">75%</td></tr>
-          <tr><td>12</td><td>Qwen 3.5-0.8B</td><td class="num lose">48.8%</td><td class="num">88%</td><td class="num">88%</td></tr>
-          <tr><td>13</td><td>Qwen 3.5-2B</td><td class="num lose">43.0%</td><td class="num">82%</td><td class="num">82%</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p><strong>Both Qwen 3.6 models are excellent here.</strong> The 35B-A3B MoE dominates consensus at 94%, and the dense 27B is close behind at 87%. The MoE architecture matters for deployment: 35B total but only 3B active means it runs on modest hardware while drawing on a much larger parameter pool. Intel&rsquo;s Gemma 4 int4 quant also lands in the top tier. Below that, most models cluster in the 78&ndash;86% range. The sub-4B models (0.8B and 2B) fall apart &mdash; they still <em>make</em> tool calls at high rates, but they pick the wrong tool nearly half the time.</p>
-
-    <h2>Results: Sonnet 4.6 match</h2>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Model</th>
-            <th class="num">Match (all)</th>
-            <th class="num">Match (tool&nbsp;only)</th>
-            <th class="num">Tool-call rate</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr class="ref-row"><td>&mdash;</td><td><strong>Claude Sonnet 4.6</strong> <span class="badge badge-good">reference</span></td><td class="num">100%</td><td class="num">100%</td><td class="num">92%</td></tr>
-          <tr><td>1</td><td><strong>Qwen 3.6-27B</strong></td><td class="num win">77.0%</td><td class="num">77.2%</td><td class="num">90%</td></tr>
-          <tr><td>2</td><td>MiniMax M2.7</td><td class="num">77.0%</td><td class="num">76.1%</td><td class="num">90%</td></tr>
-          <tr><td>3</td><td>Intel Gemma 4-31B-it-int4</td><td class="num">74.0%</td><td class="num">72.8%</td><td class="num">87%</td></tr>
-          <tr><td>4</td><td>Qwen 3.5-4B</td><td class="num">73.0%</td><td class="num">71.7%</td><td class="num">85%</td></tr>
-          <tr><td>5</td><td>Gemma 4-26B-A4B</td><td class="num">71.0%</td><td class="num">70.7%</td><td class="num">89%</td></tr>
-          <tr><td>6</td><td>Qwen 3.6-35B-A3B</td><td class="num meh">70.0%</td><td class="num">70.7%</td><td class="num">93%</td></tr>
-          <tr><td>7</td><td>Qwen 3.5-9B</td><td class="num">70.0%</td><td class="num">69.6%</td><td class="num">82%</td></tr>
-          <tr><td>8</td><td>Gemma 4-E4B</td><td class="num">68.0%</td><td class="num">68.5%</td><td class="num">85%</td></tr>
-          <tr><td>9</td><td>Nemotron Omni 30B</td><td class="num">66.0%</td><td class="num">66.3%</td><td class="num">76%</td></tr>
-          <tr><td>10</td><td>Gemma 4-E2B</td><td class="num">60.0%</td><td class="num">59.7%</td><td class="num">85%</td></tr>
-          <tr><td>11</td><td>Browser-Use Qwen 30B-A3B</td><td class="num">59.0%</td><td class="num">58.7%</td><td class="num">84%</td></tr>
-          <tr><td>12</td><td>Qwen 3.5-0.8B</td><td class="num lose">53.0%</td><td class="num">52.2%</td><td class="num">88%</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>Here the leaderboard reshuffles. <strong>Qwen 3.6-27B</strong> (the dense model, not the MoE) takes the top spot at 77% match, tied with MiniMax &mdash; making the 27B the more accurate of the two Qwen models when measured against a frontier reference. The consensus champion, Qwen 3.6-35B-A3B, drops to 6th place at 70%.</p>
-
-    <h2>The interesting gap</h2>
-    <p>The same model can rank 1st on consensus and 6th on Sonnet match. What&rsquo;s going on?</p>
-    <p>Qwen 3.6-35B-A3B is the model that other models most agree with &mdash; it anchors the consensus. But Sonnet 4.6 often makes <em>different</em> choices that the 35B MoE doesn&rsquo;t follow. The dense 27B tracks Sonnet more closely, possibly because Sonnet is also a dense model and they share similar reasoning patterns for ambiguous cases.</p>
-
-    <div class="callout">
-      <strong>What this means in practice:</strong> if you're building a self-hosted browser agent and you want the model that makes the safest, most predictable picks, Qwen 3.6-35B-A3B is your best bet &mdash; it's the one everyone else agrees with. If you want the model whose judgment most resembles a frontier API model, the dense Qwen 3.6-27B is closer to Sonnet&rsquo;s reasoning. Both are valid strategies. Pick based on whether you value consensus safety or frontier alignment.
-    </div>
-
-    <h2>Other findings</h2>
-
-    <h3>Sub-4B Qwen models are not ready for tool calling</h3>
-    <p>Qwen 3.5-0.8B and 3.5-2B both maintain tool-call rates above 82% &mdash; they <em>try</em> to call tools. But they pick the wrong one 43&ndash;53% of the time. High tool-call rate with low accuracy is worse than refusing to call, because the agent acts confidently on the wrong action.</p>
-
-    <h3>Gemma 4 is blazing fast</h3>
-    <p>Gemma 4 models are the latency winners across the board. Median response times sit around 450&ndash;630 ms on llama.cpp &mdash; the fastest in the entire test. Qwen models are noticeably slower, with the dense 27B at ~10.3 seconds being the slowest by far. We did not apply any inference optimization (speculative decoding, continuous batching, quantization tuning) to the Qwen models, so there is headroom to close that gap. But out of the box, if you need sub-second tool routing, Gemma 4 is the answer.</p>
-
-    <h3>MiniMax M2.7: strong but with trade-offs</h3>
-    <p>MiniMax M2.7 ties for first on Sonnet match at 77% and scores well on consensus. It&rsquo;s a genuinely good tool-calling model. But it has no vision capability, and it&rsquo;s a much larger model parameter-wise &mdash; you can&rsquo;t self-host it on consumer hardware. For a browser agent that needs both tool routing <em>and</em> screenshot understanding, MiniMax can only fill one of those roles. It cost $0.16 for the full 100-prompt run via OpenRouter, which is cheap for an API but infinitely more than the $0 self-hosted models.</p>
-
-    <h3>Nemotron Omni 30B is solid</h3>
-    <p>NVIDIA&rsquo;s Nemotron Omni 30B-A3B doesn&rsquo;t top any leaderboard here, but it&rsquo;s a reliable mid-tier pick at 53% consensus and 66% Sonnet match. Its lower tool-call rate (76%) means it&rsquo;s more conservative about routing &mdash; it sometimes declines to pick a tool rather than guessing wrong. For use cases where false positives are costly, that caution has value.</p>
-
-    <h3>Qwen 3.5-4B: the biggest surprise in the benchmark</h3>
-    <p>This is the result that genuinely surprised us. At just 4B parameters, Qwen 3.5-4B hits 86% consensus agreement and 73% Sonnet match &mdash; competitive with models 7&times; its size. It outperforms the 9B Qwen on both metrics. It beats every Gemma 4 variant on consensus. It even edges out MiniMax on Sonnet match. For the amount of VRAM it uses (&le;8 GB), the tool-calling quality is remarkable. If you are building a browser agent on constrained hardware, this tiny model deserves serious consideration.</p>
-
-    <h3>Sub-2B: Gemma 4-E2B is the best of the small</h3>
-    <p>In the smallest weight class (under 2B parameters), Gemma 4-E2B clearly beats both Qwen 3.5-0.8B and 3.5-2B. It reaches 82% consensus agreement where the two Qwen sub-2B models manage only 43&ndash;49%. The E2B also has the fastest latency in the entire benchmark. It&rsquo;s not accurate enough to trust unsupervised, but if you need a tiny model for pre-filtering or speculative routing on extremely limited hardware, Gemma 4-E2B is the only sub-2B option worth considering.</p>
-
-    <h2>Explore the raw data</h2>
-    <p>All benchmark data is open. The repo contains both spreadsheets and an interactive HTML explorer that lets you drill into per-task differences:</p>
-    <ul>
-      <li><a href="https://github.com/esokullu/webbrain/tree/main/test/llm/analysis" target="_blank" rel="noopener">github.com/esokullu/webbrain/tree/main/test/llm/analysis</a></li>
-    </ul>
-    <p>Files included:</p>
-    <ul>
-      <li><code>llm_browser_agent_vs_consensus.xlsx</code> &mdash; full consensus benchmark with per-task breakdowns</li>
-      <li><code>llm_browser_agent_vs_sonnet.xlsx</code> &mdash; Sonnet 4.6 comparison with per-task breakdowns</li>
-      <li><code>llm_browser_agent_vs_sonnet_simple.html</code> &mdash; interactive leaderboard and per-task matrix (open locally in a browser)</li>
-    </ul>
-
-    <h2>What we&rsquo;re doing with this</h2>
-    <p>WebBrain already uses Qwen 3.6-35B-A3B as the default planner for self-hosted deployments. This benchmark confirms that choice for consensus-safe routing. We are also exploring a hybrid approach: use the MoE for fast routing on clear-cut prompts, and fall back to the dense 27B (or an API call to Sonnet) for ambiguous cases where frontier judgment matters more than speed.</p>
-    <p>The per-task data also revealed specific prompt categories where all local models diverge from Sonnet &mdash; these are candidates for improved system prompts or few-shot examples in the tool-calling pipeline.</p>
+    <p class="lede">Our previous blog posts focused on vision — which model reads a screenshot best. This one is about the other half of a browser agent: <strong>tool use and reasoning</strong>. We ran 13 models through 100 real WebBrain prompts and scored them two ways: against majority-vote consensus and against Claude Sonnet 4.6. The consensus winner is not the Sonnet-match winner — and that gap tells you something useful about what “correct” means for tool calling.</p>
+<h2 id="the-setup">The setup</h2>
+<p>WebBrain routes browser automation through tool calls — <code>click</code>, <code>type</code>, <code>scroll</code>, <code>navigate</code>, and so on. The planner LLM sees a page description and a user prompt, then picks a tool and its arguments. We collected 100 representative prompts from real sessions and ran them through 13 models, most self-hosted on local hardware via llama.cpp and vLLM, plus one API model (MiniMax M2.7 through OpenRouter).</p>
+<p>Each model got the same system prompt, the same page context, and the same user instruction. We recorded the first tool pick, latency, token counts, and cost.</p>
+<h2 id="two-ways-to-score">Two ways to score</h2>
+<p>There is no hand-labeled ground truth for these 100 prompts. Instead we used two reference signals:</p>
+<ul><li><strong>Consensus voting</strong> — for each prompt, take the tool that the majority of all 13 models chose. Then score each model by how often it agreed with the majority.</li><li><strong>Sonnet 4.6 match</strong> — use Claude Sonnet 4.6 (via API) as a strong reference. Score each model by how often its pick matched Sonnet’s pick.</li></ul>
+<p>Neither is perfect. Consensus rewards popularity, not correctness — if most models make the same mistake, the consensus is wrong. Sonnet is a strong model but not infallible, and it may have stylistic preferences that differ from equally valid alternatives. Using both baselines surfaces models that are <em>robust</em> (agree with the crowd) versus models that are <em>aligned with a strong reference</em> (track Sonnet’s judgment).</p>
+<h2 id="results-consensus-leaderboard">Results: consensus leaderboard</h2>
+<div class="table-wrap"><table><thead><tr><th>#</th><th>Model</th><th>Agreement</th><th>Tool-call rate</th><th>Valid-tool rate</th></tr></thead><tbody><tr><td>1</td><td><strong>Qwen 3.6-35B-A3B</strong></td><td>94.2%</td><td>93%</td><td>93%</td></tr><tr><td>2</td><td>Qwen 3.6-27B</td><td>87.0%</td><td>87%</td><td>87%</td></tr><tr><td>3</td><td>Intel Gemma 4-31B-it-int4</td><td>87.3%</td><td>87%</td><td>87%</td></tr><tr><td>4</td><td>Qwen 3.5-4B</td><td>85.8%</td><td>85%</td><td>85%</td></tr><tr><td>5</td><td>MiniMax M2.7</td><td>84.1%</td><td>90%</td><td>90%</td></tr><tr><td>6</td><td>Gemma 4-26B-A4B</td><td>81.7%</td><td>89%</td><td>89%</td></tr><tr><td>7</td><td>Gemma 4-E2B</td><td>81.5%</td><td>85%</td><td>84%</td></tr><tr><td>8</td><td>Gemma 4-E4B</td><td>80.5%</td><td>85%</td><td>85%</td></tr><tr><td>9</td><td>Qwen 3.5-9B</td><td>80.0%</td><td>82%</td><td>82%</td></tr><tr><td>10</td><td>Browser-Use Qwen 30B-A3B</td><td>78.2%</td><td>84%</td><td>84%</td></tr><tr><td>11</td><td>Nemotron Omni 30B</td><td>52.8%</td><td>76%</td><td>75%</td></tr><tr><td>12</td><td>Qwen 3.5-0.8B</td><td>48.8%</td><td>88%</td><td>88%</td></tr><tr><td>13</td><td>Qwen 3.5-2B</td><td>43.0%</td><td>82%</td><td>82%</td></tr></tbody></table></div>
+<p><strong>Both Qwen 3.6 models are excellent here.</strong> The 35B-A3B MoE dominates consensus at 94%, and the dense 27B is close behind at 87%. The MoE architecture matters for deployment: 35B total but only 3B active means it runs on modest hardware while drawing on a much larger parameter pool. Intel’s Gemma 4 int4 quant also lands in the top tier. Below that, most models cluster in the 78–86% range. The sub-4B models (0.8B and 2B) fall apart — they still <em>make</em> tool calls at high rates, but they pick the wrong tool nearly half the time.</p>
+<h2 id="results-sonnet-4-6-match">Results: Sonnet 4.6 match</h2>
+<div class="table-wrap"><table><thead><tr><th>#</th><th>Model</th><th>Match (all)</th><th>Match (tool only)</th><th>Tool-call rate</th></tr></thead><tbody><tr><td>—</td><td><strong>Claude Sonnet 4.6</strong> <span class="badge badge-good">reference</span></td><td>100%</td><td>100%</td><td>92%</td></tr><tr><td>1</td><td><strong>Qwen 3.6-27B</strong></td><td>77.0%</td><td>77.2%</td><td>90%</td></tr><tr><td>2</td><td>MiniMax M2.7</td><td>77.0%</td><td>76.1%</td><td>90%</td></tr><tr><td>3</td><td>Intel Gemma 4-31B-it-int4</td><td>74.0%</td><td>72.8%</td><td>87%</td></tr><tr><td>4</td><td>Qwen 3.5-4B</td><td>73.0%</td><td>71.7%</td><td>85%</td></tr><tr><td>5</td><td>Gemma 4-26B-A4B</td><td>71.0%</td><td>70.7%</td><td>89%</td></tr><tr><td>6</td><td>Qwen 3.6-35B-A3B</td><td>70.0%</td><td>70.7%</td><td>93%</td></tr><tr><td>7</td><td>Qwen 3.5-9B</td><td>70.0%</td><td>69.6%</td><td>82%</td></tr><tr><td>8</td><td>Gemma 4-E4B</td><td>68.0%</td><td>68.5%</td><td>85%</td></tr><tr><td>9</td><td>Nemotron Omni 30B</td><td>66.0%</td><td>66.3%</td><td>76%</td></tr><tr><td>10</td><td>Gemma 4-E2B</td><td>60.0%</td><td>59.7%</td><td>85%</td></tr><tr><td>11</td><td>Browser-Use Qwen 30B-A3B</td><td>59.0%</td><td>58.7%</td><td>84%</td></tr><tr><td>12</td><td>Qwen 3.5-0.8B</td><td>53.0%</td><td>52.2%</td><td>88%</td></tr></tbody></table></div>
+<p>Here the leaderboard reshuffles. <strong>Qwen 3.6-27B</strong> (the dense model, not the MoE) takes the top spot at 77% match, tied with MiniMax — making the 27B the more accurate of the two Qwen models when measured against a frontier reference. The consensus champion, Qwen 3.6-35B-A3B, drops to 6th place at 70%.</p>
+<h2 id="the-interesting-gap">The interesting gap</h2>
+<p>The same model can rank 1st on consensus and 6th on Sonnet match. What’s going on?</p>
+<p>Qwen 3.6-35B-A3B is the model that other models most agree with — it anchors the consensus. But Sonnet 4.6 often makes <em>different</em> choices that the 35B MoE doesn’t follow. The dense 27B tracks Sonnet more closely, possibly because Sonnet is also a dense model and they share similar reasoning patterns for ambiguous cases.</p>
+<div class="callout">
+<strong>What this means in practice:</strong> if you're building a self-hosted browser agent and you want the model that makes the safest, most predictable picks, Qwen 3.6-35B-A3B is your best bet — it's the one everyone else agrees with. If you want the model whose judgment most resembles a frontier API model, the dense Qwen 3.6-27B is closer to Sonnet’s reasoning. Both are valid strategies. Pick based on whether you value consensus safety or frontier alignment.
+</div>
+<h2 id="other-findings">Other findings</h2>
+<h3 id="sub4b-qwen-models-are-not-ready-for-tool-calling">Sub-4B Qwen models are not ready for tool calling</h3>
+<p>Qwen 3.5-0.8B and 3.5-2B both maintain tool-call rates above 82% — they <em>try</em> to call tools. But they pick the wrong one 43–53% of the time. High tool-call rate with low accuracy is worse than refusing to call, because the agent acts confidently on the wrong action.</p>
+<h3 id="gemma-4-is-blazing-fast">Gemma 4 is blazing fast</h3>
+<p>Gemma 4 models are the latency winners across the board. Median response times sit around 450–630 ms on llama.cpp — the fastest in the entire test. Qwen models are noticeably slower, with the dense 27B at ~10.3 seconds being the slowest by far. We did not apply any inference optimization (speculative decoding, continuous batching, quantization tuning) to the Qwen models, so there is headroom to close that gap. But out of the box, if you need sub-second tool routing, Gemma 4 is the answer.</p>
+<h3 id="minimax-m2-7-strong-but-with-tradeoffs">MiniMax M2.7: strong but with trade-offs</h3>
+<p>MiniMax M2.7 ties for first on Sonnet match at 77% and scores well on consensus. It’s a genuinely good tool-calling model. But it has no vision capability, and it’s a much larger model parameter-wise — you can’t self-host it on consumer hardware. For a browser agent that needs both tool routing <em>and</em> screenshot understanding, MiniMax can only fill one of those roles. It cost $0.16 for the full 100-prompt run via OpenRouter, which is cheap for an API but infinitely more than the $0 self-hosted models.</p>
+<h3 id="nemotron-omni-30b-is-solid">Nemotron Omni 30B is solid</h3>
+<p>NVIDIA’s Nemotron Omni 30B-A3B doesn’t top any leaderboard here, but it’s a reliable mid-tier pick at 53% consensus and 66% Sonnet match. Its lower tool-call rate (76%) means it’s more conservative about routing — it sometimes declines to pick a tool rather than guessing wrong. For use cases where false positives are costly, that caution has value.</p>
+<h3 id="qwen-3-54b-the-biggest-surprise-in-the-benchmark">Qwen 3.5-4B: the biggest surprise in the benchmark</h3>
+<p>This is the result that genuinely surprised us. At just 4B parameters, Qwen 3.5-4B hits 86% consensus agreement and 73% Sonnet match — competitive with models 7× its size. It outperforms the 9B Qwen on both metrics. It beats every Gemma 4 variant on consensus. It even edges out MiniMax on Sonnet match. For the amount of VRAM it uses (≤8 GB), the tool-calling quality is remarkable. If you are building a browser agent on constrained hardware, this tiny model deserves serious consideration.</p>
+<h3 id="sub2b-gemma-4e2b-is-the-best-of-the-small">Sub-2B: Gemma 4-E2B is the best of the small</h3>
+<p>In the smallest weight class (under 2B parameters), Gemma 4-E2B clearly beats both Qwen 3.5-0.8B and 3.5-2B. It reaches 82% consensus agreement where the two Qwen sub-2B models manage only 43–49%. The E2B also has the fastest latency in the entire benchmark. It’s not accurate enough to trust unsupervised, but if you need a tiny model for pre-filtering or speculative routing on extremely limited hardware, Gemma 4-E2B is the only sub-2B option worth considering.</p>
+<h2 id="explore-the-raw-data">Explore the raw data</h2>
+<p>All benchmark data is open. The repo contains both spreadsheets and an interactive HTML explorer that lets you drill into per-task differences:</p>
+<ul><li><a href="https://github.com/webbrain-one/webbrain/tree/main/test/llm/analysis" target="_blank" rel="noopener">github.com/webbrain-one/webbrain/tree/main/test/llm/analysis</a></li></ul>
+<p>Files included:</p>
+<ul><li><code>llm_browser_agent_vs_consensus.xlsx</code> — full consensus benchmark with per-task breakdowns</li><li><code>llm_browser_agent_vs_sonnet.xlsx</code> — Sonnet 4.6 comparison with per-task breakdowns</li><li><code>llm_browser_agent_vs_sonnet_simple.html</code> — interactive leaderboard and per-task matrix (open locally in a browser)</li></ul>
+<h2 id="what-we-re-doing-with-this">What we’re doing with this</h2>
+<p>WebBrain already uses Qwen 3.6-35B-A3B as the default planner for self-hosted deployments. This benchmark confirms that choice for consensus-safe routing. We are also exploring a hybrid approach: use the MoE for fast routing on clear-cut prompts, and fall back to the dense 27B (or an API call to Sonnet) for ambiguous cases where frontier judgment matters more than speed.</p>
+<p>The per-task data also revealed specific prompt categories where all local models diverge from Sonnet — these are candidates for improved system prompts or few-shot examples in the tool-calling pipeline.</p>
+<p>Tags: #LLM #Benchmark #ToolCalling #BrowserAgent</p>
 
     <div class="author-box">
-      Written by <a href="https://github.com/esokullu" target="_blank" rel="noopener">Emre Sokullu</a>
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
     </div>
-    <div class="foot">Tags: #LLM #Benchmark #ToolCalling #BrowserAgent</div>
-  </main>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
 </body>
 </html>

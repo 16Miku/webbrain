@@ -1,0 +1,27 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3362,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com/search?q=%C2%A0webbrain+chrome"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.google.com/search?q=%C2%A0webbrain+chrome\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 328,
+    "prompt_tokens": 9191,
+    "total_tokens": 9519,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

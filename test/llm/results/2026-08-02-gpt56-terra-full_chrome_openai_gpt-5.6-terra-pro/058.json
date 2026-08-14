@@ -1,0 +1,49 @@
+{
+  "id": "058",
+  "user": "download all the zips in this folder",
+  "mode": "act",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain/tree/main/dist",
+    "title": "webbrain/dist — main"
+  },
+  "latencyMs": 4109,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 74304,
+    "completion_tokens": 240,
+    "total_tokens": 74544,
+    "cost": 0.021033350000000003,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 60961,
+      "cache_write_tokens": 617,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.021033350000000003,
+      "upstream_inference_prompt_cost": 0.019593350000000002,
+      "upstream_inference_completions_cost": 0.00144
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 97,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

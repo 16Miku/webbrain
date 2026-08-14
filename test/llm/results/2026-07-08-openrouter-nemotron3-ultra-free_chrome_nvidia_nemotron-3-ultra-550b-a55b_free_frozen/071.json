@@ -1,0 +1,38 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 42689,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on a new tab page (about:home) with no visible content to send. Could you clarify what you'd like me to send and where? For example:\n- A message in a chat/email (which platform?)\n- A form submission (which page?)\n- A file upload (where to?)\n- Something else?\n\nIf you have a specific page open in another tab, let me know and I can switch to it.",
+  "usage": {
+    "prompt_tokens": 18363,
+    "completion_tokens": 176,
+    "total_tokens": 18539,
+    "cost": 0,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0,
+      "upstream_inference_prompt_cost": 0,
+      "upstream_inference_completions_cost": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 92,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

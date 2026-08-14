@@ -1,0 +1,25 @@
+{
+  "id": "070",
+  "user": "log in",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 11394,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Which website would you like to log in to? (e.g., GitHub, Gmail, etc.)"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{\"question\":\"Which website would you like to log in to? (e.g., GitHub, Gmail, etc.)\"}}",
+  "usage": {
+    "prompt_tokens": 8602,
+    "total_tokens": 10530,
+    "completion_tokens": 1928,
+    "prompt_tokens_details": null
+  }
+}

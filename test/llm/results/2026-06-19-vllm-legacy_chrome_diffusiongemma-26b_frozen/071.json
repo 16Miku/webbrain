@@ -1,0 +1,20 @@
+{
+  "id": "071",
+  "user": "send it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 433,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm ready to help. Since you are currently on a \"New Tab\" page, please let me know what website you would like me to visit or what task you would like me to perform for you.",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9196,
+    "completion_tokens": 44,
+    "prompt_tokens_details": null
+  }
+}

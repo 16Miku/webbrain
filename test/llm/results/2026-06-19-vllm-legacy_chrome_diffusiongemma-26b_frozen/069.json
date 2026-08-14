@@ -1,0 +1,20 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 359,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm currently on the New Tab page. What website would you like me to open for you?",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9174,
+    "completion_tokens": 22,
+    "prompt_tokens_details": null
+  }
+}

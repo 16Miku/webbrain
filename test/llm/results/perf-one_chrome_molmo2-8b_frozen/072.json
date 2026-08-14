@@ -1,0 +1,22 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1619,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm ready to assist with the New Tab page. What would you like to do?",
+  "usage": {
+    "prompt_tokens": 8591,
+    "completion_tokens": 19,
+    "total_tokens": 8610,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

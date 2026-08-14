@@ -1,0 +1,20 @@
+{
+  "id": "085",
+  "user": "tell me a joke",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2275,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nWhy don't scientists trust atoms?\n\nBecause they make up everything. ⚛️",
+  "usage": {
+    "prompt_tokens": 17326,
+    "total_tokens": 17374,
+    "completion_tokens": 48,
+    "prompt_tokens_details": null
+  }
+}

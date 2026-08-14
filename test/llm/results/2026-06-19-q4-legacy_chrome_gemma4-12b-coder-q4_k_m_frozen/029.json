@@ -1,0 +1,28 @@
+{
+  "id": "029",
+  "user": "give me the headings on this page",
+  "tab": {
+    "url": "https://en.wikipedia.org/wiki/Closure_(computer_programming)",
+    "title": "Closure (computer programming) — Wikipedia"
+  },
+  "latencyMs": 2274,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 15
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\",\"maxDepth\":15}}</tool_call>",
+  "usage": {
+    "completion_tokens": 173,
+    "prompt_tokens": 9212,
+    "total_tokens": 9385,
+    "prompt_tokens_details": {
+      "cached_tokens": 8928
+    }
+  }
+}

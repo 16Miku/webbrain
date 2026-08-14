@@ -1,0 +1,25 @@
+{
+  "id": "040",
+  "user": "clear the search box",
+  "tab": {
+    "url": "https://www.google.com/search?q=foo",
+    "title": "foo - Google Search"
+  },
+  "latencyMs": 7213,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"get_accessibility_tree\",\n  \"arguments\": {\n    \"filter\": \"visible\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8612,
+    "total_tokens": 9833,
+    "completion_tokens": 1221,
+    "prompt_tokens_details": null
+  }
+}

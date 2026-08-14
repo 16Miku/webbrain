@@ -1,0 +1,27 @@
+{
+  "id": "061",
+  "user": "add this to my cart",
+  "tab": {
+    "url": "https://www.amazon.com/dp/B0EXAMPLE",
+    "title": "Acme Earbuds — Amazon"
+  },
+  "latencyMs": 1712,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 131,
+    "prompt_tokens": 9318,
+    "total_tokens": 9449,
+    "prompt_tokens_details": {
+      "cached_tokens": 8934
+    }
+  }
+}

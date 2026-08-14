@@ -1,0 +1,25 @@
+{
+  "id": "007",
+  "user": "open linkedin in this tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 442,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.linkedin.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"https://www.linkedin.com\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9155,
+    "total_tokens": 9183,
+    "completion_tokens": 28,
+    "prompt_tokens_details": null
+  }
+}

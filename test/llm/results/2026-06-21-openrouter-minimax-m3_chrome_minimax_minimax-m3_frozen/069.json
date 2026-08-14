@@ -1,0 +1,37 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5888,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have any prior context about what you'd like me to open — the current page is just a blank New Tab. Could you let me know what \"it\" refers to? For example:\n\n- A URL or website (e.g., \"open github.com\")\n- A file on your computer\n- Something from your bookmarks or history\n- A specific page or app you were looking at earlier\n\nOnce you tell me what to open, I'll get right on it.",
+  "usage": {
+    "prompt_tokens": 16967,
+    "completion_tokens": 178,
+    "total_tokens": 17145,
+    "cost": 0.0106074,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0106074,
+      "upstream_inference_prompt_cost": 0.0101802,
+      "upstream_inference_completions_cost": 0.0004272
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 98,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

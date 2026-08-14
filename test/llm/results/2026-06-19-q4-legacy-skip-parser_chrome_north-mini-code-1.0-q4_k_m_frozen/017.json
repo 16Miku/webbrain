@@ -1,0 +1,27 @@
+{
+  "id": "017",
+  "user": "google \"best coffee shop in seattle\"",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3237,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to search Google for \"best coffee shop in seattle\". I need to navigate to Google first, then perform the search.\n\nLet me start by navigating to Google (google.com) and then perform the search.\n\nAccording to the instructions:\n1. I should start by reading the current page to understand the context\n2. The current page is \"about:home — Title: New Tab\" which is a blank new tab\n3. I need to navigate to Google first\n4. Then perform the search\n\nLet me start by navigating to Google.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://www.google.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 150,
+    "prompt_tokens": 8469,
+    "total_tokens": 8619,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

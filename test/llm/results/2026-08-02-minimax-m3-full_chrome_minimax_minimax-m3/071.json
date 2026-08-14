@@ -1,0 +1,40 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4061,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I need to understand what you want me to send. You're on a new tab page with no context — there's no draft, email, message, or form visible.\n\nCould you clarify what you'd like me to do? For example:\n- **Send an email** — tell me the recipient, subject, and body, and I'll open Gmail compose\n- **Send a message** — on Slack, LinkedIn, Discord, etc.\n- **Send a file** — to a chat, upload to a site, or attach to an email\n- **Submit a form / post something** — point me to the page and tell me what to fill in\n\nPlease give me the destination and the content, and I'll take care of it.",
+  "usage": {
+    "prompt_tokens": 21896,
+    "completion_tokens": 148,
+    "total_tokens": 22044,
+    "cost": 0.00155472,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 21632,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00155472,
+      "upstream_inference_prompt_cost": 0.00137712,
+      "upstream_inference_completions_cost": 0.0001776
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

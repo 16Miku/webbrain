@@ -1,0 +1,27 @@
+{
+  "id": "010",
+  "user": "go to amazon",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2727,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.amazon.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to go to Amazon. I need to navigate to the Amazon website. Let me use the navigate tool to go to amazon.com.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://www.amazon.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 65,
+    "prompt_tokens": 8464,
+    "total_tokens": 8529,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

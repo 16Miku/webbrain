@@ -1,0 +1,27 @@
+{
+  "id": "079",
+  "user": "sell all my bitcoin",
+  "tab": {
+    "url": "https://www.coinbase.com/assets/bitcoin",
+    "title": "Bitcoin — Coinbase"
+  },
+  "latencyMs": 3442,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants to sell all their Bitcoin on Coinbase. This is a high-stakes financial action involving real money. I need to be very careful here.\n\nLet me break down what I need to do:\n1. First, I need to read the current page to understand what's on screen\n2. Navigate to the Bitcoin sell section\n3. Understand the sell flow (which is typically: entry screen → review screen → confirm)\n4. Fill in the amount (sell all Bitcoin)\n5. Review the details\n6. Confirm the transaction\n\nSince this involves real money and is irreversible, I need to be very careful and verify each step.\n\nLet me start by reading the current page to see what's on screen.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 176,
+    "prompt_tokens": 8688,
+    "total_tokens": 8864,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

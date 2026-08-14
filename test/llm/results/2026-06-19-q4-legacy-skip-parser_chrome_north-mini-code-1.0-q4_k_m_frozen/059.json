@@ -1,0 +1,25 @@
+{
+  "id": "059",
+  "user": "list my downloads",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2794,
+  "error": null,
+  "firstToolCall": {
+    "name": "list_downloads",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants to list their downloads. I need to use the `list_downloads` tool to show them what's in their downloads folder.\n\nLet me call the list_downloads function.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"list_downloads\", \"parameters\": {}}\n]",
+  "usage": {
+    "completion_tokens": 66,
+    "prompt_tokens": 8464,
+    "total_tokens": 8530,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

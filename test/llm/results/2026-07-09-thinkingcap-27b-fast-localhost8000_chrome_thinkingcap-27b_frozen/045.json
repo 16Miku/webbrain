@@ -1,0 +1,26 @@
+{
+  "id": "045",
+  "user": "star this repo",
+  "mode": "act",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 1853,
+  "error": null,
+  "firstToolCall": {
+    "name": "click_ax",
+    "args": {
+      "ref_id": "ref_120"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17887,
+    "total_tokens": 17943,
+    "completion_tokens": 56,
+    "prompt_tokens_details": null
+  }
+}

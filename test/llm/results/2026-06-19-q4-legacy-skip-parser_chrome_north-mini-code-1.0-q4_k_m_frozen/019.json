@@ -1,0 +1,27 @@
+{
+  "id": "019",
+  "user": "search reddit for mechanical keyboards",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2984,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.reddit.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to search Reddit for mechanical keyboards. I need to navigate to Reddit and perform a search. Let me start by reading the current page to see what's available.\n\nThe current page is \"about:home\" which is a new tab page. I need to navigate to Reddit first.[\n    {\"tool_call_id\": \"1\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://www.reddit.com\"}}\n]",
+  "usage": {
+    "completion_tokens": 94,
+    "prompt_tokens": 8466,
+    "total_tokens": 8560,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

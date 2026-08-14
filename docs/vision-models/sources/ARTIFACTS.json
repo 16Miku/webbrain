@@ -1,0 +1,173 @@
+{
+  "captured_at": "2026-08-04",
+  "models": {
+    "deepseek_v4_flash_vision": {
+      "public_nvfp4": {
+        "url": "https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4",
+        "revision": "12b653e63329ac3c20395f9aeeb1bb8264d2db8b",
+        "file_count": 74,
+        "total_bytes": 169215268442,
+        "package_kind": "complete_nvfp4_text_checkpoint_plus_vision_components_and_custom_sglang_source",
+        "upstream_text": {
+          "model_id": "nvidia/DeepSeek-V4-Flash-NVFP4",
+          "revision": "e3cd60e7de98e9867116860d522499a728de1cf9"
+        }
+      },
+      "public_bf16": {
+        "url": "https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-BF16",
+        "revision": "60c441aa1c7386387c89ddaff703136395ad8d8b",
+        "file_count": 25,
+        "total_bytes": 915678201,
+        "package_kind": "vision_adapter_source_overlay",
+        "complete_text_checkpoint": false,
+        "text_reference": {
+          "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+          "revision": "60d8d70770c6776ff598c94bb586a859a38244f1"
+        }
+      },
+      "private_training_archive": {
+        "url": "https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-Training-Archive",
+        "private": true,
+        "scope": "bringup_calibration_recovery_and_code_archive_predating_final_100k_run",
+        "complete_final_100k_history": false
+      },
+      "vision_tower": {
+        "source_model": "moonshotai/Kimi-K2.6",
+        "source_revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb",
+        "filename": "vision_tower.safetensors",
+        "tensor_count": 329,
+        "parameter_count": 416866032,
+        "dtype": "BF16",
+        "size_bytes": 833765768,
+        "sha256": "1382c41f1a4afc91791ade630e2b1e1cef68cc5a1e09668a45970a5d5e1b8f15"
+      },
+      "projector": {
+        "filename": "mm_projector.safetensors",
+        "tensor_count": 6,
+        "parameter_count": 40119040,
+        "dtype": "BF16",
+        "size_bytes": 80238568,
+        "sha256": "7024d9d5c9714c7abbc09abda015f083b7d7b107745eb78879f019bf4721577a"
+      },
+      "routing": {
+        "policy": "palette_cycle",
+        "palette_size": 64,
+        "reference_revision": "60d8d70770c6776ff598c94bb586a859a38244f1"
+      },
+      "serving": {
+        "integration": "custom_sglang_external_model_and_processor",
+        "sglang_source_commit": "fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1",
+        "requires_source_patch": true,
+        "stock_sglang_supported": false,
+        "openai_multimodal_chat_supported": false,
+        "native_generate_target": true,
+        "gpu_validated_in_public_package": true,
+        "validated_profile": {
+          "date": "2026-08-04",
+          "hardware": "NVIDIA B200",
+          "tensor_parallel_size": 4,
+          "endpoint": "http://127.0.0.1:30000/generate",
+          "server_healthy_after_requests": true,
+          "requests": [
+            {
+              "probe": "street_taxi_scene",
+              "image_tokens": 294,
+              "total_prompt_tokens": 308,
+              "elapsed_seconds": 6.95,
+              "observed_answer_content": "man, yellow vest, and taxi"
+            },
+            {
+              "probe": "cat_person_scene",
+              "image_tokens": 532,
+              "elapsed_seconds": 2.52,
+              "observed_answer_content": "cat sitting on a person's shoulder"
+            }
+          ],
+          "quality_benchmark": false,
+          "production_ready": false,
+          "text_only_parity_validated": false
+        }
+      }
+    },
+    "laguna_xs_2_1_vision": {
+      "public_nvfp4": {
+        "url": "https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-NVFP4",
+        "revision": "ce108f0f3764a18a1f5f7d14ecefa90485ea6e52",
+        "file_count": 22,
+        "total_bytes": 22491749196,
+        "package_kind": "complete_nvfp4_text_checkpoint_plus_vision_components",
+        "upstream_text": {
+          "model_id": "poolside/Laguna-XS-2.1-NVFP4",
+          "revision": "d32afde8b09af1539b49ff96ff5551c674485f8e"
+        }
+      },
+      "public_bf16": {
+        "url": "https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-BF16",
+        "revision": "b06063d00b73f7713ef1c28f8247eed488c73faf",
+        "file_count": 34,
+        "total_bytes": 67794842815,
+        "package_kind": "complete_bf16_text_checkpoint_plus_vision_components",
+        "upstream_text": {
+          "model_id": "poolside/Laguna-XS-2.1",
+          "revision": "e9df9a59996d790b94b70f3fef343fe1d9e34bdf"
+        }
+      },
+      "private_training_archive": {
+        "url": "https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-Projector-100K",
+        "revision": "4f5d6359867fa55315a2bec4b568901bfdeca5e5",
+        "private": true,
+        "file_count": 170,
+        "total_bytes": 14543120986,
+        "complete_checkpoint_and_optimizer_history": true
+      },
+      "vision_tower": {
+        "source_model": "moonshotai/Kimi-K2.6",
+        "source_revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb",
+        "filename": "vision_tower.safetensors",
+        "tensor_count": 329,
+        "parameter_count": 416866032,
+        "dtype": "BF16",
+        "size_bytes": 833765768,
+        "sha256": "befe801bd7dfe8bf5630fef56a7f53c2235065599ca9eea4d995040e2e6fd183"
+      },
+      "projector": {
+        "filename": "mm_projector.safetensors",
+        "training_step": 782,
+        "training_examples": 100000,
+        "training_epochs": 1,
+        "training_world_size": 4,
+        "tensor_count": 6,
+        "parameter_count": 30679808,
+        "dtype": "BF16",
+        "size_bytes": 61360104,
+        "sha256": "7837384f18be69a4f875ca44a8ed69ec186501d70896daf4b305fa77547974de"
+      },
+      "final_optimizer": {
+        "filename": "optimizer-step-000782.pt",
+        "size_bytes": 122726045,
+        "sha256": "c5879b03b6f86b5ddabc3eb05380915b1b1aa4c0058592ae6a73f6220624c9f7"
+      },
+      "data": {
+        "dataset_id": "HuggingFaceM4/the_cauldron",
+        "dataset_revision": "847a98a779b1652d65111daf20c972dfcd333605",
+        "manifest_examples": 100000,
+        "manifest_sha256": "1d1961eee90cb3bad1ee3fb75f79e38d636ef406bb2a2539581c442a3c0ae4bb",
+        "seed": 20260802,
+        "evaluation_splits_included": false
+      },
+      "serving": {
+        "multimodal_integration_packaged_on_main": false,
+        "bf16_end_to_end_validated": false,
+        "nvfp4_equivalence_validated": false,
+        "integration_candidate": {
+          "repository": "webbrain-one/Laguna-XS-2.1-Vision-NVFP4",
+          "branch": "sglang-integration",
+          "revision": "740a6ccc05441a7ea0426c1d2536d5cd031adb86",
+          "candidate_only": true,
+          "full_model_loader_validated": false,
+          "image_smoke_validated": false
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "012",
+  "user": "show my browser history",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2239,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm not able to access your browser history. My tools let me interact with web pages, but browser history is stored in a privileged internal Chrome page (`chrome://history`) that I can't read or interact with — content scripts are blocked from running there.\n\nTo view your history yourself:\n- Press **Ctrl+H** (Windows/Linux) or **Cmd+Y** (Mac), or\n- Type **`chrome://history`** in your address bar.\n\nIf there's something specific you're looking for in your history — a site you visited, a page you need to find again — tell me what you remember about it and I can help you search for it or navigate there directly.",
+  "usage": {
+    "prompt_tokens": 22656,
+    "completion_tokens": 370,
+    "total_tokens": 23026,
+    "cost": 0.0041466,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22528,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0041466,
+      "upstream_inference_prompt_cost": 0.0032512,
+      "upstream_inference_completions_cost": 0.0008954
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 273,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

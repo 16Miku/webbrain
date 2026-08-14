@@ -1,0 +1,23 @@
+{
+  "id": "086",
+  "user": "what does CORS stand for",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 13347,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "get_accessibility_tree({filter: \"visible\"})",
+  "usage": {
+    "prompt_tokens": 8605,
+    "total_tokens": 10865,
+    "completion_tokens": 2260,
+    "prompt_tokens_details": null
+  }
+}

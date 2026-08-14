@@ -1,0 +1,46 @@
+{
+  "id": "100",
+  "user": "whats the highest rated item here",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.amazon.com/s?k=wireless+earbuds",
+    "title": "Amazon.com : wireless earbuds"
+  },
+  "latencyMs": 2031,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "maxDepth": 10,
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\n",
+  "usage": {
+    "prompt_tokens": 22374,
+    "completion_tokens": 81,
+    "total_tokens": 22455,
+    "cost": 0.006660486,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22208,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.006660486,
+      "upstream_inference_prompt_cost": 0.006466086,
+      "upstream_inference_completions_cost": 0.0001944
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 44,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

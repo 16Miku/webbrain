@@ -1,0 +1,21 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3914,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI'm on a blank new tab page - there's nothing here to delete. \n\nCould you clarify what you'd like me to delete? For example:\n- A specific item on a website (you'd need to navigate there first)?\n- A bookmark?\n- A download?\n- Browser history?\n\nLet me know and I'll help!",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17454,
+    "completion_tokens": 130,
+    "prompt_tokens_details": null
+  }
+}

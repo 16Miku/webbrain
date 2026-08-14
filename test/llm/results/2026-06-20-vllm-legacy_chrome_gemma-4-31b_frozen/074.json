@@ -1,0 +1,25 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 961,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "text": "I'm currently on a new tab page. Could you please tell me which 'other thing' or website you'd like me to go back to?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"clarify\",\"arguments\":{\"text\":\"I'm currently on a new tab page. Could you please tell me which 'other thing' or website you'd like me to go back to?\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9156,
+    "total_tokens": 9210,
+    "completion_tokens": 54,
+    "prompt_tokens_details": null
+  }
+}

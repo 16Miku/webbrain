@@ -1,0 +1,46 @@
+{
+  "id": "086",
+  "user": "what does CORS stand for",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3070,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "summary": "CORS stands for **Cross-Origin Resource Sharing**.\n\nIt is an HTTP-header-based security mechanism implemented by web browsers. CORS allows a server to indicate any origins (domain, scheme, or port) other than its own from which a browser should permit loading resources (such as web fonts, API requests, images, or stylesheets). \n\nWithout CORS headers, web browsers enforce the **Same-Origin Policy**, which restricts scripts running in a browser from making requests to a different origin for security reasons.",
+      "outcome": "success"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 21090,
+    "completion_tokens": 435,
+    "total_tokens": 21525,
+    "cost": 0.0101817,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 18308,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0101817,
+      "upstream_inference_prompt_cost": 0.0069192,
+      "upstream_inference_completions_cost": 0.0032625
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 313,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

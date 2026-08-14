@@ -1,0 +1,16 @@
+{
+  "id": "041",
+  "user": "tick the subscribe checkbox",
+  "mode": "act",
+  "tab": {
+    "url": "https://example.com/signup",
+    "title": "Sign up"
+  },
+  "latencyMs": 836,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null
+}

@@ -1,0 +1,25 @@
+{
+  "id": "089",
+  "user": "open youtube, twitter, and gmail in new tabs",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 331,
+  "error": null,
+  "firstToolCall": {
+    "name": "new_tab",
+    "args": {
+      "url": "https://www.youtube.com"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"new_tab\",\"arguments\":{\"url\":\"https://www.youtube.com\"}}</tool_call>\n<tool_call>{\"name\":\"new_tab\",\"arguments\":{\"url\":\"https://www.twitter.com\"}}</tool_call>\n<tool_call>{\"name\":\"new_tab\",\"arguments\":{\"url\":\"https://mail.google.com\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9160,
+    "total_tokens": 9253,
+    "completion_tokens": 93,
+    "prompt_tokens_details": null
+  }
+}

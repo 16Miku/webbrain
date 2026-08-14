@@ -1,0 +1,27 @@
+{
+  "id": "008",
+  "user": "wikipedia please",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3054,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://en.wikipedia.org/wiki/Main_Page"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking for \"wikipedia please\". This is a bit ambiguous - they could be asking me to navigate to Wikipedia, or they could be asking me to look up something on Wikipedia. Given the context, I think they want me to navigate to Wikipedia.\n\nLet me start by reading the current page to understand the context, then navigate to Wikipedia.\n\nThe current page is \"about:home\" which is a New Tab page. I should navigate to Wikipedia.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://en.wikipedia.org/wiki/Main_Page\"}}\n]",
+  "usage": {
+    "completion_tokens": 130,
+    "prompt_tokens": 8463,
+    "total_tokens": 8593,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

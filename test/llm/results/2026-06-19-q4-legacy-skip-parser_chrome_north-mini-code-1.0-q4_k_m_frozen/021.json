@@ -1,0 +1,27 @@
+{
+  "id": "021",
+  "user": "wiki \"ww2\"",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3041,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://en.wikipedia.org/wiki/World_War_II"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking me to search for \"ww2\" on Wikipedia. They want me to find information about World War II. Let me break this down:\n\n1. I need to navigate to Wikipedia\n2. Search for \"ww2\" \n3. Find information about World War War II\n\nLet me start by navigating to Wikipedia and then searching for \"ww2\".[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"navigate\", \"parameters\": {\"url\": \"https://en.wikipedia.org/wiki/World_War_II\"}}\n]",
+  "usage": {
+    "completion_tokens": 115,
+    "prompt_tokens": 8465,
+    "total_tokens": 8580,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

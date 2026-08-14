@@ -1,0 +1,40 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2058,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I see you're on a new tab page (`about:home`), but I don't have any context of what we were working on previously. This appears to be a fresh session.\n\nCould you please let me know what task you'd like me to finish? For example:\n- Were you working on something in a specific application or website?\n- Did you have a document, code, or form you were filling out?\n- Were you in the middle of a multi-step process?\n\nOnce you provide the details, I'll be happy to help you complete it.",
+  "usage": {
+    "prompt_tokens": 23180,
+    "completion_tokens": 253,
+    "total_tokens": 23433,
+    "cost": 0.0007266,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0007266,
+      "upstream_inference_prompt_cost": 0.00069624,
+      "upstream_inference_completions_cost": 0.00003036
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 135,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

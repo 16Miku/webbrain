@@ -1,0 +1,20 @@
+{
+  "id": "014",
+  "user": "show me my bookmarks",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 682,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I do not have a direct tool to access your browser's bookmarks manager. I can only interact with the content of web pages open in your tabs.\n\nIf you have a specific page open that lists your bookmarks, please let me know and I can read them for you. Otherwise, I cannot see your browser's internal bookmark settings.",
+  "usage": {
+    "prompt_tokens": 9154,
+    "total_tokens": 9224,
+    "completion_tokens": 70,
+    "prompt_tokens_details": null
+  }
+}

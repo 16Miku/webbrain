@@ -1,0 +1,27 @@
+{
+  "id": "012",
+  "user": "show my browser history",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1836,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "chrome://history"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"navigate\",\"arguments\":{\"url\":\"chrome://history\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 137,
+    "prompt_tokens": 9189,
+    "total_tokens": 9326,
+    "prompt_tokens_details": {
+      "cached_tokens": 8936
+    }
+  }
+}

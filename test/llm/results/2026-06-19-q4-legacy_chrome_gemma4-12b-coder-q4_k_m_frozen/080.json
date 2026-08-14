@@ -1,0 +1,22 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 40535,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "length",
+  "content": null,
+  "usage": {
+    "completion_tokens": 4096,
+    "prompt_tokens": 9192,
+    "total_tokens": 13288,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

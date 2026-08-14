@@ -1,0 +1,20 @@
+{
+  "id": "068",
+  "user": "click that",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 646,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm currently on a New Tab page and don't see any specific elements to click yet. Could you please tell me what you would like me to click, or where I should navigate to first?",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9195,
+    "completion_tokens": 43,
+    "prompt_tokens_details": null
+  }
+}

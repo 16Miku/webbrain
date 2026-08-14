@@ -1,0 +1,46 @@
+{
+  "id": "008",
+  "user": "wikipedia please",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3901,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.wikipedia.org/",
+      "force": false
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72002,
+    "completion_tokens": 233,
+    "total_tokens": 72235,
+    "cost": 0.00195719,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59809,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00195719,
+      "upstream_inference_prompt_cost": 0.00181739,
+      "upstream_inference_completions_cost": 0.0001398
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 132,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

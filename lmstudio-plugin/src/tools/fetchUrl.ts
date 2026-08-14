@@ -15,9 +15,15 @@
 
 import { htmlToText } from "../util/htmlToText.js";
 import { safeFetch, readBodyCapped } from "../util/safeFetch.js";
+import {
+  compactText,
+  normalizeTextLimit,
+  type CompactionMetadata,
+} from "../util/compactText.js";
 
 const FETCH_TEXT_LIMIT = 8000;
 const FETCH_JSON_LIMIT = 16000;
+const FETCH_MAX_CHARS_CAP = 50_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 // Hard byte ceiling for the streamed body. Sized to comfortably fit
 // the largest "useful" response while still bounding worst-case memory
@@ -44,6 +50,16 @@ export interface FetchUrlArgs {
    * plugin to talk to localhost/private services.
    */
   allowPrivate?: boolean;
+  /**
+   * Maximum characters returned in the main text/json field after compaction.
+   * Defaults to 8k for text/html and 16k for JSON; capped at 50k.
+   */
+  maxChars?: number;
+  /**
+   * When true (default), long text/json is compacted with a head/middle/tail
+   * extractive pass. Set false to keep legacy head-only truncation.
+   */
+  compact?: boolean;
 }
 
 export interface FetchUrlResult {
@@ -62,6 +78,10 @@ export interface FetchUrlResult {
   json?: string;
   /** Set when text/json was clipped to a limit. */
   truncated?: boolean;
+  /** True when the plugin performed extractive text compaction. */
+  compacted?: boolean;
+  /** Details about the compaction/truncation strategy. */
+  compaction?: CompactionMetadata;
   /** Pre-clip length, so the caller knows how much they didn't get. */
   originalLength?: number;
   /** For binary responses we don't inline — bytes from Content-Length. */
@@ -70,6 +90,38 @@ export interface FetchUrlResult {
   note?: string;
   /** Failure case. */
   error?: string;
+}
+
+function prepareModelText(
+  raw: string,
+  fallbackLimit: number,
+  args: Pick<FetchUrlArgs, "maxChars" | "compact">,
+  label: string,
+): { text: string; compacted: boolean; compaction?: CompactionMetadata } {
+  const maxChars = normalizeTextLimit(args.maxChars, fallbackLimit, FETCH_MAX_CHARS_CAP);
+  if (raw.length <= maxChars) return { text: raw, compacted: false };
+
+  if (args.compact === false) {
+    const text = raw.slice(0, maxChars);
+    return {
+      text,
+      compacted: false,
+      compaction: {
+        strategy: "head-truncate",
+        maxChars,
+        originalLength: raw.length,
+        outputLength: text.length,
+        omittedChars: raw.length - text.length,
+      },
+    };
+  }
+
+  const compacted = compactText(raw, { maxChars, label, hardCap: FETCH_MAX_CHARS_CAP });
+  return {
+    text: compacted.text,
+    compacted: compacted.compacted,
+    ...(compacted.compaction ? { compaction: compacted.compaction } : {}),
+  };
 }
 
 export async function fetchUrl(args: FetchUrlArgs): Promise<FetchUrlResult> {
@@ -107,13 +159,16 @@ export async function fetchUrl(args: FetchUrlArgs): Promise<FetchUrlResult> {
       } catch {
         /* leave as-is if it's not valid JSON */
       }
+      const prepared = prepareModelText(pretty, FETCH_JSON_LIMIT, args, "json response");
       return {
         success: true,
         status,
         contentType,
         url: finalUrl,
-        json: pretty.slice(0, FETCH_JSON_LIMIT),
-        truncated: pretty.length > FETCH_JSON_LIMIT || bodyTruncated,
+        json: prepared.text,
+        truncated: prepared.text.length < pretty.length || bodyTruncated,
+        compacted: prepared.compacted,
+        ...(prepared.compaction ? { compaction: prepared.compaction } : {}),
         originalLength: pretty.length,
       };
     }
@@ -122,14 +177,17 @@ export async function fetchUrl(args: FetchUrlArgs): Promise<FetchUrlResult> {
     if (contentType.includes("html") || contentType.includes("xhtml")) {
       const { text: html, truncated: bodyTruncated } = await readBodyCapped(res, MAX_RESPONSE_BYTES);
       const { title, text } = htmlToText(html);
+      const prepared = prepareModelText(text, FETCH_TEXT_LIMIT, args, "html text");
       return {
         success: true,
         status,
         contentType,
         url: finalUrl,
         title,
-        text: text.slice(0, FETCH_TEXT_LIMIT),
-        truncated: text.length > FETCH_TEXT_LIMIT || bodyTruncated,
+        text: prepared.text,
+        truncated: prepared.text.length < text.length || bodyTruncated,
+        compacted: prepared.compacted,
+        ...(prepared.compaction ? { compaction: prepared.compaction } : {}),
         originalLength: text.length,
       };
     }
@@ -144,13 +202,16 @@ export async function fetchUrl(args: FetchUrlArgs): Promise<FetchUrlResult> {
       contentType === ""
     ) {
       const { text, truncated: bodyTruncated } = await readBodyCapped(res, MAX_RESPONSE_BYTES);
+      const prepared = prepareModelText(text, FETCH_TEXT_LIMIT, args, "text response");
       return {
         success: true,
         status,
         contentType,
         url: finalUrl,
-        text: text.slice(0, FETCH_TEXT_LIMIT),
-        truncated: text.length > FETCH_TEXT_LIMIT || bodyTruncated,
+        text: prepared.text,
+        truncated: prepared.text.length < text.length || bodyTruncated,
+        compacted: prepared.compacted,
+        ...(prepared.compaction ? { compaction: prepared.compaction } : {}),
         originalLength: text.length,
       };
     }

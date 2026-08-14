@@ -1,0 +1,20 @@
+{
+  "id": "027",
+  "user": "tldr",
+  "tab": {
+    "url": "https://en.wikipedia.org/wiki/Closure_(computer_programming)",
+    "title": "Closure (computer programming) — Wikipedia"
+  },
+  "latencyMs": 2365,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "The term **closure** in computer programming refers to the ability of a function to \"remember\" and access variables from its outer (enclosing) scope, even after that outer scope has finished executing.\n\nKey concepts include:\n*   **Lexical Scoping:** Functions are defined with access to variables in their parent scopes.\n*   **Persistent State:** A closure allows a function to maintain a private state (like a counter or a configuration) without using global variables.\n*   **Nested Functions:** It typically occurs when a nested function is returned from an outer function or passed as a callback.\n\nIn many languages (like JavaScript, Python, and Swift), closures are a fundamental building block for functional programming, used extensively for data encapsulation, decorators, and asynchronous callbacks.",
+  "usage": {
+    "prompt_tokens": 9170,
+    "total_tokens": 9332,
+    "completion_tokens": 162,
+    "prompt_tokens_details": null
+  }
+}

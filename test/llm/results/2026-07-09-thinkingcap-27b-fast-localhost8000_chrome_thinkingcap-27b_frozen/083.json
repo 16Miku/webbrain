@@ -1,0 +1,26 @@
+{
+  "id": "083",
+  "user": "what time is it in tokyo right now",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3639,
+  "error": null,
+  "firstToolCall": {
+    "name": "execute_js",
+    "args": {
+      "code": "new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' })"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17332,
+    "total_tokens": 17452,
+    "completion_tokens": 120,
+    "prompt_tokens_details": null
+  }
+}

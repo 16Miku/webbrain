@@ -1,0 +1,39 @@
+{
+  "runTag": "2026-07-08-openrouter-nex-n2-mini",
+  "model": "nex-agi/nex-n2-mini",
+  "browser": "chrome",
+  "base": "https://openrouter.ai/api/v1",
+  "saveRequest": false,
+  "tier": null,
+  "modeOverride": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "freeze": {
+    "path": "test/llm/freeze/baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 89835,
+  "errors": 0,
+  "withToolCall": 93,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "navigate": 16,
+    "list_downloads": 2,
+    "get_accessibility_tree": 58,
+    "new_tab": 3,
+    "read_page": 5,
+    "(no_tool_call)": 7,
+    "extract_data": 1,
+    "verify_form": 1,
+    "download_resource_from_page": 1,
+    "download_social_media": 2,
+    "scroll": 1,
+    "get_selection": 1,
+    "screenshot": 1,
+    "get_frames": 1
+  }
+}

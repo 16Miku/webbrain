@@ -1,0 +1,37 @@
+{
+  "id": "071",
+  "user": "send it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4687,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on a blank new tab page — there's nothing here to send. Could you clarify what you'd like me to send? For example:\n\n- An email (and to whom, with what subject/body)\n- A message on a chat platform (Slack, Discord, WhatsApp, etc.)\n- A file or form submission\n- A post on social media\n\nLet me know what you have in mind and I'll take it from there.",
+  "usage": {
+    "prompt_tokens": 16967,
+    "completion_tokens": 138,
+    "total_tokens": 17105,
+    "cost": 0.0105114,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0105114,
+      "upstream_inference_prompt_cost": 0.0101802,
+      "upstream_inference_completions_cost": 0.0003312
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 50,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

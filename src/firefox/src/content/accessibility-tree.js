@@ -41,7 +41,9 @@
  *
  * 5. Additional exports used by click_ax / type_ax:
  *      window.__wb_ax_lookup(refId) → Element | null
+ *      window.__wb_ax_ref(element) → stable refId
  *      window.__wb_ax_release(refId) → void (optional cleanup)
+ *      window.__wb_ax_name(element) → the same accessible name used by the tree
  */
 (() => {
   if (window.__wb_ax_installed) return;
@@ -50,6 +52,42 @@
   // ── Persistent ref_id registry ──────────────────────────────────────────
   if (!window.__wbElementMap) window.__wbElementMap = Object.create(null);
   if (typeof window.__wbRefCounter !== 'number') window.__wbRefCounter = 0;
+
+  function mintRefScopeId() {
+    try {
+      const words = new Uint32Array(2);
+      globalThis.crypto.getRandomValues(words);
+      const value = (BigInt(words[0]) << 32n) | BigInt(words[1]);
+      return (value % 1000000000000n).toString().padStart(12, '0');
+    } catch {
+      const fallback = `${Date.now()}${Math.random().toString().slice(2)}`.replace(/\D/g, '');
+      return fallback.slice(-12).padStart(12, '0');
+    }
+  }
+
+  function ensureRefScope() {
+    const pageUrl = String(location.href || '');
+    const scope = window.__wbAxRefScope;
+    if (!scope || scope.pageUrl !== pageUrl || !/^\d{12}$/.test(scope.id)) {
+      // A full navigation gets a fresh isolated world automatically. Reset on
+      // SPA route changes too so an old ref can never resolve to a new route's
+      // element with the same local traversal number.
+      window.__wbElementMap = Object.create(null);
+      window.__wbRefCounter = 0;
+      window.__wbAxTreeSnapshots = new Map();
+      window.__wbAxRefScope = { pageUrl, id: mintRefScopeId() };
+    }
+    return window.__wbAxRefScope;
+  }
+
+  function refOrdinal(refId) {
+    const scope = ensureRefScope();
+    const prefix = `ref_${scope.id}`;
+    const value = String(refId || '');
+    if (!value.startsWith(prefix)) return null;
+    const suffix = value.slice(prefix.length);
+    return /^\d+$/.test(suffix) ? Number(suffix) : null;
+  }
 
   const MAX_NAME_LEN = 100;
 
@@ -77,9 +115,95 @@
     label: 'label',
   };
 
+  function isEditableRoot(el) {
+    if (!el || !el.getAttribute) return false;
+    const attr = el.getAttribute('contenteditable');
+    if (attr !== null) {
+      const normalized = String(attr).trim().toLowerCase();
+      if (normalized === '' || normalized === 'true' || normalized === 'plaintext-only') return true;
+      if (normalized === 'false') return false;
+    }
+    // isContentEditable includes inherited editability. Only surface the
+    // outer editing host so every nested span is not emitted as a textbox.
+    return el.isContentEditable === true && el.parentElement?.isContentEditable !== true;
+  }
+
+  // Some high-traffic media sites render their primary actions as plain
+  // div/span wrappers with delegated Vue event handlers. They are genuinely
+  // clickable, but expose none of the native/ARIA signals used below. Keep
+  // this list intentionally narrow and hostname-scoped so generic page
+  // containers are not promoted to buttons elsewhere.
+  const SITE_INTERACTION_RULES = {
+    bilibili: [
+      ['.video-like', '点赞'],
+      ['.video-coin', '投币'],
+      ['.video-fav', '收藏'],
+      ['.video-share', '分享'],
+      ['.follow-btn', '关注'],
+      ['.bpx-player-follow', '关注'],
+      ['.reply-box-send', '发布评论'],
+    ],
+    xiaohongshu: [
+      ['.like-wrapper', '点赞'],
+      ['.collect-wrapper', '收藏'],
+      ['.chat-wrapper', '评论'],
+      ['.share-wrapper', '分享'],
+      ['.follow-wrapper', '关注'],
+      ['.follow-btn', '关注'],
+      ['.follow-button', '关注'],
+      ['.send-btn', '发布评论'],
+      ['.publish-btn', '发布'],
+      ['.publish-button', '发布'],
+    ],
+  };
+
+  function currentSiteInteractionConfig() {
+    const hostname = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
+    const onHost = (domain) => hostname === domain || hostname.endsWith(`.${domain}`);
+    if (onHost('bilibili.com')) return { key: 'bilibili', rules: SITE_INTERACTION_RULES.bilibili };
+    if (onHost('xiaohongshu.com')) return { key: 'xiaohongshu', rules: SITE_INTERACTION_RULES.xiaohongshu };
+    // LinkedIn's interop shell renders major surfaces (the post composer
+    // dialog among them) inside the open #interop-outlet shadow root. No
+    // custom interaction rules needed — piercing alone makes the dialog's
+    // contenteditable + Post button visible to the tree walk.
+    if (onHost('linkedin.com')) return { key: 'linkedin', rules: [] };
+    return { key: '', rules: [] };
+  }
+
+  function getSiteInteractionDescriptor(el) {
+    if (!el || typeof el.matches !== 'function') return null;
+    for (const [selector, label] of currentSiteInteractionConfig().rules) {
+      try {
+        if (!el.matches(selector)) continue;
+      } catch {
+        continue;
+      }
+      const explicit = String(
+        el.getAttribute('aria-label') || el.getAttribute('title') || ''
+      ).replace(/\s+/g, ' ').trim();
+      const rendered = String(el.innerText || el.textContent || '')
+        .replace(/\s+/g, ' ').trim().slice(0, 80);
+      const name = explicit || (
+        rendered && rendered.includes(label) ? rendered
+          : rendered ? `${label} ${rendered}` : label
+      );
+      return { selector, label, name };
+    }
+    return null;
+  }
+
+  window.__wbSiteInteractions = Object.freeze({
+    selectors: () => currentSiteInteractionConfig().rules.map(([selector]) => selector),
+    describe: getSiteInteractionDescriptor,
+    isInteractive: (el) => !!getSiteInteractionDescriptor(el),
+    shouldPierceShadowRoots: () => ['bilibili', 'linkedin'].includes(currentSiteInteractionConfig().key),
+  });
+
   function getRole(el) {
+    if (getSiteInteractionDescriptor(el)) return 'button';
     const explicit = el.getAttribute('role');
     if (explicit) return explicit;
+    if (isEditableRoot(el)) return 'textbox';
     const tag = el.tagName.toLowerCase();
     if (tag === 'input') {
       const t = el.getAttribute('type');
@@ -91,9 +215,61 @@
     return TAG_ROLES[tag] || 'generic';
   }
 
+  const NESTED_ACTION_SELECTOR = [
+    'a', 'button', 'input', 'select', 'textarea', 'details', 'summary',
+    '[onclick]', '[tabindex]', '[contenteditable]:not([contenteditable="false"])',
+    '[role="button"]', '[role="link"]', '[role="textbox"]',
+    '[role="searchbox"]', '[role="combobox"]', '[role="option"]',
+    '[role="menuitem"]', '[role="tab"]', '[role="checkbox"]', '[role="radio"]',
+  ].join(',');
+
+  function rectsOverlap(a, b) {
+    return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+  }
+
+  function getVisibleDescendantText(root) {
+    const rootRect = root.getBoundingClientRect();
+    const parts = [];
+    const visit = (parent) => {
+      for (const child of parent.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = String(child.textContent || '').replace(/\s+/g, ' ').trim();
+          if (text) parts.push(text);
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        if (child.getAttribute('aria-hidden') === 'true') continue;
+        if (!isVisible(child) || !isInViewport(child)) continue;
+        if (!rectsOverlap(rootRect, child.getBoundingClientRect())) continue;
+        visit(child);
+      }
+    };
+    visit(root);
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function getFocusableGenericDescendantName(el) {
+    if (getRole(el) !== 'generic' || !el.hasAttribute('tabindex')) return '';
+    if (isEditableRoot(el)) return '';
+    try {
+      if (!isVisible(el) || el.querySelector(NESTED_ACTION_SELECTOR)) return '';
+      // Inspect each descendant instead of using innerText: browsers include
+      // opacity:0 and offscreen content in innerText, which would leak hidden
+      // picker state (or hidden prompt text) into a visible token/chip label.
+      const text = getVisibleDescendantText(el);
+      if (!text || text.length > MAX_NAME_LEN) return '';
+      return text;
+    } catch {
+      return '';
+    }
+  }
+
   // ── Accessible name (matches Claude's priority order) ───────────────────
   function getAccessibleName(el) {
     const tag = el.tagName.toLowerCase();
+
+    const siteInteraction = getSiteInteractionDescriptor(el);
+    if (siteInteraction) return siteInteraction.name;
 
     // <select> — prefer the currently selected option's label.
     if (tag === 'select') {
@@ -143,6 +319,30 @@
         }
       } catch {}
     }
+
+    // Native form controls can be wrapped by a <label> without using a
+    // matching `for` attribute. `el.labels` covers both that pattern and
+    // explicit label associations, so action results do not expose an
+    // unnamed checkbox even though the page visibly labels it.
+    try {
+      const labelText = Array.from(el.labels || [])
+        .map(label => (label.innerText || label.textContent || '').replace(/\s+/g, ' ').trim())
+        .find(Boolean);
+      if (labelText) {
+        return labelText.length > MAX_NAME_LEN
+          ? labelText.substring(0, MAX_NAME_LEN) + '...'
+          : labelText;
+      }
+      const wrappingLabel = el.closest && el.closest('label');
+      const wrappingText = (wrappingLabel?.innerText || wrappingLabel?.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (wrappingText) {
+        return wrappingText.length > MAX_NAME_LEN
+          ? wrappingText.substring(0, MAX_NAME_LEN) + '...'
+          : wrappingText;
+      }
+    } catch {}
 
     if (tag === 'input') {
       const t = (el.getAttribute('type') || '').toLowerCase();
@@ -195,6 +395,15 @@
       const s = (el.innerText || el.textContent || '').trim();
       if (s) return s.length > MAX_NAME_LEN ? s.substring(0, MAX_NAME_LEN) + '...' : s;
     }
+
+    // Tokenized inputs often replace their real textbox/combobox with a
+    // focusable generic wrapper once a value is selected. Gmail recipient
+    // chips are one example: the visible contact label lives in a nested
+    // span while the actual "To recipients" input becomes 0x0. Preserve the
+    // short visible label only for leaf-like wrappers so large composite
+    // containers do not absorb all of their descendants' text.
+    const focusableGenericName = getFocusableGenericDescendantName(el);
+    if (focusableGenericName) return focusableGenericName;
 
     // Form fields without an explicit label (aria-label, aria-labelledby,
     // placeholder, title, <label for>) often sit next to a small text node or
@@ -267,12 +476,68 @@
   function isInteractive(el) {
     const tag = el.tagName.toLowerCase();
     if (INTERACTIVE_TAGS.has(tag)) return true;
+    if (getSiteInteractionDescriptor(el)) return true;
     if (el.getAttribute('onclick') !== null) return true;
     if (el.getAttribute('tabindex') !== null) return true;
     const role = el.getAttribute('role');
     if (role === 'button' || role === 'link') return true;
-    if (el.getAttribute('contenteditable') === 'true') return true;
+    if (isEditableRoot(el)) return true;
     return false;
+  }
+
+  function composedParent(node) {
+    if (!node) return null;
+    if (node.assignedSlot) return node.assignedSlot;
+    const parent = node.parentNode;
+    if (parent) {
+      return (typeof ShadowRoot !== 'undefined' && parent instanceof ShadowRoot)
+        ? parent.host
+        : parent;
+    }
+    const root = node.getRootNode?.();
+    return (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot)
+      ? root.host
+      : null;
+  }
+
+  function deepestOpenShadowHit(x, y) {
+    let hit = document.elementFromPoint(x, y);
+    const seen = new Set();
+    while (hit?.shadowRoot?.mode === 'open' && !seen.has(hit)) {
+      seen.add(hit);
+      const inner = hit.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    return hit;
+  }
+
+  function visualTargetEligibility(el) {
+    const tag = el.tagName?.toLowerCase() || '';
+    if (tag === 'button') return 'semantic-button';
+    if (['canvas', 'iframe', 'label', 'input', 'textarea', 'select'].includes(tag)) {
+      return 'coordinate-only';
+    }
+    return isInteractive(el) ? 'coordinate-only' : '';
+  }
+
+  function resolveVisualTargetAtPoint(x, y) {
+    const cssX = Number(x);
+    const cssY = Number(y);
+    if (!Number.isFinite(cssX) || !Number.isFinite(cssY)) return null;
+
+    for (let el = deepestOpenShadowHit(cssX, cssY); el; el = composedParent(el)) {
+      if (el.nodeType !== Node.ELEMENT_NODE) continue;
+      const eligibility = visualTargetEligibility(el);
+      if (!eligibility) continue;
+      return {
+        ref_id: getOrMintRef(el),
+        role: getRole(el),
+        name: (getAccessibleName(el) || '').slice(0, 160),
+        eligibility,
+      };
+    }
+    return null;
   }
 
   function isLandmark(el) {
@@ -338,13 +603,15 @@
 
   // ── Ref_id management ───────────────────────────────────────────────────
   //
-  // Elements keep the same ref_id across calls: if we already have a WeakRef
-  // pointing at `el`, reuse its key; otherwise mint a new ref_N.
+  // Elements keep the same ref_id across calls on one document route. The
+  // numeric scope prefix changes across documents and SPA routes, so a local
+  // ref counter restart can never alias a target from an older page.
   function getOrMintRef(el) {
+    const prefix = `ref_${ensureRefScope().id}`;
     for (const key in window.__wbElementMap) {
       if (window.__wbElementMap[key].deref() === el) return key;
     }
-    const key = 'ref_' + (++window.__wbRefCounter);
+    const key = prefix + (++window.__wbRefCounter);
     window.__wbElementMap[key] = new WeakRef(el);
     return key;
   }
@@ -377,11 +644,39 @@
     const ph = el.getAttribute('placeholder');
     if (ph) line += ' placeholder="' + ph + '"';
 
+    // Disabled submit/action state is a blocker the model must see before it
+    // tries to activate a control. In particular, React editors can contain
+    // visually correct DOM text while their application state still leaves
+    // the associated Post/Send button aria-disabled.
+    let disabled = false;
+    try {
+      disabled = !!el.disabled
+        || el.getAttribute('aria-disabled') === 'true'
+        || el.matches(':disabled');
+    } catch {}
+    if (disabled) line += ' disabled=true';
+
+    // Checkbox/radio state is an action-critical value, not decorative
+    // metadata. Without it the model has to infer state from a focus ring or
+    // screenshot and can accidentally toggle a control back off.
+    const tag = el.tagName.toLowerCase();
+    const inputType = tag === 'input'
+      ? (el.getAttribute('type') || 'text').toLowerCase()
+      : '';
+    if (inputType === 'checkbox' || inputType === 'radio') {
+      line += ` checked=${el.checked ? 'true' : 'false'}`;
+    } else {
+      const role = (el.getAttribute('role') || '').toLowerCase();
+      if (['checkbox', 'radio', 'switch'].includes(role) || el.hasAttribute('aria-checked')) {
+        const ariaChecked = el.getAttribute('aria-checked');
+        if (ariaChecked != null) line += ` checked=${ariaChecked}`;
+      }
+    }
+
     // Surface the current value for text-like inputs/textareas so the model
     // can see what's already filled in. Skipped for submit/button/reset/file
     // (value is the label there), checkboxes/radios, and when the value
     // already matches the rendered name.
-    const tag = el.tagName.toLowerCase();
     if (tag === 'input' || tag === 'textarea') {
       const inputType = (el.getAttribute('type') || 'text').toLowerCase();
       const skipValueTypes = new Set(['submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image', 'hidden', 'color', 'range', 'password']);
@@ -391,6 +686,12 @@
           const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
           line += ' value="' + trimmed.replace(/"/g, '\\"') + '"';
         }
+      }
+    } else if (isEditableRoot(el)) {
+      const v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (v && v !== name) {
+        const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
+        line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
       }
     }
 
@@ -443,6 +744,14 @@
       for (const child of el.children) {
         walk(child, nextDepth, opts, lines);
       }
+      // Bilibili's current comment system is a hierarchy of open custom-
+      // element shadow roots. Traverse it here so the comment editor and
+      // Publish/Reply buttons receive the same stable ref_ids as light DOM.
+      if (window.__wbSiteInteractions.shouldPierceShadowRoots() && el.shadowRoot) {
+        for (const child of el.shadowRoot.children || []) {
+          walk(child, nextDepth, opts, lines);
+        }
+      }
     }
   }
 
@@ -457,7 +766,7 @@
       return !new Set(['submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image', 'hidden', 'color', 'range']).has(type);
     }
     if (role === 'textbox' || role === 'searchbox') return true;
-    if (el.getAttribute('contenteditable') === 'true') return true;
+    if (isEditableRoot(el)) return true;
     return false;
   }
 
@@ -507,7 +816,7 @@
     const selectors = [
       'textarea',
       'input',
-      '[contenteditable="true"]',
+      '[contenteditable]:not([contenteditable="false"])',
       '[role="textbox"]',
       '[role="searchbox"]',
       'button',
@@ -525,7 +834,7 @@
     return { elements: out, set: collected };
   }
 
-  function sliceTreePage(output, lines, chunkSize, page) {
+  function sliceTreePage(output, lines, chunkSize, page, continuationBase = {}) {
     const safePage = Math.max(1, Math.floor(Number(page) || 1));
     const chunks = [];
     let current = [];
@@ -587,8 +896,11 @@
     if (safePage > 1) {
       pageContent = `[tree page ${safePage}; ${omittedBefore} earlier nodes omitted]\n${pageContent}`;
     }
+    const continuationArgs = hasMore
+      ? { ...continuationBase, page: safePage + 1 }
+      : null;
     if (hasMore) {
-      pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling to find a visible control, call get_accessibility_tree({filter:"visible", page:${safePage + 1}}) for the next chunk.]`;
+      pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling or answering a whole-document question, call get_accessibility_tree(${JSON.stringify(continuationArgs)}) exactly for the next chunk.]`;
     }
 
     return {
@@ -597,29 +909,262 @@
       hasMore,
       page: safePage,
       nextPage: hasMore ? safePage + 1 : undefined,
+      continuationArgs,
       totalChars: output.length,
       chunkStart: chunk.charStart,
       chunkEnd: chunk.charEnd,
     };
   }
 
-  function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page) {
+  function fingerprintTreeContent(output) {
+    let hash = 0xcbf29ce484222325n;
+    for (let index = 0; index < output.length; index += 1) {
+      hash ^= BigInt(output.charCodeAt(index));
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+    return `fnv1a64:${hash.toString(16).padStart(16, '0')}`;
+  }
+
+  const MAX_TREE_SNAPSHOTS = 3;
+
+  function treeSnapshotKey(scope, treeRevision) {
+    return JSON.stringify([
+      String(scope?.filter || 'all'),
+      Number(scope?.maxDepth),
+      Number(scope?.maxChars),
+      String(scope?.ref_id || ''),
+      String(treeRevision || ''),
+    ]);
+  }
+
+  function findTreeSnapshot(scope, treeRevision) {
+    if (!(window.__wbAxTreeSnapshots instanceof Map) || !treeRevision) return null;
+    const key = treeSnapshotKey(scope, treeRevision);
+    const snapshot = window.__wbAxTreeSnapshots.get(key) || null;
+    if (snapshot && !snapshotActionsAreCurrent(snapshot)) {
+      window.__wbAxTreeSnapshots.delete(key);
+      return null;
+    }
+    return snapshot;
+  }
+
+  function actionableTreeSnapshotSignatures(lines) {
+    const signatures = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const match = String(line || '').match(/\[(ref_\d+)\]/);
+      const refId = match?.[1];
+      if (!refId || seen.has(refId)) continue;
+      seen.add(refId);
+      const el = window.__wbElementMap[refId]?.deref?.();
+      if (!el || !el.isConnected || !isInteractive(el)) continue;
+      signatures.push([refId, formatLine(el, 0)]);
+    }
+    return signatures;
+  }
+
+  function snapshotActionsAreCurrent(snapshot) {
+    if (!Array.isArray(snapshot?.actionSignatures)) return false;
+    for (const [refId, signature] of snapshot.actionSignatures) {
+      const el = window.__wbElementMap[refId]?.deref?.();
+      if (!el || !el.isConnected || !isInteractive(el) || formatLine(el, 0) !== signature) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function rememberTreeSnapshot(scope, treeRevision, output, lines) {
+    if (!treeRevision || !scope?.ref_id) return;
+    if (!(window.__wbAxTreeSnapshots instanceof Map)) window.__wbAxTreeSnapshots = new Map();
+    const key = treeSnapshotKey(scope, treeRevision);
+    window.__wbAxTreeSnapshots.delete(key);
+    window.__wbAxTreeSnapshots.set(key, {
+      output,
+      lines: lines.slice(),
+      treeRevision,
+      actionSignatures: actionableTreeSnapshotSignatures(lines),
+    });
+    while (window.__wbAxTreeSnapshots.size > MAX_TREE_SNAPSHOTS) {
+      window.__wbAxTreeSnapshots.delete(window.__wbAxTreeSnapshots.keys().next().value);
+    }
+  }
+
+  function isGmailThreadIdentifier(value) {
+    const segment = String(value || '').split('?')[0];
+    return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
+  }
+
+  function isGmailConversationHash(hash) {
+    const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+    const route = String(segments[0] || '').toLowerCase();
+    const threadId = segments.at(-1);
+    if (!isGmailThreadIdentifier(threadId)) return false;
+    if (route === 'label') {
+      // Label names may contain slashes and may themselves look like legacy
+      // hexadecimal thread IDs. Only Gmail's unambiguous modern ID prefix can
+      // terminate a variable-depth label conversation route.
+      return segments.length >= 3 && /^FMfc[A-Za-z0-9_-]+$/.test(threadId);
+    }
+    if (route === 'search' || route === 'category') return segments.length === 3;
+    return segments.length === 2;
+  }
+
+  function isGmailConversationRoute() {
+    if (window.location.hostname !== 'mail.google.com') return false;
+    return isGmailConversationHash(window.location.hash);
+  }
+
+  function detectGmailConversationRoot() {
+    if (!isGmailConversationRoute()) return null;
+    const candidates = [];
     try {
+      for (const candidate of document.querySelectorAll('main,[role="main"]')) {
+        // Message HTML is untrusted and may contain arbitrary landmarks. A
+        // nested fake main must never become trusted whole-thread coverage.
+        if (candidate.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        if (!isVisible(candidate)) continue;
+        const gmailMessageCount = candidate.querySelectorAll('.adn,.ads').length;
+        // Inbox, search, label, and category result lists also expose semantic
+        // listitems. Fail closed unless Gmail message containers prove that
+        // this landmark is the active conversation.
+        if (!gmailMessageCount) continue;
+        const semanticMessageCount = candidate.querySelectorAll('[role="article"],[role="listitem"]').length;
+        const hasEditor = !!candidate.querySelector('textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+        const hasHeading = !!candidate.querySelector('h1,h2,h3,[role="heading"]');
+        const rect = candidate.getBoundingClientRect();
+        const visibleArea = Math.max(0, rect.width) * Math.max(0, rect.height);
+        const score = (gmailMessageCount * 1000000)
+          + (hasEditor ? 100000 : 0)
+          + (semanticMessageCount * 1000)
+          + (hasHeading ? 100 : 0)
+          + Math.min(99, Math.round(visibleArea / 10000));
+        candidates.push({ candidate, score });
+      }
+    } catch (e) {}
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.candidate || null;
+  }
+
+  function gmailConversationExpansionControlState(control) {
+    // Gmail's accessible label is localized, but these semantic jsname values
+    // remain stable across UI languages. Keep the English names as a fallback
+    // for older/alternate Gmail markup that does not expose jsname.
+    const jsname = String(control?.getAttribute?.('jsname') || '').trim();
+    if (jsname === 'xvWlrc') return 'expanded';
+    if (jsname === 'tRarif') return 'collapsed';
+    const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
+    if (name === 'Collapse all') return 'expanded';
+    if (name === 'Expand all') return 'collapsed';
+    return null;
+  }
+
+  function detectGmailConversationExpansionState(conversationRoot) {
+    if (!isGmailConversationRoute() || !conversationRoot) return null;
+    let collapsed = false;
+    try {
+      for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
+        if (!isVisible(control)) continue;
+        // Message bodies are untrusted page data and may contain arbitrary
+        // buttons. Only Gmail chrome outside message/article containers can
+        // provide the structured expansion evidence used by the agent guard.
+        if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        const state = gmailConversationExpansionControlState(control);
+        if (state === 'expanded') return state;
+        if (state === 'collapsed') collapsed = true;
+      }
+    } catch (e) {}
+    return collapsed ? 'collapsed' : null;
+  }
+
+  function findGmailConversationExpandAll(conversationRoot) {
+    if (!isGmailConversationRoute() || !conversationRoot) return null;
+    try {
+      for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
+        if (!isVisible(control)) continue;
+        // Only Gmail chrome outside untrusted message bodies may be invoked.
+        // This deliberately cannot turn an Ask-mode read into a general click.
+        if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        if (gmailConversationExpansionControlState(control) === 'collapsed') return control;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function expandGmailConversationForRead(refId, timeoutMs) {
+    try {
+      ensureRefScope();
+      const conversationRoot = detectGmailConversationRoot();
+      if (!conversationRoot || getOrMintRef(conversationRoot) !== refId) {
+        return { attempted: false, expanded: false };
+      }
+      if (detectGmailConversationExpansionState(conversationRoot) === 'expanded') {
+        return { attempted: false, expanded: true };
+      }
+      const control = findGmailConversationExpandAll(conversationRoot);
+      if (!control) return { attempted: false, expanded: false };
+
+      control.click();
+      const timeout = Math.min(4000, Math.max(250, Number(timeoutMs) || 2500));
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeout) {
+        if (detectGmailConversationExpansionState(conversationRoot) === 'expanded') {
+          return { attempted: true, expanded: true };
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      return {
+        attempted: true,
+        expanded: detectGmailConversationExpansionState(conversationRoot) === 'expanded',
+      };
+    } catch (e) {
+      return { attempted: false, expanded: false };
+    }
+  }
+
+  function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
+    try {
+      ensureRefScope();
       const effFilter = filter || 'all';
-      // Tighter defaults for the 'visible' / 'interactive' modes so small
-      // models don't drown in 18K-token Stripe trees. Callers can still
-      // override by passing explicit values.
+      const conversationRoot = detectGmailConversationRoot();
+      const conversationRootRefId = conversationRoot ? getOrMintRef(conversationRoot) : '';
+      const conversationExpansionState = conversationRoot
+        ? detectGmailConversationExpansionState(conversationRoot)
+        : null;
+      const conversationMetadata = {
+        ...(conversationRootRefId ? { conversationRootRefId } : {}),
+        ...(conversationExpansionState ? { conversationExpansionState } : {}),
+      };
+      // Bound every default tree, including `all`. The model-facing tool
+      // result is capped separately at 8k chars by default; leaving `all`
+      // unlimited made that later generic limiter chop serialized JSON and
+      // discard the structured hasMore/nextPage contract. A 6k line-aware
+      // default fits below that outer cap. Capable callers may explicitly use
+      // a 12k page only when paired with the 16k serialized-result window.
       const defaultDepth = effFilter === 'all' ? 15 : 10;
       const defaultChars = effFilter === 'visible' ? 3000
                           : effFilter === 'interactive' ? 3500
-                          : null; // 'all' has no default cap (explicit only)
+                          : 6000;
       const opts = {
         filter: effFilter,
         maxDepth: maxDepth != null ? maxDepth : defaultDepth,
         refId: refId || null,
       };
       const effMaxChars = maxChars != null ? maxChars : defaultChars;
+      const baseTreeScope = {
+        filter: effFilter,
+        maxDepth: opts.maxDepth,
+        maxChars: effMaxChars,
+        ...(refId ? { ref_id: refId } : {}),
+      };
+      const gmailSnapshotEligible = !!refId
+        && !!conversationRootRefId
+        && refId === conversationRootRefId
+        && effFilter === 'all'
+        && Number(opts.maxDepth) >= 15;
       const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const requestedPage = Math.max(1, Math.floor(Number(page) || 1));
+      const requestedTreeRevision = String(expectedTreeRevision || '').trim();
       const lines = [];
 
       if (refId) {
@@ -632,13 +1177,34 @@
           };
         }
         const el = weak.deref();
-        if (!el) {
+        if (!el || !el.isConnected) {
           delete window.__wbElementMap[refId];
           return {
-            error: `Element with ref_id '${refId}' no longer exists. It may have been removed from the page. Call get_accessibility_tree without ref_id to get the current page state.`,
+            error: `Element with ref_id '${refId}' is no longer connected to the page. Call get_accessibility_tree without ref_id to get the current page state.`,
             pageContent: '',
             viewport,
           };
+        }
+        if (gmailSnapshotEligible && requestedPage > 1 && requestedTreeRevision) {
+          const snapshot = findTreeSnapshot(baseTreeScope, requestedTreeRevision);
+          if (snapshot) {
+            const continuationBase = {
+              ...baseTreeScope,
+              tree_revision: snapshot.treeRevision,
+            };
+            return {
+              ...sliceTreePage(
+                snapshot.output,
+                snapshot.lines,
+                effMaxChars,
+                requestedPage,
+                continuationBase,
+              ),
+              viewport,
+              treeRevision: snapshot.treeRevision,
+              ...conversationMetadata,
+            };
+          }
         }
         walk(el, 0, opts, lines);
       } else if (document.body) {
@@ -662,28 +1228,51 @@
         ];
         const overlayEls = [];
         const seen = new WeakSet();
+        // On pierce-enabled sites (LinkedIn's interop shell, Bilibili), the
+        // dialog we must hoist can live inside an open shadow root where
+        // document.querySelectorAll can't see it. Collect those roots so the
+        // overlay scan covers them too — without piercing, a freshly-opened
+        // composer dialog is completely absent from the tree output and the
+        // model falls back to blind coordinate clicks.
+        const overlayRoots = [document];
+        if (window.__wbSiteInteractions.shouldPierceShadowRoots()) {
+          const collectShadowRoots = (root, depth) => {
+            if (depth > 4) return;
+            let hosts;
+            try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
+            for (const host of hosts) {
+              if (host.shadowRoot) {
+                overlayRoots.push(host.shadowRoot);
+                collectShadowRoots(host.shadowRoot, depth + 1);
+              }
+            }
+          };
+          collectShadowRoots(document, 0);
+        }
         try {
           for (const sel of overlaySelectors) {
-            const nodes = document.querySelectorAll(sel);
-            for (const n of nodes) {
-              if (seen.has(n)) continue;
-              if (!n.isConnected) continue;
-              // Skip if ancestor already collected — avoids emitting a
-              // nested listbox twice when its ancestor dialog is also hit.
-              let ancIsOverlay = false;
-              for (let p = n.parentElement; p; p = p.parentElement) {
-                if (seen.has(p)) { ancIsOverlay = true; break; }
+            for (const root of overlayRoots) {
+              const nodes = root.querySelectorAll(sel);
+              for (const n of nodes) {
+                if (seen.has(n)) continue;
+                if (!n.isConnected) continue;
+                // Skip if ancestor already collected — avoids emitting a
+                // nested listbox twice when its ancestor dialog is also hit.
+                let ancIsOverlay = false;
+                for (let p = n.parentElement; p; p = p.parentElement) {
+                  if (seen.has(p)) { ancIsOverlay = true; break; }
+                }
+                if (ancIsOverlay) continue;
+                // Quick visibility gate — don't emit hidden overlay shells.
+                try {
+                  const r = n.getBoundingClientRect();
+                  if (r.width < 1 || r.height < 1) continue;
+                  const s = window.getComputedStyle(n);
+                  if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
+                } catch (e) { continue; }
+                seen.add(n);
+                overlayEls.push(n);
               }
-              if (ancIsOverlay) continue;
-              // Quick visibility gate — don't emit hidden overlay shells.
-              try {
-                const r = n.getBoundingClientRect();
-                if (r.width < 1 || r.height < 1) continue;
-                const s = window.getComputedStyle(n);
-                if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
-              } catch (e) { continue; }
-              seen.add(n);
-              overlayEls.push(n);
             }
           }
         } catch (e) {}
@@ -712,8 +1301,42 @@
       sweepDeadRefs();
 
       const output = lines.join('\n');
+      const treeRevision = fingerprintTreeContent(output);
+      const revisionBound = !!refId;
+      const continuationBase = {
+        ...baseTreeScope,
+        ...(revisionBound ? { tree_revision: treeRevision } : {}),
+      };
+      if (gmailSnapshotEligible && (
+        requestedPage === 1
+        || !requestedTreeRevision
+        || requestedTreeRevision === treeRevision
+      )) {
+        rememberTreeSnapshot(baseTreeScope, treeRevision, output, lines);
+      }
+      if (revisionBound && requestedPage > 1
+          && requestedTreeRevision && requestedTreeRevision !== treeRevision) {
+        const restartArgs = {
+          ...baseTreeScope,
+          page: 1,
+        };
+        return {
+          error: 'The anchored accessibility snapshot changed or expired. Restart from page 1 with the exact returned continuationArgs.',
+          pageContent: '',
+          viewport,
+          treeRevision,
+          treeRevisionMismatch: true,
+          truncated: true,
+          hasMore: true,
+          page: requestedPage,
+          nextPage: 1,
+          continuationArgs: restartArgs,
+          restartArgs,
+          ...conversationMetadata,
+        };
+      }
       if (effMaxChars != null && page != null && Math.floor(Number(page) || 1) > 1) {
-        return { ...sliceTreePage(output, lines, effMaxChars, page), viewport };
+        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, ...conversationMetadata };
       }
       // For 'visible' / 'interactive', truncate gracefully on overflow —
       // small models prefer a partial tree to a hard error. For 'all'
@@ -728,19 +1351,21 @@
       //      empty (chunkSize too small).
       if (effMaxChars != null && output.length > effMaxChars) {
         if (filter && filter !== 'all' && maxChars == null) {
-          return { ...sliceTreePage(output, lines, effMaxChars, page), viewport };
+          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, ...conversationMetadata };
         }
-        const sliced = sliceTreePage(output, lines, effMaxChars, page);
+        const sliced = sliceTreePage(output, lines, effMaxChars, page, continuationBase);
         if (sliced.pageContent && !sliced.pageContent.startsWith('[tree page')) {
           let hint = `Tree was ${output.length} chars; auto-sliced to fit ${effMaxChars}. `;
           if (sliced.hasMore) {
-            hint += `Call again with page:${sliced.nextPage} for the next slice, OR pass a smaller maxDepth (e.g. ${Math.max(3, (opts.maxDepth || 15) - 5)}) or a refId to anchor on a specific subtree.`;
+            hint += `Call again with the exact continuationArgs ${JSON.stringify(sliced.continuationArgs)} for the next slice, OR pass a smaller maxDepth (e.g. ${Math.max(3, (opts.maxDepth || 15) - 5)}) or a refId to anchor on a specific subtree.`;
           }
           return {
             ...sliced,
             viewport,
+            treeRevision,
             autoDegraded: true,
             notice: hint,
+            ...conversationMetadata,
           };
         }
         let hint = `Output exceeds ${effMaxChars} character limit (${output.length} characters). `;
@@ -754,7 +1379,7 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport };
+      return { pageContent: output, viewport, treeRevision, ...conversationMetadata };
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),
@@ -766,10 +1391,11 @@
 
   // ── Public: lookup by ref_id (used by click_ax / type_ax) ──────────────
   function lookup(refId) {
+    if (refOrdinal(refId) == null) return null;
     const weak = window.__wbElementMap[refId];
     if (!weak) return null;
     const el = weak.deref();
-    if (!el) {
+    if (!el || !el.isConnected) {
       delete window.__wbElementMap[refId];
       return null;
     }
@@ -789,8 +1415,7 @@
   //    interactive text-entry refs to the top of the suggestions.
   function suggestNearRefs(requestedRefId, limit) {
     const cap = typeof limit === 'number' ? limit : 6;
-    const m = /^ref_(\d+)$/.exec(String(requestedRefId || ''));
-    const targetNum = m ? parseInt(m[1], 10) : null;
+    const targetNum = refOrdinal(requestedRefId);
     const live = [];
     for (const key in window.__wbElementMap) {
       const weak = window.__wbElementMap[key];
@@ -800,8 +1425,7 @@
         if (!el.isConnected) continue;
         if (!isVisible(el)) continue;
       } catch { continue; }
-      const km = /^ref_(\d+)$/.exec(key);
-      const n = km ? parseInt(km[1], 10) : 0;
+      const n = refOrdinal(key) || 0;
       const role = getRole(el);
       const name = getAccessibleName(el) || '';
       const interactive = isInteractive(el);
@@ -841,7 +1465,24 @@
     }));
   }
 
+  function generateAccessibilitySubtree(rootElement, filter, maxDepth, maxChars, page) {
+    if (!rootElement || rootElement.nodeType !== 1 || !rootElement.isConnected) {
+      return {
+        error: 'Accessibility subtree root is no longer available.',
+        pageContent: '',
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    }
+    return generateAccessibilityTree(filter, maxDepth, maxChars, getOrMintRef(rootElement), page);
+  }
+
   window.__generateAccessibilityTree = generateAccessibilityTree;
+  window.__generateAccessibilitySubtree = generateAccessibilitySubtree;
+  window.__wb_expand_gmail_conversation_for_read = expandGmailConversationForRead;
   window.__wb_ax_lookup = lookup;
+  window.__wb_ax_ref = getOrMintRef;
+  window.__wb_ax_name = getAccessibleName;
+  window.__wb_ax_role = getRole;
+  window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;
   window.__wb_ax_suggest = suggestNearRefs;
 })();

@@ -1,0 +1,37 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 35580,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm on the New Tab page — there's nothing here to delete. What would you like me to remove?\n\n- A file or folder on your computer?\n- Something from a specific website you're logged into?\n- A tab, bookmark, or browser history item?\n- Something else?",
+  "usage": {
+    "prompt_tokens": 17479,
+    "completion_tokens": 109,
+    "total_tokens": 17588,
+    "cost": 0.00087683,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 17152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00087683,
+      "upstream_inference_prompt_cost": 0.00075148,
+      "upstream_inference_completions_cost": 0.00012535
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

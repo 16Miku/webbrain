@@ -1,0 +1,21 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4735,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI'm not sure what you'd like me to open. Could you clarify? Are you asking me to:\n\n1. Open a specific website or URL?\n2. Open a file from your computer?\n3. Open something from a previous conversation?\n\nLet me know and I'll get it done right away.",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17479,
+    "completion_tokens": 155,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "023",
+  "user": "show me vegan lasagna recipes",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3720,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking to \"show me vegan lasagna recipes\". This is a request for content, specifically recipes. I need to understand what the current page is and what tools are available.\n\nLooking at the system prompt, I can see that I'm WebBrain, an AI browser agent. The current page context shows \"about:home — Title: New Tab\", which means I'm on a blank/new tab page.\n\nThe user wants vegan lasagna recipes. This is a content request that would typically involve:\n1. Searching for or navigating to a recipe website\n2. Finding vegan lasagna recipes\n3. Presenting them to the user\n\nHowever, I need to be careful here. The user is asking for content, and I should check if this is something I can help with through web browsing. Since they want recipes, I could potentially search for this content online.\n\nLet me start by checking what's currently on the page and then see if I can navigate to a recipe site to find vegan lasagna recipes.\n\nFirst, let me read the current page to understand the context.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 244,
+    "prompt_tokens": 8466,
+    "total_tokens": 8710,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

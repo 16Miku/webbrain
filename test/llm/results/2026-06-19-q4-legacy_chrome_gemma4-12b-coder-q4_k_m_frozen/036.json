@@ -1,0 +1,25 @@
+{
+  "id": "036",
+  "user": "submit",
+  "tab": {
+    "url": "https://forms.example.com/contact",
+    "title": "Contact form"
+  },
+  "latencyMs": 2814,
+  "error": null,
+  "firstToolCall": {
+    "name": "verify_form",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"verify_form\",\"arguments\":{}}</tool_call>",
+  "usage": {
+    "completion_tokens": 214,
+    "prompt_tokens": 9192,
+    "total_tokens": 9406,
+    "prompt_tokens_details": {
+      "cached_tokens": 8191
+    }
+  }
+}

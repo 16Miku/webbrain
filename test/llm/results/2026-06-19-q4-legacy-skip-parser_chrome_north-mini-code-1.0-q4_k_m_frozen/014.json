@@ -1,0 +1,27 @@
+{
+  "id": "014",
+  "user": "show me my bookmarks",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3289,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking to \"show me my bookmarks\". This is a request to view their browser bookmarks. I need to understand what page they're currently on and how to access their bookmarks.\n\nLooking at the current page context, it says:\n- URL: about:home\n- Title: New Tab\n\nThis appears to be a new tab page (about:home is Chrome's new tab page). On Chrome's new tab page, bookmarks are typically displayed in a section called \"Bookmarks\" or similar.\n\nLet me start by reading the current page to see what's available and how to access bookmarks.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 152,
+    "prompt_tokens": 8465,
+    "total_tokens": 8617,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

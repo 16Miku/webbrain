@@ -1,0 +1,25 @@
+{
+  "id": "011",
+  "user": "open firefox settings",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4389,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "about:settings"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"navigate\",\n  \"arguments\": {\n    \"url\": \"about:settings\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8603,
+    "total_tokens": 9342,
+    "completion_tokens": 739,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "068",
+  "user": "click that",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6423,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What do you want to click on the page?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"clarify\",\"arguments\":{\"question\":\"What do you want to click on the page?\"}}",
+  "usage": {
+    "prompt_tokens": 8602,
+    "total_tokens": 9688,
+    "completion_tokens": 1086,
+    "prompt_tokens_details": null
+  }
+}

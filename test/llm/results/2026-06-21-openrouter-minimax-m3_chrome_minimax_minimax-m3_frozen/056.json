@@ -1,0 +1,37 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 6971,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'll save the YouTube thumbnail for this video. YouTube thumbnails follow a predictable URL pattern, so I can grab the highest-quality version directly.",
+  "usage": {
+    "prompt_tokens": 17244,
+    "completion_tokens": 244,
+    "total_tokens": 17488,
+    "cost": 0.010932,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.010932,
+      "upstream_inference_prompt_cost": 0.0103464,
+      "upstream_inference_completions_cost": 0.0005856
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 174,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

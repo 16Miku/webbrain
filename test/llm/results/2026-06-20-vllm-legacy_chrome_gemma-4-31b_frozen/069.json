@@ -1,0 +1,25 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1141,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "text": "You said 'open it', but we are currently on a New Tab page. What would you like me to open? (e.g., a specific website, a file, or a link from a previous conversation)"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"clarify\",\"arguments\":{\"text\":\"You said 'open it', but we are currently on a New Tab page. What would you like me to open? (e.g., a specific website, a file, or a link from a previous conversation)\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9152,
+    "total_tokens": 9218,
+    "completion_tokens": 66,
+    "prompt_tokens_details": null
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "084",
+  "user": "explain javascript closures in 2 sentences",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 7181,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "new_tab{\"name\":\"new_tab\",\"arguments\":{url:\"https://en.wikipedia.org/wiki/JavaScript\"}}",
+  "usage": {
+    "prompt_tokens": 8607,
+    "total_tokens": 9823,
+    "completion_tokens": 1216,
+    "prompt_tokens_details": null
+  }
+}

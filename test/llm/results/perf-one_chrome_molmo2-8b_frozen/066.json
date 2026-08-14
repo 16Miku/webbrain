@@ -1,0 +1,22 @@
+{
+  "id": "066",
+  "user": "what did i highlight",
+  "tab": {
+    "url": "https://en.wikipedia.org/wiki/Closure_(computer_programming)",
+    "title": "Closure (computer programming) — Wikipedia"
+  },
+  "latencyMs": 2003,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have access to your screen or the ability to see what you've highlighted. If you describe what you highlighted or share the text, I can help you with it!",
+  "usage": {
+    "prompt_tokens": 8608,
+    "completion_tokens": 37,
+    "total_tokens": 8645,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

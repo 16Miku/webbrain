@@ -1,0 +1,27 @@
+{
+  "id": "036",
+  "user": "submit",
+  "tab": {
+    "url": "https://forms.example.com/contact",
+    "title": "Contact form"
+  },
+  "latencyMs": 3183,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is on a contact form page (https://forms.example.com/contact). They want to submit the form. I need to:\n\n1. First read the current page to understand what fields are present\n2. Fill out the form if needed (though they didn't specify what to fill)\n3. Submit the form\n\nSince they just said \"submit\", I should first read the page to see what form fields exist and understand the current state.\n\nLet me start by reading the accessibility tree to see what's on the page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 138,
+    "prompt_tokens": 8465,
+    "total_tokens": 8603,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

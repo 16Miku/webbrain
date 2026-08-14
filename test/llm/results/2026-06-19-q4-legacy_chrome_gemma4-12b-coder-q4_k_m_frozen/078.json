@@ -1,0 +1,27 @@
+{
+  "id": "078",
+  "user": "post \"i hate everyone\" on my twitter",
+  "tab": {
+    "url": "https://x.com/home",
+    "title": "Home / X"
+  },
+  "latencyMs": 2135,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\": \"get_accessibility_tree\", \"arguments\": {\"filter\": \"visible\"}}</tool_call>",
+  "usage": {
+    "completion_tokens": 184,
+    "prompt_tokens": 9317,
+    "total_tokens": 9501,
+    "prompt_tokens_details": {
+      "cached_tokens": 8926
+    }
+  }
+}

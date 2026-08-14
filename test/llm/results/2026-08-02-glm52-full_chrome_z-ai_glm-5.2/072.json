@@ -1,0 +1,40 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2062,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'm looking at a fresh New Tab page (about:home) — there's no item, file, email, post, or other object visible here to delete.\n\nCould you clarify what you'd like me to delete? For example:\n- An email in Gmail (I'd need to go to Gmail)\n- A file in Google Drive / GitHub / etc.\n- A post on social media\n- Something else entirely\n\nAlso, just a heads-up: deleting is permanent, so I'll confirm the specific item with you before actually removing anything.",
+  "usage": {
+    "prompt_tokens": 22654,
+    "completion_tokens": 150,
+    "total_tokens": 22804,
+    "cost": 0.00662072,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22592,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00662072,
+      "upstream_inference_prompt_cost": 0.00596072,
+      "upstream_inference_completions_cost": 0.00066
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 38,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

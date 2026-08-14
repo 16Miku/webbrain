@@ -1,0 +1,27 @@
+{
+  "id": "052",
+  "user": "archive this",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox/abc123",
+    "title": "Invoice from Acme — Gmail"
+  },
+  "latencyMs": 3332,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user wants me to \"archive this\". Looking at the current page context, it shows:\n\nURL: https://mail.google.com/mail/u/0/#inbox/abc123\nTitle: Invoice from Acme — Gmail\n\nSo the user is currently viewing an email in Gmail titled \"Invoice from Acme\" and wants to \"archive this\". In Gmail, archiving an email typically means moving it to the \"All Mail\" folder or removing it from the inbox.\n\nLet me first read the current page to understand what I'm looking at, then identify how to archive the email.\n\nI should start by getting the accessibility tree to see what's on the page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_accessibility_tree\", \"parameters\": {\"filter\": \"visible\"}}\n]",
+  "usage": {
+    "completion_tokens": 164,
+    "prompt_tokens": 8616,
+    "total_tokens": 8780,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

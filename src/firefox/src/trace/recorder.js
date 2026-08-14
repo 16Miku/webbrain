@@ -1,3 +1,7 @@
+import { normalizeRuntimeTraceConfig } from './runtime-config.js';
+import { buildPromptTraceProvenance } from './prompt-provenance.js';
+import { formatErrorMessage } from '../error-format.js';
+
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
  * screenshots) into IndexedDB for later inspection and cross-model comparison.
@@ -8,7 +12,7 @@
  *   - shots      keyPath=[runId, seq]           // screenshot Blobs
  *
  * All writes are fire-and-forget. Recording is gated on the `tracingEnabled`
- * setting; when disabled, every call is a cheap no-op.
+ * setting. When disabled, every call is a cheap no-op.
  */
 
 const DB_NAME = 'webbrain_traces';
@@ -57,6 +61,7 @@ function promisifyReq(req) {
 
 async function tracingEnabled() {
   try {
+    if (typeof indexedDB === 'undefined') return false;
     const storageApi = (typeof browser !== 'undefined' ? browser : chrome).storage.local;
     const { tracingEnabled } = await storageApi.get(['tracingEnabled']);
     return tracingEnabled === true;
@@ -91,6 +96,16 @@ function _newSeq(runId) {
   return st.seq;
 }
 
+function normalizeTraceAttachments(attachments) {
+  return (Array.isArray(attachments) ? attachments : []).slice(0, 20).map(attachment => ({
+    kind: ['image', 'document', 'text'].includes(attachment?.kind) ? attachment.kind : 'document',
+    name: String(attachment?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240),
+    mimeType: String(attachment?.mimeType || '').slice(0, 120),
+    size: Number.isFinite(Number(attachment?.size)) ? Math.max(0, Number(attachment.size)) : 0,
+    source: attachment?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+  }));
+}
+
 // ----- Public API ------------------------------------------------------------
 
 export async function startRun(meta) {
@@ -112,10 +127,13 @@ export async function startRun(meta) {
       model: meta.model || '',
       providerId: meta.providerId || '',
       providerClass: meta.providerClass || '',
+      webbrainVersion: meta.webbrainVersion || '',
+      runtimeConfig: normalizeRuntimeTraceConfig(meta.runtimeConfig),
       userMessage: meta.userMessage || '',
       tabUrl: meta.tabUrl || '',
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
+      attachments: normalizeTraceAttachments(meta.attachments),
       stepCount: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
@@ -149,13 +167,27 @@ async function _appendEvent(runId, kind, data) {
   }
 }
 
-export function recordLLMRequest(runId, step, payload) {
-  // Payload is large (full message array + tool schemas). Only record when
-  // verboseTracing is on — in normal mode we just record the response.
-  return _appendEvent(runId, 'llm_request', { step, ...payload });
+export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
+  // Never persist full prompts, message text, tool schemas, or tool names here.
+  // The optional fourth argument is reduced to content-free provenance only.
+  let promptProvenance = null;
+  if (provenanceInput) {
+    try {
+      promptProvenance = buildPromptTraceProvenance(
+        provenanceInput.messages,
+        provenanceInput.tools,
+        provenanceInput.runtimeMode,
+      );
+    } catch { /* provenance must never break a model request */ }
+  }
+  return _appendEvent(runId, 'llm_request', {
+    step,
+    ...payload,
+    ...(promptProvenance ? { promptProvenance } : {}),
+  });
 }
 
-export function recordLLMResponse(runId, step, { content, toolCalls, usage, latencyMs, model }) {
+export function recordLLMResponse(runId, step, { content, toolCalls, usage, latencyMs, model, phase, attempt, repair }) {
   return _appendEvent(runId, 'llm_response', {
     step,
     content: content || null,
@@ -167,6 +199,11 @@ export function recordLLMResponse(runId, step, { content, toolCalls, usage, late
     usage: usage || null,
     latencyMs: latencyMs || null,
     model: model || null,
+    // Carry the phase label (e.g. 'planner') so a pre-loop planner call recorded
+    // at step 0 is distinguishable from the agent loop's first step-0 response.
+    ...(phase ? { phase } : {}),
+    ...(Number.isInteger(attempt) ? { attempt } : {}),
+    ...(repair === true ? { repair: true } : {}),
   });
 }
 
@@ -223,7 +260,16 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
 }
 
 export function recordError(runId, step, phase, message) {
-  return _appendEvent(runId, 'error', { step, phase, message });
+  return _appendEvent(runId, 'error', { step, phase, message: formatErrorMessage(message) });
+}
+
+/**
+ * Record the lifecycle of an interactive Ask streaming attempt without
+ * persisting token contents. Payloads contain only decision/outcome codes,
+ * protocol, aggregate counts, timing, and a redacted error summary.
+ */
+export function recordStreaming(runId, step, payload = {}) {
+  return _appendEvent(runId, 'streaming', { step, ...payload });
 }
 
 /**
@@ -257,6 +303,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     // across all llm_response events — providers report this in their
     // native units (OpenRouter & OpenAI: USD).
     let totalIn = 0, totalOut = 0, totalCost = 0, stepCount = 0;
+    let sawLoopError = false;
     await new Promise((resolve) => {
       const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
       const req = idx.openCursor(IDBKeyRange.only(runId));
@@ -264,6 +311,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
         const c = req.result;
         if (!c) return resolve();
         const ev = c.value;
+        if (ev.kind === 'error' && ev.data?.phase === 'loop') sawLoopError = true;
         if (ev.kind === 'llm_response') {
           stepCount = Math.max(stepCount, ev.data?.step || 0);
           const u = ev.data?.usage;
@@ -279,9 +327,10 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     });
     const existing = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
     if (existing) {
+      const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
       existing.endedAt = Date.now();
       existing.durationMs = existing.endedAt - existing.startedAt;
-      existing.status = status;
+      existing.status = finalStatus;
       existing.finalContent = finalContent;
       existing.stepCount = stepCount;
       existing.totalInputTokens = totalIn;
@@ -298,19 +347,24 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
 
 // ----- Reader API (used by traces.html) --------------------------------------
 
-export async function listRuns({ limit = 500 } = {}) {
+export async function listRuns({ limit = 500, conversationId = null } = {}) {
   const db = await openDB();
   const idx = tx(db, ['runs'], 'readonly').objectStore('runs').index('startedAt');
   const out = [];
-  await new Promise((resolve) => {
+  // When conversationId is set, only matching runs count toward `limit`, so a
+  // chat's tool-chain export is not starved by unrelated newer runs.
+  await new Promise((resolve, reject) => {
     const req = idx.openCursor(null, 'prev');
     req.onsuccess = () => {
       const c = req.result;
       if (!c || out.length >= limit) return resolve();
-      out.push(c.value);
+      const row = c.value;
+      if (!conversationId || row?.conversationId === conversationId) {
+        out.push(row);
+      }
       c.continue();
     };
-    req.onerror = () => resolve();
+    req.onerror = () => reject(req.error || new Error('listRuns failed'));
   });
   return out;
 }
@@ -324,7 +378,7 @@ export async function getRunEvents(runId) {
   const db = await openDB();
   const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
   const out = [];
-  await new Promise((resolve) => {
+  await new Promise((resolve, reject) => {
     const req = idx.openCursor(IDBKeyRange.only(runId));
     req.onsuccess = () => {
       const c = req.result;
@@ -332,7 +386,7 @@ export async function getRunEvents(runId) {
       out.push(c.value);
       c.continue();
     };
-    req.onerror = () => resolve();
+    req.onerror = () => reject(req.error || new Error('getRunEvents failed'));
   });
   out.sort((a, b) => a.seq - b.seq);
   return out;

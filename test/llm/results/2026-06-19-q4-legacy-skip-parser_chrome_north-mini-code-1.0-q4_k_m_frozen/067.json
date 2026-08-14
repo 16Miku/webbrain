@@ -1,0 +1,25 @@
+{
+  "id": "067",
+  "user": "show me what i can click on this page",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 2895,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_interactive_elements",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "The user is asking to see what they can click on the current page. They want to see clickable elements. I should use the get_interactive_elements tool to show them what interactive elements are available on the page.\n\nLet me start by getting the interactive elements on the current page.[\n    {\"tool_call_id\": \"0\", \"tool_name\": \"get_interactive_elements\", \"parameters\": {}}\n]",
+  "usage": {
+    "completion_tokens": 86,
+    "prompt_tokens": 8484,
+    "total_tokens": 8570,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

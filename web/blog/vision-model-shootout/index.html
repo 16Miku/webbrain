@@ -4,39 +4,92 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Four vision models, one screenshot — WebBrain Blog</title>
-  <meta name="description" content="We benchmarked Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B on the same browser screenshot using WebBrain's exact vision-sub-call prompt. Here's what the numbers look like and why one model changed our default recommendation.">
+  <meta name="description" content="We benchmarked Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B on the same browser screenshot using WebBrain&#39;s exact vision-sub-call prompt. Here&#39;s what the numbers look like and why one model changed our default recommendation.">
   <meta name="keywords" content="vision model benchmark, open source browser agent, Qwen3.6, Gemma 4, llama.cpp vision, local vision model, Qwen3.5 27B, browser automation OCR">
   <meta property="og:title" content="Four vision models, one screenshot — WebBrain benchmark">
   <meta property="og:description" content="Gemma 4-E2B vs Gemma 4-31B vs Qwen3.5-27B vs Qwen3.6-35B-A3B on the same browser screenshot, same prompt. OCR, latency, and token cost — what actually matters for a browser agent.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://webbrain.one/blog/vision-model-shootout">
-  <meta property="og:image" content="https://webbrain.one/og-image.svg">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Four vision models, one screenshot — WebBrain benchmark">
-  <meta name="twitter:description" content="Gemma 4 vs Qwen3.5 vs Qwen3.6-A3B on a browser agent's vision prompt.">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="twitter:description" content="Gemma 4 vs Qwen3.5 vs Qwen3.6-A3B on a browser agent&#39;s vision prompt.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="canonical" href="https://webbrain.one/blog/vision-model-shootout">
-  <!-- Blog post is English-only; alternates point to locale homepages. -->
+  <!-- Blog is English-only; alternates point to locale homepages. -->
   <link rel="alternate" hreflang="en" href="https://webbrain.one/">
   <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
   <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
   <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
   <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
   <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --bg: #0b0e17;
       --bg-card: #111827;
+      --bg-card-hover: #1a2233;
       --surface: #161d2e;
       --border: rgba(255,255,255,0.07);
       --text: #e4e4ec;
       --text-dim: #8b8fa4;
       --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
       --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
       --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
       --radius: 12px;
+      --radius-lg: 16px;
       --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
     }
     html { scroll-behavior: smooth; }
     body {
@@ -45,25 +98,45 @@
       color: var(--text);
       line-height: 1.75;
       font-size: 17px;
+      overflow-x: hidden;
     }
     a { color: var(--accent2); text-decoration: none; }
     a:hover { text-decoration: underline; }
-
     .glow-bg {
       position: fixed;
       inset: 0;
       z-index: -1;
       pointer-events: none;
+      overflow: hidden;
     }
-    .glow-bg::before, .glow-bg::after {
-      content: ''; position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.3;
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
     }
-    .glow-bg::before { width: 500px; height: 500px; background: var(--accent); top: -200px; left: -150px; }
-    .glow-bg::after  { width: 500px; height: 500px; background: var(--accent2); bottom: -200px; right: -150px; opacity: 0.2; }
-
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
     nav {
-      position: sticky; top: 0; z-index: 100;
-      background: rgba(11,14,23,0.85);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
       backdrop-filter: saturate(160%) blur(12px);
       -webkit-backdrop-filter: saturate(160%) blur(12px);
       border-bottom: 1px solid var(--border);
@@ -71,48 +144,139 @@
     .nav-inner {
       max-width: var(--max-w);
       margin: 0 auto;
-      padding: 16px 24px;
+      padding: 14px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 20px;
     }
-    .nav-brand { font-weight: 700; font-size: 18px; color: var(--text); }
-    .nav-brand .emoji { margin-right: 4px; }
-    .nav-links a { color: var(--text-dim); margin-left: 20px; font-size: 14px; }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
-
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
     article {
       max-width: var(--max-w);
       margin: 0 auto;
       padding: 64px 24px 80px;
     }
-
-    .meta {
-      font-size: 13px;
-      color: var(--text-dim);
-      margin-bottom: 12px;
-      letter-spacing: 0.02em;
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     h1 {
       font-size: 38px;
       line-height: 1.2;
       font-weight: 700;
-      letter-spacing: -0.02em;
+      letter-spacing: 0;
       margin-bottom: 16px;
     }
     .lede {
-      font-size: 19px;
       color: var(--text-dim);
-      margin-bottom: 40px;
       line-height: 1.6;
     }
-
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
     h2 {
       font-size: 24px;
       font-weight: 700;
       margin-top: 48px;
       margin-bottom: 14px;
-      letter-spacing: -0.01em;
+      letter-spacing: 0;
     }
     h3 {
       font-size: 18px;
@@ -121,18 +285,22 @@
       margin-bottom: 10px;
       color: var(--text);
     }
-
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
     p { margin-bottom: 16px; }
     ul, ol { margin: 0 0 16px 20px; }
     li { margin-bottom: 6px; }
-
     code {
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 0.88em;
-      background: rgba(255,255,255,0.06);
+      background: var(--inline-code-bg);
       padding: 2px 6px;
       border-radius: 4px;
-      color: #e7dbff;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
     }
     pre {
       background: var(--code-bg);
@@ -143,14 +311,14 @@
       margin: 20px 0;
       font-size: 14px;
       line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
     }
     pre code {
       background: transparent;
       padding: 0;
-      color: #d7cff7;
+      color: inherit;
       font-size: inherit;
     }
-
     blockquote {
       border-left: 3px solid var(--accent);
       padding: 4px 0 4px 18px;
@@ -158,13 +326,26 @@
       color: var(--text-dim);
       font-style: italic;
     }
-
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
     .table-wrap { overflow-x: auto; margin: 24px 0; }
     table {
       width: 100%;
+      min-width: 560px;
       border-collapse: collapse;
       font-size: 14px;
-      min-width: 560px;
     }
     th, td {
       text-align: left;
@@ -177,16 +358,16 @@
       font-weight: 600;
       font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      background: rgba(255,255,255,0.02);
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
     }
     td code { font-size: 12px; }
-    .win { color: #34d399; font-weight: 600; }
-    .lose { color: #f87171; }
-
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
     .callout {
-      background: rgba(108,99,255,0.08);
-      border: 1px solid rgba(108,99,255,0.2);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
       border-radius: var(--radius);
       padding: 16px 20px;
       margin: 24px 0;
@@ -195,7 +376,6 @@
       color: var(--text-dim);
     }
     .callout strong { color: var(--text); }
-
     .author-box {
       margin-top: 64px;
       padding-top: 32px;
@@ -203,8 +383,40 @@
       color: var(--text-dim);
       font-size: 14px;
     }
-    .author-box a { color: var(--accent2); }
-
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
     footer {
       max-width: var(--max-w);
       margin: 0 auto;
@@ -212,265 +424,190 @@
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
+      gap: 24px;
       color: var(--text-dim);
       font-size: 13px;
     }
     footer a { color: var(--text-dim); }
     footer a:hover { color: var(--text); }
-
-    @media (max-width: 640px) {
+    @media (max-width: 700px) {
       body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
       h1 { font-size: 28px; }
       .lede { font-size: 16px; }
-      article { padding: 48px 20px 64px; }
+      main, article { padding: 48px 20px 64px; }
       h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
     }
   </style>
-
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "BlogPosting",
-    "headline": "Four vision models, one screenshot: which one is actually worth running locally for a browser agent?",
-    "description": "Benchmarking Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B on WebBrain's vision sub-call prompt.",
-    "author": {
-      "@type": "Person",
-      "name": "Emre Sokullu",
-      "url": "https://emresokullu.com"
-    },
-    "datePublished": "2026-04-21",
-    "image": "https://webbrain.one/og-image.svg",
-    "publisher": {
-      "@type": "Organization",
-      "name": "WebBrain",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://webbrain.one/favicon.svg"
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
       }
-    },
-    "mainEntityOfPage": {
-      "@type": "WebPage",
-      "@id": "https://webbrain.one/blog/vision-model-shootout"
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Four vision models, one screenshot: which one is actually worth running locally for a browser agent?",
+  "description": "We benchmarked Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B on the same browser screenshot using WebBrain's exact vision-sub-call prompt. Here's what the numbers look like and why one model changed our default recommendation.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-04-21",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
     }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/vision-model-shootout"
   }
+}
   </script>
 </head>
 <body>
   <div class="glow-bg"></div>
-
   <nav>
     <div class="nav-inner">
-      <a href="/" class="nav-brand"><span class="emoji">🧠</span> WebBrain<span style="opacity:0.5; font-weight:400;">.one</span></a>
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
       <div class="nav-links">
         <a href="/">Home</a>
-        <a href="/blog">Blog</a>
-        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"
-                style="background:rgba(255,255,255,0.05); color:inherit; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:6px 10px; font-size:13px;">
-          <option value="en">English</option>
-          <option value="es">Español</option>
-          <option value="fr">Français</option>
-          <option value="tr">Türkçe</option>
-          <option value="zh">中文</option>
-        </select>
-        <a href="https://github.com/esokullu/webbrain" target="_blank">GitHub</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
       </div>
     </div>
   </nav>
 
   <article>
-    <div class="meta">April 21, 2026 · 7 min read · <a href="/blog">← All posts</a></div>
+    <div class="meta">April 21, 2026 &middot; 7 min read &middot; <a href="/blog">&larr; All posts</a></div>
     <h1>Four vision models, one screenshot: which one is actually worth running locally for a browser agent?</h1>
-    <p class="lede">
-      We fed the same Google sign-in page through four open-weight vision models using the exact system prompt WebBrain's vision sub-call ships with. The spread on OCR accuracy, latency, and token cost is wider than you'd expect — and one model quietly changed our mind about which architecture to reach for.
-    </p>
-
-    <h2>Why this matters (and what we're actually measuring)</h2>
-    <p>
-      WebBrain runs entirely inside your browser and supports a <em>split-provider</em> vision setup: your fast planner (GPT-4o-mini, Sonnet, a local Qwen, whatever) handles tool calls, and a separate vision model reads screenshots into terse structured text that gets threaded back into the planner's context. That's cheaper, lower-latency, and — importantly — lets you run vision locally on your own hardware while keeping the planner on a smarter cloud model.
-    </p>
-    <p>
-      But it only works if the vision model can actually <em>see</em> the page. For a browser agent, that means three things, in order of importance:
-    </p>
-    <ol>
-      <li><strong>Verbatim OCR</strong> — can it quote button/link text exactly? Because <code>click({text: "Next"})</code> only fires if the caption said "Next", not "next step" or "continue button".</li>
-      <li><strong>State signals</strong> — can it spot red borders, disabled buttons, error text, modals, CAPTCHAs?</li>
-      <li><strong>Calibrated uncertainty</strong> — if it can't read something clearly, does it say so, or does it hallucinate?</li>
-    </ol>
-    <p>
-      Our vision sub-call's system prompt asks for a 6-section structured caption covering exactly these concerns. We built a tiny CLI probe (<code>test/vision-probe.mjs</code> in the repo) that sends the same prompt + same image + same parameters the extension uses, so you can compare models apples-to-apples on your own screenshots.
-    </p>
-
-    <div class="callout">
-      <strong>The test image.</strong> Google's password-entry screen for a real Gmail account, with the password field left empty — so the page shows the red error border, an icon, the message <em>"Enter a password"</em>, and the "Try another way" link. It's a realistic, information-dense screen: 12 distinct visible strings, a focused input, a checkbox, an error state, and a small email chip with a dropdown affordance. Easy to produce a caption for, hard to produce one that doesn't skip or hallucinate.
-    </div>
-
-    <h2>The four contenders</h2>
-    <ul>
-      <li><strong>Gemma 4-E2B-It</strong> — Google's 2B-effective-parameter model, the smallest plausible vision option.</li>
-      <li><strong>Gemma 4-31B-It</strong> — same family, dense 31B parameters, high-throughput quant.</li>
-      <li><strong>Qwen3.5-27B</strong> — Alibaba's dense 27B multimodal.</li>
-      <li><strong>Qwen3.6-35B-A3B</strong> — Mixture-of-Experts: 35B total, ~3B activated per token.</li>
-    </ul>
-    <p>All four served locally via llama.cpp, same endpoint, same quantization family. Exact same prompt, same temperature (0), same max_tokens (800), same <code>chat_template_kwargs.enable_thinking: false</code>.</p>
-
-    <h2>Results</h2>
-
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th></th>
-            <th>Gemma 4-E2B</th>
-            <th>Gemma 4-31B</th>
-            <th>Qwen3.5-27B</th>
-            <th>Qwen3.6-35B-A3B</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Latency</td>
-            <td>1.5s</td>
-            <td>4.6s</td>
-            <td>7.9s</td>
-            <td><span class="win">5.3s</span></td>
-          </tr>
-          <tr>
-            <td>Completion tokens</td>
-            <td>187</td>
-            <td>183</td>
-            <td>262</td>
-            <td>311</td>
-          </tr>
-          <tr>
-            <td>Prompt tokens (image)</td>
-            <td><span class="win">574</span></td>
-            <td><span class="win">574</span></td>
-            <td>4374</td>
-            <td>4374</td>
-          </tr>
-          <tr>
-            <td>Email chip OCR</td>
-            <td><span class="lose"><code>emreillu@…</code></span></td>
-            <td><span class="lose"><code>esokullullu@…</code></span></td>
-            <td><span class="win">correct</span></td>
-            <td><span class="win">correct</span></td>
-          </tr>
-          <tr>
-            <td>All 12 visible strings</td>
-            <td><span class="lose">5 of 12</span></td>
-            <td><span class="win">12 of 12</span></td>
-            <td><span class="win">12 of 12</span></td>
-            <td><span class="win">12 of 12</span></td>
-          </tr>
-          <tr>
-            <td>Red error state surfaced</td>
-            <td><span class="lose">no</span></td>
-            <td>text only</td>
-            <td>text + icon</td>
-            <td><span class="win">border + icon + text</span></td>
-          </tr>
-          <tr>
-            <td>Inferred a semantic blocker</td>
-            <td>no</td>
-            <td>no</td>
-            <td>yes (1)</td>
-            <td><span class="win">yes (2)</span></td>
-          </tr>
-          <tr>
-            <td>Honest Unknowns section</td>
-            <td>no</td>
-            <td>no</td>
-            <td>no</td>
-            <td><span class="win">yes</span></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h2>What the numbers mean</h2>
-
-    <h3>Gemma 4-E2B is not a vision model for this job</h3>
-    <p>
-      It's fast — 1.5 seconds — and cheap — 574 prompt tokens per image — but it hallucinates the email (<code>emreillu@gmail.com</code> instead of <code>esokullu@gmail.com</code>), invents a non-existent "I agree" button, misses most of the visible text, and calls the full-page login a "modal dialog". Those are not OCR shortfalls; those are planner-poisoning failures. A browser agent fed this caption would reason about a screen that doesn't exist.
-    </p>
-
-    <h3>Gemma 4-31B is usable but has a narrow weakness</h3>
-    <p>
-      All 12 strings enumerated, field and error correctly identified, no fabricated labels. But it keeps misreading the email chip — once as <code>ecookullu@gmail.com</code>, once as <code>esokullullu@gmail.com</code>. Different mistakes, same structural issue: the chip's small font plus the adjacent avatar bubble plus the dropdown arrow seems to confuse the OCR pass, and the model doesn't flag the uncertainty in section 6. For most action tasks (clicking buttons, typing in fields) this is fine, because DOM-based <code>verify_form</code> is the ground truth anyway. But if the planner ever reads that caption back to you (<em>"I've signed you in as ecookullu@gmail.com"</em>) or uses it to cross-check a field it just typed, you have a silent corruption problem. Price of entry: just 574 image tokens and under 5 seconds.
-    </p>
-
-    <h3>Qwen3.5-27B is solid but gets dominated by its own successor</h3>
-    <p>
-      Correct email, 12 of 12 strings, correct error breakdown, even inferred that the <em>Next</em> button would likely fail submission. The tradeoff: 4374 image tokens (7.6× Gemma's rate because of the Qwen vision encoder's tile resolution) and 7.9 seconds of latency. Good quality, but we'll see in a second why you probably want the A3B instead.
-    </p>
-
-    <h3>Qwen3.6-35B-A3B is the quiet winner</h3>
-    <p>
-      This is the model that changed our mind. The MoE architecture (35B total parameters, ~3B activated per token) delivers:
-    </p>
-    <ul>
-      <li><strong>Faster than the dense 27B</strong> — 5.3s vs 7.9s — because the forward pass only touches active experts.</li>
-      <li><strong>Better caption quality than the dense 27B</strong>, not worse. It's the <em>only</em> model in this shootout that:
-        <ul>
-          <li>noticed the dropdown-arrow affordance on the email chip,</li>
-          <li>described the red border's ambiguity between "field is focused" and "field is in error" instead of committing to one reading,</li>
-          <li>actually used section 6 (<em>Unknowns</em>) the way our prompt asks — to flag things it can't verify from pixels alone — rather than confabulating and claiming "None".</li>
-        </ul>
-      </li>
-      <li><strong>Same prompt-token cost as the dense 27B</strong> (4374 image tokens), because vision encoding happens before the language stack.</li>
-    </ul>
-    <p>
-      That third point matters more than it sounds. "Honest uncertainty" is the bullet in our vision prompt that's been least respected across every model we've tested. Getting a caption that says <em>"Whether the password field is currently focused (visually indicated by red border, but not confirmed via DOM)"</em> is exactly what the planner wants — it can now decide to re-read the DOM instead of acting on a misperception. Every other model either ignored section 6 or wrote "None" even when it had visible reasons to be unsure.
-    </p>
-
-    <h2>The MoE lesson for local vision</h2>
-    <p>
-      If you've been picking vision models by dense parameter count — "27B is smaller than 35B, so it'll be cheaper to run" — this shootout is a reminder that MoE upends that heuristic. For roughly the same VRAM (same-family 4-bit quants land in the 18–22 GB range for both), the A3B variant outperforms the dense 27B on <em>every</em> axis: latency, caption quality, and calibrated uncertainty. You pay for 35B of parameters at load time and get ~3B-worth of latency per token at inference.
-    </p>
-    <p>
-      Browser-agent screenshots fire frequently — once after every state-changing tool call in WebBrain's <code>state_change</code> mode — so per-image latency compounds fast. Five seconds per auto-screenshot vs eight is a meaningful UX difference over a 10-step task.
-    </p>
-
-    <h2>What this changes in WebBrain</h2>
-    <p>
-      Nothing in the code, but something in the recommended configuration. If you're setting up the dedicated vision model in <strong>Settings → Vision Model</strong>:
-    </p>
-    <ul>
-      <li><strong>If you have the VRAM (~20 GB for a decent quant):</strong> Qwen3.6-35B-A3B is the new default recommendation.</li>
-      <li><strong>If you're VRAM-constrained or latency-sensitive:</strong> Gemma 4-31B at 574 prompt tokens per image is attractive, but you probably want to tighten the prompt's section 6 wording — escalating it from <em>"say so"</em> to an explicit "if any text is a username, email, dollar amount, date, or ID and you are even slightly unsure of a single character, list it in Unknowns verbatim and leave it out of section 2" — so its identifier-OCR failure mode flags itself instead of confabulating.</li>
-      <li><strong>Don't use Qwen3.5-27B unless you can't run the A3B.</strong> Same cost, worse quality, slower.</li>
-      <li><strong>Gemma 4-E2B is not a serious option</strong> for this job. Use it for speculative decoding, not for page understanding.</li>
-    </ul>
-
-    <h2>Reproducing this</h2>
-    <p>
-      The probe is <code>test/vision-probe.mjs</code> in the repo. It sends the same system prompt, user text, and parameters the extension uses, against any OpenAI-compatible endpoint:
-    </p>
-    <pre><code>node test/vision-probe.mjs ./shot.png
+    <p class="lede">We fed the same Google sign-in page through four open-weight vision models using the exact system prompt WebBrain's vision sub-call ships with. The spread on OCR accuracy, latency, and token cost is wider than you'd expect — and one model quietly changed our mind about which architecture to reach for.</p>
+<h2 id="why-this-matters-and-what-we-re-actually-measuring">Why this matters (and what we're actually measuring)</h2>
+<p>WebBrain runs entirely inside your browser and supports a <em>split-provider</em> vision setup: your fast planner (GPT-4o-mini, Sonnet, a local Qwen, whatever) handles tool calls, and a separate vision model reads screenshots into terse structured text that gets threaded back into the planner's context. That's cheaper, lower-latency, and — importantly — lets you run vision locally on your own hardware while keeping the planner on a smarter cloud model.</p>
+<p>But it only works if the vision model can actually <em>see</em> the page. For a browser agent, that means three things, in order of importance:</p>
+<ol><li><strong>Verbatim OCR</strong> — can it quote button/link text exactly? Because <code>click({text: &quot;Next&quot;})</code> only fires if the caption said "Next", not "next step" or "continue button".</li><li><strong>State signals</strong> — can it spot red borders, disabled buttons, error text, modals, CAPTCHAs?</li><li><strong>Calibrated uncertainty</strong> — if it can't read something clearly, does it say so, or does it hallucinate?</li></ol>
+<p>Our vision sub-call's system prompt asks for a 6-section structured caption covering exactly these concerns. We built a tiny CLI probe (<code>test/vision-probe.mjs</code> in the repo) that sends the same prompt + same image + same parameters the extension uses, so you can compare models apples-to-apples on your own screenshots.</p>
+<div class="callout">
+<strong>The test image.</strong> Google's password-entry screen for a real Gmail account, with the password field left empty — so the page shows the red error border, an icon, the message <em>"Enter a password"</em>, and the "Try another way" link. It's a realistic, information-dense screen: 12 distinct visible strings, a focused input, a checkbox, an error state, and a small email chip with a dropdown affordance. Easy to produce a caption for, hard to produce one that doesn't skip or hallucinate.
+</div>
+<h2 id="the-four-contenders">The four contenders</h2>
+<ul><li><strong>Gemma 4-E2B-It</strong> — Google's 2B-effective-parameter model, the smallest plausible vision option.</li><li><strong>Gemma 4-31B-It</strong> — same family, dense 31B parameters, high-throughput quant.</li><li><strong>Qwen3.5-27B</strong> — Alibaba's dense 27B multimodal.</li><li><strong>Qwen3.6-35B-A3B</strong> — Mixture-of-Experts: 35B total, ~3B activated per token.</li></ul>
+<p>All four served locally via llama.cpp, same endpoint, same quantization family. Exact same prompt, same temperature (0), same max_tokens (800), same <code>chat_template_kwargs.enable_thinking: false</code>.</p>
+<h2 id="results">Results</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>Gemma 4-E2B</th><th>Gemma 4-31B</th><th>Qwen3.5-27B</th><th>Qwen3.6-35B-A3B</th></tr></thead><tbody><tr><td>Latency</td><td>1.5s</td><td>4.6s</td><td>7.9s</td><td><span class="win">5.3s</span></td></tr><tr><td>Completion tokens</td><td>187</td><td>183</td><td>262</td><td>311</td></tr><tr><td>Prompt tokens (image)</td><td><span class="win">574</span></td><td><span class="win">574</span></td><td>4374</td><td>4374</td></tr><tr><td>Email chip OCR</td><td><span class="lose"><code>emreillu@…</code></span></td><td><span class="lose"><code>esokullullu@…</code></span></td><td><span class="win">correct</span></td><td><span class="win">correct</span></td></tr><tr><td>All 12 visible strings</td><td><span class="lose">5 of 12</span></td><td><span class="win">12 of 12</span></td><td><span class="win">12 of 12</span></td><td><span class="win">12 of 12</span></td></tr><tr><td>Red error state surfaced</td><td><span class="lose">no</span></td><td>text only</td><td>text + icon</td><td><span class="win">border + icon + text</span></td></tr><tr><td>Inferred a semantic blocker</td><td>no</td><td>no</td><td>yes (1)</td><td><span class="win">yes (2)</span></td></tr><tr><td>Honest Unknowns section</td><td>no</td><td>no</td><td>no</td><td><span class="win">yes</span></td></tr></tbody></table></div>
+<h2 id="what-the-numbers-mean">What the numbers mean</h2>
+<h3 id="gemma-4e2b-is-not-a-vision-model-for-this-job">Gemma 4-E2B is not a vision model for this job</h3>
+<p>It's fast — 1.5 seconds — and cheap — 574 prompt tokens per image — but it hallucinates the email (<code>emreillu@gmail.com</code> instead of <code>esokullu@gmail.com</code>), invents a non-existent "I agree" button, misses most of the visible text, and calls the full-page login a "modal dialog". Those are not OCR shortfalls; those are planner-poisoning failures. A browser agent fed this caption would reason about a screen that doesn't exist.</p>
+<h3 id="gemma-431b-is-usable-but-has-a-narrow-weakness">Gemma 4-31B is usable but has a narrow weakness</h3>
+<p>All 12 strings enumerated, field and error correctly identified, no fabricated labels. But it keeps misreading the email chip — once as <code>ecookullu@gmail.com</code>, once as <code>esokullullu@gmail.com</code>. Different mistakes, same structural issue: the chip's small font plus the adjacent avatar bubble plus the dropdown arrow seems to confuse the OCR pass, and the model doesn't flag the uncertainty in section 6. For most action tasks (clicking buttons, typing in fields) this is fine, because DOM-based <code>verify_form</code> is the ground truth anyway. But if the planner ever reads that caption back to you (<em>"I've signed you in as ecookullu@gmail.com"</em>) or uses it to cross-check a field it just typed, you have a silent corruption problem. Price of entry: just 574 image tokens and under 5 seconds.</p>
+<h3 id="qwen3-527b-is-solid-but-gets-dominated-by-its-own-successor">Qwen3.5-27B is solid but gets dominated by its own successor</h3>
+<p>Correct email, 12 of 12 strings, correct error breakdown, even inferred that the <em>Next</em> button would likely fail submission. The tradeoff: 4374 image tokens (7.6× Gemma's rate because of the Qwen vision encoder's tile resolution) and 7.9 seconds of latency. Good quality, but we'll see in a second why you probably want the A3B instead.</p>
+<h3 id="qwen3-635ba3b-is-the-quiet-winner">Qwen3.6-35B-A3B is the quiet winner</h3>
+<p>This is the model that changed our mind. The MoE architecture (35B total parameters, ~3B activated per token) delivers:</p>
+<ul><li><strong>Faster than the dense 27B</strong> — 5.3s vs 7.9s — because the forward pass only touches active experts.</li><li><strong>Better caption quality than the dense 27B</strong>, not worse. It's the <em>only</em> model in this shootout that: noticed the dropdown-arrow affordance on the email chip, described the red border's ambiguity between "field is focused" and "field is in error" instead of committing to one reading, actually used section 6 (<em>Unknowns</em>) the way our prompt asks — to flag things it can't verify from pixels alone — rather than confabulating and claiming "None".</li><li><strong>Same prompt-token cost as the dense 27B</strong> (4374 image tokens), because vision encoding happens before the language stack.</li></ul>
+<p>That third point matters more than it sounds. "Honest uncertainty" is the bullet in our vision prompt that's been least respected across every model we've tested. Getting a caption that says <em>"Whether the password field is currently focused (visually indicated by red border, but not confirmed via DOM)"</em> is exactly what the planner wants — it can now decide to re-read the DOM instead of acting on a misperception. Every other model either ignored section 6 or wrote "None" even when it had visible reasons to be unsure.</p>
+<h2 id="the-moe-lesson-for-local-vision">The MoE lesson for local vision</h2>
+<p>If you've been picking vision models by dense parameter count — "27B is smaller than 35B, so it'll be cheaper to run" — this shootout is a reminder that MoE upends that heuristic. For roughly the same VRAM (same-family 4-bit quants land in the 18–22 GB range for both), the A3B variant outperforms the dense 27B on <em>every</em> axis: latency, caption quality, and calibrated uncertainty. You pay for 35B of parameters at load time and get ~3B-worth of latency per token at inference.</p>
+<p>Browser-agent screenshots fire frequently — once after every state-changing tool call in WebBrain's <code>state_change</code> mode — so per-image latency compounds fast. Five seconds per auto-screenshot vs eight is a meaningful UX difference over a 10-step task.</p>
+<h2 id="what-this-changes-in-webbrain">What this changes in WebBrain</h2>
+<p>Nothing in the code, but something in the recommended configuration. If you're setting up the dedicated vision model in <strong>Settings → Vision Model</strong>:</p>
+<ul><li><strong>If you have the VRAM (~20 GB for a decent quant):</strong> Qwen3.6-35B-A3B is the new default recommendation.</li><li><strong>If you're VRAM-constrained or latency-sensitive:</strong> Gemma 4-31B at 574 prompt tokens per image is attractive, but you probably want to tighten the prompt's section 6 wording — escalating it from <em>"say so"</em> to an explicit "if any text is a username, email, dollar amount, date, or ID and you are even slightly unsure of a single character, list it in Unknowns verbatim and leave it out of section 2" — so its identifier-OCR failure mode flags itself instead of confabulating.</li><li><strong>Don't use Qwen3.5-27B unless you can't run the A3B.</strong> Same cost, worse quality, slower.</li><li><strong>Gemma 4-E2B is not a serious option</strong> for this job. Use it for speculative decoding, not for page understanding.</li></ul>
+<h2 id="reproducing-this">Reproducing this</h2>
+<p>The probe is <code>test/vision-probe.mjs</code> in the repo. It sends the same system prompt, user text, and parameters the extension uses, against any OpenAI-compatible endpoint:</p>
+<pre><code>node test/vision-probe.mjs ./shot.png
 node test/vision-probe.mjs ./shot.png http://127.0.0.1:8080 Qwen3.6-35B-A3B
 node test/vision-probe.mjs ./shot.png http://localhost:11434/v1 llava:13b
 VISION_PROBE_KEY=sk-... node test/vision-probe.mjs ./shot.png https://api.openai.com/v1 gpt-4o</code></pre>
-    <p>
-      Point it at your own screenshots. If the caption paraphrases button text, invents labels, or writes "Unknowns: None" for an image full of small typography, you've just reproduced exactly what the planner would be working with. That's the test.
-    </p>
-
-    <div class="callout">
-      <strong>Caveat.</strong> One screenshot is one data point. The email-OCR weakness in Gemma might be reading-glyph-specific (the chip has small italic-ish type and an avatar bubble crowding it). Other weaknesses will surface on other screens. The methodology — same prompt, same params, same image — is what transfers. Run it against the pages <em>you</em> actually want the agent to handle before committing to a model.
-    </div>
+<p>Point it at your own screenshots. If the caption paraphrases button text, invents labels, or writes "Unknowns: None" for an image full of small typography, you've just reproduced exactly what the planner would be working with. That's the test.</p>
+<div class="callout">
+<strong>Caveat.</strong> One screenshot is one data point. The email-OCR weakness in Gemma might be reading-glyph-specific (the chip has small italic-ish type and an avatar bubble crowding it). Other weaknesses will surface on other screens. The methodology — same prompt, same params, same image — is what transfers. Run it against the pages <em>you</em> actually want the agent to handle before committing to a model.
+</div>
 
     <div class="author-box">
-      Written by <a href="https://emresokullu.com" target="_blank">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/esokullu/webbrain" target="_blank">GitHub</a> — file an issue if you benchmark a model we haven't covered.
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
     </div>
   </article>
 
   <footer>
-    <div>© 2026 WebBrain · <a href="/privacy">Privacy</a></div>
-    <div><a href="https://github.com/esokullu/webbrain" target="_blank">GitHub</a></div>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
   </footer>
-
   <script>
     (function () {
-      const LOCALES = ['en', 'es', 'fr', 'tr', 'zh'];
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
       const sel = document.getElementById('lang-dropdown');
       if (!sel) return;
       sel.value = sel.dataset.current || 'en';

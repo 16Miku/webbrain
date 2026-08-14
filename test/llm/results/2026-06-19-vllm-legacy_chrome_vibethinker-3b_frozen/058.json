@@ -1,0 +1,26 @@
+{
+  "id": "058",
+  "user": "download all the zips in this folder",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain/tree/main/dist",
+    "title": "webbrain/dist — main"
+  },
+  "latencyMs": 19969,
+  "error": null,
+  "firstToolCall": {
+    "name": "download_files",
+    "args": {
+      "url": "https://github.com/esokullu/webbrain/tree/main/dist",
+      "filter": "zip"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"download_files\",\"arguments\":{\"url\":\"https://github.com/esokullu/webbrain/tree/main/dist\",\"filter\":\"zip\"}}",
+  "usage": {
+    "prompt_tokens": 9160,
+    "total_tokens": 12509,
+    "completion_tokens": 3349,
+    "prompt_tokens_details": null
+  }
+}

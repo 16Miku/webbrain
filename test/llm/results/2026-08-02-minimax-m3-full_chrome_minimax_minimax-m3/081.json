@@ -1,0 +1,46 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 9335,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 4
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\nI'll help you send a thank-you email to all your contacts. Let me start by opening compose and then I'll work on adding your contacts through Gmail's contact picker.",
+  "usage": {
+    "prompt_tokens": 23563,
+    "completion_tokens": 1101,
+    "total_tokens": 24664,
+    "cost": 0.00835938,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 128,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00835938,
+      "upstream_inference_prompt_cost": 0.00703818,
+      "upstream_inference_completions_cost": 0.0013212
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 1187,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

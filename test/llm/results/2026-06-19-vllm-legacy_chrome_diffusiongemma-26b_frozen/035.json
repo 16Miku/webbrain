@@ -1,0 +1,25 @@
+{
+  "id": "035",
+  "user": "fill the email field with bob@example.com",
+  "tab": {
+    "url": "https://github.com/login",
+    "title": "Sign in to GitHub"
+  },
+  "latencyMs": 368,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}</tool_call>",
+  "usage": {
+    "prompt_tokens": 9732,
+    "total_tokens": 9758,
+    "completion_tokens": 26,
+    "prompt_tokens_details": null
+  }
+}

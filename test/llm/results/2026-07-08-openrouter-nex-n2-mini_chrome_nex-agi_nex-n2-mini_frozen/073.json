@@ -1,0 +1,38 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3060,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I can help buy it, but I need more info: what is “it”? Please send the product page/link or the exact item you want to buy.",
+  "usage": {
+    "prompt_tokens": 17453,
+    "completion_tokens": 261,
+    "total_tokens": 17714,
+    "cost": 0.000462425,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000462425,
+      "upstream_inference_prompt_cost": 0.000436325,
+      "upstream_inference_completions_cost": 0.0000261
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 227,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebBrain</title>
+  <!-- Theme bootstrap MUST load before the stylesheet so data-theme is set
+       on <html> before any paint. External classic script (not inline,
+       not module) — MV3's default CSP forbids inline scripts, and modules
+       are deferred so they'd run AFTER first paint. -->
+  <script src="theme-bootstrap.js"></script>
   <link rel="stylesheet" href="../../styles/sidepanel.css">
   <link rel="stylesheet" href="../../vendor/katex/katex.min.css">
   <!-- KaTeX is loaded as classic scripts (not modules). They assign to
@@ -13,42 +18,207 @@
   <script defer src="../../vendor/katex/auto-render.min.js"></script>
 </head>
 <body>
+  <!-- Shown before the regular onboarding when the install page opens the
+       panel. The arrow terminates at Chrome's real side-panel toolbar, so the
+       user never has to translate a fake toolbar drawing into browser chrome. -->
+  <div
+    id="pin-coachmark"
+    class="pin-coachmark hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="pin-coachmark-title"
+    aria-describedby="pin-coachmark-description"
+    tabindex="-1"
+  >
+    <svg class="pin-coachmark-arrow" viewBox="0 0 190 150" aria-hidden="true">
+      <path d="M18 139C26 76 69 108 95 74C117 45 129 22 171 15"/>
+      <path d="m158 7 14 8-10 14"/>
+    </svg>
+    <div class="pin-coachmark-card">
+      <p class="pin-coachmark-kicker" data-i18n="install.eyebrow">One small setup step</p>
+      <h2 id="pin-coachmark-title" data-i18n="install.pin.title">Pin WebBrain to your toolbar</h2>
+      <p id="pin-coachmark-description" data-i18n="install.pin.body">Click the pin in the side panel header above. This adds WebBrain to your browser toolbar for one-click access.</p>
+      <div class="pin-coachmark-actions">
+        <button id="pin-coachmark-done" type="button" data-i18n="install.pin.confirm">I pinned it</button>
+        <button id="pin-coachmark-skip" class="pin-coachmark-skip" type="button" data-i18n="install.pin.skip">Skip this step</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Onboarding Overlay (shown on first launch only) -->
+  <div id="onboarding" class="onboarding hidden">
+    <div class="ob-card">
+      <div class="ob-step-indicator">
+        <span class="ob-step-dot active"></span>
+        <span class="ob-step-dot"></span>
+        <span class="ob-step-dot"></span>
+      </div>
+
+      <!-- Step 1: Welcome -->
+      <div class="ob-step active" data-step="0">
+        <div class="ob-icon">
+          <img class="ob-brand-logo" src="../../icons/icon128.png" alt="" aria-hidden="true">
+        </div>
+        <h2 data-i18n="ob.welcome.title"></h2>
+        <p class="ob-body" data-i18n="ob.welcome.body"></p>
+        <p class="ob-note" data-i18n="ob.welcome.note"></p>
+      </div>
+
+      <!-- Step 2: Act Mode Warning -->
+      <div class="ob-step" data-step="1">
+        <div class="ob-icon ob-icon-warn">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <h2 data-i18n="ob.act.title"></h2>
+        <p class="ob-body" data-i18n="ob.act.body"></p>
+        <ul class="ob-warn-list">
+          <li data-i18n="ob.act.warn1"></li>
+          <li data-i18n="ob.act.warn2"></li>
+          <li data-i18n="ob.act.warn3"></li>
+        </ul>
+        <p class="ob-note ob-permission-note" data-i18n="ob.act.permissions_tip"></p>
+      </div>
+
+      <!-- Step 3: Model setup -->
+      <div class="ob-step" data-step="2">
+        <div class="ob-icon ob-icon-key">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+        </div>
+        <h2 data-i18n="ob.tokens.title"></h2>
+        <p class="ob-body" id="ob-provider-body" data-i18n="ob.tokens.body"></p>
+        <div class="ob-provider-status" id="ob-provider-status" data-i18n="ob.tokens.scanning"></div>
+        <div class="ob-local-models hidden" id="ob-local-models">
+          <label class="ob-local-label" id="ob-local-model-label" data-i18n="ob.tokens.local_models_label"></label>
+          <div class="ob-local-model-list" id="ob-local-model-list" role="listbox" aria-labelledby="ob-local-model-label"></div>
+          <p class="ob-note" data-i18n="ob.tokens.context_hint"></p>
+          <p class="ob-note" data-i18n="ob.tokens.local_note"></p>
+        </div>
+        <ul class="ob-provider-list" id="ob-provider-list">
+          <li data-i18n="ob.tokens.option_lmstudio"></li>
+          <li data-i18n="ob.tokens.option_openai"></li>
+          <li data-i18n="ob.tokens.option_other"></li>
+        </ul>
+      </div>
+
+      <div class="ob-nav">
+        <button class="ob-btn ob-btn-back hidden" id="ob-back" data-i18n="ob.btn.back"></button>
+        <button class="ob-btn ob-btn-next" id="ob-next" data-i18n="ob.btn.next"></button>
+        <button class="ob-btn ob-btn-settings hidden" id="ob-open-settings" data-i18n="ob.btn.settings"></button>
+      </div>
+      <button class="ob-skip hidden" id="ob-skip" data-i18n="ob.btn.skip"></button>
+    </div>
+  </div>
+
+  <div
+    id="new-conversation-confirm"
+    class="new-conversation-confirm hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="new-conversation-confirm-title"
+    aria-describedby="new-conversation-confirm-description"
+    tabindex="-1"
+  >
+    <div class="new-conversation-confirm-card">
+      <div class="new-conversation-confirm-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>
+          <path d="M12 9v4"/>
+          <path d="M12 17h.01"/>
+        </svg>
+      </div>
+      <div class="new-conversation-confirm-copy">
+        <h2 id="new-conversation-confirm-title" data-i18n="sp.clear.title">Start a new conversation?</h2>
+        <p id="new-conversation-confirm-description" data-i18n="sp.clear.description">This will clear this conversation's history.</p>
+      </div>
+      <div class="new-conversation-confirm-actions">
+        <button
+          id="new-conversation-confirm-cancel"
+          class="new-conversation-confirm-cancel"
+          type="button"
+          data-new-conversation-confirm-action
+          data-i18n="sp.scheduled.cancel"
+        >Cancel</button>
+        <button
+          id="new-conversation-confirm-accept"
+          class="new-conversation-confirm-accept"
+          type="button"
+          data-new-conversation-confirm-action
+        >
+          <span class="new-conversation-confirm-action-label" data-i18n="sp.btn.clear">New conversation</span>
+          <span class="new-conversation-confirm-action-warning">
+            <span aria-hidden="true">⚠</span>
+            <span data-i18n="sp.clear.action_warning">Clears history</span>
+          </span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="app">
     <!-- Header -->
     <header id="header">
       <div class="header-left">
-        <select id="provider-select" title="LLM Provider"></select>
+        <div class="provider-picker" id="provider-picker">
+          <!-- Native select kept as the value source for existing handlers.
+               Closed button is text-only; brand icons show only in the open menu. -->
+          <select id="provider-select" class="provider-select-native" title="LLM Provider" tabindex="-1" aria-hidden="true"></select>
+          <button type="button" id="provider-picker-btn" class="provider-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="provider-picker-menu" aria-label="LLM Provider">
+            <span class="provider-picker-label" id="provider-picker-label"></span>
+            <span class="provider-picker-caret" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </span>
+          </button>
+          <div class="provider-picker-menu hidden" id="provider-picker-menu" role="listbox" tabindex="-1"></div>
+        </div>
         <span id="status-dot" class="status-dot offline" data-i18n-title="sp.status.disconnected"></span>
       </div>
       <div class="header-right">
-        <div id="language-wrapper" class="language-wrapper" data-i18n-title="sp.btn.language">
-          <svg class="language-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="2" y1="12" x2="22" y2="12"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-          </svg>
-          <select id="language-select" data-i18n-aria-label="sp.btn.language"></select>
+        <div id="language-picker" class="language-picker">
+          <select id="language-select" class="language-select-native" tabindex="-1" aria-hidden="true"></select>
+          <button type="button" id="language-picker-btn" class="provider-picker-btn language-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-picker-menu" data-i18n-aria-label="sp.btn.language">
+            <img class="language-picker-flag" id="language-picker-flag" src="../../icons/flags/us.svg" alt="" aria-hidden="true">
+            <span class="language-picker-code" id="language-picker-code">EN</span>
+            <span class="provider-picker-caret language-picker-caret" aria-hidden="true">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </span>
+          </button>
+          <div class="provider-picker-menu language-picker-menu hidden" id="language-picker-menu" role="listbox" tabindex="-1"></div>
         </div>
-        <button id="btn-verbose" data-i18n-title="sp.btn.verbose">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 17 10 11 4 5"/>
-            <line x1="12" y1="19" x2="20" y2="19"/>
+        <button id="btn-history" data-i18n-title="sp.btn.history" data-i18n-aria-label="sp.btn.history">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7"/>
+            <path d="M3 3v6h6"/>
+            <path d="M12 7v5l3 2"/>
           </svg>
         </button>
-        <!-- (Recording is now entirely prompt-driven via the agent's
-             `record_tab` tool. The live recording banner below the
-             header carries its own Stop button, so there's no need for
-             a toolbar affordance — keeping both was duplicate UI.) -->
+        <button id="btn-expand" data-i18n-title="sp.btn.expand" data-i18n-aria-label="sp.btn.expand">
+          <svg data-icon="external-link" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 3h6v6"/>
+            <path d="M10 14 21 3"/>
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          </svg>
+        </button>
         <button id="btn-settings" data-i18n-title="sp.btn.settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button id="btn-clear" data-i18n-title="sp.btn.clear">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        <button id="btn-clear" data-i18n-title="sp.btn.clear" data-i18n-aria-label="sp.btn.clear">
+          <svg data-icon="message-square-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4z"/>
+            <path d="M11.5 8v6"/>
+            <path d="M8.5 11h6"/>
           </svg>
         </button>
       </div>
@@ -60,10 +230,8 @@
       <span data-i18n="sp.inspection"></span>
     </div>
 
-    <!-- (Recording options popover removed. Recording is now triggered by
-         the agent's `record_tab` tool — e.g. user types "record this
-         meeting and transcribe it" and the agent calls the tool with the
-         right options. Live banner below is the only post-start UI.) -->
+    <!-- Recording options popover removed. Recording commands show the live
+         banner below unless full-screen capture explicitly hides it. -->
 
     <div id="recording-banner" class="hidden" role="status" aria-live="polite">
       <span class="recording-dot" aria-hidden="true"></span>
@@ -72,15 +240,81 @@
       <button id="btn-recording-stop" class="recording-stop" data-i18n="sp.record.stop"></button>
     </div>
 
+    <div id="scheduled-jobs" class="scheduled-jobs hidden" aria-live="polite"></div>
+
     <!-- Chat Messages -->
-    <div id="chat-container">
-      <div id="messages">
-        <div class="message system">
-          <div class="message-content">
-            <p data-i18n-html="sp.greeting.html"></p>
-            <p class="hint" data-i18n="sp.greeting.hint"></p>
+    <div id="chat-shell">
+      <div id="chat-container">
+        <div id="messages">
+          <div class="message system">
+            <div class="message-content">
+              <p data-i18n-html="sp.greeting.html"></p>
+            </div>
           </div>
         </div>
+        <div id="recommended-actions" class="recommended-actions hidden" aria-live="polite">
+          <div class="recommended-actions-header">
+            <div class="recommended-actions-title" data-i18n="sp.recommended.title">Suggested actions</div>
+            <button
+              id="recommended-actions-toggle"
+              class="recommended-actions-toggle"
+              type="button"
+              aria-controls="recommended-actions-list"
+              aria-expanded="true"
+              data-i18n-title="sp.recommended.collapse"
+              data-i18n-aria-label="sp.recommended.collapse"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
+          </div>
+          <div id="recommended-actions-list" class="recommended-actions-list"></div>
+        </div>
+        <div id="store-review-prompt" class="store-review-prompt hidden" role="dialog" aria-live="polite" aria-labelledby="store-review-title">
+          <div class="store-review-card">
+            <button type="button" id="store-review-close" class="store-review-close" data-i18n-aria-label="sp.review.close" aria-label="Dismiss">×</button>
+            <div id="store-review-step-rating" class="store-review-step">
+              <div id="store-review-title" class="store-review-title" data-i18n="sp.review.rating_title">Enjoying WebBrain?</div>
+              <p class="store-review-body" data-i18n="sp.review.rating_body">Tap a star — it helps us know how we're doing.</p>
+              <div class="store-review-stars" role="group" data-i18n-aria-label="sp.review.stars_label" aria-label="Rate WebBrain">
+                <button type="button" class="store-review-star" data-rating="1" data-i18n-aria-label="sp.review.star_1" aria-label="1 star">★</button>
+                <button type="button" class="store-review-star" data-rating="2" data-i18n-aria-label="sp.review.star_2" aria-label="2 stars">★</button>
+                <button type="button" class="store-review-star" data-rating="3" data-i18n-aria-label="sp.review.star_3" aria-label="3 stars">★</button>
+                <button type="button" class="store-review-star" data-rating="4" data-i18n-aria-label="sp.review.star_4" aria-label="4 stars">★</button>
+                <button type="button" class="store-review-star" data-rating="5" data-i18n-aria-label="sp.review.star_5" aria-label="5 stars">★</button>
+              </div>
+            </div>
+            <div id="store-review-step-positive" class="store-review-step hidden">
+              <div class="store-review-title" data-i18n="sp.review.positive_title">Thanks — that means a lot!</div>
+              <p class="store-review-body" data-i18n="sp.review.positive_body">Would you leave a quick review on the extension store? It helps others discover WebBrain.</p>
+              <button type="button" id="store-review-open-store" class="store-review-primary" data-i18n="sp.review.open_store">Leave a review</button>
+            </div>
+            <div id="store-review-step-negative" class="store-review-step hidden">
+              <div class="store-review-title" data-i18n="sp.review.negative_title">Sorry it missed the mark</div>
+              <p class="store-review-body" data-i18n="sp.review.negative_body">What could we improve? Your feedback goes straight to the team.</p>
+              <textarea id="store-review-feedback" class="store-review-feedback" rows="3" data-i18n-placeholder="sp.review.feedback_placeholder" placeholder="Tell us what went wrong or what you'd like to see…"></textarea>
+              <button type="button" id="store-review-send-feedback" class="store-review-primary" data-i18n="sp.review.send_feedback">Send feedback</button>
+            </div>
+            <div id="store-review-step-thanks" class="store-review-step hidden">
+              <div class="store-review-title" data-i18n="sp.review.thanks_title">Thank you!</div>
+              <p class="store-review-body" data-i18n="sp.review.thanks_body">We appreciate you taking the time.</p>
+            </div>
+            <div class="store-review-footer">
+              <button type="button" id="store-review-not-now" class="store-review-link" data-i18n="sp.review.not_now">Not now</button>
+              <button type="button" id="store-review-never" class="store-review-link" data-i18n="sp.review.never">Don't ask again</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="chat-navigation" class="chat-navigation hidden">
+        <button id="chat-navigation-action" class="chat-navigation-action" type="button" aria-controls="chat-container">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/>
+          </svg>
+          <span id="chat-navigation-label">Back to question</span>
+        </button>
+        <button id="chat-navigation-dismiss" class="chat-navigation-dismiss" type="button" data-i18n-aria-label="sp.review.close" aria-label="Dismiss">×</button>
       </div>
     </div>
 
@@ -102,6 +336,16 @@
         <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
       <span data-i18n="sp.mode.act.warning"></span>
+      <button id="act-warning-dismiss" type="button" data-i18n-aria-label="sp.review.close" aria-label="Dismiss">×</button>
+    </div>
+
+    <div id="selection-scope-banner" class="selection-scope-banner hidden" role="region" aria-labelledby="selection-scope-title">
+      <div class="selection-scope-banner-icon" aria-hidden="true">⚠</div>
+      <div class="selection-scope-banner-copy" aria-live="polite">
+        <strong id="selection-scope-title" data-i18n="sp.selection_scope.title">Selected text only</strong>
+        <span id="selection-scope-description" data-i18n="sp.selection_scope.description">Start a new conversation to access the page or screen.</span>
+      </div>
+      <button id="selection-scope-new-conversation" type="button" data-i18n="sp.btn.clear">New conversation</button>
     </div>
 
     <!-- Input Area -->
@@ -109,9 +353,30 @@
       <div id="mode-toggle">
         <button id="btn-mode-ask" class="mode-btn active" data-i18n="sp.mode.ask" data-i18n-title="sp.mode.ask.title"></button>
         <button id="btn-mode-act" class="mode-btn" data-i18n="sp.mode.act" data-i18n-title="sp.mode.act.title"></button>
+        <button id="btn-mode-dev" class="mode-btn" data-i18n="sp.mode.dev" data-i18n-title="sp.mode.dev.title"></button>
       </div>
+      <div id="queued-messages" class="queued-messages hidden" role="list" aria-live="polite"></div>
+      <div id="slash-command-menu" class="slash-command-menu hidden" role="listbox" data-i18n-aria-label="sp.slash.commands_label"></div>
+      <div id="attachment-preview-list" class="attachment-preview-list hidden"></div>
+      <input type="file" id="file-attach-input" accept="image/*,application/pdf,application/json,text/plain,text/csv,.json,.txt,.csv" multiple hidden>
       <div id="input-wrapper">
-        <textarea id="user-input" data-i18n-placeholder="sp.input.ask_placeholder" rows="1"></textarea>
+        <button id="btn-attach" data-i18n-title="sp.btn.attach">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m16 6-8.4 8.6a2 2 0 0 0 2.8 2.8l8.4-8.6a4 4 0 0 0-5.6-5.6l-8.4 8.6a6 6 0 0 0 8.5 8.5l8.4-8.6"/>
+          </svg>
+        </button>
+        <div id="input-text-layer">
+          <div id="input-highlight" aria-hidden="true"></div>
+          <textarea id="user-input" data-i18n-placeholder="sp.input.ask_placeholder" rows="1"></textarea>
+        </div>
+        <button id="btn-mic" data-i18n-title="sp.btn.mic">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <path d="M12 19v3"/>
+            <path d="M8 22h8"/>
+          </svg>
+        </button>
         <button id="btn-send" data-i18n-title="sp.btn.send">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>

@@ -1,0 +1,20 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6134,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI can't switch between your open browser tabs directly. You'll need to manually switch to the Netflix tab by clicking on it in your browser's tab bar.\n\nAlternatively, I can navigate to Netflix.com — would you like me to do that?",
+  "usage": {
+    "prompt_tokens": 17328,
+    "total_tokens": 17605,
+    "completion_tokens": 277,
+    "prompt_tokens_details": null
+  }
+}

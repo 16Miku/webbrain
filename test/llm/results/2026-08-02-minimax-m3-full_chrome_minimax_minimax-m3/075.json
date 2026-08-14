@@ -1,0 +1,45 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3752,
+  "error": null,
+  "firstToolCall": {
+    "name": "scratchpad_write",
+    "args": {
+      "text": "[session check] User said \"finish what we were doing\" but no prior context exists in this run — current page is about:home (New Tab). Asking user for clarification on what to resume."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\nI don't have any prior context to work from — this appears to be a fresh conversation starting on a New Tab page. Let me check if there's anything saved from previous work.",
+  "usage": {
+    "prompt_tokens": 23057,
+    "completion_tokens": 229,
+    "total_tokens": 23286,
+    "cost": 0.00716118,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 128,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00716118,
+      "upstream_inference_prompt_cost": 0.00688638,
+      "upstream_inference_completions_cost": 0.0002748
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 102,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

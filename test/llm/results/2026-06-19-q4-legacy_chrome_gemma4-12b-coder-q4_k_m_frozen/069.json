@@ -1,0 +1,25 @@
+{
+  "id": "069",
+  "user": "open it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1389,
+  "error": null,
+  "firstToolCall": {
+    "name": "full_page_screenshot",
+    "args": {}
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "<tool_call>{\"name\":\"full_page_screenshot\",\"arguments\":{}}</tool_call>",
+  "usage": {
+    "completion_tokens": 116,
+    "prompt_tokens": 9187,
+    "total_tokens": 9303,
+    "prompt_tokens_details": {
+      "cached_tokens": 8936
+    }
+  }
+}

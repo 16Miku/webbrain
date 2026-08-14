@@ -1,0 +1,25 @@
+{
+  "id": "021",
+  "user": "wiki \"ww2\"",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5162,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to do for you?"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\n  \"name\": \"clarify\",\n  \"arguments\": {\n    \"question\": \"What would you like me to do for you?\"\n  }\n}",
+  "usage": {
+    "prompt_tokens": 8604,
+    "total_tokens": 9475,
+    "completion_tokens": 871,
+    "prompt_tokens_details": null
+  }
+}

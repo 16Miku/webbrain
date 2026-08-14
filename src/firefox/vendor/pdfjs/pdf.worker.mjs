@@ -2483,16 +2483,13 @@ var html = __webpack_require__(397);
 var documentCreateElement = __webpack_require__(4055);
 var sharedKey = __webpack_require__(6119);
 
-var GT = '>';
-var LT = '<';
 var PROTOTYPE = 'prototype';
-var SCRIPT = 'script';
 var IE_PROTO = sharedKey('IE_PROTO');
 
 var EmptyConstructor = function () { /* empty */ };
 
 var scriptTag = function (content) {
-  return LT + SCRIPT + GT + content + LT + '/' + SCRIPT + GT;
+  return '<script>' + content + '</script>';
 };
 
 // Create object with fake `null` prototype: use ActiveX Object with cleared prototype
@@ -2509,7 +2506,7 @@ var NullProtoObjectViaActiveX = function (activeXDocument) {
 var NullProtoObjectViaIFrame = function () {
   // Thrash, waste and sodomy: IE GC bug
   var iframe = documentCreateElement('iframe');
-  var JS = 'java' + SCRIPT + ':';
+  var JS = 'javascript:';
   var iframeDocument;
   iframe.style.display = 'none';
   html.appendChild(iframe);

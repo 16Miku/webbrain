@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "sourceResult": "2026-08-02-inkling-small-openrouter.json",
+  "fixture": "test/fixtures/google-signin-password-error.jpg",
+  "model": "thinkingmachines/inkling-small",
+  "evaluation": {
+    "pagePurpose": "correct",
+    "visibleStrings": {
+      "correct": 12,
+      "total": 12
+    },
+    "emailChipOcr": "correct",
+    "emailChipDropdownAffordance": "missed",
+    "passwordFieldState": "correctly described as empty and focused",
+    "redErrorState": "border + warning icon + exact error text",
+    "semanticBlocker": "correctly inferred",
+    "unknownsCalibration": "failed; answered None",
+    "fabricatedVisibleText": 0,
+    "formatNotes": [
+      "Did not report disabled state for the password field or checkbox as requested.",
+      "Listed the account pill under Inputs but did not identify its chevron/dropdown behavior."
+    ]
+  },
+  "metrics": {
+    "headersLatencyMs": 769,
+    "firstTokenLatencyMs": 3600,
+    "totalLatencyMs": 5134,
+    "promptTokens": 3649,
+    "completionTokens": 381,
+    "reasoningTokens": 243,
+    "reportedCostUsd": 0.00207685
+  }
+}

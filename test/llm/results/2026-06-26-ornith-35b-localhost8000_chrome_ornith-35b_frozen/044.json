@@ -1,0 +1,25 @@
+{
+  "id": "044",
+  "user": "file a bug titled \"buttons unresponsive\"",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 2534,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://github.com/esokullu/webbrain/issues/new"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 17893,
+    "total_tokens": 17972,
+    "completion_tokens": 79,
+    "prompt_tokens_details": null
+  }
+}

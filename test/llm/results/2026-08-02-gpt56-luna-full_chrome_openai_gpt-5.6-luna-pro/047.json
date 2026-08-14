@@ -1,0 +1,49 @@
+{
+  "id": "047",
+  "user": "show me the latest commit",
+  "mode": "act",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 9169,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 74292,
+    "completion_tokens": 204,
+    "total_tokens": 74496,
+    "cost": 0.002081,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 60955,
+      "cache_write_tokens": 614,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.002081,
+      "upstream_inference_prompt_cost": 0.0019586,
+      "upstream_inference_completions_cost": 0.00012240000000000002
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 67,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

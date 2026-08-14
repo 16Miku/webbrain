@@ -1,0 +1,16 @@
+{
+  "id": "091",
+  "user": "toggle dark mode on this site",
+  "mode": "act",
+  "tab": {
+    "url": "https://stackoverflow.com/questions/111/javascript-closures",
+    "title": "JavaScript closures — Stack Overflow"
+  },
+  "latencyMs": 1658,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null
+}

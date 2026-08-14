@@ -1,0 +1,37 @@
+{
+  "id": "054",
+  "user": "download this image",
+  "tab": {
+    "url": "https://example.com/photo.jpg",
+    "title": "photo.jpg"
+  },
+  "latencyMs": 4859,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 16972,
+    "completion_tokens": 152,
+    "total_tokens": 17124,
+    "cost": 0.010548,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.010548,
+      "upstream_inference_prompt_cost": 0.0101832,
+      "upstream_inference_completions_cost": 0.0003648
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 124,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

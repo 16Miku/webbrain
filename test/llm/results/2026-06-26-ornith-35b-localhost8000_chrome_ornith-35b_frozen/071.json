@@ -1,0 +1,20 @@
+{
+  "id": "071",
+  "user": "send it",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1511,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI don't have any context about what you want to send. Could you clarify — what are you trying to send?",
+  "usage": {
+    "prompt_tokens": 17324,
+    "total_tokens": 17395,
+    "completion_tokens": 71,
+    "prompt_tokens_details": null
+  }
+}

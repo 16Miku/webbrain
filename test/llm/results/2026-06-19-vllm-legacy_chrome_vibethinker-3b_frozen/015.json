@@ -1,0 +1,25 @@
+{
+  "id": "015",
+  "user": "whats my new tab page",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5045,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "content_fallback",
+  "finishReason": "stop",
+  "content": "{\"name\":\"get_accessibility_tree\",\"arguments\":{\"filter\":\"visible\"}}",
+  "usage": {
+    "prompt_tokens": 8606,
+    "total_tokens": 9457,
+    "completion_tokens": 851,
+    "prompt_tokens_details": null
+  }
+}
