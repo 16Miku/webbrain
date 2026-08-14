@@ -63585,6 +63585,21 @@ test('response-language policy keeps framing, translation targets, and source pr
       `${label}: incomplete planner policy translated source text instead of failing closed`,
     );
 
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: ['Spanish', 'not a locale'],
+        preserve_source_text: false,
+      }, 'tr'),
+      {
+        framing_locale: 'tr',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: invalid deliverable locales were replaced with the framing locale instead of failing closed`,
+    );
+
     const translation = normalize({
       framing_locale: 'en',
       deliverable_locales: ['ES', 'es', 'fr', 'de', 'it', 'pt', 'not a locale'],

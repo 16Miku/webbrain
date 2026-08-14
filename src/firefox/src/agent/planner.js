@@ -402,7 +402,9 @@ export function normalizeResponseLanguagePolicy(value, fallbackLocale = 'en') {
     deliverableLocales.push(locale);
   }
   const preserveSourceText = value.preserve_source_text === true;
-  if (deliverableLocales.length === 0 && !preserveSourceText) deliverableLocales.push(framingLocale);
+  if (deliverableLocales.length === 0 && !preserveSourceText) {
+    return fallbackResponseLanguagePolicy(fallbackLocale);
+  }
   return {
     framing_locale: framingLocale,
     deliverable_locales: deliverableLocales,
