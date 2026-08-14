@@ -40851,7 +40851,10 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(bonsaiProvider.model, WEBGPU_BONSAI_MODEL_ID);
     assert.equal(bonsaiProvider.dtype, WEBGPU_BONSAI_DTYPE, 'the Ternary Bonsai preset must select its WebGPU q2f16 graph');
     assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_MODEL_ID }).model, WEBGPU_LFM25_MODEL_ID);
-    assert.equal(new WebGPUProvider({ model: 'custom-owner/custom-model' }).model, 'custom-owner/custom-model');
+    const customProvider = new WebGPUProvider({ model: 'custom-owner/custom-model' });
+    assert.equal(customProvider.model, 'custom-owner/custom-model');
+    assert.equal(customProvider.requiresToolTemplate, true);
+    assert.equal(generalProvider.requiresToolTemplate, false);
     assert.equal(
       new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
       WEBGPU_QWEN_MODEL_ID,
@@ -40885,6 +40888,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       model: WEBGPU_MODEL_ID,
       device: 'webgpu',
       dtype: WEBGPU_DTYPE,
+      requireTools: false,
       messages: [{ role: 'user', content: 'Hello' }],
       options: { maxTokens: 123, tools },
     });
@@ -40996,6 +41000,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
   assert.match(host, /'webgpu-download-start'/);
+  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendResponse\(await sendVisionWorkerMessage\('start-download-text'/);
+  assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
   assert.match(host, /'webgpu-download-status'/);
@@ -41003,6 +41009,9 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
   assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
+  assert.match(worker, /type === 'start-download-text'/);
+  assert.match(worker, /function assertTextDownloadCanStart/);
+  assert.match(worker, /function assertToolCapableTextRuntime/);
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
   assert.match(settingsScript, /dispose_webgpu_vision/);
@@ -41065,7 +41074,7 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       },
     };
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
-    const { prepareTextMessages, splitThinking } = await import(workerUrl);
+    const { prepareTextMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
     const messages = [
       {
         role: 'assistant',
@@ -41102,6 +41111,14 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       reasoningContent: 'unfinished private trace',
       incompleteReasoning: true,
     });
+    assert.equal(tokenizerSupportsTools({ chat_template: '{% if tools %}{{ tools }}{% endif %}{{ messages }}' }), true);
+    assert.equal(tokenizerSupportsTools({ chat_template: '{{ messages }}' }), false);
+    assert.equal(tokenizerSupportsTools({
+      chat_template: {
+        default: '{{ messages }}',
+        tool_use: '{% for tool in tools %}{{ tool }}{% endfor %}',
+      },
+    }), true);
 
     globalThis.__webgpuRuntimeCounts = {
       visionProcessorLoads: 0,
@@ -41149,7 +41166,11 @@ test('WebGPU worker replays text tool history and applies model-specific generat
           return [{ generated_text: [...input, { role: 'assistant', content }] }];
         };
         instance.model = {};
-        instance.tokenizer = {};
+        instance.tokenizer = {
+          chat_template: modelId === 'custom-no-tools'
+            ? '{{ messages }}'
+            : '{% if tools %}{{ tools }}{% endif %}{{ messages }}',
+        };
         instance.dispose = async () => { globalThis.__webgpuRuntimeCounts.textDisposals++; };
         return instance;
       }
@@ -41261,6 +41282,14 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     }
     assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'second download should reach the controllable pipeline');
 
+    const conflictId = requestId++;
+    await workerListener({
+      data: { id: conflictId, type: 'start-download-text', payload: otherPayload },
+    });
+    const conflict = posted.find(message => message.id === conflictId);
+    assert.equal(conflict.ok, false);
+    assert.match(conflict.error, /Finish or stop the text-model-active download/);
+
     const otherStatus = await dispatch('text-download-status', otherPayload);
     assert.equal(otherStatus.modelId, otherPayload.modelId);
     assert.equal(otherStatus.status, 'not-downloaded');
@@ -41320,6 +41349,19 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       tools: undefined,
       tokenizer_encode_kwargs: { preserve_thinking: false },
     }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');
+
+    const incompatiblePayload = {
+      ...textPayload,
+      modelId: 'custom-no-tools',
+      requireTools: true,
+    };
+    const incompatibleId = requestId++;
+    await workerListener({
+      data: { id: incompatibleId, type: 'download-text', payload: incompatiblePayload },
+    });
+    const incompatible = posted.find(message => message.id === incompatibleId);
+    assert.equal(incompatible.ok, false);
+    assert.match(incompatible.error, /chat template that accepts tools/);
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;
