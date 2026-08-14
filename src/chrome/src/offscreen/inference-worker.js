@@ -22,13 +22,15 @@ let modelOperationQueue = Promise.resolve();
 const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 const TEXT_DOWNLOAD_EVENT = 'text-download-state';
 const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
-const WEBGPU_TEXT_SESSION_OPTIONS = Object.freeze({
-  extra: Object.freeze({
-    // ORT's default bucket cache can retain rounded-up transient buffers. That
-    // is especially costly for Ling's dynamic prefill/decode shapes on Metal.
-    'ep.webgpuexecutionprovider.storageBufferCacheMode': 'simple',
-  }),
-});
+function createWebGpuTextSessionOptions() {
+  return {
+    extra: {
+      // ORT's default bucket cache can retain rounded-up transient buffers. That
+      // is especially costly for Ling's dynamic prefill/decode shapes on Metal.
+      'ep.webgpuexecutionprovider.storageBufferCacheMode': 'simple',
+    },
+  };
+}
 const readyTextModelKeys = new Set();
 const textDownloadFiles = new Map();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
@@ -372,7 +374,8 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
       pipeline = await library.pipeline('text-generation', modelId, {
         device,
         dtype,
-        session_options: WEBGPU_TEXT_SESSION_OPTIONS,
+        // ORT mutates this object while appending its default session config.
+        session_options: createWebGpuTextSessionOptions(),
         local_files_only: localFilesOnly,
         progress_callback: event => postProgress(modelId, event),
       });
