@@ -40794,6 +40794,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   const sentMessages = [];
   let localEnabled = true;
   let textModelReady = true;
+  let webgpuExecutionError = '';
   try {
     globalThis.chrome = {
       offscreen: { hasDocument: async () => true },
@@ -40805,7 +40806,9 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
           else if (message.type === 'webgpu-dispose') callback({ ok: true, disposed: true });
           else if (message.type === 'webgpu-probe') callback({ ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: '4.2.0' });
           else if (message.type === 'webgpu-download-status') callback({ ok: true, status: textModelReady ? 'ready' : 'not-downloaded', ready: textModelReady });
-          else if (message.type === 'webgpu-chat') callback({ ok: true, content: 'Local answer.' });
+          else if (message.type === 'webgpu-chat') callback(webgpuExecutionError
+            ? { ok: false, error: webgpuExecutionError }
+            : { ok: true, content: 'Local answer.' });
           else callback({ ok: true, content: 'A settings page is visible.' });
         },
       },
@@ -40903,6 +40906,14 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     await assert.rejects(manager.setActive('webgpu'), /Download Ling 3\.0 Tiny/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
+    textModelReady = true;
+    webgpuExecutionError = 'failed to call OrtRun(): BufferManager::Download mapAsync GPUBuffer failed';
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Exercise the GPU.' }]),
+      error => error.isAskStreamTerminalError === true && /OrtRun/.test(error.message),
+      'fatal WebGPU execution failures should bypass the generic network retry',
+    );
+
     localEnabled = false;
     const preservedRemote = await manager.getVisionProvider();
     assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
@@ -40941,6 +40952,9 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
   assert.match(worker, /pipeline\('text-generation', modelId/);
   assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
+  assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
+  assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
+  assert.match(worker, /GPU detail:/);
   assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
@@ -40980,6 +40994,8 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
 
   const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  assert.match(fs.readFileSync(path.join(vendorDir, 'ort.webgpu.mjs'), 'utf8'), /ONNX Runtime Web v1\.27\.0/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'README.md'), 'utf8'), /Qwen3\/QMoE correctness fixes/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
@@ -40990,6 +41006,7 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
   const previousCounts = globalThis.__webgpuRuntimeCounts;
   const previousHoldTextDownload = globalThis.__holdWebgpuTextDownload;
   const previousReleaseTextDownload = globalThis.__releaseWebgpuTextDownload;
+  const previousGenerationOptions = globalThis.__webgpuGenerationOptions;
   let workerListener = null;
   const posted = [];
   try {
@@ -41060,7 +41077,10 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
         if (globalThis.__holdWebgpuTextDownload) {
           await new Promise(resolve => { globalThis.__releaseWebgpuTextDownload = resolve; });
         }
-        const instance = async (input) => [{ generated_text: [...input, { role: 'assistant', content: 'text answer' }] }];
+        const instance = async (input, options) => {
+          globalThis.__webgpuGenerationOptions = options;
+          return [{ generated_text: [...input, { role: 'assistant', content: 'text answer' }] }];
+        };
         instance.model = {};
         instance.tokenizer = {};
         instance.dispose = async () => { globalThis.__webgpuRuntimeCounts.textDisposals++; };
@@ -41099,7 +41119,7 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
       device: 'webgpu',
       dtype: 'q4f16',
       messages: [{ role: 'user', content: 'Continue.' }],
-      options: { maxTokens: 1 },
+      options: { maxTokens: 4096 },
     };
     await dispatch('chat', visionPayload);
     const beforeDownloadId = requestId++;
@@ -41109,6 +41129,7 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     assert.match(beforeDownload.error, /not downloaded/);
     await dispatch('download-text', textPayload);
     await dispatch('text-chat', textPayload);
+    assert.equal(globalThis.__webgpuGenerationOptions.max_new_tokens, 256, 'Ling generation must keep a browser-safe output budget');
     await dispatch('chat', visionPayload);
     await dispatch('text-chat', textPayload);
     assert.deepEqual(globalThis.__webgpuRuntimeCounts, {
@@ -41163,6 +41184,8 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     else globalThis.__holdWebgpuTextDownload = previousHoldTextDownload;
     if (previousReleaseTextDownload === undefined) delete globalThis.__releaseWebgpuTextDownload;
     else globalThis.__releaseWebgpuTextDownload = previousReleaseTextDownload;
+    if (previousGenerationOptions === undefined) delete globalThis.__webgpuGenerationOptions;
+    else globalThis.__webgpuGenerationOptions = previousGenerationOptions;
   }
 });
 

@@ -115,7 +115,15 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       },
     });
     if (!response || response.error) {
-      throw new Error(`In-browser WebGPU: ${response?.error || 'no response from the inference worker'}`);
+      const error = new Error(`In-browser WebGPU: ${response?.error || 'no response from the inference worker'}`);
+      // A failed OrtRun leaves the WebGPU session/device in an unknown state.
+      // The agent's generic two-second network retry only repeats a costly GPU
+      // failure, so surface this terminally and let the user free resources or
+      // restart Chrome before attempting another turn.
+      if (/OrtRun|BufferManager::Download|mapAsync|GPUBuffer|device lost/i.test(error.message)) {
+        error.isAskStreamTerminalError = true;
+      }
+      throw error;
     }
     return {
       content: String(response.content || ''),
