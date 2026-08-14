@@ -23,6 +23,8 @@ let modelOperationQueue = Promise.resolve();
 const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 const TEXT_DOWNLOAD_EVENT = 'text-download-state';
 const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
+const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
+const WEBGPU_LFM25_MAX_NEW_TOKENS = 512;
 function createWebGpuTextSessionOptions() {
   return {
     extra: {
@@ -749,13 +751,35 @@ export function prepareTextMessages(messages) {
   });
 }
 
-function splitThinking(content) {
+export function splitThinking(content, { openingTagInPrompt = false } = {}) {
   const source = String(content || '').trim();
   const match = /^<think>\s*([\s\S]*?)\s*<\/think>\s*([\s\S]*)$/i.exec(source);
-  if (!match) return { content: source, reasoningContent: null };
+  if (match) {
+    return {
+      content: String(match[2] || '').trim(),
+      reasoningContent: String(match[1] || '').trim() || null,
+      incompleteReasoning: false,
+    };
+  }
+  if (!openingTagInPrompt) {
+    return { content: source, reasoningContent: null, incompleteReasoning: false };
+  }
+
+  // LFM2.5's official template places `<think>` in the generation prompt.
+  // Transformers.js therefore returns only the generated suffix: reasoning,
+  // `</think>`, then the user-facing answer.
+  const closingTag = /<\/think>/i.exec(source);
+  if (!closingTag) {
+    return {
+      content: '',
+      reasoningContent: source || null,
+      incompleteReasoning: !!source,
+    };
+  }
   return {
-    content: String(match[2] || '').trim(),
-    reasoningContent: String(match[1] || '').trim() || null,
+    content: source.slice(closingTag.index + closingTag[0].length).trim(),
+    reasoningContent: source.slice(0, closingTag.index).trim() || null,
+    incompleteReasoning: false,
   };
 }
 
@@ -764,24 +788,33 @@ async function runText(payload) {
   if (!modelId) throw new Error('No text-generation model was specified.');
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
+  const usesLfm25ReasoningTemplate = modelId === WEBGPU_LFM25_MODEL_ID;
   if (!await isTextModelReady(modelId, dtype)) {
     throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   const requestedTokens = Number(payload?.options?.maxTokens);
-  const maxNewTokens = Number.isFinite(requestedTokens)
-    ? Math.max(1, Math.min(WEBGPU_TEXT_MAX_NEW_TOKENS, Math.round(requestedTokens)))
+  const maxTokenLimit = usesLfm25ReasoningTemplate
+    ? WEBGPU_LFM25_MAX_NEW_TOKENS
     : WEBGPU_TEXT_MAX_NEW_TOKENS;
+  const maxNewTokens = Number.isFinite(requestedTokens)
+    ? Math.max(1, Math.min(maxTokenLimit, Math.round(requestedTokens)))
+    : maxTokenLimit;
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
   let output;
   try {
     output = await runtime.pipeline(prepareTextMessages(payload?.messages), {
-      do_sample: false,
+      do_sample: usesLfm25ReasoningTemplate,
+      ...(usesLfm25ReasoningTemplate
+        ? { temperature: 0.1, top_k: 50, repetition_penalty: 1.1 }
+        : {}),
       max_new_tokens: maxNewTokens,
       tools: tools.length ? tools : undefined,
-      tokenizer_encode_kwargs: { enable_thinking: false },
+      tokenizer_encode_kwargs: usesLfm25ReasoningTemplate
+        ? { preserve_thinking: false }
+        : { enable_thinking: false },
     });
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await enrichWebGpuExecutionError(error);
@@ -794,7 +827,11 @@ async function runText(payload) {
   if (typeof content !== 'string') {
     throw new Error('The WebGPU model returned no generated text.');
   }
-  return splitThinking(content);
+  const result = splitThinking(content, { openingTagInPrompt: usesLfm25ReasoningTemplate });
+  if (result.incompleteReasoning) {
+    throw new Error(`${modelId} used its generation budget before finishing reasoning. Retry with a shorter prompt.`);
+  }
+  return { content: result.content, reasoningContent: result.reasoningContent };
 }
 
 async function probeRuntime() {
