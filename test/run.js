@@ -13492,6 +13492,28 @@ test('firefox manifest declares required data collection permissions for AMO', (
   assert.deepEqual(manifest.browser_specific_settings?.gecko?.data_collection_permissions?.required, ['none']);
 });
 
+test('firefox minimum version covers declared manifest capabilities', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
+  const declaredVersion = manifest.browser_specific_settings?.gecko?.strict_min_version;
+  const declaredVersionMatch = /^(\d+)(?:\.\d+)*$/.exec(declaredVersion);
+  const requirements = [];
+  if (manifest.permissions?.includes('tabGroups')) {
+    requirements.push({ feature: 'tabGroups permission', minimum: 139 });
+  }
+  if (manifest.browser_specific_settings?.gecko?.data_collection_permissions) {
+    requirements.push({ feature: 'data_collection_permissions', minimum: 140 });
+  }
+
+  assert.ok(declaredVersionMatch, 'Firefox strict_min_version must be a dotted numeric version');
+  const declaredMinimumMajor = Number(declaredVersionMatch[1]);
+  for (const requirement of requirements) {
+    assert.ok(
+      declaredMinimumMajor >= requirement.minimum,
+      `${requirement.feature} requires Firefox ${requirement.minimum}+, but strict_min_version is ${declaredVersion}`,
+    );
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Context-aware recommended actions
 // ────────────────────────────────────────────────────────────────────────
