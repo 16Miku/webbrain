@@ -21034,6 +21034,18 @@ function minimalWikipediaZimFixture(options = {}) {
       { namespace: 'C', url: 'The_New_York_Times', title: 'The New York Times', mimeType: 0, contents: '<p>A newspaper based in New York City.</p>' },
     );
   }
+  if (options.caseSensitiveTitle) {
+    for (let index = 0; index < 30; index += 1) {
+      entries.push({
+        namespace: 'C', url: `New_Example_${String(index).padStart(2, '0')}`, title: `New Example ${index}`, mimeType: 0,
+        contents: `<p>Prefix decoy ${index}.</p>`,
+      });
+    }
+    entries.push({
+      namespace: 'C', url: 'New_York_City', title: 'New York City', mimeType: 0,
+      contents: '<p>New York City is the most populous city in the United States.</p>',
+    });
+  }
   entries.sort((left, right) => `${left.namespace}/${left.url}`.localeCompare(`${right.namespace}/${right.url}`));
   const blobs = entries.filter(entry => entry.contents != null);
   blobs.forEach((entry, index) => { entry.blobIndex = index; });
@@ -21141,6 +21153,15 @@ test('Apocalypse Mode reranks resolved redirect destinations before returning ZI
     const [passage] = await archive.search('Science', { limit: 1 });
     assert.equal(passage?.title, 'Science article', `${label}: an exact-looking redirect alias displaced the relevant destination`);
     assert.doesNotMatch(passage?.url || '', /The_New_York_Times/, `${label}: an unrelated redirect destination escaped relevance scoring`);
+  }
+});
+
+test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM titles', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ caseSensitiveTitle: true }));
+    const [passage] = await archive.search('new york city', { limit: 1 });
+    assert.equal(passage?.title, 'New York City', `${label}: lowercase proper-name query missed the case-sensitive ZIM path`);
+    assert.match(passage?.excerpt || '', /most populous city/i, `${label}: case-correct lookup returned the wrong prefix match`);
   }
 });
 
@@ -21282,6 +21303,42 @@ test('Apocalypse Mode disabling loses atomically to concurrent archive deletion'
     assert.deepEqual(expectedState, { status: 'queued', generation: 3, updatedAt: 123 },
       `${label}: disabling did not guard the original record state`);
     assert.equal(records.has(record.id), false, `${label}: disabling recreated concurrently deleted metadata`);
+  }
+});
+
+test('Apocalypse Mode pause and resume lose atomically to concurrent archive deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const [action, status] of [['pause', 'queued'], ['resume', 'paused']]) {
+      const record = { id: `${action}-race`, status, generation: 7, updatedAt: 321 };
+      const records = new Map([[record.id, record]]);
+      let compareAttempts = 0;
+      let expectedState;
+      const scheduled = [];
+      const store = {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()]; },
+        async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+        async putArchive(next) { records.set(next.id, { ...next }); return next; },
+        async putArchiveIfCurrent(_next, expected) {
+          compareAttempts += 1;
+          expectedState = { ...expected };
+          records.delete(record.id);
+          return false;
+        },
+      };
+      const manager = runtime.createApocalypseArchiveManager({
+        store, storage: {}, schedule: delay => scheduled.push(delay), now: () => 654,
+      });
+
+      const result = await manager[action](record.id);
+
+      assert.equal(result, null, `${label}: ${action} returned stale metadata after deletion won`);
+      assert.equal(compareAttempts, 1, `${label}: ${action} did not compare-and-swap metadata`);
+      assert.deepEqual(expectedState, { status, generation: 7, updatedAt: 321 },
+        `${label}: ${action} did not guard the original record state`);
+      assert.equal(records.has(record.id), false, `${label}: ${action} recreated concurrently deleted metadata`);
+      assert.deepEqual(scheduled, [], `${label}: cancelled ${action} scheduled stale work`);
+    }
   }
 });
 

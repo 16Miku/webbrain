@@ -203,8 +203,9 @@ function queryPaths(query) {
   const normalized = String(query || '').trim().replace(/\s+/g, '_');
   if (!normalized) return [];
   const capitalized = normalized[0].toUpperCase() + normalized.slice(1);
+  const titleCased = normalized.split('_').map(token => token ? token[0].toUpperCase() + token.slice(1) : '').join('_');
   const tokens = normalized.split('_').filter(token => token.length >= 3);
-  return Array.from(new Set([normalized, capitalized, ...tokens, ...tokens.map(token => token[0].toUpperCase() + token.slice(1))]));
+  return Array.from(new Set([normalized, capitalized, titleCased, ...tokens, ...tokens.map(token => token[0].toUpperCase() + token.slice(1))]));
 }
 
 function normalizedTitleTerms(value) {
@@ -766,15 +767,20 @@ export function createApocalypseArchiveManager(options = {}) {
     if (!record || record.status === 'ready') return record;
     controllers.get(id)?.abort();
     const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'paused', updatedAt: now() };
-    await store.putArchive(next);
-    return next;
+    const saved = await putArchiveIfCurrent(store, next, {
+      status: record.status, generation: record.generation, updatedAt: record.updatedAt,
+    });
+    return saved ? next : await store.getArchive(id);
   }
 
   async function resume(id) {
     const record = await store.getArchive(id);
     if (!record || record.status === 'ready') return record;
     const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'queued', retryCount: 0, nextRetryAt: 0, error: '', errorKind: '', updatedAt: now() };
-    await store.putArchive(next);
+    const saved = await putArchiveIfCurrent(store, next, {
+      status: record.status, generation: record.generation, updatedAt: record.updatedAt,
+    });
+    if (!saved) return await store.getArchive(id);
     schedule(0);
     return next;
   }
