@@ -23,10 +23,13 @@ vision provider becomes active again. Disabling local vision in Settings is an
 explicit opt-out and is not undone when the service worker restarts.
 
 Archive language is selected independently from WebBrain's interface language.
-The management page reads Kiwix's current OPDS catalog and shows only complete
-text editions. **Include images** switches between the smaller full-text archive
-without images and the larger full-text archive with images. Before an install,
-WebBrain resolves the archive's Metalink and shows its exact byte size,
+The management page reads Kiwix's current OPDS catalog and offers an
+**All / Starter / Introductions / Text / Full** tier selector. **Starter** shows
+curated article subsets, **Introductions** shows compact `mini` editions,
+**Text** shows complete `nopic` text editions without images, and **Full** shows
+the complete editions that typically include images and other media. **All**
+leaves the catalog unfiltered. Before an install, WebBrain resolves the
+archive's Metalink and shows its exact byte size,
 archive date, catalog publisher/source and license notice, integrity-piece
 count, and the browser's reported free extension storage. The archive is
 downloaded only after that confirmation. Existing `.zim` files are validated
