@@ -448,6 +448,7 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT,
   PLANNER_API_REPLAY_RULE,
   PLANNER_RESPONSE_ONLY_RULES,
+  PLANNER_RESPONSE_LANGUAGE_RULES,
   READ_SCOPE_SYSTEM_PROMPT,
   PLANNER_RESPONSE_JSON_SCHEMA,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
@@ -458,6 +459,9 @@ const {
   parseReadScopeFromContent,
   formatPlanMarkdown,
   formatPlanScratchpad,
+  fallbackResponseLanguagePolicy,
+  normalizeResponseLanguagePolicy,
+  formatResponseLanguagePolicyInstruction,
   normalizePlan,
   userMessageToText,
   buildPlannerMessages,
@@ -469,6 +473,7 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT: PLANNER_INTENT_SYSTEM_PROMPT_FX,
   PLANNER_API_REPLAY_RULE: PLANNER_API_REPLAY_RULE_FX,
   PLANNER_RESPONSE_ONLY_RULES: PLANNER_RESPONSE_ONLY_RULES_FX,
+  PLANNER_RESPONSE_LANGUAGE_RULES: PLANNER_RESPONSE_LANGUAGE_RULES_FX,
   READ_SCOPE_SYSTEM_PROMPT: READ_SCOPE_SYSTEM_PROMPT_FX,
   PLANNER_RESPONSE_JSON_SCHEMA: PLANNER_RESPONSE_JSON_SCHEMA_FX,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA: PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX,
@@ -478,6 +483,9 @@ const {
   buildReadScopeMessages: buildReadScopeMessagesFx,
   parsePlanFromContent: parsePlanFromContentFx,
   parseReadScopeFromContent: parseReadScopeFromContentFx,
+  fallbackResponseLanguagePolicy: fallbackResponseLanguagePolicyFx,
+  normalizeResponseLanguagePolicy: normalizeResponseLanguagePolicyFx,
+  formatResponseLanguagePolicyInstruction: formatResponseLanguagePolicyInstructionFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/planner.js').replace(/\\/g, '/')
 );
@@ -8426,6 +8434,11 @@ test('loop-stop recovery surfaces a checkpointed draft in chat without claiming 
 test('delivery recovery exposes only done and persists a partial terminal result', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
+    agent.responseLanguagePolicies.set(913, {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    });
     const messages = [
       { role: 'system', content: 'ordinary agent prompt' },
       { role: 'user', content: 'Find remote jobs and give me the links.' },
@@ -8469,12 +8482,48 @@ test('delivery recovery exposes only done and persists a partial terminal result
     assert.deepEqual(request?.options?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum, ['partial', 'failed'], `${label}: forced done must forbid success`);
     assert.deepEqual(request?.options?.toolChoice, { type: 'function', function: { name: 'done' } }, `${label}: done should be explicitly requested`);
     assert.match(request?.sentMessages?.[0]?.content || '', /Call the done tool exactly once/i, `${label}: forced terminal system prompt missing`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /Use English \(en\) for explanatory framing/i, `${label}: recovery prompt lost English framing`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /authored deliverables in English \(en\)/i, `${label}: recovery prompt lost the deliverable language`);
+    assert.match(request?.options?.tools?.[0]?.function?.description || '', /authored deliverables in English \(en\)/i, `${label}: forced done schema lost language guidance`);
     assert.equal(updates.some(update => update.type === 'tool_call' && update.data?.name === 'done'), true, `${label}: forced done call was not surfaced`);
     assert.equal(updates.some(update => update.type === 'run_status' && update.data?.status === 'partial'), true, `${label}: partial run status missing`);
     const persistedResult = JSON.parse(messages.at(-1)?.content || '{}');
     assert.equal(messages.at(-1)?.role, 'tool', `${label}: forced done tool result was not persisted structurally`);
     assert.equal(persistedResult.done, true, `${label}: persisted forced done result missing`);
     assert.equal(persistedResult.outcome, 'partial', `${label}: persisted forced done outcome mismatch`);
+  }
+});
+
+test('active response-language policy reaches normal system and done-tool prompts without breaking translation jobs', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const tabId = 916;
+    const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    const translation = {
+      framing_locale: 'en',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    agent._setResponseLanguagePolicy(tabId, translation, 'en');
+    const systemPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(systemPrompt, /Use English \(en\) for explanatory framing/i, `${label}: normal system prompt lost framing language`);
+    assert.match(systemPrompt, /authored deliverables in Spanish \(es\)/i, `${label}: normal system prompt overrode the translation target`);
+
+    const guidedTools = agent._withResponseLanguageToolGuidance(tabId, getTools('act', { tier: 'full' }), 'en');
+    const done = guidedTools.find(tool => tool?.function?.name === 'done');
+    assert.match(done?.function?.description || '', /authored deliverables in Spanish \(es\)/i, `${label}: normal done tool lost the translation target`);
+
+    agent._setResponseLanguagePolicy(tabId, null, 'tr');
+    const fallbackPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(fallbackPrompt, /Infer explanatory framing from the language of the latest genuine user request/i, `${label}: planner bypass stopped deriving framing from the user request`);
+    assert.match(fallbackPrompt, /Only when the request language is unclear, use Turkish \(tr\) as the fallback/i, `${label}: UI locale was not retained as a soft fallback`);
+    assert.doesNotMatch(fallbackPrompt, /Use Turkish \(tr\) for explanatory framing/i, `${label}: Ask-mode fallback became a hard UI-locale requirement`);
+    assert.match(fallbackPrompt, /No fixed authored-deliverable language was inferred/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
+    assert.match(fallbackPrompt, /explicit language or translation instruction/i, `${label}: planner fallback lost the translation exception`);
   }
 });
 
@@ -55125,6 +55174,9 @@ function plannerIntentFixture({
   readScope = null,
   scheduling = null,
   locale = 'en',
+  framingLocale = locale,
+  deliverableLocales = [locale],
+  preserveSourceText = false,
   localizedSummary = 'Carry out the requested task.',
   localizedSteps = ['Inspect the current state.', 'Complete the requested task.'],
   localizedRisks = [],
@@ -55160,6 +55212,11 @@ function plannerIntentFixture({
       summary: localizedSummary,
       steps: localizedSteps.map((action, index) => ({ id: String(index + 1), action })),
       risks: localizedRisks,
+    },
+    response_language: {
+      framing_locale: framingLocale,
+      deliverable_locales: deliverableLocales,
+      preserve_source_text: preserveSourceText,
     },
     mode: 'act',
   });
@@ -56108,6 +56165,7 @@ test('planner-bypassed managed cloud runs never enable the execution guard', () 
 
 test('trusted continuation carries consequential evidence without repeating the mutation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
     const responses = [
       {
         content: null,
@@ -56140,7 +56198,11 @@ test('trusted continuation carries consequential evidence without repeating the 
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: async (messages, options) => {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
         const next = responses.shift();
         assert.ok(next, `${AgentClass.name}: continuation requested an unexpected model turn`);
         return next;
@@ -56150,10 +56212,30 @@ test('trusted continuation carries consequential evidence without repeating the 
     const tabId = 8644 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `continuation_conv_${index}`);
+    const persistedLanguagePolicies = [];
+    agent._persistNow = async () => {
+      persistedLanguagePolicies.push(
+        agent._conversationStorageEntry(tabId)?.continuationResponseLanguagePolicy || null,
+      );
+      return { ok: true };
+    };
+    let gateCalls = 0;
+    const fallbackPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: [],
+      preserve_source_text: true,
+      _framing_locale_is_fallback: true,
+    };
+    const englishPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    };
     agent._maybeRunPlannerGate = async () => ({
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
+      responseLanguagePolicy: gateCalls++ === 0 ? fallbackPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -56165,14 +56247,25 @@ test('trusted continuation carries consequential evidence without repeating the 
     };
 
     agent.maxSteps = 1;
-    await agent.processMessage(tabId, 'Submit the form and verify it.', () => {}, 'act');
+    await agent.processMessage(tabId, 'Envía el formulario y verifica el resultado.', () => {}, 'act');
     assert.equal(
       agent._continuationExecutionEvidence.get(tabId)?.successfulConsequentialToolCalls,
       1,
       `${AgentClass.name}: first run did not preserve mutation evidence`,
     );
+    assert.deepEqual(
+      agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
+      fallbackPolicy,
+      `${AgentClass.name}: first run did not preserve its response language policy`,
+    );
+    assert.deepEqual(
+      persistedLanguagePolicies.at(-1)?.policy,
+      fallbackPolicy,
+      `${AgentClass.name}: first run returned before its response language policy was durable`,
+    );
 
     agent.maxSteps = 3;
+    const persistenceCountBeforeContinuation = persistedLanguagePolicies.length;
     const final = await agent.continueProcessing(tabId, () => {}, 'act');
 
     assert.equal(final, 'Prior mutation verified.', `${AgentClass.name}: continuation rejected prior mutation evidence`);
@@ -56182,6 +56275,138 @@ test('trusted continuation carries consequential evidence without repeating the 
       `${AgentClass.name}: continuation repeated a consequential action`,
     );
     assert.equal(responses.length, 0, `${AgentClass.name}: continuation entered recovery`);
+    assert.equal(requests.length, 2, `${AgentClass.name}: continuation made an unexpected number of model requests`);
+    assert.match(
+      requests[1].systemPrompt,
+      /synthetic Continue control/,
+      `${AgentClass.name}: continuation system prompt did not identify the synthetic user turn`,
+    );
+    assert.match(
+      requests[1].systemPrompt,
+      /most recent earlier genuine user request/,
+      `${AgentClass.name}: fallback continuation did not anchor framing to the original request`,
+    );
+    assert.match(
+      requests[1].doneDescription,
+      /must not influence response or deliverable language/,
+      `${AgentClass.name}: continuation tools treated the synthetic turn as a language instruction`,
+    );
+    assert.match(
+      requests[1].doneDescription,
+      /No fixed authored-deliverable language was inferred/,
+      `${AgentClass.name}: fallback continuation invented a fixed deliverable language`,
+    );
+    assert.doesNotMatch(
+      requests[1].systemPrompt,
+      /Use English \(en\) for explanatory framing/,
+      `${AgentClass.name}: synthetic continuation prompt replaced the prior language policy`,
+    );
+    assert.equal(
+      persistedLanguagePolicies[persistenceCountBeforeContinuation],
+      null,
+      `${AgentClass.name}: trusted continuation did not durably consume the one-shot policy`,
+    );
+    assert.equal(
+      agent._continuationResponseLanguagePolicies.has(tabId),
+      false,
+      `${AgentClass.name}: completed continuation retained a stale language policy`,
+    );
+    assert.equal(
+      persistedLanguagePolicies.at(-1),
+      null,
+      `${AgentClass.name}: completed continuation restored the durable one-shot policy`,
+    );
+  }
+});
+
+test('trusted continuation language policy persists across worker restart without crossing conversations', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [AgentClass, apiName, tabId] of [
+      [AgentCh, 'chrome', 8654],
+      [AgentFx, 'browser', 8655],
+    ]) {
+      const conversationId = `continuation_restart_conv_${tabId}`;
+      const policy = {
+        framing_locale: 'es',
+        deliverable_locales: ['es'],
+        preserve_source_text: false,
+        approved_plan_language_override: true,
+      };
+      const original = new AgentClass({});
+      original.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      original.conversationIds.set(tabId, conversationId);
+      original.responseLanguagePolicies.set(tabId, policy);
+      assert.equal(original._storeContinuationResponseLanguagePolicy(tabId), true);
+      const storedEntry = original._conversationStorageEntry(tabId);
+      assert.deepEqual(
+        storedEntry.continuationResponseLanguagePolicy,
+        { policy, conversationId },
+        `${AgentClass.name}: session snapshot omitted the continuation language policy`,
+      );
+
+      globalThis[apiName] = {
+        storage: {
+          session: {
+            get: async key => ({ [key]: storedEntry }),
+          },
+        },
+      };
+      const restarted = new AgentClass({});
+      await restarted._hydrate(tabId);
+      assert.deepEqual(
+        restarted._continuationResponseLanguagePolicies.get(tabId),
+        { policy, conversationId },
+        `${AgentClass.name}: worker restart lost the continuation language policy`,
+      );
+      assert.deepEqual(
+        restarted._takeContinuationResponseLanguagePolicy(tabId),
+        policy,
+        `${AgentClass.name}: restored continuation policy could not be consumed`,
+      );
+      assert.equal(
+        restarted._continuationResponseLanguagePolicies.has(tabId),
+        false,
+        `${AgentClass.name}: restored continuation policy was not one-shot`,
+      );
+
+      const replacementTabId = tabId + 10;
+      const replacementEntry = {
+        ...storedEntry,
+        conversationId: `replacement_${conversationId}`,
+      };
+      globalThis[apiName].storage.session.get = async key => ({ [key]: replacementEntry });
+      const replacement = new AgentClass({});
+      await replacement._hydrate(replacementTabId);
+      assert.equal(
+        replacement._continuationResponseLanguagePolicies.has(replacementTabId),
+        false,
+        `${AgentClass.name}: persisted continuation policy crossed into a replacement conversation`,
+      );
+
+      const malformedTabId = tabId + 20;
+      const malformedEntry = {
+        ...storedEntry,
+        continuationResponseLanguagePolicy: {
+          conversationId,
+          policy: { ...policy, framing_locale: 'Spanish' },
+        },
+      };
+      globalThis[apiName].storage.session.get = async key => ({ [key]: malformedEntry });
+      const malformed = new AgentClass({});
+      await malformed._hydrate(malformedTabId);
+      assert.equal(
+        malformed._continuationResponseLanguagePolicies.has(malformedTabId),
+        false,
+        `${AgentClass.name}: malformed persisted language policy was accepted`,
+      );
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
   }
 });
 
@@ -56274,6 +56499,7 @@ test('trusted continuation carries verified submit state without permitting ordi
 
 test('streamed runs preserve consequential evidence for a trusted continuation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
     const provider = {
       supportsTools: true,
       supportsVision: false,
@@ -56281,7 +56507,11 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      async *chatStream() {
+      async *chatStream(messages, options) {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
         yield {
           type: 'tool_call',
           content: [{
@@ -56292,31 +56522,49 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
         };
         yield { type: 'done' };
       },
-      chat: async () => ({
-        content: null,
-        toolCalls: [
-          {
-            id: `stream_continuation_verify_${index}`,
-            function: { name: 'read_page', arguments: '{}' },
-          },
-          {
-            id: `stream_continuation_done_${index}`,
-            function: {
-              name: 'done',
-              arguments: JSON.stringify({ summary: 'Streamed mutation verified.', outcome: 'success' }),
+      chat: async (messages, options) => {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
+        return {
+          content: null,
+          toolCalls: [
+            {
+              id: `stream_continuation_verify_${index}`,
+              function: { name: 'read_page', arguments: '{}' },
             },
-          },
-        ],
-      }),
+            {
+              id: `stream_continuation_done_${index}`,
+              function: {
+                name: 'done',
+                arguments: JSON.stringify({ summary: 'Streamed mutation verified.', outcome: 'success' }),
+              },
+            },
+          ],
+        };
+      },
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8647 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `stream_continuation_conv_${index}`);
+    let gateCalls = 0;
+    const spanishPolicy = {
+      framing_locale: 'es',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    const englishPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    };
     agent._maybeRunPlannerGate = async () => ({
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
+      responseLanguagePolicy: gateCalls++ === 0 ? spanishPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -56328,11 +56576,16 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
     };
 
     agent.maxSteps = 1;
-    await agent.processMessageStream(tabId, 'Submit the form and verify it.', () => {}, 'act');
+    await agent.processMessageStream(tabId, 'Envía el formulario y verifica el resultado.', () => {}, 'act');
     assert.equal(
       agent._continuationExecutionEvidence.get(tabId)?.successfulConsequentialToolCalls,
       1,
       `${AgentClass.name}: streamed run did not preserve mutation evidence`,
+    );
+    assert.deepEqual(
+      agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
+      spanishPolicy,
+      `${AgentClass.name}: streamed run did not preserve its response language policy`,
     );
 
     agent.maxSteps = 3;
@@ -56343,6 +56596,17 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       toolCalls,
       ['click_ax', 'read_page', 'done'],
       `${AgentClass.name}: continuation repeated the streamed mutation`,
+    );
+    assert.equal(requests.length, 2, `${AgentClass.name}: streamed continuation made unexpected model requests`);
+    assert.match(
+      requests[1].systemPrompt,
+      /Use Spanish \(es\) for explanatory framing/,
+      `${AgentClass.name}: streamed continuation system prompt lost the prior framing language`,
+    );
+    assert.match(
+      requests[1].doneDescription,
+      /Write authored deliverables in Spanish \(es\)/,
+      `${AgentClass.name}: streamed continuation tools lost the prior deliverable language`,
     );
   }
 });
@@ -63585,6 +63849,145 @@ test('planner schemas require structured download completion metadata in both br
   }
 });
 
+test('planner schemas require a structured response-language policy in both browsers', () => {
+  for (const [label, schema] of [
+    ['chrome full', PLANNER_RESPONSE_JSON_SCHEMA],
+    ['chrome intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA],
+    ['firefox full', PLANNER_RESPONSE_JSON_SCHEMA_FX],
+    ['firefox intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX],
+  ]) {
+    assert.ok(schema.required.includes('response_language'), `${label}: response language policy is optional`);
+    const language = schema.properties.response_language;
+    assert.equal(language?.type, 'object', `${label}: response language policy is not structured`);
+    assert.equal(language?.additionalProperties, false, `${label}: response language policy accepts undeclared fields`);
+    assert.deepEqual(
+      language?.required,
+      ['framing_locale', 'deliverable_locales', 'preserve_source_text'],
+      `${label}: response language policy fields are optional`,
+    );
+    assert.equal(language?.properties?.framing_locale?.type, 'string', `${label}: framing locale is not a string`);
+    assert.equal(language?.properties?.deliverable_locales?.type, 'array', `${label}: deliverable locales are not an array`);
+    assert.equal(language?.properties?.preserve_source_text?.type, 'boolean', `${label}: source preservation is not boolean`);
+  }
+});
+
+test('response-language policy keeps framing, translation targets, and source preservation separate', () => {
+  for (const [label, fallback, normalize, format] of [
+    ['chrome', fallbackResponseLanguagePolicy, normalizeResponseLanguagePolicy, formatResponseLanguagePolicyInstruction],
+    ['firefox', fallbackResponseLanguagePolicyFx, normalizeResponseLanguagePolicyFx, formatResponseLanguagePolicyInstructionFx],
+  ]) {
+    assert.deepEqual(
+      fallback('EN_us'),
+      {
+        framing_locale: 'en-us',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: fallback should remain translation-safe instead of hard-coding the UI locale as a deliverable`,
+    );
+
+    const ordinary = normalize({
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    }, 'tr');
+    assert.deepEqual(
+      ordinary,
+      { framing_locale: 'en', deliverable_locales: ['en'], preserve_source_text: false },
+      `${label}: ordinary English policy drifted`,
+    );
+
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: ['es'],
+      }, 'tr'),
+      {
+        framing_locale: 'tr',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: incomplete planner policy translated source text instead of failing closed`,
+    );
+
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: ['Spanish', 'not a locale'],
+        preserve_source_text: false,
+      }, 'tr'),
+      {
+        framing_locale: 'tr',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: invalid deliverable locales were replaced with the framing locale instead of failing closed`,
+    );
+
+    const translation = normalize({
+      framing_locale: 'en',
+      deliverable_locales: ['ES', 'es', 'fr', 'de', 'it', 'pt', 'not a locale'],
+      preserve_source_text: false,
+    }, 'tr');
+    assert.deepEqual(
+      translation,
+      { framing_locale: 'en', deliverable_locales: ['es', 'fr', 'de', 'it', 'pt'], preserve_source_text: false },
+      `${label}: multilingual targets were truncated, duplicated, or replaced by invalid locale data`,
+    );
+    const translationInstruction = format(translation, 'tr');
+    assert.match(translationInstruction, /Use English \(en\) for explanatory framing/i, `${label}: framing language missing`);
+    assert.match(translationInstruction, /authored deliverables in Spanish \(es\)/i, `${label}: translation target missing`);
+    assert.match(translationInstruction, /takes precedence over the framing language/i, `${label}: translation precedence missing`);
+    assert.match(translationInstruction, /Do not translate code, identifiers, URLs/i, `${label}: stable-token exception missing`);
+
+    const preserved = normalize({
+      framing_locale: 'en',
+      deliverable_locales: [],
+      preserve_source_text: true,
+    }, 'tr');
+    assert.deepEqual(
+      preserved,
+      { framing_locale: 'en', deliverable_locales: [], preserve_source_text: true },
+      `${label}: source-faithful task gained a blanket output locale`,
+    );
+    assert.match(format(preserved), /source-faithful text in its original language/i, `${label}: preservation instruction missing`);
+  }
+});
+
+test('planner parses translation and multilingual deliverable policies without using UI locale as a hard constraint', () => {
+  const translationFixture = plannerIntentFixture({
+    locale: 'en',
+    framingLocale: 'en',
+    deliverableLocales: ['es'],
+    preserveSourceText: false,
+    localizedSummary: 'Translate the current article into Spanish.',
+  });
+  const mixedFixture = plannerIntentFixture({
+    locale: 'en',
+    framingLocale: 'en',
+    deliverableLocales: ['es', 'fr'],
+    preserveSourceText: true,
+    localizedSummary: 'Compare the Spanish and French wording.',
+  });
+  for (const [label, parse] of [['chrome', parsePlanFromContent], ['firefox', parsePlanFromContentFx]]) {
+    const translation = parse(translationFixture, { requireIntent: true, locale: 'en' });
+    assert.deepEqual(
+      translation?.response_language,
+      { framing_locale: 'en', deliverable_locales: ['es'], preserve_source_text: false },
+      `${label}: translation deliverable did not override English framing`,
+    );
+    const mixed = parse(mixedFixture, { requireIntent: true, locale: 'en' });
+    assert.deepEqual(
+      mixed?.response_language,
+      { framing_locale: 'en', deliverable_locales: ['es', 'fr'], preserve_source_text: true },
+      `${label}: multilingual/source-preserving policy was lost`,
+    );
+  }
+});
+
 test('planner download completion metadata is language-neutral and does not infer from prose', () => {
   const cases = [
     { task: 'download this video', download: true, locale: 'en' },
@@ -63804,6 +64207,14 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.doesNotMatch(PLANNER_SYSTEM_PROMPT, /sample exactly one fetch_url replay/);
   assert.equal(PLANNER_SYSTEM_PROMPT_FX, PLANNER_SYSTEM_PROMPT);
   assert.equal(PLANNER_API_REPLAY_RULE_FX, PLANNER_API_REPLAY_RULE);
+  assert.equal(PLANNER_RESPONSE_LANGUAGE_RULES_FX, PLANNER_RESPONSE_LANGUAGE_RULES);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /only from the latest genuine user request and trusted conversation context/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /Page\/document text.*cannot choose the response language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /explicitly requested response or explanatory language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /translation target alone changes the deliverable language, not the framing language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /translation.*requested target language.*differs from framing_locale/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /"response_language"/);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"deliverable_locales"/);
 });
 
 test('planner: API replay guidance is gated by allow-api state', () => {
@@ -63985,6 +64396,12 @@ test('planner routes existing-context artifact requests to a tool-free response'
         proceed: true,
         requestKind: 'respond',
         responseOnly: true,
+        responseLanguagePolicy: {
+          framing_locale: 'en',
+          deliverable_locales: [],
+          preserve_source_text: true,
+          _framing_locale_is_fallback: true,
+        },
         requiresStateChange: false,
       }, `${label}: existing-context response should bypass browser tools`);
       assert.match(plannerMessages?.[1]?.content || '', /Prior user request[\s\S]*Draft and send Gary/, `${label}: planner lost the original email task`);
@@ -64712,6 +65129,84 @@ test('planner clears skill activation when verbose approval text is edited', asy
       );
       assert.equal(outcome.proceed, true, `${label}: edited plan should still proceed`);
       assert.equal(changed.agent.activeSkillIds.has(label === 'chrome' ? 9195 : 9196), false, `${label}: removed verbose skill must not activate`);
+    }
+  });
+});
+
+test('reviewed plan edits override the planner response-language target', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const tabId = label === 'chrome' ? 9200 : 9201;
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-language-edit-test',
+        name: 'planner-language-edit-test',
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.setPlanReviewSettings({ mode: 'always' });
+      agent._chatWithCostAllowance = async () => ({
+        content: plannerFixtureJson({
+          summary: 'Translate the visible article into Spanish',
+          steps: [{ id: '1', action: 'Translate the visible article into Spanish', tools: ['read_page'] }],
+          localized: {
+            locale: 'en',
+            summary: 'Translate the visible article into Spanish',
+            steps: [{ id: '1', action: 'Translate the visible article into Spanish' }],
+            risks: [],
+          },
+          response_language: {
+            framing_locale: 'en',
+            deliverable_locales: ['es'],
+            preserve_source_text: false,
+          },
+        }),
+      });
+      agent._waitForPlanReview = async (_tabId, _planId, _plan, compactMarkdown) => ({
+        action: 'approve',
+        editedText: compactMarkdown.replaceAll('Spanish', 'French'),
+        markdownMode: 'compact',
+      });
+
+      const gate = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Translate the visible article into Spanish.' },
+        () => {},
+        null,
+        null,
+        '',
+        { tabUrl: 'https://example.test/article', tabTitle: 'Article' },
+        'try',
+        'act',
+        { locale: 'en' },
+      );
+
+      assert.equal(gate.proceed, true, `${label}: edited translation plan did not proceed`);
+      assert.equal(gate.responseLanguageApprovedPlanOverride, true, `${label}: edited plan retained an authoritative stale target`);
+      assert.match(gate.approvedScratchpadText || '', /French/, `${label}: edited translation target was not pinned`);
+
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('act', tabId) }]);
+      agent.conversationModes.set(tabId, 'act');
+      agent._runPlannerGate = async () => gate;
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        agent.conversations.get(tabId),
+        { role: 'user', content: 'Translate the visible article into Spanish.' },
+        () => {},
+        'act',
+        null,
+        null,
+        { tabUrl: 'https://example.test/article', tabTitle: 'Article' },
+        { locale: 'en' },
+      );
+      assert.equal(outcome.responseLanguageApprovedPlanOverride, true, `${label}: edited-plan override was dropped by the planner wrapper`);
+      agent._setResponseLanguagePolicy(tabId, outcome.responseLanguagePolicy, 'en', {
+        approvedPlanLanguageOverride: outcome.responseLanguageApprovedPlanOverride === true,
+      });
+      const systemPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+      assert.match(systemPrompt, /user edited the approved plan after this policy was inferred/i, `${label}: edited-plan language override did not reach the system prompt`);
+      assert.match(systemPrompt, /Keep them unless.*approved plan.*explicitly changes/i, `${label}: unrelated plan edits discarded the earlier language target`);
+      assert.match(systemPrompt, /No other scratchpad content gains authority/i, `${label}: edited-plan exception was not narrowly scoped`);
+      assert.doesNotMatch(systemPrompt, /Write authored deliverables in Spanish/i, `${label}: stale Spanish target still unconditionally overrode the French edit`);
     }
   });
 });
