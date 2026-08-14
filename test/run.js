@@ -2738,16 +2738,30 @@ test('user memory extraction applies only high-confidence safe operations', () =
     assert.equal(deduped.changed, true, `${label}: duplicate adds may refresh the existing record`);
     assert.equal(deduped.created, false, `${label}: duplicate adds should not report a newly formed memory`);
 
-    // A memory extracted without an explicit confidence is a stable model
-    // assertion and must default to full confidence, not zero (which would
-    // silently drop it at the 0.85 threshold).
+    // Missing confidence is accepted at the configured threshold, but malformed
+    // confidence must not be promoted to a trusted memory.
     const defaulted = memory.parseUserMemoryExtractionResult(JSON.stringify({
       memories: [{ op: 'add', text: 'Always cite sources in drafts.', kind: 'workflow_preference' }],
     }));
-    assert.equal(defaulted[0].confidence, 1, `${label}: missing confidence should default to 1`);
+    assert.equal(defaulted[0].confidence, memory.USER_MEMORY_EXTRACTION_CONFIDENCE_THRESHOLD,
+      `${label}: missing confidence should default to the acceptance threshold`);
     const defaultedApplied = memory.applyUserMemoryExtractionOperations(base, defaulted, { now: 600, threshold: 0.85 });
     assert.equal(defaultedApplied.created, true, `${label}: confidence-less extraction should apply`);
     assert.equal(defaultedApplied.store.records.length, 2, `${label}: confidence-less extraction should persist a record`);
+
+    for (const invalidConfidence of [null, '', 'high', true, {}, []]) {
+      const malformed = memory.parseUserMemoryExtractionResult(JSON.stringify({
+        memories: [{ op: 'add', text: 'Use a questionable preference.', kind: 'preference', confidence: invalidConfidence }],
+      }));
+      assert.equal(malformed[0].confidence, 0, `${label}: malformed confidence should be rejected`);
+      const malformedApplied = memory.applyUserMemoryExtractionOperations(base, malformed, { now: 700, threshold: 0.85 });
+      assert.equal(malformedApplied.changed, false, `${label}: malformed confidence should not apply`);
+    }
+
+    const numericString = memory.parseUserMemoryExtractionResult(JSON.stringify({
+      memories: [{ op: 'add', text: 'Prefer compact tables.', kind: 'preference', confidence: '0.9' }],
+    }));
+    assert.equal(numericString[0].confidence, 0.9, `${label}: nonblank numeric confidence should remain supported`);
 
     const extractionMessages = memory.buildUserMemoryExtractionMessages({
       userText: 'Remember that I prefer terse replies.',
