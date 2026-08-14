@@ -545,7 +545,6 @@ const languageSelect = document.getElementById('language-select');
 const languagePickerBtn = document.getElementById('language-picker-btn');
 const languagePickerMenu = document.getElementById('language-picker-menu');
 const languagePickerFlag = document.getElementById('language-picker-flag');
-const languagePickerCode = document.getElementById('language-picker-code');
 const MORE_PROVIDERS_OPTION_VALUE = '__more_providers__';
 const statusDot = document.getElementById('status-dot');
 // Short labels for the closed picker button (menu rows keep the longer status text).
@@ -6401,7 +6400,6 @@ function syncLanguagePicker() {
   const code = languageSelect.value || getLocale();
   const language = LANGUAGES.find((item) => item.code === code);
   if (languagePickerFlag && language?.flagCode) languagePickerFlag.src = languageFlagSrc(language.flagCode);
-  if (languagePickerCode) languagePickerCode.textContent = code.toUpperCase();
   if (languagePickerBtn) {
     const controlLabel = `${t('sp.btn.language')}: ${language?.label || code}`;
     languagePickerBtn.title = controlLabel;

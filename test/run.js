@@ -22332,7 +22332,7 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
     assert.match(html, /id="language-picker-btn"[^>]+aria-haspopup="listbox"[^>]+aria-controls="language-picker-menu"/, `${label}: language picker trigger should expose listbox semantics`);
     assert.match(html, /id="language-picker-menu" role="listbox"/, `${label}: language picker menu should be an accessible listbox`);
     assert.match(html, /id="language-picker-flag" src="\.\.\/\.\.\/icons\/flags\/us\.svg"[^>]+aria-hidden="true"/, `${label}: English should show the bundled US flag in the closed picker`);
-    assert.match(html, /id="language-picker-code">EN</, `${label}: closed picker should expose a compact language code`);
+    assert.doesNotMatch(html, /id="language-picker-code"/, `${label}: closed picker should stay flag-only to preserve header space`);
     assert.match(panel, /function initializeLanguagePicker\(\)[\s\S]*?if \(index === 2\) appendLanguagePickerSeparator\(\)/, `${label}: pinned languages should be separated from the alphabetical list`);
     assert.match(panel, /function focusLanguagePickerByPrefix\(key\)/, `${label}: language picker should support typeahead`);
     assert.match(panel, /moveLanguagePickerFocus\(1\)[\s\S]*?moveLanguagePickerFocus\(-1\)[\s\S]*?activateFocusedLanguagePickerOption\(\)[\s\S]*?event\.key === 'Escape'/, `${label}: language picker should support arrow, activation, and Escape keys`);

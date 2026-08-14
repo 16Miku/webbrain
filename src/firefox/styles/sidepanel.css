@@ -877,8 +877,8 @@ body {
   flex-shrink: 0;
 }
 
-/* Compact language picker: representative SVG flags aid scanning while the
-   language code and native/English names stay authoritative. */
+/* Compact language picker: the closed trigger uses only the representative
+   flag; language codes and native/English names stay in the open menu. */
 .language-picker {
   position: relative;
   display: flex;
@@ -887,7 +887,7 @@ body {
 }
 
 .language-picker-btn {
-  min-width: 56px;
+  min-width: 48px;
   padding: 3px 4px 3px 6px;
   gap: 4px;
   color: var(--text-secondary);
@@ -912,16 +912,6 @@ body {
   width: 20px;
   height: 15px;
   border-radius: 3px;
-}
-
-.language-picker-code {
-  min-width: 18px;
-  color: var(--text-primary);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.45px;
-  line-height: 1;
-  text-align: center;
 }
 
 .language-picker-caret {
