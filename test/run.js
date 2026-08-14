@@ -21045,8 +21045,13 @@ function minimalWikipediaZimFixture(options = {}) {
       namespace: 'C', url: 'New_York_City', title: 'New York City', mimeType: 0,
       contents: '<p>New York City is the most populous city in the United States.</p>',
     });
+    entries.push({ namespace: 'C', url: 'NYC', title: 'NYC', redirectUrl: 'New_York_City' });
   }
-  entries.sort((left, right) => `${left.namespace}/${left.url}`.localeCompare(`${right.namespace}/${right.url}`));
+  entries.sort((left, right) => {
+    const leftKey = `${left.namespace}/${left.url}`;
+    const rightKey = `${right.namespace}/${right.url}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
   const blobs = entries.filter(entry => entry.contents != null);
   blobs.forEach((entry, index) => { entry.blobIndex = index; });
   const mime = encoder.encode('text/html\0text/plain\0\0');
@@ -21162,6 +21167,10 @@ test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM
     const [passage] = await archive.search('new york city', { limit: 1 });
     assert.equal(passage?.title, 'New York City', `${label}: lowercase proper-name query missed the case-sensitive ZIM path`);
     assert.match(passage?.excerpt || '', /most populous city/i, `${label}: case-correct lookup returned the wrong prefix match`);
+    const [redirect] = await archive.search('NYC', { limit: 1 });
+    assert.equal(redirect?.title, 'New York City', `${label}: exact redirect alias lost its destination title`);
+    assert.equal(redirect?.url, 'https://en.wikipedia.org/wiki/New_York_City', `${label}: exact redirect alias lost its destination URL`);
+    assert.match(redirect?.excerpt || '', /most populous city/i, `${label}: exact redirect alias lost its destination content`);
   }
 });
 
@@ -21375,6 +21384,44 @@ test('Apocalypse Mode schedules the next archive after completing another downlo
     assert.equal(records.get('first-archive')?.status, 'ready', `${label}: first archive did not complete`);
     assert.equal(records.get('second-archive')?.status, 'queued', `${label}: second archive did not remain eligible`);
     assert.deepEqual(scheduled, [0], `${label}: finishing one archive stranded the next queued archive`);
+  }
+});
+
+test('Apocalypse Mode rearms a pending retry after another archive completes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const retrying = {
+      id: 'retry-later', status: 'retrying', generation: 1, updatedAt: 100,
+      nextRetryAt: 1500, pieceIndex: 0, retryCount: 1,
+      filename: 'retry.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'],
+      downloadUrl: 'https://example.test/retry.zim', target: { kind: 'opfs', key: 'retry.zim' },
+    };
+    const queued = {
+      ...retrying, id: 'finish-now', status: 'queued', nextRetryAt: 0, retryCount: 0,
+      filename: 'finish.zim', downloadUrl: 'https://example.test/finish.zim', target: { kind: 'opfs', key: 'finish.zim' },
+    };
+    const records = new Map([[retrying.id, retrying], [queued.id, queued]]);
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'finish-lease',
+      now: () => 1000,
+    });
+
+    await manager.processNext();
+
+    assert.equal(records.get(queued.id)?.status, 'ready', `${label}: eligible archive did not complete before the pending retry`);
+    assert.equal(records.get(retrying.id)?.status, 'retrying', `${label}: future retry state was lost`);
+    assert.deepEqual(scheduled, [500], `${label}: completing another archive lost the pending retry alarm`);
   }
 });
 

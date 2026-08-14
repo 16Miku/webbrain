@@ -212,6 +212,15 @@ function normalizedTitleTerms(value) {
   return String(value || '').toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
 }
 
+function redirectAliasMatchesDestination(alias, destination) {
+  const aliasTerms = normalizedTitleTerms(alias?.title || alias?.url);
+  const destinationTerms = normalizedTitleTerms(destination?.title || destination?.url);
+  if (aliasTerms.some(term => destinationTerms.includes(term))) return true;
+  const insignificant = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'the', 'to']);
+  const initials = destinationTerms.filter(term => !insignificant.has(term)).map(term => term[0]).join('');
+  return aliasTerms.length === 1 && aliasTerms[0].length >= 2 && aliasTerms[0] === initials;
+}
+
 export function rankZimTitleCandidates(candidates, query, limit = 3) {
   const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLocaleLowerCase();
   const queryTerms = normalizedTitleTerms(query);
@@ -219,7 +228,7 @@ export function rankZimTitleCandidates(candidates, query, limit = 3) {
   const unique = new Map();
   for (const candidate of candidates || []) {
     if (!candidate || unique.has(candidate.index)) continue;
-    const normalizedTitle = String(candidate.title || candidate.url || '').replace(/\s+/g, '_').toLocaleLowerCase();
+    const normalizedTitle = String(candidate.searchTitle || candidate.searchUrl || candidate.title || candidate.url || '').replace(/\s+/g, '_').toLocaleLowerCase();
     const titleTerms = new Set(normalizedTitleTerms(normalizedTitle));
     const matches = queryTerms.filter(term => titleTerms.has(term)).length;
     const fullPrefix = normalizedTitle.startsWith(normalizedQuery);
@@ -406,9 +415,16 @@ export async function openKiwixZim(source, metadata = {}) {
       locatedCandidates.push(...await findPaths(path, Math.max(24, limit * 8)));
     }
     const resolvedCandidates = [];
+    const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLocaleLowerCase();
     for (const located of locatedCandidates) {
       const entry = await resolvedEntry(located);
-      if (entry) resolvedCandidates.push(entry);
+      if (!entry) continue;
+      const exactRedirectAlias = located.redirectIndex != null
+        && String(located.url || '').toLocaleLowerCase() === normalizedQuery
+        && redirectAliasMatchesDestination(located, entry);
+      resolvedCandidates.push(exactRedirectAlias
+        ? { ...entry, searchTitle: located.title, searchUrl: located.url }
+        : entry);
     }
     for (const entry of rankZimTitleCandidates(resolvedCandidates, query, limit)) {
       if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) continue;
@@ -656,6 +672,17 @@ function downloadable(record, now) {
     || (record.status === 'retrying' && Number(record.nextRetryAt) <= now);
 }
 
+function nextArchiveScheduleDelay(records, timestamp) {
+  const delays = (records || []).map((record) => {
+    if (record.status === 'queued') return 0;
+    if (record.status === 'retrying') return Math.max(0, (Number(record.nextRetryAt) || 0) - timestamp);
+    if (record.status === 'downloading') return Math.max(0, (Number(record.leaseUntil) || 0) - timestamp);
+    return Number.POSITIVE_INFINITY;
+  });
+  const delay = Math.min(...delays);
+  return Number.isFinite(delay) ? delay : null;
+}
+
 function advanceDownloadMirror(record) {
   const mirrors = Array.isArray(record?.mirrors)
     ? [...new Set(record.mirrors.filter(url => /^https:\/\//.test(String(url || ''))))]
@@ -894,7 +921,8 @@ export function createApocalypseArchiveManager(options = {}) {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
       if (!saved) return { processed: false, reason: 'cancelled' };
-      if (!finished || (await store.listArchives()).some(candidate => downloadable(candidate, now()))) schedule(0);
+      const nextDelay = nextArchiveScheduleDelay(await store.listArchives(), now());
+      if (nextDelay != null) schedule(nextDelay);
       return { processed: true, archive: next };
     } catch (error) {
       const current = await store.getArchive(record.id);
@@ -921,9 +949,8 @@ export function createApocalypseArchiveManager(options = {}) {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
       if (!saved) return { processed: false, reason: 'cancelled' };
-      const eligibleWork = (await store.listArchives()).some(candidate => downloadable(candidate, now()));
-      if (eligibleWork) schedule(0);
-      else if (retrying) schedule(delay);
+      const nextDelay = nextArchiveScheduleDelay(await store.listArchives(), now());
+      if (nextDelay != null) schedule(nextDelay);
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
     } finally {
       if (controllers.get(record.id) === controller) controllers.delete(record.id);
@@ -1186,14 +1213,8 @@ export function createApocalypseController(api, options = {}) {
     const config = await store.getConfig();
     if (config.enabled !== true) return null;
     const timestamp = now();
-    const delays = (await store.listArchives()).map((record) => {
-      if (record.status === 'queued') return 0;
-      if (record.status === 'retrying') return Math.max(0, (Number(record.nextRetryAt) || 0) - timestamp);
-      if (record.status === 'downloading') return Math.max(0, (Number(record.leaseUntil) || 0) - timestamp);
-      return Number.POSITIVE_INFINITY;
-    });
-    const delay = Math.min(...delays);
-    if (!Number.isFinite(delay)) return null;
+    const delay = nextArchiveScheduleDelay(await store.listArchives(), timestamp);
+    if (delay == null) return null;
     await schedule(delay);
     return delay;
   }
