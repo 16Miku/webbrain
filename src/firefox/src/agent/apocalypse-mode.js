@@ -141,9 +141,9 @@ export function selectKiwixUpdate(installed, catalogItems) {
 const ZIM_MAGIC = 0x044d495a;
 const MAX_DIRECTORY_ENTRY_BYTES = 64 * 1024;
 const ISO_639_3_TO_1 = Object.freeze({
-  ara: 'ar', deu: 'de', eng: 'en', spa: 'es', fas: 'fa', fra: 'fr', hin: 'hi',
+  ara: 'ar', ben: 'bn', deu: 'de', eng: 'en', spa: 'es', fas: 'fa', fra: 'fr', hin: 'hi',
   ind: 'id', ita: 'it', jpn: 'ja', kor: 'ko', nld: 'nl', pol: 'pl', por: 'pt',
-  rus: 'ru', swe: 'sv', tur: 'tr', ukr: 'uk', vie: 'vi', zho: 'zh',
+  rus: 'ru', swe: 'sv', tgl: 'tl', tur: 'tr', ukr: 'uk', vie: 'vi', zho: 'zh',
 });
 
 async function sourceBlob(source) {
@@ -506,6 +506,7 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
       const matches = Boolean(current)
         && (expected.status == null || current.status === expected.status)
         && (expected.generation == null || (Number(current.generation) || 0) === (Number(expected.generation) || 0))
+        && (expected.leaseToken == null || current.leaseToken === expected.leaseToken)
         && (expected.updatedAt == null || Number(current.updatedAt) === Number(expected.updatedAt));
       if (matches) objectStore.put(record);
       await idbTransaction(transaction);
@@ -549,6 +550,7 @@ async function putArchiveIfCurrent(store, record, expected) {
   const matches = Boolean(current)
     && (expected.status == null || current.status === expected.status)
     && (expected.generation == null || (Number(current.generation) || 0) === (Number(expected.generation) || 0))
+    && (expected.leaseToken == null || current.leaseToken === expected.leaseToken)
     && (expected.updatedAt == null || Number(current.updatedAt) === Number(expected.updatedAt));
   if (!matches) return false;
   await store.putArchive(record);
@@ -852,7 +854,10 @@ export function createApocalypseArchiveManager(options = {}) {
         completedAt: finished ? now() : null,
         updatedAt: now(),
       };
-      await store.putArchive(next);
+      const saved = await putArchiveIfCurrent(store, next, {
+        status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
+      });
+      if (!saved) return { processed: false, reason: 'cancelled' };
       if (!finished) schedule(0);
       return { processed: true, archive: next };
     } catch (error) {

@@ -21008,10 +21008,12 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
 
 function minimalWikipediaZimFixture(options = {}) {
   const encoder = new TextEncoder();
+  const language = options.language || 'eng';
+  const sourceLanguage = ({ ben: 'bn', tgl: 'tl' })[language] || language.slice(0, 2);
   const metadata = options.wikipedia === false ? {
     Language: 'eng', Name: 'project_gutenberg_en', Source: 'www.gutenberg.org', Tags: '_category:books',
   } : {
-    Language: 'eng', Name: 'wikipedia_en_test', Source: 'https://en.wikipedia.org/', Tags: 'wikipedia;_category:wikipedia',
+    Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`, Tags: 'wikipedia;_category:wikipedia',
   };
   const entries = [
     {
@@ -21116,6 +21118,16 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
   }
   const corrupt = new Blob([new Uint8Array(96)]);
   await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
+});
+
+test('Apocalypse Mode maps Bengali and Tagalog ZIM languages to canonical Wikipedia hosts', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const [language, host] of [['ben', 'bn'], ['tgl', 'tl']]) {
+      const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ language }));
+      const [passage] = await archive.search('Alan Turing');
+      assert.equal(passage?.url, `https://${host}.wikipedia.org/wiki/Alan_Turing`, `${label}: ${language} used the wrong Wikipedia host`);
+    }
+  }
 });
 
 test('Apocalypse Mode reranks resolved redirect destinations before returning ZIM search results', async () => {
@@ -21233,6 +21245,78 @@ test('Apocalypse Mode requires opt-in and removal wins an in-flight download rac
     assert.equal(writes.length, 0, `${label}: removed archive bytes were written after cancellation`);
     assert.deepEqual(removals, [{ kind: 'opfs', key: 'archive-1-example.zim' }], `${label}: archive removal did not delete its record-scoped managed storage`);
     assert.equal(scheduled.length, schedulesBeforeRace, `${label}: cancelled work rescheduled itself after removal`);
+  }
+});
+
+test('Apocalypse Mode removal wins while a completed download is being validated', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const records = new Map();
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return { ...record }; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && current.leaseToken === expected.leaseToken
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const fixture = minimalWikipediaZimFixture();
+    let releaseValidation;
+    let markValidationStarted;
+    const validationStarted = new Promise(resolve => { markValidationStarted = resolve; });
+    const validatingBlob = {
+      size: fixture.size,
+      slice(start, end) {
+        const bytes = fixture.slice(start, end);
+        return {
+          async arrayBuffer() {
+            if (start === 0 && end === 80) {
+              markValidationStarted();
+              await new Promise(resolve => { releaseValidation = resolve; });
+            }
+            return await bytes.arrayBuffer();
+          },
+        };
+      },
+    };
+    const storage = {
+      async write() {}, async truncate() {}, async open() { return validatingBlob; }, async remove() {},
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return fixture.arrayBuffer(); } }),
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'validation-race',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: fixture.size, pieceLength: fixture.size,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+
+    const running = manager.processNext();
+    await validationStarted;
+    await manager.remove('validation-race');
+    releaseValidation();
+    const result = await running;
+
+    assert.equal(result.reason, 'cancelled', `${label}: deleted final-piece validation was reported as complete`);
+    assert.equal(compareAttempts, 1, `${label}: final download state did not use compare-and-swap storage`);
+    assert.equal(records.has('validation-race'), false, `${label}: completed validation recreated a deleted archive`);
   }
 });
 
