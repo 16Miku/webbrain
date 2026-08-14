@@ -718,7 +718,12 @@ export function createApocalypseArchiveManager(options = {}) {
       await Promise.all(archives.map(async (record) => {
         controllers.get(record.id)?.abort();
         if (record.status === 'ready') return;
-        await store.putArchive({ ...record, generation: (Number(record.generation) || 0) + 1, status: 'paused', updatedAt: now() });
+        await putArchiveIfCurrent(store, {
+          ...record,
+          generation: (Number(record.generation) || 0) + 1,
+          status: 'paused',
+          updatedAt: now(),
+        }, { status: record.status, generation: record.generation, updatedAt: record.updatedAt });
       }));
     } else {
       schedule(0);
@@ -883,7 +888,7 @@ export function createApocalypseArchiveManager(options = {}) {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
       if (!saved) return { processed: false, reason: 'cancelled' };
-      if (!finished) schedule(0);
+      if (!finished || (await store.listArchives()).some(candidate => downloadable(candidate, now()))) schedule(0);
       return { processed: true, archive: next };
     } catch (error) {
       const current = await store.getArchive(record.id);

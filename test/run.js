@@ -21253,6 +21253,74 @@ test('Apocalypse Mode requires opt-in and removal wins an in-flight download rac
   }
 });
 
+test('Apocalypse Mode disabling loses atomically to concurrent archive deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const record = { id: 'disable-race', status: 'queued', generation: 3, updatedAt: 123 };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    let expectedState;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(_next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        records.delete(record.id);
+        return false;
+      },
+    };
+    const manager = runtime.createApocalypseArchiveManager({ store, storage: {}, now: () => 456 });
+
+    await manager.setEnabled(false);
+
+    assert.equal(config.enabled, false, `${label}: disabling did not persist the configuration`);
+    assert.equal(compareAttempts, 1, `${label}: disabling did not compare-and-swap incomplete metadata`);
+    assert.deepEqual(expectedState, { status: 'queued', generation: 3, updatedAt: 123 },
+      `${label}: disabling did not guard the original record state`);
+    assert.equal(records.has(record.id), false, `${label}: disabling recreated concurrently deleted metadata`);
+  }
+});
+
+test('Apocalypse Mode schedules the next archive after completing another download', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const ids = ['first-archive', 'second-archive', 'download-lease'];
+    const store = {
+      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => ids.shift(),
+      now: () => 1000,
+    });
+    const download = {
+      filename: 'archive.zim', size: 1, pieceLength: 1,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/archive.zim',
+    };
+    await manager.install(download, { kind: 'opfs', key: 'first.zim' });
+    await manager.install(download, { kind: 'opfs', key: 'second.zim' });
+    scheduled.length = 0;
+
+    await manager.processNext();
+
+    assert.equal(records.get('first-archive')?.status, 'ready', `${label}: first archive did not complete`);
+    assert.equal(records.get('second-archive')?.status, 'queued', `${label}: second archive did not remain eligible`);
+    assert.deepEqual(scheduled, [0], `${label}: finishing one archive stranded the next queued archive`);
+  }
+});
+
 test('Apocalypse Mode removal wins while a completed download is being validated', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const config = { enabled: true, updatePolicy: 'manual' };
