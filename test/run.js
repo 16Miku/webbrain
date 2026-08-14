@@ -40771,6 +40771,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
   let localEnabled = true;
+  let textModelReady = true;
   try {
     globalThis.chrome = {
       offscreen: { hasDocument: async () => true },
@@ -40781,6 +40782,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
           if (message.type === 'webgpu-vision-dispose') callback({ ok: true, disposed: true });
           else if (message.type === 'webgpu-dispose') callback({ ok: true, disposed: true });
           else if (message.type === 'webgpu-probe') callback({ ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: '4.2.0' });
+          else if (message.type === 'webgpu-download-status') callback({ ok: true, status: textModelReady ? 'ready' : 'not-downloaded', ready: textModelReady });
           else if (message.type === 'webgpu-chat') callback({ ok: true, content: 'Local answer.' });
           else callback({ ok: true, content: 'A settings page is visible.' });
         },
@@ -40819,6 +40821,11 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const localResult = await generalProvider.chat([{ role: 'user', content: 'Hello' }], { maxTokens: 123, tools });
     assert.equal(localResult.content, 'Local answer.');
     assert.deepEqual(sentMessages[1], {
+      type: 'webgpu-download-status',
+      model: WEBGPU_MODEL_ID,
+      dtype: WEBGPU_DTYPE,
+    });
+    assert.deepEqual(sentMessages[2], {
       type: 'webgpu-chat',
       model: WEBGPU_MODEL_ID,
       device: 'webgpu',
@@ -40828,7 +40835,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     });
     const textDisposed = await generalProvider.dispose();
     assert.deepEqual(textDisposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[2], { type: 'webgpu-dispose' });
+    assert.deepEqual(sentMessages[3], { type: 'webgpu-dispose' });
 
     const provider = await manager.getVisionProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
@@ -40847,7 +40854,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const result = await provider.chat(messages, { maxTokens: 321 });
     assert.equal(result.content, 'A settings page is visible.');
     assert.equal(result.toolCalls, null);
-    assert.deepEqual(sentMessages[3], {
+    assert.deepEqual(sentMessages[4], {
       type: 'webgpu-vision-chat',
       model: WEBGPU_VISION_MODEL_ID,
       device: 'webgpu',
@@ -40858,13 +40865,21 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
 
     const disposed = await manager.disposeWebgpuVisionRuntime();
     assert.deepEqual(disposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[4], { type: 'webgpu-vision-dispose' });
+    assert.deepEqual(sentMessages[5], { type: 'webgpu-vision-dispose' });
 
     manager.providers.set('webgpu', generalProvider);
     manager.providers.set('remote', { config: { type: 'openai', model: 'remote-model' } });
     manager.activeProviderId = 'webgpu';
     await manager.setActive('remote');
-    assert.deepEqual(sentMessages[5], { type: 'webgpu-dispose' });
+    assert.deepEqual(sentMessages[6], { type: 'webgpu-dispose' });
+
+    textModelReady = false;
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
+      /not downloaded/,
+    );
+    await assert.rejects(manager.setActive('webgpu'), /Download Ling 3\.0 Tiny/);
+    assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     localEnabled = false;
     const preservedRemote = await manager.getVisionProvider();
@@ -40907,6 +40922,10 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
+  assert.match(host, /'webgpu-download-start'/);
+  assert.match(host, /'webgpu-download-pause'/);
+  assert.match(host, /'webgpu-download-stop'/);
+  assert.match(host, /'webgpu-download-status'/);
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
@@ -40914,6 +40933,12 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
   assert.match(settingsScript, /dispose_webgpu_vision/);
+  assert.match(settingsScript, /data-webgpu-download-action="start"/);
+  assert.match(settingsScript, /data-webgpu-download-action="pause"/);
+  assert.match(settingsScript, /data-webgpu-download-action="resume"/);
+  assert.match(settingsScript, /data-webgpu-download-action="stop"/);
+  assert.match(settingsScript, /get_webgpu_download_status/);
+  assert.match(settingsScript, /webgpu-text-download-state/);
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
   const webgpuSettingsBlock = settingsScript.slice(
     settingsScript.indexOf('webgpu: {'),
@@ -40941,6 +40966,8 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
 test('WebGPU worker replays Ling tool history without coupling text and vision lifecycles', async () => {
   const previousSelf = globalThis.self;
   const previousCounts = globalThis.__webgpuRuntimeCounts;
+  const previousHoldTextDownload = globalThis.__holdWebgpuTextDownload;
+  const previousReleaseTextDownload = globalThis.__releaseWebgpuTextDownload;
   let workerListener = null;
   const posted = [];
   try {
@@ -41008,6 +41035,9 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
       };
       export async function pipeline() {
         globalThis.__webgpuRuntimeCounts.textLoads++;
+        if (globalThis.__holdWebgpuTextDownload) {
+          await new Promise(resolve => { globalThis.__releaseWebgpuTextDownload = resolve; });
+        }
         const instance = async (input) => [{ generated_text: [...input, { role: 'assistant', content: 'text answer' }] }];
         instance.model = {};
         instance.tokenizer = {};
@@ -41050,6 +41080,12 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
       options: { maxTokens: 1 },
     };
     await dispatch('chat', visionPayload);
+    const beforeDownloadId = requestId++;
+    await workerListener({ data: { id: beforeDownloadId, type: 'text-chat', payload: textPayload } });
+    const beforeDownload = posted.find(message => message.id === beforeDownloadId);
+    assert.equal(beforeDownload.ok, false);
+    assert.match(beforeDownload.error, /not downloaded/);
+    await dispatch('download-text', textPayload);
     await dispatch('text-chat', textPayload);
     await dispatch('chat', visionPayload);
     await dispatch('text-chat', textPayload);
@@ -41068,11 +41104,43 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, 0, 'vision disposal must preserve Ling');
     await dispatch('dispose-text');
     assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, 1);
+
+    await dispatch('stop-text-download', textPayload);
+    const stopped = await dispatch('text-download-status', textPayload);
+    assert.equal(stopped.status, 'not-downloaded');
+    assert.equal(stopped.ready, false);
+
+    globalThis.__holdWebgpuTextDownload = true;
+    const pausedDownloadId = requestId++;
+    const pausedDownloadPromise = workerListener({
+      data: { id: pausedDownloadId, type: 'download-text', payload: textPayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextDownload; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'download should reach the controllable pipeline');
+    const paused = await dispatch('pause-text-download');
+    assert.equal(paused.status, 'paused');
+    globalThis.__releaseWebgpuTextDownload();
+    await pausedDownloadPromise;
+    const pausedDownload = posted.find(message => message.id === pausedDownloadId);
+    assert.equal(pausedDownload.ok, true);
+    assert.equal(pausedDownload.status, 'paused');
+
+    globalThis.__holdWebgpuTextDownload = false;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const resumed = await dispatch('download-text', textPayload);
+    assert.equal(resumed.status, 'ready');
+    assert.equal(resumed.ready, true);
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;
     if (previousCounts === undefined) delete globalThis.__webgpuRuntimeCounts;
     else globalThis.__webgpuRuntimeCounts = previousCounts;
+    if (previousHoldTextDownload === undefined) delete globalThis.__holdWebgpuTextDownload;
+    else globalThis.__holdWebgpuTextDownload = previousHoldTextDownload;
+    if (previousReleaseTextDownload === undefined) delete globalThis.__releaseWebgpuTextDownload;
+    else globalThis.__releaseWebgpuTextDownload = previousReleaseTextDownload;
   }
 });
 

@@ -1097,6 +1097,28 @@ export class ProviderManager {
     }
   }
 
+  _webgpuProvider() {
+    const provider = this.providers.get('webgpu');
+    if (!(provider instanceof WebGPUProvider)) throw new Error('WebGPU provider is unavailable.');
+    return provider;
+  }
+
+  async getWebgpuDownloadStatus() {
+    return this._webgpuProvider().downloadStatus();
+  }
+
+  async startWebgpuDownload() {
+    return this._webgpuProvider().startDownload();
+  }
+
+  async pauseWebgpuDownload() {
+    return this._webgpuProvider().pauseDownload();
+  }
+
+  async stopWebgpuDownload() {
+    return this._webgpuProvider().stopDownload();
+  }
+
   /**
    * Switch the active provider.
    */
@@ -1106,6 +1128,12 @@ export class ProviderManager {
     }
     const previousProvider = this.providers.get(this.activeProviderId);
     const nextProvider = this.providers.get(id);
+    if (nextProvider instanceof WebGPUProvider) {
+      const download = await nextProvider.downloadStatus();
+      if (!download.ready) {
+        throw new Error('Download Ling 3.0 Tiny in Settings > Providers > WebGPU before selecting it for chat.');
+      }
+    }
     this.activeProviderId = id;
     await this.save();
     if (previousProvider instanceof WebGPUProvider && !(nextProvider instanceof WebGPUProvider)) {

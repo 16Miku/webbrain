@@ -19,6 +19,92 @@ let textRuntimeKey = '';
 let textRuntimeLoadPromise = null;
 let textRuntimeLoadKey = '';
 let modelOperationQueue = Promise.resolve();
+const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
+const TEXT_DOWNLOAD_EVENT = 'text-download-state';
+const readyTextModelKeys = new Set();
+const textDownloadFiles = new Map();
+const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+let activeTextDownloadModelId = '';
+let textDownloadAbortController = null;
+let textDownloadCancelMode = '';
+let lastTextProgressPostAt = 0;
+let textDownloadState = {
+  status: 'not-downloaded',
+  ready: false,
+  modelId: '',
+  dtype: '',
+  file: '',
+  loaded: 0,
+  total: 0,
+  progress: 0,
+  error: '',
+};
+
+function textModelKey(modelId, dtype) {
+  return `${String(modelId || '').trim()}|${String(dtype || '').trim()}`;
+}
+
+function textReadyMarkerUrl(modelId, dtype) {
+  const key = encodeURIComponent(textModelKey(modelId, dtype));
+  return `https://webbrain.one/.well-known/webgpu-model-ready/${key}`;
+}
+
+function safeDecodedUrl(value) {
+  try { return decodeURIComponent(String(value || '')); } catch { return String(value || ''); }
+}
+
+function fetchTargetsActiveTextModel(input) {
+  if (!activeTextDownloadModelId) return false;
+  const url = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+  return safeDecodedUrl(url).includes(`/${activeTextDownloadModelId}/`);
+}
+
+async function controlledFetch(input, init = {}) {
+  if (!nativeFetch) throw new Error('Fetch is unavailable in the WebGPU worker.');
+  if (textDownloadAbortController && fetchTargetsActiveTextModel(input)) {
+    return nativeFetch(input, { ...init, signal: textDownloadAbortController.signal });
+  }
+  return nativeFetch(input, init);
+}
+
+function textDownloadSnapshot() {
+  return { ...textDownloadState };
+}
+
+function postTextDownloadState({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastTextProgressPostAt < 160) return;
+  lastTextProgressPostAt = now;
+  self.postMessage({ type: TEXT_DOWNLOAD_EVENT, state: textDownloadSnapshot() });
+}
+
+async function isTextModelReady(modelId, dtype) {
+  const key = textModelKey(modelId, dtype);
+  if (readyTextModelKeys.has(key)) return true;
+  if (typeof caches === 'undefined') return false;
+  try {
+    const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+    const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
+    if (!marker) return false;
+    readyTextModelKeys.add(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function markTextModelReady(modelId, dtype) {
+  const key = textModelKey(modelId, dtype);
+  if (typeof caches === 'undefined') {
+    readyTextModelKeys.add(key);
+    return;
+  }
+  const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+  await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
+    headers: { 'content-type': 'application/json' },
+  }));
+  readyTextModelKeys.add(key);
+}
 
 async function loadLibrary() {
   if (libraryPromise) return libraryPromise;
@@ -37,6 +123,7 @@ async function loadLibrary() {
       library.env.allowRemoteModels = true;
       library.env.useBrowserCache = true;
       library.env.useWasmCache = false;
+      library.env.fetch = controlledFetch;
       const wasm = library.env.backends?.onnx?.wasm;
       if (wasm) {
         wasm.numThreads = 1;
@@ -52,6 +139,39 @@ async function loadLibrary() {
 }
 
 function postProgress(modelId, event) {
+  if (modelId === activeTextDownloadModelId && !textDownloadCancelMode) {
+    const file = String(event?.file || event?.name || '');
+    if (file) {
+      const previous = textDownloadFiles.get(file) || { loaded: 0, total: 0, status: '' };
+      const total = Number(event?.total || previous.total || 0);
+      const loaded = event?.status === 'done' && total > 0
+        ? total
+        : Number(event?.loaded ?? previous.loaded ?? 0);
+      textDownloadFiles.set(file, {
+        status: event?.status || previous.status,
+        loaded: Math.max(0, loaded),
+        total: Math.max(0, total),
+      });
+    }
+    let loaded = 0;
+    let total = 0;
+    for (const item of textDownloadFiles.values()) {
+      if (item.total <= 0) continue;
+      loaded += Math.min(item.loaded, item.total);
+      total += item.total;
+    }
+    textDownloadState = {
+      ...textDownloadState,
+      status: 'downloading',
+      ready: false,
+      file,
+      loaded,
+      total,
+      progress: total > 0 ? Math.max(0, Math.min(100, loaded / total * 100)) : 0,
+      error: '',
+    };
+    postTextDownloadState({ force: event?.status === 'done' });
+  }
   self.postMessage({
     type: 'progress',
     modelId,
@@ -149,7 +269,7 @@ async function getVisionRuntime(modelId, dtype, device) {
   }
 }
 
-async function getTextRuntime(modelId, dtype, device) {
+async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
   const key = `text|${modelId}|${device}|${JSON.stringify(dtype)}`;
   if (textRuntime && textRuntimeKey === key) return textRuntime;
   if (textRuntimeLoadPromise) {
@@ -164,11 +284,19 @@ async function getTextRuntime(modelId, dtype, device) {
       throw new Error('The packaged Transformers.js version does not include text generation.');
     }
     await disposeTextRuntime();
-    const pipeline = await library.pipeline('text-generation', modelId, {
-      device,
-      dtype,
-      progress_callback: event => postProgress(modelId, event),
-    });
+    const previousAllowLocalModels = library.env?.allowLocalModels;
+    if (localFilesOnly && library.env) library.env.allowLocalModels = true;
+    let pipeline;
+    try {
+      pipeline = await library.pipeline('text-generation', modelId, {
+        device,
+        dtype,
+        local_files_only: localFilesOnly,
+        progress_callback: event => postProgress(modelId, event),
+      });
+    } finally {
+      if (localFilesOnly && library.env) library.env.allowLocalModels = previousAllowLocalModels;
+    }
     textRuntime = {
       library,
       pipeline,
@@ -188,6 +316,160 @@ async function getTextRuntime(modelId, dtype, device) {
       textRuntimeLoadKey = '';
     }
   }
+}
+
+async function getTextDownloadStatus(modelId, dtype) {
+  const ready = await isTextModelReady(modelId, dtype);
+  const sameModel = textDownloadState.modelId === modelId && textDownloadState.dtype === dtype;
+  if (ready && (!sameModel || !['downloading', 'stopping'].includes(textDownloadState.status))) {
+    textDownloadState = {
+      status: 'ready',
+      ready: true,
+      modelId,
+      dtype,
+      file: sameModel ? textDownloadState.file : '',
+      loaded: sameModel ? textDownloadState.loaded : 0,
+      total: sameModel ? textDownloadState.total : 0,
+      progress: 100,
+      error: '',
+    };
+  } else if (!ready && !sameModel) {
+    textDownloadState = {
+      status: 'not-downloaded',
+      ready: false,
+      modelId,
+      dtype,
+      file: '',
+      loaded: 0,
+      total: 0,
+      progress: 0,
+      error: '',
+    };
+  }
+  return textDownloadSnapshot();
+}
+
+async function downloadTextModel(payload) {
+  const modelId = String(payload?.modelId || '').trim();
+  if (!modelId) throw new Error('No text-generation model was specified.');
+  const device = payload?.device || 'webgpu';
+  const dtype = payload?.dtype || 'q4f16';
+  if (await isTextModelReady(modelId, dtype)) {
+    textDownloadState = {
+      ...textDownloadState,
+      status: 'ready',
+      ready: true,
+      modelId,
+      dtype,
+      progress: 100,
+      error: '',
+    };
+    postTextDownloadState({ force: true });
+    return textDownloadSnapshot();
+  }
+
+  const resuming = textDownloadState.status === 'paused'
+    && textDownloadState.modelId === modelId
+    && textDownloadState.dtype === dtype;
+  if (!resuming) textDownloadFiles.clear();
+  activeTextDownloadModelId = modelId;
+  textDownloadCancelMode = '';
+  const controller = new AbortController();
+  textDownloadAbortController = controller;
+  textDownloadState = {
+    status: 'downloading',
+    ready: false,
+    modelId,
+    dtype,
+    file: resuming ? textDownloadState.file : '',
+    loaded: resuming ? textDownloadState.loaded : 0,
+    total: resuming ? textDownloadState.total : 0,
+    progress: resuming ? textDownloadState.progress : 0,
+    error: '',
+  };
+  postTextDownloadState({ force: true });
+
+  try {
+    await getTextRuntime(modelId, dtype, device);
+    if (textDownloadCancelMode) {
+      await disposeTextRuntime();
+      return textDownloadSnapshot();
+    }
+    await markTextModelReady(modelId, dtype);
+    textDownloadState = {
+      ...textDownloadState,
+      status: 'ready',
+      ready: true,
+      progress: 100,
+      error: '',
+    };
+    postTextDownloadState({ force: true });
+    return textDownloadSnapshot();
+  } catch (error) {
+    if (textDownloadCancelMode === 'pause' || textDownloadCancelMode === 'stop' || controller.signal.aborted) {
+      textDownloadState = {
+        ...textDownloadState,
+        status: textDownloadCancelMode === 'stop' ? 'stopping' : 'paused',
+        ready: false,
+        error: '',
+      };
+      postTextDownloadState({ force: true });
+      return textDownloadSnapshot();
+    }
+    textDownloadState = {
+      ...textDownloadState,
+      status: 'error',
+      ready: false,
+      error: error?.message || String(error),
+    };
+    postTextDownloadState({ force: true });
+    throw error;
+  } finally {
+    if (textDownloadAbortController === controller) textDownloadAbortController = null;
+    activeTextDownloadModelId = '';
+  }
+}
+
+function pauseTextDownload() {
+  if (textDownloadState.status !== 'downloading') return textDownloadSnapshot();
+  textDownloadCancelMode = 'pause';
+  textDownloadState = { ...textDownloadState, status: 'paused', ready: false, error: '' };
+  textDownloadAbortController?.abort();
+  postTextDownloadState({ force: true });
+  return textDownloadSnapshot();
+}
+
+async function clearTextModelCache(modelId, dtype) {
+  await disposeTextRuntime();
+  const modelPath = `/${modelId}/`;
+  const markerUrl = textReadyMarkerUrl(modelId, dtype);
+  if (typeof caches !== 'undefined') {
+    for (const name of await caches.keys()) {
+      if (!/transformers/i.test(name)) continue;
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        const url = safeDecodedUrl(request.url);
+        if (url.includes(modelPath) || request.url === markerUrl) await cache.delete(request);
+      }
+      await cache.delete(markerUrl);
+    }
+  }
+  readyTextModelKeys.delete(textModelKey(modelId, dtype));
+  textDownloadFiles.clear();
+  textDownloadCancelMode = '';
+  textDownloadState = {
+    status: 'not-downloaded',
+    ready: false,
+    modelId,
+    dtype,
+    file: '',
+    loaded: 0,
+    total: 0,
+    progress: 0,
+    error: '',
+  };
+  postTextDownloadState({ force: true });
+  return textDownloadSnapshot();
 }
 
 function enqueueModelOperation(operation) {
@@ -370,7 +652,10 @@ async function runText(payload) {
   if (!modelId) throw new Error('No text-generation model was specified.');
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
-  const runtime = await getTextRuntime(modelId, dtype, device);
+  if (!await isTextModelReady(modelId, dtype)) {
+    throw new Error('Ling 3.0 Tiny is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.');
+  }
+  const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   const requestedTokens = Number(payload?.options?.maxTokens);
   const maxNewTokens = Number.isFinite(requestedTokens)
     ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
@@ -417,6 +702,19 @@ async function clearModelCache() {
       if (await caches.delete(name)) deletedCaches.push(name);
     }
   }
+  readyTextModelKeys.clear();
+  textDownloadFiles.clear();
+  textDownloadState = {
+    ...textDownloadState,
+    status: 'not-downloaded',
+    ready: false,
+    file: '',
+    loaded: 0,
+    total: 0,
+    progress: 0,
+    error: '',
+  };
+  postTextDownloadState({ force: true });
   return deletedCaches;
 }
 
@@ -430,6 +728,32 @@ self.addEventListener('message', async event => {
     }
     if (type === 'probe') {
       self.postMessage({ id, ok: true, ...(await probeRuntime()) });
+      return;
+    }
+    if (type === 'text-download-status') {
+      const modelId = String(payload?.modelId || '').trim();
+      const dtype = payload?.dtype || 'q4f16';
+      self.postMessage({ id, ok: true, ...(await getTextDownloadStatus(modelId, dtype)) });
+      return;
+    }
+    if (type === 'download-text') {
+      const state = await enqueueModelOperation(() => downloadTextModel(payload));
+      self.postMessage({ id, ok: true, ...state });
+      return;
+    }
+    if (type === 'pause-text-download') {
+      self.postMessage({ id, ok: true, ...pauseTextDownload() });
+      return;
+    }
+    if (type === 'stop-text-download') {
+      const modelId = String(payload?.modelId || '').trim();
+      const dtype = payload?.dtype || 'q4f16';
+      textDownloadCancelMode = 'stop';
+      textDownloadState = { ...textDownloadState, status: 'stopping', ready: false, error: '' };
+      textDownloadAbortController?.abort();
+      postTextDownloadState({ force: true });
+      const state = await enqueueModelOperation(() => clearTextModelCache(modelId, dtype));
+      self.postMessage({ id, ok: true, ...state });
       return;
     }
     if (type === 'clear-cache') {
