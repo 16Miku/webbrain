@@ -210,9 +210,12 @@ function queryPaths(query) {
   for (let tokenIndex = 0; tokenIndex < pathTokens.length && mixedCase.length < 24; tokenIndex += 1) {
     const token = pathTokens[tokenIndex];
     for (let index = 1; index < token.length && mixedCase.length < 24; index += 1) {
-      const parts = [...titleCasedTokens];
-      parts[tokenIndex] = `${token.slice(0, index)}${token[index].toUpperCase()}${token.slice(index + 1)}`;
-      mixedCase.push(parts.join('_'));
+      for (const base of [token, titleCasedTokens[tokenIndex]]) {
+        if (mixedCase.length >= 24) break;
+        const parts = [...titleCasedTokens];
+        parts[tokenIndex] = `${base.slice(0, index)}${base[index].toUpperCase()}${base.slice(index + 1)}`;
+        mixedCase.push(parts.join('_'));
+      }
     }
   }
   const tokens = normalized.split('_').filter(token => token.length >= 3);

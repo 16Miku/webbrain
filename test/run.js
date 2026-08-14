@@ -21050,6 +21050,10 @@ function minimalWikipediaZimFixture(options = {}) {
       namespace: 'C', url: 'iPhone', title: 'iPhone', mimeType: 0,
       contents: '<p>The iPhone is a line of smartphones designed by Apple.</p>',
     });
+    entries.push({
+      namespace: 'C', url: 'YouTube', title: 'YouTube', mimeType: 0,
+      contents: '<p>YouTube is an online video sharing platform.</p>',
+    });
   }
   entries.sort((left, right) => {
     const leftKey = `${left.namespace}/${left.url}`;
@@ -21178,6 +21182,9 @@ test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM
     const [mixedCase] = await archive.search('iphone', { limit: 1 });
     assert.equal(mixedCase?.title, 'iPhone', `${label}: lowercase query missed a mixed-case ZIM title`);
     assert.match(mixedCase?.excerpt || '', /smartphones designed by Apple/i, `${label}: mixed-case lookup returned the wrong article`);
+    const [combinedCase] = await archive.search('youtube', { limit: 1 });
+    assert.equal(combinedCase?.title, 'YouTube', `${label}: lowercase query missed combined leading and internal capitals`);
+    assert.match(combinedCase?.excerpt || '', /video sharing platform/i, `${label}: combined-case lookup returned the wrong article`);
   }
 });
 
