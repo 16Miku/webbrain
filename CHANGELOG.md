@@ -4,6 +4,22 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [30.0.7] - 2026-08-14
+
+### Changed
+- fix(memory): validate extraction confidence defaults
+- fix(actions): preserve Messenger thread routes
+- fix(session): recompute recent boundary after filtering
+- 30.0.6
+- docs: explain page context reduction
+- Default extraction confidence to 1 when the model omits it
+- Reject lookalike commerce hosts and short-link DM paths
+- Drop tool results orphaned by assistant compaction in session snapshots
+- Clarify the non-finite overflow comment per review feedback
+- Fix clipped plan review steps
+- Reject non-finite numbers in cloud output schema validation
+- Added Product Hunt
+
 ## [30.0.5] - 2026-08-13
 
 ### Changed
