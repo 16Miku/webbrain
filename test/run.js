@@ -60432,6 +60432,35 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{ name: 'navigate', args: { url: 'https://example.test/path' } }],
     },
     {
+      label: 'LFM2.5 native Python-style tool call',
+      raw: '<|tool_call_start|>[read_page(includeChrome=False, offset=4000, limit=6000)]<|tool_call_end|>',
+      expected: [{
+        name: 'read_page',
+        args: { includeChrome: false, offset: 4000, limit: 6000 },
+      }],
+    },
+    {
+      label: 'LFM2.5 native batch with escaped strings and nested JSON',
+      raw: [
+        '<|tool_call_start|>[',
+        "navigate(url='https://example.test/a\\'b'), ",
+        'read_page(includeChrome=True, selector={"roles":["main","dialog"]}, offsets=[1,2], empty=None)',
+        ']<|tool_call_end|>',
+      ].join(''),
+      expected: [
+        { name: 'navigate', args: { url: "https://example.test/a'b" } },
+        {
+          name: 'read_page',
+          args: {
+            includeChrome: true,
+            selector: { roles: ['main', 'dialog'] },
+            offsets: [1, 2],
+            empty: null,
+          },
+        },
+      ],
+    },
+    {
       label: 'custom quote tokens',
       raw: 'call:click{text:<|"|>Save<|"|>}',
       expected: [{ name: 'click', args: { text: 'Save' } }],
@@ -60587,6 +60616,34 @@ test('text tool-call parser is production code with format and allowlist coverag
       [],
       'malformed fallback arguments dispatched an empty-argument action',
     );
+    for (const [label, unsafe] of [
+      [
+        'mixed allowlisted and denied calls',
+        '<|tool_call_start|>[read_page(), execute_js(code=\'alert(1)\')]<|tool_call_end|>',
+      ],
+      [
+        'positional arguments',
+        '<|tool_call_start|>[navigate(\'https://example.test\')]<|tool_call_end|>',
+      ],
+      [
+        'duplicate arguments',
+        '<|tool_call_start|>[read_page(offset=0, offset=1)]<|tool_call_end|>',
+      ],
+      [
+        'narrated native call',
+        'For example: <|tool_call_start|>[read_page()]<|tool_call_end|>',
+      ],
+      [
+        'malformed nested JSON containing an allowlisted name',
+        '<|tool_call_start|>[read_page(selector={"name":"click") ]<|tool_call_end|>',
+      ],
+    ]) {
+      assert.deepEqual(
+        parser.parseToolCallsFromText(unsafe, allowed),
+        [],
+        `unsafe LFM2.5 call was dispatched (${label})`,
+      );
+    }
 
     // A parsed call replaces the model's prose entirely (the caller sets
     // result.content = null), so a call the model was describing rather than
