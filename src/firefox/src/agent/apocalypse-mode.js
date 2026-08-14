@@ -203,9 +203,23 @@ function queryPaths(query) {
   const normalized = String(query || '').trim().replace(/\s+/g, '_');
   if (!normalized) return [];
   const capitalized = normalized[0].toUpperCase() + normalized.slice(1);
-  const titleCased = normalized.split('_').map(token => token ? token[0].toUpperCase() + token.slice(1) : '').join('_');
+  const pathTokens = normalized.split('_').filter(Boolean);
+  const titleCasedTokens = pathTokens.map(token => token[0].toUpperCase() + token.slice(1));
+  const titleCased = titleCasedTokens.join('_');
+  const mixedCase = [];
+  for (let tokenIndex = 0; tokenIndex < pathTokens.length && mixedCase.length < 24; tokenIndex += 1) {
+    const token = pathTokens[tokenIndex];
+    for (let index = 1; index < token.length && mixedCase.length < 24; index += 1) {
+      const parts = [...titleCasedTokens];
+      parts[tokenIndex] = `${token.slice(0, index)}${token[index].toUpperCase()}${token.slice(index + 1)}`;
+      mixedCase.push(parts.join('_'));
+    }
+  }
   const tokens = normalized.split('_').filter(token => token.length >= 3);
-  return Array.from(new Set([normalized, capitalized, titleCased, ...tokens, ...tokens.map(token => token[0].toUpperCase() + token.slice(1))]));
+  return Array.from(new Set([
+    normalized, capitalized, titleCased, normalized.toUpperCase(), ...mixedCase,
+    ...tokens, ...tokens.map(token => token[0].toUpperCase() + token.slice(1)), ...tokens.map(token => token.toUpperCase()),
+  ]));
 }
 
 function normalizedTitleTerms(value) {
@@ -724,6 +738,8 @@ export function createApocalypseArchiveManager(options = {}) {
   const schedule = options.schedule || (() => {});
   const randomId = options.randomId || (() => globalThis.crypto.randomUUID());
   const now = options.now || (() => Date.now());
+  const configuredMaxPieces = Number(options.maxPiecesPerWake);
+  const maxPiecesPerWake = Number.isFinite(configuredMaxPieces) ? Math.max(1, Math.floor(configuredMaxPieces)) : Number.POSITIVE_INFINITY;
   const controllers = new Map();
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');
@@ -856,18 +872,23 @@ export function createApocalypseArchiveManager(options = {}) {
     if (config?.enabled !== true) return { processed: false, reason: 'disabled' };
     const timestamp = now();
     const leaseToken = randomId();
-    const record = typeof store.claimNext === 'function'
+    let record = typeof store.claimNext === 'function'
       ? await store.claimNext(timestamp, leaseToken)
       : (await store.listArchives()).find(candidate => downloadable(candidate, timestamp));
     if (!record) return { processed: false, reason: 'idle' };
     const generation = Number(record.generation) || 0;
     const controller = new AbortController();
     controllers.set(record.id, controller);
-    if (typeof store.claimNext !== 'function') await store.putArchive({ ...record, status: 'downloading', leaseToken, leaseUntil: timestamp + 5 * 60_000, updatedAt: timestamp });
+    if (typeof store.claimNext !== 'function') {
+      record = { ...record, status: 'downloading', leaseToken, leaseUntil: timestamp + 5 * 60_000, updatedAt: timestamp };
+      await store.putArchive(record);
+    }
     try {
       if (record.target?.kind === 'file-handle' && typeof storage.ensurePermission === 'function') {
         await storage.ensurePermission(record.target, 'readwrite');
       }
+      let piecesProcessed = 0;
+      while (true) {
       const offset = Number(record.pieceIndex) * Number(record.pieceLength);
       const expectedLength = Math.min(Number(record.pieceLength), Number(record.size) - offset);
       const response = await fetchImpl(record.downloadUrl, {
@@ -899,15 +920,16 @@ export function createApocalypseArchiveManager(options = {}) {
       }
       const bytesDownloaded = offset + bytes.byteLength;
       const finished = bytesDownloaded >= Number(record.size);
+      const continueInWake = !finished && piecesProcessed + 1 < maxPiecesPerWake;
       if (finished && typeof storage.truncate === 'function') await storage.truncate(record.target, Number(record.size));
       if (finished && typeof storage.open === 'function') {
         await openKiwixZim(await storage.open(record.target), record);
       }
       const next = {
         ...current,
-        status: finished ? 'ready' : 'queued',
-        leaseToken: '',
-        leaseUntil: 0,
+        status: finished ? 'ready' : continueInWake ? 'downloading' : 'queued',
+        leaseToken: continueInWake ? leaseToken : '',
+        leaseUntil: continueInWake ? now() + 5 * 60_000 : 0,
         pieceIndex: Number(record.pieceIndex) + 1,
         bytesDownloaded,
         retryCount: 0,
@@ -921,9 +943,15 @@ export function createApocalypseArchiveManager(options = {}) {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
       if (!saved) return { processed: false, reason: 'cancelled' };
+      piecesProcessed += 1;
+      if (continueInWake) {
+        record = next;
+        continue;
+      }
       const nextDelay = nextArchiveScheduleDelay(await store.listArchives(), now());
       if (nextDelay != null) schedule(nextDelay);
       return { processed: true, archive: next };
+      }
     } catch (error) {
       const current = await store.getArchive(record.id);
       if (!current || current.generation !== generation || current.leaseToken !== leaseToken || controller.signal.aborted) {

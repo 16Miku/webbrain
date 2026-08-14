@@ -21046,6 +21046,10 @@ function minimalWikipediaZimFixture(options = {}) {
       contents: '<p>New York City is the most populous city in the United States.</p>',
     });
     entries.push({ namespace: 'C', url: 'NYC', title: 'NYC', redirectUrl: 'New_York_City' });
+    entries.push({
+      namespace: 'C', url: 'iPhone', title: 'iPhone', mimeType: 0,
+      contents: '<p>The iPhone is a line of smartphones designed by Apple.</p>',
+    });
   }
   entries.sort((left, right) => {
     const leftKey = `${left.namespace}/${left.url}`;
@@ -21167,10 +21171,13 @@ test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM
     const [passage] = await archive.search('new york city', { limit: 1 });
     assert.equal(passage?.title, 'New York City', `${label}: lowercase proper-name query missed the case-sensitive ZIM path`);
     assert.match(passage?.excerpt || '', /most populous city/i, `${label}: case-correct lookup returned the wrong prefix match`);
-    const [redirect] = await archive.search('NYC', { limit: 1 });
+    const [redirect] = await archive.search('nyc', { limit: 1 });
     assert.equal(redirect?.title, 'New York City', `${label}: exact redirect alias lost its destination title`);
     assert.equal(redirect?.url, 'https://en.wikipedia.org/wiki/New_York_City', `${label}: exact redirect alias lost its destination URL`);
     assert.match(redirect?.excerpt || '', /most populous city/i, `${label}: exact redirect alias lost its destination content`);
+    const [mixedCase] = await archive.search('iphone', { limit: 1 });
+    assert.equal(mixedCase?.title, 'iPhone', `${label}: lowercase query missed a mixed-case ZIM title`);
+    assert.match(mixedCase?.excerpt || '', /smartphones designed by Apple/i, `${label}: mixed-case lookup returned the wrong article`);
   }
 });
 
@@ -21801,7 +21808,7 @@ test('Apocalypse Mode resumes verified pieces after a background restart', async
     };
     const managerOptions = {
       store, storage, fetchImpl, digestHex: async bytesValue => bytesValue[0] < 3 ? 'first' : 'second',
-      schedule() {}, randomId: () => 'archive-restart', now: () => 5000,
+      schedule() {}, randomId: () => 'archive-restart', now: () => 5000, maxPiecesPerWake: 1,
     };
     const firstWorker = runtime.createApocalypseArchiveManager(managerOptions);
     await firstWorker.install({
@@ -21816,6 +21823,46 @@ test('Apocalypse Mode resumes verified pieces after a background restart', async
     assert.equal(records.get('archive-restart').status, 'ready', `${label}: restarted worker did not finish the archive`);
     assert.deepEqual(ranges, ['bytes=0-1', 'bytes=2-3'], `${label}: restart repeated or skipped a byte range`);
     assert.deepEqual(writes, [[0, 1, 2], [2, 3, 4]], `${label}: verified pieces were written at the wrong offsets`);
+  }
+});
+
+test('Apocalypse Mode processes every verified piece in one background wake', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const ranges = [];
+    const writes = [];
+    const scheduled = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write(_target, offset, bytes) { writes.push([offset, ...bytes]); } },
+      fetchImpl: async (_url, request) => {
+        ranges.push(request.headers.Range);
+        const offset = Number(request.headers.Range.match(/bytes=(\d+)-/)[1]);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(offset + 1).buffer; } };
+      },
+      digestHex: async bytes => `hash-${bytes[0]}`,
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'continuous-download',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['hash-1', 'hash-2', 'hash-3'], downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+    scheduled.length = 0;
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.status, 'ready', `${label}: one wake did not finish all available pieces`);
+    assert.deepEqual(ranges, ['bytes=0-0', 'bytes=1-1', 'bytes=2-2'], `${label}: one wake skipped or repeated a piece`);
+    assert.deepEqual(writes, [[0, 1], [1, 2], [2, 3]], `${label}: continuous pieces were written at the wrong offsets`);
+    assert.deepEqual(scheduled, [], `${label}: continuous download paid an alarm delay between pieces`);
   }
 });
 
