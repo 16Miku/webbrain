@@ -1001,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Замінити зашифровану хмарну копію на поточні налаштування WebBrain цього пристрою?",
   "st.sync.consent.legacy": "Увімкнути зашифровану синхронізацію? WebBrain передасть наскрізну зашифровану копію ваших спогадів, автозаповнення профілю та налаштувань постачальника ключа API до WebBrain Cloud. Історія чату та вхід OAuth не синхронізуються.",
   "st.sync.consent.denied": "Дозвіл на зашифровану синхронізацію не надано.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

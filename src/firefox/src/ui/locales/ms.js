@@ -1001,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Gantikan salinan awan yang disulitkan dengan persediaan WebBrain semasa peranti ini?",
   "st.sync.consent.legacy": "Hidupkan penyegerakan yang disulitkan? WebBrain akan menghantar salinan memori anda yang disulitkan hujung ke hujung, autolengkap profil dan tetapan pembekal kunci API ke WebBrain Cloud. Sejarah sembang dan log masuk OAuth tidak disegerakkan.",
   "st.sync.consent.denied": "Kebenaran penyegerakan yang disulitkan tidak diberikan.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

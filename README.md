@@ -105,8 +105,9 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-Settings ships **105 built-in provider cards** with base URLs and default models
-pre-filled — see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
+Settings ships **106 built-in provider cards on Chromium** (105 on Firefox),
+including an endpoint-free local WebGPU option backed by Ling 3.0 Tiny ONNX —
+see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
 ## Features
 

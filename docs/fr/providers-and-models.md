@@ -46,6 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `local_openai_proxy` | `openai` | local | (requis) | Désactivée / bascule manuelle |
+| `webgpu` (Chromium) | `webgpu` | local | `webbrain-one/Ling-3.0-tiny-ONNX` | Non |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Regex nom de modèle |
@@ -70,9 +71,10 @@ class BaseLLMProvider {
 
 WebBrain ajoute 76 cartes désactivées par défaut depuis l’instantané du
 catalogue OpenCode au commit
-`62e4641235d7847dadc60da37cca8a023dd54fc1`. Avec les 29 cartes existantes,
-les Paramètres proposent **105 fournisseurs intégrés**. La liste exacte des
-identifiants est :
+`62e4641235d7847dadc60da37cca8a023dd54fc1`. Avec les cartes existantes,
+les Paramètres proposent **106 fournisseurs intégrés sur Chromium** et **105
+sur Firefox** ; la différence est le moteur WebGPU local à Chromium. La liste
+exacte des identifiants est :
 
 `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`,
 `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`,

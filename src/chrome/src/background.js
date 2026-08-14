@@ -3263,6 +3263,15 @@ async function handleMessage(msg, sender) {
       return await providerManager.testProvider(msg.providerId);
     }
 
+    case 'get_webgpu_download_status':
+      return await providerManager.getWebgpuDownloadStatus();
+    case 'start_webgpu_download':
+      return await providerManager.startWebgpuDownload();
+    case 'pause_webgpu_download':
+      return await providerManager.pauseWebgpuDownload();
+    case 'stop_webgpu_download':
+      return await providerManager.stopWebgpuDownload();
+
     case 'test_vision_provider': {
       return await providerManager.testVisionProvider();
     }

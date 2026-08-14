@@ -826,7 +826,7 @@ Firefox uses `browser.storage.session`.
 | Events | CDP-trusted (`isTrusted=true`) | Synthetic (`isTrusted=false`) |
 | Screenshots | CDP `Page.captureScreenshot` with run-scoped focus emulation for background tabs | `browser.tabs.captureTab()` for direct inactive-tab capture |
 | Conversation/UI persistence | `chrome.storage.session` | `browser.storage.session` |
-| Offscreen document | Yes (fetch proxy + recorder + local WebGPU vision) | Not available |
+| Offscreen document | Yes (fetch proxy + recorder + local WebGPU models) | Not available |
 | Trace recorder | IndexedDB (opt-in) | IndexedDB (opt-in) — same `trace/recorder.js` |
 | Duplicate-submit guard | Yes | Not available |
 | `execute_js` | Dev mode through CDP `Runtime.evaluate` | Dev mode through the MV2 content-script evaluator |
@@ -839,7 +839,9 @@ Firefox uses `browser.storage.session`.
 | Side panel | `sidePanel` API (MV3) | `sidebar_action` (MV2) |
 | File upload | CDP path or `downloadId` | `downloadId` re-fetch or WebBrain file picker; no arbitrary local path |
 
-Everything else (agent loop, tools, adapters, providers, loop detection, context management, system prompts) is architecturally identical between the two builds.
+Apart from the Chromium-only endpoint-free WebGPU provider and vision sidecar,
+the agent loop, tools, adapters, providers, loop detection, context management,
+and system prompts are architecturally identical between the two builds.
 
 ---
 
@@ -856,7 +858,7 @@ src/
 │       ├── cdp/      # CDP client (Chrome only)
 │       ├── content/  # accessibility-tree.js, content.js, ...
 │       ├── network/  # network-tools.js
-│       ├── offscreen/# Fetch proxy + recorder + local WebGPU vision (Chrome only)
+│       ├── offscreen/# Fetch proxy + recorder + local WebGPU models (Chrome only)
 │       ├── providers/# BaseLLMProvider + implementations
 │       ├── recorder/ # Recording orchestration
 │       ├── trace/    # IndexedDB recorder
