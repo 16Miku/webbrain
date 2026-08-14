@@ -76965,6 +76965,44 @@ test('session conversation snapshots strip binary payloads and cap large tool re
   }
 });
 
+test('session conversation snapshots drop tool results orphaned by assistant compaction', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const persistence = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/conversation-persistence.js`)).href);
+    const messages = [];
+    for (let i = 0; i < 40; i++) {
+      messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: `tc${i}`, type: 'function', function: { name: 'x', arguments: '{"big":"' + 'a'.repeat(5000) + '"}' } }],
+      });
+      messages.push({ role: 'tool', tool_call_id: `tc${i}`, content: 'result '.repeat(2000) });
+    }
+    const serialized = persistence.serializeConversationForSession(messages, { maxBytes: 100_000 });
+    assert.equal(serialized.compacted, true, `${build}: oversized conversation was not compacted`);
+    assert.ok(serialized.bytes <= 100_000, `${build}: serialized conversation exceeded its requested bound`);
+    const toolCallIds = new Set(
+      serialized.messages
+        .filter(m => m.role === 'assistant')
+        .flatMap(m => Array.isArray(m.tool_calls) ? m.tool_calls.map(c => c.id) : []),
+    );
+    const orphaned = serialized.messages.filter(
+      m => m.role === 'tool' && !toolCallIds.has(m.tool_call_id),
+    );
+    assert.equal(orphaned.length, 0,
+      `${build}: snapshot left tool results with no matching assistant tool_calls`);
+
+    // A conversation that fits the budget is returned verbatim.
+    const small = [
+      { role: 'system', content: 'system' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'keep', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'keep', content: 'ok' },
+    ];
+    const untouched = persistence.serializeConversationForSession(small);
+    assert.equal(untouched.compacted, false, `${build}: in-budget conversation was modified`);
+    assert.equal(untouched.messages.length, 3, `${build}: in-budget conversation lost messages`);
+  }
+});
+
 test('quota exhaustion degrades recovery once, continues live, and disables automatic replay', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
