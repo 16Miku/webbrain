@@ -8511,7 +8511,9 @@ test('active response-language policy reaches normal system and done-tool prompt
 
     agent._setResponseLanguagePolicy(tabId, null, 'tr');
     const fallbackPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
-    assert.match(fallbackPrompt, /Use Turkish \(tr\) for explanatory framing/i, `${label}: UI-locale fallback was not available`);
+    assert.match(fallbackPrompt, /Infer explanatory framing from the language of the latest genuine user request/i, `${label}: planner bypass stopped deriving framing from the user request`);
+    assert.match(fallbackPrompt, /Only when the request language is unclear, use Turkish \(tr\) as the fallback/i, `${label}: UI locale was not retained as a soft fallback`);
+    assert.doesNotMatch(fallbackPrompt, /Use Turkish \(tr\) for explanatory framing/i, `${label}: Ask-mode fallback became a hard UI-locale requirement`);
     assert.match(fallbackPrompt, /No fixed authored-deliverable language was inferred/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
     assert.match(fallbackPrompt, /explicit language or translation instruction/i, `${label}: planner fallback lost the translation exception`);
   }
@@ -63549,7 +63551,12 @@ test('response-language policy keeps framing, translation targets, and source pr
   ]) {
     assert.deepEqual(
       fallback('EN_us'),
-      { framing_locale: 'en-us', deliverable_locales: [], preserve_source_text: true },
+      {
+        framing_locale: 'en-us',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
       `${label}: fallback should remain translation-safe instead of hard-coding the UI locale as a deliverable`,
     );
 
@@ -64037,6 +64044,7 @@ test('planner routes existing-context artifact requests to a tool-free response'
           framing_locale: 'en',
           deliverable_locales: [],
           preserve_source_text: true,
+          _framing_locale_is_fallback: true,
         },
         requiresStateChange: false,
       }, `${label}: existing-context response should bypass browser tools`);

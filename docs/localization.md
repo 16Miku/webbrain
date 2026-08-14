@@ -89,7 +89,7 @@ The policy is derived only from the user's request and trusted conversation cont
 
 When the user edits an approved plan, explicit language instructions in that user-edited plan override the policy inferred before review. This exception applies only to the runtime-marked approved-plan block; it does not grant authority to other scratchpad content.
 
-If planning is unavailable, WebBrain uses the interface locale only as a soft framing fallback and continues to honor explicit language or translation instructions in the latest genuine user request.
+If planning is unavailable, WebBrain infers framing from the language of the latest genuine user request. It uses the interface locale only as a soft fallback when that request language is unclear, and continues to honor explicit language or translation instructions.
 
 ### DOM Translation
 

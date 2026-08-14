@@ -374,6 +374,7 @@ export function fallbackResponseLanguagePolicy(locale = 'en') {
     framing_locale: normalizePlannerLocale(locale),
     deliverable_locales: [],
     preserve_source_text: true,
+    _framing_locale_is_fallback: true,
   };
 }
 
@@ -381,8 +382,9 @@ export function normalizeResponseLanguagePolicy(value, fallbackLocale = 'en') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return fallbackResponseLanguagePolicy(fallbackLocale);
   }
-  const framingLocale = normalizedLocaleOrEmpty(value.framing_locale)
-    || normalizePlannerLocale(fallbackLocale);
+  const requestedFramingLocale = normalizedLocaleOrEmpty(value.framing_locale);
+  const framingLocale = requestedFramingLocale || normalizePlannerLocale(fallbackLocale);
+  const framingLocaleIsFallback = value._framing_locale_is_fallback === true || !requestedFramingLocale;
   const deliverableLocales = [];
   const seen = new Set();
   for (const candidate of Array.isArray(value.deliverable_locales) ? value.deliverable_locales : []) {
@@ -398,6 +400,7 @@ export function normalizeResponseLanguagePolicy(value, fallbackLocale = 'en') {
     framing_locale: framingLocale,
     deliverable_locales: deliverableLocales,
     preserve_source_text: preserveSourceText,
+    ...(framingLocaleIsFallback ? { _framing_locale_is_fallback: true } : {}),
   };
 }
 
@@ -427,9 +430,12 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
     : policy.preserve_source_text
       ? 'Keep quoted, extracted, transcribed, or otherwise source-faithful text in its original language unless the user explicitly requested its translation.'
       : 'Translate source material only when the requested deliverable language or the latest genuine user request requires it.';
+  const framingRule = policy._framing_locale_is_fallback === true
+    ? `Infer explanatory framing from the language of the latest genuine user request. If that request explicitly specifies a response language, use it. Only when the request language is unclear, use ${framing} as the fallback.`
+    : `Use ${framing} for explanatory framing unless the latest genuine user request${approvedPlanLanguageOverride ? ' or user-edited approved plan' : ''} explicitly asks for different framing.`;
   return [
     '[RESPONSE LANGUAGE POLICY — derived only from the trusted user request]',
-    `Use ${framing} for explanatory framing unless the latest genuine user request${approvedPlanLanguageOverride ? ' or user-edited approved plan' : ''} explicitly asks for different framing.`,
+    framingRule,
     deliverableRule,
     sourceRule,
     'Do not translate code, identifiers, URLs, product names, or personal names unless the user explicitly requests translation or transliteration.',
