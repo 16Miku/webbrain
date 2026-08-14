@@ -784,6 +784,7 @@ const {
   WEBGPU_DTYPE,
   WEBGPU_GEMMA_DTYPE,
   WEBGPU_GEMMA_MODEL_ID,
+  WEBGPU_LFM25_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_QWEN_MODEL_ID,
@@ -40849,6 +40850,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const bonsaiProvider = new WebGPUProvider({ model: WEBGPU_BONSAI_MODEL_ID, dtype: WEBGPU_DTYPE });
     assert.equal(bonsaiProvider.model, WEBGPU_BONSAI_MODEL_ID);
     assert.equal(bonsaiProvider.dtype, WEBGPU_BONSAI_DTYPE, 'the Ternary Bonsai preset must select its WebGPU q2f16 graph');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_MODEL_ID }).model, WEBGPU_LFM25_MODEL_ID);
     assert.equal(new WebGPUProvider({ model: 'custom-owner/custom-model' }).model, 'custom-owner/custom-model');
     assert.equal(
       new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
@@ -40859,6 +40861,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       WEBGPU_QWEN_MODEL_ID,
       WEBGPU_GEMMA_MODEL_ID,
       WEBGPU_BONSAI_MODEL_ID,
+      WEBGPU_LFM25_MODEL_ID,
     ]);
     assert.equal(normalizeWebgpuModelId(' onnx-community/Qwen3-0.6B-ONNX '), WEBGPU_QWEN_MODEL_ID);
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
@@ -40982,12 +40985,14 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /function textDtypeKey\(dtype\)/);
   assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
+  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 512/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
   assert.match(worker, /GPU detail:/);
   assert.doesNotMatch(worker, /cannot execute Ling/);
-  assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
+  assert.match(worker, /preserve_thinking: false/);
+  assert.match(worker, /enable_thinking: false/);
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
   assert.match(host, /'webgpu-download-start'/);
@@ -41041,7 +41046,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
 });
 
-test('WebGPU worker replays Ling tool history without coupling text and vision lifecycles', async () => {
+test('WebGPU worker replays text tool history and applies model-specific generation contracts', async () => {
   const previousSelf = globalThis.self;
   const previousCounts = globalThis.__webgpuRuntimeCounts;
   const previousHoldTextDownload = globalThis.__holdWebgpuTextDownload;
@@ -41060,7 +41065,7 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
       },
     };
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
-    const { prepareTextMessages } = await import(workerUrl);
+    const { prepareTextMessages, splitThinking } = await import(workerUrl);
     const messages = [
       {
         role: 'assistant',
@@ -41082,6 +41087,21 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     assert.equal(prepared[0].content, '');
     assert.equal(prepared[1].content, '{"success":true}');
     assert.equal(messages[0].tool_calls[0].function.arguments, '{"ref_id":"ref_7","force":true}', 'normalization must not mutate persisted history');
+    assert.deepEqual(splitThinking('<think>private trace</think>Visible answer'), {
+      content: 'Visible answer',
+      reasoningContent: 'private trace',
+      incompleteReasoning: false,
+    });
+    assert.deepEqual(splitThinking('implicit private trace</think>Visible answer', { openingTagInPrompt: true }), {
+      content: 'Visible answer',
+      reasoningContent: 'implicit private trace',
+      incompleteReasoning: false,
+    });
+    assert.deepEqual(splitThinking('unfinished private trace', { openingTagInPrompt: true }), {
+      content: '',
+      reasoningContent: 'unfinished private trace',
+      incompleteReasoning: true,
+    });
 
     globalThis.__webgpuRuntimeCounts = {
       visionProcessorLoads: 0,
@@ -41123,7 +41143,10 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
         }
         const instance = async (input, options) => {
           globalThis.__webgpuGenerationOptions = options;
-          return [{ generated_text: [...input, { role: 'assistant', content: 'text answer' }] }];
+          const content = modelId === 'LiquidAI/LFM2.5-2.6B-ONNX'
+            ? 'private model reasoning</think>Hello!'
+            : 'text answer';
+          return [{ generated_text: [...input, { role: 'assistant', content }] }];
         };
         instance.model = {};
         instance.tokenizer = {};
@@ -41279,6 +41302,24 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
       dtype: { embed_tokens: 'q4f16', decoder_model_merged: 'q4f16' },
     });
     assert.equal(wrongObjectDtypeStatus.status, 'not-downloaded', 'different dtype maps must have separate ready markers');
+
+    const lfmPayload = {
+      ...textPayload,
+      modelId: WEBGPU_LFM25_MODEL_ID,
+    };
+    await dispatch('download-text', lfmPayload);
+    const lfmResponse = await dispatch('text-chat', lfmPayload);
+    assert.equal(lfmResponse.content, 'Hello!');
+    assert.equal(lfmResponse.reasoningContent, 'private model reasoning');
+    assert.deepEqual(globalThis.__webgpuGenerationOptions, {
+      do_sample: true,
+      temperature: 0.1,
+      top_k: 50,
+      repetition_penalty: 1.1,
+      max_new_tokens: 512,
+      tools: undefined,
+      tokenizer_encode_kwargs: { preserve_thinking: false },
+    }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;
