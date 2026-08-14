@@ -5,7 +5,7 @@ import { AnthropicProvider, AnthropicOAuthProvider } from './anthropic.js';
 import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
-import { WebGPUVisionProvider } from './webgpu.js';
+import { WebGPUVisionProvider, WEBGPU_VISION_ENABLED_KEY } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
 // `await import()` throws "import() is disallowed on ServiceWorkerGlobalScope".
@@ -1025,18 +1025,20 @@ export class ProviderManager {
   }
 
   /**
-   * Get a dedicated vision provider if the user has configured one under
-   * `visionModel` in storage. The in-browser WebGPU option is a vision-only
-   * sidecar; it is never added to the general provider catalog or selected as
-   * the planning/tool-calling provider.
+   * Get a dedicated vision provider. `visionModel` remains the portable,
+   * synced OpenAI-compatible endpoint; the Chrome-only WebGPU selection is a
+   * separate local preference so toggling it never destroys that endpoint.
    */
   async getVisionProvider() {
     try {
-      const { visionModel } = await chrome.storage.local.get(['visionModel']);
-      if (!visionModel) return null;
-      if (visionModel.type === 'webgpu') {
-        return new WebGPUVisionProvider(visionModel);
+      const stored = await chrome.storage.local.get(['visionModel', WEBGPU_VISION_ENABLED_KEY]);
+      const { visionModel } = stored;
+      // Accept the short-lived legacy shape written by early PR builds. The
+      // settings page migrates it to the dedicated flag when opened.
+      if (stored[WEBGPU_VISION_ENABLED_KEY] === true || visionModel?.type === 'webgpu') {
+        return new WebGPUVisionProvider();
       }
+      if (!visionModel) return null;
       if (!visionModel.baseUrl || !visionModel.model) return null;
       return new OpenAICompatibleProvider({
         type: 'openai',
@@ -1054,6 +1056,21 @@ export class ProviderManager {
     } catch (e) {
       console.warn('[providers] getVisionProvider failed:', e);
       return null;
+    }
+  }
+
+  /** Release local vision memory without deleting the browser's model cache. */
+  async disposeWebgpuVisionRuntime() {
+    try {
+      // Do not create an offscreen document merely to dispose a worker that
+      // cannot exist. Older Chrome builds may not expose hasDocument(), in
+      // which case dispatching is the safest fallback.
+      const existsPromise = chrome.offscreen?.hasDocument?.();
+      const exists = existsPromise ? await existsPromise.catch(() => null) : null;
+      if (exists === false) return { ok: true, disposed: false };
+      return await new WebGPUVisionProvider().dispose();
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
     }
   }
 

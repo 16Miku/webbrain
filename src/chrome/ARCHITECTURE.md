@@ -257,8 +257,9 @@ workarounds. Rather than fight over it, `offscreen/offscreen.html` loads
 `offscreen.js` (fetch proxy), `recorder.js` (tab recorder), and
 `vision-inference-host.js` (local WebGPU vision worker bridge).
 `src/offscreen/ensure.js` is the single creation helper, declaring all
-reasons up front: `LOCAL_STORAGE` (fetch), `DISPLAY_MEDIA` (tab/display
-capture), `USER_MEDIA` (mic). Each script binds its own `runtime.onMessage` filter
+  reasons up front: `LOCAL_STORAGE` (fetch), `WORKERS` (WebGPU inference),
+  `BLOBS` (download staging), `DISPLAY_MEDIA` (tab/display capture),
+  `USER_MEDIA` (mic), and `AUDIO_PLAYBACK` (watch alerts). Each script binds its own `runtime.onMessage` filter
 (`offscreen-fetch`, `recorder-*`, or `webgpu-vision-*`) so they don't collide.
 
 ### Transcription provider selection

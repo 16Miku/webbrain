@@ -11,6 +11,10 @@ import { BaseLLMProvider } from './base.js';
 import { ensureOffscreen } from '../offscreen/ensure.js';
 
 export const WEBGPU_VISION_MODEL_ID = 'LiquidAI/LFM2.5-VL-450M-ONNX';
+// Chrome-only selection state. Keep this separate from the synced
+// `visionModel` endpoint so enabling the fallback never overwrites a user's
+// remote vision credentials or sends a Chromium-only provider type to Firefox.
+export const WEBGPU_VISION_ENABLED_KEY = 'webgpuVisionEnabled';
 export const WEBGPU_VISION_DTYPE = Object.freeze({
   embed_tokens: 'fp16',
   vision_encoder: 'fp16',
@@ -106,6 +110,18 @@ export class WebGPUVisionProvider extends BaseLLMProvider {
       return response?.error
         ? { ok: false, error: response.error }
         : { ok: true, deletedCaches: response?.deletedCaches || [] };
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+
+  /** Release GPU/model allocations while preserving downloaded model files. */
+  async dispose() {
+    try {
+      const response = await this._dispatch({ type: 'webgpu-vision-dispose' });
+      return response?.error
+        ? { ok: false, error: response.error }
+        : { ok: true, disposed: response?.disposed !== false };
     } catch (error) {
       return { ok: false, error: error?.message || String(error) };
     }

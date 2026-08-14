@@ -21,10 +21,13 @@ conversation.
 | File / directory | Source | Purpose |
 | --- | --- | --- |
 | `transformers.web.js` | `@huggingface/transformers` 4.2.0 | Browser ESM model/processor APIs |
-| `ort.webgpu.mjs` | matching `onnxruntime-web` dependency | WebGPU execution provider |
+| `ort.webgpu.mjs` | `onnxruntime-web` 1.26.0-dev.20260416-b7804b056c | WebGPU execution provider |
 | `onnxruntime-common/` | matching `onnxruntime-common` dependency | Tensor and session types |
-| `ort-wasm-simd-threaded.asyncify.*` | matching `onnxruntime-web` dependency | WASM bridge used by the worker |
-| `ort-wasm-simd-threaded.jsep.*` | matching `onnxruntime-web` dependency | Packaged WebGPU/JSEP runtime |
+| `ort-wasm-simd-threaded.asyncify.*` | `onnxruntime-web` 1.26.0-dev.20260416-b7804b056c | WASM bridge used by the worker |
+| `ort-wasm-simd-threaded.jsep.*` | `onnxruntime-web` 1.26.0-dev.20260416-b7804b056c | Packaged WebGPU/JSEP runtime |
+| `LICENSE.transformers.txt` | `@huggingface/transformers` 4.2.0 | Apache-2.0 license |
+| `LICENSE.onnxruntime.txt` | ONNX Runtime commit `b7804b056c30aa35c1748f8e4e239d0e2ff25d6d` | MIT license |
+| `ThirdPartyNotices.onnxruntime.txt` | same ONNX Runtime commit | Notices for incorporated third-party software |
 
 The readable, unminified browser builds are committed so a fresh checkout is a
 complete, Chrome Web Store-reviewable extension. Remote executable code is not
@@ -70,6 +73,8 @@ cp node_modules/onnxruntime-common/dist/esm/*.js \
   src/chrome/vendor/transformers/onnxruntime-common/
 ```
 
+Copy the Transformers.js license and the ONNX Runtime license plus
+`ThirdPartyNotices.txt` into this directory whenever the runtime is updated.
 Reapply the two specifier patches, update the version table above, then verify:
 
 1. `node --check` passes for the provider, host, and worker.

@@ -12,6 +12,9 @@ let libraryVersion = null;
 let workerConfig = null;
 let activeRuntime = null;
 let activeRuntimeKey = '';
+let runtimeLoadPromise = null;
+let runtimeLoadKey = '';
+let modelOperationQueue = Promise.resolve();
 
 async function loadLibrary() {
   if (libraryPromise) return libraryPromise;
@@ -70,24 +73,65 @@ async function disposeRuntime() {
 async function getRuntime(modelId, dtype, device) {
   const key = `${modelId}|${device}|${JSON.stringify(dtype)}`;
   if (activeRuntime && activeRuntimeKey === key) return activeRuntime;
-  const library = await loadLibrary();
-  const { AutoModelForImageTextToText, AutoProcessor } = library;
-  if (!AutoModelForImageTextToText || !AutoProcessor) {
-    throw new Error('The packaged Transformers.js version does not include image-text-to-text support.');
+  if (runtimeLoadPromise) {
+    if (runtimeLoadKey === key) return runtimeLoadPromise;
+    await runtimeLoadPromise.catch(() => {});
+    if (activeRuntime && activeRuntimeKey === key) return activeRuntime;
   }
-  await disposeRuntime();
-  const progress_callback = event => postProgress(modelId, event);
-  const [processor, model] = await Promise.all([
-    AutoProcessor.from_pretrained(modelId, { progress_callback }),
-    AutoModelForImageTextToText.from_pretrained(modelId, {
-      device,
-      dtype,
-      progress_callback,
-    }),
-  ]);
-  activeRuntime = { library, processor, model };
-  activeRuntimeKey = key;
-  return activeRuntime;
+
+  const loadPromise = (async () => {
+    const library = await loadLibrary();
+    const { AutoModelForImageTextToText, AutoProcessor } = library;
+    if (!AutoModelForImageTextToText || !AutoProcessor) {
+      throw new Error('The packaged Transformers.js version does not include image-text-to-text support.');
+    }
+    await disposeRuntime();
+    const progress_callback = event => postProgress(modelId, event);
+    const [processorResult, modelResult] = await Promise.allSettled([
+      AutoProcessor.from_pretrained(modelId, { progress_callback }),
+      AutoModelForImageTextToText.from_pretrained(modelId, {
+        device,
+        dtype,
+        progress_callback,
+      }),
+    ]);
+    if (processorResult.status === 'rejected' || modelResult.status === 'rejected') {
+      const loaded = [processorResult, modelResult]
+        .filter(result => result.status === 'fulfilled')
+        .map(result => result.value);
+      for (const resource of loaded) {
+        if (resource?.dispose) {
+          try { await resource.dispose(); } catch {}
+        }
+      }
+      throw processorResult.status === 'rejected'
+        ? processorResult.reason
+        : modelResult.reason;
+    }
+    const processor = processorResult.value;
+    const model = modelResult.value;
+    activeRuntime = { library, processor, model };
+    activeRuntimeKey = key;
+    return activeRuntime;
+  })();
+  runtimeLoadPromise = loadPromise;
+  runtimeLoadKey = key;
+  try {
+    return await loadPromise;
+  } finally {
+    if (runtimeLoadPromise === loadPromise) {
+      runtimeLoadPromise = null;
+      runtimeLoadKey = '';
+    }
+  }
+}
+
+function enqueueModelOperation(operation) {
+  const result = modelOperationQueue.then(operation, operation);
+  // Keep the queue usable after one request fails while preserving that
+  // failure for the caller awaiting `result`.
+  modelOperationQueue = result.catch(() => {});
+  return result;
 }
 
 function imageUrlFromBlock(block) {
@@ -206,11 +250,17 @@ self.addEventListener('message', async event => {
       return;
     }
     if (type === 'clear-cache') {
-      self.postMessage({ id, ok: true, deletedCaches: await clearModelCache() });
+      const deletedCaches = await enqueueModelOperation(clearModelCache);
+      self.postMessage({ id, ok: true, deletedCaches });
+      return;
+    }
+    if (type === 'dispose') {
+      await enqueueModelOperation(disposeRuntime);
+      self.postMessage({ id, ok: true, disposed: true });
       return;
     }
     if (type === 'chat') {
-      const content = await runVision(payload);
+      const content = await enqueueModelOperation(() => runVision(payload));
       self.postMessage({ id, ok: true, content, raw: { model: payload?.modelId || '' } });
       return;
     }

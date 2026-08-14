@@ -52,7 +52,7 @@ import {
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
-import { WEBGPU_VISION_MODEL_ID } from '../providers/webgpu.js';
+import { WEBGPU_VISION_ENABLED_KEY } from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
@@ -319,6 +319,7 @@ let activeProviderId = '';
 let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
 let currentVisionConfig = {};
+let webgpuVisionEnabled = false;
 
 if (globalThis.chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -736,9 +737,7 @@ async function init() {
   }
 
   // Load vision model config
-  const visionStored = await chrome.storage.local.get(['visionModel']);
-  const vision = visionStored.visionModel || {};
-  renderVisionConfig(vision);
+  await loadVisionConfig();
 
   // Load transcription service config. Same shape as visionModel; used by
   // recorder/host.js → transcribe.js when transcribing recorded audio.
@@ -1443,16 +1442,19 @@ if (scheduledConfirmToggle) {
 
 // --- Vision Model ---
 
-function isWebgpuVisionConfig(config = currentVisionConfig) {
-  return config?.type === 'webgpu';
+function isWebgpuVisionEnabled() {
+  return webgpuVisionEnabled;
 }
 
-function renderVisionConfig(config = {}) {
-  currentVisionConfig = config && typeof config === 'object' ? config : {};
-  const isWebgpu = isWebgpuVisionConfig();
-  visionBaseUrlInput.value = isWebgpu ? '' : (currentVisionConfig.baseUrl || '');
-  visionApiKeyInput.value = isWebgpu ? '' : (currentVisionConfig.apiKey || '');
-  visionModelInput.value = isWebgpu ? '' : (currentVisionConfig.model || '');
+function renderVisionConfig(config = {}, localEnabled = webgpuVisionEnabled) {
+  currentVisionConfig = config && typeof config === 'object' && config.type !== 'webgpu'
+    ? config
+    : {};
+  webgpuVisionEnabled = localEnabled === true;
+  const isWebgpu = isWebgpuVisionEnabled();
+  visionBaseUrlInput.value = currentVisionConfig.baseUrl || '';
+  visionApiKeyInput.value = currentVisionConfig.apiKey || '';
+  visionModelInput.value = currentVisionConfig.model || '';
   webgpuVisionOption?.classList.toggle('enabled', isWebgpu);
   btnUseWebgpuVision?.setAttribute('aria-pressed', String(isWebgpu));
   if (btnUseWebgpuVision) {
@@ -1469,11 +1471,39 @@ function renderVisionConfig(config = {}) {
 async function saveVisionConfig(config) {
   if (config && Object.keys(config).length) {
     await chrome.storage.local.set({ visionModel: config });
-    renderVisionConfig(config);
+    renderVisionConfig(config, webgpuVisionEnabled);
     return;
   }
   await chrome.storage.local.remove('visionModel');
-  renderVisionConfig({});
+  renderVisionConfig({}, webgpuVisionEnabled);
+}
+
+async function loadVisionConfig() {
+  const stored = await chrome.storage.local.get(['visionModel', WEBGPU_VISION_ENABLED_KEY]);
+  let vision = stored.visionModel || {};
+  let localEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true;
+  if (vision?.type === 'webgpu') {
+    // Early PR builds stored the Chromium-only choice in the portable endpoint
+    // slot. Migrate that shape once so it cannot sync to Firefox again.
+    localEnabled = true;
+    vision = {};
+    await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
+    await chrome.storage.local.remove('visionModel');
+  }
+  renderVisionConfig(vision, localEnabled);
+}
+
+async function setWebgpuVisionEnabled(enabled) {
+  const nextEnabled = enabled === true;
+  if (nextEnabled) {
+    await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
+  } else {
+    // Release GPU allocations, but keep the browser-cached model download so
+    // re-enabling does not require another ~770 MB transfer.
+    await sendToBackground('dispose_webgpu_vision').catch(() => {});
+    await chrome.storage.local.remove(WEBGPU_VISION_ENABLED_KEY);
+  }
+  renderVisionConfig(currentVisionConfig, nextEnabled);
 }
 
 function updateMultimodalDetectedProvider(kind) {
@@ -1508,15 +1538,12 @@ function flashVisionResult(className, text) {
 }
 
 btnUseWebgpuVision?.addEventListener('click', async () => {
-  if (isWebgpuVisionConfig()) {
-    await saveVisionConfig(null);
+  if (isWebgpuVisionEnabled()) {
+    await setWebgpuVisionEnabled(false);
     flashVisionResult('ok', t('st.vision.cleared'));
     return;
   }
-  await saveVisionConfig({
-    type: 'webgpu',
-    model: WEBGPU_VISION_MODEL_ID,
-  });
+  await setWebgpuVisionEnabled(true);
   flashVisionResult('ok', t('st.vision.local.saved'));
 });
 
@@ -1536,7 +1563,7 @@ btnSaveVision.addEventListener('click', async () => {
 });
 
 btnTestVision.addEventListener('click', async () => {
-  const isWebgpu = isWebgpuVisionConfig();
+  const isWebgpu = isWebgpuVisionEnabled();
   const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
@@ -1567,6 +1594,11 @@ btnTestVision.addEventListener('click', async () => {
 });
 
 btnClearVision.addEventListener('click', async () => {
+  if (isWebgpuVisionEnabled()) {
+    await setWebgpuVisionEnabled(false);
+    flashVisionResult('ok', t('st.vision.cleared'));
+    return;
+  }
   await saveVisionConfig(null);
   flashVisionResult('ok', t('st.vision.cleared'));
 });
@@ -1697,11 +1729,16 @@ async function reloadProfileSyncData() {
     'profileEnabled',
     'profileText',
     'visionModel',
+    WEBGPU_VISION_ENABLED_KEY,
     'transcriptionModel',
   ]);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled;
   if (profileTextArea) profileTextArea.value = stored.profileText || '';
-  renderVisionConfig(stored.visionModel || {});
+  if (stored.visionModel?.type === 'webgpu') {
+    await loadVisionConfig();
+  } else {
+    renderVisionConfig(stored.visionModel || {}, stored[WEBGPU_VISION_ENABLED_KEY] === true);
+  }
   const transcription = stored.transcriptionModel || {};
   if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || '';
   if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || '';

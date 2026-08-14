@@ -32,6 +32,10 @@ const OFFSCREEN_REASONS = [
   // Large validated skill downloads are staged in OPFS and exposed through a
   // short-lived blob URL so chrome.downloads never re-fetches the remote URL.
   'BLOBS',
+  // The local vision bridge creates a dedicated module Worker for WebGPU/ONNX
+  // inference. Reasons are immutable after the document is created, so this
+  // must be present even when another consumer creates the shared host first.
+  'WORKERS',
   // Tab recorder needs DISPLAY_MEDIA (chrome.tabCapture stream pulls in as
   // display media) and USER_MEDIA (mic via getUserMedia).
   'DISPLAY_MEDIA',

@@ -771,6 +771,7 @@ const { ProviderManager: ProviderManagerFx } = await import(
 const {
   WebGPUVisionProvider,
   WEBGPU_VISION_DTYPE,
+  WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
@@ -40691,6 +40692,7 @@ console.log('\nprovider categorization');
 test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
+  let localEnabled = true;
   try {
     globalThis.chrome = {
       offscreen: { hasDocument: async () => true },
@@ -40698,13 +40700,21 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
         lastError: null,
         sendMessage(message, callback) {
           sentMessages.push(message);
-          callback({ ok: true, content: 'A settings page is visible.' });
+          callback(message.type === 'webgpu-vision-dispose'
+            ? { ok: true, disposed: true }
+            : { ok: true, content: 'A settings page is visible.' });
         },
       },
       storage: {
         local: {
           get: async () => ({
-            visionModel: { type: 'webgpu', model: WEBGPU_VISION_MODEL_ID },
+            visionModel: {
+              type: 'openai',
+              baseUrl: 'https://vision.example/v1',
+              apiKey: 'preserved-secret',
+              model: 'remote-vision',
+            },
+            [WEBGPU_VISION_ENABLED_KEY]: localEnabled,
           }),
         },
       },
@@ -40737,6 +40747,16 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
       messages,
       options: { maxTokens: 321 },
     });
+
+    const disposed = await manager.disposeWebgpuVisionRuntime();
+    assert.deepEqual(disposed, { ok: true, disposed: true });
+    assert.deepEqual(sentMessages[1], { type: 'webgpu-vision-dispose' });
+
+    localEnabled = false;
+    const preservedRemote = await manager.getVisionProvider();
+    assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
+    assert.equal(preservedRemote.config.baseUrl, 'https://vision.example/v1');
+    assert.equal(preservedRemote.config.apiKey, 'preserved-secret');
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
@@ -40745,12 +40765,24 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
 
 test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
+  const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+  const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
+  const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
   assert.match(worker, /AutoProcessor\.from_pretrained/);
   assert.match(worker, /apply_chat_template/);
   assert.match(worker, /load_image\(imageUrl\)/);
   assert.match(worker, /decoder_model_merged:\s*'q4'/);
+  assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
+  assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeRuntime\)/);
   assert.doesNotMatch(worker, /pipeline\(['"]text-generation/);
+  assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
+  assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
+  assert.match(settingsScript, /dispose_webgpu_vision/);
+  assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
+  assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
@@ -40758,6 +40790,11 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   const localToggle = settings.indexOf('id="btn-use-webgpu-vision"', visionCard);
   const transcription = settings.indexOf('id="transcription-card"', localToggle);
   assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
+
+  const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
 });
 
 test('categoryFor: local family', () => {

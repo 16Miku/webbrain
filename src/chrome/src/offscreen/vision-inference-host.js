@@ -49,6 +49,7 @@ async function ensureVisionWorker() {
 const VISION_MESSAGE_TYPES = new Set([
   'webgpu-vision-chat',
   'webgpu-vision-probe',
+  'webgpu-vision-dispose',
   'webgpu-vision-clear-cache',
 ]);
 
@@ -63,6 +64,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message.type === 'webgpu-vision-clear-cache') {
         sendResponse(await sendVisionWorkerMessage('clear-cache'));
+        return;
+      }
+      if (message.type === 'webgpu-vision-dispose') {
+        sendResponse(await sendVisionWorkerMessage('dispose'));
         return;
       }
       sendResponse(await sendVisionWorkerMessage('chat', {

@@ -384,8 +384,12 @@ dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. The
 model is not present in the general provider catalog and never receives agent
 tools or planning turns. First use downloads approximately 770 MB of model
 data from Hugging Face into the browser cache; screenshots stay on-device and
-only the generated description is passed to the active provider. Firefox does
-not expose this option because its build has no MV3 offscreen document.
+only the generated description is passed to the active provider. The local
+selection is stored as a Chrome-only preference, separately from the synced
+OpenAI-compatible vision endpoint, so it can be disabled without losing that
+endpoint or its credentials. Disabling it releases the loaded model and GPU
+resources while retaining the browser-cached download. Firefox does not expose
+this option because its build has no MV3 offscreen document.
 
 ### Transcription Provider
 

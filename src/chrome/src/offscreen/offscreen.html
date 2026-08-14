@@ -15,7 +15,9 @@
     don't step on each other's messages.
 
     Reasons declared at createDocument time cover both code paths up front:
-    LOCAL_STORAGE (fetch proxy), USER_MEDIA (mic), DISPLAY_MEDIA (tab/display capture).
+    LOCAL_STORAGE (fetch proxy), WORKERS (vision inference), BLOBS (download
+    staging), USER_MEDIA (mic), DISPLAY_MEDIA (tab/display capture), and
+    AUDIO_PLAYBACK (watch alerts).
   -->
   <script src="offscreen.js"></script>
   <script src="vision-inference-host.js"></script>
