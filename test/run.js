@@ -21716,6 +21716,7 @@ test('Apocalypse Mode marks unreadable ready archives as actionable errors', asy
     const records = new Map([[record.id, record]]);
     const store = {
       async getConfig() { return { enabled: true }; }, async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
       async putArchive(next) { records.set(next.id, next); return next; },
     };
     await assert.rejects(runtime.searchApocalypseArchives('Alan Turing', {
@@ -21725,6 +21726,56 @@ test('Apocalypse Mode marks unreadable ready archives as actionable errors', asy
     }), /could not be read|corrupt/i, `${label}: unreadable ready archive was silently treated as no match`);
     assert.equal(records.get(record.id)?.status, 'error', `${label}: corrupt ready archive remained ready`);
     assert.equal(records.get(record.id)?.errorKind, 'archive-unreadable', `${label}: corruption did not receive an actionable lifecycle classification`);
+  }
+});
+
+test('Apocalypse Mode failed searches cannot recreate a concurrently deleted archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'deleted-during-search', status: 'ready', generation: 3, updatedAt: 100,
+      archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'deleted.zim' },
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    let releaseSearch;
+    let markSearchStarted;
+    const searchStarted = new Promise(resolve => { markSearchStarted = resolve; });
+    const searching = runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      storage: {},
+      providers: [{
+        supports() { return true; },
+        async search() {
+          markSearchStarted();
+          await new Promise(resolve => { releaseSearch = resolve; });
+          throw new Error('ZIM read failed after deletion');
+        },
+      }],
+    });
+
+    await searchStarted;
+    records.delete(record.id);
+    releaseSearch();
+    await assert.rejects(searching, /could not be read|deletion/i, `${label}: failed archive search was hidden`);
+
+    assert.equal(compareAttempts, 1, `${label}: failed search metadata did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: failed search recreated a deleted archive record`);
   }
 });
 

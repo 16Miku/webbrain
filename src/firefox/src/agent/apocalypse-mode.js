@@ -918,7 +918,13 @@ export async function searchApocalypseArchives(query, options = {}) {
         : `Installed archive could not be read: ${error?.message || String(error)} Delete and reinstall or re-import it.`;
       archiveErrors.push(message);
       if (typeof store.putArchive === 'function') {
-        await store.putArchive({ ...record, status: 'error', errorKind: permissionRequired ? APOCALYPSE_FILE_PERMISSION_REQUIRED : 'archive-unreadable', error: message, updatedAt: Date.now() });
+        await putArchiveIfCurrent(store, {
+          ...record,
+          status: 'error',
+          errorKind: permissionRequired ? APOCALYPSE_FILE_PERMISSION_REQUIRED : 'archive-unreadable',
+          error: message,
+          updatedAt: Date.now(),
+        }, { status: 'ready', generation: record.generation, updatedAt: record.updatedAt });
       }
       if (typeof options.onArchiveError === 'function') await options.onArchiveError(record, error);
     }
