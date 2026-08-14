@@ -780,6 +780,8 @@ const {
   WebGPUProvider,
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
+  WEBGPU_GEMMA_DTYPE,
+  WEBGPU_GEMMA_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_QWEN_MODEL_ID,
@@ -40839,12 +40841,15 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
     assert.ok(generalProvider instanceof WebGPUProvider);
     assert.equal(new WebGPUProvider({ model: WEBGPU_QWEN_MODEL_ID }).model, WEBGPU_QWEN_MODEL_ID);
+    const gemmaProvider = new WebGPUProvider({ model: WEBGPU_GEMMA_MODEL_ID, dtype: WEBGPU_DTYPE });
+    assert.equal(gemmaProvider.model, WEBGPU_GEMMA_MODEL_ID);
+    assert.deepEqual(gemmaProvider.dtype, WEBGPU_GEMMA_DTYPE, 'the Gemma preset must override the generic q4f16 graph');
     assert.equal(new WebGPUProvider({ model: 'custom-owner/custom-model' }).model, 'custom-owner/custom-model');
     assert.equal(
       new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
       WEBGPU_QWEN_MODEL_ID,
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [WEBGPU_MODEL_ID, WEBGPU_QWEN_MODEL_ID]);
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [WEBGPU_MODEL_ID, WEBGPU_QWEN_MODEL_ID, WEBGPU_GEMMA_MODEL_ID]);
     assert.equal(normalizeWebgpuModelId(' onnx-community/Qwen3-0.6B-ONNX '), WEBGPU_QWEN_MODEL_ID);
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
@@ -40964,6 +40969,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
   assert.match(worker, /pipeline\('text-generation', modelId/);
   assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
+  assert.match(worker, /function textDtypeKey\(dtype\)/);
+  assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
@@ -41013,6 +41020,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
 
   const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  const transformersBundle = fs.readFileSync(path.join(vendorDir, 'transformers.web.js'), 'utf8');
+  assert.match(transformersBundle, /Gemma4ForCausalLM/);
+  assert.match(transformersBundle, /Gemma4ForConditionalGeneration/);
+  assert.match(transformersBundle, /q2f16/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ort.webgpu.mjs'), 'utf8'), /ONNX Runtime Web v1\.27\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'README.md'), 'utf8'), /Qwen3\/QMoE correctness fixes/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
@@ -41238,6 +41249,26 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     const activeStatus = await dispatch('text-download-status', activePayload);
     assert.equal(activeStatus.status, 'ready');
     assert.equal(activeStatus.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = false;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const objectDtypePayload = {
+      ...textPayload,
+      modelId: 'text-model-object-dtype',
+      dtype: { decoder_model_merged: 'q2f16', embed_tokens: 'q2f16' },
+    };
+    const objectDtypeDownload = await dispatch('download-text', objectDtypePayload);
+    assert.equal(objectDtypeDownload.status, 'ready');
+    const objectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q2f16', decoder_model_merged: 'q2f16' },
+    });
+    assert.equal(objectDtypeStatus.status, 'ready', 'dtype-map key order must not change model readiness');
+    const wrongObjectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q4f16', decoder_model_merged: 'q4f16' },
+    });
+    assert.equal(wrongObjectDtypeStatus.status, 'not-downloaded', 'different dtype maps must have separate ready markers');
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;

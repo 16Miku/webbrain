@@ -6,10 +6,18 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 export const WEBGPU_VISION_MODEL_ID = 'LiquidAI/LFM2.5-VL-450M-ONNX';
 export const WEBGPU_MODEL_ID = 'webbrain-one/Ling-3.0-tiny-ONNX';
 export const WEBGPU_QWEN_MODEL_ID = 'onnx-community/Qwen3-0.6B-ONNX';
+export const WEBGPU_GEMMA_MODEL_ID = 'onnx-community/gemma-4-E2B-it-qat-mobile-ONNX';
 export const WEBGPU_DTYPE = 'q4f16';
+export const WEBGPU_GEMMA_DTYPE = Object.freeze({
+  decoder_model_merged: 'q2f16',
+  embed_tokens: 'q2f16',
+  audio_encoder: 'q2f16',
+  vision_encoder: 'fp16',
+});
 export const WEBGPU_MODEL_PRESETS = Object.freeze([
-  Object.freeze({ id: WEBGPU_MODEL_ID, label: 'Ling 3.0 Tiny', size: '4.85 GB' }),
-  Object.freeze({ id: WEBGPU_QWEN_MODEL_ID, label: 'Qwen3 0.6B', size: '570 MB' }),
+  Object.freeze({ id: WEBGPU_MODEL_ID, label: 'Ling 3.0 Tiny', size: '4.85 GB', dtype: WEBGPU_DTYPE, dtypeLabel: WEBGPU_DTYPE }),
+  Object.freeze({ id: WEBGPU_QWEN_MODEL_ID, label: 'Qwen3 0.6B', size: '570 MB', dtype: WEBGPU_DTYPE, dtypeLabel: WEBGPU_DTYPE }),
+  Object.freeze({ id: WEBGPU_GEMMA_MODEL_ID, label: 'Gemma 4 E2B QAT Mobile', size: '2.32 GB', dtype: WEBGPU_GEMMA_DTYPE, dtypeLabel: 'q2f16 text' }),
 ]);
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
@@ -51,6 +59,11 @@ export function normalizeWebgpuModelId(value) {
 export function webgpuModelDisplayName(modelId) {
   const normalized = normalizeWebgpuModelId(modelId);
   return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.label || normalized;
+}
+
+export function webgpuModelDtype(modelId, fallback = WEBGPU_DTYPE) {
+  const normalized = normalizeWebgpuModelId(modelId);
+  return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.dtype || fallback;
 }
 
 class WebGPUOffscreenProvider extends BaseLLMProvider {
@@ -106,6 +119,7 @@ class WebGPUOffscreenProvider extends BaseLLMProvider {
 export class WebGPUProvider extends WebGPUOffscreenProvider {
   constructor(config = {}) {
     const model = normalizeWebgpuModelId(config.model);
+    const dtype = webgpuModelDtype(model, config.dtype || WEBGPU_DTYPE);
     super({
       ...config,
       type: 'webgpu',
@@ -115,14 +129,14 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       baseUrl: '',
       model,
       device: 'webgpu',
-      dtype: WEBGPU_DTYPE,
+      dtype,
       supportsVision: false,
       supportsAskStreaming: false,
     });
     this.model = model;
     this.baseUrl = '';
     this.device = 'webgpu';
-    this.dtype = WEBGPU_DTYPE;
+    this.dtype = dtype;
   }
 
   get name() {

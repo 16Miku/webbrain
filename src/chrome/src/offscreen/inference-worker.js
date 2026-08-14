@@ -56,8 +56,19 @@ let textDownloadState = {
   error: '',
 };
 
+function textDtypeKey(dtype) {
+  if (!dtype || typeof dtype !== 'object' || Array.isArray(dtype)) return String(dtype || '').trim();
+  return JSON.stringify(Object.fromEntries(
+    Object.entries(dtype).sort(([left], [right]) => left.localeCompare(right)),
+  ));
+}
+
 function textModelKey(modelId, dtype) {
-  return `${String(modelId || '').trim()}|${String(dtype || '').trim()}`;
+  return `${String(modelId || '').trim()}|${textDtypeKey(dtype)}`;
+}
+
+function sameTextModel(leftModelId, leftDtype, rightModelId, rightDtype) {
+  return textModelKey(leftModelId, leftDtype) === textModelKey(rightModelId, rightDtype);
 }
 
 function textReadyMarkerUrl(modelId, dtype) {
@@ -409,7 +420,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
 
 async function getTextDownloadStatus(modelId, dtype) {
   const ready = await isTextModelReady(modelId, dtype);
-  const sameModel = textDownloadState.modelId === modelId && textDownloadState.dtype === dtype;
+  const sameModel = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
   if (sameModel && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status)) {
     return textDownloadSnapshot();
   }
@@ -446,7 +457,7 @@ async function downloadTextModel(payload) {
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
   const tracksDifferentTransfer = textDownloadState.modelId
-    && (textDownloadState.modelId !== modelId || textDownloadState.dtype !== dtype)
+    && !sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype)
     && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status);
   if (tracksDifferentTransfer) {
     throw new Error(`Finish or stop the ${textDownloadState.modelId} download before downloading ${modelId}.`);
@@ -466,8 +477,7 @@ async function downloadTextModel(payload) {
   }
 
   const resuming = textDownloadState.status === 'paused'
-    && textDownloadState.modelId === modelId
-    && textDownloadState.dtype === dtype;
+    && sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
   if (!resuming) textDownloadFiles.clear();
   activeTextDownloadModelId = modelId;
   textDownloadCancelMode = '';
@@ -566,7 +576,7 @@ async function clearTextModelCache(modelId, dtype) {
     error: '',
   };
   const sameModel = !textDownloadState.modelId
-    || (textDownloadState.modelId === modelId && textDownloadState.dtype === dtype);
+    || sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
   if (sameModel) {
     textDownloadState = clearedState;
     postTextDownloadState({ force: true });
@@ -858,8 +868,7 @@ self.addEventListener('message', async event => {
     if (type === 'stop-text-download') {
       const modelId = String(payload?.modelId || '').trim();
       const dtype = payload?.dtype || 'q4f16';
-      const targetsTrackedTransfer = textDownloadState.modelId === modelId
-        && textDownloadState.dtype === dtype;
+      const targetsTrackedTransfer = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
       if (targetsTrackedTransfer) {
         textDownloadCancelMode = 'stop';
         textDownloadState = { ...textDownloadState, status: 'stopping', ready: false, error: '' };
