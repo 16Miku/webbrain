@@ -72539,6 +72539,93 @@ test('profile sync keeps auxiliary timestamps independent from provider edits', 
   assert.equal(vault.auxiliaryProviders.visionModel.apiKey, 'remote-vision');
 });
 
+test('profile sync keeps Chromium-only WebGPU provider state out of portable vaults', async () => {
+  const chromeSync = await import(
+    'file://' + path.join(ROOT, 'src/chrome/src/profile-sync.js').replace(/\\/g, '/')
+  );
+  const firefoxSync = await import(
+    'file://' + path.join(ROOT, 'src/firefox/src/profile-sync.js').replace(/\\/g, '/')
+  );
+  const portableBase = {
+    version: 1,
+    providers: { openai: { type: 'openai', apiKey: 'portable-secret' } },
+    activeProvider: 'openai',
+    auxiliaryProviders: {},
+    profile: { enabled: false, text: '' },
+    memory: { records: [] },
+    tombstones: {},
+    meta: { providersAt: 5, providerItemsAt: { openai: 5 }, activeProviderAt: 5 },
+  };
+  const pollutedRemote = {
+    ...portableBase,
+    providers: {
+      ...portableBase.providers,
+      webgpu: { type: 'webgpu', model: 'webbrain-one/Ling-3.0-tiny-ONNX', configured: true },
+    },
+    activeProvider: 'webgpu',
+    meta: { providersAt: 20, providerItemsAt: { openai: 5, webgpu: 20 }, activeProviderAt: 20 },
+  };
+
+  for (const runtime of [chromeSync, firefoxSync]) {
+    const { vault } = runtime.mergeProfileVaults(portableBase, pollutedRemote);
+    assert.equal(vault.providers.webgpu, undefined);
+    assert.equal(vault.activeProvider, 'openai', 'a polluted WebGPU selection should retain the local portable selection');
+    assert.equal(vault.meta.providerItemsAt.webgpu, undefined);
+  }
+
+  const localState = {
+    providers: structuredClone(pollutedRemote.providers),
+    activeProvider: 'webgpu',
+    profileSyncPortableActiveProvider: 'openai',
+    profileSyncMetadataV1: structuredClone(pollutedRemote.meta),
+  };
+  const chromeWrites = [];
+  const chromeStorage = {
+    get: async () => structuredClone(localState),
+    set: async values => {
+      chromeWrites.push(structuredClone(values));
+      Object.assign(localState, structuredClone(values));
+    },
+  };
+  const chromeManager = new chromeSync.ProfileSyncManager(chromeStorage);
+  const localVault = await chromeManager.localVault();
+  assert.equal(localVault.providers.webgpu, undefined);
+  assert.equal(localVault.activeProvider, 'openai');
+  assert.equal(localVault.meta.providerItemsAt.webgpu, undefined);
+
+  await chromeManager.apply({
+    ...portableBase,
+    providers: { anthropic: { type: 'anthropic', apiKey: 'remote-secret' } },
+    activeProvider: 'anthropic',
+  }, []);
+  const chromeApplied = chromeWrites.at(-1);
+  assert.equal(chromeApplied.providers.webgpu.configured, true, 'Chrome should retain its local-only provider config');
+  assert.equal(chromeApplied.providers.anthropic.apiKey, 'remote-secret');
+  assert.equal(chromeApplied.activeProvider, 'webgpu', 'remote sync should not deactivate the local WebGPU provider');
+  assert.equal(chromeApplied.profileSyncPortableActiveProvider, 'anthropic');
+
+  let scheduled = 0;
+  chromeManager.schedule = () => { scheduled++; };
+  await chromeManager.noteChanges({
+    activeProvider: { oldValue: 'anthropic', newValue: 'webgpu' },
+    providers: {
+      oldValue: chromeApplied.providers,
+      newValue: { ...chromeApplied.providers, webgpu: { ...chromeApplied.providers.webgpu, contextWindow: 8192 } },
+    },
+  });
+  assert.equal(localState.profileSyncPortableActiveProvider, 'anthropic');
+  assert.equal(scheduled, 0, 'local-only WebGPU edits should not schedule a portable vault upload');
+
+  let firefoxApplied;
+  const firefoxManager = new firefoxSync.ProfileSyncManager({
+    set: async values => { firefoxApplied = structuredClone(values); },
+  });
+  await firefoxManager.apply(pollutedRemote, []);
+  assert.equal(firefoxApplied.providers.webgpu, undefined);
+  assert.equal(firefoxApplied.activeProvider, 'webbrain_cloud');
+  assert.equal(firefoxApplied.profileSyncMetadataV1.providerItemsAt.webgpu, undefined);
+});
+
 test('profile sync password change uploads a vault encrypted with the new password', async () => {
   const { ProfileSyncManager, decryptProfileVault } = await import(
     'file://' + path.join(ROOT, 'src/chrome/src/profile-sync.js').replace(/\\/g, '/')
