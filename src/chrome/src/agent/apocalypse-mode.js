@@ -2,6 +2,21 @@ import { decompress as decompressZstd } from '../../vendor/fzstd.js';
 
 const KIWIX_CATALOG_URL = 'https://library.kiwix.org/catalog/v2/entries';
 const UNDECLARED_LICENSE_NOTICE = 'Not declared by the current catalog/archive metadata. Wikipedia text is generally CC BY-SA 4.0 unless otherwise noted; archive components may use additional licenses.';
+export const APOCALYPSE_FILE_PERMISSION_REQUIRED = 'file-permission-required';
+
+function filePermissionError() {
+  const error = new Error('File access requires confirmation. Open Apocalypse Mode and authorize the selected archive file again.');
+  error.name = 'NotAllowedError';
+  error.code = APOCALYPSE_FILE_PERMISSION_REQUIRED;
+  return error;
+}
+
+function isFilePermissionError(error, target) {
+  return target?.kind === 'file-handle'
+    && (error?.code === APOCALYPSE_FILE_PERMISSION_REQUIRED
+      || error?.name === 'NotAllowedError'
+      || error?.name === 'SecurityError');
+}
 
 function decodeXml(value) {
   return String(value || '')
@@ -482,6 +497,19 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
       await idbTransaction(transaction);
       return record;
     },
+    async putArchiveIfCurrent(record, expected = {}) {
+      const database = await open();
+      const transaction = database.transaction(ARCHIVE_STORE, 'readwrite');
+      const objectStore = transaction.objectStore(ARCHIVE_STORE);
+      const current = await idbRequest(objectStore.get(record.id));
+      const matches = Boolean(current)
+        && (expected.status == null || current.status === expected.status)
+        && (expected.generation == null || (Number(current.generation) || 0) === (Number(expected.generation) || 0))
+        && (expected.updatedAt == null || Number(current.updatedAt) === Number(expected.updatedAt));
+      if (matches) objectStore.put(record);
+      await idbTransaction(transaction);
+      return matches;
+    },
     async deleteArchive(id) {
       const database = await open();
       const transaction = database.transaction(ARCHIVE_STORE, 'readwrite');
@@ -512,20 +540,50 @@ function safeArchiveKey(value) {
   return key;
 }
 
+async function putArchiveIfCurrent(store, record, expected) {
+  if (typeof store.putArchiveIfCurrent === 'function') {
+    return await store.putArchiveIfCurrent(record, expected);
+  }
+  const current = await store.getArchive(record.id);
+  const matches = Boolean(current)
+    && (expected.status == null || current.status === expected.status)
+    && (expected.generation == null || (Number(current.generation) || 0) === (Number(expected.generation) || 0))
+    && (expected.updatedAt == null || Number(current.updatedAt) === Number(expected.updatedAt));
+  if (!matches) return false;
+  await store.putArchive(record);
+  return true;
+}
+
 export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.storage) {
   async function directory(create = true) {
     if (typeof storageManager?.getDirectory !== 'function') throw new Error('Origin Private File System storage is unavailable in this browser.');
     const root = await storageManager.getDirectory();
     return await root.getDirectoryHandle(ARCHIVE_DIRECTORY, { create });
   }
-  async function fileHandle(target, create = false) {
-    if (target?.kind === 'file-handle' && target.handle) return target.handle;
+  async function fileHandle(target, create = false, mode = 'read') {
+    if (target?.kind === 'file-handle' && target.handle) {
+      if (typeof target.handle.queryPermission === 'function') {
+        let permission;
+        try {
+          permission = await target.handle.queryPermission({ mode });
+        } catch (error) {
+          if (isFilePermissionError(error, target)) throw filePermissionError();
+          throw error;
+        }
+        if (permission !== 'granted') throw filePermissionError();
+      }
+      return target.handle;
+    }
     if (target?.kind !== 'opfs') throw new Error('Unsupported archive storage target.');
     return await (await directory(create)).getFileHandle(safeArchiveKey(target.key), { create });
   }
   return {
+    async ensurePermission(target, mode = 'read') {
+      await fileHandle(target, false, mode);
+      return true;
+    },
     async write(target, offset, bytes) {
-      const handle = await fileHandle(target, true);
+      const handle = await fileHandle(target, true, 'readwrite');
       const writable = await handle.createWritable({ keepExistingData: true });
       try {
         await writable.seek(offset);
@@ -554,10 +612,10 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       }
     },
     async open(target) {
-      return await (await fileHandle(target, false)).getFile();
+      return await (await fileHandle(target, false, 'read')).getFile();
     },
     async truncate(target, size) {
-      const handle = await fileHandle(target, false);
+      const handle = await fileHandle(target, false, 'readwrite');
       const writable = await handle.createWritable({ keepExistingData: true });
       try {
         await writable.truncate(size);
@@ -647,11 +705,15 @@ export function createApocalypseArchiveManager(options = {}) {
       throw new Error('Archive download metadata is incomplete.');
     }
     const timestamp = now();
+    const id = randomId();
+    const scopedTarget = target?.kind === 'opfs'
+      ? { ...target, key: safeArchiveKey(`${id}-${target.key || download.filename || 'archive.zim'}`) }
+      : target;
     const record = {
       ...download,
       archiveKind: download.archiveKind || (/^wikipedia(?:_|$)/i.test(String(download.name || '')) ? 'wikipedia' : ''),
-      id: randomId(),
-      target,
+      id,
+      target: scopedTarget,
       status: 'queued',
       generation: 1,
       pieceIndex: 0,
@@ -678,7 +740,7 @@ export function createApocalypseArchiveManager(options = {}) {
   async function resume(id) {
     const record = await store.getArchive(id);
     if (!record || record.status === 'ready') return record;
-    const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'queued', retryCount: 0, nextRetryAt: 0, error: '', updatedAt: now() };
+    const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'queued', retryCount: 0, nextRetryAt: 0, error: '', errorKind: '', updatedAt: now() };
     await store.putArchive(next);
     schedule(0);
     return next;
@@ -737,6 +799,9 @@ export function createApocalypseArchiveManager(options = {}) {
     controllers.set(record.id, controller);
     if (typeof store.claimNext !== 'function') await store.putArchive({ ...record, status: 'downloading', leaseToken, leaseUntil: timestamp + 5 * 60_000, updatedAt: timestamp });
     try {
+      if (record.target?.kind === 'file-handle' && typeof storage.ensurePermission === 'function') {
+        await storage.ensurePermission(record.target, 'readwrite');
+      }
       const offset = Number(record.pieceIndex) * Number(record.pieceLength);
       const expectedLength = Math.min(Number(record.pieceLength), Number(record.size) - offset);
       const response = await fetchImpl(record.downloadUrl, {
@@ -782,6 +847,7 @@ export function createApocalypseArchiveManager(options = {}) {
         retryCount: 0,
         nextRetryAt: 0,
         error: '',
+        errorKind: '',
         completedAt: finished ? now() : null,
         updatedAt: now(),
       };
@@ -793,9 +859,10 @@ export function createApocalypseArchiveManager(options = {}) {
       if (!current || current.generation !== generation || current.leaseToken !== leaseToken || controller.signal.aborted) {
         return { processed: false, reason: 'cancelled' };
       }
-      const retryCount = (Number(current.retryCount) || 0) + 1;
+      const permissionRequired = isFilePermissionError(error, current.target);
+      const retryCount = permissionRequired ? (Number(current.retryCount) || 0) : (Number(current.retryCount) || 0) + 1;
       const delay = retryDelay(retryCount);
-      const retrying = retryCount < MAX_RETRY_ATTEMPTS;
+      const retrying = !permissionRequired && retryCount < MAX_RETRY_ATTEMPTS;
       const next = {
         ...current,
         status: retrying ? 'retrying' : 'error',
@@ -804,6 +871,7 @@ export function createApocalypseArchiveManager(options = {}) {
         retryCount,
         nextRetryAt: retrying ? now() + delay : 0,
         error: error?.message || String(error),
+        errorKind: permissionRequired ? APOCALYPSE_FILE_PERMISSION_REQUIRED : '',
         updatedAt: now(),
       };
       await store.putArchive(next);
@@ -838,10 +906,13 @@ export async function searchApocalypseArchives(query, options = {}) {
       results.push(...await provider.search(record, query, { limit: options.limit || 3 }));
       if (results.length >= (options.limit || 3)) break;
     } catch (error) {
-      const message = `Installed archive could not be read: ${error?.message || String(error)} Delete and reinstall or re-import it.`;
+      const permissionRequired = isFilePermissionError(error, record.target);
+      const message = permissionRequired
+        ? 'File access requires confirmation. Open Apocalypse Mode and authorize the selected archive file again.'
+        : `Installed archive could not be read: ${error?.message || String(error)} Delete and reinstall or re-import it.`;
       archiveErrors.push(message);
       if (typeof store.putArchive === 'function') {
-        await store.putArchive({ ...record, status: 'error', errorKind: 'archive-unreadable', error: message, updatedAt: Date.now() });
+        await store.putArchive({ ...record, status: 'error', errorKind: permissionRequired ? APOCALYPSE_FILE_PERMISSION_REQUIRED : 'archive-unreadable', error: message, updatedAt: Date.now() });
       }
       if (typeof options.onArchiveError === 'function') await options.onArchiveError(record, error);
     }
@@ -921,13 +992,21 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
       if (!afterWrite || afterWrite.generation !== record.generation || options.signal?.aborted) {
         throw new DOMException('Import cancelled.', 'AbortError');
       }
-      record = { ...afterWrite, bytesDownloaded: offset + bytes.byteLength, updatedAt: Date.now() };
-      await store.putArchive(record);
+      const next = { ...afterWrite, bytesDownloaded: offset + bytes.byteLength, updatedAt: Date.now() };
+      const saved = await putArchiveIfCurrent(store, next, {
+        status: 'importing', generation: record.generation, updatedAt: afterWrite.updatedAt,
+      });
+      if (!saved) throw new DOMException('Import cancelled.', 'AbortError');
+      record = next;
       if (typeof options.onProgress === 'function') options.onProgress(record);
     }
     if (options.signal?.aborted) throw new DOMException('Import cancelled.', 'AbortError');
-    record = { ...record, status: 'ready', completedAt: Date.now(), updatedAt: Date.now() };
-    await store.putArchive(record);
+    const ready = { ...record, status: 'ready', completedAt: Date.now(), updatedAt: Date.now() };
+    const saved = await putArchiveIfCurrent(store, ready, {
+      status: 'importing', generation: record.generation, updatedAt: record.updatedAt,
+    });
+    if (!saved) throw new DOMException('Import cancelled.', 'AbortError');
+    record = ready;
     return record;
   } catch (error) {
     let cleanupError = null;
@@ -962,7 +1041,7 @@ export async function registerKiwixArchiveHandle(handle, metadata = {}, options 
   const inspected = await openKiwixZim(file, metadata);
   assertWikipediaZimArchive(inspected.embeddedMetadata);
   const id = options.id || globalThis.crypto.randomUUID();
-  const record = importedArchiveRecord(metadata, file, inspected, id, { kind: 'file-handle', handle }, 'ready');
+  const record = importedArchiveRecord(metadata, file, inspected, id, { kind: 'file-handle', handle, access: 'read' }, 'ready');
   await store.putArchive(record);
   return record;
 }
@@ -976,6 +1055,10 @@ export function createApocalypseController(api, options = {}) {
   }));
   const manager = createApocalypseArchiveManager({ store, storage, fetchImpl, schedule });
   const importStaleMs = Math.max(30_000, Number(options.importStaleMs) || 60_000);
+  const recoveryIntervalMs = Math.max(5_000, Number(options.recoveryIntervalMs) || Math.min(importStaleMs, 60_000));
+  const now = options.now || (() => Date.now());
+  let lastRecoveryAt = Number.NEGATIVE_INFINITY;
+  let recoveryInFlight = null;
   const scheduleUpdateChecks = options.scheduleUpdateChecks || (() => api?.alarms?.create?.(APOCALYPSE_UPDATE_ALARM, {
     delayInMinutes: 1,
     periodInMinutes: APOCALYPSE_UPDATE_PERIOD_MINUTES,
@@ -984,30 +1067,32 @@ export function createApocalypseController(api, options = {}) {
 
   async function recoverInterruptedImports() {
     const records = await store.listArchives();
-    const stale = records.filter(record => record.status === 'importing' && Number(record.updatedAt) <= Date.now() - importStaleMs);
-    await Promise.all(stale.map(async (record) => {
-      let cleanupError = null;
-      try {
-        await storage.remove(record.target, record);
-        if (typeof storage.exists === 'function' && await storage.exists(record.target, record)) throw new Error('partial archive bytes are still present');
-      } catch (error) {
-        cleanupError = error;
-      }
-      await store.putArchive({
+    const stale = records.filter(record => record.status === 'importing' && Number(record.updatedAt) <= now() - importStaleMs);
+    const recovered = await Promise.all(stale.map(async (record) => {
+      const generation = Number(record.generation) || 0;
+      return await putArchiveIfCurrent(store, {
         ...record,
+        generation: generation + 1,
         status: 'error',
-        bytesDownloaded: cleanupError ? record.bytesDownloaded : 0,
-        errorKind: cleanupError ? 'delete-failed' : 'import-interrupted',
-        error: cleanupError
-          ? `Import was interrupted and partial archive cleanup failed: ${cleanupError?.message || String(cleanupError)}. Retry deletion to remove the retained bytes.`
-          : 'Import was interrupted. Choose the source .zim file again to restart it.',
-        updatedAt: Date.now(),
-      });
+        errorKind: 'import-interrupted',
+        error: 'Import was interrupted. Partial archive bytes were retained to avoid racing a live import. Delete this entry, then choose the source .zim file again.',
+        updatedAt: now(),
+      }, { status: 'importing', generation, updatedAt: record.updatedAt });
     }));
+    return recovered.filter(Boolean).length;
+  }
+
+  async function maybeRecoverInterruptedImports() {
+    const timestamp = now();
+    if (recoveryInFlight) return await recoveryInFlight;
+    if (timestamp - lastRecoveryAt < recoveryIntervalMs) return 0;
+    lastRecoveryAt = timestamp;
+    recoveryInFlight = recoverInterruptedImports().finally(() => { recoveryInFlight = null; });
+    return await recoveryInFlight;
   }
 
   async function snapshot() {
-    await recoverInterruptedImports();
+    await maybeRecoverInterruptedImports();
     const [state, estimate] = await Promise.all([manager.getSnapshot(), storage.estimate().catch(() => ({}))]);
     const archives = state.archives.map(record => ({
       ...record,
@@ -1020,12 +1105,16 @@ export function createApocalypseController(api, options = {}) {
   }
 
   async function catalog(language) {
+    const config = await store.getConfig();
+    if (config.enabled !== true) throw new Error('Apocalypse Mode is disabled. Enable it before loading the Kiwix catalog.');
     const response = await fetchImpl(kiwixCatalogUrl(language), { credentials: 'omit', redirect: 'follow' });
     if (!response.ok) throw new Error(`Kiwix catalog returned HTTP ${response.status}.`);
     return parseKiwixCatalog(await response.text());
   }
 
   async function resolve(item) {
+    const config = await store.getConfig();
+    if (config.enabled !== true) throw new Error('Apocalypse Mode is disabled. Enable it before resolving an archive download.');
     if (!/^https:\/\//.test(String(item?.metaUrl || ''))) throw new Error('Kiwix archive metadata URL is invalid.');
     if (!/^wikipedia(?:_|$)/i.test(String(item?.name || ''))) throw new Error('Apocalypse Mode currently supports Wikipedia catalog archives only.');
     const response = await fetchImpl(item.metaUrl, { credentials: 'omit', redirect: 'follow' });
@@ -1045,6 +1134,30 @@ export function createApocalypseController(api, options = {}) {
     await store.setConfig({ updatePolicy });
     await syncUpdateSchedule();
     return await snapshot();
+  }
+
+  async function reauthorizeFile(id) {
+    const record = await store.getArchive(id);
+    if (!record || record.target?.kind !== 'file-handle' || !record.target.handle) {
+      throw new Error('The selected archive file is unavailable.');
+    }
+    const incompleteDownload = Boolean(record.downloadUrl) && Number(record.bytesDownloaded) < Number(record.size);
+    const mode = incompleteDownload ? 'readwrite' : 'read';
+    if (typeof record.target.handle.queryPermission === 'function') {
+      const permission = await record.target.handle.queryPermission({ mode });
+      if (permission !== 'granted') throw filePermissionError();
+    }
+    if (incompleteDownload) return await manager.resume(id);
+    const next = {
+      ...record,
+      generation: (Number(record.generation) || 0) + 1,
+      status: 'ready',
+      error: '',
+      errorKind: '',
+      updatedAt: now(),
+    };
+    await store.putArchive(next);
+    return next;
   }
 
   async function checkForUpdates(options = {}) {
@@ -1072,6 +1185,7 @@ export function createApocalypseController(api, options = {}) {
       case 'enable': await manager.setEnabled(payload.enabled); await syncUpdateSchedule(); return await snapshot();
       case 'set_update_policy': return await setUpdatePolicy(payload.policy);
       case 'check_updates': return await checkForUpdates({ force: payload.force === true });
+      case 'reauthorize_file': await reauthorizeFile(payload.id); return await snapshot();
       case 'catalog': return { items: await catalog(payload.language) };
       case 'resolve': return { download: await resolve(payload.item) };
       case 'install': {
@@ -1096,5 +1210,5 @@ export function createApocalypseController(api, options = {}) {
     }
   }
 
-  return { manager, store, storage, snapshot, catalog, resolve, recoverInterruptedImports, syncUpdateSchedule, setUpdatePolicy, checkForUpdates, handle };
+  return { manager, store, storage, snapshot, catalog, resolve, recoverInterruptedImports, syncUpdateSchedule, setUpdatePolicy, checkForUpdates, reauthorizeFile, handle };
 }

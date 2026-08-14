@@ -21200,8 +21200,66 @@ test('Apocalypse Mode requires opt-in and removal wins an in-flight download rac
 
     assert.equal(records.has('archive-1'), false, `${label}: removed archive record was repopulated by an in-flight fetch`);
     assert.equal(writes.length, 0, `${label}: removed archive bytes were written after cancellation`);
-    assert.deepEqual(removals, [{ kind: 'opfs', key: 'example.zim' }], `${label}: archive removal did not delete its managed storage`);
+    assert.deepEqual(removals, [{ kind: 'opfs', key: 'archive-1-example.zim' }], `${label}: archive removal did not delete its record-scoped managed storage`);
     assert.equal(scheduled.length, schedulesBeforeRace, `${label}: cancelled work rescheduled itself after removal`);
+  }
+});
+
+test('Apocalypse Mode gives repeated catalog installs independent OPFS targets', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const removed = [];
+    const ids = ['install-one', 'install-two'];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async remove(target) { removed.push(target); }, async exists() { return false; } },
+      randomId: () => ids.shift(),
+      schedule() {},
+    });
+    const download = {
+      id: 'catalog-entry', filename: 'wikipedia.zim', size: 2, pieceLength: 2,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'], downloadUrl: 'https://example.test/wikipedia.zim',
+    };
+    const first = await manager.install(download, { kind: 'opfs', key: 'catalog-entry-wikipedia.zim' });
+    const second = await manager.install(download, { kind: 'opfs', key: 'catalog-entry-wikipedia.zim' });
+    assert.notEqual(first.id, second.id, `${label}: duplicate installs reused one archive record`);
+    assert.notEqual(first.target.key, second.target.key, `${label}: duplicate installs still share one OPFS file`);
+    assert.match(first.target.key, /^install-one-/, `${label}: first OPFS target is not record-scoped`);
+    assert.match(second.target.key, /^install-two-/, `${label}: second OPFS target is not record-scoped`);
+    await manager.remove(first.id);
+    assert.equal(records.has(first.id), false, `${label}: removed duplicate record was retained`);
+    assert.equal(records.has(second.id), true, `${label}: removing one duplicate deleted the other record`);
+    assert.deepEqual(removed, [first.target], `${label}: removal targeted bytes owned by another record`);
+  }
+});
+
+test('Apocalypse Mode catalog and Metalink network access require opt-in', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: false };
+    let fetches = 0;
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return []; }, async getArchive() { return null; }, async putArchive(record) { return record; },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; } },
+      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return '<feed></feed>'; } }; },
+      clearUpdateChecks() {},
+    });
+    await assert.rejects(controller.handle('catalog', { language: 'eng' }), /disabled/i, `${label}: catalog fetch was allowed before opt-in`);
+    await assert.rejects(controller.handle('resolve', { item: { name: 'wikipedia_en_all', metaUrl: 'https://example.test/archive.meta4' } }), /disabled/i, `${label}: Metalink fetch was allowed before opt-in`);
+    assert.equal(fetches, 0, `${label}: archive network activity occurred before opt-in`);
+    config.enabled = true;
+    assert.deepEqual(await controller.handle('catalog', { language: 'eng' }), { items: [] }, `${label}: enabled catalog request failed`);
+    assert.equal(fetches, 1, `${label}: enabled catalog request did not use the network exactly once`);
   }
 });
 
@@ -21511,7 +21569,7 @@ test('Apocalypse Mode can register a user-selected ZIM handle without copying by
   }
 });
 
-test('Apocalypse Mode recovers a stale interrupted import after restart', async () => {
+test('Apocalypse Mode marks a stale interrupted import without racing its bytes', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const records = new Map([['stale-import', {
       id: 'stale-import', status: 'importing', updatedAt: 0, bytesDownloaded: 1024,
@@ -21531,9 +21589,127 @@ test('Apocalypse Mode recovers a stale interrupted import after restart', async 
     const snapshot = await controller.snapshot();
     const recovered = snapshot.archives.find(record => record.id === 'stale-import');
     assert.equal(recovered.status, 'error', `${label}: stale import did not become an actionable error`);
-    assert.equal(recovered.bytesDownloaded, 0, `${label}: stale import retained misleading progress`);
+    assert.equal(recovered.bytesDownloaded, 1024, `${label}: stale import hid the retained partial bytes`);
+    assert.equal(recovered.generation, 1, `${label}: stale import recovery did not invalidate the old writer`);
+    assert.equal(recovered.errorKind, 'import-interrupted', `${label}: stale import did not receive an actionable classification`);
     assert.match(recovered.error, /interrupted/i, `${label}: stale import recovery omitted its reason`);
-    assert.deepEqual(removals, [{ kind: 'opfs', key: 'stale.zim' }], `${label}: stale partial bytes were not removed`);
+    assert.match(recovered.error, /partial archive bytes were retained/i, `${label}: stale import did not disclose retained bytes`);
+    assert.deepEqual(removals, [], `${label}: background recovery deleted bytes that may still have an active writer`);
+  }
+});
+
+test('Apocalypse Mode stale-import recovery loses safely to a concurrent completion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'active-import', status: 'importing', generation: 4, updatedAt: 0, bytesDownloaded: 1024,
+      target: { kind: 'opfs', key: 'active.zim' }, size: 2048,
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent() {
+        compareAttempts += 1;
+        records.set(record.id, { ...record, status: 'ready', bytesDownloaded: record.size, updatedAt: 90_000 });
+        return false;
+      },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; }, async remove() { throw new Error('recovery must not remove bytes'); } },
+      importStaleMs: 30_000,
+      now: () => 90_000,
+    });
+    assert.equal(await controller.recoverInterruptedImports(), 0, `${label}: a completed import was claimed as interrupted`);
+    assert.equal(compareAttempts, 1, `${label}: stale recovery did not use compare-and-swap state`);
+    assert.equal(records.get(record.id).status, 'ready', `${label}: stale recovery overwrote a concurrent completion`);
+    assert.equal(records.get(record.id).bytesDownloaded, record.size, `${label}: stale recovery corrupted completed progress`);
+  }
+});
+
+test('Apocalypse Mode file-handle permission expiry stops retries until reauthorization', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let permission = 'prompt';
+    let writableCalls = 0;
+    let fetches = 0;
+    const queriedModes = [];
+    const handle = {
+      name: 'wikipedia.zim',
+      async queryPermission({ mode }) {
+        queriedModes.push(mode);
+        return permission;
+      },
+      async createWritable() { writableCalls += 1; throw new Error('permission preflight was skipped'); },
+    };
+    const storage = runtime.createOpfsArchiveStorage();
+    const target = { kind: 'file-handle', handle, access: 'readwrite' };
+    await assert.rejects(storage.write(target, 0, Uint8Array.of(1)), (error) => {
+      assert.equal(error.code, runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, `${label}: expired handle lacked a stable error classification`);
+      return true;
+    });
+    assert.equal(writableCalls, 0, `${label}: browser write was attempted before permission was granted`);
+
+    const config = { enabled: true };
+    const records = new Map();
+    const scheduled = [];
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async () => { fetches += 1; return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }; },
+      digestHex: async () => 'aa',
+      randomId: () => 'external-download',
+      schedule: delay => scheduled.push(delay),
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/wikipedia.zim',
+    }, target);
+    const result = await manager.processNext();
+    assert.equal(result.reason, 'error', `${label}: expired handle entered an automatic retry state`);
+    assert.equal(fetches, 0, `${label}: expired file permission was detected only after downloading another piece`);
+    assert.equal(records.get('external-download').errorKind, runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, `${label}: expired handle was not marked for reauthorization`);
+    assert.deepEqual(scheduled, [0], `${label}: expired handle scheduled an automatic retry`);
+    assert.deepEqual(queriedModes, ['readwrite', 'readwrite'], `${label}: external download did not consistently preflight write permission`);
+
+    permission = 'granted';
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store, storage, schedule: delay => scheduled.push(delay), now: () => 2000,
+    });
+    await controller.reauthorizeFile('external-download');
+    assert.equal(records.get('external-download').status, 'queued', `${label}: granted file permission did not resume the download`);
+    assert.equal(records.get('external-download').errorKind, '', `${label}: successful reauthorization retained the permission error`);
+    assert.deepEqual(scheduled, [0, 0], `${label}: successful reauthorization did not schedule one resumed attempt`);
+
+    records.set('external-download', {
+      ...records.get('external-download'), status: 'error', errorKind: runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED,
+      bytesDownloaded: 1, size: 1,
+    });
+    await controller.reauthorizeFile('external-download');
+    assert.equal(records.get('external-download').status, 'ready', `${label}: completed external archive was incorrectly queued for redownload`);
+    assert.deepEqual(scheduled, [0, 0], `${label}: completed external archive scheduled a redownload after reauthorization`);
+    assert.equal(queriedModes.at(-1), 'read', `${label}: completed external archive requested unnecessary write permission`);
+  }
+});
+
+test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const start = source.indexOf("if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM)");
+    const end = source.indexOf('} else if (alarm?.name === APOCALYPSE_UPDATE_ALARM)', start);
+    assert.notEqual(start, -1, `${label}: Apocalypse download alarm listener is missing`);
+    assert.notEqual(end, -1, `${label}: Apocalypse update alarm boundary is missing`);
+    const downloadAlarm = source.slice(start, end);
+    assert.match(downloadAlarm, /processNext\(\)\.catch/, `${label}: unexpected download failures are not logged`);
+    assert.doesNotMatch(downloadAlarm, /alarms\.create/, `${label}: unexpected download failures still recreate an unbounded alarm`);
   }
 });
 
@@ -21548,6 +21724,7 @@ test('Apocalypse Mode has a dedicated Advanced settings management page in both 
     assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
     assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /data-action="update"/, `${prefix}: manual update action is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /requestPermission[\s\S]*?reauthorize_file/, `${prefix}: file-handle reauthorization flow is missing`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /installedCount[\s\S]*?totalBytes[\s\S]*?updatePolicy/, `${prefix}: Advanced settings does not summarize live archive state`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8'), /APOCALYPSE_UPDATE_ALARM[\s\S]*?checkForUpdates/, `${prefix}: automatic update checks are not wired to a background alarm`);
     assert.match(pageHtml, /data-i18n="ap\.hero\.consent"/, `${prefix}: localized opt-in boundary is not visible`);

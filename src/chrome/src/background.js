@@ -1079,7 +1079,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
     apocalypseController.manager.processNext().catch((error) => {
       console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
-      chrome.alarms.create(APOCALYPSE_DOWNLOAD_ALARM, { delayInMinutes: 5 });
     });
   } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
     apocalypseController.checkForUpdates().catch((error) => {

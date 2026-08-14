@@ -13,6 +13,7 @@ let snapshot = null;
 let catalogItems = [];
 let importController = null;
 let polling = false;
+const fileHandles = new Map();
 const pageManager = createApocalypseArchiveManager({
   store,
   storage,
@@ -39,6 +40,21 @@ function notice(message, kind = '') {
   elements.notice.dataset.kind = kind;
 }
 
+async function authorizeFileHandle(handle, mode) {
+  if (!handle) throw new Error(t('ap.file_permission_required'));
+  if (typeof handle.queryPermission !== 'function') return;
+  let permission;
+  try {
+    permission = await handle.queryPermission({ mode });
+    if (permission !== 'granted' && typeof handle.requestPermission === 'function') {
+      permission = await handle.requestPermission({ mode });
+    }
+  } catch {
+    throw new Error(t('ap.file_permission_required'));
+  }
+  if (permission !== 'granted') throw new Error(t('ap.file_permission_required'));
+}
+
 async function command(command, payload = {}) {
   const response = await runtimeApi.runtime.sendMessage({ target: 'background', action: 'apocalypse_mode', command, ...payload });
   if (response?.error) throw new Error(response.error);
@@ -46,6 +62,9 @@ async function command(command, payload = {}) {
 }
 
 function archiveButtons(record) {
+  if (record.errorKind === 'file-permission-required') {
+    return `<button data-action="reauthorize" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.reauthorize'))}</button>`;
+  }
   if (record.status === 'downloading' || record.status === 'queued' || record.status === 'retrying') {
     return `<button data-action="pause" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.pause'))}</button>`;
   }
@@ -68,9 +87,10 @@ function renderInstalled() {
   }
   elements.installed.innerHTML = records.map(record => {
     const progress = record.size ? Math.min(100, Math.round((Number(record.bytesDownloaded) || 0) / Number(record.size) * 100)) : 0;
+    const error = record.errorKind === 'file-permission-required' ? t('ap.file_permission_required') : record.error;
     return `<article class="item"><div><h3>${escapeHtml(record.title || record.filename)}</h3>
       <div class="meta">${escapeHtml(record.language)} · ${escapeHtml(t(`ap.tier.${record.tier}`))} · ${escapeHtml(record.archiveDate || t('ap.date_unknown'))} · ${bytes(record.size)} · ${escapeHtml(t(`ap.status.${record.status}`))}</div>
-      ${record.error ? `<div class="meta" style="color:var(--bad)">${escapeHtml(record.error)}</div>` : ''}
+      ${error ? `<div class="meta" style="color:var(--bad)">${escapeHtml(error)}</div>` : ''}
       ${record.status === 'ready' ? '' : `<progress max="100" value="${progress}"></progress>`}</div>
       <div class="actions">${archiveButtons(record)}<button class="danger" data-action="delete" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.delete'))}</button></div></article>`;
   }).join('');
@@ -93,6 +113,11 @@ function renderCatalog() {
 
 async function refresh() {
   snapshot = await command('status');
+  const storedRecords = await store.listArchives().catch(() => []);
+  fileHandles.clear();
+  for (const record of storedRecords) {
+    if (record.target?.kind === 'file-handle' && record.target.handle) fileHandles.set(record.id, record.target.handle);
+  }
   elements.enabled.checked = snapshot.enabled === true;
   elements['update-policy'].value = snapshot.updatePolicy === 'automatic' ? 'automatic' : 'manual';
   renderInstalled();
@@ -107,7 +132,8 @@ async function reviewInstall(item) {
         suggestedName,
         types: [{ description: t('ap.file_description'), accept: { 'application/x-zim': ['.zim'] } }],
       });
-      target = { kind: 'file-handle', handle };
+      await authorizeFileHandle(handle, 'readwrite');
+      target = { kind: 'file-handle', handle, access: 'readwrite' };
     }
     notice(t('ap.resolving'));
     const { download } = await command('resolve', { item });
@@ -129,7 +155,8 @@ async function reviewInstall(item) {
     }));
     if (!confirmed) { notice(t('ap.install_cancelled')); return; }
     if (target) {
-      await pageManager.install(download, target);
+      const record = await pageManager.install(download, target);
+      fileHandles.set(record.id, target.handle);
       snapshot = await command('status');
     } else {
       snapshot = await command('install', { download });
@@ -209,6 +236,16 @@ elements.installed.addEventListener('click', async (event) => {
     if (!globalThis.confirm(message)) return;
   }
   try {
+    if (action === 'reauthorize') {
+      const record = snapshot.archives.find(item => item.id === button.dataset.id);
+      const handle = fileHandles.get(record?.id);
+      const incompleteDownload = Boolean(record?.downloadUrl) && Number(record?.bytesDownloaded) < Number(record?.size);
+      await authorizeFileHandle(handle, incompleteDownload ? 'readwrite' : 'read');
+      snapshot = await command('reauthorize_file', { id: record.id });
+      renderInstalled();
+      notice(t('ap.action_done', { action: t('ap.reauthorize') }), 'success');
+      return;
+    }
     if (action === 'update') {
       const record = snapshot.archives.find(item => item.id === button.dataset.id);
       let replacement = record.updateAvailable;
@@ -238,6 +275,7 @@ elements['import-button'].addEventListener('click', async () => {
         multiple: false,
         types: [{ description: t('ap.file_description'), accept: { 'application/x-zim': ['.zim'] } }],
       });
+      await authorizeFileHandle(handle, 'read');
       const file = await handle.getFile();
       const provenance = await reviewImport(file, true);
       if (!provenance) { notice(t('ap.import_cancelled')); return; }
