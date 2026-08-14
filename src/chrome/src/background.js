@@ -1143,9 +1143,10 @@ chrome.storage.onChanged.addListener((changes) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
+    const releaseKeepalive = acquireRunKeepalive();
     apocalypseController.manager.processNext().catch((error) => {
       console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
-    });
+    }).finally(releaseKeepalive);
   } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
     apocalypseController.checkForUpdates().catch((error) => {
       console.warn('[WebBrain] Apocalypse Mode update check failed:', error);

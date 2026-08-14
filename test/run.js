@@ -22094,6 +22094,59 @@ test('Apocalypse Mode keeps partial-import metadata when cleanup itself fails', 
   }
 });
 
+test('Apocalypse Mode import failure loses atomically to concurrent deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    let importingSnapshot;
+    let expectedState;
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) {
+        records.set(record.id, { ...record });
+        if (record.status === 'importing' && !importingSnapshot) importingSnapshot = { ...record };
+        return record;
+      },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && current.generation === expected.generation
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    const archive = minimalWikipediaZimFixture();
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: {
+        async estimate() { return {}; },
+        async write() {
+          const current = records.get('import-delete-race');
+          records.set(current.id, {
+            ...current, status: 'deleting', generation: current.generation + 1, updatedAt: current.updatedAt + 1,
+          });
+          throw new Error('write failed while deletion started');
+        },
+        async remove() {},
+      },
+      id: 'import-delete-race',
+    }), /write failed while deletion started/i, `${label}: concurrent import failure was hidden`);
+
+    assert.equal(compareAttempts, 1, `${label}: import failure did not compare-and-swap its state`);
+    assert.deepEqual(expectedState, {
+      status: 'importing', generation: importingSnapshot.generation, updatedAt: importingSnapshot.updatedAt,
+    }, `${label}: import failure did not guard the original importing state`);
+    assert.equal(records.get('import-delete-race')?.status, 'deleting', `${label}: import failure overwrote concurrent deletion`);
+    assert.equal(records.get('import-delete-race')?.generation, importingSnapshot.generation + 1,
+      `${label}: import failure restored a stale generation`);
+  }
+});
+
 test('Apocalypse Mode rejects a managed download when reported free space is zero', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     let installs = 0;
@@ -22398,6 +22451,12 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
     const downloadAlarm = source.slice(start, end);
     assert.match(downloadAlarm, /processNext\(\)\.catch/, `${label}: unexpected download failures are not logged`);
     assert.doesNotMatch(downloadAlarm, /alarms\.create/, `${label}: unexpected download failures still recreate an unbounded alarm`);
+    if (label === 'chrome') {
+      assert.match(downloadAlarm, /const releaseKeepalive = acquireRunKeepalive\(\)/,
+        'chrome: archive download alarm does not acquire the MV3 keepalive');
+      assert.match(downloadAlarm, /processNext\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
+        'chrome: archive download alarm does not hold the keepalive until processing settles');
+    }
   }
 });
 

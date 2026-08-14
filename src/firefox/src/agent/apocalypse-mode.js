@@ -1128,15 +1128,21 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
     const current = await store.getArchive(id);
     if (cleanupError && current) {
       const message = `Import failed and partial archive cleanup failed: ${cleanupError?.message || String(cleanupError)}. Retry deletion to remove the retained bytes.`;
-      await store.putArchive({ ...current, status: 'error', errorKind: 'delete-failed', error: message, updatedAt: Date.now() });
+      const failed = { ...record, status: 'error', errorKind: 'delete-failed', error: message, updatedAt: Date.now() };
+      await putArchiveIfCurrent(store, failed, {
+        status: 'importing', generation: record.generation, updatedAt: record.updatedAt,
+      });
       throw new Error(message, { cause: error });
     }
     if (!current || error?.name === 'AbortError') {
       await store.deleteArchive(id);
       throw error;
     }
-    record = { ...current, status: 'error', bytesDownloaded: 0, error: error?.message || String(error), updatedAt: Date.now() };
-    await store.putArchive(record);
+    const failed = { ...record, status: 'error', bytesDownloaded: 0, error: error?.message || String(error), updatedAt: Date.now() };
+    const saved = await putArchiveIfCurrent(store, failed, {
+      status: 'importing', generation: record.generation, updatedAt: record.updatedAt,
+    });
+    if (saved) record = failed;
     throw error;
   }
 }
