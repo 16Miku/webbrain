@@ -8494,11 +8494,8 @@ test('delivery recovery exposes only done and persists a partial terminal result
   }
 });
 
-test('active response-language policy reaches normal system and done-tool prompts without breaking translation jobs', () => {
-  for (const [label, AgentClass, getTools] of [
-    ['chrome', AgentCh, getToolsForModeCh],
-    ['firefox', AgentFx, getToolsForModeFx],
-  ]) {
+test('active response-language policy reaches the normal system prompt without breaking translation jobs', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = 916;
     const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
     agent.conversationModes.set(tabId, 'act');
@@ -8513,17 +8510,45 @@ test('active response-language policy reaches normal system and done-tool prompt
     assert.match(systemPrompt, /Use English \(en\) for explanatory framing/i, `${label}: normal system prompt lost framing language`);
     assert.match(systemPrompt, /authored deliverables in Spanish \(es\)/i, `${label}: normal system prompt overrode the translation target`);
 
-    const guidedTools = agent._withResponseLanguageToolGuidance(tabId, getTools('act', { tier: 'full' }), 'en');
-    const done = guidedTools.find(tool => tool?.function?.name === 'done');
-    assert.match(done?.function?.description || '', /authored deliverables in Spanish \(es\)/i, `${label}: normal done tool lost the translation target`);
-
     agent._setResponseLanguagePolicy(tabId, null, 'tr');
     const fallbackPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
-    assert.match(fallbackPrompt, /Infer explanatory framing from the language of the latest genuine user request/i, `${label}: planner bypass stopped deriving framing from the user request`);
-    assert.match(fallbackPrompt, /Only when the request language is unclear, use Turkish \(tr\) as the fallback/i, `${label}: UI locale was not retained as a soft fallback`);
-    assert.doesNotMatch(fallbackPrompt, /Use Turkish \(tr\) for explanatory framing/i, `${label}: Ask-mode fallback became a hard UI-locale requirement`);
-    assert.match(fallbackPrompt, /No fixed authored-deliverable language was inferred/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
-    assert.match(fallbackPrompt, /explicit language or translation instruction/i, `${label}: planner fallback lost the translation exception`);
+    assert.match(fallbackPrompt, /Match the language of the latest genuine user request/i, `${label}: planner bypass stopped deriving framing from the user request`);
+    assert.match(fallbackPrompt, /if unclear, use Turkish \(tr\)/i, `${label}: UI locale was not retained as a soft fallback`);
+    assert.doesNotMatch(fallbackPrompt, /Respond in Turkish \(tr\)/i, `${label}: Ask-mode fallback became a hard UI-locale requirement`);
+    assert.doesNotMatch(fallbackPrompt, /authored deliverable itself in/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
+  }
+});
+
+test('ordinary response-language policies use the short rendering and never ride on normal-turn tool schemas', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const tabId = 917;
+    const ordinary = { framing_locale: 'tr', deliverable_locales: ['tr'], preserve_source_text: true };
+    const translation = { framing_locale: 'en', deliverable_locales: ['es'], preserve_source_text: false };
+
+    const full = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+    full.conversationModes.set(tabId, 'act');
+    full.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    full._setResponseLanguagePolicy(tabId, ordinary, 'tr');
+    const ordinaryPrompt = full.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(ordinaryPrompt, /\[Response language\] Respond in Turkish \(tr\)\./, `${label}: ordinary policy did not use the short rendering`);
+    assert.match(ordinaryPrompt, /never translate code, identifiers, URLs/i, `${label}: short rendering dropped the stable-token exception`);
+    assert.doesNotMatch(ordinaryPrompt, /RESPONSE LANGUAGE POLICY/, `${label}: ordinary policy still paid for the long block`);
+
+    // The done schema no longer repeats what the system prompt already carries.
+    const doneTool = getTools('act', { tier: 'full' }).find(tool => tool?.function?.name === 'done');
+    assert.doesNotMatch(doneTool?.function?.description || '', /Response language/i, `${label}: normal-turn done schema regained duplicate language guidance`);
+
+    const compact = new AgentClass({ getActive: () => ({ promptTier: 'compact' }) });
+    compact.conversationModes.set(tabId, 'act');
+    compact.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    compact._setResponseLanguagePolicy(tabId, translation, 'en');
+    const compactPrompt = compact.conversations.get(tabId)?.[0]?.content || '';
+    assert.doesNotMatch(compactPrompt, /RESPONSE LANGUAGE POLICY/, `${label}: compact tier still carried the long block`);
+    assert.match(compactPrompt, /Respond in English \(en\)\./, `${label}: compact tier lost the framing language`);
+    assert.match(compactPrompt, /deliverable itself in Spanish \(es\)/i, `${label}: compact tier lost the translation target`);
   }
 });
 
@@ -56287,14 +56312,19 @@ test('trusted continuation carries consequential evidence without repeating the 
       `${AgentClass.name}: fallback continuation did not anchor framing to the original request`,
     );
     assert.match(
-      requests[1].doneDescription,
+      requests[1].systemPrompt,
       /must not influence response or deliverable language/,
-      `${AgentClass.name}: continuation tools treated the synthetic turn as a language instruction`,
+      `${AgentClass.name}: continuation prompt treated the synthetic turn as a language instruction`,
     );
     assert.match(
-      requests[1].doneDescription,
+      requests[1].systemPrompt,
       /No fixed authored-deliverable language was inferred/,
       `${AgentClass.name}: fallback continuation invented a fixed deliverable language`,
+    );
+    assert.doesNotMatch(
+      requests[1].doneDescription,
+      /authored-deliverable language|explanatory framing/,
+      `${AgentClass.name}: normal-turn done schema duplicated the system prompt's language policy`,
     );
     assert.doesNotMatch(
       requests[1].systemPrompt,
@@ -56604,9 +56634,14 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       `${AgentClass.name}: streamed continuation system prompt lost the prior framing language`,
     );
     assert.match(
-      requests[1].doneDescription,
+      requests[1].systemPrompt,
       /Write authored deliverables in Spanish \(es\)/,
-      `${AgentClass.name}: streamed continuation tools lost the prior deliverable language`,
+      `${AgentClass.name}: streamed continuation lost the prior deliverable language`,
+    );
+    assert.doesNotMatch(
+      requests[1].doneDescription,
+      /Spanish \(es\)/,
+      `${AgentClass.name}: normal-turn done schema duplicated the system prompt's language policy`,
     );
   }
 });
@@ -63942,6 +63977,18 @@ test('response-language policy keeps framing, translation targets, and source pr
     assert.match(translationInstruction, /authored deliverables in Spanish \(es\)/i, `${label}: translation target missing`);
     assert.match(translationInstruction, /takes precedence over the framing language/i, `${label}: translation precedence missing`);
     assert.match(translationInstruction, /Do not translate code, identifiers, URLs/i, `${label}: stable-token exception missing`);
+
+    // An explicitly empty deliverable list is a coherent planner answer, unlike
+    // a list whose entries were all invalid. Only the latter fails closed.
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: [],
+        preserve_source_text: false,
+      }, 'tr'),
+      { framing_locale: 'en', deliverable_locales: [], preserve_source_text: false },
+      `${label}: an explicit "no fixed deliverable language" answer was discarded as malformed`,
+    );
 
     const preserved = normalize({
       framing_locale: 'en',
