@@ -40953,6 +40953,8 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(worker, /pipeline\('text-generation', modelId/);
   assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
+  assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
+  assert.match(worker, /session_options: WEBGPU_TEXT_SESSION_OPTIONS/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
   assert.match(worker, /GPU detail:/);
   assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
@@ -41007,6 +41009,7 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
   const previousHoldTextDownload = globalThis.__holdWebgpuTextDownload;
   const previousReleaseTextDownload = globalThis.__releaseWebgpuTextDownload;
   const previousGenerationOptions = globalThis.__webgpuGenerationOptions;
+  const previousPipelineOptions = globalThis.__webgpuPipelineOptions;
   let workerListener = null;
   const posted = [];
   try {
@@ -41072,8 +41075,9 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
           };
         },
       };
-      export async function pipeline() {
+      export async function pipeline(task, modelId, options) {
         globalThis.__webgpuRuntimeCounts.textLoads++;
+        globalThis.__webgpuPipelineOptions = { task, modelId, options };
         if (globalThis.__holdWebgpuTextDownload) {
           await new Promise(resolve => { globalThis.__releaseWebgpuTextDownload = resolve; });
         }
@@ -41129,6 +41133,11 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     assert.match(beforeDownload.error, /not downloaded/);
     await dispatch('download-text', textPayload);
     await dispatch('text-chat', textPayload);
+    assert.equal(
+      globalThis.__webgpuPipelineOptions.options.session_options.extra['ep.webgpuexecutionprovider.storageBufferCacheMode'],
+      'simple',
+      'Ling must avoid ORT WebGPU bucket-cache amplification',
+    );
     assert.equal(globalThis.__webgpuGenerationOptions.max_new_tokens, 256, 'Ling generation must keep a browser-safe output budget');
     await dispatch('chat', visionPayload);
     await dispatch('text-chat', textPayload);
@@ -41186,6 +41195,8 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     else globalThis.__releaseWebgpuTextDownload = previousReleaseTextDownload;
     if (previousGenerationOptions === undefined) delete globalThis.__webgpuGenerationOptions;
     else globalThis.__webgpuGenerationOptions = previousGenerationOptions;
+    if (previousPipelineOptions === undefined) delete globalThis.__webgpuPipelineOptions;
+    else globalThis.__webgpuPipelineOptions = previousPipelineOptions;
   }
 });
 
