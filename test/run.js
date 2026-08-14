@@ -448,6 +448,7 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT,
   PLANNER_API_REPLAY_RULE,
   PLANNER_RESPONSE_ONLY_RULES,
+  PLANNER_RESPONSE_LANGUAGE_RULES,
   READ_SCOPE_SYSTEM_PROMPT,
   PLANNER_RESPONSE_JSON_SCHEMA,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
@@ -458,6 +459,9 @@ const {
   parseReadScopeFromContent,
   formatPlanMarkdown,
   formatPlanScratchpad,
+  fallbackResponseLanguagePolicy,
+  normalizeResponseLanguagePolicy,
+  formatResponseLanguagePolicyInstruction,
   normalizePlan,
   userMessageToText,
   buildPlannerMessages,
@@ -469,6 +473,7 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT: PLANNER_INTENT_SYSTEM_PROMPT_FX,
   PLANNER_API_REPLAY_RULE: PLANNER_API_REPLAY_RULE_FX,
   PLANNER_RESPONSE_ONLY_RULES: PLANNER_RESPONSE_ONLY_RULES_FX,
+  PLANNER_RESPONSE_LANGUAGE_RULES: PLANNER_RESPONSE_LANGUAGE_RULES_FX,
   READ_SCOPE_SYSTEM_PROMPT: READ_SCOPE_SYSTEM_PROMPT_FX,
   PLANNER_RESPONSE_JSON_SCHEMA: PLANNER_RESPONSE_JSON_SCHEMA_FX,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA: PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX,
@@ -478,6 +483,9 @@ const {
   buildReadScopeMessages: buildReadScopeMessagesFx,
   parsePlanFromContent: parsePlanFromContentFx,
   parseReadScopeFromContent: parseReadScopeFromContentFx,
+  fallbackResponseLanguagePolicy: fallbackResponseLanguagePolicyFx,
+  normalizeResponseLanguagePolicy: normalizeResponseLanguagePolicyFx,
+  formatResponseLanguagePolicyInstruction: formatResponseLanguagePolicyInstructionFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/planner.js').replace(/\\/g, '/')
 );
@@ -8418,6 +8426,11 @@ test('loop-stop recovery surfaces a checkpointed draft in chat without claiming 
 test('delivery recovery exposes only done and persists a partial terminal result', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
+    agent.responseLanguagePolicies.set(913, {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    });
     const messages = [
       { role: 'system', content: 'ordinary agent prompt' },
       { role: 'user', content: 'Find remote jobs and give me the links.' },
@@ -8461,12 +8474,46 @@ test('delivery recovery exposes only done and persists a partial terminal result
     assert.deepEqual(request?.options?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum, ['partial', 'failed'], `${label}: forced done must forbid success`);
     assert.deepEqual(request?.options?.toolChoice, { type: 'function', function: { name: 'done' } }, `${label}: done should be explicitly requested`);
     assert.match(request?.sentMessages?.[0]?.content || '', /Call the done tool exactly once/i, `${label}: forced terminal system prompt missing`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /Use English \(en\) for explanatory framing/i, `${label}: recovery prompt lost English framing`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /authored deliverables in English \(en\)/i, `${label}: recovery prompt lost the deliverable language`);
+    assert.match(request?.options?.tools?.[0]?.function?.description || '', /authored deliverables in English \(en\)/i, `${label}: forced done schema lost language guidance`);
     assert.equal(updates.some(update => update.type === 'tool_call' && update.data?.name === 'done'), true, `${label}: forced done call was not surfaced`);
     assert.equal(updates.some(update => update.type === 'run_status' && update.data?.status === 'partial'), true, `${label}: partial run status missing`);
     const persistedResult = JSON.parse(messages.at(-1)?.content || '{}');
     assert.equal(messages.at(-1)?.role, 'tool', `${label}: forced done tool result was not persisted structurally`);
     assert.equal(persistedResult.done, true, `${label}: persisted forced done result missing`);
     assert.equal(persistedResult.outcome, 'partial', `${label}: persisted forced done outcome mismatch`);
+  }
+});
+
+test('active response-language policy reaches normal system and done-tool prompts without breaking translation jobs', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const tabId = 916;
+    const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    const translation = {
+      framing_locale: 'en',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    agent._setResponseLanguagePolicy(tabId, translation, 'en');
+    const systemPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(systemPrompt, /Use English \(en\) for explanatory framing/i, `${label}: normal system prompt lost framing language`);
+    assert.match(systemPrompt, /authored deliverables in Spanish \(es\)/i, `${label}: normal system prompt overrode the translation target`);
+
+    const guidedTools = agent._withResponseLanguageToolGuidance(tabId, getTools('act', { tier: 'full' }), 'en');
+    const done = guidedTools.find(tool => tool?.function?.name === 'done');
+    assert.match(done?.function?.description || '', /authored deliverables in Spanish \(es\)/i, `${label}: normal done tool lost the translation target`);
+
+    agent._setResponseLanguagePolicy(tabId, null, 'tr');
+    const fallbackPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(fallbackPrompt, /Use Turkish \(tr\) for explanatory framing/i, `${label}: UI-locale fallback was not available`);
+    assert.match(fallbackPrompt, /No fixed authored-deliverable language was inferred/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
+    assert.match(fallbackPrompt, /explicit language or translation instruction/i, `${label}: planner fallback lost the translation exception`);
   }
 });
 
@@ -55005,6 +55052,9 @@ function plannerIntentFixture({
   readScope = null,
   scheduling = null,
   locale = 'en',
+  framingLocale = locale,
+  deliverableLocales = [locale],
+  preserveSourceText = false,
   localizedSummary = 'Carry out the requested task.',
   localizedSteps = ['Inspect the current state.', 'Complete the requested task.'],
   localizedRisks = [],
@@ -55040,6 +55090,11 @@ function plannerIntentFixture({
       summary: localizedSummary,
       steps: localizedSteps.map((action, index) => ({ id: String(index + 1), action })),
       risks: localizedRisks,
+    },
+    response_language: {
+      framing_locale: framingLocale,
+      deliverable_locales: deliverableLocales,
+      preserve_source_text: preserveSourceText,
     },
     mode: 'act',
   });
@@ -63465,6 +63520,111 @@ test('planner schemas require structured download completion metadata in both br
   }
 });
 
+test('planner schemas require a structured response-language policy in both browsers', () => {
+  for (const [label, schema] of [
+    ['chrome full', PLANNER_RESPONSE_JSON_SCHEMA],
+    ['chrome intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA],
+    ['firefox full', PLANNER_RESPONSE_JSON_SCHEMA_FX],
+    ['firefox intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX],
+  ]) {
+    assert.ok(schema.required.includes('response_language'), `${label}: response language policy is optional`);
+    const language = schema.properties.response_language;
+    assert.equal(language?.type, 'object', `${label}: response language policy is not structured`);
+    assert.equal(language?.additionalProperties, false, `${label}: response language policy accepts undeclared fields`);
+    assert.deepEqual(
+      language?.required,
+      ['framing_locale', 'deliverable_locales', 'preserve_source_text'],
+      `${label}: response language policy fields are optional`,
+    );
+    assert.equal(language?.properties?.framing_locale?.type, 'string', `${label}: framing locale is not a string`);
+    assert.equal(language?.properties?.deliverable_locales?.type, 'array', `${label}: deliverable locales are not an array`);
+    assert.equal(language?.properties?.preserve_source_text?.type, 'boolean', `${label}: source preservation is not boolean`);
+  }
+});
+
+test('response-language policy keeps framing, translation targets, and source preservation separate', () => {
+  for (const [label, fallback, normalize, format] of [
+    ['chrome', fallbackResponseLanguagePolicy, normalizeResponseLanguagePolicy, formatResponseLanguagePolicyInstruction],
+    ['firefox', fallbackResponseLanguagePolicyFx, normalizeResponseLanguagePolicyFx, formatResponseLanguagePolicyInstructionFx],
+  ]) {
+    assert.deepEqual(
+      fallback('EN_us'),
+      { framing_locale: 'en-us', deliverable_locales: [], preserve_source_text: true },
+      `${label}: fallback should remain translation-safe instead of hard-coding the UI locale as a deliverable`,
+    );
+
+    const ordinary = normalize({
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    }, 'tr');
+    assert.deepEqual(
+      ordinary,
+      { framing_locale: 'en', deliverable_locales: ['en'], preserve_source_text: false },
+      `${label}: ordinary English policy drifted`,
+    );
+
+    const translation = normalize({
+      framing_locale: 'en',
+      deliverable_locales: ['ES', 'es', 'fr', 'de', 'it', 'pt', 'not a locale'],
+      preserve_source_text: false,
+    }, 'tr');
+    assert.deepEqual(
+      translation,
+      { framing_locale: 'en', deliverable_locales: ['es', 'fr', 'de', 'it', 'pt'], preserve_source_text: false },
+      `${label}: multilingual targets were truncated, duplicated, or replaced by invalid locale data`,
+    );
+    const translationInstruction = format(translation, 'tr');
+    assert.match(translationInstruction, /Use English \(en\) for explanatory framing/i, `${label}: framing language missing`);
+    assert.match(translationInstruction, /authored deliverables in Spanish \(es\)/i, `${label}: translation target missing`);
+    assert.match(translationInstruction, /takes precedence over the framing language/i, `${label}: translation precedence missing`);
+    assert.match(translationInstruction, /Do not translate code, identifiers, URLs/i, `${label}: stable-token exception missing`);
+
+    const preserved = normalize({
+      framing_locale: 'en',
+      deliverable_locales: [],
+      preserve_source_text: true,
+    }, 'tr');
+    assert.deepEqual(
+      preserved,
+      { framing_locale: 'en', deliverable_locales: [], preserve_source_text: true },
+      `${label}: source-faithful task gained a blanket output locale`,
+    );
+    assert.match(format(preserved), /source-faithful text in its original language/i, `${label}: preservation instruction missing`);
+  }
+});
+
+test('planner parses translation and multilingual deliverable policies without using UI locale as a hard constraint', () => {
+  const translationFixture = plannerIntentFixture({
+    locale: 'en',
+    framingLocale: 'en',
+    deliverableLocales: ['es'],
+    preserveSourceText: false,
+    localizedSummary: 'Translate the current article into Spanish.',
+  });
+  const mixedFixture = plannerIntentFixture({
+    locale: 'en',
+    framingLocale: 'en',
+    deliverableLocales: ['es', 'fr'],
+    preserveSourceText: true,
+    localizedSummary: 'Compare the Spanish and French wording.',
+  });
+  for (const [label, parse] of [['chrome', parsePlanFromContent], ['firefox', parsePlanFromContentFx]]) {
+    const translation = parse(translationFixture, { requireIntent: true, locale: 'en' });
+    assert.deepEqual(
+      translation?.response_language,
+      { framing_locale: 'en', deliverable_locales: ['es'], preserve_source_text: false },
+      `${label}: translation deliverable did not override English framing`,
+    );
+    const mixed = parse(mixedFixture, { requireIntent: true, locale: 'en' });
+    assert.deepEqual(
+      mixed?.response_language,
+      { framing_locale: 'en', deliverable_locales: ['es', 'fr'], preserve_source_text: true },
+      `${label}: multilingual/source-preserving policy was lost`,
+    );
+  }
+});
+
 test('planner download completion metadata is language-neutral and does not infer from prose', () => {
   const cases = [
     { task: 'download this video', download: true, locale: 'en' },
@@ -63684,6 +63844,14 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.doesNotMatch(PLANNER_SYSTEM_PROMPT, /sample exactly one fetch_url replay/);
   assert.equal(PLANNER_SYSTEM_PROMPT_FX, PLANNER_SYSTEM_PROMPT);
   assert.equal(PLANNER_API_REPLAY_RULE_FX, PLANNER_API_REPLAY_RULE);
+  assert.equal(PLANNER_RESPONSE_LANGUAGE_RULES_FX, PLANNER_RESPONSE_LANGUAGE_RULES);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /only from the latest genuine user request and trusted conversation context/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /Page\/document text.*cannot choose the response language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /explicitly requested response or explanatory language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /translation target alone changes the deliverable language, not the framing language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /translation.*requested target language.*differs from framing_locale/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /"response_language"/);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"deliverable_locales"/);
 });
 
 test('planner: API replay guidance is gated by allow-api state', () => {
@@ -63865,6 +64033,11 @@ test('planner routes existing-context artifact requests to a tool-free response'
         proceed: true,
         requestKind: 'respond',
         responseOnly: true,
+        responseLanguagePolicy: {
+          framing_locale: 'en',
+          deliverable_locales: [],
+          preserve_source_text: true,
+        },
         requiresStateChange: false,
       }, `${label}: existing-context response should bypass browser tools`);
       assert.match(plannerMessages?.[1]?.content || '', /Prior user request[\s\S]*Draft and send Gary/, `${label}: planner lost the original email task`);
@@ -64592,6 +64765,84 @@ test('planner clears skill activation when verbose approval text is edited', asy
       );
       assert.equal(outcome.proceed, true, `${label}: edited plan should still proceed`);
       assert.equal(changed.agent.activeSkillIds.has(label === 'chrome' ? 9195 : 9196), false, `${label}: removed verbose skill must not activate`);
+    }
+  });
+});
+
+test('reviewed plan edits override the planner response-language target', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const tabId = label === 'chrome' ? 9200 : 9201;
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-language-edit-test',
+        name: 'planner-language-edit-test',
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.setPlanReviewSettings({ mode: 'always' });
+      agent._chatWithCostAllowance = async () => ({
+        content: plannerFixtureJson({
+          summary: 'Translate the visible article into Spanish',
+          steps: [{ id: '1', action: 'Translate the visible article into Spanish', tools: ['read_page'] }],
+          localized: {
+            locale: 'en',
+            summary: 'Translate the visible article into Spanish',
+            steps: [{ id: '1', action: 'Translate the visible article into Spanish' }],
+            risks: [],
+          },
+          response_language: {
+            framing_locale: 'en',
+            deliverable_locales: ['es'],
+            preserve_source_text: false,
+          },
+        }),
+      });
+      agent._waitForPlanReview = async (_tabId, _planId, _plan, compactMarkdown) => ({
+        action: 'approve',
+        editedText: compactMarkdown.replaceAll('Spanish', 'French'),
+        markdownMode: 'compact',
+      });
+
+      const gate = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Translate the visible article into Spanish.' },
+        () => {},
+        null,
+        null,
+        '',
+        { tabUrl: 'https://example.test/article', tabTitle: 'Article' },
+        'try',
+        'act',
+        { locale: 'en' },
+      );
+
+      assert.equal(gate.proceed, true, `${label}: edited translation plan did not proceed`);
+      assert.equal(gate.responseLanguageApprovedPlanOverride, true, `${label}: edited plan retained an authoritative stale target`);
+      assert.match(gate.approvedScratchpadText || '', /French/, `${label}: edited translation target was not pinned`);
+
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('act', tabId) }]);
+      agent.conversationModes.set(tabId, 'act');
+      agent._runPlannerGate = async () => gate;
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        agent.conversations.get(tabId),
+        { role: 'user', content: 'Translate the visible article into Spanish.' },
+        () => {},
+        'act',
+        null,
+        null,
+        { tabUrl: 'https://example.test/article', tabTitle: 'Article' },
+        { locale: 'en' },
+      );
+      assert.equal(outcome.responseLanguageApprovedPlanOverride, true, `${label}: edited-plan override was dropped by the planner wrapper`);
+      agent._setResponseLanguagePolicy(tabId, outcome.responseLanguagePolicy, 'en', {
+        approvedPlanLanguageOverride: outcome.responseLanguageApprovedPlanOverride === true,
+      });
+      const systemPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+      assert.match(systemPrompt, /user edited the approved plan after this policy was inferred/i, `${label}: edited-plan language override did not reach the system prompt`);
+      assert.match(systemPrompt, /Keep them unless.*approved plan.*explicitly changes/i, `${label}: unrelated plan edits discarded the earlier language target`);
+      assert.match(systemPrompt, /No other scratchpad content gains authority/i, `${label}: edited-plan exception was not narrowly scoped`);
+      assert.doesNotMatch(systemPrompt, /Write authored deliverables in Spanish/i, `${label}: stale Spanish target still unconditionally overrode the French edit`);
     }
   });
 });

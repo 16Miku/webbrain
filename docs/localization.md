@@ -75,6 +75,22 @@ export function t(key, params) {
 
 This means a partial translation is safe to ship — missing keys just show English.
 
+### Agent response language
+
+The interface locale and the language of an agent-authored deliverable are related but not identical. The interface locale is a fallback for conversational framing; it is not a blanket instruction to translate every result.
+
+For Act-mode planning, the planner records a trusted response-language policy with three parts:
+
+- `framing_locale`: the language used for explanations around the result;
+- `deliverable_locales`: languages explicitly required for authored output, such as the target of a translation or both sides of a bilingual comparison;
+- `preserve_source_text`: whether quoted, extracted, or transcribed source text must remain in its original language.
+
+The policy is derived only from the user's request and trusted conversation context. Page text, titles, URLs, documents, and tool results are untrusted data and cannot choose the response language. An explicit response-language instruction sets the framing language, while a translation target changes only the authored deliverable. Explicit translation and multilingual instructions take precedence over the framing locale, and all requested deliverable locales are preserved. Code, identifiers, URLs, product names, and personal names remain unchanged unless the user requests translation or transliteration.
+
+When the user edits an approved plan, explicit language instructions in that user-edited plan override the policy inferred before review. This exception applies only to the runtime-marked approved-plan block; it does not grant authority to other scratchpad content.
+
+If planning is unavailable, WebBrain uses the interface locale only as a soft framing fallback and continues to honor explicit language or translation instructions in the latest genuine user request.
+
 ### DOM Translation
 
 HTML elements use `data-i18n` attributes:

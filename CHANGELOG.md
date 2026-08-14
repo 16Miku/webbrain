@@ -20,6 +20,9 @@ This changelog was generated from the repository Git history and release tags. V
 - Reject non-finite numbers in cloud output schema validation
 - Added Product Hunt
 
+### Fixed
+- Keep ordinary and forced-recovery answers in the trusted user-request language while allowing explicit translation targets, user-edited plan targets, multilingual deliverables, and source-faithful quotations to use their requested languages.
+
 ## [30.0.5] - 2026-08-13
 
 ### Changed
