@@ -70,6 +70,10 @@ This changelog was generated from the repository Git history and release tags. V
 - Reject non-finite numbers in cloud output schema validation
 - Added Product Hunt
 
+### Fixed
+- Keep ordinary and forced-recovery answers in the trusted user-request language while allowing explicit translation targets, user-edited plan targets, multilingual deliverables, and source-faithful quotations to use their requested languages.
+- Shrink the response-language instruction on ordinary turns from about 150 tokens to about 40, stop repeating it in the `done` tool schema when the system prompt already carries it, and keep an explicitly empty planner deliverable list instead of discarding it as malformed. Translation, multilingual, approved-plan-override, and forced-delivery turns keep the full wording.
+
 ## [30.0.5] - 2026-08-13
 
 ### Changed
