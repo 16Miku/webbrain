@@ -290,11 +290,11 @@ export default {
 
   'st.vision.desc': '設定すると、ページ読み取り用のスクリーンショットはこのモデルに送られ、プランニングとツール呼び出しはアクティブなプロバイダーが担当します。空欄なら画像認識もアクティブなプロバイダーを使います。OpenAI 互換エンドポイントのみ対応。',
   'st.vision.local.title': 'LFM2.5-VL local fallback',
-  'st.vision.local.desc': 'Runs LiquidAI/LFM2.5-VL-450M-ONNX on your GPU. Screenshots stay on this device; first use downloads about 770 MB from Hugging Face and caches it locally.',
+  'st.vision.local.desc': 'Runs LiquidAI/LFM2.5-VL-450M-ONNX on your GPU. Screenshots stay on this device; first use downloads about 770 MB from Hugging Face in the background and caches it locally. You can switch tabs or close Settings while it downloads; keep Chrome open.',
   'st.vision.local.enable': 'Use local fallback',
   'st.vision.local.disable': 'Disable local fallback',
   'st.vision.local.saved': 'Local vision fallback enabled.',
-  'st.vision.local.testing': 'Testing local vision… First use downloads about 770 MB.',
+  'st.vision.local.testing': 'Loading and testing local vision… First use downloads about 770 MB in the background. You may switch tabs or close Settings; keep Chrome open.',
   'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': '保存',
   'st.vision.test': '接続テスト',

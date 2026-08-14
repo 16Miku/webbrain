@@ -154,28 +154,58 @@ function prepareMultimodalMessages(messages) {
     const role = ['system', 'user', 'assistant'].includes(message.role)
       ? message.role
       : 'user';
-    const blocks = [];
+    const imageBlocks = [];
+    const textBlocks = [];
     if (Array.isArray(message.content)) {
       for (const block of message.content) {
         if (block?.type === 'text' && typeof block.text === 'string') {
-          blocks.push({ type: 'text', text: block.text });
+          textBlocks.push({ type: 'text', text: block.text });
           continue;
         }
         const imageUrl = imageUrlFromBlock(block);
         if (imageUrl) {
           imageUrls.push(imageUrl);
-          blocks.push({ type: 'image' });
+          imageBlocks.push({ type: 'image' });
         }
       }
     } else if (typeof message.content === 'string') {
-      blocks.push({ type: 'text', text: message.content });
+      textBlocks.push({ type: 'text', text: message.content });
     }
+    // LFM2.5-VL's published chat template places <image> before the question.
+    // Normalize OpenAI-style messages (which often put text first) to that
+    // model-specific contract without changing the provider-facing API.
+    const blocks = [...imageBlocks, ...textBlocks];
     if (blocks.length) prepared.push({ role, content: blocks });
   }
   if (imageUrls.length !== 1) {
     throw new Error(`LFM2.5-VL requires exactly one screenshot; received ${imageUrls.length}.`);
   }
   return { messages: prepared, imageUrl: imageUrls[0] };
+}
+
+function upscaleProbeImageNearest(image, RawImage) {
+  if (!RawImage || !image?.data || !image.width || !image.height || !image.channels) return image;
+  // The packaged OCR probe is intentionally tiny. LFM2.5-VL preserves native
+  // resolution, so enlarge only this known probe to make each glyph occupy
+  // enough vision patches. Nearest-neighbor keeps the synthetic edges crisp.
+  const scale = Math.min(8, Math.floor(Math.min(512 / image.width, 512 / image.height)));
+  if (scale <= 1) return image;
+  const width = image.width * scale;
+  const height = image.height * scale;
+  const channels = image.channels;
+  const data = new Uint8ClampedArray(width * height * channels);
+  for (let y = 0; y < height; y++) {
+    const sourceY = Math.floor(y / scale);
+    for (let x = 0; x < width; x++) {
+      const sourceX = Math.floor(x / scale);
+      const sourceOffset = (sourceY * image.width + sourceX) * channels;
+      const targetOffset = (y * width + x) * channels;
+      for (let channel = 0; channel < channels; channel++) {
+        data[targetOffset + channel] = image.data[sourceOffset + channel];
+      }
+    }
+  }
+  return new RawImage(data, width, height, channels);
 }
 
 async function runVision(payload) {
@@ -192,7 +222,10 @@ async function runVision(payload) {
   const prompt = runtime.processor.apply_chat_template(messages, {
     add_generation_prompt: true,
   });
-  const image = await runtime.library.load_image(imageUrl);
+  let image = await runtime.library.load_image(imageUrl);
+  if (payload?.options?.visionProbe === true) {
+    image = upscaleProbeImageNearest(image, runtime.library.RawImage);
+  }
   const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
   const requestedTokens = Number(payload?.options?.maxTokens);
   const maxNewTokens = Number.isFinite(requestedTokens)

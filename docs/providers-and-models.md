@@ -383,7 +383,9 @@ in-browser fallback. It runs `LiquidAI/LFM2.5-VL-450M-ONNX` through WebGPU in a
 dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. The
 model is not present in the general provider catalog and never receives agent
 tools or planning turns. First use downloads approximately 770 MB of model
-data from Hugging Face into the browser cache; screenshots stay on-device and
+data from Hugging Face into the browser cache. That download runs in Chrome's
+offscreen extension worker, so the user may switch tabs or close Settings while
+it continues, but must keep Chrome running. Screenshots stay on-device and
 only the generated description is passed to the active provider. The local
 selection is stored as a Chrome-only preference, separately from the synced
 OpenAI-compatible vision endpoint, so it can be disabled without losing that

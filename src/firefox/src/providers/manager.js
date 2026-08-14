@@ -1148,21 +1148,27 @@ export class ProviderManager {
     const messages = [{
       role: 'user',
       content: [
-        { type: 'text', text: 'Read the three-character black code centered in the attached image. Reply with only that code.' },
         { type: 'image_url', image_url: { url: imageDataUrl } },
+        { type: 'text', text: 'Read the three-character black code centered in the attached image. Reply with only that code.' },
       ],
     }];
     let attempts = 1;
     let reasoningControl = true;
     let result;
     try {
-      result = await provider.chat(messages, visionGenerationOptions(256, { reasoningControl }));
+      result = await provider.chat(messages, {
+        ...visionGenerationOptions(256, { reasoningControl }),
+        webbrainVisionProbe: true,
+      });
     } catch (error) {
       if (!unsupportedVisionGenerationControl(error)) return { ok: false, error: error.message };
       reasoningControl = false;
       attempts++;
       try {
-        result = await provider.chat(messages, visionGenerationOptions(800, { reasoningControl }));
+        result = await provider.chat(messages, {
+          ...visionGenerationOptions(800, { reasoningControl }),
+          webbrainVisionProbe: true,
+        });
       } catch (fallbackError) {
         return { ok: false, error: fallbackError.message };
       }
@@ -1170,7 +1176,10 @@ export class ProviderManager {
     if (!String(result?.content || '').trim() && attempts === 1) {
       attempts++;
       try {
-        result = await provider.chat(messages, visionGenerationOptions(800, { reasoningControl }));
+        result = await provider.chat(messages, {
+          ...visionGenerationOptions(800, { reasoningControl }),
+          webbrainVisionProbe: true,
+        });
       } catch (error) {
         return { ok: false, error: error.message };
       }
@@ -1180,7 +1189,11 @@ export class ProviderManager {
       return { ok: false, error: 'Vision model returned no visible description after the image probe.' };
     }
     if (!/\bWB7\b/i.test(probeText)) {
-      return { ok: false, error: 'Vision model responded but did not read the image probe correctly.' };
+      const observed = probeText.replace(/\s+/g, ' ').slice(0, 120);
+      return {
+        ok: false,
+        error: `Vision model responded but did not read the image probe correctly (received: "${observed}").`,
+      };
     }
     return { ok: true, model: provider.model, baseUrl: provider.baseUrl };
   }

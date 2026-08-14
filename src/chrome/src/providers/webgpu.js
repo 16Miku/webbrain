@@ -61,6 +61,7 @@ export class WebGPUVisionProvider extends BaseLLMProvider {
       messages,
       options: {
         maxTokens: options.maxTokens,
+        ...(options.webbrainVisionProbe === true ? { visionProbe: true } : {}),
       },
     });
     if (!response || response.error) {

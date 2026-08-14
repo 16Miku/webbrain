@@ -98,3 +98,10 @@ offscreen document's main thread has shown tighter WASM allocation limits for
 large ONNX runs. Do not set `preferredOutputLocation: 'gpu-buffer'` on this
 generation path: Transformers.js decodes the generated tensor on the CPU and
 must be allowed to download that output normally.
+
+LFM2.5-VL expects the image placeholder before the user's text in its chat
+template. The Worker normalizes incoming OpenAI-style multimodal messages to
+that order. The packaged 96x48 connection-test probe is enlarged with
+nearest-neighbor sampling before preprocessing because the model otherwise
+preserves too little native detail for a reliable OCR check; normal screenshots
+are never enlarged by this probe-only path.
