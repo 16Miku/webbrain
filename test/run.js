@@ -42163,6 +42163,23 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.doesNotMatch(host, /chrome\.storage/, 'offscreen documents only expose chrome.runtime from extension APIs');
   assert.match(host, /chrome\.runtime\.sendMessage\(\{[\s\S]*?VISION_DOWNLOAD_STATE_MESSAGE/);
   assert.match(host, /data\?\.type === 'progress'[\s\S]*?updateVisionDownloadProgress/);
+  assert.match(host, /data\?\.type === 'progress'[\s\S]{0,240}!progressMatchesActiveVisionModel[\s\S]{0,240}updateVisionDownloadProgress/,
+    'shared-worker progress must be filtered before it mutates vision download state');
+  const progressFilterStart = host.indexOf('function progressMatchesActiveVisionModel');
+  const progressFilterEnd = host.indexOf('\n}', progressFilterStart) + 2;
+  assert.ok(progressFilterStart >= 0 && progressFilterEnd > progressFilterStart,
+    'vision progress model filter is missing');
+  const progressMatchesActiveVisionModel = vm.runInNewContext(
+    `(${host.slice(progressFilterStart, progressFilterEnd)})`,
+  );
+  const activePreload = Promise.resolve();
+  const visionModel = 'LiquidAI/LFM2.5-VL-450M';
+  assert.equal(progressMatchesActiveVisionModel({ modelId: visionModel }, visionModel, activePreload), true,
+    'active vision-model progress should be retained');
+  assert.equal(progressMatchesActiveVisionModel({ modelId: 'webbrain-one/Ling-3.0-tiny-ONNX' }, visionModel, activePreload), false,
+    'Ling text-model progress must not overwrite vision preload state');
+  assert.equal(progressMatchesActiveVisionModel({ modelId: visionModel }, visionModel, null), false,
+    'late progress must not update state after vision preload settles');
   assert.match(background, /message\?\.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE/);
   assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
   assert.match(background, /normalized\.status === 'error'[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY[\s\S]*?WEBGPU_VISION_ENABLED_KEY/);

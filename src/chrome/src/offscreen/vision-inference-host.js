@@ -60,6 +60,13 @@ function updateVisionDownloadProgress(data) {
   });
 }
 
+function progressMatchesActiveVisionModel(data, activeModelId, preloading) {
+  const progressModelId = String(data?.modelId || '').trim();
+  return Boolean(preloading
+    && progressModelId
+    && progressModelId === String(activeModelId || '').trim());
+}
+
 function settleVisionRequest(data) {
   if (data?.type === 'text-download-state') {
     try {
@@ -70,6 +77,7 @@ function settleVisionRequest(data) {
     return;
   }
   if (data?.type === 'progress') {
+    if (!progressMatchesActiveVisionModel(data, visionDownloadState?.modelId, visionPreloadPromise)) return;
     console.debug('[webgpu] model download', data);
     updateVisionDownloadProgress(data);
     return;
