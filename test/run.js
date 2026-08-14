@@ -21464,6 +21464,54 @@ test('Apocalypse Mode automatic policy checks daily but still requires confirmat
   }
 });
 
+test('Apocalypse Mode startup preserves update alarms and rearms persisted downloads', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'automatic' };
+    let records = [{ id: 'queued', status: 'queued' }];
+    let existingUpdateAlarm = { name: runtime.APOCALYPSE_UPDATE_ALARM, scheduledTime: 50_000 };
+    const updateSchedules = [];
+    const downloadSchedules = [];
+    const store = {
+      async getConfig() { return { ...config }; },
+      async listArchives() { return records.map(record => ({ ...record })); },
+    };
+    const controller = runtime.createApocalypseController({
+      alarms: {
+        async get(name) {
+          assert.equal(name, runtime.APOCALYPSE_UPDATE_ALARM, `${label}: startup queried the wrong update alarm`);
+          return existingUpdateAlarm;
+        },
+        create(name, details) { updateSchedules.push([name, details]); },
+        async clear() {},
+      },
+    }, {
+      store,
+      storage: {},
+      schedule: delay => downloadSchedules.push(delay),
+      now: () => 10_000,
+    });
+
+    await controller.syncUpdateSchedule();
+    assert.deepEqual(updateSchedules, [], `${label}: startup replaced an existing daily update alarm`);
+    existingUpdateAlarm = null;
+    await controller.syncUpdateSchedule();
+    assert.equal(updateSchedules.length, 1, `${label}: a missing daily update alarm was not restored`);
+
+    assert.equal(await controller.syncDownloadSchedule(), 0, `${label}: queued startup work was not due immediately`);
+    assert.deepEqual(downloadSchedules, [0], `${label}: queued startup work was not rearmed`);
+    records = [
+      { id: 'leased', status: 'downloading', leaseUntil: 12_000 },
+      { id: 'retry', status: 'retrying', nextRetryAt: 16_000 },
+      { id: 'ready', status: 'ready' },
+    ];
+    assert.equal(await controller.syncDownloadSchedule(), 2_000, `${label}: startup did not schedule the earliest persisted attempt`);
+    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: an unexpired lease was not rearmed for its expiry`);
+    config.enabled = false;
+    assert.equal(await controller.syncDownloadSchedule(), null, `${label}: disabled Apocalypse Mode rearmed downloads`);
+    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: disabled startup created a download alarm`);
+  }
+});
+
 test('Apocalypse Mode update checks cannot recreate a concurrently deleted archive', async () => {
   const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
     <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
@@ -21989,6 +22037,8 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /requestPermission[\s\S]*?reauthorize_file/, `${prefix}: file-handle reauthorization flow is missing`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /installedCount[\s\S]*?totalBytes[\s\S]*?updatePolicy/, `${prefix}: Advanced settings does not summarize live archive state`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8'), /APOCALYPSE_UPDATE_ALARM[\s\S]*?checkForUpdates/, `${prefix}: automatic update checks are not wired to a background alarm`);
+    assert.match(backgroundScript, /syncUpdateSchedule\(\)[\s\S]*?syncDownloadSchedule\(\)/,
+      `${prefix}: startup does not restore both Apocalypse schedules`);
     assert.match(pageHtml, /data-i18n="ap\.hero\.consent"/, `${prefix}: localized opt-in boundary is not visible`);
   }
 });

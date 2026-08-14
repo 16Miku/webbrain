@@ -1075,6 +1075,7 @@ export function createApocalypseController(api, options = {}) {
     delayInMinutes: 1,
     periodInMinutes: APOCALYPSE_UPDATE_PERIOD_MINUTES,
   }));
+  const getUpdateCheckAlarm = options.getUpdateCheckAlarm || (() => api?.alarms?.get?.(APOCALYPSE_UPDATE_ALARM));
   const clearUpdateChecks = options.clearUpdateChecks || (() => api?.alarms?.clear?.(APOCALYPSE_UPDATE_ALARM));
 
   async function recoverInterruptedImports() {
@@ -1136,9 +1137,28 @@ export function createApocalypseController(api, options = {}) {
 
   async function syncUpdateSchedule() {
     const config = await store.getConfig();
-    if (config.enabled === true && config.updatePolicy === 'automatic') scheduleUpdateChecks();
-    else await clearUpdateChecks();
+    if (config.enabled === true && config.updatePolicy === 'automatic') {
+      let existing = null;
+      try { existing = await getUpdateCheckAlarm(); } catch {}
+      if (!existing) await scheduleUpdateChecks();
+    } else await clearUpdateChecks();
     return config;
+  }
+
+  async function syncDownloadSchedule() {
+    const config = await store.getConfig();
+    if (config.enabled !== true) return null;
+    const timestamp = now();
+    const delays = (await store.listArchives()).map((record) => {
+      if (record.status === 'queued') return 0;
+      if (record.status === 'retrying') return Math.max(0, (Number(record.nextRetryAt) || 0) - timestamp);
+      if (record.status === 'downloading') return Math.max(0, (Number(record.leaseUntil) || 0) - timestamp);
+      return Number.POSITIVE_INFINITY;
+    });
+    const delay = Math.min(...delays);
+    if (!Number.isFinite(delay)) return null;
+    await schedule(delay);
+    return delay;
   }
 
   async function setUpdatePolicy(policy) {
@@ -1231,5 +1251,5 @@ export function createApocalypseController(api, options = {}) {
     }
   }
 
-  return { manager, store, storage, snapshot, catalog, resolve, recoverInterruptedImports, syncUpdateSchedule, setUpdatePolicy, checkForUpdates, reauthorizeFile, handle };
+  return { manager, store, storage, snapshot, catalog, resolve, recoverInterruptedImports, syncUpdateSchedule, syncDownloadSchedule, setUpdatePolicy, checkForUpdates, reauthorizeFile, handle };
 }

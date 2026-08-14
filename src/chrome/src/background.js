@@ -164,8 +164,11 @@ async function enableApocalypseVisionModel() {
   }).catch(() => {});
   return result;
 }
-apocalypseController.syncUpdateSchedule().catch((error) => {
-  console.warn('[WebBrain] Apocalypse Mode update schedule could not be restored:', error);
+Promise.all([
+  apocalypseController.syncUpdateSchedule(),
+  apocalypseController.syncDownloadSchedule(),
+]).catch((error) => {
+  console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
 });
 const agent = new Agent(providerManager);
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
