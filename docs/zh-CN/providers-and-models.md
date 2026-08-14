@@ -46,6 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
+| `webgpu`（Chromium） | `webgpu` | 本地 | `webbrain-one/Ling-3.0-tiny-ONNX` | 否 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |
@@ -70,7 +71,8 @@ class BaseLLMProvider {
 
 WebBrain 从 OpenCode 提供商目录提交
 `62e4641235d7847dadc60da37cca8a023dd54fc1` 的快照中新增了 76 张默认禁用的
-提供商卡片。加上原有 29 张，设置中共有 **105 个内置提供商**。完整 ID
+提供商卡片。设置中在 **Chromium 上共有 106 个内置提供商**，在 **Firefox
+上共有 105 个**；两者的差异是仅 Chromium 提供的本地 WebGPU 运行时。完整 ID
 列表如下：
 
 `302ai`、`abacus`、`aihubmix`、`alibaba-coding-plan`、

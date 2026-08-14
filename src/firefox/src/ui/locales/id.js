@@ -998,4 +998,5 @@ export default {
   "st.sync.confirm.reset": "Ganti salinan cloud terenkripsi dengan pengaturan WebBrain perangkat ini saat ini?",
   "st.sync.consent.legacy": "Aktifkan sinkronisasi terenkripsi? WebBrain akan mengirimkan salinan memori Anda yang terenkripsi ujung ke ujung, pengisian otomatis profil, dan pengaturan penyedia kunci API ke WebBrain Cloud. Riwayat obrolan dan proses masuk OAuth tidak disinkronkan.",
   "st.sync.consent.denied": "Izin sinkronisasi terenkripsi tidak diberikan.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

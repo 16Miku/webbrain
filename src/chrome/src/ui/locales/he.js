@@ -1002,4 +1002,5 @@ export default {
   'st.vision.local.disable': 'השבתת החלופה המקומית',
   'st.vision.local.saved': 'חלופת הראייה המקומית הופעלה.',
   'st.vision.local.testing': 'הראייה המקומית נטענת ונבדקת… בשימוש הראשון יורדים ברקע כ-770 MB. אפשר לעבור בין כרטיסיות או לסגור את ההגדרות; יש להשאיר את Chrome פתוח.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

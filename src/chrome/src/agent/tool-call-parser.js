@@ -203,6 +203,23 @@ export function parseToolCallsFromText(text, allowedNames) {
     } catch { /* fall through to string cleanup */ }
     return cleaned.replace(/^["']+|["']+$/g, '');
   };
+  const parseBailingToolCall = (inner) => {
+    const nameMatch = /^([A-Za-z_]\w*)/.exec(inner);
+    if (!nameMatch || !allowedNames.has(nameMatch[1])) return null;
+    let cursor = nameMatch[0].length;
+    const args = {};
+    const pairRe = /<arg_key>\s*([A-Za-z_]\w*)\s*<\/arg_key>\s*<arg_value>\s*([\s\S]*?)\s*<\/arg_value>/giy;
+    while (cursor < inner.length) {
+      while (cursor < inner.length && /\s/.test(inner[cursor])) cursor++;
+      if (cursor >= inner.length) break;
+      pairRe.lastIndex = cursor;
+      const pair = pairRe.exec(inner);
+      if (!pair || pair.index !== cursor) return null;
+      args[pair[1]] = parseXmlParamValue(pair[2]);
+      cursor = pairRe.lastIndex;
+    }
+    return { name: nameMatch[1], arguments: args };
+  };
 
   const patterns = [
     /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi,
@@ -226,6 +243,14 @@ export function parseToolCallsFromText(text, allowedNames) {
           continue;
         }
       } catch { /* not JSON — try call:name{} format below */ }
+
+      // Ling/Bailing V3 native tool format:
+      // <tool_call>click_ax\n<arg_key>ref_id</arg_key>\n<arg_value>ref_7</arg_value></tool_call>
+      const bailingCall = parseBailingToolCall(inner);
+      if (bailingCall) {
+        results.push(bailingCall);
+        continue;
+      }
 
       const callMatch = /^call:(\w+)\s*\{([\s\S]*)\}$/.exec(inner);
       if (callMatch && allowedNames.has(callMatch[1])) {

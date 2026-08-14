@@ -60,7 +60,7 @@ src/chrome/
 │   ├── offscreen/
 │   │   ├── offscreen.html      # Offscreen document host
 │   │   ├── offscreen.js        # HTTP fetch proxy (localhost/PNA fallback)
-│   │   ├── vision-inference-host.js # Local vision worker bridge
+│   │   ├── vision-inference-host.js # Local WebGPU worker bridge
 │   │   └── inference-worker.js # Transformers.js WebGPU inference worker
 │   ├── providers/
 │   │   ├── base.js             # Provider interface
@@ -70,7 +70,7 @@ src/chrome/
 │   │   ├── aws-bedrock.js      # AWS Bedrock Converse
 │   │   ├── anthropic.js        # Anthropic Claude
 │   │   ├── llamacpp.js         # Local llama.cpp server
-│   │   ├── webgpu.js           # Chrome-only LFM2.5-VL vision sidecar
+│   │   ├── webgpu.js           # Chrome-only endpoint-free text + vision providers
 │   │   └── fetch-with-fallback.js  # Uses offscreen proxy on direct-fetch failure
 │   ├── trace/
 │   │   └── recorder.js         # Optional IndexedDB run recorder
@@ -106,7 +106,7 @@ src/chrome/
 | `webRequest` | Opt-in, in-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. Off by default. |
 | `alarms` | Scheduled tasks and scheduled resumes across browser sessions. |
 | `unlimitedStorage` | Optional trace recorder persists agent runs (LLM I/O + screenshots) into IndexedDB. A multi-step run can be 1–10 MB; the default ~10 MB origin cap fills after a few runs. |
-| `offscreen` | Hosts the localhost/PNA fetch proxy, tab recorder, and optional on-device WebGPU vision worker. Chrome MV3 service workers cannot provide those document APIs directly. |
+| `offscreen` | Hosts the localhost/PNA fetch proxy, tab recorder, and optional on-device WebGPU model worker. Chrome MV3 service workers cannot provide those document APIs directly. |
 | `privateNetworkAccess` | Same motivation — allow calling `http://localhost:8080` from the extension. |
 | `tabCapture` | Optional "Record this tab" feature in the sidepanel. Pulls a MediaStream of the active tab's video+audio via `chrome.tabCapture.getMediaStreamId()`, hands it to the offscreen document which runs the MediaRecorder. |
 
@@ -255,12 +255,12 @@ Chrome/Edge MV3 allows exactly one offscreen document per extension. The
 localhost-fetch proxy already needs one for Private Network Access
 workarounds. Rather than fight over it, `offscreen/offscreen.html` loads
 `offscreen.js` (fetch proxy), `recorder.js` (tab recorder), and
-`vision-inference-host.js` (local WebGPU vision worker bridge).
+`vision-inference-host.js` (local WebGPU model worker bridge).
 `src/offscreen/ensure.js` is the single creation helper, declaring all
   reasons up front: `LOCAL_STORAGE` (fetch), `WORKERS` (WebGPU inference),
   `BLOBS` (download staging), `DISPLAY_MEDIA` (tab/display capture),
   `USER_MEDIA` (mic), and `AUDIO_PLAYBACK` (watch alerts). Each script binds its own `runtime.onMessage` filter
-(`offscreen-fetch`, `recorder-*`, or `webgpu-vision-*`) so they don't collide.
+(`offscreen-fetch`, `recorder-*`, or `webgpu-*`) so they don't collide.
 
 ### Transcription provider selection
 
@@ -543,10 +543,11 @@ class BaseProvider {
 | `AnthropicProvider` | `/v1/messages` | `claude-(3\|sonnet-4\|opus-4)` patterns |
 | `LlamaCppProvider` | `localhost:8080/v1/chat/completions` | Enabled by default, configurable |
 | OpenAI-compatible configs | Provider-specific `/v1` endpoint | Model-name regex or explicit config |
-| `WebGPUVisionProvider` | Chrome offscreen worker | Always; dedicated screenshot-description sidecar only |
+| `WebGPUProvider` | Chrome offscreen worker; no endpoint | Text-only Ling 3.0 Tiny with native tools |
+| `WebGPUVisionProvider` | Chrome offscreen worker; no endpoint | Always; dedicated screenshot-description sidecar only |
 
-`ProviderManager` seeds WebBrain Cloud, nine local endpoints, Azure OpenAI, AWS
-Bedrock, direct cloud providers, and router providers. The canonical current ID
+`ProviderManager` seeds WebBrain Cloud, one Chromium in-browser WebGPU provider,
+nine local endpoints, Azure OpenAI, AWS Bedrock, direct cloud providers, and router providers. The canonical current ID
 and default-model table is maintained in
 [`docs/providers-and-models.md`](../../docs/providers-and-models.md).
 
@@ -560,7 +561,7 @@ OpenAI format → Anthropic blocks: system → separate `system` field; `assista
 (typically a `TypeError: Failed to fetch` against localhost), it lazily creates
 an offscreen document and proxies through it. The shared offscreen host also
 supports recording, validated download staging, audio, the cloud bridge, and
-the optional local WebGPU vision worker.
+the optional local WebGPU model worker.
 
 ---
 

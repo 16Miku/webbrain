@@ -17,7 +17,7 @@ The user's message, the current page content (AX tree, screenshot, or extracted 
 | Tool call history | Yes | Previous tool results are context for the next LLM call |
 | User memory | Yes, if enabled | Active records are injected into the system prompt; disabled memory is not sent |
 | User credentials (passwords, API keys) | Yes | If the user types them in chat or the agent fills them and they appear in tool results |
-| Provider API key | Yes | Sent as an HTTP header (Bearer token) to the provider's API endpoint |
+| Provider API key | Yes, when applicable | Sent as an HTTP header to endpoint-based providers; the in-browser WebGPU provider has no key or endpoint |
 
 When **Plan before Act** is enabled, action-mode turns (Act or Dev) make an additional planner
 call to the same configured provider before any browser tools run. That call
@@ -35,11 +35,12 @@ the extractor is skipped silently.
 
 **No separate analytics payload is added to provider requests.** The request data above is sent only as needed to run the selected provider and agent features.
 
-When Chromium's optional in-browser vision fallback is enabled, first use
-downloads the public model, tokenizer, and configuration files from Hugging
-Face. That request contains only ordinary model-download metadata; screenshots,
-page content, and conversation data are not included. The downloaded files are
-cached by the browser, and screenshot inference stays on-device.
+When either Chromium in-browser WebGPU path is used, first use downloads the
+public model, tokenizer, and configuration files from Hugging Face. That
+request contains only ordinary model-download metadata; screenshots, page
+content, and conversation data are not included. The downloaded files are
+cached by the browser, and both general text/tool inference and screenshot
+inference stay on-device.
 
 ### Which provider receives the data?
 
@@ -49,6 +50,8 @@ The user chooses their provider in Settings. Options include:
 - **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials and are never collected by WebBrain
 - **Local model runtimes**: llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang,
   LocalAI, and GPT4All — inference requests stay on the user's machine
+- **WebGPU (In-browser), Chromium only**: Ling 3.0 Tiny runs in an extension
+  Worker with no API key, base URL, localhost server, or model endpoint
 - **Local OpenAI-compatible Proxy**: WebBrain connects only to the configured
   local gateway, but the gateway may forward the request context to an upstream
   account. Its configuration and privacy policy determine where data goes.
@@ -224,7 +227,9 @@ WebBrain Cloud or to the configured LLM provider.
 Active WebBrain Cloud subscribers may explicitly enable encrypted profile sync in
 Settings. The extension combines user memory, profile autofill, and provider
 configuration (including API keys, but excluding legacy OAuth access/refresh
-token stores) into one vault and
+token stores) into one vault. Chromium-only WebGPU provider configuration and
+selection remain device-local so a Firefox sync cannot replace that local choice.
+The extension
 encrypts it in the browser with AES-256-GCM. Its key is derived from the sync
 password with PBKDF2-HMAC-SHA-256 (600,000 iterations). The password and derived
 key are retained in memory only for the browser session.
@@ -434,7 +439,7 @@ CDP capture → JPEG/PNG data URL
 | Browser ↔ LLM provider | Chat messages, page content, screenshot | HTTPS; user chose the provider |
 | Browser ↔ LLM provider | Enabled user memory prompt block and optional extractor input | HTTPS; user chose the provider |
 | Browser ↔ CapSolver | CAPTCHA token requests | HTTPS; user opted in |
-| Extension ↔ Offscreen document | Fetch proxy, recording, and optional local vision requests | Same extension, same origin |
+| Extension ↔ Offscreen document | Fetch proxy, recording, and optional local model requests | Same extension, same origin |
 | Service worker ↔ IndexedDB | Trace data | Browser sandbox; never transmitted |
 | Service worker ↔ `chrome.storage.local` | API keys, settings | Browser sandbox (plaintext) |
 
