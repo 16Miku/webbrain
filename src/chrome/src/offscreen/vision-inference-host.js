@@ -1,4 +1,4 @@
-/** Proxy WebGPU vision requests from the service worker to a module Worker. */
+/** Proxy endpoint-free WebGPU requests from the service worker to a module Worker. */
 
 let visionWorker = null;
 let visionWorkerReady = null;
@@ -7,7 +7,7 @@ const pendingVisionRequests = new Map();
 
 function settleVisionRequest(data) {
   if (data?.type === 'progress') {
-    console.debug('[vision-webgpu] model download', data);
+    console.debug('[webgpu] model download', data);
     return;
   }
   const pending = pendingVisionRequests.get(data?.id);
@@ -46,7 +46,10 @@ async function ensureVisionWorker() {
   return visionWorkerReady;
 }
 
-const VISION_MESSAGE_TYPES = new Set([
+const WEBGPU_MESSAGE_TYPES = new Set([
+  'webgpu-chat',
+  'webgpu-dispose',
+  'webgpu-probe',
   'webgpu-vision-chat',
   'webgpu-vision-probe',
   'webgpu-vision-dispose',
@@ -54,11 +57,11 @@ const VISION_MESSAGE_TYPES = new Set([
 ]);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!VISION_MESSAGE_TYPES.has(message?.type)) return false;
+  if (!WEBGPU_MESSAGE_TYPES.has(message?.type)) return false;
   (async () => {
     try {
       await ensureVisionWorker();
-      if (message.type === 'webgpu-vision-probe') {
+      if (message.type === 'webgpu-probe' || message.type === 'webgpu-vision-probe') {
         sendResponse(await sendVisionWorkerMessage('probe'));
         return;
       }
@@ -67,7 +70,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-vision-dispose') {
-        sendResponse(await sendVisionWorkerMessage('dispose'));
+        sendResponse(await sendVisionWorkerMessage('dispose-vision'));
+        return;
+      }
+      if (message.type === 'webgpu-dispose') {
+        sendResponse(await sendVisionWorkerMessage('dispose-text'));
+        return;
+      }
+      if (message.type === 'webgpu-chat') {
+        sendResponse(await sendVisionWorkerMessage('text-chat', {
+          modelId: message.model,
+          device: message.device,
+          dtype: message.dtype,
+          messages: message.messages || [],
+          options: message.options || {},
+        }));
         return;
       }
       sendResponse(await sendVisionWorkerMessage('chat', {

@@ -46,6 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (loaded model) | Auto metadata / override |
 | `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
 | `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
+| `webgpu` (Chromium) | `webgpu` | local | `webbrain-one/Ling-3.0-tiny-ONNX` | No |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
@@ -70,8 +71,9 @@ class BaseLLMProvider {
 
 WebBrain also ships 76 disabled-by-default provider cards sourced from the
 OpenCode provider catalog snapshot at commit
-`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the 29 original
-cards, Settings contains **105 built-in providers**.
+`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the original
+cards, Settings contains **106 built-in providers on Chromium** and **105 on
+Firefox**; the difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs |
 |---|
@@ -144,6 +146,18 @@ duplicate request.
   service integration.
 
 ### Local Providers
+
+On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider. It
+runs [`webbrain-one/Ling-3.0-tiny-ONNX`](https://huggingface.co/webbrain-one/Ling-3.0-tiny-ONNX/)
+through the packaged Transformers.js 4.2 runtime in a dedicated extension
+Worker. It supports Ling's native tool-calling template, is text-only, and
+defaults to the Compact prompt tier with a conservative 16k practical context
+setting. The first generation downloads approximately 4.85 GB of `q4f16`
+model data into Chrome's browser cache; **Test Connection** checks only the
+packaged runtime and hardware WebGPU adapter, so it does not trigger that
+download. There is no API key, base URL, localhost server, or OpenAI-compatible
+endpoint. Firefox does not expose the card because its build does not package
+the Chromium MV3 offscreen/WebGPU runtime.
 
 Nine local endpoint providers are enabled by default. The model runtimes need no
 API key unless the server was started with auth; the generic proxy card requires

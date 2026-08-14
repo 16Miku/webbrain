@@ -105,8 +105,8 @@ compacte la conversation à mesure qu'elle se remplit. Il existe aussi un relais
 **API cloud** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter et
-d'autres. Les Paramètres embarquent **105 cartes de fournisseurs** avec URL de
-base et modèle par défaut préremplis — voir le
+d'autres. Les Paramètres embarquent **106 cartes de fournisseurs sur Chromium**
+(105 sur Firefox), dont l'option WebGPU locale sans endpoint — voir le
 [catalogue complet](docs/fr/providers-and-models.md#catalogue-étendu-de-fournisseurs).
 
 ## Fonctionnalités
@@ -198,7 +198,7 @@ WebBrain a le focus.
 | [Architecture](docs/fr/architecture.md) | Vue d'ensemble, flux d'un tour, sous-systèmes |
 | [Outils de l'agent](docs/fr/agent-tools.md) | Niveaux, modes et matrice complète |
 | [Commandes slash](docs/fr/slash-commands.md) | Toutes les commandes et options |
-| [Fournisseurs et modèles](docs/fr/providers-and-models.md) | Les 105 cartes, configuration locale, niveaux |
+| [Fournisseurs et modèles](docs/fr/providers-and-models.md) | 106 cartes sur Chromium, 105 sur Firefox, configuration locale, niveaux |
 | [Compétences](docs/fr/skills.md) | Compétences intégrées, import, outils de compétence |
 | [Modèle de sécurité](docs/fr/security-model.md) | Permissions, identifiants, frontières de confiance |
 | [Défense contre l'injection de prompt](docs/fr/prompt-injection-defense.md) | Couches de défense et limites connues |

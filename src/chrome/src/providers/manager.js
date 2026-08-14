@@ -5,7 +5,13 @@ import { AnthropicProvider, AnthropicOAuthProvider } from './anthropic.js';
 import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
-import { WebGPUVisionProvider, WEBGPU_VISION_ENABLED_KEY } from './webgpu.js';
+import {
+  WebGPUProvider,
+  WebGPUVisionProvider,
+  WEBGPU_DTYPE,
+  WEBGPU_MODEL_ID,
+  WEBGPU_VISION_ENABLED_KEY,
+} from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
 // `await import()` throws "import() is disallowed on ServiceWorkerGlobalScope".
@@ -57,7 +63,7 @@ const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const OPENROUTER_LEGACY_DEFAULT_MODEL = 'stepfun/step-3.7-flash';
 const OPENAI_DEFAULT_MODEL = 'gpt-5.6-terra';
 const OPENAI_LEGACY_DEFAULT_MODEL = 'gpt-5.5';
-const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
+const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'webgpu', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
@@ -326,6 +332,21 @@ export class ProviderManager {
         apiKey: '',
         requiresApiKey: true,
         supportsAskStreaming: true,
+        supportsVision: false,
+        enabled: true,
+      },
+      webgpu: {
+        type: 'webgpu',
+        category: 'local',
+        label: 'WebGPU (In-browser)',
+        providerName: 'webgpu',
+        baseUrl: '',
+        model: WEBGPU_MODEL_ID,
+        device: 'webgpu',
+        dtype: WEBGPU_DTYPE,
+        contextWindow: 16384,
+        promptTier: 'compact',
+        supportsAskStreaming: false,
         supportsVision: false,
         enabled: true,
       },
@@ -727,7 +748,7 @@ export class ProviderManager {
 
   /**
    * Provider category for filter UI. Returns one of:
-   *   'local'  — connects through a local endpoint (llama.cpp, ollama, lmstudio, jan, vllm, sglang, localai, gpt4all, local_openai_proxy)
+   *   'local'  — runs in-browser or connects through a local endpoint
    *   'cloud'  — first-party API endpoint (openai, anthropic, gemini, etc.)
    *   'router' — multi-model gateways that fan out to many backends (openrouter, cloudflare, nvidia, groq)
    * Reads `config.category` first; falls back to a per-id table so configs
@@ -735,8 +756,8 @@ export class ProviderManager {
    */
   static categoryFor(id, config) {
     if (config && config.category) return config.category;
-    if (config?.type === 'llamacpp') return 'local';
-    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy'].includes(id)) return 'local';
+    if (config?.type === 'llamacpp' || config?.type === 'webgpu') return 'local';
+    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'webgpu'].includes(id)) return 'local';
     if (ROUTER_PROVIDER_IDS.includes(id)) return 'router';
     return 'cloud';
   }
@@ -772,6 +793,8 @@ export class ProviderManager {
     switch (normalizedConfig.type) {
       case 'llamacpp':
         return new LlamaCppProvider(normalizedConfig);
+      case 'webgpu':
+        return new WebGPUProvider(normalizedConfig);
       case 'openai':
         return new OpenAICompatibleProvider(normalizedConfig);
       case 'azure_openai':
@@ -1081,8 +1104,25 @@ export class ProviderManager {
     if (!this.providers.has(id)) {
       throw new Error(`Provider not found: ${id}`);
     }
+    const previousProvider = this.providers.get(this.activeProviderId);
+    const nextProvider = this.providers.get(id);
     this.activeProviderId = id;
     await this.save();
+    if (previousProvider instanceof WebGPUProvider && !(nextProvider instanceof WebGPUProvider)) {
+      try {
+        // Avoid creating the shared offscreen document just to dispose a model
+        // that was never loaded. Older Chrome builds may not expose
+        // hasDocument(), in which case dispatching is the safest fallback.
+        const existsPromise = chrome.offscreen?.hasDocument?.();
+        const exists = existsPromise ? await existsPromise.catch(() => null) : null;
+        if (exists !== false) {
+          const result = await previousProvider.dispose();
+          if (!result?.ok) console.warn('[providers] WebGPU dispose failed:', result?.error || 'unknown error');
+        }
+      } catch (error) {
+        console.warn('[providers] WebGPU dispose failed:', error?.message || error);
+      }
+    }
   }
 
   /**

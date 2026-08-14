@@ -1,18 +1,22 @@
 # Vendored Transformers.js WebGPU runtime
 
-This directory packages the JavaScript and WASM runtime used by the optional
-**Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback**. The fallback
-runs `LiquidAI/LFM2.5-VL-450M-ONNX` in a dedicated Web Worker and is never
-offered as WebBrain's general planning or tool-calling provider.
+This directory packages the JavaScript and WASM runtime used by two local
+WebGPU paths in Chrome:
+
+- **Settings -> Providers -> WebGPU (In-browser)** runs
+  `webbrain-one/Ling-3.0-tiny-ONNX` as a general text/tool provider.
+- **Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback** runs
+  `LiquidAI/LFM2.5-VL-450M-ONNX` as the dedicated screenshot sidecar.
 
 Model weights are not bundled. Transformers.js downloads the recommended
-WebGPU variants on first use and stores them in the browser cache:
+WebGPU variants on first use and stores them in the browser cache. Ling uses
+the repository's standard `q4f16` graph (about 4.85 GB); LFM2.5-VL uses:
 
 - `embed_tokens`: FP16
 - `vision_encoder`: FP16
 - `decoder_model_merged`: Q4
 
-The initial download is approximately 770 MB. Screenshots are processed on the
+The LFM2.5-VL download is approximately 770 MB. Screenshots are processed on the
 user's device; only the resulting text description enters the main provider's
 conversation.
 
@@ -85,12 +89,12 @@ Reapply the two specifier patches, update the version table above, then verify:
 ## Runtime architecture
 
 ```text
-ProviderManager.getVisionProvider()
-  -> WebGPUVisionProvider.chat()
+ProviderManager._createProvider('webgpu') / getVisionProvider()
+  -> WebGPUProvider.chat() / WebGPUVisionProvider.chat()
   -> MV3 offscreen document
   -> dedicated module Worker
-  -> AutoProcessor + AutoModelForImageTextToText
-  -> LiquidAI/LFM2.5-VL-450M-ONNX over WebGPU
+  -> text-generation pipeline / AutoProcessor + AutoModelForImageTextToText
+  -> Ling-3.0-tiny-ONNX / LFM2.5-VL-450M-ONNX over WebGPU
 ```
 
 Keep inference in the Worker. The MV3 service worker has no WebGPU, while the

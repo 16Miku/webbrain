@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <title>WebGPU in-browser provider</title>
+  <rect x="5" y="5" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/>
+  <path d="M9 9.25h2.1l.9 2.15.9-2.15H15l-2.05 5.5h-1.9L9 9.25Z" fill="currentColor"/>
+  <path d="M8 2.75v2.1M12 2.75v2.1M16 2.75v2.1M8 19.15v2.1M12 19.15v2.1M16 19.15v2.1M2.75 8h2.1M2.75 12h2.1M2.75 16h2.1M19.15 8h2.1M19.15 12h2.1M19.15 16h2.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

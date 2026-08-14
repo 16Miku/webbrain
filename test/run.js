@@ -777,7 +777,10 @@ const { ProviderManager: ProviderManagerFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/manager.js').replace(/\\/g, '/')
 );
 const {
+  WebGPUProvider,
   WebGPUVisionProvider,
+  WEBGPU_DTYPE,
+  WEBGPU_MODEL_ID,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
@@ -40764,7 +40767,7 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
 
 console.log('\nprovider categorization');
 
-test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider', async () => {
+test('Chrome exposes separate endpoint-free WebGPU text and vision providers', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
   let localEnabled = true;
@@ -40775,9 +40778,11 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
         lastError: null,
         sendMessage(message, callback) {
           sentMessages.push(message);
-          callback(message.type === 'webgpu-vision-dispose'
-            ? { ok: true, disposed: true }
-            : { ok: true, content: 'A settings page is visible.' });
+          if (message.type === 'webgpu-vision-dispose') callback({ ok: true, disposed: true });
+          else if (message.type === 'webgpu-dispose') callback({ ok: true, disposed: true });
+          else if (message.type === 'webgpu-probe') callback({ ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: '4.2.0' });
+          else if (message.type === 'webgpu-chat') callback({ ok: true, content: 'Local answer.' });
+          else callback({ ok: true, content: 'A settings page is visible.' });
         },
       },
       storage: {
@@ -40791,12 +40796,40 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
             },
             [WEBGPU_VISION_ENABLED_KEY]: localEnabled,
           }),
+          set: async () => {},
         },
       },
     };
 
     const manager = new ProviderManagerCh();
-    assert.equal(Object.hasOwn(manager._defaultConfigs(), 'webgpu'), false);
+    const webgpuConfig = manager._defaultConfigs().webgpu;
+    assert.equal(webgpuConfig.model, WEBGPU_MODEL_ID);
+    assert.equal(webgpuConfig.baseUrl, '');
+    assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
+    const generalProvider = manager._createProvider('webgpu', webgpuConfig);
+    assert.ok(generalProvider instanceof WebGPUProvider);
+    assert.equal(new WebGPUProvider({ model: 'unexpected/override' }).model, WEBGPU_MODEL_ID);
+    assert.equal(generalProvider.supportsTools, true);
+    assert.equal(generalProvider.supportsVision, false);
+    const probe = await generalProvider.testConnection();
+    assert.equal(probe.ok, true);
+    assert.equal(probe.libraryVersion, '4.2.0');
+    assert.deepEqual(sentMessages[0], { type: 'webgpu-probe' });
+    const tools = [{ type: 'function', function: { name: 'read_page', parameters: { type: 'object' } } }];
+    const localResult = await generalProvider.chat([{ role: 'user', content: 'Hello' }], { maxTokens: 123, tools });
+    assert.equal(localResult.content, 'Local answer.');
+    assert.deepEqual(sentMessages[1], {
+      type: 'webgpu-chat',
+      model: WEBGPU_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_DTYPE,
+      messages: [{ role: 'user', content: 'Hello' }],
+      options: { maxTokens: 123, tools },
+    });
+    const textDisposed = await generalProvider.dispose();
+    assert.deepEqual(textDisposed, { ok: true, disposed: true });
+    assert.deepEqual(sentMessages[2], { type: 'webgpu-dispose' });
+
     const provider = await manager.getVisionProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
     assert.equal(provider.name, 'webgpu-vision');
@@ -40814,7 +40847,7 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
     const result = await provider.chat(messages, { maxTokens: 321 });
     assert.equal(result.content, 'A settings page is visible.');
     assert.equal(result.toolCalls, null);
-    assert.deepEqual(sentMessages[0], {
+    assert.deepEqual(sentMessages[3], {
       type: 'webgpu-vision-chat',
       model: WEBGPU_VISION_MODEL_ID,
       device: 'webgpu',
@@ -40825,7 +40858,13 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
 
     const disposed = await manager.disposeWebgpuVisionRuntime();
     assert.deepEqual(disposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[1], { type: 'webgpu-vision-dispose' });
+    assert.deepEqual(sentMessages[4], { type: 'webgpu-vision-dispose' });
+
+    manager.providers.set('webgpu', generalProvider);
+    manager.providers.set('remote', { config: { type: 'openai', model: 'remote-model' } });
+    manager.activeProviderId = 'webgpu';
+    await manager.setActive('remote');
+    assert.deepEqual(sentMessages[5], { type: 'webgpu-dispose' });
 
     localEnabled = false;
     const preservedRemote = await manager.getVisionProvider();
@@ -40838,7 +40877,7 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
   }
 });
 
-test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', () => {
+test('WebGPU worker follows the Ling text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
@@ -40853,13 +40892,36 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
   assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
-  assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeRuntime\)/);
-  assert.doesNotMatch(worker, /pipeline\(['"]text-generation/);
+  assert.match(worker, /let visionRuntime = null/);
+  assert.match(worker, /let textRuntime = null/);
+  const visionLoader = worker.slice(worker.indexOf('async function getVisionRuntime'), worker.indexOf('async function getTextRuntime'));
+  const textLoader = worker.slice(worker.indexOf('async function getTextRuntime'), worker.indexOf('function enqueueModelOperation'));
+  assert.match(visionLoader, /disposeVisionRuntime\(\)/);
+  assert.doesNotMatch(visionLoader, /disposeTextRuntime\(\)/);
+  assert.match(textLoader, /disposeTextRuntime\(\)/);
+  assert.doesNotMatch(textLoader, /disposeVisionRuntime\(\)/);
+  assert.match(worker, /type === 'dispose-vision'[\s\S]*?enqueueModelOperation\(disposeVisionRuntime\)/);
+  assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
+  assert.match(worker, /pipeline\('text-generation', modelId/);
+  assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
+  assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
+  assert.match(worker, /tools: tools\.length \? tools : undefined/);
+  assert.match(host, /'webgpu-chat'/);
+  assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
+  assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
   assert.match(settingsScript, /dispose_webgpu_vision/);
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
+  const webgpuSettingsBlock = settingsScript.slice(
+    settingsScript.indexOf('webgpu: {'),
+    settingsScript.indexOf('azure_openai: {'),
+  );
+  assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
+  assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
+  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey|model)'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
 
@@ -40876,6 +40938,144 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
 });
 
+test('WebGPU worker replays Ling tool history without coupling text and vision lifecycles', async () => {
+  const previousSelf = globalThis.self;
+  const previousCounts = globalThis.__webgpuRuntimeCounts;
+  let workerListener = null;
+  const posted = [];
+  try {
+    globalThis.self = {
+      addEventListener(type, listener) {
+        if (type === 'message') workerListener = listener;
+      },
+      postMessage(message) {
+        posted.push(message);
+      },
+    };
+    const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
+    const { prepareTextMessages } = await import(workerUrl);
+    const messages = [
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_1',
+          type: 'function',
+          function: {
+            name: 'click_ax',
+            arguments: '{"ref_id":"ref_7","force":true}',
+          },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"success":true}' },
+    ];
+
+    const prepared = prepareTextMessages(messages);
+    assert.deepEqual(prepared[0].tool_calls[0].function.arguments, { ref_id: 'ref_7', force: true });
+    assert.equal(prepared[0].content, '');
+    assert.equal(prepared[1].content, '{"success":true}');
+    assert.equal(messages[0].tool_calls[0].function.arguments, '{"ref_id":"ref_7","force":true}', 'normalization must not mutate persisted history');
+
+    globalThis.__webgpuRuntimeCounts = {
+      visionProcessorLoads: 0,
+      visionModelLoads: 0,
+      textLoads: 0,
+      visionProcessorDisposals: 0,
+      visionModelDisposals: 0,
+      textDisposals: 0,
+    };
+    const runtimeModule = `
+      export const env = { version: 'test', backends: { onnx: { wasm: {} } } };
+      export class RawImage { constructor(data, width, height, channels) { Object.assign(this, { data, width, height, channels }); } }
+      export const AutoProcessor = {
+        async from_pretrained() {
+          globalThis.__webgpuRuntimeCounts.visionProcessorLoads++;
+          const processor = async () => ({ input_ids: { dims: { at: () => 1 } } });
+          processor.apply_chat_template = () => 'vision prompt';
+          processor.batch_decode = () => ['vision answer'];
+          processor.dispose = async () => { globalThis.__webgpuRuntimeCounts.visionProcessorDisposals++; };
+          return processor;
+        },
+      };
+      export const AutoModelForImageTextToText = {
+        async from_pretrained() {
+          globalThis.__webgpuRuntimeCounts.visionModelLoads++;
+          return {
+            generate: async () => ({ slice: () => ({}) }),
+            dispose: async () => { globalThis.__webgpuRuntimeCounts.visionModelDisposals++; },
+          };
+        },
+      };
+      export async function pipeline() {
+        globalThis.__webgpuRuntimeCounts.textLoads++;
+        const instance = async (input) => [{ generated_text: [...input, { role: 'assistant', content: 'text answer' }] }];
+        instance.model = {};
+        instance.tokenizer = {};
+        instance.dispose = async () => { globalThis.__webgpuRuntimeCounts.textDisposals++; };
+        return instance;
+      }
+    `;
+    let requestId = 1;
+    const dispatch = async (type, payload = {}) => {
+      const id = requestId++;
+      await workerListener({ data: { id, type, payload } });
+      const response = posted.find(message => message.id === id);
+      assert.ok(response, `worker did not answer ${type}`);
+      assert.equal(response.ok, true, response.error || `${type} failed`);
+      return response;
+    };
+    await dispatch('init', {
+      transformersUrl: `data:text/javascript,${encodeURIComponent(runtimeModule)}`,
+      wasmMjsUrl: 'test.mjs',
+      wasmUrl: 'test.wasm',
+    });
+    const visionPayload = {
+      modelId: 'vision-model',
+      device: 'webgpu',
+      dtype: { decoder_model_merged: 'q4' },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe this.' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+        ],
+      }],
+      options: { visionProbe: true, maxTokens: 1 },
+    };
+    const textPayload = {
+      modelId: 'text-model',
+      device: 'webgpu',
+      dtype: 'q4f16',
+      messages: [{ role: 'user', content: 'Continue.' }],
+      options: { maxTokens: 1 },
+    };
+    await dispatch('chat', visionPayload);
+    await dispatch('text-chat', textPayload);
+    await dispatch('chat', visionPayload);
+    await dispatch('text-chat', textPayload);
+    assert.deepEqual(globalThis.__webgpuRuntimeCounts, {
+      visionProcessorLoads: 1,
+      visionModelLoads: 1,
+      textLoads: 1,
+      visionProcessorDisposals: 0,
+      visionModelDisposals: 0,
+      textDisposals: 0,
+    }, 'alternating calls should reuse both resident runtimes');
+
+    await dispatch('dispose-vision');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionProcessorDisposals, 1);
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelDisposals, 1);
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, 0, 'vision disposal must preserve Ling');
+    await dispatch('dispose-text');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, 1);
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+    if (previousCounts === undefined) delete globalThis.__webgpuRuntimeCounts;
+    else globalThis.__webgpuRuntimeCounts = previousCounts;
+  }
+});
+
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
@@ -40883,6 +41083,7 @@ test('categoryFor: local family', () => {
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
   }
+  assert.equal(ProviderManagerCh.categoryFor('webgpu', { type: 'webgpu' }), 'local');
 });
 
 test('categoryFor: cloud family (openai / anthropic / gemini / mistral / deepseek / xai / oauth)', () => {
@@ -42918,7 +43119,12 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    assert.equal(Object.keys(defaults).length, 105, `${label}: expected 29 original + 76 catalog providers`);
+    const expectedDefaultCount = label === 'chrome' ? 106 : 105;
+    assert.equal(
+      Object.keys(defaults).length,
+      expectedDefaultCount,
+      `${label}: unexpected built-in provider count`,
+    );
     for (const id of expectedIds) {
       const config = defaults[id];
       assert.ok(config, `${label}: missing ${id}`);
@@ -43969,17 +44175,17 @@ test('Kimi settings keep K2.5 as the default and list every supported model', ()
   }
 });
 
-test('_defaultConfigs: chrome and firefox share the same provider set', () => {
+test('_defaultConfigs: chrome and firefox differ only by the Chromium WebGPU provider', () => {
   const chDefaults = new ProviderManagerCh()._defaultConfigs();
   const fxDefaults = new ProviderManagerFx()._defaultConfigs();
   assert.deepEqual(
-    Object.keys(chDefaults).sort(),
+    Object.keys(chDefaults).filter(id => id !== 'webgpu').sort(),
     Object.keys(fxDefaults).sort(),
-    'chrome and firefox provider lists diverged'
+    'provider lists diverged beyond the Chromium-only WebGPU runtime'
   );
   // Categories must also match — drift here would mean the filter UI
   // shows different buckets on each platform.
-  for (const id of Object.keys(chDefaults)) {
+  for (const id of Object.keys(fxDefaults)) {
     assert.equal(
       chDefaults[id].category, fxDefaults[id].category,
       `provider ${id}: category differs (chrome=${chDefaults[id].category}, firefox=${fxDefaults[id].category})`
@@ -60021,6 +60227,21 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{
         name: 'click',
         args: { name: 'Save', index: 2, force: true, coordinates: [10, 20] },
+      }],
+    },
+    {
+      label: 'Ling Bailing V3 arg key/value parameters',
+      raw: [
+        '<tool_call>click_ax',
+        '<arg_key>ref_id</arg_key>',
+        '<arg_value>"ref_7"</arg_value>',
+        '<arg_key>force</arg_key>',
+        '<arg_value>true</arg_value>',
+        '</tool_call>',
+      ].join('\n'),
+      expected: [{
+        name: 'click_ax',
+        args: { ref_id: 'ref_7', force: true },
       }],
     },
     {

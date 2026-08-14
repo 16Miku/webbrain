@@ -2515,6 +2515,12 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    webgpu: {
+      fields: [
+        CONTEXT_WINDOW_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
     azure_openai: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://{resource}.openai.azure.com' },
@@ -2905,6 +2911,14 @@ function renderProviders() {
                   background:rgba(74,144,217,0.08);border:1px solid rgba(74,144,217,0.22);
                   font-size:12px;color:var(--text2);line-height:1.5;">
            ${t('st.providers.webbrain_data_use.body', { privacyLink, subscribeLink, accountLink })}
+         </div>`;
+    }
+    if (id === 'webgpu') {
+      const modelLink = '<a href="https://huggingface.co/webbrain-one/Ling-3.0-tiny-ONNX/" target="_blank" rel="noopener noreferrer">Ling 3.0 Tiny ONNX</a>';
+      providerNote = `<div style="margin-top:10px;padding:10px 12px;border-radius:6px;
+                  background:rgba(74,144,217,0.08);border:1px solid rgba(74,144,217,0.22);
+                  font-size:12px;color:var(--text2);line-height:1.5;">
+           ${t('st.providers.webgpu_note.body', { modelLink })}
          </div>`;
     }
     const extensionOrigin = chrome.runtime.getURL('').replace(/\/$/, '');
