@@ -40843,6 +40843,9 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
     assert.ok(generalProvider instanceof WebGPUProvider);
+    assert.equal(generalProvider.promptTier, 'compact');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID }).promptTier, 'compact');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID, promptTier: 'full' }).promptTier, 'full');
     assert.equal(new WebGPUProvider({ model: WEBGPU_QWEN_MODEL_ID }).model, WEBGPU_QWEN_MODEL_ID);
     const gemmaProvider = new WebGPUProvider({ model: WEBGPU_GEMMA_MODEL_ID, dtype: WEBGPU_DTYPE });
     assert.equal(gemmaProvider.model, WEBGPU_GEMMA_MODEL_ID);
