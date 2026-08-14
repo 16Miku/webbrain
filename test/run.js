@@ -41203,6 +41203,41 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     const resumed = await dispatch('download-text', textPayload);
     assert.equal(resumed.status, 'ready');
     assert.equal(resumed.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = true;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const activePayload = { ...textPayload, modelId: 'text-model-active' };
+    const otherPayload = { ...textPayload, modelId: 'text-model-other' };
+    const activeDownloadId = requestId++;
+    const activeDownloadPromise = workerListener({
+      data: { id: activeDownloadId, type: 'download-text', payload: activePayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextDownload; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'second download should reach the controllable pipeline');
+
+    const otherStatus = await dispatch('text-download-status', otherPayload);
+    assert.equal(otherStatus.modelId, otherPayload.modelId);
+    assert.equal(otherStatus.status, 'not-downloaded');
+    const stopOtherId = requestId++;
+    const stopOtherPromise = workerListener({
+      data: { id: stopOtherId, type: 'stop-text-download', payload: otherPayload },
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    globalThis.__releaseWebgpuTextDownload();
+    await Promise.all([activeDownloadPromise, stopOtherPromise]);
+
+    const activeDownload = posted.find(message => message.id === activeDownloadId);
+    assert.equal(activeDownload.ok, true);
+    assert.equal(activeDownload.modelId, activePayload.modelId, 'another model status/stop request must not relabel the active transfer');
+    assert.equal(activeDownload.status, 'ready', 'stopping another model must not abort the active transfer');
+    const stoppedOther = posted.find(message => message.id === stopOtherId);
+    assert.equal(stoppedOther.modelId, otherPayload.modelId);
+    assert.equal(stoppedOther.status, 'not-downloaded');
+    const activeStatus = await dispatch('text-download-status', activePayload);
+    assert.equal(activeStatus.status, 'ready');
+    assert.equal(activeStatus.ready, true);
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;

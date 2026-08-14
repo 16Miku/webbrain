@@ -16,6 +16,7 @@ let visionRuntimeLoadPromise = null;
 let visionRuntimeLoadKey = '';
 let textRuntime = null;
 let textRuntimeKey = '';
+let textRuntimeModelKey = '';
 let textRuntimeLoadPromise = null;
 let textRuntimeLoadKey = '';
 let modelOperationQueue = Promise.resolve();
@@ -287,6 +288,7 @@ async function disposeTextRuntime() {
   const runtime = textRuntime;
   textRuntime = null;
   textRuntimeKey = '';
+  textRuntimeModelKey = '';
   await disposeRuntime(runtime);
 }
 
@@ -390,6 +392,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
       tokenizer: pipeline.tokenizer,
     };
     textRuntimeKey = key;
+    textRuntimeModelKey = textModelKey(modelId, dtype);
     return textRuntime;
   })();
   textRuntimeLoadPromise = loadPromise;
@@ -407,8 +410,11 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
 async function getTextDownloadStatus(modelId, dtype) {
   const ready = await isTextModelReady(modelId, dtype);
   const sameModel = textDownloadState.modelId === modelId && textDownloadState.dtype === dtype;
-  if (ready && (!sameModel || !['downloading', 'stopping'].includes(textDownloadState.status))) {
-    textDownloadState = {
+  if (sameModel && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status)) {
+    return textDownloadSnapshot();
+  }
+  if (ready) {
+    return {
       status: 'ready',
       ready: true,
       modelId,
@@ -419,20 +425,19 @@ async function getTextDownloadStatus(modelId, dtype) {
       progress: 100,
       error: '',
     };
-  } else if (!ready && !sameModel) {
-    textDownloadState = {
-      status: 'not-downloaded',
-      ready: false,
-      modelId,
-      dtype,
-      file: '',
-      loaded: 0,
-      total: 0,
-      progress: 0,
-      error: '',
-    };
   }
-  return textDownloadSnapshot();
+  if (sameModel && textDownloadState.status === 'error') return textDownloadSnapshot();
+  return {
+    status: 'not-downloaded',
+    ready: false,
+    modelId,
+    dtype,
+    file: '',
+    loaded: 0,
+    total: 0,
+    progress: 0,
+    error: '',
+  };
 }
 
 async function downloadTextModel(payload) {
@@ -440,6 +445,12 @@ async function downloadTextModel(payload) {
   if (!modelId) throw new Error('No text-generation model was specified.');
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
+  const tracksDifferentTransfer = textDownloadState.modelId
+    && (textDownloadState.modelId !== modelId || textDownloadState.dtype !== dtype)
+    && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status);
+  if (tracksDifferentTransfer) {
+    throw new Error(`Finish or stop the ${textDownloadState.modelId} download before downloading ${modelId}.`);
+  }
   if (await isTextModelReady(modelId, dtype)) {
     textDownloadState = {
       ...textDownloadState,
@@ -526,7 +537,7 @@ function pauseTextDownload() {
 }
 
 async function clearTextModelCache(modelId, dtype) {
-  await disposeTextRuntime();
+  if (textRuntimeModelKey === textModelKey(modelId, dtype)) await disposeTextRuntime();
   const modelPath = `/${modelId}/`;
   const markerUrl = textReadyMarkerUrl(modelId, dtype);
   if (typeof caches !== 'undefined') {
@@ -543,7 +554,7 @@ async function clearTextModelCache(modelId, dtype) {
   readyTextModelKeys.delete(textModelKey(modelId, dtype));
   textDownloadFiles.clear();
   textDownloadCancelMode = '';
-  textDownloadState = {
+  const clearedState = {
     status: 'not-downloaded',
     ready: false,
     modelId,
@@ -554,8 +565,13 @@ async function clearTextModelCache(modelId, dtype) {
     progress: 0,
     error: '',
   };
-  postTextDownloadState({ force: true });
-  return textDownloadSnapshot();
+  const sameModel = !textDownloadState.modelId
+    || (textDownloadState.modelId === modelId && textDownloadState.dtype === dtype);
+  if (sameModel) {
+    textDownloadState = clearedState;
+    postTextDownloadState({ force: true });
+  }
+  return { ...clearedState };
 }
 
 function enqueueModelOperation(operation) {
@@ -842,10 +858,14 @@ self.addEventListener('message', async event => {
     if (type === 'stop-text-download') {
       const modelId = String(payload?.modelId || '').trim();
       const dtype = payload?.dtype || 'q4f16';
-      textDownloadCancelMode = 'stop';
-      textDownloadState = { ...textDownloadState, status: 'stopping', ready: false, error: '' };
-      textDownloadAbortController?.abort();
-      postTextDownloadState({ force: true });
+      const targetsTrackedTransfer = textDownloadState.modelId === modelId
+        && textDownloadState.dtype === dtype;
+      if (targetsTrackedTransfer) {
+        textDownloadCancelMode = 'stop';
+        textDownloadState = { ...textDownloadState, status: 'stopping', ready: false, error: '' };
+        if (activeTextDownloadModelId === modelId) textDownloadAbortController?.abort();
+        postTextDownloadState({ force: true });
+      }
       const state = await enqueueModelOperation(() => clearTextModelCache(modelId, dtype));
       self.postMessage({ id, ok: true, ...state });
       return;
