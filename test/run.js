@@ -20987,6 +20987,7 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
   const metalinkXml = `<?xml version="1.0"?><metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="example.zim">
     <size>4621915</size><hash type="sha-256">b3d5db724e2ef884eaf43e3677ba2dc5c4d17619114b3de4602c119ca23dcfcd</hash>
     <pieces length="4194304" type="sha-1"><hash>f6dc33924096656d9952a6ffe0de101d1b3aa5c6</hash><hash>33534cc215d7a94fba21cf264a64f2ef954dedce</hash></pieces>
+    <url priority="2">https://mirror.example.test/wikipedia/example.zim</url>
     <url priority="1">https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim</url>
   </file></metalink>`;
 
@@ -21003,6 +21004,10 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
     assert.equal(resolved.pieceLength, 4194304, `${label}: resumable piece size was not preserved`);
     assert.deepEqual(resolved.pieceHashes, ['f6dc33924096656d9952a6ffe0de101d1b3aa5c6', '33534cc215d7a94fba21cf264a64f2ef954dedce'], `${label}: piece integrity hashes were lost`);
     assert.equal(resolved.downloadUrl, 'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim', `${label}: mirror URL was not selected`);
+    assert.deepEqual(resolved.mirrors, [
+      'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim',
+      'https://mirror.example.test/wikipedia/example.zim',
+    ], `${label}: priority-ordered Metalink mirrors were not retained`);
   }
 });
 
@@ -21512,6 +21517,34 @@ test('Apocalypse Mode startup preserves update alarms and rearms persisted downl
   }
 });
 
+test('Apocalypse Mode status snapshots omit private download metadata', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'large-archive', status: 'ready', filename: 'wikipedia.zim', size: 100, bytesDownloaded: 100,
+      downloadUrl: 'https://primary.example.test/wikipedia.zim',
+      pieceHashes: Array.from({ length: 10_000 }, (_, index) => `hash-${index}`),
+      pieceLength: 4_194_304, pieceHashAlgorithm: 'sha-1', sha256: 'private-integrity-value',
+      mirrors: ['https://primary.example.test/wikipedia.zim', 'https://backup.example.test/wikipedia.zim'],
+      mirrorIndex: 1, leaseToken: 'private-lease', leaseUntil: 50_000,
+      target: { kind: 'opfs', key: 'large-archive.zim' },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store: {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return [{ ...record }]; },
+      },
+      storage: { async estimate() { return {}; } },
+    });
+    const [visible] = (await controller.snapshot()).archives;
+
+    for (const field of ['pieceHashes', 'pieceLength', 'pieceHashAlgorithm', 'sha256', 'mirrors', 'mirrorIndex', 'leaseToken', 'leaseUntil']) {
+      assert.equal(Object.hasOwn(visible, field), false, `${label}: status snapshot exposed ${field}`);
+    }
+    assert.equal(visible.downloadUrl, record.downloadUrl, `${label}: lifecycle UI lost its managed-download marker`);
+    assert.equal(visible.bytesDownloaded, record.bytesDownloaded, `${label}: status snapshot lost visible progress`);
+  }
+});
+
 test('Apocalypse Mode update checks cannot recreate a concurrently deleted archive', async () => {
   const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
     <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
@@ -21636,6 +21669,88 @@ test('Apocalypse Mode rejects a corrupt piece before storage and backs off', asy
     assert.equal(records.get('corrupt').status, 'retrying', `${label}: corruption did not enter bounded retry state`);
     assert.equal(records.get('corrupt').nextRetryAt, 70_000, `${label}: first retry did not use exponential backoff`);
     assert.deepEqual(scheduled.slice(-1), [60_000], `${label}: retry alarm delay was not bounded`);
+  }
+});
+
+test('Apocalypse Mode rotates Metalink mirrors across automatic and manual retries', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    let timestamp = 1_000;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const urls = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async (url) => { urls.push(url); return { ok: false, status: 503 }; },
+      schedule() {},
+      randomId: () => 'mirror-rotation',
+      now: () => timestamp,
+    });
+    const primary = 'https://primary.example.test/archive.zim';
+    const backup = 'https://backup.example.test/archive.zim';
+    await manager.install({
+      filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      mirrors: [primary, backup], downloadUrl: primary,
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await manager.processNext();
+      const current = records.get('mirror-rotation');
+      if (current.status === 'retrying') timestamp = current.nextRetryAt;
+    }
+    assert.equal(records.get('mirror-rotation').status, 'error', `${label}: retry exhaustion did not become actionable`);
+    await manager.retry('mirror-rotation');
+    await manager.processNext();
+
+    assert.deepEqual(urls, [primary, backup, primary, backup, primary, backup, primary],
+      `${label}: automatic or manual retry reused a failed mirror`);
+  }
+});
+
+test('Apocalypse Mode failed-piece state loses atomically to concurrent deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'failed-piece-race', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/archive.zim', target: { kind: 'opfs', key: 'archive.zim' },
+      pieceIndex: 0, retryCount: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const schedules = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent() {
+        compareAttempts += 1;
+        records.delete(record.id);
+        return false;
+      },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async () => ({ ok: false, status: 503 }),
+      schedule: delay => schedules.push(delay),
+      randomId: () => 'failure-lease',
+      now: () => 100,
+    });
+    const result = await manager.processNext();
+
+    assert.equal(result.reason, 'cancelled', `${label}: stale failed-piece state was reported as current`);
+    assert.equal(compareAttempts, 1, `${label}: failed-piece state did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: failed-piece state recreated deleted metadata`);
+    assert.deepEqual(schedules, [], `${label}: cancelled failure scheduled a retry`);
   }
 });
 

@@ -655,6 +655,31 @@ function downloadable(record, now) {
     || (record.status === 'retrying' && Number(record.nextRetryAt) <= now);
 }
 
+function advanceDownloadMirror(record) {
+  const mirrors = Array.isArray(record?.mirrors)
+    ? [...new Set(record.mirrors.filter(url => /^https:\/\//.test(String(url || ''))))]
+    : [];
+  if (!mirrors.length) return {};
+  let currentIndex = Number(record.mirrorIndex);
+  if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= mirrors.length
+    || mirrors[currentIndex] !== record.downloadUrl) {
+    currentIndex = mirrors.indexOf(record.downloadUrl);
+  }
+  const mirrorIndex = (currentIndex + 1) % mirrors.length;
+  return { mirrors, mirrorIndex, downloadUrl: mirrors[mirrorIndex] };
+}
+
+function publicArchiveRecord(record) {
+  const projected = { ...record };
+  for (const field of ['pieceHashes', 'pieceLength', 'pieceHashAlgorithm', 'mirrors', 'mirrorIndex', 'sha256', 'leaseToken', 'leaseUntil']) {
+    delete projected[field];
+  }
+  projected.target = record.target?.kind === 'file-handle'
+    ? { kind: 'file-handle', name: record.target.handle?.name || record.filename || '' }
+    : record.target;
+  return projected;
+}
+
 function ownsDownloadClaim(record, generation, leaseToken, config) {
   return Boolean(record)
     && record.generation === generation
@@ -871,6 +896,7 @@ export function createApocalypseArchiveManager(options = {}) {
       const retrying = !permissionRequired && retryCount < MAX_RETRY_ATTEMPTS;
       const next = {
         ...current,
+        ...(permissionRequired ? {} : advanceDownloadMirror(current)),
         status: retrying ? 'retrying' : 'error',
         leaseToken: '',
         leaseUntil: 0,
@@ -880,7 +906,10 @@ export function createApocalypseArchiveManager(options = {}) {
         errorKind: permissionRequired ? APOCALYPSE_FILE_PERMISSION_REQUIRED : '',
         updatedAt: now(),
       };
-      await store.putArchive(next);
+      const saved = await putArchiveIfCurrent(store, next, {
+        status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
+      });
+      if (!saved) return { processed: false, reason: 'cancelled' };
       if (retrying) schedule(delay);
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
     } finally {
@@ -1107,12 +1136,7 @@ export function createApocalypseController(api, options = {}) {
   async function snapshot() {
     await maybeRecoverInterruptedImports();
     const [state, estimate] = await Promise.all([manager.getSnapshot(), storage.estimate().catch(() => ({}))]);
-    const archives = state.archives.map(record => ({
-      ...record,
-      target: record.target?.kind === 'file-handle'
-        ? { kind: 'file-handle', name: record.target.handle?.name || record.filename || '' }
-        : record.target,
-    }));
+    const archives = state.archives.map(publicArchiveRecord);
     const capacity = normalizeStorageEstimate(estimate);
     return { ...state, archives, storage: { usage: capacity.usage, quota: capacity.quota } };
   }
