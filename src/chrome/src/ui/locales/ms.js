@@ -1,6 +1,8 @@
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Penstriman respons terganggu; mencuba semula giliran Ask ini tanpa penstriman.',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Cari tetapan Umum',
   'st.display.search.empty': 'Tiada tetapan Umum yang sepadan.',
   'st.display.advanced': 'Lanjutan',
+  ...apocalypseModeCopy,
   'st.display.cloud_bridge.label': 'Jambatan awan',
   'st.display.cloud_bridge.desc': 'Sambungkan satu pengawal setempat ke profil Chromium ini. Gunakan port 17373 untuk WebBrain Cloud, 17374 untuk klien MCP atau 17375 untuk LM Studio. Hanya satu jambatan boleh aktif; gesaan kebenaran biasa masih digunakan.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

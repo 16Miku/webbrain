@@ -13,7 +13,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
-import { WIKIPEDIA_SYNC_ALARM, configureWikipediaOfflineSync, handleWikipediaOfflineAlarm } from './agent/wikipedia-offline.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -94,6 +94,7 @@ import {
  */
 
 const providerManager = new ProviderManager();
+const apocalypseController = createApocalypseController(browser);
 const agent = new Agent(providerManager);
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
@@ -805,9 +806,6 @@ async function loadCustomSkills() {
     console.warn('[WebBrain] Packaged skills could not be refreshed', e);
   }
   agent.setCustomSkills(skills);
-  await configureWikipediaOfflineSync(browser, agent.customSkills).catch((error) => {
-    console.warn('[WebBrain] Wikipedia offline sync could not be configured:', error);
-  });
 }
 const customSkillsReady = loadCustomSkills();
 
@@ -996,9 +994,6 @@ browser.storage.onChanged.addListener((changes) => {
       });
     }
     refreshPrompts = true;
-    configureWikipediaOfflineSync(browser, agent.customSkills).catch((error) => {
-      console.warn('[WebBrain] Wikipedia offline sync could not be configured:', error);
-    });
   }
   if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
     loadCaptchaSolver()
@@ -1021,9 +1016,10 @@ browser.storage.onChanged.addListener((changes) => {
 });
 
 browser.alarms.onAlarm.addListener((alarm) => {
-  handleWikipediaOfflineAlarm(alarm, browser, agent.customSkills).catch((error) => {
-    console.warn('[WebBrain] Wikipedia offline sync failed:', error);
-    browser.alarms.create(WIKIPEDIA_SYNC_ALARM, { delayInMinutes: 5 });
+  if (alarm?.name !== APOCALYPSE_DOWNLOAD_ALARM) return;
+  apocalypseController.manager.processNext().catch((error) => {
+    console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
+    browser.alarms.create(APOCALYPSE_DOWNLOAD_ALARM, { delayInMinutes: 5 });
   });
 });
 
@@ -1957,6 +1953,8 @@ async function handleMessage(msg, sender) {
   }
 
   switch (msg.action) {
+    case 'apocalypse_mode':
+      return await apocalypseController.handle(msg.command, msg);
     case 'profile_sync_state': return { ok: true, ...(await profileSync.state()) };
     case 'profile_sync_auth_start': return { ok: true, ...(await profileSync.authStart(String(msg.email || '').trim())) };
     case 'profile_sync_auth_status': return { ok: true, ...(await profileSync.authStatus(msg.challengeId, msg.verifier)) };

@@ -1,6 +1,8 @@
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Naputol ang pag-stream ng tugon; sinusubukang muli ang Ask turn na ito nang walang streaming.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Maghanap sa General na mga setting',
   'st.display.search.empty': 'Walang tugmang General na mga setting.',
   'st.display.advanced': 'Advanced',
+  ...apocalypseModeCopy,
   'st.display.clarify_timeout.label': 'Timeout ng clarify',
   'st.display.clarify_timeout.desc': 'Gaano katagal maghintay ng sagot sa clarify bago awtomatikong piliin ang unang opsyon (o mag-timeout kung walang opsyon). 0 = Agad (palaging auto-select). Higit sa 1200s ay walang hangganan (Naka-off). Default 60s. Hindi para sa permission o form-submit confirmations.',
   'st.display.clarify_timeout.off': 'Naka-off',

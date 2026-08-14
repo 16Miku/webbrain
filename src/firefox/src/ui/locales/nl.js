@@ -1,6 +1,8 @@
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'De antwoordstream is onderbroken; deze Ask-beurt wordt opnieuw geprobeerd zonder streaming.',
@@ -495,6 +497,7 @@ export default {
   'st.display.search.placeholder': 'Zoek in Algemene instellingen',
   'st.display.search.empty': 'Geen algemene instellingen gevonden.',
   'st.display.advanced': 'Geavanceerd',
+  ...apocalypseModeCopy,
   'st.display.help_improve.label': 'Help WebBrain verbeteren',
   'st.display.help_improve.desc_html': 'Sta toe dat geschikte WebBrain Cloud-tekst- en toolinteracties worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Standaard ingeschakeld. Als u dit uitschakelt, wordt het huidige gesprek permanent uitgesloten; opnieuw inschakelen geldt vanaf het volgende nieuwe gesprek. Screenshots en afbeeldingsbytes worden niet bewaard in de WebBrain-verbeteringsdatabase. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacybeleid →</a>',
   'st.display.clarify_timeout.label': 'Verduidelijkingstime-out',

@@ -423,7 +423,7 @@ tracks as a successful video or hand ffmpeg work to the user.
 | Draft or rewrite an email reply, message, or post the user will send | Humanizer | Ask, Act, Dev | Prompt-only; preactivated on webmail adapters and on the explicit Humanize selected-text shortcut, otherwise routed by catalog. Returns final text only. |
 | Look up weather or a short forecast | Open-Meteo weather | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Find books, ISBNs, authors, or publication data | Open Library | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
-| Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Live Wikipedia APIs plus a local text-only cache; all results are untrusted. |
+| Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Live Wikipedia APIs plus explicitly installed local Kiwix/ZIM archives; all results are untrusted. |
 | Restore Turkish characters in ASCII Turkish text after an explicit user request | Turkish deasciifier | Ask, Act, Dev | Prompt-only and opt-in; ordinary form-entry tools continue to type their text argument verbatim. |
 | Upload one non-sensitive file to a short-lived public link | Temporary file share (Litterbox) | Act, Dev | Not shown to Ask; the skill uses existing browser upload tools. |
 
@@ -436,17 +436,15 @@ not a deterministic intent classifier. Routing quality also depends on concise,
 distinct summaries; a broad skill such as FreeSkillz deliberately loads one
 instruction bundle for several related capabilities.
 
-The packaged Wikipedia skill adds one built-in adapter behind its existing
-`search_wikipedia` and `get_wikipedia_summary` interface. Enabling that exact
-built-in schedules alarm-driven, 20-page batches from the English Wikipedia
-Level 3 vital-article catalog pinned to revision `1368863307`.
-`wikipedia-offline.js` stores plain-text introductions, source URLs, revision
-metadata, and the restart cursor in a separate `webbrain_wikipedia` IndexedDB
-database. Live tool results extend the cache opportunistically. A failed live
-request falls back to deterministic lexical passage ranking over local
-records; the dynamic skill's `resultPolicy: "untrusted"` still wraps those
-cached third-party bytes. Removing the skill cancels its alarm and clears that
-database. Images and full Wikipedia/Kiwix archives stay outside this module.
+The packaged Wikipedia skill keeps its existing `search_wikipedia` and
+`get_wikipedia_summary` interface. When a live request fails, the exact
+built-in tool may query archives that the user explicitly installed through
+Settings → Advanced → Apocalypse Mode. `apocalypse-mode.js` owns catalog
+metadata, resumable piece verification, durable lifecycle state, OPFS or
+user-selected archive bytes, and the local openZIM reader. IndexedDB contains only configuration,
+archive metadata, and restart cursors—not multi-gigabyte archive bodies.
+Kiwix content remains on the dynamic skill's `resultPolicy: "untrusted"` path.
+See [Apocalypse Mode](apocalypse-mode.md) for storage and browser limits.
 
 The optional metadata format is a separate prompt-stripped fence:
 

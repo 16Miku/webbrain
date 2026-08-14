@@ -342,6 +342,12 @@ const WikipediaOfflineCh = await import(
 const WikipediaOfflineFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
 );
+const ApocalypseModeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
+const ApocalypseModeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
 );
@@ -20941,240 +20947,503 @@ test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
   }
 });
 
-test('Wikipedia skill retrieves cached passages when the network is unavailable', async () => {
-  const records = [
-    {
-      pageid: 1208,
-      title: 'Alan Turing',
-      extract: 'Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.',
-      url: 'https://en.wikipedia.org/wiki/Alan_Turing',
-      revision: 12345,
+test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata before install', () => {
+  const catalogXml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
+    <entry><id>urn:uuid:test-mini</id><title>Wikipedia 100</title><updated>2026-07-17T00:00:00Z</updated>
+      <summary>Top hundred Wikipedia articles</summary><language>eng</language><name>wikipedia_en_100</name><flavour>mini</flavour>
+      <category>wikipedia</category><tags>wikipedia;_ftindex:yes;_pictures:no</tags><articleCount>5032</articleCount>
+      <author><name>Wikipedia</name></author><publisher><name>openZIM</name></publisher>
+      <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/example.zim.meta4" length="331961344" />
+      <dc:issued>2026-07-17T00:00:00Z</dc:issued>
+    </entry></feed>`;
+  const metalinkXml = `<?xml version="1.0"?><metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="example.zim">
+    <size>4621915</size><hash type="sha-256">b3d5db724e2ef884eaf43e3677ba2dc5c4d17619114b3de4602c119ca23dcfcd</hash>
+    <pieces length="4194304" type="sha-1"><hash>f6dc33924096656d9952a6ffe0de101d1b3aa5c6</hash><hash>33534cc215d7a94fba21cf264a64f2ef954dedce</hash></pieces>
+    <url priority="1">https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim</url>
+  </file></metalink>`;
+
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const [item] = runtime.parseKiwixCatalog(catalogXml);
+    assert.equal(item.language, 'eng', `${label}: catalog language was not preserved`);
+    assert.equal(item.tier, 'starter', `${label}: small archive tier was not classified`);
+    assert.equal(item.source, 'Wikipedia / openZIM', `${label}: catalog publisher provenance was replaced by a generic label`);
+    assert.equal(item.licenseDeclared, false, `${label}: missing OPDS rights metadata was presented as a publisher-declared license`);
+    assert.match(item.license, /not declared/i, `${label}: missing OPDS rights metadata was not disclosed before confirmation`);
+    assert.equal(item.catalogSize, 331961344, `${label}: catalog-reported size was lost`);
+    const resolved = runtime.resolveKiwixDownload(item, metalinkXml);
+    assert.equal(resolved.size, 4621915, `${label}: install did not use the Metalink exact size`);
+    assert.equal(resolved.pieceLength, 4194304, `${label}: resumable piece size was not preserved`);
+    assert.deepEqual(resolved.pieceHashes, ['f6dc33924096656d9952a6ffe0de101d1b3aa5c6', '33534cc215d7a94fba21cf264a64f2ef954dedce'], `${label}: piece integrity hashes were lost`);
+    assert.equal(resolved.downloadUrl, 'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim', `${label}: mirror URL was not selected`);
+  }
+});
+
+function minimalWikipediaZimFixture() {
+  const encoder = new TextEncoder();
+  const url = encoder.encode('Alan_Turing');
+  const title = encoder.encode('Alan Turing');
+  const html = encoder.encode('<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>');
+  const mime = encoder.encode('text/html\0\0');
+  const clusterStart = 96;
+  const cluster = new Uint8Array(1 + 8 + html.length);
+  cluster[0] = 1;
+  const clusterView = new DataView(cluster.buffer);
+  clusterView.setUint32(1, 8, true);
+  clusterView.setUint32(5, 8 + html.length, true);
+  cluster.set(html, 9);
+  const directoryStart = clusterStart + cluster.length;
+  const directory = new Uint8Array(16 + url.length + 1 + title.length + 1);
+  const directoryView = new DataView(directory.buffer);
+  directoryView.setUint16(0, 0, true);
+  directory[3] = 'C'.charCodeAt(0);
+  directoryView.setUint32(8, 0, true);
+  directoryView.setUint32(12, 0, true);
+  directory.set(url, 16);
+  directory.set(title, 17 + url.length);
+  const urlPointerPosition = directoryStart + directory.length;
+  const clusterPointerPosition = urlPointerPosition + 8;
+  const checksumPosition = clusterPointerPosition + 8;
+  const bytes = new Uint8Array(checksumPosition + 16);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x044d495a, true);
+  view.setUint16(4, 6, true);
+  view.setUint16(6, 3, true);
+  view.setUint32(24, 1, true);
+  view.setUint32(28, 1, true);
+  view.setBigUint64(32, BigInt(urlPointerPosition), true);
+  view.setBigUint64(40, 0xffffffffffffffffn, true);
+  view.setBigUint64(48, BigInt(clusterPointerPosition), true);
+  view.setBigUint64(56, 80n, true);
+  view.setUint32(64, 0, true);
+  view.setUint32(68, 0xffffffff, true);
+  view.setBigUint64(72, BigInt(checksumPosition), true);
+  bytes.set(mime, 80);
+  bytes.set(cluster, clusterStart);
+  bytes.set(directory, directoryStart);
+  view.setBigUint64(urlPointerPosition, BigInt(directoryStart), true);
+  view.setBigUint64(clusterPointerPosition, BigInt(clusterStart), true);
+  return new Blob([bytes], { type: 'application/x-zim' });
+}
+
+test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture(), {
+      language: 'eng',
+      archiveDate: '2026-07-17',
       license: 'CC BY-SA 4.0',
-      modified: 'Introduction extracted and normalized to plain text by WebBrain.',
-    },
-    {
-      pageid: 19668,
-      title: 'Mercury',
-      extract: 'Mercury is the first planet from the Sun and the smallest planet in the Solar System.',
-      url: 'https://en.wikipedia.org/wiki/Mercury_(planet)',
-    },
+    });
+    assert.deepEqual(archive.metadata, {
+      language: 'eng', archiveDate: '2026-07-17', source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0', licenseDeclared: true,
+    }, `${label}: validated import metadata was unavailable before confirmation`);
+    const [passage] = await archive.search('Alan Turing', { limit: 3 });
+    assert.equal(passage.title, 'Alan Turing', `${label}: local ZIM title was not read`);
+    assert.match(passage.excerpt, /computer scientist/, `${label}: local ZIM article text was not extracted`);
+    assert.equal(passage.url, 'https://en.wikipedia.org/wiki/Alan_Turing', `${label}: canonical Wikipedia attribution was lost`);
+    assert.equal(passage.language, 'eng', `${label}: archive language was lost`);
+    assert.equal(passage.archiveDate, '2026-07-17', `${label}: archive date was lost`);
+    assert.equal(passage.license, 'CC BY-SA 4.0', `${label}: archive license was lost`);
+  }
+  const corrupt = new Blob([new Uint8Array(96)]);
+  await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
+});
+
+test('Apocalypse Mode ranks multi-word ZIM titles and preserves embedded provenance', () => {
+  const candidates = [
+    { index: 1, url: 'World_Heritage_Site', title: 'World Heritage Site' },
+    { index: 2, url: 'World_War_II', title: 'World War II' },
+    { index: 3, url: 'War', title: 'War' },
   ];
-  for (const [label, runtime] of [
-    ['chrome', WikipediaOfflineCh],
-    ['firefox', WikipediaOfflineFx],
-  ]) {
-    const store = {
-      async getAll() { return records; },
-      async get() { return null; },
-      async putMany() {},
-      async status() { return { articleCount: records.length, state: 'ready' }; },
-    };
-    const tool = {
-      name: 'search_wikipedia',
-      skillId: 'wikipedia',
-      skillName: 'Wikipedia',
-      sourceType: 'built-in',
-      sourceUrl: 'skills/wikipedia.md',
-    };
-    const result = await runtime.executeWikipediaSkillTool(tool, {
-      q: 'computer science cryptanalyst',
-      limit: 3,
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const ranked = runtime.rankZimTitleCandidates(candidates, 'World War II', 3);
+    assert.deepEqual(ranked.map(item => item.url), ['World_War_II'], `${label}: one-token title matches displaced the relevant article`);
+    assert.deepEqual(runtime.mergeZimProvenance({
+      language: 'eng', archiveDate: '2024-01-01', source: 'Catalog source', license: 'Catalog license',
     }, {
-      store,
-      executeOnline: async () => ({ success: false, error: 'Skill tool request failed: offline' }),
-    });
-
-    assert.equal(result.success, true, `${label}: cached search should recover from a network failure`);
-    assert.equal(result.offline, true, `${label}: fallback should identify local-only retrieval`);
-    assert.equal(result.data.pages[0].title, 'Alan Turing', `${label}: lexical retrieval ranked the wrong article`);
-    assert.match(result.data.pages[0].excerpt, /cryptanalyst/, `${label}: fallback omitted the retrieved passage`);
-    assert.equal(result.data.pages[0].url, records[0].url, `${label}: fallback omitted source attribution URL`);
-
-    const summary = await runtime.executeWikipediaSkillTool({
-      ...tool,
-      name: 'get_wikipedia_summary',
-    }, { titles: 'Alan Turing' }, {
-      store,
-      executeOnline: async () => ({ success: false, error: 'Skill tool request failed: offline' }),
-    });
-    const page = Object.values(summary.data.query.pages)[0];
-    assert.equal(page.lastrevid, records[0].revision, `${label}: offline summary omitted revision metadata`);
-    assert.equal(page.license, records[0].license, `${label}: offline summary omitted license metadata`);
-    assert.equal(page.modified, records[0].modified, `${label}: offline summary omitted modification notice`);
+      Language: 'deu', Date: '2026-07-17', Source: 'Embedded source', License: 'Embedded license',
+    }), {
+      language: 'deu', archiveDate: '2026-07-17', source: 'Embedded source', license: 'Embedded license', licenseDeclared: true,
+    }, `${label}: generic catalog provenance overrode archive-embedded metadata`);
   }
 });
 
-test('Wikipedia cache merge preserves text and matching revision provenance', () => {
-  for (const [label, runtime] of [
-    ['chrome', WikipediaOfflineCh],
-    ['firefox', WikipediaOfflineFx],
-  ]) {
-    const downloaded = {
-      key: 'alan turing',
-      pageid: 1208,
-      title: 'Alan Turing',
-      extract: 'A long revision-bearing introduction downloaded by the background snapshot.',
-      url: 'https://en.wikipedia.org/wiki/Alan_Turing',
-      revision: 12345,
-      license: 'CC BY-SA 4.0',
-      modified: 'Introduction extracted and normalized to plain text by WebBrain.',
-    };
-    const searchHit = {
-      key: 'alan turing',
-      pageid: 1208,
-      title: 'Alan Turing',
-      extract: 'Short search excerpt.',
-      url: 'https://en.wikipedia.org/wiki/Alan_Turing',
-      revision: null,
-      license: 'CC BY-SA 4.0',
-      modified: 'Introduction extracted and normalized to plain text by WebBrain.',
-    };
-    const merged = runtime.mergeWikipediaRecords(downloaded, searchHit);
-    assert.equal(merged.extract, downloaded.extract, `${label}: online search degraded the offline introduction`);
-    assert.equal(merged.revision, downloaded.revision, `${label}: online search discarded snapshot revision metadata`);
-
-    const newerSummary = {
-      ...downloaded,
-      extract: 'A shorter introduction from the current article revision.',
-      url: 'https://en.wikipedia.org/wiki/Alan_Turing?oldid=67890',
-      revision: 67890,
-      modified: 'Current introduction normalized to plain text by WebBrain.',
-    };
-    const mergedRevision = runtime.mergeWikipediaRecords(downloaded, newerSummary);
-    assert.equal(mergedRevision.extract, downloaded.extract, `${label}: merge did not retain the selected longer introduction`);
-    assert.equal(mergedRevision.revision, downloaded.revision, `${label}: merge attached a revision that does not match the retained text`);
-    assert.equal(mergedRevision.url, downloaded.url, `${label}: merge attached a source URL that does not match the retained text`);
-
-    const longSearchHit = {
-      ...searchHit,
-      extract: `${downloaded.extract} A long revisionless search excerpt must not replace revision-bearing text.`,
-    };
-    const mergedSearch = runtime.mergeWikipediaRecords(downloaded, longSearchHit);
-    assert.equal(mergedSearch.extract, downloaded.extract, `${label}: revisionless search text replaced a revision-bearing introduction`);
-    assert.equal(mergedSearch.revision, downloaded.revision, `${label}: revisionless search text broke snapshot provenance`);
+test('Apocalypse Mode selects only a newer matching catalog archive', () => {
+  const installed = { name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-01-01' };
+  const items = [
+    { id: 'wrong-flavour', name: installed.name, flavour: 'mini', archiveDate: '2026-08-01' },
+    { id: 'older', name: installed.name, flavour: installed.flavour, archiveDate: '2025-12-01' },
+    { id: 'newest', name: installed.name, flavour: installed.flavour, archiveDate: '2026-07-01' },
+    { id: 'newer', name: installed.name, flavour: installed.flavour, archiveDate: '2026-05-01' },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.selectKiwixUpdate(installed, items)?.id, 'newest', `${label}: manual update selected the wrong archive`);
+    assert.equal(runtime.selectKiwixUpdate({ ...installed, archiveDate: '2027-01-01' }, items), null, `${label}: older archives were offered as updates`);
+    assert.deepEqual(runtime.normalizeStorageEstimate({ quota: null, usage: 10 }), {
+      known: false, usage: 10, quota: null, free: null,
+    }, `${label}: null quota was misclassified as exhausted storage`);
+    assert.deepEqual(runtime.normalizeStorageEstimate({ quota: 10, usage: 10 }), {
+      known: true, usage: 10, quota: 10, free: 0,
+    }, `${label}: zero free space was misclassified as an unknown estimate`);
   }
 });
 
-test('Wikipedia offline sync ingests one restart-safe catalog batch', async () => {
-  for (const [label, runtime] of [
-    ['chrome', WikipediaOfflineCh],
-    ['firefox', WikipediaOfflineFx],
-  ]) {
-    const metadata = new Map();
-    const stored = [];
-    const requested = [];
+test('Apocalypse Mode requires opt-in and removal wins an in-flight download race', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: false, updatePolicy: 'manual' };
+    const records = new Map();
     const store = {
-      async getMeta(key) { return metadata.get(key); },
-      async setMeta(key, value) { metadata.set(key, value); },
-      async putMany(records) { stored.push(...records); },
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return { ...record }; },
+      async deleteArchive(id) { records.delete(id); },
     };
-    const fetchImpl = async (url) => {
-      requested.push(new URL(url));
-      if (requested.length === 1) {
-        return {
-          ok: true,
-          async json() {
-            return {
-              parse: {
-                revid: runtime.WIKIPEDIA_CATALOG_REVISION,
-                links: Array.from({ length: 923 }, (_, index) => ({ ns: 0, title: `Article ${index + 1}` })),
-              },
-            };
-          },
-        };
-      }
-      return {
-        ok: true,
-        async json() {
-          return {
-            query: {
-              pages: Array.from({ length: runtime.WIKIPEDIA_SYNC_BATCH_SIZE }, (_, index) => ({
-                pageid: index + 1,
-                title: `Article ${index + 1}`,
-                extract: `Summary ${index + 1}`,
-                canonicalurl: `https://en.wikipedia.org/wiki/Article_${index + 1}`,
-              })),
-            },
-          };
-        },
-      };
+    const writes = [];
+    const removals = [];
+    const storage = {
+      async write(ref, offset, bytes) { writes.push([ref, offset, bytes.byteLength]); },
+      async remove(ref) { removals.push(ref); },
     };
-
-    const state = await runtime.syncWikipediaOfflineBatch({ store, fetchImpl });
-    assert.equal(requested[0].searchParams.get('oldid'), String(runtime.WIKIPEDIA_CATALOG_REVISION), `${label}: catalog is not revision-pinned`);
-    assert.equal(requested[1].searchParams.get('explaintext'), '1', `${label}: sync should download text-only extracts`);
-    assert.equal(requested[1].searchParams.get('titles').split('|').length, runtime.WIKIPEDIA_SYNC_BATCH_SIZE, `${label}: sync batch was not bounded`);
-    assert.equal(stored.length, runtime.WIKIPEDIA_SYNC_BATCH_SIZE, `${label}: wrong article batch size persisted`);
-    assert.equal(state.cursor, runtime.WIKIPEDIA_SYNC_BATCH_SIZE, `${label}: restart cursor was not persisted`);
-    assert.equal(state.state, 'downloading', `${label}: partial corpus should remain resumable`);
-  }
-});
-
-test('Wikipedia online results extend the offline cache', async () => {
-  for (const [label, runtime] of [
-    ['chrome', WikipediaOfflineCh],
-    ['firefox', WikipediaOfflineFx],
-  ]) {
-    const stored = [];
-    const online = {
-      success: true,
-      status: 200,
-      data: {
-        query: {
-          pages: {
-            1208: {
-              pageid: 1208,
-              title: 'Alan Turing',
-              extract: 'Alan Turing was an English computer scientist.',
-              canonicalurl: 'https://en.wikipedia.org/wiki/Alan_Turing',
-              lastrevid: 12345,
-            },
-          },
-        },
-      },
-    };
-    const result = await runtime.executeWikipediaSkillTool({
-      name: 'get_wikipedia_summary',
-      skillId: 'wikipedia',
-      skillName: 'Wikipedia',
-      sourceType: 'built-in',
-      sourceUrl: 'skills/wikipedia.md',
-    }, { titles: 'Alan Turing' }, {
-      store: { async putMany(records) { stored.push(...records); } },
-      executeOnline: async () => online,
+    let releaseFetch;
+    const fetchImpl = async () => await new Promise(resolve => { releaseFetch = resolve; });
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl,
+      digestHex: async () => 'aa',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'archive-1',
+      now: () => 1000,
     });
+    const download = {
+      id: 'catalog-1', filename: 'example.zim', title: 'Wikipedia', language: 'eng', tier: 'starter', archiveDate: '2026-07-17',
+      size: 2, pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'], downloadUrl: 'https://example.test/example.zim',
+      source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0',
+    };
 
-    assert.equal(result, online, `${label}: online response shape should remain backward compatible`);
-    assert.equal(stored[0].title, 'Alan Turing', `${label}: live summary was not cached`);
-    assert.equal(stored[0].revision, 12345, `${label}: cached attribution omitted revision metadata`);
-    assert.equal(stored[0].license, 'CC BY-SA 4.0', `${label}: cached text omitted license metadata`);
-    assert.match(stored[0].modified, /extracted and normalized/i, `${label}: cached text omitted modification notice`);
+    await assert.rejects(manager.install(download, { kind: 'opfs', key: 'example.zim' }), /disabled/i, `${label}: download started before explicit opt-in`);
+    await manager.setEnabled(true);
+    await manager.install(download, { kind: 'opfs', key: 'example.zim' });
+    const schedulesBeforeRace = scheduled.length;
+    const running = manager.processNext();
+    while (!releaseFetch) await new Promise(resolve => setTimeout(resolve, 0));
+    await manager.remove('archive-1');
+    releaseFetch({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1, 2).buffer; } });
+    await running;
+
+    assert.equal(records.has('archive-1'), false, `${label}: removed archive record was repopulated by an in-flight fetch`);
+    assert.equal(writes.length, 0, `${label}: removed archive bytes were written after cancellation`);
+    assert.deepEqual(removals, [{ kind: 'opfs', key: 'example.zim' }], `${label}: archive removal did not delete its managed storage`);
+    assert.equal(scheduled.length, schedulesBeforeRace, `${label}: cancelled work rescheduled itself after removal`);
   }
 });
 
-test('Wikipedia offline data follows exact built-in skill enablement', async () => {
-  for (const [label, runtime] of [
-    ['chrome', WikipediaOfflineCh],
-    ['firefox', WikipediaOfflineFx],
-  ]) {
-    const calls = [];
-    let cleared = 0;
-    const api = { alarms: {
-      async create(name, options) { calls.push(['create', name, options]); },
-      async clear(name) { calls.push(['clear', name]); },
-    } };
-    const store = { async clear() { cleared += 1; } };
-    const enabled = [{ id: 'wikipedia', sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md' }];
-    assert.deepEqual(await runtime.configureWikipediaOfflineSync(api, enabled, { store }), { enabled: true }, `${label}: built-in skill did not enable sync`);
-    assert.equal(calls[0][1], runtime.WIKIPEDIA_SYNC_ALARM, `${label}: wrong sync alarm configured`);
+test('Apocalypse Mode resumes verified pieces after a background restart', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), value => ({ ...value })); },
+      async getArchive(id) { return records.has(id) ? { ...records.get(id) } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const storage = { async write(target, offset, value) { writes.push([offset, ...value]); }, async remove() {} };
+    const ranges = [];
+    const fetchImpl = async (_url, request) => {
+      ranges.push(request.headers.Range);
+      const second = request.headers.Range === 'bytes=2-3';
+      return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.from(second ? [3, 4] : [1, 2]).buffer; } };
+    };
+    const managerOptions = {
+      store, storage, fetchImpl, digestHex: async bytesValue => bytesValue[0] < 3 ? 'first' : 'second',
+      schedule() {}, randomId: () => 'archive-restart', now: () => 5000,
+    };
+    const firstWorker = runtime.createApocalypseArchiveManager(managerOptions);
+    await firstWorker.install({
+      id: 'catalog-entry', title: 'Wikipedia', filename: 'wikipedia.zim', language: 'eng', size: 4,
+      pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['first', 'second'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+    await firstWorker.processNext();
+    assert.equal(records.get('archive-restart').pieceIndex, 1, `${label}: first verified cursor was not persisted`);
 
-    const sameIdCustomSkill = [{ id: 'wikipedia', sourceType: 'text', sourceUrl: '' }];
-    assert.deepEqual(await runtime.configureWikipediaOfflineSync(api, sameIdCustomSkill, { store }), { enabled: false }, `${label}: custom skill spoofed built-in sync`);
-    assert.equal(cleared, 1, `${label}: removing the built-in skill did not delete local data`);
-    assert.equal(calls.at(-1)[0], 'clear', `${label}: removing the built-in skill did not cancel sync`);
+    const restartedWorker = runtime.createApocalypseArchiveManager(managerOptions);
+    await restartedWorker.processNext();
+    assert.equal(records.get('archive-restart').status, 'ready', `${label}: restarted worker did not finish the archive`);
+    assert.deepEqual(ranges, ['bytes=0-1', 'bytes=2-3'], `${label}: restart repeated or skipped a byte range`);
+    assert.deepEqual(writes, [[0, 1, 2], [2, 3, 4]], `${label}: verified pieces were written at the wrong offsets`);
   }
 });
 
+test('Apocalypse Mode rejects a corrupt piece before storage and backs off', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    let writes = 0;
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store, storage: { async write() { writes += 1; }, async remove() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(9, 9).buffer; } }),
+      digestHex: async () => 'wrong', schedule: delay => scheduled.push(delay), randomId: () => 'corrupt', now: () => 10_000,
+    });
+    await manager.install({ filename: 'bad.zim', size: 2, pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['expected'], downloadUrl: 'https://example.test/bad.zim' }, { kind: 'opfs', key: 'bad.zim' });
+    await manager.processNext();
+    assert.equal(writes, 0, `${label}: corrupt bytes reached durable storage`);
+    assert.equal(records.get('corrupt').status, 'retrying', `${label}: corruption did not enter bounded retry state`);
+    assert.equal(records.get('corrupt').nextRetryAt, 70_000, `${label}: first retry did not use exponential backoff`);
+    assert.deepEqual(scheduled.slice(-1), [60_000], `${label}: retry alarm delay was not bounded`);
+  }
+});
+
+test('Apocalypse Mode cancellation removes a partial imported archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    const store = {
+      async getConfig() { return config; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const removals = [];
+    const storage = {
+      async write(target, offset, bytesValue) { writes.push([target, offset, bytesValue.byteLength]); },
+      async remove(target) { removals.push(target); },
+    };
+    const controller = new AbortController();
+    const padded = new Blob([minimalWikipediaZimFixture(), new Uint8Array(2 * 1024 * 1024)]);
+    await assert.rejects(runtime.importKiwixArchive(padded, { filename: 'import.zim' }, {
+      store, storage, id: 'import-1', chunkSize: 1024 * 1024, signal: controller.signal,
+      onProgress: () => controller.abort(),
+    }), /cancel/i, `${label}: cancelled import should reject`);
+    assert.equal(records.has('import-1'), false, `${label}: cancelled import metadata was retained`);
+    assert.equal(writes.length, 1, `${label}: import continued writing after cancellation`);
+    assert.equal(removals.length, 1, `${label}: partial imported bytes were not removed`);
+  }
+});
+
+test('Apocalypse Mode preflights import capacity and removes partial bytes after write failure', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const archive = minimalWikipediaZimFixture();
+    let writes = 0;
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: { async estimate() { return { quota: archive.size - 1, usage: 0 }; }, async write() { writes += 1; }, async remove() {} },
+      id: 'no-space',
+    }), /space|storage/i, `${label}: insufficient extension storage was not rejected`);
+    assert.equal(writes, 0, `${label}: capacity preflight happened after writing bytes`);
+    assert.equal(records.has('no-space'), false, `${label}: rejected capacity preflight created an archive record`);
+
+    const removals = [];
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: {
+        async estimate() { return {}; },
+        async write() { throw new Error('quota exhausted during write'); },
+        async remove(target) { removals.push(target); },
+      },
+      id: 'write-failure',
+    }), /quota exhausted/i, `${label}: write failure was hidden`);
+    assert.equal(records.get('write-failure')?.status, 'error', `${label}: failed import did not remain actionable`);
+    assert.equal(records.get('write-failure')?.bytesDownloaded, 0, `${label}: failed import retained partial progress`);
+    assert.equal(removals.length, 1, `${label}: failed import retained partial extension-owned bytes`);
+  }
+});
+
+test('Apocalypse Mode rejects a managed download when reported free space is zero', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let installs = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
+      async listArchives() { return []; }, async putArchive() { installs += 1; }, async getArchive() { return null; }, async deleteArchive() {},
+    };
+    const controller = runtime.createApocalypseController({ alarms: { create() {} } }, {
+      store,
+      storage: { async estimate() { return { quota: 1024, usage: 1024 }; }, async remove() {} },
+    });
+    await assert.rejects(controller.handle('install', { download: {
+      id: 'no-room', filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashes: ['aa'], downloadUrl: 'https://example.test/archive.zim',
+    } }), /not enough|storage/i, `${label}: exhausted quota still admitted a managed download`);
+    assert.equal(installs, 0, `${label}: rejected managed download persisted metadata`);
+  }
+});
+
+test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'archive-1', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'future-provider' } };
+    let searched = 0;
+    const results = await runtime.searchApocalypseArchives('Alan Turing', {
+      store: { async getConfig() { return { enabled: true }; }, async listArchives() { return [record]; } },
+      storage: {},
+      providers: [{
+        id: 'test-provider',
+        supports(candidate) { return candidate.target.kind === 'future-provider'; },
+        async search(candidate, query) { searched += 1; return [{ title: query, archiveId: candidate.id }]; },
+      }],
+    });
+    assert.equal(searched, 1, `${label}: selected provider did not receive the archive query`);
+    assert.deepEqual(results, [{ title: 'Alan Turing', archiveId: 'archive-1' }], `${label}: provider result was not preserved`);
+  }
+});
+
+test('Apocalypse Mode marks unreadable ready archives as actionable errors', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'corrupt-ready', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'corrupt.zim' } };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { enabled: true }; }, async listArchives() { return [...records.values()]; },
+      async putArchive(next) { records.set(next.id, next); return next; },
+    };
+    await assert.rejects(runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      storage: {},
+      providers: [{ supports() { return true; }, async search() { throw new Error('ZIM checksum is corrupt'); } }],
+    }), /could not be read|corrupt/i, `${label}: unreadable ready archive was silently treated as no match`);
+    assert.equal(records.get(record.id)?.status, 'error', `${label}: corrupt ready archive remained ready`);
+    assert.equal(records.get(record.id)?.errorKind, 'archive-unreadable', `${label}: corruption did not receive an actionable lifecycle classification`);
+  }
+});
+
+test('Apocalypse Mode can register a user-selected ZIM handle without copying bytes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const file = minimalWikipediaZimFixture();
+    Object.defineProperty(file, 'name', { value: 'wikipedia_en_test.zim' });
+    const handle = { name: file.name, async getFile() { return file; } };
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async putArchive(record) { records.set(record.id, record); return record; },
+    };
+    const record = await runtime.registerKiwixArchiveHandle(handle, { language: 'eng' }, { store, id: 'external-1' });
+    assert.equal(record.status, 'ready', `${label}: validated file handle was not ready`);
+    assert.equal(record.target.kind, 'file-handle', `${label}: external storage target was not preserved`);
+    assert.equal(record.target.handle, handle, `${label}: persistent handle was replaced or copied`);
+    assert.equal(record.bytesDownloaded, file.size, `${label}: external archive size was not recorded`);
+  }
+});
+
+test('Apocalypse Mode recovers a stale interrupted import after restart', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map([['stale-import', {
+      id: 'stale-import', status: 'importing', updatedAt: 0, bytesDownloaded: 1024,
+      target: { kind: 'opfs', key: 'stale.zim' }, size: 2048,
+    }]]);
+    const removals = [];
+    const store = {
+      async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      async remove(target) { removals.push(target); }, async estimate() { return {}; },
+      async write() { throw new Error('unexpected write'); },
+    };
+    const controller = runtime.createApocalypseController({ alarms: { create() {} } }, { store, storage, importStaleMs: 30_000 });
+    const snapshot = await controller.snapshot();
+    const recovered = snapshot.archives.find(record => record.id === 'stale-import');
+    assert.equal(recovered.status, 'error', `${label}: stale import did not become an actionable error`);
+    assert.equal(recovered.bytesDownloaded, 0, `${label}: stale import retained misleading progress`);
+    assert.match(recovered.error, /interrupted/i, `${label}: stale import recovery omitted its reason`);
+    assert.deepEqual(removals, [{ kind: 'opfs', key: 'stale.zim' }], `${label}: stale partial bytes were not removed`);
+  }
+});
+
+test('Apocalypse Mode has a dedicated Advanced settings management page in both builds', () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
+    assert.match(settingsHtml, /href="apocalypse-mode\.html"/, `${prefix}: Advanced settings gateway is missing`);
+    assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
+    assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
+    assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /data-action="update"/, `${prefix}: manual update action is missing`);
+    assert.match(pageHtml, /data-i18n="ap\.hero\.consent"/, `${prefix}: localized opt-in boundary is not visible`);
+  }
+});
+
+test('Wikipedia tools use installed Apocalypse Mode archives only after online failure', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const tool = {
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia',
+      sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    };
+    const result = await runtime.executeWikipediaSkillTool(tool, { q: 'Alan Turing', limit: 3 }, {
+      executeOnline: async () => ({ success: false, error: 'network unavailable' }),
+      apocalypseSearch: async () => [{
+        title: 'Alan Turing', excerpt: 'Alan Turing was an English computer scientist and cryptanalyst.',
+        url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng',
+        archiveDate: '2026-07-17', source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0',
+      }],
+    });
+    assert.equal(result.success, true, `${label}: installed ZIM should recover an offline search`);
+    assert.equal(result.provider, 'local Kiwix/ZIM archive', `${label}: local provider was not identified`);
+    assert.equal(result.resultPolicy, 'untrusted', `${label}: local archive bytes must remain untrusted`);
+    assert.equal(result.data.pages[0].archiveDate, '2026-07-17', `${label}: archive provenance was lost`);
+  }
+});
+
+test('Wikipedia online success neither populates nor consults offline storage', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const online = { success: true, status: 200, data: { pages: [{ title: 'Alan Turing' }] } };
+    let offlineCalls = 0;
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia',
+      sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => online,
+      apocalypseSearch: async () => { offlineCalls += 1; return []; },
+    });
+    assert.equal(result, online, `${label}: online response shape should remain unchanged`);
+    assert.equal(offlineCalls, 0, `${label}: online success should not touch offline archives`);
+  }
+});
+
+test('Wikipedia offline routing surfaces an unreadable archive instead of a false no-match', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia', sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => ({ success: false, error: 'network unavailable' }),
+      apocalypseSearch: async () => { throw new Error('Installed archive could not be read; re-import it.'); },
+    });
+    assert.equal(result.success, false, `${label}: unreadable archive produced a successful result`);
+    assert.match(result.error, /could not be read/i, `${label}: archive corruption reason was hidden`);
+    assert.doesNotMatch(result.error, /No matching/i, `${label}: archive corruption was misreported as no match`);
+  }
+});
+
+test('Wikipedia offline routing requires exact built-in provenance', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    let onlineCalls = 0;
+    let offlineCalls = 0;
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', sourceType: 'url', sourceUrl: 'https://example.test/skill.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => { onlineCalls += 1; return { success: false, error: 'spoof rejected' }; },
+      apocalypseSearch: async () => { offlineCalls += 1; return []; },
+    });
+    assert.equal(result.error, 'spoof rejected', `${label}: spoofed skill should remain on its declared online path`);
+    assert.equal(onlineCalls, 1, `${label}: spoofed skill was not delegated exactly once`);
+    assert.equal(offlineCalls, 0, `${label}: spoofed skill reached privileged local archives`);
+  }
+});
 test('packaged Open-Meteo and Open Library skills are opt-in with read-only HTTP tools', () => {
   for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
     ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],

@@ -364,20 +364,25 @@ responses as untrusted unless the manifest says otherwise. Removing or
 disabling a skill stops that data flow. See [Skills](skills.md#bundled-skills)
 for the full packaged catalog.
 
-Enabling the packaged Wikipedia skill additionally schedules a background,
-credentialless download from `en.wikipedia.org` before a model activates the
-skill. It fetches a revision-pinned catalog of about 1,000 core English topics
-and then downloads text-only article introductions in bounded batches. The
-extension stores those extracts, canonical source URLs, revision metadata, and
-a resumable cursor in its local `webbrain_wikipedia` IndexedDB database. Live
-Wikipedia searches and summaries may add returned article text to the same
-cache. This data is never uploaded by the cache module; when a later run uses
-an offline result, that passage enters the normal untrusted tool-result path
-and is sent to the user's configured LLM as part of the run. Removing the
-Wikipedia skill cancels the download and deletes its cache. Wikipedia text is
-[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); local results
-retain canonical article URLs for attribution.
-Images are not downloaded.
+The packaged Wikipedia skill does not silently create an offline corpus.
+Apocalypse Mode is disabled by default and requires a separate opt-in under
+Settings → Advanced. Catalog browsing sends the selected archive language to
+Kiwix; resolving an archive fetches its Metalink. Archive bytes are downloaded
+only after a second confirmation that displays the exact size, date, source,
+license notice, integrity pieces, and reported storage availability.
+
+Downloaded or imported `.zim` bytes live in extension-owned OPFS storage by
+default. Chromium users can instead select an external file through the File
+System Access API; Firefox uses OPFS. IndexedDB stores only settings, archive
+metadata, progress, retry state, and storage references (including a persisted
+file handle where supported). Each downloaded piece is checked before writing.
+Pause, cancellation, deletion, corruption, restart, and bounded retry states
+are durable. A ready archive that becomes unreadable is marked as an error and
+requires reinstall or re-import. Live Wikipedia results are not copied into this store. When an
+installed archive answers a later request, only the relevant extracted passage
+and its canonical Wikipedia attribution enter the normal untrusted tool-result
+path and are sent to the user's configured LLM. See
+[Apocalypse Mode](apocalypse-mode.md) for browser-specific limits.
 
 ---
 

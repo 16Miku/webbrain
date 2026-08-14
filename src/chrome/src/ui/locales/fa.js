@@ -1,4 +1,6 @@
 // Persian — translated from the canonical English locale.
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'جریان پاسخ قطع شد؛ این نوبت Ask بدون پخش جریانی دوباره امتحان می‌شود.',
   'sp.providers.no_setup_group': "بدون نیاز به راه اندازی",
@@ -521,6 +523,7 @@ export default {
   'st.display.search.placeholder': "تنظیمات عمومی را جستجو کنید",
   'st.display.search.empty': "تنظیمات عمومی مطابقت ندارد.",
   'st.display.advanced': "پیشرفته",
+  ...apocalypseModeCopy,
   'st.display.cloud_bridge.label': 'پل ابری',
   'st.display.cloud_bridge.desc': 'یک کنترل‌کننده محلی را به این نمایه Chromium متصل کنید. برای WebBrain Cloud از درگاه 17373، برای سرویس‌گیرنده‌های MCP از 17374 یا برای LM Studio از 17375 استفاده کنید. فقط یک پل می‌تواند فعال باشد؛ درخواست‌های معمول مجوز همچنان اعمال می‌شوند.',
   'st.display.cloud_bridge.url_label': 'نشانی WebSocket',

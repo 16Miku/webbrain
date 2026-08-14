@@ -689,6 +689,12 @@
       background: var(--bg3);
       color: var(--text);
       border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
     }
     .btn-secondary:hover { background: rgba(255,255,255,0.05); }
 
@@ -1259,6 +1265,13 @@
       <details class="advanced-settings">
         <summary data-i18n="st.display.advanced"></summary>
         <div class="advanced-settings-body">
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.apocalypse_mode.label"></div>
+              <div class="setting-desc" data-i18n="st.display.apocalypse_mode.desc"></div>
+            </div>
+            <a class="btn-secondary" href="apocalypse-mode.html" target="_blank" data-i18n="st.display.apocalypse_mode.manage"></a>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label" data-i18n="st.display.tracing.label"></div>

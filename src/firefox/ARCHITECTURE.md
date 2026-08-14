@@ -229,14 +229,12 @@ permission gate before saving files. Third-party results should use
 `resultPolicy: "untrusted"` so the agent wraps and digests them like page
 content instead of trusted instructions.
 
-The exact packaged Wikipedia skill also uses `agent/wikipedia-offline.js`
-behind its existing two tool names. Once enabled, an alarm downloads
-plain-text introductions for a revision-pinned catalog of about 1,000 core
-English articles in resumable 20-page batches. Records and the sync cursor live
-in `webbrain_wikipedia` IndexedDB; successful live lookups extend the cache,
-and failed live requests fall back to local lexical passage retrieval. Removing
-the skill cancels the alarm and deletes the cache. Cached text retains canonical
-Wikipedia URLs and remains untrusted CC BY-SA content; images are excluded.
+The exact packaged Wikipedia skill uses `agent/wikipedia-offline.js` to fall
+back to user-installed Kiwix/ZIM archives after a live request fails.
+`agent/apocalypse-mode.js` owns the opt-in archive manager, resumable verified
+downloads, durable IndexedDB state, OPFS bytes, and local openZIM title lookup.
+No archive is downloaded by enabling the skill. Local passages retain their
+canonical URL, language, archive date, and license metadata and stay untrusted.
 
 ---
 

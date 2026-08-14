@@ -1,6 +1,8 @@
 // French (fr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Le flux de réponse a été interrompu ; nouvelle tentative de ce tour Ask sans streaming.',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Rechercher dans les paramètres généraux',
   'st.display.search.empty': 'Aucun paramètre général correspondant.',
   'st.display.advanced': 'Avancé',
+  ...apocalypseModeCopy,
   'st.display.cloud_bridge.label': 'Pont cloud',
   'st.display.cloud_bridge.desc': 'Connectez un contrôleur local à ce profil Chromium. Utilisez le port 17373 pour WebBrain Cloud, 17374 pour les clients MCP ou 17375 pour LM Studio. Un seul pont peut être actif ; les demandes d’autorisation restent applicables.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

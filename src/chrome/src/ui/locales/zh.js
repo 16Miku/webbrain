@@ -1,6 +1,8 @@
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '响应流已中断；正在以非流式方式重试本次 Ask。',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': '搜索通用设置',
   'st.display.search.empty': '没有匹配的通用设置。',
   'st.display.advanced': '高级',
+  ...apocalypseModeCopy,
   'st.display.cloud_bridge.label': '云桥接',
   'st.display.cloud_bridge.desc': '将一个本地控制器连接到此 Chromium 配置文件。WebBrain Cloud 使用端口 17373，MCP 客户端使用 17374，LM Studio 使用 17375。一次只能启用一个桥接；常规权限提示仍然有效。',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

@@ -1,4 +1,6 @@
 // Portuguese — translated from the canonical English locale.
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'A transmissão da resposta foi interrompida; tentando novamente esta interação Ask sem transmissão.',
   'sp.providers.no_setup_group': "Nenhuma configuração necessária",
@@ -521,6 +523,7 @@ export default {
   'st.display.search.placeholder': "Pesquisar configurações gerais",
   'st.display.search.empty': "Nenhuma configuração geral corresponde.",
   'st.display.advanced': "Avançado",
+  ...apocalypseModeCopy,
   'st.display.cloud_bridge.label': 'Ponte na nuvem',
   'st.display.cloud_bridge.desc': 'Conecte um controlador local a este perfil do Chromium. Use a porta 17373 para o WebBrain Cloud, 17374 para clientes MCP ou 17375 para o LM Studio. Apenas uma ponte pode ficar ativa; os pedidos normais de permissão continuam válidos.',
   'st.display.cloud_bridge.url_label': 'URL do WebSocket',

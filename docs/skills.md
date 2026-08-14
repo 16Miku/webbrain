@@ -128,22 +128,18 @@ enable. They are not seeded on by default.
 | Temporary file share (Litterbox) | Act, Dev | Uses browser upload tools; short-lived public link |
 | Open-Meteo weather | Ask, Act, Dev | Geocoding + forecast HTTPS |
 | Open Library | Ask, Act, Dev | Open Library search HTTPS |
-| Wikipedia | Ask, Act, Dev | Live Wikipedia APIs + local text-only offline retrieval |
+| Wikipedia | Ask, Act, Dev | Live Wikipedia APIs + explicitly installed Kiwix/ZIM archives |
 | Turkish deasciifier | Ask, Act, Dev | Instruction-only; uses ordinary verbatim form-entry tools |
 
 Enable a skill only when you want its tools and instructions available for
 `load_skill` on eligible runs.
 
-Enabling the packaged Wikipedia skill also starts a bounded background download
-of the English Wikipedia Level 3 vital-article introductions (about 1,000 core
-topics) into extension-owned IndexedDB. The catalog is pinned to an exact
-Wikipedia revision and downloaded in resumable batches; live search/summary
-results extend the cache opportunistically. With no network, the existing
-Wikipedia tools retrieve ranked passages from this local text. The cache is
-local-only, contains no images, may become stale, and is deleted when the skill
-is removed. Cached Wikipedia text remains
-[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) and results
-retain their canonical article URL for attribution.
+The optional [Apocalypse Mode](apocalypse-mode.md) management page lets users
+choose a Wikipedia language and Kiwix archive tier, review exact size and
+license metadata, install resumably, import an existing `.zim`, and manage its
+lifecycle. It is independent from the interface language, disabled by default,
+and never downloads an archive merely because the Wikipedia skill is enabled.
+Installed archive passages retain canonical attribution and remain untrusted.
 
 ## See also
 
