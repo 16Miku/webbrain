@@ -1,6 +1,8 @@
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'De antwoordstream is onderbroken; deze Ask-beurt wordt opnieuw geprobeerd zonder streaming.',
@@ -498,6 +500,7 @@ export default {
   'st.display.search.placeholder': 'Zoek in Algemene instellingen',
   'st.display.search.empty': 'Geen algemene instellingen gevonden.',
   'st.display.advanced': 'Geavanceerd',
+  ...getApocalypseModeCopy('nl'),
   'st.display.cloud_bridge.label': 'Cloudbridge',
   'st.display.cloud_bridge.desc': 'Verbind één lokale controller met dit Chromium-profiel. Gebruik poort 17373 voor WebBrain Cloud, 17374 voor MCP-clients of 17375 voor LM Studio. Er kan maar één bridge actief zijn; de normale toestemmingsvragen blijven gelden.',
   'st.display.cloud_bridge.url_label': 'WebSocket-URL',

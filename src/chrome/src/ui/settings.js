@@ -52,20 +52,25 @@ import {
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
-import { WEBGPU_VISION_ENABLED_KEY } from '../providers/webgpu.js';
+import {
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_ENABLED_KEY,
+} from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '31.0.1';
+const EXT_VERSION = '32.0.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
 const generalSearchInput = document.getElementById('input-general-search');
 const generalSearchEmpty = document.getElementById('general-search-empty');
 const advancedSettings = document.querySelector('.advanced-settings');
+const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
+const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
@@ -307,8 +312,13 @@ if (languageSelect) {
     renderSkills();
     renderPermissions();
     refreshProfileSyncState();
+    refreshApocalypseModeStatus();
   });
 }
+globalThis.addEventListener('focus', () => {
+  refreshApocalypseModeStatus();
+  loadVisionConfig().catch(() => {});
+});
 
 let providersData = {};
 // Unsaved custom-body text must survive provider-card/filter/search renders,
@@ -323,7 +333,9 @@ let webgpuVisionEnabled = false;
 
 if (globalThis.chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.providers?.newValue) return;
+    if (area !== 'local') return;
+    if (changes[WEBGPU_VISION_ENABLED_KEY]) loadVisionConfig().catch(() => {});
+    if (!changes.providers?.newValue) return;
     const nextOllama = changes.providers?.newValue?.ollama;
     if (nextOllama && providersData.ollama) {
       providersData.ollama.visionDetection = nextOllama.visionDetection || null;
@@ -636,6 +648,43 @@ let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
 
+function formatArchiveBytes(value) {
+  const number = Math.max(0, Number(value) || 0);
+  if (number < 1024) return `${number} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let amount = number;
+  let unit = -1;
+  do { amount /= 1024; unit += 1; } while (amount >= 1024 && unit < units.length - 1);
+  return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+async function refreshApocalypseModeStatus() {
+  if (!apocalypseModeStatus) return;
+  try {
+    const status = await sendToBackground('apocalypse_mode', { command: 'status' });
+    const enabled = status?.enabled === true;
+    const summary = enabled
+      ? t('st.display.apocalypse_mode.status.summary', {
+        count: Number(status.installedCount) || 0,
+        size: formatArchiveBytes(status.totalBytes),
+        policy: t(status.updatePolicy === 'automatic' ? 'ap.metric.automatic' : 'ap.metric.manual'),
+      })
+      : t('st.display.apocalypse_mode.status.off');
+    apocalypseModeStatus.textContent = summary;
+    if (apocalypseModeLink) {
+      apocalypseModeLink.dataset.enabled = String(enabled);
+      apocalypseModeLink.title = summary;
+    }
+  } catch {
+    const unavailable = t('st.display.apocalypse_mode.status.unavailable');
+    apocalypseModeStatus.textContent = unavailable;
+    if (apocalypseModeLink) {
+      delete apocalypseModeLink.dataset.enabled;
+      apocalypseModeLink.title = unavailable;
+    }
+  }
+}
+
 // --- Init ---
 
 async function init() {
@@ -765,6 +814,7 @@ async function init() {
   await initPermissionGateToggle();
   await renderPermissions();
   await initScreenshotRedactionToggle();
+  await refreshApocalypseModeStatus();
 
   // Load providers
   const res = await sendToBackground('get_providers');
@@ -1497,11 +1547,15 @@ async function setWebgpuVisionEnabled(enabled) {
   const nextEnabled = enabled === true;
   if (nextEnabled) {
     await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
+    await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
   } else {
     // Release GPU allocations, but keep the browser-cached model download so
     // re-enabling does not require another ~770 MB transfer.
     await sendToBackground('dispose_webgpu_vision').catch(() => {});
-    await chrome.storage.local.remove(WEBGPU_VISION_ENABLED_KEY);
+    await chrome.storage.local.remove([
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_AUTO_SELECTED_KEY,
+    ]);
   }
   renderVisionConfig(currentVisionConfig, nextEnabled);
 }

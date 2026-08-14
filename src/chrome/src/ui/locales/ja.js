@@ -1,6 +1,8 @@
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '応答ストリームが中断されました。この Ask ターンをストリーミングなしで再試行します。',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': '一般設定を検索',
   'st.display.search.empty': '一致する一般設定はありません。',
   'st.display.advanced': '詳細設定',
+  ...getApocalypseModeCopy('ja'),
   'st.display.cloud_bridge.label': 'クラウドブリッジ',
   'st.display.cloud_bridge.desc': 'この Chromium プロファイルにローカルコントローラーを1つ接続します。WebBrain Cloud はポート 17373、MCP クライアントは 17374、LM Studio は 17375 を使用します。有効にできるブリッジは1つだけで、通常の権限確認は引き続き適用されます。',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

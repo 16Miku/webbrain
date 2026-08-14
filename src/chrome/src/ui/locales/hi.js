@@ -1,4 +1,6 @@
 // Hindi — translated from the canonical English locale.
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'प्रतिक्रिया स्ट्रीम बाधित हुई; इस Ask टर्न को बिना स्ट्रीमिंग के फिर से आज़माया जा रहा है।',
   'sp.providers.no_setup_group': "किसी सेटअप की आवश्यकता नहीं है",
@@ -521,6 +523,7 @@ export default {
   'st.display.search.placeholder': "सामान्य सेटिंग्स खोजें",
   'st.display.search.empty': "कोई सामान्य सेटिंग मेल नहीं खाती.",
   'st.display.advanced': "उन्नत",
+  ...getApocalypseModeCopy('hi'),
   'st.display.cloud_bridge.label': 'क्लाउड ब्रिज',
   'st.display.cloud_bridge.desc': 'एक स्थानीय कंट्रोलर को इस Chromium प्रोफ़ाइल से कनेक्ट करें। WebBrain Cloud के लिए पोर्ट 17373, MCP क्लाइंट के लिए 17374 या LM Studio के लिए 17375 इस्तेमाल करें। एक समय में केवल एक ब्रिज सक्रिय हो सकता है; सामान्य अनुमति संकेत लागू रहेंगे।',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

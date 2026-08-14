@@ -1,4 +1,11 @@
 import { ProviderManager } from './providers/manager.js';
+import {
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
+  WEBGPU_VISION_ENABLED_KEY,
+  WEBGPU_VISION_MODEL_ID,
+} from './providers/webgpu.js';
 import { Agent } from './agent/agent.js';
 import {
   CUSTOM_SKILLS_STORAGE_KEY,
@@ -13,6 +20,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -99,6 +107,66 @@ import {
  */
 
 const providerManager = new ProviderManager();
+const apocalypseController = createApocalypseController(chrome);
+const VISION_OFFSCREEN_URL = chrome.runtime.getURL('src/offscreen/offscreen.html');
+
+function normalizeVisionDownloadState(state) {
+  return {
+    modelId: String(state?.modelId || ''),
+    status: String(state?.status || 'idle'),
+    progress: Math.max(0, Math.min(100, Number(state?.progress) || 0)),
+    loaded: Math.max(0, Number(state?.loaded) || 0),
+    total: Math.max(0, Number(state?.total) || 0),
+    error: String(state?.error || '').slice(0, 500),
+    updatedAt: Date.now(),
+  };
+}
+
+async function persistVisionDownloadState(state) {
+  const normalized = normalizeVisionDownloadState(state);
+  await chrome.storage.local.set({ [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: normalized });
+  if (normalized.status === 'error') {
+    const stored = await chrome.storage.local.get(WEBGPU_VISION_AUTO_SELECTED_KEY);
+    if (stored[WEBGPU_VISION_AUTO_SELECTED_KEY] === true) {
+      await chrome.storage.local.remove([
+        WEBGPU_VISION_ENABLED_KEY,
+        WEBGPU_VISION_AUTO_SELECTED_KEY,
+      ]);
+    }
+  } else if (normalized.status === 'ready') {
+    await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
+  }
+  return normalized;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE) return false;
+  if (String(sender?.url || '') !== VISION_OFFSCREEN_URL) return false;
+  persistVisionDownloadState(message.state)
+    .then(state => sendResponse({ ok: true, state }))
+    .catch(error => sendResponse({ ok: false, error: error?.message || String(error) }));
+  return true;
+});
+
+async function enableApocalypseVisionModel() {
+  const result = await providerManager.enableAndPreloadWebgpuVision();
+  if (result?.ok) return result;
+  await chrome.storage.local.set({
+    [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'error',
+      progress: 0,
+      loaded: 0,
+      total: 0,
+      error: String(result?.error || 'The local vision model download could not be started.').slice(0, 500),
+      updatedAt: Date.now(),
+    },
+  }).catch(() => {});
+  return result;
+}
+apocalypseController.syncUpdateSchedule().catch((error) => {
+  console.warn('[WebBrain] Apocalypse Mode update schedule could not be restored:', error);
+});
 const agent = new Agent(providerManager);
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
@@ -1068,6 +1136,18 @@ chrome.storage.onChanged.addListener((changes) => {
     });
   }
   if (refreshPrompts) agent._refreshSystemPrompts();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
+    apocalypseController.manager.processNext().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
+    });
+  } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
+    apocalypseController.checkForUpdates().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode update check failed:', error);
+    });
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -2147,6 +2227,13 @@ async function handleMessage(msg, sender) {
   }
 
   switch (msg.action) {
+    case 'apocalypse_mode': {
+      const snapshot = await apocalypseController.handle(msg.command, msg);
+      if (msg.command === 'enable' && msg.enabled === true) {
+        return { ...snapshot, visionModel: await enableApocalypseVisionModel() };
+      }
+      return snapshot;
+    }
     case 'cloud_run':
       return await cloudRunController.startRun(msg);
     case 'cloud_workflow_compile':

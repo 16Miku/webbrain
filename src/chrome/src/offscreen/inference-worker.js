@@ -126,6 +126,20 @@ async function getRuntime(modelId, dtype, device) {
   }
 }
 
+async function preloadRuntime(payload = {}) {
+  const modelId = String(payload.modelId || '').trim();
+  if (!modelId) throw new Error('No vision model was specified.');
+  const device = payload.device || 'webgpu';
+  const dtype = payload.dtype || {
+    embed_tokens: 'fp16',
+    vision_encoder: 'fp16',
+    decoder_model_merged: 'q4',
+  };
+  await getRuntime(modelId, dtype, device);
+  await disposeRuntime();
+  return modelId;
+}
+
 function enqueueModelOperation(operation) {
   const result = modelOperationQueue.then(operation, operation);
   // Keep the queue usable after one request fails while preserving that
@@ -291,6 +305,11 @@ self.addEventListener('message', async event => {
     if (type === 'dispose') {
       await enqueueModelOperation(disposeRuntime);
       self.postMessage({ id, ok: true, disposed: true });
+      return;
+    }
+    if (type === 'preload') {
+      const modelId = await enqueueModelOperation(() => preloadRuntime(payload));
+      self.postMessage({ id, ok: true, modelId });
       return;
     }
     if (type === 'chat') {

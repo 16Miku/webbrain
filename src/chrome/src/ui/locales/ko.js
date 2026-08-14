@@ -1,6 +1,8 @@
 // Korean (ko).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '응답 스트리밍이 중단되었습니다. 이 Ask 요청을 스트리밍 없이 다시 시도합니다.',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': '일반 설정 검색',
   'st.display.search.empty': '일치하는 일반 설정이 없습니다.',
   'st.display.advanced': '고급',
+  ...getApocalypseModeCopy('ko'),
   'st.display.cloud_bridge.label': '클라우드 브리지',
   'st.display.cloud_bridge.desc': '로컬 컨트롤러 하나를 이 Chromium 프로필에 연결합니다. WebBrain Cloud는 포트 17373, MCP 클라이언트는 17374, LM Studio는 17375를 사용하세요. 브리지는 하나만 활성화할 수 있으며 일반 권한 확인은 계속 적용됩니다.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',
