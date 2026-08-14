@@ -21,6 +21,7 @@ let textRuntimeLoadKey = '';
 let modelOperationQueue = Promise.resolve();
 const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 const TEXT_DOWNLOAD_EVENT = 'text-download-state';
+const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
 const readyTextModelKeys = new Set();
 const textDownloadFiles = new Map();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
@@ -28,6 +29,11 @@ let activeTextDownloadModelId = '';
 let textDownloadAbortController = null;
 let textDownloadCancelMode = '';
 let lastTextProgressPostAt = 0;
+let webGpuAdapterProbePromise = null;
+let webGpuAdapterSummary = '';
+let observedWebGpuDevice = null;
+let lastWebGpuDeviceError = '';
+let lastWebGpuDeviceLost = '';
 let textDownloadState = {
   status: 'not-downloaded',
   ready: false,
@@ -136,6 +142,73 @@ async function loadLibrary() {
     return library;
   })();
   return libraryPromise;
+}
+
+function compactAdapterInfo(adapter) {
+  if (!adapter) return '';
+  const info = adapter.info || {};
+  const identity = [info.vendor, info.architecture, info.device, info.description]
+    .map(value => String(value || '').trim())
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(' / ');
+  const maxBufferSize = Number(adapter.limits?.maxBufferSize);
+  const maxStorageBinding = Number(adapter.limits?.maxStorageBufferBindingSize);
+  const limits = [
+    Number.isFinite(maxBufferSize) ? `maxBufferSize=${maxBufferSize}` : '',
+    Number.isFinite(maxStorageBinding) ? `maxStorageBufferBindingSize=${maxStorageBinding}` : '',
+  ].filter(Boolean).join(', ');
+  return [identity, limits].filter(Boolean).join('; ');
+}
+
+async function captureWebGpuAdapterSummary() {
+  if (webGpuAdapterProbePromise) return webGpuAdapterProbePromise;
+  webGpuAdapterProbePromise = (async () => {
+    if (typeof navigator === 'undefined' || !navigator.gpu) return '';
+    try {
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+      webGpuAdapterSummary = compactAdapterInfo(adapter);
+    } catch {}
+    return webGpuAdapterSummary;
+  })();
+  return webGpuAdapterProbePromise;
+}
+
+function bindWebGpuDeviceDiagnostics(library) {
+  const device = library?.env?.backends?.onnx?.webgpu?.device;
+  if (!device || device === observedWebGpuDevice) return;
+  observedWebGpuDevice = device;
+  lastWebGpuDeviceError = '';
+  lastWebGpuDeviceLost = '';
+  device.addEventListener?.('uncapturederror', event => {
+    lastWebGpuDeviceError = String(event?.error?.message || event?.message || 'Unknown WebGPU validation error.');
+    console.error('[webgpu] uncaptured device error:', lastWebGpuDeviceError);
+  });
+  device.lost?.then(info => {
+    if (device !== observedWebGpuDevice) return;
+    lastWebGpuDeviceLost = String(info?.message || info?.reason || 'The WebGPU device was lost.');
+    console.error('[webgpu] device lost:', lastWebGpuDeviceLost);
+  }).catch(() => {});
+}
+
+function isWebGpuExecutionFailure(error) {
+  return /OrtRun|BufferManager::Download|mapAsync|GPUBuffer|device lost/i.test(error?.message || String(error));
+}
+
+async function enrichWebGpuExecutionError(error) {
+  // WebGPU uncaptured-error/device-lost events can arrive just after OrtRun's
+  // generic buffer readback exception. Give that event one task to land so the
+  // user sees the actionable root error instead of only "Invalid Buffer".
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const details = [lastWebGpuDeviceError, lastWebGpuDeviceLost]
+    .map(value => String(value || '').trim())
+    .filter((value, index, values) => value && values.indexOf(value) === index);
+  const adapter = webGpuAdapterSummary || await captureWebGpuAdapterSummary();
+  const suffix = [
+    details.length ? `GPU detail: ${details.join(' ')}` : '',
+    adapter ? `Adapter: ${adapter}.` : '',
+    'Close other GPU-heavy tabs/apps and retry with a short prompt. If it persists, this GPU/driver cannot execute Ling with the current WebGPU runtime.',
+  ].filter(Boolean).join(' ');
+  return new Error(`${error?.message || String(error)} ${suffix}`);
 }
 
 function postProgress(modelId, event) {
@@ -283,6 +356,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
     if (!library.pipeline) {
       throw new Error('The packaged Transformers.js version does not include text generation.');
     }
+    await captureWebGpuAdapterSummary();
     await disposeTextRuntime();
     const previousAllowLocalModels = library.env?.allowLocalModels;
     if (localFilesOnly && library.env) library.env.allowLocalModels = true;
@@ -297,6 +371,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
     } finally {
       if (localFilesOnly && library.env) library.env.allowLocalModels = previousAllowLocalModels;
     }
+    bindWebGpuDeviceDiagnostics(library);
     textRuntime = {
       library,
       pipeline,
@@ -658,15 +733,23 @@ async function runText(payload) {
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   const requestedTokens = Number(payload?.options?.maxTokens);
   const maxNewTokens = Number.isFinite(requestedTokens)
-    ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
-    : 512;
+    ? Math.max(1, Math.min(WEBGPU_TEXT_MAX_NEW_TOKENS, Math.round(requestedTokens)))
+    : WEBGPU_TEXT_MAX_NEW_TOKENS;
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
-  const output = await runtime.pipeline(prepareTextMessages(payload?.messages), {
-    do_sample: false,
-    max_new_tokens: maxNewTokens,
-    tools: tools.length ? tools : undefined,
-    tokenizer_encode_kwargs: { enable_thinking: false },
-  });
+  lastWebGpuDeviceError = '';
+  lastWebGpuDeviceLost = '';
+  let output;
+  try {
+    output = await runtime.pipeline(prepareTextMessages(payload?.messages), {
+      do_sample: false,
+      max_new_tokens: maxNewTokens,
+      tools: tools.length ? tools : undefined,
+      tokenizer_encode_kwargs: { enable_thinking: false },
+    });
+  } catch (error) {
+    if (isWebGpuExecutionFailure(error)) throw await enrichWebGpuExecutionError(error);
+    throw error;
+  }
   const generated = output?.[0]?.generated_text;
   const content = Array.isArray(generated)
     ? generated.at(-1)?.content
