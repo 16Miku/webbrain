@@ -64,16 +64,19 @@ current entry.
 - An installed archive that later becomes unreadable because of corruption,
   eviction, or a revoked file grant moves from ready to an actionable error;
   WebBrain reports the read failure instead of misreporting an empty search.
-- Updates are manual in this release. Installing a newer catalog entry does not
-  silently overwrite an older archive; delete the older archive after verifying
-  the replacement.
+- Update checks can be manual or automatic. The automatic policy performs a
+  daily catalog network check, but installing a discovered replacement still
+  requires confirmation. A newer archive never silently overwrites an older
+  one; delete the older archive after verifying the replacement.
 
 Imported archives are structurally checked and extension free space is reviewed
 before they are copied to OPFS. Closing the management page interrupts an active
 user-file import because browsers do not provide a durable file grant
-consistently. A stale import is marked failed and its partial bytes are removed;
-choose the file again to restart it. Partial import bytes are also removed on
-explicit cancellation, quota exhaustion, or another write failure.
+consistently. A stale import is marked failed, and its partial bytes are retained
+so the failure remains visible and recoverable.
+Delete the failed entry to reclaim that storage, then choose the file again to
+restart the import. Partial import bytes are removed automatically on explicit
+cancellation, quota exhaustion, or another write failure.
 
 ## Retrieval and attribution
 
