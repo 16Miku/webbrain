@@ -1,7 +1,7 @@
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -681,7 +681,7 @@ export default {
   'st.display.search.placeholder': 'ค้นหาการตั้งค่าทั่วไป',
   'st.display.search.empty': 'ไม่พบการตั้งค่าทั่วไปที่ตรงกัน',
   'st.display.advanced': 'ขั้นสูง',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('th'),
   'st.display.cloud_bridge.label': 'บริดจ์คลาวด์',
   'st.display.cloud_bridge.desc': 'เชื่อมต่อตัวควบคุมภายในเครื่องหนึ่งตัวกับโปรไฟล์ Chromium นี้ ใช้พอร์ต 17373 สำหรับ WebBrain Cloud, 17374 สำหรับไคลเอนต์ MCP หรือ 17375 สำหรับ LM Studio เปิดใช้บริดจ์ได้ครั้งละหนึ่งตัวเท่านั้น และยังคงมีการขอสิทธิ์ตามปกติ',
   'st.display.cloud_bridge.url_label': 'URL ของ WebSocket',

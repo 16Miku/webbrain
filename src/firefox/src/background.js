@@ -13,7 +13,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
-import { APOCALYPSE_DOWNLOAD_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -95,6 +95,9 @@ import {
 
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(browser);
+apocalypseController.syncUpdateSchedule().catch((error) => {
+  console.warn('[WebBrain] Apocalypse Mode update schedule could not be restored:', error);
+});
 const agent = new Agent(providerManager);
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
@@ -1016,11 +1019,16 @@ browser.storage.onChanged.addListener((changes) => {
 });
 
 browser.alarms.onAlarm.addListener((alarm) => {
-  if (alarm?.name !== APOCALYPSE_DOWNLOAD_ALARM) return;
-  apocalypseController.manager.processNext().catch((error) => {
-    console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
-    browser.alarms.create(APOCALYPSE_DOWNLOAD_ALARM, { delayInMinutes: 5 });
-  });
+  if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
+    apocalypseController.manager.processNext().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
+      browser.alarms.create(APOCALYPSE_DOWNLOAD_ALARM, { delayInMinutes: 5 });
+    });
+  } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
+    apocalypseController.checkForUpdates().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode update check failed:', error);
+    });
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────

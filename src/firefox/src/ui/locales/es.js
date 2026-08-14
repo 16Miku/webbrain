@@ -1,7 +1,7 @@
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': 'Buscar en ajustes generales',
   'st.display.search.empty': 'No hay ajustes generales que coincidan.',
   'st.display.advanced': 'Avanzado',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('es'),
   'st.display.clarify_timeout.label': 'Tiempo de espera de aclaración',
   'st.display.clarify_timeout.desc': 'Cuánto esperar una respuesta a una pregunta de aclaración antes de elegir automáticamente la primera opción (o agotar el tiempo si no hay opciones). 0 = Instantáneo (autoelegir siempre). Valores por encima de 1200s esperan indefinidamente (Desactivado). Predeterminado 60s. No se aplica a permisos ni confirmaciones de envío de formularios.',
   'st.display.clarify_timeout.off': 'Desactivado',

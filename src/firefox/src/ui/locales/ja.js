@@ -1,7 +1,7 @@
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': '一般設定を検索',
   'st.display.search.empty': '一致する一般設定はありません。',
   'st.display.advanced': '詳細設定',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('ja'),
   'st.display.clarify_timeout.label': '確認のタイムアウト',
   'st.display.clarify_timeout.desc': 'clarify の返答を待つ時間。経過すると最初の選択肢を自動選択（選択肢がなければタイムアウト）。0 で即時（常に自動選択）。1200 秒超は無制限（オフ）。既定 60 秒。権限やフォーム送信確認には適用されません。',
   'st.display.clarify_timeout.off': 'オフ',

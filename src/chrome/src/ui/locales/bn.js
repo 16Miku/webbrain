@@ -1,5 +1,5 @@
 // Bengali — translated from the canonical English locale.
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   'sp.streaming.fallback': 'প্রতিক্রিয়া স্ট্রিম বাধাগ্রস্ত হয়েছে; স্ট্রিমিং ছাড়া এই Ask পালাটি আবার চেষ্টা করা হচ্ছে।',
@@ -523,7 +523,7 @@ export default {
   'st.display.search.placeholder': "সাধারণ সেটিংস অনুসন্ধান করুন",
   'st.display.search.empty': "কোনো সাধারণ সেটিংস মেলে না।",
   'st.display.advanced': "উন্নত",
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('bn'),
   'st.display.cloud_bridge.label': 'ক্লাউড ব্রিজ',
   'st.display.cloud_bridge.desc': 'এই Chromium প্রোফাইলে একটি স্থানীয় কন্ট্রোলার সংযুক্ত করুন। WebBrain Cloud-এর জন্য পোর্ট 17373, MCP ক্লায়েন্টের জন্য 17374 অথবা LM Studio-এর জন্য 17375 ব্যবহার করুন। একবারে শুধু একটি ব্রিজ সক্রিয় থাকতে পারে; স্বাভাবিক অনুমতির অনুরোধ প্রযোজ্য থাকবে।',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

@@ -1,7 +1,7 @@
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': '搜索通用设置',
   'st.display.search.empty': '没有匹配的通用设置。',
   'st.display.advanced': '高级',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('zh'),
   'st.display.clarify_timeout.label': '澄清超时',
   'st.display.clarify_timeout.desc': '等待澄清问题回复的时长；超时后自动选择第一个选项（若无选项则记为超时）。0 = 立即（始终自动选择）。超过 1200 秒为无限等待（关闭）。默认 60 秒。不适用于权限或表单提交确认。',
   'st.display.clarify_timeout.off': '关闭',

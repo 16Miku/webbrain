@@ -1,7 +1,13 @@
-export default {
+import apocalypseModeTranslations from './apocalypse-translations.mjs';
+
+const englishApocalypseModeCopy = {
   'st.display.apocalypse_mode.label': 'Apocalypse Mode',
   'st.display.apocalypse_mode.desc': 'Manage optional offline Wikipedia archives by language and size. Disabled by default; no archive is downloaded without confirmation.',
   'st.display.apocalypse_mode.manage': 'Manage archives',
+  'st.display.apocalypse_mode.status.loading': 'Loading archive status…',
+  'st.display.apocalypse_mode.status.off': 'Off · no offline archive will be used.',
+  'st.display.apocalypse_mode.status.summary': 'On · {count} installed · {size} · {policy} updates',
+  'st.display.apocalypse_mode.status.unavailable': 'Archive status is temporarily unavailable.',
   'ap.page_title': 'WebBrain — Apocalypse Mode',
   'ap.title': 'Apocalypse Mode',
   'ap.subtitle': 'Offline Wikipedia via Kiwix/ZIM',
@@ -15,6 +21,7 @@ export default {
   'ap.metric.storage': 'Extension storage',
   'ap.metric.updates': 'Updates',
   'ap.metric.manual': 'Manual',
+  'ap.metric.automatic': 'Automatic checks',
   'ap.catalog.title': 'Install from the Kiwix catalog',
   'ap.catalog.desc': "Archive language is independent from WebBrain's interface language. Exact Metalink size and integrity pieces are resolved before confirmation.",
   'ap.language': 'Wikipedia language',
@@ -40,6 +47,7 @@ export default {
   'ap.resume': 'Resume',
   'ap.retry': 'Retry',
   'ap.check_update': 'Check update',
+  'ap.review_update': 'Review update',
   'ap.delete': 'Delete',
   'ap.date_unknown': 'date unknown',
   'ap.no_match': 'No matching archives in the current catalog.',
@@ -66,6 +74,8 @@ export default {
   'ap.delete_internal': 'Delete this archive and its extension-owned bytes?',
   'ap.checking_update': 'Checking the current Kiwix catalog…',
   'ap.current': 'This archive is current.',
+  'ap.update_policy.automatic_notice': 'Automatic daily update checks enabled. Downloads still require your confirmation.',
+  'ap.update_policy.manual_notice': 'Update checks are manual.',
   'ap.action_done': 'Archive {action} request completed.',
   'ap.enable_import': 'Enable Apocalypse Mode before importing.',
   'ap.choose_file': 'Choose a .zim file first.',
@@ -77,5 +87,12 @@ export default {
   'ap.status.paused': 'paused',
   'ap.status.ready': 'ready',
   'ap.status.importing': 'importing',
+  'ap.status.deleting': 'deleting',
   'ap.status.error': 'error',
 };
+
+export function getApocalypseModeCopy(locale = 'en') {
+  return { ...englishApocalypseModeCopy, ...(apocalypseModeTranslations[locale] || {}) };
+}
+
+export default englishApocalypseModeCopy;

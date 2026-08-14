@@ -1,7 +1,7 @@
 // Russian (ru).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': 'Поиск в общих настройках',
   'st.display.search.empty': 'Нет совпадений в общих настройках.',
   'st.display.advanced': 'Расширенные',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('ru'),
   'st.display.clarify_timeout.label': 'Таймаут уточнения',
   'st.display.clarify_timeout.desc': 'Сколько ждать ответа на уточняющий вопрос, прежде чем автоматически выбрать первый вариант (или зафиксировать таймаут без вариантов). 0 — сразу (всегда автовыбор). Больше 1200 с — ждать бесконечно (Выкл.). По умолчанию 60 с. Не применяется к разрешениям и подтверждениям отправки форм.',
   'st.display.clarify_timeout.off': 'Выкл.',

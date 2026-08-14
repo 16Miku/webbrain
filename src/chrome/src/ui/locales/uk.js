@@ -1,7 +1,7 @@
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -681,7 +681,7 @@ export default {
   'st.display.search.placeholder': 'Пошук у загальних налаштуваннях',
   'st.display.search.empty': 'Немає збігів у загальних налаштуваннях.',
   'st.display.advanced': 'Розширені',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('uk'),
   'st.display.cloud_bridge.label': 'Хмарний міст',
   'st.display.cloud_bridge.desc': 'Підключіть один локальний контролер до цього профілю Chromium. Використовуйте порт 17373 для WebBrain Cloud, 17374 для клієнтів MCP або 17375 для LM Studio. Одночасно може бути активним лише один міст; звичайні запити дозволів залишаються чинними.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

@@ -231,6 +231,19 @@ export function mergeZimProvenance(metadata = {}, embedded = {}) {
   };
 }
 
+export function assertWikipediaZimArchive(embedded = {}) {
+  const source = String(embedded.Source || '').toLocaleLowerCase();
+  const name = String(embedded.Name || '').toLocaleLowerCase();
+  const tags = String(embedded.Tags || '').toLocaleLowerCase().split(/[;,]/).map(tag => tag.trim());
+  const wikipediaSource = /(?:^|[/:?\s(])(?:[a-z0-9-]+\.)*wikipedia\.org(?=$|[/:?#\s;,\)])/i.test(source);
+  const wikipediaName = /^wikipedia(?:_|$)/i.test(name);
+  const wikipediaTag = tags.some(tag => tag === 'wikipedia' || tag === '_category:wikipedia' || tag.startsWith('wikipedia:'));
+  if (!wikipediaSource && !wikipediaName && !wikipediaTag) {
+    throw new Error('This ZIM does not identify itself as a Wikipedia archive. Apocalypse Mode currently supports Wikipedia ZIM files only.');
+  }
+  return true;
+}
+
 function wikipediaArticleUrl(language, path) {
   const safePath = encodeURI(path).replace(/[?#]/g, character => encodeURIComponent(character));
   return `https://${language}.wikipedia.org/wiki/${safePath}`;
@@ -352,7 +365,7 @@ export async function openKiwixZim(source, metadata = {}) {
     if (embeddedMetadataPromise) return await embeddedMetadataPromise;
     embeddedMetadataPromise = (async () => {
       const values = {};
-      for (const key of ['Language', 'Date', 'License', 'Source', 'Creator', 'Publisher']) {
+      for (const key of ['Language', 'Date', 'License', 'Source', 'Creator', 'Publisher', 'Name', 'Tags', 'Title']) {
         const candidate = (await findPaths(key, 1, 'M'))[0];
         if (!candidate || candidate.url !== key) continue;
         const entry = await resolvedEntry(candidate);
@@ -365,7 +378,8 @@ export async function openKiwixZim(source, metadata = {}) {
     return await embeddedMetadataPromise;
   }
 
-  const provenance = mergeZimProvenance(metadata, await embeddedMetadata());
+  const embedded = await embeddedMetadata();
+  const provenance = mergeZimProvenance(metadata, embedded);
 
   async function search(query, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit) || 3));
@@ -374,15 +388,19 @@ export async function openKiwixZim(source, metadata = {}) {
     for (const path of queryPaths(query)) {
       locatedCandidates.push(...await findPaths(path, Math.max(24, limit * 8)));
     }
-    for (const located of rankZimTitleCandidates(locatedCandidates, query, limit)) {
+    const resolvedCandidates = [];
+    for (const located of locatedCandidates) {
       const entry = await resolvedEntry(located);
+      if (entry) resolvedCandidates.push(entry);
+    }
+    for (const entry of rankZimTitleCandidates(resolvedCandidates, query, limit)) {
       if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) continue;
       const bytes = await clusterBlob(entry.clusterIndex, entry.blobIndex);
       const excerpt = relevantPassage(decodeHtmlText(new TextDecoder().decode(bytes)), query);
       if (!excerpt) continue;
       const wikipediaLanguage = ISO_639_3_TO_1[provenance.language] || provenance.language.slice(0, 2);
       results.push({
-        title: entry.title || located.title,
+        title: entry.title,
         excerpt,
         url: wikipediaArticleUrl(wikipediaLanguage, entry.url),
         ...provenance,
@@ -391,7 +409,7 @@ export async function openKiwixZim(source, metadata = {}) {
     return results;
   }
 
-  return { articleCount, clusterCount, metadata: provenance, search };
+  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, search };
 }
 
 const APOCALYPSE_DB_NAME = 'webbrain_apocalypse_mode';
@@ -437,14 +455,14 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
     async getConfig() {
       const database = await open();
       const value = await idbRequest(database.transaction(CONFIG_STORE, 'readonly').objectStore(CONFIG_STORE).get(CONFIG_KEY));
-      return { enabled: false, ...(value?.value || {}) };
+      return { enabled: false, updatePolicy: 'manual', ...(value?.value || {}) };
     },
     async setConfig(patch) {
       const database = await open();
       const transaction = database.transaction(CONFIG_STORE, 'readwrite');
       const objectStore = transaction.objectStore(CONFIG_STORE);
       const current = await idbRequest(objectStore.get(CONFIG_KEY));
-      const value = { enabled: false, ...(current?.value || {}), ...(patch || {}) };
+      const value = { enabled: false, updatePolicy: 'manual', ...(current?.value || {}), ...(patch || {}) };
       objectStore.put({ key: CONFIG_KEY, value });
       await idbTransaction(transaction);
       return value;
@@ -518,8 +536,22 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     },
     async remove(target) {
       if (target?.kind === 'file-handle') return;
-      const dir = await directory(false);
-      await dir.removeEntry(safeArchiveKey(target?.key));
+      try {
+        const dir = await directory(false);
+        await dir.removeEntry(safeArchiveKey(target?.key));
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+    },
+    async exists(target) {
+      if (target?.kind === 'file-handle') return false;
+      try {
+        await fileHandle(target, false);
+        return true;
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return false;
+        throw error;
+      }
     },
     async open(target) {
       return await (await fileHandle(target, false)).getFile();
@@ -543,6 +575,8 @@ const MAX_RETRY_ATTEMPTS = 6;
 const BASE_RETRY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 export const APOCALYPSE_DOWNLOAD_ALARM = 'wb_apocalypse_archive_download';
+export const APOCALYPSE_UPDATE_ALARM = 'wb_apocalypse_archive_updates';
+const APOCALYPSE_UPDATE_PERIOD_MINUTES = 24 * 60;
 
 async function defaultDigestHex(bytes, algorithm) {
   const normalized = String(algorithm || '').toLowerCase() === 'sha-1' ? 'SHA-1' : 'SHA-256';
@@ -584,6 +618,7 @@ export function createApocalypseArchiveManager(options = {}) {
     const [config, archives] = await Promise.all([store.getConfig(), store.listArchives()]);
     return {
       enabled: config?.enabled === true,
+      updatePolicy: config?.updatePolicy === 'automatic' ? 'automatic' : 'manual',
       archives,
       installedCount: archives.filter(record => record.status === 'ready').length,
       totalBytes: archives.filter(record => record.status === 'ready').reduce((sum, record) => sum + (Number(record.size) || 0), 0),
@@ -614,6 +649,7 @@ export function createApocalypseArchiveManager(options = {}) {
     const timestamp = now();
     const record = {
       ...download,
+      archiveKind: download.archiveKind || (/^wikipedia(?:_|$)/i.test(String(download.name || '')) ? 'wikipedia' : ''),
       id: randomId(),
       target,
       status: 'queued',
@@ -652,9 +688,36 @@ export function createApocalypseArchiveManager(options = {}) {
     const record = await store.getArchive(id);
     if (!record) return false;
     controllers.get(id)?.abort();
-    await store.deleteArchive(id);
-    await storage.remove(record.target, record).catch(() => {});
-    return true;
+    const deleting = {
+      ...record,
+      generation: (Number(record.generation) || 0) + 1,
+      status: 'deleting',
+      error: '',
+      errorKind: '',
+      updatedAt: now(),
+    };
+    await store.putArchive(deleting);
+    try {
+      await storage.remove(deleting.target, deleting);
+      if (typeof storage.exists === 'function' && await storage.exists(deleting.target, deleting)) {
+        throw new Error('archive bytes are still present after deletion');
+      }
+      const current = await store.getArchive(id);
+      if (!current) return true;
+      if (current.generation !== deleting.generation || current.status !== 'deleting') {
+        throw new Error('archive state changed while deletion was in progress');
+      }
+      await store.deleteArchive(id);
+      if (await store.getArchive(id)) throw new Error('archive metadata is still present after deletion');
+      return true;
+    } catch (error) {
+      const message = `Archive deletion failed: ${error?.message || String(error)}. Retry deletion to remove the retained archive bytes.`;
+      const current = await store.getArchive(id);
+      if (current && current.generation === deleting.generation) {
+        await store.putArchive({ ...current, status: 'error', errorKind: 'delete-failed', error: message, updatedAt: now() });
+      }
+      throw new Error(message, { cause: error });
+    }
   }
 
   async function processNext() {
@@ -792,7 +855,8 @@ export function createKiwixZimProvider(options = {}) {
   return {
     id: 'kiwix-zim',
     supports(record) {
-      return record?.target?.kind === 'opfs' || record?.target?.kind === 'file-handle';
+      return record?.archiveKind === 'wikipedia'
+        && (record?.target?.kind === 'opfs' || record?.target?.kind === 'file-handle');
     },
     async search(record, query, searchOptions = {}) {
       const archive = await openKiwixZim(await storage.open(record.target), record);
@@ -812,6 +876,7 @@ function importedArchiveRecord(metadata, file, inspected, id, target, status) {
     language: provenance.language,
     archiveDate: provenance.archiveDate,
     tier: metadata.tier || 'imported',
+    archiveKind: 'wikipedia',
     source: provenance.source,
     license: provenance.license,
     licenseDeclared: provenance.licenseDeclared,
@@ -834,6 +899,7 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
   if (config.enabled !== true) throw new Error('Apocalypse Mode is disabled. Enable it before importing an archive.');
   const blob = await sourceBlob(source);
   const inspected = await openKiwixZim(blob, metadata);
+  assertWikipediaZimArchive(inspected.embeddedMetadata);
   const capacity = normalizeStorageEstimate(typeof storage.estimate === 'function' ? await storage.estimate() : {});
   if (capacity.known && blob.size > capacity.free) {
     throw new Error('Insufficient browser-managed storage space for this ZIM archive.');
@@ -864,10 +930,21 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
     await store.putArchive(record);
     return record;
   } catch (error) {
-    await storage.remove(target).catch(() => {});
+    let cleanupError = null;
+    try {
+      await storage.remove(target);
+      if (typeof storage.exists === 'function' && await storage.exists(target)) throw new Error('partial archive bytes are still present');
+    } catch (caught) {
+      cleanupError = caught;
+    }
     const current = await store.getArchive(id);
+    if (cleanupError && current) {
+      const message = `Import failed and partial archive cleanup failed: ${cleanupError?.message || String(cleanupError)}. Retry deletion to remove the retained bytes.`;
+      await store.putArchive({ ...current, status: 'error', errorKind: 'delete-failed', error: message, updatedAt: Date.now() });
+      throw new Error(message, { cause: error });
+    }
     if (!current || error?.name === 'AbortError') {
-      await store.deleteArchive(id).catch(() => {});
+      await store.deleteArchive(id);
       throw error;
     }
     record = { ...current, status: 'error', bytesDownloaded: 0, error: error?.message || String(error), updatedAt: Date.now() };
@@ -883,6 +960,7 @@ export async function registerKiwixArchiveHandle(handle, metadata = {}, options 
   if (config.enabled !== true) throw new Error('Apocalypse Mode is disabled. Enable it before importing an archive.');
   const file = await handle.getFile();
   const inspected = await openKiwixZim(file, metadata);
+  assertWikipediaZimArchive(inspected.embeddedMetadata);
   const id = options.id || globalThis.crypto.randomUUID();
   const record = importedArchiveRecord(metadata, file, inspected, id, { kind: 'file-handle', handle }, 'ready');
   await store.putArchive(record);
@@ -898,17 +976,31 @@ export function createApocalypseController(api, options = {}) {
   }));
   const manager = createApocalypseArchiveManager({ store, storage, fetchImpl, schedule });
   const importStaleMs = Math.max(30_000, Number(options.importStaleMs) || 60_000);
+  const scheduleUpdateChecks = options.scheduleUpdateChecks || (() => api?.alarms?.create?.(APOCALYPSE_UPDATE_ALARM, {
+    delayInMinutes: 1,
+    periodInMinutes: APOCALYPSE_UPDATE_PERIOD_MINUTES,
+  }));
+  const clearUpdateChecks = options.clearUpdateChecks || (() => api?.alarms?.clear?.(APOCALYPSE_UPDATE_ALARM));
 
   async function recoverInterruptedImports() {
     const records = await store.listArchives();
     const stale = records.filter(record => record.status === 'importing' && Number(record.updatedAt) <= Date.now() - importStaleMs);
     await Promise.all(stale.map(async (record) => {
-      await storage.remove(record.target, record).catch(() => {});
+      let cleanupError = null;
+      try {
+        await storage.remove(record.target, record);
+        if (typeof storage.exists === 'function' && await storage.exists(record.target, record)) throw new Error('partial archive bytes are still present');
+      } catch (error) {
+        cleanupError = error;
+      }
       await store.putArchive({
         ...record,
         status: 'error',
-        bytesDownloaded: 0,
-        error: 'Import was interrupted. Choose the source .zim file again to restart it.',
+        bytesDownloaded: cleanupError ? record.bytesDownloaded : 0,
+        errorKind: cleanupError ? 'delete-failed' : 'import-interrupted',
+        error: cleanupError
+          ? `Import was interrupted and partial archive cleanup failed: ${cleanupError?.message || String(cleanupError)}. Retry deletion to remove the retained bytes.`
+          : 'Import was interrupted. Choose the source .zim file again to restart it.',
         updatedAt: Date.now(),
       });
     }));
@@ -935,15 +1027,51 @@ export function createApocalypseController(api, options = {}) {
 
   async function resolve(item) {
     if (!/^https:\/\//.test(String(item?.metaUrl || ''))) throw new Error('Kiwix archive metadata URL is invalid.');
+    if (!/^wikipedia(?:_|$)/i.test(String(item?.name || ''))) throw new Error('Apocalypse Mode currently supports Wikipedia catalog archives only.');
     const response = await fetchImpl(item.metaUrl, { credentials: 'omit', redirect: 'follow' });
     if (!response.ok) throw new Error(`Kiwix Metalink returned HTTP ${response.status}.`);
     return resolveKiwixDownload(item, await response.text());
   }
 
+  async function syncUpdateSchedule() {
+    const config = await store.getConfig();
+    if (config.enabled === true && config.updatePolicy === 'automatic') scheduleUpdateChecks();
+    else await clearUpdateChecks();
+    return config;
+  }
+
+  async function setUpdatePolicy(policy) {
+    const updatePolicy = policy === 'automatic' ? 'automatic' : 'manual';
+    await store.setConfig({ updatePolicy });
+    await syncUpdateSchedule();
+    return await snapshot();
+  }
+
+  async function checkForUpdates(options = {}) {
+    const config = await store.getConfig();
+    if (config.enabled !== true || (config.updatePolicy !== 'automatic' && options.force !== true)) {
+      return await snapshot();
+    }
+    const checkedAt = Date.now();
+    const records = await store.listArchives();
+    const candidates = records.filter(record => record.status === 'ready' && record.name && record.flavour);
+    const catalogs = new Map();
+    for (const record of candidates) {
+      const language = String(record.language || 'eng');
+      if (!catalogs.has(language)) catalogs.set(language, await catalog(language));
+      const updateAvailable = selectKiwixUpdate(record, catalogs.get(language));
+      await store.putArchive({ ...record, updateAvailable, lastUpdateCheckAt: checkedAt, updatedAt: checkedAt });
+    }
+    await store.setConfig({ lastUpdateCheckAt: checkedAt });
+    return await snapshot();
+  }
+
   async function handle(action, payload = {}) {
     switch (action) {
       case 'status': return await snapshot();
-      case 'enable': await manager.setEnabled(payload.enabled); return await snapshot();
+      case 'enable': await manager.setEnabled(payload.enabled); await syncUpdateSchedule(); return await snapshot();
+      case 'set_update_policy': return await setUpdatePolicy(payload.policy);
+      case 'check_updates': return await checkForUpdates({ force: payload.force === true });
       case 'catalog': return { items: await catalog(payload.language) };
       case 'resolve': return { download: await resolve(payload.item) };
       case 'install': {
@@ -952,8 +1080,11 @@ export function createApocalypseController(api, options = {}) {
         if (capacity.known && Number(payload.download?.size) > capacity.free) {
           throw new Error(`Not enough extension storage (${capacity.free} bytes available).`);
         }
+        if (!/^wikipedia(?:_|$)/i.test(String(payload.download?.name || ''))) {
+          throw new Error('Apocalypse Mode currently supports Wikipedia catalog archives only.');
+        }
         const key = `${payload.download?.id || 'wikipedia'}-${payload.download?.filename || 'archive.zim'}`;
-        await manager.install(payload.download, { kind: 'opfs', key: safeArchiveKey(key) });
+        await manager.install({ ...payload.download, archiveKind: 'wikipedia' }, { kind: 'opfs', key: safeArchiveKey(key) });
         return await snapshot();
       }
       case 'pause': await manager.pause(payload.id); return await snapshot();
@@ -965,5 +1096,5 @@ export function createApocalypseController(api, options = {}) {
     }
   }
 
-  return { manager, store, storage, snapshot, catalog, resolve, recoverInterruptedImports, handle };
+  return { manager, store, storage, snapshot, catalog, resolve, recoverInterruptedImports, syncUpdateSchedule, setUpdatePolicy, checkForUpdates, handle };
 }

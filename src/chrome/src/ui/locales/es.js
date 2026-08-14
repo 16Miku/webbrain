@@ -1,7 +1,7 @@
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -681,7 +681,7 @@ export default {
   'st.display.search.placeholder': 'Buscar en ajustes generales',
   'st.display.search.empty': 'No hay ajustes generales que coincidan.',
   'st.display.advanced': 'Avanzado',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('es'),
   'st.display.cloud_bridge.label': 'Puente en la nube',
   'st.display.cloud_bridge.desc': 'Conecta un controlador local a este perfil de Chromium. Usa el puerto 17373 para WebBrain Cloud, 17374 para clientes MCP o 17375 para LM Studio. Solo puede haber un puente activo; los avisos de permisos siguen aplicándose.',
   'st.display.cloud_bridge.url_label': 'URL de WebSocket',

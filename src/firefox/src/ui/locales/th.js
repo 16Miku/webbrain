@@ -1,7 +1,7 @@
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': 'ค้นหาการตั้งค่าทั่วไป',
   'st.display.search.empty': 'ไม่พบการตั้งค่าทั่วไปที่ตรงกัน',
   'st.display.advanced': 'ขั้นสูง',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('th'),
   'st.display.clarify_timeout.label': 'หมดเวลา clarify',
   'st.display.clarify_timeout.desc': 'ระยะเวลารอคำตอบ clarify ก่อนเลือกตัวเลือกแรกอัตโนมัติ (หรือหมดเวลาหากไม่มีตัวเลือก) 0 = ทันที (เลือกอัตโนมัติเสมอ) เกิน 1200 วินาที = รอไม่จำกัด (ปิด) ค่าเริ่มต้น 60 วินาที ไม่ใช้กับสิทธิ์หรือการยืนยันส่งฟอร์ม',
   'st.display.clarify_timeout.off': 'ปิด',

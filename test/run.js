@@ -20978,37 +20978,74 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
   }
 });
 
-function minimalWikipediaZimFixture() {
+function minimalWikipediaZimFixture(options = {}) {
   const encoder = new TextEncoder();
-  const url = encoder.encode('Alan_Turing');
-  const title = encoder.encode('Alan Turing');
-  const html = encoder.encode('<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>');
-  const mime = encoder.encode('text/html\0\0');
-  const clusterStart = 96;
-  const cluster = new Uint8Array(1 + 8 + html.length);
+  const metadata = options.wikipedia === false ? {
+    Language: 'eng', Name: 'project_gutenberg_en', Source: 'www.gutenberg.org', Tags: '_category:books',
+  } : {
+    Language: 'eng', Name: 'wikipedia_en_test', Source: 'https://en.wikipedia.org/', Tags: 'wikipedia;_category:wikipedia',
+  };
+  const entries = [
+    {
+      namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
+      contents: '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
+    },
+    ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
+  ];
+  if (options.redirectTrap) {
+    entries.push(
+      { namespace: 'C', url: 'Science', title: 'Science', redirectUrl: 'The_New_York_Times' },
+      { namespace: 'C', url: 'Science_article', title: 'Science article', mimeType: 0, contents: '<p>Science is the systematic study of the natural world.</p>' },
+      { namespace: 'C', url: 'The_New_York_Times', title: 'The New York Times', mimeType: 0, contents: '<p>A newspaper based in New York City.</p>' },
+    );
+  }
+  entries.sort((left, right) => `${left.namespace}/${left.url}`.localeCompare(`${right.namespace}/${right.url}`));
+  const blobs = entries.filter(entry => entry.contents != null);
+  blobs.forEach((entry, index) => { entry.blobIndex = index; });
+  const mime = encoder.encode('text/html\0text/plain\0\0');
+  const offsetsBytes = (blobs.length + 1) * 4;
+  const encodedBlobs = blobs.map(entry => encoder.encode(entry.contents));
+  const clusterStart = 128;
+  const cluster = new Uint8Array(1 + offsetsBytes + encodedBlobs.reduce((sum, value) => sum + value.length, 0));
   cluster[0] = 1;
   const clusterView = new DataView(cluster.buffer);
-  clusterView.setUint32(1, 8, true);
-  clusterView.setUint32(5, 8 + html.length, true);
-  cluster.set(html, 9);
+  let blobOffset = offsetsBytes;
+  encodedBlobs.forEach((value, index) => {
+    clusterView.setUint32(1 + index * 4, blobOffset, true);
+    cluster.set(value, 1 + blobOffset);
+    blobOffset += value.length;
+  });
+  clusterView.setUint32(1 + blobs.length * 4, blobOffset, true);
   const directoryStart = clusterStart + cluster.length;
-  const directory = new Uint8Array(16 + url.length + 1 + title.length + 1);
-  const directoryView = new DataView(directory.buffer);
-  directoryView.setUint16(0, 0, true);
-  directory[3] = 'C'.charCodeAt(0);
-  directoryView.setUint32(8, 0, true);
-  directoryView.setUint32(12, 0, true);
-  directory.set(url, 16);
-  directory.set(title, 17 + url.length);
-  const urlPointerPosition = directoryStart + directory.length;
-  const clusterPointerPosition = urlPointerPosition + 8;
+  const directories = entries.map((entry) => {
+    const url = encoder.encode(entry.url);
+    const title = encoder.encode(entry.title);
+    const redirect = Boolean(entry.redirectUrl);
+    const directory = new Uint8Array((redirect ? 12 : 16) + url.length + 1 + title.length + 1);
+    const directoryView = new DataView(directory.buffer);
+    directoryView.setUint16(0, redirect ? 0xffff : entry.mimeType, true);
+    directory[3] = entry.namespace.charCodeAt(0);
+    directoryView.setUint32(8, redirect ? entries.findIndex(candidate => candidate.url === entry.redirectUrl && candidate.namespace === 'C') : 0, true);
+    if (!redirect) directoryView.setUint32(12, entry.blobIndex, true);
+    directory.set(url, redirect ? 12 : 16);
+    directory.set(title, (redirect ? 13 : 17) + url.length);
+    return directory;
+  });
+  const directoryPositions = [];
+  let directoryOffset = directoryStart;
+  for (const directory of directories) {
+    directoryPositions.push(directoryOffset);
+    directoryOffset += directory.length;
+  }
+  const urlPointerPosition = directoryOffset;
+  const clusterPointerPosition = urlPointerPosition + entries.length * 8;
   const checksumPosition = clusterPointerPosition + 8;
   const bytes = new Uint8Array(checksumPosition + 16);
   const view = new DataView(bytes.buffer);
   view.setUint32(0, 0x044d495a, true);
   view.setUint16(4, 6, true);
   view.setUint16(6, 3, true);
-  view.setUint32(24, 1, true);
+  view.setUint32(24, entries.length, true);
   view.setUint32(28, 1, true);
   view.setBigUint64(32, BigInt(urlPointerPosition), true);
   view.setBigUint64(40, 0xffffffffffffffffn, true);
@@ -21019,8 +21056,10 @@ function minimalWikipediaZimFixture() {
   view.setBigUint64(72, BigInt(checksumPosition), true);
   bytes.set(mime, 80);
   bytes.set(cluster, clusterStart);
-  bytes.set(directory, directoryStart);
-  view.setBigUint64(urlPointerPosition, BigInt(directoryStart), true);
+  directories.forEach((directory, index) => {
+    bytes.set(directory, directoryPositions[index]);
+    view.setBigUint64(urlPointerPosition + index * 8, BigInt(directoryPositions[index]), true);
+  });
   view.setBigUint64(clusterPointerPosition, BigInt(clusterStart), true);
   return new Blob([bytes], { type: 'application/x-zim' });
 }
@@ -21033,7 +21072,7 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
       license: 'CC BY-SA 4.0',
     });
     assert.deepEqual(archive.metadata, {
-      language: 'eng', archiveDate: '2026-07-17', source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0', licenseDeclared: true,
+      language: 'eng', archiveDate: '2026-07-17', source: 'https://en.wikipedia.org/', license: 'CC BY-SA 4.0', licenseDeclared: true,
     }, `${label}: validated import metadata was unavailable before confirmation`);
     const [passage] = await archive.search('Alan Turing', { limit: 3 });
     assert.equal(passage.title, 'Alan Turing', `${label}: local ZIM title was not read`);
@@ -21042,9 +21081,36 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
     assert.equal(passage.language, 'eng', `${label}: archive language was lost`);
     assert.equal(passage.archiveDate, '2026-07-17', `${label}: archive date was lost`);
     assert.equal(passage.license, 'CC BY-SA 4.0', `${label}: archive license was lost`);
+    assert.equal(archive.embeddedMetadata.Name, 'wikipedia_en_test', `${label}: embedded archive identity was not exposed for import validation`);
   }
   const corrupt = new Blob([new Uint8Array(96)]);
   await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
+});
+
+test('Apocalypse Mode reranks resolved redirect destinations before returning ZIM search results', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ redirectTrap: true }));
+    const [passage] = await archive.search('Science', { limit: 1 });
+    assert.equal(passage?.title, 'Science article', `${label}: an exact-looking redirect alias displaced the relevant destination`);
+    assert.doesNotMatch(passage?.url || '', /The_New_York_Times/, `${label}: an unrelated redirect destination escaped relevance scoring`);
+  }
+});
+
+test('Apocalypse Mode accepts only self-identified Wikipedia ZIM imports', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: 'https://fr.wikipedia.org/', Name: 'other', Tags: '' }), true, `${label}: Wikipedia Source metadata was rejected`);
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: '', Name: 'wikipedia_en_all', Tags: '' }), true, `${label}: Wikipedia Name metadata was rejected`);
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: '', Name: 'other', Tags: '_category:wikipedia' }), true, `${label}: Wikipedia Tags metadata was rejected`);
+    assert.throws(() => runtime.assertWikipediaZimArchive({ Source: 'https://www.gutenberg.org/', Name: 'books_en', Tags: '_category:books' }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: a non-Wikipedia archive was accepted`);
+    assert.throws(() => runtime.assertWikipediaZimArchive({ Source: 'https://wikipedia.org.evil.test/', Name: 'books_en', Tags: '' }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: a lookalike Wikipedia hostname was accepted`);
+    const file = minimalWikipediaZimFixture({ wikipedia: false });
+    Object.defineProperty(file, 'name', { value: 'pretend-wikipedia.zim' });
+    await assert.rejects(runtime.importKiwixArchive(file, { source: 'User supplied', filename: file.name }, {
+      store: { async getConfig() { return { enabled: true }; } },
+      storage: { async estimate() { return {}; } },
+      id: 'not-wikipedia',
+    }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: caller-supplied provenance bypassed embedded archive identity`);
+  }
 });
 
 test('Apocalypse Mode ranks multi-word ZIM titles and preserves embedded provenance', () => {
@@ -21136,6 +21202,92 @@ test('Apocalypse Mode requires opt-in and removal wins an in-flight download rac
     assert.equal(writes.length, 0, `${label}: removed archive bytes were written after cancellation`);
     assert.deepEqual(removals, [{ kind: 'opfs', key: 'example.zim' }], `${label}: archive removal did not delete its managed storage`);
     assert.equal(scheduled.length, schedulesBeforeRace, `${label}: cancelled work rescheduled itself after removal`);
+  }
+});
+
+test('Apocalypse Mode retains actionable metadata when managed-byte deletion fails', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'delete-me', status: 'ready', generation: 2, target: { kind: 'opfs', key: 'delete-me.zim' }, size: 4096 };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    let failRemoval = true;
+    const storage = {
+      async remove() { if (failRemoval) throw new Error('OPFS file is locked'); },
+      async exists() { return failRemoval; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({ store, storage, now: () => 1234 });
+    await assert.rejects(manager.remove(record.id), /deletion failed.*locked/i, `${label}: storage deletion failure was reported as success`);
+    assert.equal(records.get(record.id)?.status, 'error', `${label}: failed deletion discarded its archive record`);
+    assert.equal(records.get(record.id)?.errorKind, 'delete-failed', `${label}: failed deletion was not actionable`);
+    assert.match(records.get(record.id)?.error || '', /Retry deletion/i, `${label}: failed deletion omitted recovery guidance`);
+    failRemoval = false;
+    assert.equal(await manager.remove(record.id), true, `${label}: a recoverable deletion could not be retried`);
+    assert.equal(records.has(record.id), false, `${label}: successful retry retained archive metadata`);
+  }
+});
+
+test('Apocalypse Mode OPFS deletion verifies removal and treats an absent file as deleted', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const entries = new Set(['archive.zim']);
+    const directory = {
+      async getFileHandle(key) {
+        if (!entries.has(key)) throw new DOMException('missing', 'NotFoundError');
+        return { kind: 'file', name: key };
+      },
+      async removeEntry(key) {
+        if (!entries.delete(key)) throw new DOMException('missing', 'NotFoundError');
+      },
+    };
+    const storage = runtime.createOpfsArchiveStorage({
+      async getDirectory() { return { async getDirectoryHandle() { return directory; } }; },
+    });
+    const target = { kind: 'opfs', key: 'archive.zim' };
+    assert.equal(await storage.exists(target), true, `${label}: existing OPFS archive was not detected`);
+    await storage.remove(target);
+    assert.equal(await storage.exists(target), false, `${label}: OPFS archive remained after removal`);
+    await storage.remove(target);
+    assert.equal(await storage.exists(target), false, `${label}: retrying deletion of absent bytes was not idempotent`);
+  }
+});
+
+test('Apocalypse Mode automatic policy checks daily but still requires confirmation before download', async () => {
+  const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
+    <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/new.zim.meta4" length="100" /></entry></feed>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const record = { id: 'installed', status: 'ready', name: 'wikipedia_en_all', flavour: 'nopic', language: 'eng', archiveDate: '2026-07-01', target: { kind: 'opfs', key: 'old.zim' } };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const scheduled = [];
+    let cleared = 0;
+    let fetches = 0;
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; }, async remove() {} },
+      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return catalogXml; } }; },
+      scheduleUpdateChecks: () => scheduled.push('daily'),
+      clearUpdateChecks: () => { cleared += 1; },
+    });
+    let snapshot = await controller.setUpdatePolicy('automatic');
+    assert.equal(snapshot.updatePolicy, 'automatic', `${label}: automatic update policy was not persisted`);
+    assert.deepEqual(scheduled, ['daily'], `${label}: automatic policy did not schedule periodic checks`);
+    snapshot = await controller.checkForUpdates();
+    assert.equal(fetches, 1, `${label}: automatic update check did not consult the catalog`);
+    assert.equal(snapshot.archives[0].updateAvailable?.id, 'new', `${label}: newer matching archive was not surfaced`);
+    assert.equal(snapshot.archives.length, 1, `${label}: update check downloaded or installed before confirmation`);
+    await controller.setUpdatePolicy('manual');
+    assert.equal(cleared, 1, `${label}: manual policy did not clear automatic checks`);
   }
 });
 
@@ -21267,6 +21419,26 @@ test('Apocalypse Mode preflights import capacity and removes partial bytes after
   }
 });
 
+test('Apocalypse Mode keeps partial-import metadata when cleanup itself fails', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const store = {
+      async getConfig() { return { enabled: true }; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    await assert.rejects(runtime.importKiwixArchive(minimalWikipediaZimFixture(), {}, {
+      store,
+      storage: {
+        async estimate() { return {}; }, async write() { throw new Error('write failed'); },
+        async remove() { throw new Error('OPFS cleanup denied'); },
+      },
+      id: 'cleanup-failure',
+    }), /cleanup failed.*denied/i, `${label}: cleanup failure was swallowed`);
+    assert.equal(records.get('cleanup-failure')?.status, 'error', `${label}: cleanup failure discarded the recovery record`);
+    assert.equal(records.get('cleanup-failure')?.errorKind, 'delete-failed', `${label}: cleanup failure was not classified for retry`);
+  }
+});
+
 test('Apocalypse Mode rejects a managed download when reported free space is zero', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     let installs = 0;
@@ -21370,10 +21542,14 @@ test('Apocalypse Mode has a dedicated Advanced settings management page in both 
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
     assert.match(settingsHtml, /href="apocalypse-mode\.html"/, `${prefix}: Advanced settings gateway is missing`);
+    assert.match(settingsHtml, /id="apocalypse-mode-status"/, `${prefix}: Advanced settings status is not dynamic`);
     assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
+    assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
     assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
     assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /data-action="update"/, `${prefix}: manual update action is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /installedCount[\s\S]*?totalBytes[\s\S]*?updatePolicy/, `${prefix}: Advanced settings does not summarize live archive state`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8'), /APOCALYPSE_UPDATE_ALARM[\s\S]*?checkForUpdates/, `${prefix}: automatic update checks are not wired to a background alarm`);
     assert.match(pageHtml, /data-i18n="ap\.hero\.consent"/, `${prefix}: localized opt-in boundary is not visible`);
   }
 });
@@ -22264,6 +22440,32 @@ test('all locales cover English keys and preserve interpolation placeholders', a
           placeholders(fallback),
           `${label}/${filename}: ${key} must preserve interpolation placeholders`,
         );
+      }
+    }
+  }
+});
+
+test('Apocalypse Mode copy is translated instead of inherited from English in every locale', async () => {
+  const requiredTranslatedKeys = [
+    'st.display.apocalypse_mode.desc',
+    'st.display.apocalypse_mode.status.off',
+    'ap.hero.desc',
+    'ap.hero.consent',
+    'ap.catalog.desc',
+    'ap.import.desc',
+    'ap.confirm_install',
+    'ap.confirm_import',
+    'ap.update_policy.automatic_notice',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
+    const englishCopy = (await import(pathToFileURL(path.join(localeDir, 'apocalypse-copy.mjs')).href)).default;
+    for (const filename of fs.readdirSync(localeDir).filter(name => name.endsWith('.js') && name !== 'en.js').sort()) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      const changed = Object.keys(englishCopy).filter(key => locale[key] !== englishCopy[key]);
+      assert.ok(changed.length >= Object.keys(englishCopy).length * 0.8, `${browser}/${filename}: Apocalypse Mode still relies on English fallback copy`);
+      for (const key of requiredTranslatedKeys) {
+        assert.notEqual(locale[key], englishCopy[key], `${browser}/${filename}: ${key} is still English fallback copy`);
       }
     }
   }

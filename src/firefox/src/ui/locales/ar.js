@@ -1,7 +1,7 @@
 // Arabic (ar).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': 'البحث في الإعدادات العامة',
   'st.display.search.empty': 'لا توجد إعدادات عامة مطابقة.',
   'st.display.advanced': 'متقدم',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('ar'),
   'st.display.clarify_timeout.label': 'مهلة التوضيح',
   'st.display.clarify_timeout.desc': 'مدة انتظار الرد على سؤال التوضيح قبل اختيار الخيار الأول تلقائيًا (أو انتهاء المهلة إن لم توجد خيارات). 0 = فوري (اختيار تلقائي دائمًا). أعلى من 1200 ثانية = انتظار بلا حدود (إيقاف). الافتراضي 60 ثانية. لا ينطبق على أذونات أو تأكيدات إرسال النماذج.',
   'st.display.clarify_timeout.off': 'إيقاف',

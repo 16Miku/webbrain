@@ -1,7 +1,7 @@
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': 'Cari pengaturan Umum',
   'st.display.search.empty': 'Tidak ada pengaturan Umum yang cocok.',
   'st.display.advanced': 'Lanjutan',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('id'),
   'st.display.clarify_timeout.label': 'Batas waktu klarifikasi',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan pada prompt klarifikasi sebelum memilih opsi pertama secara otomatis (atau timeout jika tidak ada opsi). 0 = Instan (selalu pilih otomatis). Di atas 1200 detik menunggu tanpa batas (Nonaktif). Default 60 detik. Tidak berlaku untuk izin atau konfirmasi kirim formulir.',
   'st.display.clarify_timeout.off': 'Nonaktif',

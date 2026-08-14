@@ -1,7 +1,7 @@
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -681,7 +681,7 @@ export default {
   'st.display.search.placeholder': 'Cari pengaturan Umum',
   'st.display.search.empty': 'Tidak ada pengaturan Umum yang cocok.',
   'st.display.advanced': 'Lanjutan',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('id'),
   'st.display.cloud_bridge.label': 'Bridge cloud',
   'st.display.cloud_bridge.desc': 'Hubungkan satu pengontrol lokal ke profil Chromium ini. Gunakan port 17373 untuk WebBrain Cloud, 17374 untuk klien MCP, atau 17375 untuk LM Studio. Hanya satu bridge yang dapat aktif; permintaan izin normal tetap berlaku.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

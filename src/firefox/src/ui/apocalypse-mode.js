@@ -1,4 +1,4 @@
-import { createApocalypseArchiveManager, createApocalypseStore, createOpfsArchiveStorage, importKiwixArchive, normalizeStorageEstimate, openKiwixZim, registerKiwixArchiveHandle, selectKiwixUpdate } from '../agent/apocalypse-mode.js';
+import { assertWikipediaZimArchive, createApocalypseArchiveManager, createApocalypseStore, createOpfsArchiveStorage, importKiwixArchive, normalizeStorageEstimate, openKiwixZim, registerKiwixArchiveHandle, selectKiwixUpdate } from '../agent/apocalypse-mode.js';
 import { t } from './i18n.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
@@ -7,6 +7,7 @@ const storage = createOpfsArchiveStorage();
 const elements = Object.fromEntries([
   'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language', 'tier',
   'storage-target', 'external-storage-option', 'load-catalog', 'catalog', 'import-file', 'import-language', 'import-button', 'cancel-import', 'notice',
+  'update-policy',
 ].map(id => [id, document.getElementById(id)]));
 let snapshot = null;
 let catalogItems = [];
@@ -50,7 +51,7 @@ function archiveButtons(record) {
   }
   if (record.status === 'paused') return `<button data-action="resume" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.resume'))}</button>`;
   if (record.status === 'error' && record.downloadUrl && record.errorKind !== 'archive-unreadable') return `<button data-action="retry" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.retry'))}</button>`;
-  if (record.status === 'ready' && record.downloadUrl) return `<button data-action="update" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.check_update'))}</button>`;
+  if (record.status === 'ready' && record.downloadUrl) return `<button data-action="update" data-id="${escapeHtml(record.id)}">${escapeHtml(t(record.updateAvailable ? 'ap.review_update' : 'ap.check_update'))}</button>`;
   return '';
 }
 
@@ -93,6 +94,7 @@ function renderCatalog() {
 async function refresh() {
   snapshot = await command('status');
   elements.enabled.checked = snapshot.enabled === true;
+  elements['update-policy'].value = snapshot.updatePolicy === 'automatic' ? 'automatic' : 'manual';
   renderInstalled();
 }
 
@@ -144,6 +146,7 @@ async function reviewImport(file, external) {
     license: t('ap.import.license'),
     licenseDeclared: false,
   });
+  assertWikipediaZimArchive(inspected.embeddedMetadata);
   const provenance = inspected.metadata;
   const capacity = normalizeStorageEstimate(external || typeof storage.estimate !== 'function' ? {} : await storage.estimate());
   if (!external && capacity.known && file.size > capacity.free) {
@@ -171,6 +174,18 @@ elements.enabled.addEventListener('change', async () => {
   } catch (error) { elements.enabled.checked = !elements.enabled.checked; notice(error.message, 'error'); }
 });
 
+elements['update-policy'].addEventListener('change', async () => {
+  const previous = snapshot?.updatePolicy || 'manual';
+  try {
+    snapshot = await command('set_update_policy', { policy: elements['update-policy'].value });
+    renderInstalled();
+    notice(t(snapshot.updatePolicy === 'automatic' ? 'ap.update_policy.automatic_notice' : 'ap.update_policy.manual_notice'), 'success');
+  } catch (error) {
+    elements['update-policy'].value = previous;
+    notice(error.message, 'error');
+  }
+});
+
 elements['load-catalog'].addEventListener('click', async () => {
   try {
     notice(t('ap.loading_catalog'));
@@ -196,9 +211,12 @@ elements.installed.addEventListener('click', async (event) => {
   try {
     if (action === 'update') {
       const record = snapshot.archives.find(item => item.id === button.dataset.id);
-      notice(t('ap.checking_update'));
-      const result = await command('catalog', { language: record.language });
-      const replacement = selectKiwixUpdate(record, result.items);
+      let replacement = record.updateAvailable;
+      if (!replacement) {
+        notice(t('ap.checking_update'));
+        const result = await command('catalog', { language: record.language });
+        replacement = selectKiwixUpdate(record, result.items);
+      }
       if (!replacement) { notice(t('ap.current'), 'success'); return; }
       await reviewInstall(replacement);
       return;

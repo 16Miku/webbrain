@@ -1,7 +1,7 @@
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -485,7 +485,7 @@ export default {
   "st.display.search.placeholder": "חפש בהגדרות כלליות",
   "st.display.search.empty": "אין הגדרות כלליות תואמות.",
   "st.display.advanced": "מִתקַדֵם",
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('he'),
   "st.display.clarify_timeout.label": "פסק זמן להבהרה",
   "st.display.clarify_timeout.desc": "כמה זמן להמתין לתשובה לשאלת הבהרה לפני בחירה אוטומטית של האפשרות הראשונה (או פקיעת זמן אם אין אפשרויות). 0 = מיידי (בחירה אוטומטית תמיד). מעל 1200 שנ׳ = המתנה ללא הגבלה (כבוי). ברירת מחדל 60 שנ׳. לא חל על הרשאות או אישורי שליחת טופס.",
   "st.display.clarify_timeout.off": "כבוי",

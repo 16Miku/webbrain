@@ -1,7 +1,7 @@
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
-import apocalypseModeCopy from './apocalypse-copy.mjs';
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -665,7 +665,7 @@ export default {
   'st.display.search.placeholder': 'Cari tetapan Umum',
   'st.display.search.empty': 'Tiada tetapan Umum yang sepadan.',
   'st.display.advanced': 'Lanjutan',
-  ...apocalypseModeCopy,
+  ...getApocalypseModeCopy('ms'),
   'st.display.clarify_timeout.label': 'Tamat masa penjelasan',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan soalan penjelasan sebelum memilih pilihan pertama secara automatik (atau tamat masa jika tiada pilihan). 0 = Segera (sentiasa auto-pilih). Melebihi 1200s tunggu tanpa had (Mati). Lalai 60s. Tidak digunakan untuk kebenaran atau pengesahan hantar borang.',
   'st.display.clarify_timeout.off': 'Mati',
