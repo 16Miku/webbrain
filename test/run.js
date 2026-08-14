@@ -21879,6 +21879,44 @@ test('Apocalypse Mode failed-piece state loses atomically to concurrent deletion
   }
 });
 
+test('Apocalypse Mode schedules another archive after a terminal download failure', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const failed = {
+      id: 'terminal-failure', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'failed.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/failed.zim', target: { kind: 'opfs', key: 'failed.zim' },
+      pieceIndex: 0, retryCount: 5,
+    };
+    const queued = {
+      ...failed, id: 'queued-next', filename: 'next.zim', downloadUrl: 'https://example.test/next.zim',
+      target: { kind: 'opfs', key: 'next.zim' }, retryCount: 0,
+    };
+    const records = new Map([[failed.id, failed], [queued.id, queued]]);
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async () => ({ ok: false, status: 503 }),
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'terminal-lease',
+      now: () => 100,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.reason, 'error', `${label}: exhausted download did not reach a terminal failure`);
+    assert.equal(records.get(failed.id)?.status, 'error', `${label}: exhausted archive did not persist its error`);
+    assert.equal(records.get(queued.id)?.status, 'queued', `${label}: next archive lost eligibility`);
+    assert.deepEqual(scheduled, [0], `${label}: terminal failure stranded the next queued archive`);
+  }
+});
+
 test('Apocalypse Mode cancellation removes a partial imported archive', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const config = { enabled: true };
@@ -22213,6 +22251,46 @@ test('Apocalypse Mode file-handle permission expiry stops retries until reauthor
     assert.equal(records.get('external-download').status, 'ready', `${label}: completed external archive was incorrectly queued for redownload`);
     assert.deepEqual(scheduled, [0, 0], `${label}: completed external archive scheduled a redownload after reauthorization`);
     assert.equal(queriedModes.at(-1), 'read', `${label}: completed external archive requested unnecessary write permission`);
+  }
+});
+
+test('Apocalypse Mode completed-file reauthorization loses atomically to deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'reauthorize-race', status: 'error', generation: 4, updatedAt: 500,
+      errorKind: runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, error: 'permission required',
+      downloadUrl: 'https://example.test/archive.zim', size: 10, bytesDownloaded: 10,
+    };
+    const records = new Map();
+    const handle = {
+      async queryPermission() {
+        records.delete(record.id);
+        return 'granted';
+      },
+    };
+    records.set(record.id, { ...record, target: { kind: 'file-handle', handle } });
+    let compareAttempts = 0;
+    let expectedState;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(_next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        return false;
+      },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, { store, storage: {}, now: () => 600 });
+
+    const result = await controller.reauthorizeFile(record.id);
+
+    assert.equal(result, null, `${label}: reauthorization returned stale metadata after deletion`);
+    assert.equal(compareAttempts, 1, `${label}: reauthorization did not compare-and-swap completed metadata`);
+    assert.deepEqual(expectedState, { status: 'error', generation: 4, updatedAt: 500 },
+      `${label}: reauthorization did not guard the original record state`);
+    assert.equal(records.has(record.id), false, `${label}: reauthorization recreated concurrently deleted metadata`);
   }
 });
 

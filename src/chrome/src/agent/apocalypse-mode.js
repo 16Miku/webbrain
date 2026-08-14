@@ -921,7 +921,9 @@ export function createApocalypseArchiveManager(options = {}) {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
       if (!saved) return { processed: false, reason: 'cancelled' };
-      if (retrying) schedule(delay);
+      const eligibleWork = (await store.listArchives()).some(candidate => downloadable(candidate, now()));
+      if (eligibleWork) schedule(0);
+      else if (retrying) schedule(delay);
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
     } finally {
       if (controllers.get(record.id) === controller) controllers.delete(record.id);
@@ -1223,8 +1225,10 @@ export function createApocalypseController(api, options = {}) {
       errorKind: '',
       updatedAt: now(),
     };
-    await store.putArchive(next);
-    return next;
+    const saved = await putArchiveIfCurrent(store, next, {
+      status: record.status, generation: record.generation, updatedAt: record.updatedAt,
+    });
+    return saved ? next : await store.getArchive(id);
   }
 
   async function checkForUpdates(options = {}) {
