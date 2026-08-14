@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebBrain 31 offline WebGPU vision for text-only models - WebBrain Blog</title>
-  <meta name="description" content="WebBrain 31.0.0 will add optional offline vision powered by WebGPU and Liquid AI&#39;s sub-1GB LFM2.5-VL-450M, giving strong text-only models a local visual layer.">
+  <meta name="description" content="WebBrain 31.0.0 adds optional offline vision powered by WebGPU and Liquid AI&#39;s sub-1GB LFM2.5-VL-450M, giving strong text-only models a local visual layer.">
   <meta name="keywords" content="WebBrain 31, WebGPU, offline vision, Liquid AI, LFM2.5-VL-450M, DeepSeek V4 Flash, Laguna S 2.1, local AI, browser agent, text-only model">
   <meta property="og:title" content="WebBrain 31 brings offline WebGPU vision to text-only models">
-  <meta property="og:description" content="Liquid AI&#39;s sub-1GB LFM2.5-VL-450M will give WebBrain an optional local visual layer while the user&#39;s original text model remains the planner.">
+  <meta property="og:description" content="Liquid AI&#39;s sub-1GB LFM2.5-VL-450M gives WebBrain an optional local visual layer while the user&#39;s original text model remains the planner.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://webbrain.one/blog/webbrain-31-offline-webgpu-vision">
   <meta property="og:image" content="https://webbrain.one/og-image.png">
@@ -475,7 +475,7 @@
   "@context": "https://schema.org",
   "@type": "BlogPosting",
   "headline": "WebBrain 31 brings offline WebGPU vision to text-only models",
-  "description": "WebBrain 31.0.0 will add optional offline vision powered by WebGPU and Liquid AI's sub-1GB LFM2.5-VL-450M, giving strong text-only models a local visual layer.",
+  "description": "WebBrain 31.0.0 adds optional offline vision powered by WebGPU and Liquid AI's sub-1GB LFM2.5-VL-450M, giving strong text-only models a local visual layer.",
   "author": {
     "@type": "Person",
     "name": "Emre Sokullu",
@@ -525,31 +525,37 @@
   <article>
     <div class="meta">August 14, 2026 &middot; 5 min read &middot; <a href="/blog">&larr; All posts</a></div>
     <h1>WebBrain 31 brings offline WebGPU vision to text-only models</h1>
-    <p class="lede"><strong>WebBrain 31.0.0 will add optional offline vision powered by WebGPU.</strong> We plan to use Liquid AI&#39;s <a href="https://huggingface.co/LiquidAI/LFM2.5-VL-450M" target="_blank" rel="noopener">LFM2.5-VL-450M</a>, a 450M-parameter vision-language model whose main weights are under one gigabyte. It is small enough to run as a local visual layer in the browser, yet capable enough for the screenshot understanding and visual grounding a browser agent needs.</p>
+    <p class="lede"><strong>WebBrain 31.0.0 adds optional offline vision powered by WebGPU.</strong> It uses Liquid AI's <a href="https://huggingface.co/LiquidAI/LFM2.5-VL-450M" target="_blank" rel="noopener">LFM2.5-VL-450M</a>, a 450M-parameter vision-language model whose weights are under one gigabyte. It is small enough to run as a local visual layer in the browser, yet capable enough for the screenshot understanding and visual grounding a browser agent needs.</p>
 <h2 id="vision-from-webbrain-planning-from-your-model">Vision from WebBrain, planning from your model</h2>
 <p>The important part of this design is that the local vision model does not replace your main model.</p>
-<p>WebBrain will use LFM2.5-VL-450M to inspect visual browser state—screenshots, visible controls, layout relationships, selected elements, dialogs, charts, canvases, and other details that may not appear in page text or the accessibility tree. It can then turn those observations into text for the main model to reason over.</p>
+<p>WebBrain uses LFM2.5-VL-450M to inspect visual browser state—screenshots, visible controls, layout relationships, selected elements, dialogs, charts, canvases, and other details that may not appear in page text or the accessibility tree. It then turns those observations into text for the main model to reason over.</p>
 <p>That creates a clean division of labor:</p>
-<ol><li><strong>LFM2.5-VL-450M sees the page locally.</strong> The vision step runs through WebGPU on the user&#39;s device.</li><li><strong>WebBrain converts the useful visual state into context.</strong> The planner gets the information it needs without requiring native image input.</li><li><strong>The user&#39;s original model decides what to do.</strong> Its checkpoint, serving setup, and text-only interface can remain unchanged.</li></ol>
+<ol><li><strong>LFM2.5-VL-450M sees the page locally.</strong> The vision step runs through WebGPU on the user's device.</li><li><strong>WebBrain converts the useful visual state into context.</strong> The planner gets the information it needs without requiring native image input.</li><li><strong>The user's original model decides what to do.</strong> Its checkpoint, serving setup, and text-only interface can remain unchanged.</li></ol>
 <p>In other words, WebBrain supplies the eyes while the model you chose remains the brain.</p>
+<h2 id="what-it-looks-like-in-webbrain-31">What it looks like in WebBrain 31</h2>
+<p>The shipped setting is under <strong>Settings → Multimodal → Vision</strong>. Enable <strong>LFM2.5-VL local fallback</strong> to run the ONNX model on your GPU. The active provider continues to handle planning and tool calls; the in-browser fallback reads screenshots locally.</p>
+<figure>
+  <img src="/assets/webbrain-31-lfm25-vl-local-fallback-settings.png" alt="WebBrain 31.0.0 Multimodal Vision settings with the LFM2.5-VL local fallback enabled" width="1586" height="1384" loading="lazy">
+  <figcaption>WebBrain 31.0.0 with LFM2.5-VL local fallback enabled. Screenshots stay on the device, while the original active provider remains responsible for planning and tool calls.</figcaption>
+</figure>
 <h2 id="why-such-a-small-vision-model-is-enough">Why such a small vision model is enough</h2>
-<p>LFM2.5-VL-450M uses a 350M language backbone with an 86M-parameter SigLIP2 vision encoder. Liquid AI&#39;s model card reports stronger real-world vision performance than the previous LFM2-VL-450M generation, along with improved instruction following, multilingual visual understanding, object detection, and bounding-box prediction.</p>
+<p>LFM2.5-VL-450M uses a 350M language backbone with an 86M-parameter SigLIP2 vision encoder. Liquid AI's model card reports stronger real-world vision performance than the previous LFM2-VL-450M generation, along with improved instruction following, multilingual visual understanding, object detection, and bounding-box prediction.</p>
 <p>It is not supposed to replace a frontier planner, and that is exactly why it fits this architecture. WebBrain needs the local model to extract useful visual evidence: what text is visible, which control looks selected, where a dialog is blocking the page, whether an error state appeared, or what a chart and canvas are showing. The larger text model can handle the longer-horizon planning, tool selection, and reasoning.</p>
-<p>The original <code>model.safetensors</code> checkpoint is about 897 MB. That is still a meaningful download, but it is exceptionally small for a useful vision-language model. Once downloaded and cached, it can provide vision without sending screenshots to a remote vision API. If the main planner is local too, the complete WebBrain workflow can remain on the device.</p>
+<p>The ONNX package WebBrain uses downloads about 770 MB from Hugging Face on first use, then caches locally. The download runs in the background, so you can switch tabs or close Settings while it continues—just keep Chrome open. Once cached, it provides vision without sending screenshots to a remote vision API. If the main planner is local too, the complete WebBrain workflow can remain on the device.</p>
 <h2 id="this-makes-strong-textonly-models-much-more-useful">This makes strong text-only models much more useful</h2>
 <p>Our recent benchmarks keep pointing to the same opportunity: some of the best price-performance results come from models whose main limitation is not planning quality, but the lack of image input.</p>
 <p>In our <a href="/blog/american-chinese-open-model-frontier-gap-benchmark">latest thirteen-model planner benchmark</a>, <strong>DeepSeek V4 Flash ranked first by exact-action peer consensus</strong>. The full 100-case replay cost about five cents. It was fast, inexpensive, and highly competitive—but text-only.</p>
-<p><strong><a href="/blog/poolside-laguna-s-openrouter-planner-benchmark">Poolside Laguna S 2.1 showed a similar trade-off in its class.</a></strong> It reached 71% Sonnet alignment in our requested-high-reasoning planner run, returned at a 1.52-second median, and the 100-case replay cost less than three cents. MiniMax M3 scored four points higher in that frozen test, but its saved replay cost $1.06. Laguna&#39;s OpenRouter route was also text-only.</p>
+<p><strong><a href="/blog/poolside-laguna-s-openrouter-planner-benchmark">Poolside Laguna S 2.1 showed a similar trade-off in its class.</a></strong> It reached 71% Sonnet alignment in our requested-high-reasoning planner run, returned at a 1.52-second median, and the 100-case replay cost less than three cents. MiniMax M3 scored four points higher in that frozen test, but its saved replay cost $1.06. Laguna's OpenRouter route was also text-only.</p>
 <p>These are different benchmark views, so the percentages should not be combined into one ranking. The consistent product signal is what matters: DeepSeek V4 Flash and Laguna S 2.1 both performed well for their respective class and price, while costing dramatically less than strong peers. For both, vision was the conspicuous missing capability.</p>
 <p>That lack of vision mattered. A browser agent can often act from URLs, page text, the DOM, and accessibility data, but some decisive information exists only visually: a canvas-rendered interface, a broken accessibility tree, a selected tab, a disabled button, a drag target, a chart, or the final state after an action.</p>
-<p>WebBrain 31 changes the model-selection equation. Instead of moving from a strong, inexpensive text model to a larger or more expensive multimodal variant, users will be able to keep the original DeepSeek V4 Flash, Laguna S 2.1, or another text-only model and let WebBrain provide the missing visual context locally.</p>
+<p>WebBrain 31 changes the model-selection equation. Instead of moving from a strong, inexpensive text model to a larger or more expensive multimodal variant, users can keep the original DeepSeek V4 Flash, Laguna S 2.1, or another text-only model and let WebBrain provide the missing visual context locally.</p>
 <h2 id="cheaper-more-private-and-more-flexible">Cheaper, more private, and more flexible</h2>
 <p>Separating vision from planning has three practical advantages:</p>
-<ul><li><strong>Lower cost.</strong> Visual understanding does not require a paid image call on every screenshot, and users can keep an inexpensive text-only route for the main agent loop.</li><li><strong>More privacy.</strong> When offline vision is enabled, screenshots are processed on the device instead of being uploaded to a vision provider. If the planner is remote, its normal text context still follows that provider&#39;s data path; the image itself does not need to.</li><li><strong>More choice.</strong> Users do not have to wait for a special vision fine-tune or switch away from a model that already performs well for their tasks. The original, unmodified text checkpoint can stay in place.</li></ul>
+<ul><li><strong>Lower cost.</strong> Visual understanding does not require a paid image call on every screenshot, and users can keep an inexpensive text-only route for the main agent loop.</li><li><strong>More privacy.</strong> When offline vision is enabled, screenshots are processed on the device instead of being uploaded to a vision provider. If the planner is remote, its normal text context still follows that provider's data path; the image itself does not need to.</li><li><strong>More choice.</strong> Users do not have to wait for a special vision fine-tune or switch away from a model that already performs well for their tasks. The original, unmodified text checkpoint can stay in place.</li></ul>
 <p>This is also a more sustainable way to improve WebBrain. A lightweight visual layer can serve many different planners, so every strong text-only release becomes a more complete browser-agent option without requiring a new multimodal graft for each model.</p>
-<h2 id="coming-in-webbrain-31-0-0">Coming in WebBrain 31.0.0</h2>
-<p>Offline WebGPU vision will be optional in WebBrain 31.0.0. Users with compatible browser and device support will be able to enable the local model, while existing local and hosted vision configurations remain useful for people who prefer them or need a different capability profile.</p>
-<p>We will share more implementation details, setup guidance, compatibility notes, and real WebBrain vision results as version 31.0.0 gets closer to release.</p>
+<h2 id="available-now-in-webbrain-31-0-0">Available now in WebBrain 31.0.0</h2>
+<p>Offline WebGPU vision is optional in WebBrain 31.0.0. Users with compatible browser and device support can enable the local model under <strong>Settings → Multimodal → Vision</strong>, while existing local and hosted vision configurations remain available for people who prefer them or need a different capability profile.</p>
+<p>We will continue sharing compatibility notes and real WebBrain vision results as more people use the local fallback.</p>
 <p>Most of all, thank you to <strong>Liquid AI</strong> for making LFM2.5-VL-450M open source and openly available. A capable vision model below one gigabyte is what makes this split architecture practical, and releasing it under the LFM Open License gives projects like WebBrain a foundation to build on.</p>
 <p>Tags: #WebBrain #WebGPU #OfflineAI #LiquidAI #LFM25VL #LocalAI #BrowserAgent</p>
 
