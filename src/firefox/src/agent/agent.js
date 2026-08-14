@@ -1098,6 +1098,22 @@ export class Agent extends LoopDetector {
         if (entry.conversationId) {
           this.conversationIds.set(tabId, entry.conversationId);
         }
+        const persistedContinuationLanguage = entry.continuationResponseLanguagePolicy;
+        if (
+          typeof entry.conversationId === 'string'
+          && entry.conversationId
+          && persistedContinuationLanguage?.conversationId === entry.conversationId
+        ) {
+          const policy = this._normalizePersistedContinuationResponseLanguagePolicy(
+            persistedContinuationLanguage.policy,
+          );
+          if (policy) {
+            this._continuationResponseLanguagePolicies.set(tabId, {
+              policy,
+              conversationId: entry.conversationId,
+            });
+          }
+        }
         if (entry.submittedRunRequestId) {
           this.submittedRunRequestIds.set(tabId, String(entry.submittedRunRequestId));
         }
@@ -1180,6 +1196,17 @@ export class Agent extends LoopDetector {
           updatedAt: Number(clarificationGuard.updatedAt) || Date.now(),
         }
       : null;
+    const continuationLanguage = this._continuationResponseLanguagePolicies.get(tabId);
+    const persistedContinuationLanguage = conversationId
+      && continuationLanguage?.conversationId === conversationId
+      ? {
+          conversationId,
+          policy: {
+            ...continuationLanguage.policy,
+            deliverable_locales: [...(continuationLanguage.policy?.deliverable_locales || [])],
+          },
+        }
+      : null;
     const serialized = serializeConversationForSession(messages, {
       maxBytes: options.maxBytes || SESSION_CONVERSATION_BUDGET_BYTES,
     });
@@ -1195,6 +1222,7 @@ export class Agent extends LoopDetector {
       progressSession: this.progressSessions.get(tabId) || null,
       selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
+      continuationResponseLanguagePolicy: persistedContinuationLanguage,
       richTextToolbarAudit: this._persistedRichTextToolbarAudit(tabId),
       captchaGateState: captchaGateState?.cloudflareManagedChallenge === true
         || captchaGateState?.publicGate?.cloudflareManagedChallenge === true
@@ -13414,11 +13442,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _normalizePersistedContinuationResponseLanguagePolicy(value) {
+    if (
+      !value
+      || typeof value !== 'object'
+      || Array.isArray(value)
+      || typeof value.framing_locale !== 'string'
+      || !Array.isArray(value.deliverable_locales)
+      || typeof value.preserve_source_text !== 'boolean'
+    ) return null;
+    const normalized = normalizeResponseLanguagePolicy(value, 'en');
+    const framingLocale = value.framing_locale.trim().replace(/_/g, '-').toLowerCase();
+    const deliverableLocales = value.deliverable_locales.map(
+      locale => String(locale || '').trim().replace(/_/g, '-').toLowerCase(),
+    );
+    if (
+      normalized.framing_locale !== framingLocale
+      || normalized.preserve_source_text !== value.preserve_source_text
+      || normalized.deliverable_locales.length !== deliverableLocales.length
+      || normalized.deliverable_locales.some((locale, index) => locale !== deliverableLocales[index])
+      || (normalized._framing_locale_is_fallback === true) !== (value._framing_locale_is_fallback === true)
+    ) return null;
+    if (value.approved_plan_language_override === true) {
+      normalized.approved_plan_language_override = true;
+    }
+    return normalized;
+  }
+
   _storeContinuationResponseLanguagePolicy(tabId) {
     const policy = this.responseLanguagePolicies.get(tabId);
     if (!policy) {
       this._continuationResponseLanguagePolicies.delete(tabId);
-      return;
+      return false;
     }
     this._continuationResponseLanguagePolicies.set(tabId, {
       policy: {
@@ -13427,6 +13482,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       },
       conversationId: this.conversationIds.get(tabId) || null,
     });
+    return true;
   }
 
   _takeContinuationResponseLanguagePolicy(tabId) {
@@ -18574,6 +18630,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
+    let continuationEligible = false;
+    const emitUpdate = onUpdate;
+    onUpdate = (type, data) => {
+      if (type === 'max_steps_reached') continuationEligible = true;
+      return emitUpdate(type, data);
+    };
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -18586,10 +18648,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._runningTabs.delete(tabId);
       throw error;
     }
+    const hadContinuationResponseLanguagePolicy = this._continuationResponseLanguagePolicies.has(tabId);
     const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
       ? this._takeContinuationResponseLanguagePolicy(tabId)
       : null;
     if (runOptions?.trustedContinuation !== true) this._continuationResponseLanguagePolicies.delete(tabId);
+    if (hadContinuationResponseLanguagePolicy) {
+      try { await this._persistNow(tabId); } catch {}
+    }
     runOptions = { ...runOptions, trustedContinuationResponseLanguagePolicy };
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
@@ -18612,10 +18678,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
-      this._storeContinuationResponseLanguagePolicy(tabId);
+      let continuationResponseLanguagePolicyStored = false;
+      if (continuationEligible) {
+        continuationResponseLanguagePolicyStored = this._storeContinuationResponseLanguagePolicy(tabId);
+      } else {
+        this._continuationResponseLanguagePolicies.delete(tabId);
+      }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
+      if (continuationResponseLanguagePolicyStored) {
+        try { await this._persistNow(tabId); } catch {}
+      }
       this._resetActiveSkillsForRun(tabId);
       if (runOptions.cloudRun) {
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
@@ -19585,6 +19659,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
+    let continuationEligible = false;
+    const emitUpdate = onUpdate;
+    onUpdate = (type, data) => {
+      if (type === 'max_steps_reached') continuationEligible = true;
+      return emitUpdate(type, data);
+    };
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -19597,10 +19677,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._runningTabs.delete(tabId);
       throw error;
     }
+    const hadContinuationResponseLanguagePolicy = this._continuationResponseLanguagePolicies.has(tabId);
     const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
       ? this._takeContinuationResponseLanguagePolicy(tabId)
       : null;
     if (runOptions?.trustedContinuation !== true) this._continuationResponseLanguagePolicies.delete(tabId);
+    if (hadContinuationResponseLanguagePolicy) {
+      try { await this._persistNow(tabId); } catch {}
+    }
     runOptions = { ...runOptions, trustedContinuationResponseLanguagePolicy };
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
@@ -19623,10 +19707,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
-      this._storeContinuationResponseLanguagePolicy(tabId);
+      let continuationResponseLanguagePolicyStored = false;
+      if (continuationEligible) {
+        continuationResponseLanguagePolicyStored = this._storeContinuationResponseLanguagePolicy(tabId);
+      } else {
+        this._continuationResponseLanguagePolicies.delete(tabId);
+      }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
+      if (continuationResponseLanguagePolicyStored) {
+        try { await this._persistNow(tabId); } catch {}
+      }
       this._resetActiveSkillsForRun(tabId);
       if (runOptions.cloudRun) {
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);

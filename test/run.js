@@ -56092,6 +56092,13 @@ test('trusted continuation carries consequential evidence without repeating the 
     const tabId = 8644 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `continuation_conv_${index}`);
+    const persistedLanguagePolicies = [];
+    agent._persistNow = async () => {
+      persistedLanguagePolicies.push(
+        agent._conversationStorageEntry(tabId)?.continuationResponseLanguagePolicy || null,
+      );
+      return { ok: true };
+    };
     let gateCalls = 0;
     const spanishPolicy = {
       framing_locale: 'es',
@@ -56130,8 +56137,14 @@ test('trusted continuation carries consequential evidence without repeating the 
       spanishPolicy,
       `${AgentClass.name}: first run did not preserve its response language policy`,
     );
+    assert.deepEqual(
+      persistedLanguagePolicies.at(-1)?.policy,
+      spanishPolicy,
+      `${AgentClass.name}: first run returned before its response language policy was durable`,
+    );
 
     agent.maxSteps = 3;
+    const persistenceCountBeforeContinuation = persistedLanguagePolicies.length;
     const final = await agent.continueProcessing(tabId, () => {}, 'act');
 
     assert.equal(final, 'Prior mutation verified.', `${AgentClass.name}: continuation rejected prior mutation evidence`);
@@ -56157,6 +56170,112 @@ test('trusted continuation carries consequential evidence without repeating the 
       /Use English \(en\) for explanatory framing/,
       `${AgentClass.name}: synthetic continuation prompt replaced the prior language policy`,
     );
+    assert.equal(
+      persistedLanguagePolicies[persistenceCountBeforeContinuation],
+      null,
+      `${AgentClass.name}: trusted continuation did not durably consume the one-shot policy`,
+    );
+    assert.equal(
+      agent._continuationResponseLanguagePolicies.has(tabId),
+      false,
+      `${AgentClass.name}: completed continuation retained a stale language policy`,
+    );
+    assert.equal(
+      persistedLanguagePolicies.at(-1),
+      null,
+      `${AgentClass.name}: completed continuation restored the durable one-shot policy`,
+    );
+  }
+});
+
+test('trusted continuation language policy persists across worker restart without crossing conversations', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [AgentClass, apiName, tabId] of [
+      [AgentCh, 'chrome', 8654],
+      [AgentFx, 'browser', 8655],
+    ]) {
+      const conversationId = `continuation_restart_conv_${tabId}`;
+      const policy = {
+        framing_locale: 'es',
+        deliverable_locales: ['es'],
+        preserve_source_text: false,
+        approved_plan_language_override: true,
+      };
+      const original = new AgentClass({});
+      original.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      original.conversationIds.set(tabId, conversationId);
+      original.responseLanguagePolicies.set(tabId, policy);
+      assert.equal(original._storeContinuationResponseLanguagePolicy(tabId), true);
+      const storedEntry = original._conversationStorageEntry(tabId);
+      assert.deepEqual(
+        storedEntry.continuationResponseLanguagePolicy,
+        { policy, conversationId },
+        `${AgentClass.name}: session snapshot omitted the continuation language policy`,
+      );
+
+      globalThis[apiName] = {
+        storage: {
+          session: {
+            get: async key => ({ [key]: storedEntry }),
+          },
+        },
+      };
+      const restarted = new AgentClass({});
+      await restarted._hydrate(tabId);
+      assert.deepEqual(
+        restarted._continuationResponseLanguagePolicies.get(tabId),
+        { policy, conversationId },
+        `${AgentClass.name}: worker restart lost the continuation language policy`,
+      );
+      assert.deepEqual(
+        restarted._takeContinuationResponseLanguagePolicy(tabId),
+        policy,
+        `${AgentClass.name}: restored continuation policy could not be consumed`,
+      );
+      assert.equal(
+        restarted._continuationResponseLanguagePolicies.has(tabId),
+        false,
+        `${AgentClass.name}: restored continuation policy was not one-shot`,
+      );
+
+      const replacementTabId = tabId + 10;
+      const replacementEntry = {
+        ...storedEntry,
+        conversationId: `replacement_${conversationId}`,
+      };
+      globalThis[apiName].storage.session.get = async key => ({ [key]: replacementEntry });
+      const replacement = new AgentClass({});
+      await replacement._hydrate(replacementTabId);
+      assert.equal(
+        replacement._continuationResponseLanguagePolicies.has(replacementTabId),
+        false,
+        `${AgentClass.name}: persisted continuation policy crossed into a replacement conversation`,
+      );
+
+      const malformedTabId = tabId + 20;
+      const malformedEntry = {
+        ...storedEntry,
+        continuationResponseLanguagePolicy: {
+          conversationId,
+          policy: { ...policy, framing_locale: 'Spanish' },
+        },
+      };
+      globalThis[apiName].storage.session.get = async key => ({ [key]: malformedEntry });
+      const malformed = new AgentClass({});
+      await malformed._hydrate(malformedTabId);
+      assert.equal(
+        malformed._continuationResponseLanguagePolicies.has(malformedTabId),
+        false,
+        `${AgentClass.name}: malformed persisted language policy was accepted`,
+      );
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
   }
 });
 
