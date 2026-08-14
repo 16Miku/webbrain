@@ -52,7 +52,10 @@ import {
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
-import { WEBGPU_VISION_ENABLED_KEY } from '../providers/webgpu.js';
+import {
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_ENABLED_KEY,
+} from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
@@ -66,6 +69,7 @@ const displaySettings = document.getElementById('display-settings');
 const generalSearchInput = document.getElementById('input-general-search');
 const generalSearchEmpty = document.getElementById('general-search-empty');
 const advancedSettings = document.querySelector('.advanced-settings');
+const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
@@ -311,6 +315,10 @@ if (languageSelect) {
     refreshApocalypseModeStatus();
   });
 }
+globalThis.addEventListener('focus', () => {
+  refreshApocalypseModeStatus();
+  loadVisionConfig().catch(() => {});
+});
 
 let providersData = {};
 // Unsaved custom-body text must survive provider-card/filter/search renders,
@@ -325,7 +333,9 @@ let webgpuVisionEnabled = false;
 
 if (globalThis.chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.providers?.newValue) return;
+    if (area !== 'local') return;
+    if (changes[WEBGPU_VISION_ENABLED_KEY]) loadVisionConfig().catch(() => {});
+    if (!changes.providers?.newValue) return;
     const nextOllama = changes.providers?.newValue?.ollama;
     if (nextOllama && providersData.ollama) {
       providersData.ollama.visionDetection = nextOllama.visionDetection || null;
@@ -652,15 +662,26 @@ async function refreshApocalypseModeStatus() {
   if (!apocalypseModeStatus) return;
   try {
     const status = await sendToBackground('apocalypse_mode', { command: 'status' });
-    apocalypseModeStatus.textContent = status?.enabled
+    const enabled = status?.enabled === true;
+    const summary = enabled
       ? t('st.display.apocalypse_mode.status.summary', {
         count: Number(status.installedCount) || 0,
         size: formatArchiveBytes(status.totalBytes),
         policy: t(status.updatePolicy === 'automatic' ? 'ap.metric.automatic' : 'ap.metric.manual'),
       })
       : t('st.display.apocalypse_mode.status.off');
+    apocalypseModeStatus.textContent = summary;
+    if (apocalypseModeLink) {
+      apocalypseModeLink.dataset.enabled = String(enabled);
+      apocalypseModeLink.title = summary;
+    }
   } catch {
-    apocalypseModeStatus.textContent = t('st.display.apocalypse_mode.status.unavailable');
+    const unavailable = t('st.display.apocalypse_mode.status.unavailable');
+    apocalypseModeStatus.textContent = unavailable;
+    if (apocalypseModeLink) {
+      delete apocalypseModeLink.dataset.enabled;
+      apocalypseModeLink.title = unavailable;
+    }
   }
 }
 
@@ -1526,11 +1547,15 @@ async function setWebgpuVisionEnabled(enabled) {
   const nextEnabled = enabled === true;
   if (nextEnabled) {
     await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
+    await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
   } else {
     // Release GPU allocations, but keep the browser-cached model download so
     // re-enabling does not require another ~770 MB transfer.
     await sendToBackground('dispose_webgpu_vision').catch(() => {});
-    await chrome.storage.local.remove(WEBGPU_VISION_ENABLED_KEY);
+    await chrome.storage.local.remove([
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_AUTO_SELECTED_KEY,
+    ]);
   }
   renderVisionConfig(currentVisionConfig, nextEnabled);
 }

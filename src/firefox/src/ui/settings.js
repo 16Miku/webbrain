@@ -65,6 +65,7 @@ const displaySettings = document.getElementById('display-settings');
 const generalSearchInput = document.getElementById('input-general-search');
 const generalSearchEmpty = document.getElementById('general-search-empty');
 const advancedSettings = document.querySelector('.advanced-settings');
+const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
@@ -302,6 +303,7 @@ if (languageSelect) {
     refreshApocalypseModeStatus();
   });
 }
+globalThis.addEventListener('focus', () => refreshApocalypseModeStatus());
 
 let providersData = {};
 // Unsaved custom-body text must survive provider-card/filter/search renders,
@@ -435,15 +437,26 @@ async function refreshApocalypseModeStatus() {
   if (!apocalypseModeStatus) return;
   try {
     const status = await sendToBackground('apocalypse_mode', { command: 'status' });
-    apocalypseModeStatus.textContent = status?.enabled
+    const enabled = status?.enabled === true;
+    const summary = enabled
       ? t('st.display.apocalypse_mode.status.summary', {
         count: Number(status.installedCount) || 0,
         size: formatArchiveBytes(status.totalBytes),
         policy: t(status.updatePolicy === 'automatic' ? 'ap.metric.automatic' : 'ap.metric.manual'),
       })
       : t('st.display.apocalypse_mode.status.off');
+    apocalypseModeStatus.textContent = summary;
+    if (apocalypseModeLink) {
+      apocalypseModeLink.dataset.enabled = String(enabled);
+      apocalypseModeLink.title = summary;
+    }
   } catch {
-    apocalypseModeStatus.textContent = t('st.display.apocalypse_mode.status.unavailable');
+    const unavailable = t('st.display.apocalypse_mode.status.unavailable');
+    apocalypseModeStatus.textContent = unavailable;
+    if (apocalypseModeLink) {
+      delete apocalypseModeLink.dataset.enabled;
+      apocalypseModeLink.title = unavailable;
+    }
   }
 }
 

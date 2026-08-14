@@ -439,7 +439,7 @@ instruction bundle for several related capabilities.
 The packaged Wikipedia skill keeps its existing `search_wikipedia` and
 `get_wikipedia_summary` interface. When a live request fails, the exact
 built-in tool may query archives that the user explicitly installed through
-Settings → Advanced → Apocalypse Mode. `apocalypse-mode.js` owns catalog
+the ☢ Apocalypse Mode link in the Settings header. `apocalypse-mode.js` owns catalog
 metadata, resumable piece verification, durable lifecycle state, OPFS or
 user-selected archive bytes, and the local openZIM reader. IndexedDB contains only configuration,
 archive metadata, and restart cursors—not multi-gigabyte archive bodies.

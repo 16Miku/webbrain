@@ -9,12 +9,24 @@ model or a reachable model provider.
 
 The feature is disabled by default. Enabling the packaged Wikipedia skill does
 not enable Apocalypse Mode, query the Kiwix catalog, or store article text.
-Open **Settings → Advanced → Apocalypse Mode** to opt in.
+Open the **☢ Apocalypse Mode** link beside **Support** in the Settings header to
+opt in.
+
+On supported Chromium browsers, enabling Apocalypse Mode also enables the
+local LFM2.5-VL vision fallback and immediately starts caching its approximately
+770 MB model from Hugging Face in the background. The management page shows
+that progress, and the download continues if the page is closed as long as
+Chrome remains open. Wikipedia archives still require their own confirmation.
+WebBrain checks hardware WebGPU support before selecting the local provider. If
+that check or an automatically started download fails, any configured remote
+vision provider becomes active again. Disabling local vision in Settings is an
+explicit opt-out and is not undone when the service worker restarts.
 
 Archive language is selected independently from WebBrain's interface language.
-The management page reads Kiwix's current OPDS catalog and groups archives into
-starter, introductions, full-text-without-images, and full tiers. Before an
-install, WebBrain resolves the archive's Metalink and shows its exact byte size,
+The management page reads Kiwix's current OPDS catalog and shows only complete
+text editions. **Include images** switches between the smaller full-text archive
+without images and the larger full-text archive with images. Before an install,
+WebBrain resolves the archive's Metalink and shows its exact byte size,
 archive date, catalog publisher/source and license notice, integrity-piece
 count, and the browser's reported free extension storage. The archive is
 downloaded only after that confirmation. Existing `.zim` files are validated
@@ -23,10 +35,10 @@ When the current catalog or archive omits a license field, WebBrain says that it
 was not declared instead of presenting the general Wikipedia notice as an exact
 publisher declaration.
 
-Kiwix publishes very different archive sizes. A starter archive can be only a
-few MiB, while a complete language edition can require tens or hundreds of GiB.
-Catalog values can change; the confirmation dialog is authoritative for the
-selected current entry.
+Kiwix publishes very different archive sizes. A complete language edition can
+require tens or hundreds of GiB, especially when images are included. Catalog
+values can change; the confirmation dialog is authoritative for the selected
+current entry.
 
 ## Storage and lifecycle
 
@@ -44,6 +56,11 @@ selected current entry.
   resurrect the archive.
 - Transient failures use bounded exponential backoff. Integrity failures never
   write the rejected piece and eventually require a manual retry.
+- Catalog downloads continue in the background after the management page is
+  closed. Reopen Apocalypse Mode to inspect progress or pause the download.
+- The Chromium-only local vision model uses the browser's Transformers cache.
+  After the automatic download completes, its GPU allocations are released
+  until WebBrain actually needs local screenshot analysis.
 - An installed archive that later becomes unreadable because of corruption,
   eviction, or a revoked file grant moves from ready to an actionable error;
   WebBrain reports the read failure instead of misreporting an empty search.

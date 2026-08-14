@@ -791,6 +791,9 @@ const { ProviderManager: ProviderManagerFx } = await import(
 const {
   WebGPUVisionProvider,
   WEBGPU_VISION_DTYPE,
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
 } = await import(
@@ -21713,12 +21716,42 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
   }
 });
 
-test('Apocalypse Mode has a dedicated Advanced settings management page in both builds', () => {
+test('Apocalypse Mode has a dedicated header gateway and management page in both builds', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
-    assert.match(settingsHtml, /href="apocalypse-mode\.html"/, `${prefix}: Advanced settings gateway is missing`);
-    assert.match(settingsHtml, /id="apocalypse-mode-status"/, `${prefix}: Advanced settings status is not dynamic`);
+    const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
+    const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
+    assert.match(pageHtml, /id="include-images"/, `${prefix}: full-text image choice is missing`);
+    assert.doesNotMatch(pageHtml, /id="tier"/, `${prefix}: archive categories are still exposed`);
+    assert.match(pageScript, /item\.tier === 'text' \|\| item\.tier === 'full'/, `${prefix}: catalog accepts archives other than the two full-text variants`);
+    assert.match(pageScript, /include-images'[\s\S]*?\? 'full' : 'text'/, `${prefix}: image choice does not switch between full-text variants`);
+    assert.doesNotMatch(pageScript, /t\(`ap\.tier\.\$\{(?:item|record|download)\.tier\}`\)/, `${prefix}: archive categories are still rendered`);
+    assert.match(pageHtml, /id="vision-model-card"[^>]*hidden/, `${prefix}: local vision status must start hidden on unsupported browsers`);
+    assert.match(pageHtml, /data-i18n="ap\.vision\.auto"/, `${prefix}: automatic local vision download is not disclosed`);
+    assert.match(pageScript, /webgpuVisionDownloadState/, `${prefix}: local vision download status is not rendered`);
+    assert.match(pageScript, /chrome\?\.offscreen\?\.createDocument/, `${prefix}: Chromium vision capability is not detected safely`);
+    if (prefix === 'src/chrome') {
+      assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
+    } else {
+      assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
+    }
+    for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
+      assert.match(pageScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing`);
+    }
+    const headerStart = settingsHtml.indexOf('<div class="header-row">');
+    const apocalypseLink = settingsHtml.indexOf('id="apocalypse-mode-link"', headerStart);
+    const supportLink = settingsHtml.indexOf('href="https://webbrain.one/docs"', headerStart);
+    const tabsStart = settingsHtml.indexOf('<nav class="tabs"', headerStart);
+    assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
+      `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
+    assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
+    const advancedStart = settingsHtml.indexOf('<details class="advanced-settings">');
+    const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
+    assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
     assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
     assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
     assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
@@ -22628,7 +22661,11 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
     'st.display.apocalypse_mode.status.off',
     'ap.hero.desc',
     'ap.hero.consent',
+    'ap.vision.auto',
+    'ap.vision.waiting',
     'ap.catalog.desc',
+    'ap.download_background',
+    'ap.include_images',
     'ap.import.desc',
     'ap.confirm_install',
     'ap.confirm_import',
@@ -41715,6 +41752,16 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
     assert.deepEqual(disposed, { ok: true, disposed: true });
     assert.deepEqual(sentMessages[1], { type: 'webgpu-vision-dispose' });
 
+    const preload = await new WebGPUVisionProvider().preload();
+    assert.deepEqual(preload, { ok: true, started: true, ready: false });
+    assert.deepEqual(sentMessages[2], {
+      type: 'webgpu-vision-preload',
+      model: WEBGPU_VISION_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_VISION_DTYPE,
+    });
+    assert.equal(WEBGPU_VISION_DOWNLOAD_STATE_KEY, 'webgpuVisionDownloadState');
+
     localEnabled = false;
     const preservedRemote = await manager.getVisionProvider();
     assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
@@ -41726,9 +41773,88 @@ test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider
   }
 });
 
+test('Apocalypse vision probes before automatic selection and rolls back failed starts', async () => {
+  const previousChrome = globalThis.chrome;
+  const storageState = {
+    visionModel: {
+      type: 'openai',
+      baseUrl: 'https://vision.example/v1',
+      apiKey: 'preserved-secret',
+      model: 'remote-vision',
+    },
+  };
+  const sentMessages = [];
+  let hasWebGPU = true;
+  let preloadResponse = { ok: true, started: true };
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-vision-probe') {
+            callback({ ok: true, hasWebGPU, isFallbackAdapter: false, libraryVersion: 'test' });
+            return;
+          }
+          callback(preloadResponse);
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({ ...storageState }),
+          set: async patch => Object.assign(storageState, patch),
+          remove: async keys => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete storageState[key];
+          },
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    const started = await manager.enableAndPreloadWebgpuVision();
+    assert.deepEqual(started, { ok: true, started: true, ready: false });
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-vision-probe',
+      'webgpu-vision-preload',
+    ]);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], true);
+
+    delete storageState[WEBGPU_VISION_ENABLED_KEY];
+    delete storageState[WEBGPU_VISION_AUTO_SELECTED_KEY];
+    sentMessages.length = 0;
+    hasWebGPU = false;
+    const unsupported = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(unsupported.ok, false);
+    assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-vision-probe']);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+
+    sentMessages.length = 0;
+    hasWebGPU = true;
+    preloadResponse = { ok: false, error: 'download dispatch failed' };
+    const failedAutomaticStart = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedAutomaticStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+
+    storageState[WEBGPU_VISION_ENABLED_KEY] = true;
+    sentMessages.length = 0;
+    const failedExplicitStart = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedExplicitStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true,
+      'an existing explicit local selection must not be rolled back as an automatic choice');
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
@@ -41742,13 +41868,30 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeRuntime\)/);
+  assert.match(worker, /type === 'preload'[\s\S]*?preloadRuntime\(payload\)/);
+  assert.match(worker, /async function preloadRuntime[\s\S]*?await getRuntime[\s\S]*?await disposeRuntime/);
   assert.doesNotMatch(worker, /pipeline\(['"]text-generation/);
   assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(host, /'webgpu-vision-preload'/);
+  assert.match(host, /webgpu-vision-download-state/);
+  assert.doesNotMatch(host, /chrome\.storage/, 'offscreen documents only expose chrome.runtime from extension APIs');
+  assert.match(host, /chrome\.runtime\.sendMessage\(\{[\s\S]*?VISION_DOWNLOAD_STATE_MESSAGE/);
+  assert.match(host, /data\?\.type === 'progress'[\s\S]*?updateVisionDownloadProgress/);
+  assert.match(background, /message\?\.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE/);
+  assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
+  assert.match(background, /normalized\.status === 'error'[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY[\s\S]*?WEBGPU_VISION_ENABLED_KEY/);
+  assert.doesNotMatch(background, /apocalypseController\.handle\('status'\)/,
+    'service-worker startup must not override a later local-vision opt-out');
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
+  assert.match(settingsScript, /addEventListener\('focus'[\s\S]{0,180}loadVisionConfig/);
+  assert.match(settingsScript, /changes\[WEBGPU_VISION_ENABLED_KEY\][\s\S]{0,100}loadVisionConfig/);
+  assert.match(settingsScript, /chrome\.storage\.local\.remove\(WEBGPU_VISION_AUTO_SELECTED_KEY\)/,
+    'an explicit local-vision selection must clear automatic-selection provenance');
   assert.match(settingsScript, /dispose_webgpu_vision/);
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
+  assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');

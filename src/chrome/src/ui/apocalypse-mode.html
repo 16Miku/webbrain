@@ -16,6 +16,14 @@
     .muted,.meta { color:var(--muted); } .warning { color:var(--warn);margin-top:8px; }
     .toggle { display:flex;gap:10px;align-items:center;font-weight:700; }
     .toggle input { width:42px;height:22px;accent-color:var(--accent); }
+    .vision-model { margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--panel2); }
+    .vision-model-head { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+    .vision-model .meta { margin-top:4px; }
+    .vision-status { margin-top:8px;color:var(--muted);font-weight:650; }
+    .vision-status[data-kind="ready"] { color:var(--good); }
+    .vision-status[data-kind="error"] { color:var(--bad); }
+    .check { display:flex;gap:8px;align-items:center;min-height:38px;color:var(--text); }
+    .check input { accent-color:var(--accent); }
     .controls { display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:14px; }
     label.field { display:grid;gap:5px;color:var(--muted);font-size:12px; }
     button,select,input[type=file] { background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:8px 11px;font:inherit; }
@@ -39,6 +47,13 @@
         <h2 data-i18n="ap.hero.title"></h2>
         <p class="muted" data-i18n="ap.hero.desc"></p>
         <p class="warning" data-i18n="ap.hero.consent"></p>
+        <div id="vision-model-card" class="vision-model" hidden>
+          <div class="vision-model-head"><strong data-i18n="st.vision.local.title"></strong><span class="meta">~770 MB</span></div>
+          <p class="meta" data-i18n="st.vision.local.desc"></p>
+          <p class="meta" data-i18n="ap.vision.auto"></p>
+          <div id="vision-model-status" class="vision-status" role="status" aria-live="polite"></div>
+          <progress id="vision-model-progress" max="100" value="0" hidden></progress>
+        </div>
       </div>
       <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
     </section>
@@ -57,17 +72,12 @@
     <section class="card">
       <h2 data-i18n="ap.catalog.title"></h2>
       <p class="muted" data-i18n="ap.catalog.desc"></p>
+      <p class="warning" data-i18n="ap.download_background"></p>
       <div class="controls">
         <label class="field"><span data-i18n="ap.language"></span>
-          <select id="language">
-            <option value="eng">English</option><option value="zho">中文</option><option value="spa">Español</option>
-            <option value="fra">Français</option><option value="deu">Deutsch</option><option value="jpn">日本語</option>
-            <option value="kor">한국어</option><option value="por">Português</option><option value="rus">Русский</option><option value="ara">العربية</option>
-          </select>
+          <select id="language"></select>
         </label>
-        <label class="field"><span data-i18n="ap.tier"></span>
-          <select id="tier"><option value="" data-i18n="ap.tier.all"></option><option value="starter" data-i18n="ap.tier.starter"></option><option value="introductions" data-i18n="ap.tier.introductions"></option><option value="text" data-i18n="ap.tier.text"></option><option value="full" data-i18n="ap.tier.full"></option></select>
-        </label>
+        <label class="check"><input id="include-images" type="checkbox"> <span data-i18n="ap.include_images"></span></label>
         <label class="field"><span data-i18n="ap.storage_location"></span>
           <select id="storage-target"><option value="opfs" data-i18n="ap.storage.browser"></option><option id="external-storage-option" value="file" hidden data-i18n="ap.storage.file"></option></select>
         </label>
@@ -81,7 +91,7 @@
       <p class="muted" data-i18n="ap.import.desc"></p>
       <div class="controls">
         <input id="import-file" type="file" accept=".zim,application/x-zim">
-        <label class="field"><span data-i18n="ap.language"></span><select id="import-language"><option value="eng">English</option><option value="zho">中文</option><option value="spa">Español</option><option value="fra">Français</option><option value="deu">Deutsch</option><option value="jpn">日本語</option></select></label>
+        <label class="field"><span data-i18n="ap.language"></span><select id="import-language"></select></label>
         <button id="import-button" data-i18n="ap.import.button"></button>
         <button id="cancel-import" class="danger" hidden data-i18n="ap.cancel"></button>
       </div>

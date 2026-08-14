@@ -1,18 +1,33 @@
 import { assertWikipediaZimArchive, createApocalypseArchiveManager, createApocalypseStore, createOpfsArchiveStorage, importKiwixArchive, normalizeStorageEstimate, openKiwixZim, registerKiwixArchiveHandle, selectKiwixUpdate } from '../agent/apocalypse-mode.js';
 import { t } from './i18n.js';
 
+const WIKIPEDIA_LANGUAGES = Object.freeze([
+  ['eng', 'English'], ['zho', '中文'], ['ara', 'العربية'], ['ben', 'বাংলা'], ['nld', 'Nederlands'],
+  ['tgl', 'Filipino'], ['fra', 'Français'], ['deu', 'Deutsch'], ['heb', 'עברית'], ['hin', 'हिन्दी'],
+  ['ind', 'Bahasa Indonesia'], ['jpn', '日本語'], ['kor', '한국어'], ['msa', 'Bahasa Melayu'], ['fas', 'فارسی'],
+  ['pol', 'Polski'], ['por', 'Português'], ['rus', 'Русский'], ['spa', 'Español'], ['tha', 'ไทย'],
+  ['tur', 'Türkçe'], ['ukr', 'Українська'], ['vie', 'Tiếng Việt'],
+]);
+
 const runtimeApi = globalThis.browser || globalThis.chrome;
+const WEBGPU_VISION_DOWNLOAD_STATE_KEY = 'webgpuVisionDownloadState';
+const supportsWebgpuVision = typeof globalThis.chrome?.offscreen?.createDocument === 'function';
 const store = createApocalypseStore();
 const storage = createOpfsArchiveStorage();
 const elements = Object.fromEntries([
-  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language', 'tier',
+  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language', 'include-images',
   'storage-target', 'external-storage-option', 'load-catalog', 'catalog', 'import-file', 'import-language', 'import-button', 'cancel-import', 'notice',
-  'update-policy',
+  'update-policy', 'vision-model-card', 'vision-model-status', 'vision-model-progress',
 ].map(id => [id, document.getElementById(id)]));
+for (const select of [elements.language, elements['import-language']]) {
+  for (const [value, label] of WIKIPEDIA_LANGUAGES) select.add(new Option(label, value));
+}
+elements['vision-model-card'].hidden = !supportsWebgpuVision;
 let snapshot = null;
 let catalogItems = [];
 let importController = null;
 let polling = false;
+let visionDownloadState = null;
 const fileHandles = new Map();
 const pageManager = createApocalypseArchiveManager({
   store,
@@ -89,7 +104,7 @@ function renderInstalled() {
     const progress = record.size ? Math.min(100, Math.round((Number(record.bytesDownloaded) || 0) / Number(record.size) * 100)) : 0;
     const error = record.errorKind === 'file-permission-required' ? t('ap.file_permission_required') : record.error;
     return `<article class="item"><div><h3>${escapeHtml(record.title || record.filename)}</h3>
-      <div class="meta">${escapeHtml(record.language)} · ${escapeHtml(t(`ap.tier.${record.tier}`))} · ${escapeHtml(record.archiveDate || t('ap.date_unknown'))} · ${bytes(record.size)} · ${escapeHtml(t(`ap.status.${record.status}`))}</div>
+      <div class="meta">${escapeHtml(record.language)} · ${escapeHtml(record.archiveDate || t('ap.date_unknown'))} · ${bytes(record.size)} · ${escapeHtml(t(`ap.status.${record.status}`))}</div>
       ${error ? `<div class="meta" style="color:var(--bad)">${escapeHtml(error)}</div>` : ''}
       ${record.status === 'ready' ? '' : `<progress max="100" value="${progress}"></progress>`}</div>
       <div class="actions">${archiveButtons(record)}<button class="danger" data-action="delete" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.delete'))}</button></div></article>`;
@@ -97,18 +112,55 @@ function renderInstalled() {
 }
 
 function renderCatalog() {
-  const tier = elements.tier.value;
-  const items = catalogItems.filter(item => !tier || item.tier === tier);
+  const tier = elements['include-images'].checked ? 'full' : 'text';
+  const items = catalogItems.filter(item => item.tier === tier);
   if (!items.length) {
     elements.catalog.innerHTML = `<div class="empty">${escapeHtml(t('ap.no_match'))}</div>`;
     return;
   }
   elements.catalog.innerHTML = items.slice(0, 80).map((item, index) => `<article class="item"><div><h3>${escapeHtml(item.title)}</h3>
-    <div class="meta">${escapeHtml(item.language)} · ${escapeHtml(t(`ap.tier.${item.tier}`))} · ${escapeHtml(item.archiveDate)} · ${Number(item.articleCount || 0).toLocaleString()}</div>
+    <div class="meta">${escapeHtml(item.language)} · ${escapeHtml(item.archiveDate)} · ${Number(item.articleCount || 0).toLocaleString()}</div>
     <div class="meta">${escapeHtml(t('ap.catalog.size_pending'))}</div></div>
     <div class="actions"><button class="primary" data-install="${index}">${escapeHtml(t('ap.review_install'))}</button></div></article>`).join('');
   const visible = items.slice(0, 80);
   elements.catalog.querySelectorAll('[data-install]').forEach(button => button.addEventListener('click', () => reviewInstall(visible[Number(button.dataset.install)])));
+}
+
+function renderVisionDownload() {
+  if (!supportsWebgpuVision) return;
+  const state = visionDownloadState || {};
+  const progress = Math.max(0, Math.min(100, Number(state.progress) || 0));
+  const active = state.status === 'starting' || state.status === 'downloading';
+  elements['vision-model-status'].dataset.kind = state.status === 'ready' || state.status === 'error'
+    ? state.status
+    : '';
+  elements['vision-model-progress'].hidden = !active;
+  elements['vision-model-progress'].value = progress;
+  if (state.status === 'ready') {
+    elements['vision-model-status'].textContent = t('ap.status.ready');
+    return;
+  }
+  if (state.status === 'error') {
+    const message = String(state.error || '').trim();
+    elements['vision-model-status'].textContent = `${t('ap.status.error')}${message ? ` · ${message}` : ''}`;
+    return;
+  }
+  if (state.status === 'downloading') {
+    elements['vision-model-status'].textContent = `${t('ap.status.downloading')} · ${Math.round(progress)}%`;
+    return;
+  }
+  if (state.status === 'starting' || snapshot?.enabled) {
+    elements['vision-model-status'].textContent = t('ap.status.queued');
+    return;
+  }
+  elements['vision-model-status'].textContent = t('ap.vision.waiting');
+}
+
+async function refreshVisionDownload() {
+  if (!supportsWebgpuVision) return;
+  const stored = await runtimeApi.storage.local.get(WEBGPU_VISION_DOWNLOAD_STATE_KEY);
+  visionDownloadState = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY] || null;
+  renderVisionDownload();
 }
 
 async function refresh() {
@@ -121,6 +173,7 @@ async function refresh() {
   elements.enabled.checked = snapshot.enabled === true;
   elements['update-policy'].value = snapshot.updatePolicy === 'automatic' ? 'automatic' : 'manual';
   renderInstalled();
+  await refreshVisionDownload().catch(() => {});
 }
 
 async function reviewInstall(item) {
@@ -146,7 +199,6 @@ async function reviewInstall(item) {
       size: bytes(download.size),
       date: download.archiveDate || t('ap.date_unknown'),
       language: download.language,
-      tier: t(`ap.tier.${download.tier}`),
       source: download.source,
       license: download.license,
       pieces: download.pieceHashes.length,
@@ -217,12 +269,12 @@ elements['load-catalog'].addEventListener('click', async () => {
   try {
     notice(t('ap.loading_catalog'));
     const result = await command('catalog', { language: elements.language.value });
-    catalogItems = result.items || [];
+    catalogItems = (result.items || []).filter(item => item.tier === 'text' || item.tier === 'full');
     renderCatalog();
     notice(t('ap.loaded_catalog', { count: catalogItems.length }), 'success');
   } catch (error) { notice(error.message, 'error'); }
 });
-elements.tier.addEventListener('change', renderCatalog);
+elements['include-images'].addEventListener('change', renderCatalog);
 
 elements.installed.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
@@ -304,6 +356,12 @@ elements['cancel-import'].addEventListener('click', () => importController?.abor
 document.addEventListener('wb-locale-changed', () => {
   renderInstalled();
   renderCatalog();
+  renderVisionDownload();
+});
+runtimeApi.storage?.onChanged?.addListener?.((changes, area) => {
+  if (!supportsWebgpuVision || area !== 'local' || !changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) return;
+  visionDownloadState = changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY].newValue || null;
+  renderVisionDownload();
 });
 
 async function poll() {
