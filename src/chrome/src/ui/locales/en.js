@@ -1046,7 +1046,7 @@ export default {
   'st.sync.consent.legacy': 'Turn on encrypted sync? WebBrain will transmit an end-to-end encrypted copy of your memories, profile autofill, and API-key provider settings to WebBrain Cloud. Chat history and OAuth sign-ins are not synced.',
   'st.sync.consent.denied': 'Encrypted sync permission was not granted.',
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-  'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation and include a q4f16 ONNX graph. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

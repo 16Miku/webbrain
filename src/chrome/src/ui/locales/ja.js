@@ -1044,7 +1044,7 @@ export default {
   "st.sync.consent.legacy": "暗号化された同期をオンにしますか? WebBrain は、エンドツーエンドで暗号化された思い出、プロファイルの自動入力、API キー プロバイダー設定のコピーを WebBrain Cloud に送信します。チャット履歴と OAuth サインインは同期されません。",
   "st.sync.consent.denied": "暗号化された同期権限が付与されませんでした。",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-  'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation and include a q4f16 ONNX graph. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

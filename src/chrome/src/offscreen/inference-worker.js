@@ -38,6 +38,7 @@ const readyTextModelKeys = new Set();
 const textDownloadFiles = new Map();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
 let activeTextDownloadModelId = '';
+let queuedTextDownload = null;
 let textDownloadAbortController = null;
 let textDownloadCancelMode = '';
 let lastTextProgressPostAt = 0;
@@ -71,6 +72,22 @@ function textModelKey(modelId, dtype) {
 
 function sameTextModel(leftModelId, leftDtype, rightModelId, rightDtype) {
   return textModelKey(leftModelId, leftDtype) === textModelKey(rightModelId, rightDtype);
+}
+
+function assertTextDownloadCanStart(payload) {
+  const modelId = String(payload?.modelId || '').trim();
+  if (!modelId) throw new Error('No text-generation model was specified.');
+  const dtype = payload?.dtype || 'q4f16';
+  const conflictsWithTransfer = textDownloadState.modelId
+    && !sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype)
+    && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status);
+  const conflictsWithQueued = queuedTextDownload
+    && !sameTextModel(queuedTextDownload.modelId, queuedTextDownload.dtype, modelId, dtype);
+  if (conflictsWithTransfer || conflictsWithQueued) {
+    const blockingModel = conflictsWithTransfer ? textDownloadState.modelId : queuedTextDownload.modelId;
+    throw new Error(`Finish or stop the ${blockingModel} download before downloading ${modelId}.`);
+  }
+  return { modelId, dtype, key: textModelKey(modelId, dtype) };
 }
 
 function textReadyMarkerUrl(modelId, dtype) {
@@ -420,6 +437,23 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
   }
 }
 
+function chatTemplateText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(chatTemplateText).join('\n');
+  if (value && typeof value === 'object') return Object.values(value).map(chatTemplateText).join('\n');
+  return '';
+}
+
+export function tokenizerSupportsTools(tokenizer) {
+  const template = chatTemplateText(tokenizer?.chat_template ?? tokenizer?.chatTemplate);
+  return /\btools\b/.test(template);
+}
+
+function assertToolCapableTextRuntime(runtime, modelId) {
+  if (tokenizerSupportsTools(runtime?.tokenizer)) return;
+  throw new Error(`${modelId} is not compatible with WebBrain: custom repositories must provide a chat template that accepts tools.`);
+}
+
 async function getTextDownloadStatus(modelId, dtype) {
   const ready = await isTextModelReady(modelId, dtype);
   const sameModel = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
@@ -453,7 +487,7 @@ async function getTextDownloadStatus(modelId, dtype) {
   };
 }
 
-async function downloadTextModel(payload) {
+async function downloadTextModel(payload, { onStarted } = {}) {
   const modelId = String(payload?.modelId || '').trim();
   if (!modelId) throw new Error('No text-generation model was specified.');
   const device = payload?.device || 'webgpu';
@@ -465,6 +499,10 @@ async function downloadTextModel(payload) {
     throw new Error(`Finish or stop the ${textDownloadState.modelId} download before downloading ${modelId}.`);
   }
   if (await isTextModelReady(modelId, dtype)) {
+    if (payload?.requireTools === true) {
+      const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
+      assertToolCapableTextRuntime(runtime, modelId);
+    }
     textDownloadState = {
       ...textDownloadState,
       status: 'ready',
@@ -497,9 +535,11 @@ async function downloadTextModel(payload) {
     error: '',
   };
   postTextDownloadState({ force: true });
+  onStarted?.(textDownloadSnapshot());
 
   try {
-    await getTextRuntime(modelId, dtype, device);
+    const runtime = await getTextRuntime(modelId, dtype, device);
+    if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
     if (textDownloadCancelMode) {
       await disposeTextRuntime();
       return textDownloadSnapshot();
@@ -793,6 +833,7 @@ async function runText(payload) {
     throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
+  if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const requestedTokens = Number(payload?.options?.maxTokens);
   const maxTokenLimit = usesLfm25ReasoningTemplate
     ? WEBGPU_LFM25_MAX_NEW_TOKENS
@@ -896,6 +937,25 @@ self.addEventListener('message', async event => {
     if (type === 'download-text') {
       const state = await enqueueModelOperation(() => downloadTextModel(payload));
       self.postMessage({ id, ok: true, ...state });
+      return;
+    }
+    if (type === 'start-download-text') {
+      const request = assertTextDownloadCanStart(payload);
+      queuedTextDownload = request;
+      let acknowledged = false;
+      const operation = enqueueModelOperation(() => downloadTextModel(payload, {
+        onStarted(state) {
+          acknowledged = true;
+          self.postMessage({ id, ok: true, ...state });
+        },
+      }));
+      void operation.then((state) => {
+        if (!acknowledged) self.postMessage({ id, ok: true, ...state });
+      }).catch((error) => {
+        if (!acknowledged) self.postMessage({ id, ok: false, error: error?.message || String(error) });
+      }).finally(() => {
+        if (queuedTextDownload?.key === request.key) queuedTextDownload = null;
+      });
       return;
     }
     if (type === 'pause-text-download') {

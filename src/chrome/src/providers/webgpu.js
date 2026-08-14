@@ -71,6 +71,11 @@ export function webgpuModelDtype(modelId, fallback = WEBGPU_DTYPE) {
   return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.dtype || fallback;
 }
 
+export function webgpuModelRequiresToolTemplate(modelId) {
+  const normalized = normalizeWebgpuModelId(modelId);
+  return !WEBGPU_MODEL_PRESETS.some(preset => preset.id === normalized);
+}
+
 class WebGPUOffscreenProvider extends BaseLLMProvider {
   async _dispatch(message) {
     await ensureOffscreen();
@@ -142,6 +147,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     this.baseUrl = '';
     this.device = 'webgpu';
     this.dtype = dtype;
+    this.requiresToolTemplate = webgpuModelRequiresToolTemplate(model);
   }
 
   get name() {
@@ -165,6 +171,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       model: this.model,
       device: this.device,
       dtype: this.dtype,
+      requireTools: this.requiresToolTemplate,
       messages: this._chatMessages(messages, options),
       options: {
         maxTokens: options.maxTokens,
@@ -214,6 +221,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       model: this.model,
       device: this.device,
       dtype: this.dtype,
+      requireTools: this.requiresToolTemplate,
     });
     if (!response || response.error) {
       throw new Error(response?.error || `Unable to download ${webgpuModelDisplayName(this.model)}.`);

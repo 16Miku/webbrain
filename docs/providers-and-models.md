@@ -156,7 +156,9 @@ model selector offers
 [`onnx-community/Ternary-Bonsai-1.7B-ONNX`](https://huggingface.co/onnx-community/Ternary-Bonsai-1.7B-ONNX/),
 [`LiquidAI/LFM2.5-2.6B-ONNX`](https://huggingface.co/LiquidAI/LFM2.5-2.6B-ONNX/),
 or a custom Hugging Face repository. Custom repositories must be compatible
-with Transformers.js text generation and provide a `q4f16` ONNX variant. The
+with Transformers.js text generation, provide a `q4f16` ONNX variant, and use
+a chat template that accepts `tools`. WebBrain validates that template after
+loading and rejects incompatible custom repositories. The
 selected model runs through the packaged Transformers.js 4.2 runtime in a
 dedicated extension Worker. The provider is text-only and defaults to the
 Compact prompt tier with a conservative 16k practical context setting. Ling

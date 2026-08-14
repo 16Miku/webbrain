@@ -1042,7 +1042,7 @@ export default {
   "st.sync.consent.legacy": "এনক্রিপ্ট করা সিঙ্ক চালু করবেন? WebBrain আপনার স্মৃতি, প্রোফাইল অটোফিল এবং API-কী প্রদানকারী সেটিংসের একটি এন্ড-টু-এন্ড এনক্রিপ্টেড কপি WebBrain Cloud-এ প্রেরণ করবে। চ্যাট ইতিহাস এবং OAuth সাইন-ইন সিঙ্ক করা হয় না।",
   "st.sync.consent.denied": "এনক্রিপ্ট করা সিঙ্ক অনুমতি দেওয়া হয়নি।",
   'st.providers.webgpu_note.body': '{modelLink} কোনো API এন্ডপয়েন্ট ছাড়াই সম্পূর্ণভাবে Chrome-এ চলে। প্রথম জেনারেশনে প্রায় 4.85 GB ডাউনলোড হয় এবং ব্রাউজারে ক্যাশ করা হয়। সংযোগ পরীক্ষা মডেল ডাউনলোড না করেই প্যাকেজ করা রানটাইম ও হার্ডওয়্যার অ্যাডাপ্টার যাচাই করে।',
-  'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation and include a q4f16 ONNX graph. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

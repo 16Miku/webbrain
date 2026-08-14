@@ -1015,7 +1015,7 @@ export default {
   "st.sync.consent.legacy": "Verschlüsselte Synchronisierung aktivieren? WebBrain überträgt eine Ende-zu-Ende-verschlüsselte Kopie Ihrer Erinnerungen, des automatischen Ausfüllens Ihres Profils und der Einstellungen des API-Schlüsselanbieters an die WebBrain Cloud. Chatverlauf und OAuth-Anmeldungen werden nicht synchronisiert.",
   "st.sync.consent.denied": "Die Berechtigung zur verschlüsselten Synchronisierung wurde nicht erteilt.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-  'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation and include a q4f16 ONNX graph. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',
