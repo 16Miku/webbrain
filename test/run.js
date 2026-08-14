@@ -21948,11 +21948,15 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
     const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
-    assert.match(pageHtml, /id="include-images"/, `${prefix}: full-text image choice is missing`);
-    assert.doesNotMatch(pageHtml, /id="tier"/, `${prefix}: archive categories are still exposed`);
-    assert.match(pageScript, /item\.tier === 'text' \|\| item\.tier === 'full'/, `${prefix}: catalog accepts archives other than the two full-text variants`);
-    assert.match(pageScript, /include-images'[\s\S]*?\? 'full' : 'text'/, `${prefix}: image choice does not switch between full-text variants`);
-    assert.doesNotMatch(pageScript, /t\(`ap\.tier\.\$\{(?:item|record|download)\.tier\}`\)/, `${prefix}: archive categories are still rendered`);
+    assert.match(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier selection is missing`);
+    for (const tier of ['all', 'starter', 'introductions', 'text', 'full']) {
+      assert.match(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: ${tier} archive tier is unavailable`);
+    }
+    assert.match(pageScript, /catalogItems = Array\.isArray\(result\.items\) \? result\.items : \[\]/,
+      `${prefix}: catalog items are discarded before tier selection`);
+    assert.match(pageScript, /tier === 'all' \? catalogItems : catalogItems\.filter\(item => item\.tier === tier\)/,
+      `${prefix}: catalog tier selection does not preserve all tiers`);
+    assert.match(pageScript, /t\(`ap\.tier\.\$\{item\.tier\}`\)/, `${prefix}: archive tier is not rendered`);
     assert.match(pageHtml, /id="vision-model-card"[^>]*hidden/, `${prefix}: local vision status must start hidden on unsupported browsers`);
     assert.match(pageHtml, /data-i18n="ap\.vision\.auto"/, `${prefix}: automatic local vision download is not disclosed`);
     assert.match(pageScript, /webgpuVisionDownloadState/, `${prefix}: local vision download status is not rendered`);

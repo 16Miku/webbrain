@@ -15,7 +15,7 @@ const supportsWebgpuVision = typeof globalThis.chrome?.offscreen?.createDocument
 const store = createApocalypseStore();
 const storage = createOpfsArchiveStorage();
 const elements = Object.fromEntries([
-  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language', 'include-images',
+  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language', 'catalog-tier',
   'storage-target', 'external-storage-option', 'load-catalog', 'catalog', 'import-file', 'import-language', 'import-button', 'cancel-import', 'notice',
   'update-policy', 'vision-model-card', 'vision-model-status', 'vision-model-progress',
 ].map(id => [id, document.getElementById(id)]));
@@ -112,14 +112,14 @@ function renderInstalled() {
 }
 
 function renderCatalog() {
-  const tier = elements['include-images'].checked ? 'full' : 'text';
-  const items = catalogItems.filter(item => item.tier === tier);
+  const tier = elements['catalog-tier'].value || 'text';
+  const items = tier === 'all' ? catalogItems : catalogItems.filter(item => item.tier === tier);
   if (!items.length) {
     elements.catalog.innerHTML = `<div class="empty">${escapeHtml(t('ap.no_match'))}</div>`;
     return;
   }
   elements.catalog.innerHTML = items.slice(0, 80).map((item, index) => `<article class="item"><div><h3>${escapeHtml(item.title)}</h3>
-    <div class="meta">${escapeHtml(item.language)} · ${escapeHtml(item.archiveDate)} · ${Number(item.articleCount || 0).toLocaleString()}</div>
+    <div class="meta">${escapeHtml(item.language)} · ${escapeHtml(item.archiveDate)} · ${escapeHtml(t(`ap.tier.${item.tier}`))} · ${Number(item.articleCount || 0).toLocaleString()}</div>
     <div class="meta">${escapeHtml(t('ap.catalog.size_pending'))}</div></div>
     <div class="actions"><button class="primary" data-install="${index}">${escapeHtml(t('ap.review_install'))}</button></div></article>`).join('');
   const visible = items.slice(0, 80);
@@ -269,12 +269,12 @@ elements['load-catalog'].addEventListener('click', async () => {
   try {
     notice(t('ap.loading_catalog'));
     const result = await command('catalog', { language: elements.language.value });
-    catalogItems = (result.items || []).filter(item => item.tier === 'text' || item.tier === 'full');
+    catalogItems = Array.isArray(result.items) ? result.items : [];
     renderCatalog();
     notice(t('ap.loaded_catalog', { count: catalogItems.length }), 'success');
   } catch (error) { notice(error.message, 'error'); }
 });
-elements['include-images'].addEventListener('change', renderCatalog);
+elements['catalog-tier'].addEventListener('change', renderCatalog);
 
 elements.installed.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
