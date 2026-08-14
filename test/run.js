@@ -779,15 +779,10 @@ const { ProviderManager: ProviderManagerFx } = await import(
 const {
   WebGPUProvider,
   WebGPUVisionProvider,
-  WEBGPU_BONSAI_DTYPE,
-  WEBGPU_BONSAI_MODEL_ID,
   WEBGPU_DTYPE,
-  WEBGPU_GEMMA_DTYPE,
-  WEBGPU_GEMMA_MODEL_ID,
   WEBGPU_LFM25_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
-  WEBGPU_QWEN_MODEL_ID,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
@@ -40839,6 +40834,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const manager = new ProviderManagerCh();
     const webgpuConfig = manager._defaultConfigs().webgpu;
     assert.equal(webgpuConfig.model, WEBGPU_MODEL_ID);
+    assert.equal(WEBGPU_MODEL_ID, WEBGPU_LFM25_MODEL_ID);
     assert.equal(webgpuConfig.baseUrl, '');
     assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
@@ -40846,30 +40842,19 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(generalProvider.promptTier, 'compact');
     assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID }).promptTier, 'compact');
     assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID, promptTier: 'full' }).promptTier, 'full');
-    assert.equal(new WebGPUProvider({ model: WEBGPU_QWEN_MODEL_ID }).model, WEBGPU_QWEN_MODEL_ID);
-    const gemmaProvider = new WebGPUProvider({ model: WEBGPU_GEMMA_MODEL_ID, dtype: WEBGPU_DTYPE });
-    assert.equal(gemmaProvider.model, WEBGPU_GEMMA_MODEL_ID);
-    assert.deepEqual(gemmaProvider.dtype, WEBGPU_GEMMA_DTYPE, 'the Gemma preset must override the generic q4f16 graph');
-    const bonsaiProvider = new WebGPUProvider({ model: WEBGPU_BONSAI_MODEL_ID, dtype: WEBGPU_DTYPE });
-    assert.equal(bonsaiProvider.model, WEBGPU_BONSAI_MODEL_ID);
-    assert.equal(bonsaiProvider.dtype, WEBGPU_BONSAI_DTYPE, 'the Ternary Bonsai preset must select its WebGPU q2f16 graph');
     assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_MODEL_ID }).model, WEBGPU_LFM25_MODEL_ID);
     const customProvider = new WebGPUProvider({ model: 'custom-owner/custom-model' });
     assert.equal(customProvider.model, 'custom-owner/custom-model');
     assert.equal(customProvider.requiresToolTemplate, true);
     assert.equal(generalProvider.requiresToolTemplate, false);
     assert.equal(
-      new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
-      WEBGPU_QWEN_MODEL_ID,
+      new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
+      'custom-owner/custom-model',
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [
-      WEBGPU_MODEL_ID,
-      WEBGPU_QWEN_MODEL_ID,
-      WEBGPU_GEMMA_MODEL_ID,
-      WEBGPU_BONSAI_MODEL_ID,
-      WEBGPU_LFM25_MODEL_ID,
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B' },
     ]);
-    assert.equal(normalizeWebgpuModelId(' onnx-community/Qwen3-0.6B-ONNX '), WEBGPU_QWEN_MODEL_ID);
+    assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
     assert.equal(generalProvider.supportsTools, true);
@@ -40940,7 +40925,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
       /not downloaded/,
     );
-    await assert.rejects(manager.setActive('webgpu'), /Download Ling 3\.0 Tiny/);
+    await assert.rejects(manager.setActive('webgpu'), /Download LFM2\.5 2\.6B/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     textModelReady = true;
@@ -41035,9 +41020,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
   assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey)'/);
   assert.match(settingsScript, /normalizeWebgpuModelId/);
+  assert.match(settingsScript, /<option value="__custom__"/);
   assert.match(settingsScript, /data-webgpu-model-link/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
+  assert.match(englishLocale, /LFM2\.5 2\.6B is the only tested model[\s\S]*Other models entered through Custom are untested and likely will not work/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
@@ -72865,7 +72852,7 @@ test('profile sync keeps Chromium-only WebGPU provider state out of portable vau
     ...portableBase,
     providers: {
       ...portableBase.providers,
-      webgpu: { type: 'webgpu', model: 'webbrain-one/Ling-3.0-tiny-ONNX', configured: true },
+      webgpu: { type: 'webgpu', model: WEBGPU_LFM25_MODEL_ID, configured: true },
     },
     activeProvider: 'webgpu',
     meta: { providersAt: 20, providerItemsAt: { openai: 5, webgpu: 20 }, activeProviderAt: 20 },

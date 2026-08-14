@@ -1042,7 +1042,7 @@ export default {
   "st.sync.consent.legacy": "Bật đồng bộ hóa được mã hóa? WebBrain sẽ truyền bản sao được mã hóa nối đầu các ký ức của bạn, tự động điền hồ sơ và cài đặt nhà cung cấp khóa API tới WebBrain Cloud. Lịch sử trò chuyện và thông tin đăng nhập OAuth không được đồng bộ hóa.",
   "st.sync.consent.denied": "Quyền đồng bộ hóa được mã hóa không được cấp.",
   'st.providers.webgpu_note.body': '{modelLink} chạy hoàn toàn trong Chrome mà không cần điểm cuối API. Lần tạo đầu tiên tải xuống khoảng 4,85 GB và lưu vào bộ nhớ đệm của trình duyệt. Kiểm tra kết nối xác minh runtime đóng gói và bộ điều hợp phần cứng mà không tải mô hình.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

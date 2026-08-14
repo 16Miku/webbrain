@@ -3,19 +3,17 @@
 This directory packages the JavaScript and WASM runtime used by two local
 WebGPU paths in Chrome:
 
-- **Settings -> Providers -> WebGPU (In-browser)** runs
-  selectable Transformers.js-compatible Hugging Face ONNX repositories as the
-  general text/tool provider.
+- **Settings -> Providers -> WebGPU (In-browser)** runs the tested LFM2.5 2.6B
+  preset or an experimental custom Hugging Face ONNX repository as the general
+  text/tool provider.
 - **Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback** runs
   `LiquidAI/LFM2.5-VL-450M-ONNX` as the dedicated screenshot sidecar.
 
 Model weights are not bundled. Transformers.js downloads the selected WebGPU
-variant on first use and stores it in the browser cache. Ling and Qwen use the
-repository's standard `q4f16` graph (about 4.85 GB and 570 MB respectively).
-Gemma 4 E2B QAT Mobile uses its text-only `q2f16` embeddings and decoder (about
-2.32 GB), without loading its image or audio encoders. Ternary Bonsai 1.7B uses
-its `q2f16` graph (about 480 MB). LFM2.5 2.6B uses the standard `q4f16` graph
-(about 1.55 GB). The LFM2.5 text preset
+variant on first use and stores it in the browser cache. LFM2.5 2.6B uses the
+standard `q4f16` graph (about 1.55 GB). Custom repositories are untested and
+likely not to work; they must provide a Transformers.js-compatible `q4f16` text
+generation graph and a chat template that accepts `tools`. The LFM2.5 text preset
 uses its official reasoning template and a 512-token generation budget;
 reasoning before `</think>` is kept out of visible answers. LFM2.5-VL uses:
 

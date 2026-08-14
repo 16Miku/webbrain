@@ -1042,7 +1042,7 @@ export default {
   "st.sync.consent.legacy": "همگام سازی رمزگذاری شده روشن شود؟ WebBrain یک نسخه رمزگذاری شده سرتاسر از خاطرات، تکمیل خودکار نمایه و تنظیمات ارائه دهنده کلید API شما را به WebBrain Cloud منتقل می کند. سابقه گپ و ورود به سیستم OAuth همگام سازی نمی شوند.",
   "st.sync.consent.denied": "مجوز همگام‌سازی رمزگذاری شده داده نشد.",
   'st.providers.webgpu_note.body': '{modelLink} بدون هیچ نقطهٔ پایانی API کاملاً در Chrome اجرا می‌شود. نخستین تولید حدود 4.85 GB دانلود می‌کند و آن را در مرورگر ذخیره می‌کند. آزمایش اتصال، محیط اجرایی بسته‌بندی‌شده و آداپتور سخت‌افزاری را بدون دانلود مدل بررسی می‌کند.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download and manage the model files below. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',
