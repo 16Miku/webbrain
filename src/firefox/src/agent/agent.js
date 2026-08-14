@@ -11157,6 +11157,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (options.approvedPlanLanguageOverride === true) {
       policy.approved_plan_language_override = true;
     }
+    if (options.trustedContinuation === true && policy._framing_locale_is_fallback === true) {
+      policy._trusted_continuation_fallback = true;
+    }
     this.responseLanguagePolicies.set(tabId, policy);
     const messages = this.conversations.get(tabId);
     if (messages?.[0]?.role === 'system') {
@@ -19036,6 +19039,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._setResponseLanguagePolicy(tabId, responseLanguagePolicy, runOptions?.locale || 'en', {
       approvedPlanLanguageOverride: responseLanguagePolicy?.approved_plan_language_override === true
         || gateOutcome.responseLanguageApprovedPlanOverride === true,
+      trustedContinuation: runOptions?.trustedContinuation === true,
     });
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
@@ -19856,6 +19860,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._setResponseLanguagePolicy(tabId, responseLanguagePolicy, runOptions?.locale || 'en', {
       approvedPlanLanguageOverride: responseLanguagePolicy?.approved_plan_language_override === true
         || gateOutcome.responseLanguageApprovedPlanOverride === true,
+      trustedContinuation: runOptions?.trustedContinuation === true,
     });
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(

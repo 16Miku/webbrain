@@ -427,6 +427,8 @@ function responseLanguageLabel(locale) {
 export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 'en') {
   const approvedPlanLanguageOverride = value?.approved_plan_language_override === true;
   const policy = normalizeResponseLanguagePolicy(value, fallbackLocale);
+  const trustedContinuationFallback = value?._trusted_continuation_fallback === true
+    && policy._framing_locale_is_fallback === true;
   const framing = responseLanguageLabel(policy.framing_locale);
   const deliverables = policy.deliverable_locales.map(responseLanguageLabel);
   const deliverableRule = approvedPlanLanguageOverride
@@ -439,7 +441,9 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
     : policy.preserve_source_text
       ? 'Keep quoted, extracted, transcribed, or otherwise source-faithful text in its original language unless the user explicitly requested its translation.'
       : 'Translate source material only when the requested deliverable language or the latest genuine user request requires it.';
-  const framingRule = policy._framing_locale_is_fallback === true
+  const framingRule = trustedContinuationFallback
+    ? `This run was started by WebBrain's synthetic Continue control. The latest role:user continuation message is not a genuine user request and must not influence response or deliverable language. Infer explanatory framing from the most recent earlier genuine user request. If that earlier request explicitly specifies a response language, use it. Only when its language is unclear, use ${framing} as the fallback.`
+    : policy._framing_locale_is_fallback === true
     ? `Infer explanatory framing from the language of the latest genuine user request. If that request explicitly specifies a response language, use it. Only when the request language is unclear, use ${framing} as the fallback.`
     : `Use ${framing} for explanatory framing unless the latest genuine user request${approvedPlanLanguageOverride ? ' or user-edited approved plan' : ''} explicitly asks for different framing.`;
   return [

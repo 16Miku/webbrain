@@ -56100,10 +56100,11 @@ test('trusted continuation carries consequential evidence without repeating the 
       return { ok: true };
     };
     let gateCalls = 0;
-    const spanishPolicy = {
-      framing_locale: 'es',
-      deliverable_locales: ['es'],
-      preserve_source_text: false,
+    const fallbackPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: [],
+      preserve_source_text: true,
+      _framing_locale_is_fallback: true,
     };
     const englishPolicy = {
       framing_locale: 'en',
@@ -56114,7 +56115,7 @@ test('trusted continuation carries consequential evidence without repeating the 
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
-      responseLanguagePolicy: gateCalls++ === 0 ? spanishPolicy : englishPolicy,
+      responseLanguagePolicy: gateCalls++ === 0 ? fallbackPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -56134,12 +56135,12 @@ test('trusted continuation carries consequential evidence without repeating the 
     );
     assert.deepEqual(
       agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
-      spanishPolicy,
+      fallbackPolicy,
       `${AgentClass.name}: first run did not preserve its response language policy`,
     );
     assert.deepEqual(
       persistedLanguagePolicies.at(-1)?.policy,
-      spanishPolicy,
+      fallbackPolicy,
       `${AgentClass.name}: first run returned before its response language policy was durable`,
     );
 
@@ -56157,13 +56158,23 @@ test('trusted continuation carries consequential evidence without repeating the 
     assert.equal(requests.length, 2, `${AgentClass.name}: continuation made an unexpected number of model requests`);
     assert.match(
       requests[1].systemPrompt,
-      /Use Spanish \(es\) for explanatory framing/,
-      `${AgentClass.name}: continuation system prompt lost the prior framing language`,
+      /synthetic Continue control/,
+      `${AgentClass.name}: continuation system prompt did not identify the synthetic user turn`,
+    );
+    assert.match(
+      requests[1].systemPrompt,
+      /most recent earlier genuine user request/,
+      `${AgentClass.name}: fallback continuation did not anchor framing to the original request`,
     );
     assert.match(
       requests[1].doneDescription,
-      /Write authored deliverables in Spanish \(es\)/,
-      `${AgentClass.name}: continuation tools lost the prior deliverable language`,
+      /must not influence response or deliverable language/,
+      `${AgentClass.name}: continuation tools treated the synthetic turn as a language instruction`,
+    );
+    assert.match(
+      requests[1].doneDescription,
+      /No fixed authored-deliverable language was inferred/,
+      `${AgentClass.name}: fallback continuation invented a fixed deliverable language`,
     );
     assert.doesNotMatch(
       requests[1].systemPrompt,
