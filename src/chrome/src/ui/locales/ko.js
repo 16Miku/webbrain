@@ -289,6 +289,13 @@ export default {
   'st.provider.field.model_loaded_hint': '비워 두면 이미 로드된 모델을 사용',
 
   'st.vision.desc': '설정하면 페이지 읽기용 스크린샷은 이 모델로 전송되고, 활성 제공자는 계획 수립과 도구 호출을 담당합니다. 비워 두면 비전에도 활성 제공자가 사용됩니다. OpenAI 호환 엔드포인트만 지원합니다.',
+  'st.vision.local.title': 'LFM2.5-VL 로컬 대체 모델',
+  'st.vision.local.desc': 'LiquidAI/LFM2.5-VL-450M-ONNX를 GPU에서 실행합니다. 스크린샷은 이 기기에만 남습니다. 처음 사용할 때 백그라운드에서 Hugging Face로부터 약 770 MB를 다운로드하여 로컬에 캐시합니다. 다운로드 중에 탭을 전환하거나 설정을 닫아도 됩니다. Chrome은 열어 두세요.',
+  'st.vision.local.enable': '로컬 대체 모델 사용',
+  'st.vision.local.disable': '로컬 대체 모델 사용 중지',
+  'st.vision.local.saved': '로컬 비전 대체 모델이 활성화되었습니다.',
+  'st.vision.local.testing': '로컬 비전을 불러와 테스트하는 중… 처음 사용할 때 백그라운드에서 약 770 MB를 다운로드합니다. 탭을 전환하거나 설정을 닫아도 됩니다. Chrome은 열어 두세요.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': '저장',
   'st.vision.test': '연결 테스트',
   'st.vision.clear': '지우기',

@@ -768,6 +768,14 @@ const { ProviderManager: ProviderManagerCh } = await import(
 const { ProviderManager: ProviderManagerFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/manager.js').replace(/\\/g, '/')
 );
+const {
+  WebGPUVisionProvider,
+  WEBGPU_VISION_DTYPE,
+  WEBGPU_VISION_ENABLED_KEY,
+  WEBGPU_VISION_MODEL_ID,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
+);
 const ProviderCatalogCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/provider-catalog.js').replace(/\\/g, '/')
 );
@@ -40681,6 +40689,118 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
 
 console.log('\nprovider categorization');
 
+test('in-browser LFM2.5-VL is a dedicated vision sidecar, not a general provider', async () => {
+  const previousChrome = globalThis.chrome;
+  const sentMessages = [];
+  let localEnabled = true;
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          callback(message.type === 'webgpu-vision-dispose'
+            ? { ok: true, disposed: true }
+            : { ok: true, content: 'A settings page is visible.' });
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({
+            visionModel: {
+              type: 'openai',
+              baseUrl: 'https://vision.example/v1',
+              apiKey: 'preserved-secret',
+              model: 'remote-vision',
+            },
+            [WEBGPU_VISION_ENABLED_KEY]: localEnabled,
+          }),
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    assert.equal(Object.hasOwn(manager._defaultConfigs(), 'webgpu'), false);
+    const provider = await manager.getVisionProvider();
+    assert.ok(provider instanceof WebGPUVisionProvider);
+    assert.equal(provider.name, 'webgpu-vision');
+    assert.equal(provider.supportsVision, true);
+    assert.equal(provider.supportsTools, false);
+    assert.equal(provider.config.category, 'local');
+
+    const messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Describe this screenshot.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+      ],
+    }];
+    const result = await provider.chat(messages, { maxTokens: 321 });
+    assert.equal(result.content, 'A settings page is visible.');
+    assert.equal(result.toolCalls, null);
+    assert.deepEqual(sentMessages[0], {
+      type: 'webgpu-vision-chat',
+      model: WEBGPU_VISION_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_VISION_DTYPE,
+      messages,
+      options: { maxTokens: 321 },
+    });
+
+    const disposed = await manager.disposeWebgpuVisionRuntime();
+    assert.deepEqual(disposed, { ok: true, disposed: true });
+    assert.deepEqual(sentMessages[1], { type: 'webgpu-vision-dispose' });
+
+    localEnabled = false;
+    const preservedRemote = await manager.getVisionProvider();
+    assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
+    assert.equal(preservedRemote.config.baseUrl, 'https://vision.example/v1');
+    assert.equal(preservedRemote.config.apiKey, 'preserved-secret');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', () => {
+  const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
+  const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+  const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
+  const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
+  const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
+  assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
+  assert.match(worker, /AutoProcessor\.from_pretrained/);
+  assert.match(worker, /apply_chat_template/);
+  assert.match(worker, /load_image\(imageUrl\)/);
+  assert.match(worker, /decoder_model_merged:\s*'q4'/);
+  assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
+  assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
+  assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
+  assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeRuntime\)/);
+  assert.doesNotMatch(worker, /pipeline\(['"]text-generation/);
+  assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
+  assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
+  assert.match(settingsScript, /dispose_webgpu_vision/);
+  assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
+  assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
+  assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
+
+  const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
+  const multimodal = settings.indexOf('data-panel="multimodal"');
+  const visionCard = settings.indexOf('id="vision-card"', multimodal);
+  const localToggle = settings.indexOf('id="btn-use-webgpu-vision"', visionCard);
+  const transcription = settings.indexOf('id="transcription-card"', localToggle);
+  assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
+
+  const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
+});
+
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
@@ -77354,8 +77474,24 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       const visionResult = await visionManager.testVisionProvider();
       assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
       assert.equal(visionCalls.length, 1);
-      assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+      assert.match(visionCalls[0].messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
       assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
+      assert.equal(visionCalls[0].options.webbrainVisionProbe, true);
+
+      if (label === 'chrome') {
+        visionManager.getVisionProvider = async () => ({
+          name: 'webgpu-vision',
+          model: WEBGPU_VISION_MODEL_ID,
+          baseUrl: 'local://webgpu',
+          chat: async (messages, options) => {
+            assert.match(messages[0].content[1].text, /three solid vertical color panels/i);
+            assert.equal(options.webbrainVisionProbe, true);
+            return { content: 'yellow, blue, red' };
+          },
+        });
+        const localVisionResult = await visionManager.testVisionProvider();
+        assert.equal(localVisionResult.ok, true, 'chrome: local color-panel vision probe should pass');
+      }
 
       visionManager.getVisionProvider = async () => ({
         model: 'text-only-model',

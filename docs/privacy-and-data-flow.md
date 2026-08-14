@@ -35,6 +35,12 @@ the extractor is skipped silently.
 
 **No separate analytics payload is added to provider requests.** The request data above is sent only as needed to run the selected provider and agent features.
 
+When Chromium's optional in-browser vision fallback is enabled, first use
+downloads the public model, tokenizer, and configuration files from Hugging
+Face. That request contains only ordinary model-download metadata; screenshots,
+page content, and conversation data are not included. The downloaded files are
+cached by the browser, and screenshot inference stays on-device.
+
 ### Which provider receives the data?
 
 The user chooses their provider in Settings. Options include:
@@ -409,7 +415,8 @@ All IndexedDB reads happen only when the user opens the Traces page.
 ```
 CDP capture → JPEG/PNG data URL
   │
-  ├─ If dedicated vision model configured → sub-call to describe → text description
+  ├─ If dedicated vision model configured → remote sub-call or local inference
+  │   → describe as text
   │   → only the description text is sent to the main provider
   │
   ├─ If main provider supports vision → image_url block attached to user message
@@ -427,7 +434,7 @@ CDP capture → JPEG/PNG data URL
 | Browser ↔ LLM provider | Chat messages, page content, screenshot | HTTPS; user chose the provider |
 | Browser ↔ LLM provider | Enabled user memory prompt block and optional extractor input | HTTPS; user chose the provider |
 | Browser ↔ CapSolver | CAPTCHA token requests | HTTPS; user opted in |
-| Extension ↔ Offscreen document | Fetch proxy requests | Same extension, same origin |
+| Extension ↔ Offscreen document | Fetch proxy, recording, and optional local vision requests | Same extension, same origin |
 | Service worker ↔ IndexedDB | Trace data | Browser sandbox; never transmitted |
 | Service worker ↔ `chrome.storage.local` | API keys, settings | Browser sandbox (plaintext) |
 

@@ -289,6 +289,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'laisser vide pour utiliser le modèle chargé',
 
   'st.vision.desc': 'Si défini, les captures d\'écran sont envoyées à ce modèle pour lire la page, pendant que le fournisseur actif gère la planification et les appels d\'outils. Laissez vide pour utiliser également le fournisseur actif pour la vision. Uniquement pour les endpoints compatibles OpenAI.',
+  'st.vision.local.title': 'Solution de secours locale LFM2.5-VL',
+  'st.vision.local.desc': 'Exécute LiquidAI/LFM2.5-VL-450M-ONNX sur votre GPU. Les captures d’écran restent sur cet appareil ; lors de la première utilisation, environ 770 Mo sont téléchargés depuis Hugging Face en arrière-plan puis mis en cache localement. Vous pouvez changer d’onglet ou fermer les paramètres pendant le téléchargement ; laissez Chrome ouvert.',
+  'st.vision.local.enable': 'Utiliser la solution de secours locale',
+  'st.vision.local.disable': 'Désactiver la solution de secours locale',
+  'st.vision.local.saved': 'Solution de secours locale pour la vision activée.',
+  'st.vision.local.testing': 'Chargement et test du modèle de vision local… Lors de la première utilisation, environ 770 Mo sont téléchargés en arrière-plan. Vous pouvez changer d’onglet ou fermer les paramètres ; laissez Chrome ouvert.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Enregistrer',
   'st.vision.test': 'Tester la connexion',
   'st.vision.clear': 'Effacer',

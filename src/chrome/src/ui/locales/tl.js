@@ -289,6 +289,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'iwang blangko para gamitin ang na-load na modelo',
 
   'st.vision.desc': 'Kung naitakda, ipinapadala ang mga screenshot sa modelong ito para basahin ang pahina, habang ang aktibong provider ang humahawak sa pagpaplano at mga tool call. Iwang blangko para gamitin din ang aktibong provider para sa bisyon. Para lamang sa mga OpenAI-compatible na endpoint.',
+  'st.vision.local.title': 'Lokal na fallback ng LFM2.5-VL',
+  'st.vision.local.desc': 'Pinapagana ang LiquidAI/LFM2.5-VL-450M-ONNX sa iyong GPU. Nananatili sa device na ito ang mga screenshot; sa unang paggamit, nagda-download ito ng humigit-kumulang 770 MB mula sa Hugging Face sa background at kino-cache ito nang lokal. Maaari kang lumipat ng tab o isara ang Mga Setting habang nagda-download; panatilihing bukas ang Chrome.',
+  'st.vision.local.enable': 'Gamitin ang lokal na fallback',
+  'st.vision.local.disable': 'I-disable ang lokal na fallback',
+  'st.vision.local.saved': 'Naka-enable ang lokal na vision fallback.',
+  'st.vision.local.testing': 'Nilo-load at sinusubukan ang lokal na vision… Sa unang paggamit, nagda-download ng humigit-kumulang 770 MB sa background. Maaari kang lumipat ng tab o isara ang Mga Setting; panatilihing bukas ang Chrome.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'I-save',
   'st.vision.test': 'Subukan ang Koneksyon',
   'st.vision.clear': 'I-clear',

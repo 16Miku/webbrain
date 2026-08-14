@@ -5,6 +5,7 @@ import { AnthropicProvider, AnthropicOAuthProvider } from './anthropic.js';
 import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
+import { WebGPUVisionProvider, WEBGPU_VISION_ENABLED_KEY } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
 // `await import()` throws "import() is disallowed on ServiceWorkerGlobalScope".
@@ -1024,15 +1025,21 @@ export class ProviderManager {
   }
 
   /**
-   * Get a dedicated vision provider if the user has configured one under
-   * `visionModel` in storage. Returns an OpenAI-compatible provider instance
-   * or null if not configured. Caller is responsible for falling back to the
-   * active provider when this returns null.
+   * Get a dedicated vision provider. `visionModel` remains the portable,
+   * synced OpenAI-compatible endpoint; the Chrome-only WebGPU selection is a
+   * separate local preference so toggling it never destroys that endpoint.
    */
   async getVisionProvider() {
     try {
-      const { visionModel } = await chrome.storage.local.get(['visionModel']);
-      if (!visionModel || !visionModel.baseUrl || !visionModel.model) return null;
+      const stored = await chrome.storage.local.get(['visionModel', WEBGPU_VISION_ENABLED_KEY]);
+      const { visionModel } = stored;
+      // Accept the short-lived legacy shape written by early PR builds. The
+      // settings page migrates it to the dedicated flag when opened.
+      if (stored[WEBGPU_VISION_ENABLED_KEY] === true || visionModel?.type === 'webgpu') {
+        return new WebGPUVisionProvider();
+      }
+      if (!visionModel) return null;
+      if (!visionModel.baseUrl || !visionModel.model) return null;
       return new OpenAICompatibleProvider({
         type: 'openai',
         category: 'cloud',
@@ -1049,6 +1056,21 @@ export class ProviderManager {
     } catch (e) {
       console.warn('[providers] getVisionProvider failed:', e);
       return null;
+    }
+  }
+
+  /** Release local vision memory without deleting the browser's model cache. */
+  async disposeWebgpuVisionRuntime() {
+    try {
+      // Do not create an offscreen document merely to dispose a worker that
+      // cannot exist. Older Chrome builds may not expose hasDocument(), in
+      // which case dispatching is the safest fallback.
+      const existsPromise = chrome.offscreen?.hasDocument?.();
+      const exists = existsPromise ? await existsPromise.catch(() => null) : null;
+      if (exists === false) return { ok: true, disposed: false };
+      return await new WebGPUVisionProvider().dispose();
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
     }
   }
 
@@ -1172,24 +1194,34 @@ export class ProviderManager {
     } catch (error) {
       return { ok: false, error: error.message };
     }
+    const isLocalWebgpu = provider.name === 'webgpu-vision';
+    const probePrompt = isLocalWebgpu
+      ? 'The image contains three solid vertical color panels. Name their colors from left to right. Reply with only the three color names.'
+      : 'Read the three-character black code centered in the attached image. Reply with only that code.';
     const messages = [{
       role: 'user',
       content: [
-        { type: 'text', text: 'Read the three-character black code centered in the attached image. Reply with only that code.' },
         { type: 'image_url', image_url: { url: imageDataUrl } },
+        { type: 'text', text: probePrompt },
       ],
     }];
     let attempts = 1;
     let reasoningControl = true;
     let result;
     try {
-      result = await provider.chat(messages, visionGenerationOptions(256, { reasoningControl }));
+      result = await provider.chat(messages, {
+        ...visionGenerationOptions(256, { reasoningControl }),
+        webbrainVisionProbe: true,
+      });
     } catch (error) {
       if (!unsupportedVisionGenerationControl(error)) return { ok: false, error: error.message };
       reasoningControl = false;
       attempts++;
       try {
-        result = await provider.chat(messages, visionGenerationOptions(800, { reasoningControl }));
+        result = await provider.chat(messages, {
+          ...visionGenerationOptions(800, { reasoningControl }),
+          webbrainVisionProbe: true,
+        });
       } catch (fallbackError) {
         return { ok: false, error: fallbackError.message };
       }
@@ -1197,7 +1229,10 @@ export class ProviderManager {
     if (!String(result?.content || '').trim() && attempts === 1) {
       attempts++;
       try {
-        result = await provider.chat(messages, visionGenerationOptions(800, { reasoningControl }));
+        result = await provider.chat(messages, {
+          ...visionGenerationOptions(800, { reasoningControl }),
+          webbrainVisionProbe: true,
+        });
       } catch (error) {
         return { ok: false, error: error.message };
       }
@@ -1206,8 +1241,22 @@ export class ProviderManager {
     if (!probeText) {
       return { ok: false, error: 'Vision model returned no visible description after the image probe.' };
     }
-    if (!/\bWB7\b/i.test(probeText)) {
-      return { ok: false, error: 'Vision model responded but did not read the image probe correctly.' };
+    const normalizedProbeText = probeText
+      .toLowerCase()
+      .replace(/\b(?:navy|azure)\b/g, 'blue')
+      .replace(/\bgold(?:en)?\b/g, 'yellow');
+    const yellowAt = normalizedProbeText.indexOf('yellow');
+    const blueAt = normalizedProbeText.indexOf('blue');
+    const redAt = normalizedProbeText.indexOf('red');
+    const passed = isLocalWebgpu
+      ? yellowAt >= 0 && blueAt > yellowAt && redAt > blueAt
+      : /\bWB7\b/i.test(probeText);
+    if (!passed) {
+      const observed = probeText.replace(/\s+/g, ' ').slice(0, 120);
+      return {
+        ok: false,
+        error: `Vision model responded but did not read the image probe correctly (received: "${observed}").`,
+      };
     }
     return { ok: true, model: provider.model, baseUrl: provider.baseUrl };
   }

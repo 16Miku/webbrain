@@ -758,6 +758,13 @@ export default {
 
   'st.vision.heading': "Tầm nhìn",
   'st.vision.desc': "Nếu được đặt, ảnh chụp màn hình sẽ được gửi đến mô hình này để đọc trang, trong khi nhà cung cấp hoạt động xử lý các lệnh gọi công cụ và lập kế hoạch. Để trống để sử dụng nhà cung cấp hoạt động cho thị lực. Chỉ các điểm cuối tương thích với OpenAI.",
+  'st.vision.local.title': 'Mô hình dự phòng cục bộ LFM2.5-VL',
+  'st.vision.local.desc': 'Chạy LiquidAI/LFM2.5-VL-450M-ONNX trên GPU của bạn. Ảnh chụp màn hình chỉ lưu trên thiết bị này; lần sử dụng đầu tiên sẽ tải khoảng 770 MB từ Hugging Face trong nền và lưu vào bộ nhớ đệm cục bộ. Bạn có thể chuyển tab hoặc đóng phần Cài đặt trong khi tải; hãy giữ Chrome mở.',
+  'st.vision.local.enable': 'Sử dụng mô hình dự phòng cục bộ',
+  'st.vision.local.disable': 'Tắt mô hình dự phòng cục bộ',
+  'st.vision.local.saved': 'Đã bật mô hình thị giác dự phòng cục bộ.',
+  'st.vision.local.testing': 'Đang tải và kiểm tra mô hình thị giác cục bộ… Lần sử dụng đầu tiên sẽ tải khoảng 770 MB trong nền. Bạn có thể chuyển tab hoặc đóng phần Cài đặt; hãy giữ Chrome mở.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': "Lưu",
   'st.vision.test': "Kiểm tra kết nối",
   'st.vision.clear': "Xóa",

@@ -4,6 +4,11 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [31.0.0] - 2026-08-14
+
+### Added
+- Added a one-click, Chrome-only in-browser vision fallback powered by WebGPU, using LiquidAI's LFM2.5-VL-450M ONNX model as a dedicated screenshot-description sidecar rather than a general planning provider.
+
 ## [30.0.7] - 2026-08-14
 
 ### Changed

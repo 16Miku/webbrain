@@ -1,4 +1,4 @@
-﻿// German (de).
+// German (de).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 export default {
@@ -698,6 +698,13 @@ export default {
   // --- Vision settings ---
   'st.vision.heading': 'Vision',
   'st.vision.desc': 'Wenn gesetzt, werden Screenshots an dieses Modell gesendet, um die Seite zu lesen...',
+  'st.vision.local.title': 'Lokale LFM2.5-VL-Ausweichlösung',
+  'st.vision.local.desc': 'Führt LiquidAI/LFM2.5-VL-450M-ONNX auf deiner GPU aus. Screenshots bleiben auf diesem Gerät; bei der ersten Verwendung werden im Hintergrund etwa 770 MB von Hugging Face heruntergeladen und lokal zwischengespeichert. Du kannst während des Downloads den Tab wechseln oder die Einstellungen schließen; Chrome muss geöffnet bleiben.',
+  'st.vision.local.enable': 'Lokale Ausweichlösung verwenden',
+  'st.vision.local.disable': 'Lokale Ausweichlösung deaktivieren',
+  'st.vision.local.saved': 'Lokale Ausweichlösung für Bilderkennung aktiviert.',
+  'st.vision.local.testing': 'Lokale Bilderkennung wird geladen und getestet… Bei der ersten Verwendung werden im Hintergrund etwa 770 MB heruntergeladen. Du kannst den Tab wechseln oder die Einstellungen schließen; Chrome muss geöffnet bleiben.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Speichern',
   'st.vision.test': 'Verbindung testen',
   'st.vision.clear': 'Löschen',

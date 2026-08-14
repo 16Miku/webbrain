@@ -328,6 +328,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'yüklenmiş modeli kullanmak için boş bırak',
 
   'st.vision.desc': 'Ayarlandığında, sayfa okuma için ekran görüntüleri bu modele gönderilir; planlama ve araç çağrılarını aktif sağlayıcı yürütür. Görme için de aktif sağlayıcıyı kullanmak istiyorsan boş bırak. Yalnızca OpenAI uyumlu uç noktalar.',
+  'st.vision.local.title': 'LFM2.5-VL yerel yedek modeli',
+  'st.vision.local.desc': 'LiquidAI/LFM2.5-VL-450M-ONNX modelini GPU’nuzda çalıştırır. Ekran görüntüleri bu cihazda kalır; ilk kullanımda Hugging Face’ten yaklaşık 770 MB arka planda indirilir ve yerel olarak önbelleğe alınır. İndirme sırasında sekme değiştirebilir veya Ayarlar’ı kapatabilirsiniz; Chrome’u açık tutun.',
+  'st.vision.local.enable': 'Yerel yedek modeli kullan',
+  'st.vision.local.disable': 'Yerel yedek modeli devre dışı bırak',
+  'st.vision.local.saved': 'Yerel görüntü yedek modeli etkinleştirildi.',
+  'st.vision.local.testing': 'Yerel görüntü modeli yükleniyor ve test ediliyor… İlk kullanımda yaklaşık 770 MB arka planda indirilir. Sekme değiştirebilir veya Ayarlar’ı kapatabilirsiniz; Chrome’u açık tutun.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Kaydet',
   'st.vision.test': 'Bağlantıyı sına',
   'st.vision.clear': 'Temizle',

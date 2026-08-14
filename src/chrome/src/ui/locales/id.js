@@ -289,6 +289,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'kosongkan untuk menggunakan model yang sudah dimuat',
 
   'st.vision.desc': 'Jika diatur, tangkapan layar dikirim ke model ini untuk membaca halaman, sementara penyedia aktif menangani perencanaan dan pemanggilan alat. Kosongkan agar penyedia aktif juga menangani visi. Hanya endpoint yang kompatibel dengan OpenAI.',
+  'st.vision.local.title': 'Fallback lokal LFM2.5-VL',
+  'st.vision.local.desc': 'Menjalankan LiquidAI/LFM2.5-VL-450M-ONNX di GPU Anda. Tangkapan layar tetap berada di perangkat ini; penggunaan pertama mengunduh sekitar 770 MB dari Hugging Face di latar belakang dan menyimpannya dalam cache lokal. Anda dapat berpindah tab atau menutup Pengaturan saat mengunduh; biarkan Chrome tetap terbuka.',
+  'st.vision.local.enable': 'Gunakan fallback lokal',
+  'st.vision.local.disable': 'Nonaktifkan fallback lokal',
+  'st.vision.local.saved': 'Fallback visi lokal diaktifkan.',
+  'st.vision.local.testing': 'Memuat dan menguji visi lokal… Penggunaan pertama mengunduh sekitar 770 MB di latar belakang. Anda dapat berpindah tab atau menutup Pengaturan; biarkan Chrome tetap terbuka.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Simpan',
   'st.vision.test': 'Uji koneksi',
   'st.vision.clear': 'Bersihkan',

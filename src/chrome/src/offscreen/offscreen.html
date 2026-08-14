@@ -2,21 +2,25 @@
 <html>
 <head>
   <!--
-    Single offscreen document hosting both:
+    Single offscreen document hosting:
       • offscreen.js — fetch proxy for localhost LLM servers (existing)
+      • vision-inference-host.js — local WebGPU vision worker bridge
       • skill-download.js — validated large-file staging through OPFS + blob URLs
       • recorder.js  — tab/display capture + mic mix + MediaRecorder
       • cloud-bridge.js — outbound localhost WebSocket for managed cloud runs
 
     Chrome MV3 only allows ONE offscreen document per extension at a time,
-    so the two responsibilities share this host. Each script binds its own
-    runtime.onMessage filter (`offscreen-fetch` vs `recorder-*`) so they
+    so these responsibilities share this host. Each script binds its own
+    runtime.onMessage filter (`offscreen-fetch`, `webgpu-vision-*`, etc.) so they
     don't step on each other's messages.
 
     Reasons declared at createDocument time cover both code paths up front:
-    LOCAL_STORAGE (fetch proxy), USER_MEDIA (mic), DISPLAY_MEDIA (tab/display capture).
+    LOCAL_STORAGE (fetch proxy), WORKERS (vision inference), BLOBS (download
+    staging), USER_MEDIA (mic), DISPLAY_MEDIA (tab/display capture), and
+    AUDIO_PLAYBACK (watch alerts).
   -->
   <script src="offscreen.js"></script>
+  <script src="vision-inference-host.js"></script>
   <script src="skill-download.js"></script>
   <script src="recorder.js"></script>
   <script src="cloud-bridge.js"></script>

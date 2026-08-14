@@ -351,6 +351,91 @@
       height: 16px;
       padding: 1px;
     }
+    .vision-local-option {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      margin: 2px 0 16px;
+      padding: 13px;
+      border: 1px solid rgba(129, 140, 248, 0.34);
+      border-radius: calc(var(--radius) - 2px);
+      background:
+        linear-gradient(120deg, rgba(108, 99, 255, 0.12), rgba(56, 189, 248, 0.05)),
+        var(--bg);
+    }
+    .vision-local-option.enabled {
+      border-color: rgba(96, 211, 178, 0.68);
+      box-shadow: inset 3px 0 0 rgba(96, 211, 178, 0.9);
+    }
+    .vision-local-iris {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      color: #9da5ff;
+      border-radius: 50%;
+      background: rgba(108, 99, 255, 0.14);
+      border: 1px solid rgba(157, 165, 255, 0.35);
+    }
+    .vision-local-option.enabled .vision-local-iris {
+      color: #79dfc1;
+      background: rgba(96, 211, 178, 0.12);
+      border-color: rgba(96, 211, 178, 0.4);
+    }
+    .vision-local-iris svg { width: 22px; height: 22px; }
+    .vision-local-heading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .vision-local-heading strong { font-size: 13px; color: var(--text); }
+    .vision-local-kicker {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #9da5ff;
+    }
+    .vision-local-option.enabled .vision-local-kicker { color: #79dfc1; }
+    .vision-local-desc {
+      color: var(--text2);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .vision-local-action { white-space: nowrap; }
+    .vision-endpoint-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 2px 0 14px;
+      color: var(--text2);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .vision-endpoint-divider::before,
+    .vision-endpoint-divider::after {
+      content: '';
+      height: 1px;
+      flex: 1;
+      background: var(--border);
+    }
+    .vision-endpoint-fields {
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      transition: opacity 0.15s;
+    }
+    .vision-endpoint-fields:disabled { opacity: 0.48; }
+    .vision-test-actions { margin-top: 4px; }
+    @media (max-width: 620px) {
+      .vision-local-option { grid-template-columns: 42px minmax(0, 1fr); }
+      .vision-local-action { grid-column: 2; justify-self: start; }
+    }
     .provider-name { font-weight: 600; font-size: 14px; }
     .provider-type { color: var(--text2); font-size: 11px; }
     .provider-status-badges { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -1559,6 +1644,24 @@
     </h3>
     <div class="provider-card" id="vision-card">
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5;" data-i18n="st.vision.desc"></div>
+      <div class="vision-local-option" id="webgpu-vision-option">
+        <div class="vision-local-iris" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/>
+            <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+        <div>
+          <div class="vision-local-heading">
+            <strong data-i18n="st.vision.local.title"></strong>
+            <span class="vision-local-kicker">IN-BROWSER</span>
+          </div>
+          <div class="vision-local-desc" data-i18n="st.vision.local.desc"></div>
+        </div>
+        <button class="btn-secondary vision-local-action" id="btn-use-webgpu-vision" type="button" aria-pressed="false" data-i18n="st.vision.local.enable"></button>
+      </div>
+      <div class="vision-endpoint-divider"><span data-i18n="st.vision.endpoint_alternative"></span></div>
+      <fieldset class="vision-endpoint-fields" id="vision-endpoint-fields">
       <div class="field">
         <label class="mm-field-label">
           <span data-i18n="st.provider.field.api_base_url"></span>
@@ -1579,6 +1682,9 @@
       </div>
       <div class="btn-row">
         <button class="btn-primary" id="btn-save-vision" data-i18n="st.vision.save"></button>
+      </div>
+      </fieldset>
+      <div class="btn-row vision-test-actions">
         <button class="btn-secondary" id="btn-test-vision" data-i18n="st.vision.test"></button>
         <button class="btn-secondary" id="btn-clear-vision" data-i18n="st.vision.clear"></button>
       </div>

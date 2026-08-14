@@ -48,7 +48,7 @@ This doc covers the shared architecture and calls out where the builds diverge.
 │                                                      │
 │  Chrome only:                                        │
 │    ├─ cdp/             — Chrome DevTools Protocol    │
-│    └─ offscreen/       — fetch proxy + tab recorder  │
+│    └─ offscreen/       — fetch proxy + recorder + local vision worker │
 └──────┬──────────────────────────────────────────────┘
        │ chrome.scripting.executeScript / CDP
        ▼
@@ -816,7 +816,7 @@ Firefox uses `browser.storage.session`.
 | Events | CDP-trusted (`isTrusted=true`) | Synthetic (`isTrusted=false`) |
 | Screenshots | CDP `Page.captureScreenshot` with run-scoped focus emulation for background tabs | `browser.tabs.captureTab()` for direct inactive-tab capture |
 | Conversation/UI persistence | `chrome.storage.session` | `browser.storage.session` |
-| Offscreen document | Yes (fetch proxy + recorder) | Not available |
+| Offscreen document | Yes (fetch proxy + recorder + local WebGPU vision) | Not available |
 | Trace recorder | IndexedDB (opt-in) | IndexedDB (opt-in) — same `trace/recorder.js` |
 | Duplicate-submit guard | Yes | Not available |
 | `execute_js` | Dev mode through CDP `Runtime.evaluate` | Dev mode through the MV2 content-script evaluator |
@@ -846,7 +846,7 @@ src/
 │       ├── cdp/      # CDP client (Chrome only)
 │       ├── content/  # accessibility-tree.js, content.js, ...
 │       ├── network/  # network-tools.js
-│       ├── offscreen/# Fetch proxy + slash-driven recorder (Chrome only)
+│       ├── offscreen/# Fetch proxy + recorder + local WebGPU vision (Chrome only)
 │       ├── providers/# BaseLLMProvider + implementations
 │       ├── recorder/ # Recording orchestration
 │       ├── trace/    # IndexedDB recorder

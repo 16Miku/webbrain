@@ -375,8 +375,23 @@ The user can configure a separate vision provider for screenshot description. Th
 
 ```js
 const vision = await providerManager.getVisionProvider();
-// Returns an OpenAICompatibleProvider instance or null
+// Returns a dedicated OpenAI-compatible or in-browser vision provider, or null
 ```
+
+On Chromium, **Settings -> Multimodal -> Vision** also offers a one-click
+in-browser fallback. It runs `LiquidAI/LFM2.5-VL-450M-ONNX` through WebGPU in a
+dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. The
+model is not present in the general provider catalog and never receives agent
+tools or planning turns. First use downloads approximately 770 MB of model
+data from Hugging Face into the browser cache. That download runs in Chrome's
+offscreen extension worker, so the user may switch tabs or close Settings while
+it continues, but must keep Chrome running. Screenshots stay on-device and
+only the generated description is passed to the active provider. The local
+selection is stored as a Chrome-only preference, separately from the synced
+OpenAI-compatible vision endpoint, so it can be disabled without losing that
+endpoint or its credentials. Disabling it releases the loaded model and GPU
+resources while retaining the browser-cached download. Firefox does not expose
+this option because its build has no MV3 offscreen document.
 
 ### Transcription Provider
 

@@ -3179,6 +3179,8 @@ async function handleMessage(msg, sender) {
     case 'test_vision_provider': {
       return await providerManager.testVisionProvider();
     }
+    case 'dispose_webgpu_vision':
+      return await providerManager.disposeWebgpuVisionRuntime();
 
     case 'test_transcription_provider': {
       return await providerManager.testTranscriptionProvider();
