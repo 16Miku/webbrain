@@ -3,7 +3,7 @@ title: >
   EXL3 is the best quantization format for local AI right now — especially on Blackwell lite
 slug: exl3-sparkinfer-blackwell-lite
 sortOrder: 10
-date: 2026-08-18
+date: 2026-08-11
 readTime: 6 min read
 description: >
   EXL3 (turboderp's QTIP-derived trellis format) is the best low-bit quantization for local AI on Blackwell lite hardware. Now it runs ~3x faster through SparkInfer, the vLLM fork — including on odd GPU counts and DGX Spark.
