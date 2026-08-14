@@ -20,6 +20,7 @@ const SEARCH_INPUT_RE = /^(search|q|query|keyword|keywords|s)$/i;
 const EMAIL_HOST_RE = /(^|\.)(mail\.google\.com|gmail\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|icloud\.com|proton\.me|protonmail\.com|fastmail\.com|hey\.com|mail\.zoho\.com)$/i;
 const DM_HOST_RE = /(^|\.)(instagram\.com|x\.com|twitter\.com|facebook\.com|messenger\.com|threads\.net|reddit\.com|linkedin\.com|discord\.com|slack\.com|web\.whatsapp\.com|messages\.google\.com|web\.telegram\.org)$/i;
 const DM_PATH_RE = /(?:^|[/?#])(direct|messages?|messaging|inbox|chat|chats|dm|conversation|conversations|channels)(?:\b|[/?#])/i;
+const MESSENGER_THREAD_PATH_RE = /^\/t(?:\/|$)/i;
 const COMPOSE_FIELD_RE = /\b(compose|reply|message|comment|post|tweet|share|caption|body|editor|write|what'?s happening|start a post|add a comment|write a reply|email)\b/i;
 const X_PROFILE_RESERVED_PATH_RE = /^\/(home|explore|notifications|messages?|i|search|settings|compose|login|signup|jobs|communities|lists|hashtag|intent|share|privacy|tos)(?:\/|$)/i;
 const WP_ADMIN_RE = /\/wp-admin(?:\/|$)/i;
@@ -282,7 +283,8 @@ function isCommunicationThread(pageInfo = {}, host = '', path = '/') {
     return hasEmailThreadSignal(pageInfo);
   }
   if (DM_HOST_RE.test(host)) {
-    return DM_PATH_RE.test(route) || /\b(reply|respond|conversation|thread|direct message|dm|chat)\b/i.test(signal);
+    const isMessengerThread = (host === 'messenger.com' || host.endsWith('.messenger.com')) && MESSENGER_THREAD_PATH_RE.test(path);
+    return isMessengerThread || DM_PATH_RE.test(route) || /\b(reply|respond|conversation|thread|direct message|dm|chat)\b/i.test(signal);
   }
   return false;
 }

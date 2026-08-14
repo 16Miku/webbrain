@@ -14225,6 +14225,8 @@ test('recommended actions reject lookalike commerce hosts and short-link DM path
       ['draft-reply', 'summarize-thread', 'find-followups'].includes(id));
     assert.deepEqual(dmPills('https://x.com/t'), [], `${label}: x.com/t got DM suggestions`);
     assert.deepEqual(dmPills('https://reddit.com/t/top'), [], `${label}: reddit.com/t got DM suggestions`);
+    assert.ok(dmPills('https://www.messenger.com/t/1784').includes('draft-reply'),
+      `${label}: Messenger /t thread lost DM suggestions`);
     assert.ok(dmPills('https://www.instagram.com/direct/t/1784').includes('draft-reply'),
       `${label}: instagram /direct/t thread lost DM suggestions`);
     assert.ok(dmPills('https://x.com/messages').includes('draft-reply'),
