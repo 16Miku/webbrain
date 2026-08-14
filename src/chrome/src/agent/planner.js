@@ -383,8 +383,15 @@ export function normalizeResponseLanguagePolicy(value, fallbackLocale = 'en') {
     return fallbackResponseLanguagePolicy(fallbackLocale);
   }
   const requestedFramingLocale = normalizedLocaleOrEmpty(value.framing_locale);
+  if (
+    !requestedFramingLocale
+    || !Array.isArray(value.deliverable_locales)
+    || typeof value.preserve_source_text !== 'boolean'
+  ) {
+    return fallbackResponseLanguagePolicy(fallbackLocale);
+  }
   const framingLocale = requestedFramingLocale || normalizePlannerLocale(fallbackLocale);
-  const framingLocaleIsFallback = value._framing_locale_is_fallback === true || !requestedFramingLocale;
+  const framingLocaleIsFallback = value._framing_locale_is_fallback === true;
   const deliverableLocales = [];
   const seen = new Set();
   for (const candidate of Array.isArray(value.deliverable_locales) ? value.deliverable_locales : []) {

@@ -63571,6 +63571,20 @@ test('response-language policy keeps framing, translation targets, and source pr
       `${label}: ordinary English policy drifted`,
     );
 
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: ['es'],
+      }, 'tr'),
+      {
+        framing_locale: 'tr',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: incomplete planner policy translated source text instead of failing closed`,
+    );
+
     const translation = normalize({
       framing_locale: 'en',
       deliverable_locales: ['ES', 'es', 'fr', 'de', 'it', 'pt', 'not a locale'],

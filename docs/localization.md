@@ -91,6 +91,8 @@ When the user edits an approved plan, explicit language instructions in that use
 
 If planning is unavailable, WebBrain infers framing from the language of the latest genuine user request. It uses the interface locale only as a soft fallback when that request language is unclear, and continues to honor explicit language or translation instructions.
 
+An incomplete or malformed planner language policy is treated the same way as an unavailable policy. In particular, a missing source-preservation decision never defaults to translating quoted or extracted text.
+
 ### DOM Translation
 
 HTML elements use `data-i18n` attributes:
