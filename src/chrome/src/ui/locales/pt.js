@@ -2,6 +2,12 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.message_info.sent': '(sent {time})',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.streaming.fallback': 'A transmissão da resposta foi interrompida; tentando novamente esta interação Ask sem transmissão.',
   'sp.providers.no_setup_group': "Nenhuma configuração necessária",
   'sp.providers.no_setup': "Sem configuração",

@@ -1378,6 +1378,17 @@ body {
   width: 95%;
 }
 
+.message.user,
+.message.assistant {
+  cursor: pointer;
+}
+
+.message.user:focus-visible,
+.message.assistant:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .message.assistant.assistant-awaiting-content {
   display: none;
 }
@@ -1447,6 +1458,40 @@ body {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
+}
+
+.message-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+.message.user .message-info {
+  align-self: flex-end;
+  justify-content: flex-end;
+}
+
+.message-info[hidden] {
+  display: none;
+}
+
+.message-info-pill {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.message-info-sent {
+  opacity: 0.9;
 }
 
 .message.system .message-content {

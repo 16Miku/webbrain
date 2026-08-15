@@ -4,6 +4,12 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.message_info.sent': '(sent {time})',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '응답 스트리밍이 중단되었습니다. 이 Ask 요청을 스트리밍 없이 다시 시도합니다.',
   'sp.providers.no_setup_group': '설정 필요 없음',

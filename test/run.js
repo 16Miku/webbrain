@@ -80970,4 +80970,112 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
   }
 });
 
+test('message info keeps normal mode limited to the sent timestamp', async () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/message-info.js'],
+    ['firefox', 'src/firefox/src/message-info.js'],
+  ]) {
+    const { buildMessageInfoPills } = await import(pathToFileURL(path.join(ROOT, rel)).href);
+    const pills = buildMessageInfoPills({
+      createdAt: Date.parse('2024-12-12T12:44:00Z'),
+      completion: {
+        outputTokens: 1295,
+        durationMs: 7560,
+        finishReason: 'stop',
+      },
+      verbose: false,
+      locale: 'en-GB',
+    });
+
+    assert.deepEqual(pills, [{
+      kind: 'sent',
+      key: 'sp.message_info.sent',
+      params: { time: '12/12/2024, 12:44 UTC' },
+    }], `${label}: normal mode must not expose token or provider details`);
+  }
+});
+
+test('message info aggregates model calls into verbose completion pills', async () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/message-info.js'],
+    ['firefox', 'src/firefox/src/message-info.js'],
+  ]) {
+    const { aggregateMessageCompletion, buildMessageInfoPills } = await import(
+      pathToFileURL(path.join(ROOT, rel)).href
+    );
+    const first = aggregateMessageCompletion(null, {
+      usage: { prompt_tokens: 1000, completion_tokens: 600, total_tokens: 1600 },
+      raw: { choices: [{ finish_reason: 'tool_calls' }] },
+    }, 5000);
+    const completion = aggregateMessageCompletion(first, {
+      usage: {
+        prompt_tokens: null,
+        input_tokens: 2000,
+        completion_tokens: null,
+        output_tokens: 695,
+        total_tokens: null,
+        totalTokens: 2695,
+      },
+      raw: { choices: [{ finish_reason: 'stop' }] },
+    }, 2560);
+
+    assert.deepEqual(completion, {
+      inputTokens: 3000,
+      outputTokens: 1295,
+      totalTokens: 4295,
+      durationMs: 7560,
+      finishReason: 'stop',
+    }, `${label}: completion metrics should cover every model call in the message`);
+    assert.deepEqual(buildMessageInfoPills({
+      createdAt: Date.parse('2024-12-12T12:44:00Z'),
+      completion,
+      verbose: true,
+      locale: 'en-GB',
+    }), [
+      { kind: 'sent', key: 'sp.message_info.sent', params: { time: '12/12/2024, 12:44 UTC' } },
+      { kind: 'speed', key: 'sp.message_info.speed', params: { rate: '171.3' } },
+      { kind: 'tokens', key: 'sp.message_info.tokens', params: { count: '1,295' } },
+      { kind: 'duration', key: 'sp.message_info.duration', params: { seconds: '7.56' } },
+      { kind: 'finish', key: 'sp.message_info.finish', params: { reason: 'stop' } },
+    ], `${label}: verbose mode should add only available generation details`);
+  }
+});
+
+test('sidepanels reveal persisted message info while verbose gates completion details', () => {
+  const messageInfoSources = [];
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/en.js'), 'utf8');
+    const messageInfo = fs.readFileSync(path.join(ROOT, prefix, 'src/message-info.js'), 'utf8');
+    messageInfoSources.push(messageInfo);
+
+    assert.match(agent, /import \{ aggregateMessageCompletion \} from '\.\.\/message-info\.js';/, `${label}: agent should use the message-info seam`);
+    assert.match(
+      agent,
+      /aggregateMessageCompletion\([\s\S]*?onUpdate\('message_info', messageCompletion\)/,
+      `${label}: each main model call should publish aggregate completion metadata`,
+    );
+    assert.match(panel, /import \{ buildMessageInfoPills \} from '\.\.\/message-info\.js';/, `${label}: sidepanel should adapt message info to the DOM`);
+    assert.match(
+      panel,
+      /function bindMessageInfoToggle\([\s\S]*?addEventListener\('click'[\s\S]*?toggleMessageInfo\(/,
+      `${label}: clicking a chat message should toggle its info row`,
+    );
+    assert.match(panel, /case 'message_info':[\s\S]*?applyMessageCompletion\(/, `${label}: live completion metadata should reach the active message`);
+    assert.match(panel, /case 'run_complete':[\s\S]*?setMessageCreatedAt\([\s\S]*?data\?\.endedAt/, `${label}: assistant sent time should use the terminal timestamp`);
+    assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindMessageInfoToggles\(\)/, `${label}: restored messages should regain click behavior`);
+    assert.match(panel, /createdAt: messageCreatedAt\(msgEl\)/, `${label}: durable history should preserve each message timestamp`);
+    assert.match(css, /\.message-info \{[\s\S]*?\.message-info-pill \{/, `${label}: info rows and verbose pills should be styled`);
+    for (const key of ['sent', 'speed', 'tokens', 'duration', 'finish', 'hint']) {
+      assert.match(locale, new RegExp(`'sp\\.message_info\\.${key}'`), `${label}: ${key} message-info copy missing`);
+    }
+  }
+  assert.equal(messageInfoSources[1], messageInfoSources[0], 'message-info behavior should stay byte-identical across browsers');
+});
+
 await run();

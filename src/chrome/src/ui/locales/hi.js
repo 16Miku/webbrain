@@ -2,6 +2,12 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.message_info.sent': '(sent {time})',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.streaming.fallback': 'प्रतिक्रिया स्ट्रीम बाधित हुई; इस Ask टर्न को बिना स्ट्रीमिंग के फिर से आज़माया जा रहा है।',
   'sp.providers.no_setup_group': "किसी सेटअप की आवश्यकता नहीं है",
   'sp.providers.no_setup': "कोई सेटअप नहीं",

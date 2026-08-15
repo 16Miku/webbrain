@@ -2,6 +2,7 @@ import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMo
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
+import { aggregateMessageCompletion } from '../message-info.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
 import { STANDARD_TOOL_RESULT_CHARS, createReadCompletenessState, isCommunicationThreadContext, normalizeReadScope, readCompletenessBlock, readCompletenessLimitation, readCompletenessMadeProgress, readWindowLimits, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
@@ -18925,6 +18926,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     let runId = null;
     let finalResponse = '';
+    let messageCompletion = null;
     let _traceStatus = 'done';
     let askStreamingTraceWrite = Promise.resolve();
     let shouldOrderInteractiveAskTrace = false;
@@ -19097,7 +19099,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     };
 
-    const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
+    const chatMainTurnRaw = async (chatMessages, chatOptions, requestContext) => {
       const decision = this._interactiveAskStreamingDecision(
         provider,
         mode,
@@ -19190,6 +19192,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requestContext,
         );
       }
+    };
+
+    const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
+      const startedAt = Date.now();
+      const result = await chatMainTurnRaw(chatMessages, chatOptions, requestContext);
+      messageCompletion = aggregateMessageCompletion(
+        messageCompletion,
+        result,
+        Date.now() - startedAt,
+      );
+      onUpdate('message_info', messageCompletion);
+      return result;
     };
 
     if (!runId) {

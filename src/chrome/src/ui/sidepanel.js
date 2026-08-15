@@ -26,6 +26,7 @@ import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
+import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
@@ -2390,7 +2391,7 @@ function extractChatHistoryMessages(root = messagesEl) {
       text: normalizeHistoryText(historyTextFromElement(textEl, { markdown: format === 'markdown' })),
       format,
       index,
-      createdAt: Date.now(),
+      createdAt: messageCreatedAt(msgEl),
       ...(attachments.length ? { attachments } : {}),
     };
   }).filter((message) => message.text || message.attachments?.length);
@@ -4136,6 +4137,7 @@ async function init() {
     if (changes.verboseMode) {
       verboseMode = changes.verboseMode.newValue;
       if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+      refreshOpenMessageInfoRows();
     }
     if (changes.alwaysAllowApiMutations) {
       alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
@@ -4190,6 +4192,7 @@ if (verboseBtn) {
     // Normal click → toggle verbose mode
     verboseMode = !verboseMode;
     verboseBtn.classList.toggle('active', verboseMode);
+    refreshOpenMessageInfoRows();
     await chrome.storage.local.set({ verboseMode }).catch(() => {});
   });
 }
@@ -6134,6 +6137,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
 function rebindRestoredMessageControls() {
   restoreStagedScreenshotAttachments();
   rebindCopyButtons();
+  rebindMessageInfoToggles();
   rebindCompactStepDetailsToggles();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
@@ -7418,6 +7422,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/verbose') {
     verboseMode = !verboseMode;
     if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+    refreshOpenMessageInfoRows();
     await chrome.storage.local.set({ verboseMode }).catch(() => {});
     if (currentTabId !== tabId) return '';
     showComposerToast(systemHtml(verboseMode
@@ -8871,6 +8876,10 @@ function handleAgentUpdateMessage(msg) {
       reportTrailingRunCaptureError({ kind: data?.kind }, new Error(data?.message || 'unknown error'), eventTabId);
       break;
 
+    case 'message_info':
+      applyMessageCompletion(eventAssistantEl || currentAssistantEl, data);
+      break;
+
     case 'error':
       hideActivity();
       if (currentAssistantEl) markLastStepFailed();
@@ -8921,6 +8930,7 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'run_complete':
+      setMessageCreatedAt(eventAssistantEl || currentAssistantEl, data?.endedAt, { replace: true });
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
       reconcileRunMessageAttachmentState(
         eventTabId,
@@ -10422,6 +10432,125 @@ function messageAttachmentMetadata(msgEl) {
   }, item.dataset.deliveryState));
 }
 
+function messageCreatedAt(msgEl) {
+  const value = Number(msgEl?.dataset?.messageCreatedAt);
+  return Number.isFinite(value) && value > 0 ? value : Date.now();
+}
+
+function setMessageCreatedAt(msgEl, value = Date.now(), { replace = false } = {}) {
+  if (!msgEl) return null;
+  const existing = Number(msgEl.dataset.messageCreatedAt);
+  if (!replace && Number.isFinite(existing) && existing > 0) return existing;
+  const candidate = Number(value);
+  const next = Number.isFinite(candidate) && candidate > 0
+    ? candidate
+    : (Number.isFinite(existing) && existing > 0 ? existing : Date.now());
+  msgEl.dataset.messageCreatedAt = String(Math.round(next));
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  return next;
+}
+
+function messageCompletionFromElement(msgEl) {
+  return {
+    inputTokens: Number(msgEl?.dataset?.messageInputTokens) || 0,
+    outputTokens: Number(msgEl?.dataset?.messageOutputTokens) || 0,
+    totalTokens: Number(msgEl?.dataset?.messageTotalTokens) || 0,
+    durationMs: Number(msgEl?.dataset?.messageDurationMs) || 0,
+    finishReason: String(msgEl?.dataset?.messageFinishReason || ''),
+  };
+}
+
+function renderMessageInfo(msgEl) {
+  if (!msgEl) return;
+  let row = msgEl.querySelector(':scope > .message-info');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'message-info';
+    row.setAttribute('role', 'status');
+    msgEl.appendChild(row);
+  }
+  const pills = buildMessageInfoPills({
+    createdAt: messageCreatedAt(msgEl),
+    completion: messageCompletionFromElement(msgEl),
+    verbose: verboseMode,
+    locale: getLocale(),
+  });
+  row.replaceChildren(...pills.map((pill) => {
+    const item = document.createElement('span');
+    item.className = pill.kind === 'sent'
+      ? 'message-info-item message-info-sent'
+      : `message-info-item message-info-pill message-info-${pill.kind}`;
+    item.textContent = t(pill.key, pill.params);
+    return item;
+  }));
+  row.hidden = !msgEl.classList.contains('message-info-open') || pills.length === 0;
+}
+
+function messageInfoClickIsInteractive(target) {
+  return !!target?.closest?.(
+    'a, button, input, textarea, select, summary, [role="button"], [contenteditable="true"]',
+  );
+}
+
+function toggleMessageInfo(msgEl) {
+  const open = msgEl.classList.toggle('message-info-open');
+  msgEl.setAttribute('aria-expanded', String(open));
+  renderMessageInfo(msgEl);
+  schedulePersist();
+}
+
+function bindMessageInfoToggle(msgEl) {
+  if (!msgEl?.matches?.('.message.user, .message.assistant')) return;
+  setMessageCreatedAt(msgEl);
+  msgEl.tabIndex = 0;
+  msgEl.title = t('sp.message_info.hint');
+  msgEl.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  if (msgEl.__wbMessageInfoBound) return;
+  msgEl.__wbMessageInfoBound = true;
+  msgEl.addEventListener('click', (event) => {
+    if (messageInfoClickIsInteractive(event.target)) return;
+    toggleMessageInfo(msgEl);
+  });
+  msgEl.addEventListener('keydown', (event) => {
+    if (event.target !== msgEl || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    toggleMessageInfo(msgEl);
+  });
+}
+
+function rebindMessageInfoToggles() {
+  messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant')
+    .forEach(bindMessageInfoToggle);
+}
+
+function applyMessageCompletion(msgEl, completion = {}) {
+  if (!msgEl) return;
+  const values = {
+    messageInputTokens: completion.inputTokens,
+    messageOutputTokens: completion.outputTokens,
+    messageTotalTokens: completion.totalTokens,
+    messageDurationMs: completion.durationMs,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    const number = Number(value);
+    msgEl.dataset[key] = String(Number.isFinite(number) && number >= 0 ? Math.round(number) : 0);
+  }
+  msgEl.dataset.messageFinishReason = String(completion.finishReason || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 80);
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  schedulePersist();
+}
+
+function refreshOpenMessageInfoRows() {
+  messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant').forEach((msgEl) => {
+    msgEl.title = t('sp.message_info.hint');
+    if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  });
+}
+
 function addMessage(role, content, options = {}) {
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
@@ -10471,6 +10600,10 @@ function addMessage(role, content, options = {}) {
     messagesEl.insertBefore(msgEl, currentAssistantEl);
   } else {
     messagesEl.appendChild(msgEl);
+  }
+  if (role === 'user' || role === 'assistant') {
+    setMessageCreatedAt(msgEl, options.createdAt);
+    bindMessageInfoToggle(msgEl);
   }
 
   if (role === 'error' && options.retryPayload
@@ -12469,6 +12602,7 @@ document.addEventListener('wb-locale-changed', () => {
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
   syncSelectionScopeUi();
+  refreshOpenMessageInfoRows();
   void loadProviders();
 });
 

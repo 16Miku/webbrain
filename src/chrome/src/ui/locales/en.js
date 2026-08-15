@@ -2,6 +2,12 @@
 import apocalypseModeCopy from './apocalypse-copy.mjs';
 
 export default {
+  'sp.message_info.sent': '(sent {time})',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.streaming.fallback': 'Response streaming was interrupted; retrying this Ask turn without streaming.',
   'sp.providers.no_setup_group': 'No setup required',
   'sp.providers.no_setup': 'No setup',
