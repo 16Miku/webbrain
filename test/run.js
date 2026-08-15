@@ -81026,6 +81026,9 @@ test('message info aggregates model calls into verbose completion pills', async 
       durationMs: 7560,
       finishReason: 'stop',
     }, `${label}: completion metrics should cover every model call in the message`);
+    assert.equal(aggregateMessageCompletion(null, {
+      raw: { status: 'completed' },
+    }, 1000).finishReason, '', `${label}: request lifecycle status is not a generation stop reason`);
     assert.deepEqual(buildMessageInfoPills({
       createdAt: Date.parse('2024-12-12T12:44:00Z'),
       completion,
@@ -81070,6 +81073,11 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     assert.match(panel, /case 'run_complete':[\s\S]*?setMessageCreatedAt\([\s\S]*?data\?\.endedAt/, `${label}: assistant sent time should use the terminal timestamp`);
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindMessageInfoToggles\(\)/, `${label}: restored messages should regain click behavior`);
     assert.match(panel, /createdAt: messageCreatedAt\(msgEl\)/, `${label}: durable history should preserve each message timestamp`);
+    const createdAtReader = panel.match(/function messageCreatedAt\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.doesNotMatch(createdAtReader, /Date\.now\(\)/, `${label}: unknown legacy timestamps must remain unknown`);
+    const bindToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.doesNotMatch(bindToggle, /setMessageCreatedAt\(/, `${label}: legacy restored messages must not invent a sent time while rebinding`);
+    assert.match(panel, /setMessageCreatedAt\(msgEl, options\.createdAt \?\? Date\.now\(\)\)/, `${label}: newly-created messages should receive a real sent time`);
     assert.match(css, /\.message-info \{[\s\S]*?\.message-info-pill \{/, `${label}: info rows and verbose pills should be styled`);
     for (const key of ['sent', 'speed', 'tokens', 'duration', 'finish', 'hint']) {
       assert.match(locale, new RegExp(`'sp\\.message_info\\.${key}'`), `${label}: ${key} message-info copy missing`);

@@ -17,7 +17,7 @@ function formatSentTime(createdAt, locale) {
   }
 }
 
-function finiteCount(...values) {
+function firstPositiveInteger(...values) {
   for (const value of values) {
     const number = Number(value);
     if (Number.isFinite(number) && number > 0) return Math.floor(number);
@@ -32,7 +32,6 @@ function finishReason(result) {
       ?? raw?.choices?.[0]?.finish_reason
       ?? raw?.stop_reason
       ?? raw?.stopReason
-      ?? raw?.status
       ?? '',
   ).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80);
 }
@@ -50,25 +49,25 @@ function formatNumber(value, locale, maximumFractionDigits = 0) {
 export function aggregateMessageCompletion(current, result, durationMs) {
   const previous = current || {};
   const usage = result?.usage || {};
-  const inputTokens = finiteCount(
+  const inputTokens = firstPositiveInteger(
     usage.prompt_tokens,
     usage.input_tokens,
     usage.promptTokens,
     usage.inputTokens,
   );
-  const outputTokens = finiteCount(
+  const outputTokens = firstPositiveInteger(
     usage.completion_tokens,
     usage.output_tokens,
     usage.completionTokens,
     usage.outputTokens,
   );
-  const reportedTotal = finiteCount(usage.total_tokens, usage.totalTokens);
+  const reportedTotal = firstPositiveInteger(usage.total_tokens, usage.totalTokens);
   const elapsed = Number(durationMs);
   return {
-    inputTokens: finiteCount(previous.inputTokens) + inputTokens,
-    outputTokens: finiteCount(previous.outputTokens) + outputTokens,
-    totalTokens: finiteCount(previous.totalTokens) + (reportedTotal || inputTokens + outputTokens),
-    durationMs: finiteCount(previous.durationMs) + (Number.isFinite(elapsed) && elapsed > 0 ? Math.round(elapsed) : 0),
+    inputTokens: firstPositiveInteger(previous.inputTokens) + inputTokens,
+    outputTokens: firstPositiveInteger(previous.outputTokens) + outputTokens,
+    totalTokens: firstPositiveInteger(previous.totalTokens) + (reportedTotal || inputTokens + outputTokens),
+    durationMs: firstPositiveInteger(previous.durationMs) + (Number.isFinite(elapsed) && elapsed > 0 ? Math.round(elapsed) : 0),
     finishReason: finishReason(result) || String(previous.finishReason || '').slice(0, 80),
   };
 }
@@ -82,9 +81,9 @@ export function buildMessageInfoPills({ createdAt, completion = {}, verbose = fa
     params: { time },
   }];
   if (!verbose) return pills;
-  const outputTokens = finiteCount(completion.outputTokens);
-  const displayedTokens = outputTokens || finiteCount(completion.totalTokens);
-  const durationMs = finiteCount(completion.durationMs);
+  const outputTokens = firstPositiveInteger(completion.outputTokens);
+  const displayedTokens = outputTokens || firstPositiveInteger(completion.totalTokens);
+  const durationMs = firstPositiveInteger(completion.durationMs);
   if (outputTokens && durationMs) {
     pills.push({
       kind: 'speed',

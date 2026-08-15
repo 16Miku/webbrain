@@ -10118,17 +10118,16 @@ function messageAttachmentMetadata(msgEl) {
 
 function messageCreatedAt(msgEl) {
   const value = Number(msgEl?.dataset?.messageCreatedAt);
-  return Number.isFinite(value) && value > 0 ? value : Date.now();
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function setMessageCreatedAt(msgEl, value = Date.now(), { replace = false } = {}) {
+function setMessageCreatedAt(msgEl, value, { replace = false } = {}) {
   if (!msgEl) return null;
   const existing = Number(msgEl.dataset.messageCreatedAt);
   if (!replace && Number.isFinite(existing) && existing > 0) return existing;
   const candidate = Number(value);
-  const next = Number.isFinite(candidate) && candidate > 0
-    ? candidate
-    : (Number.isFinite(existing) && existing > 0 ? existing : Date.now());
+  const next = Number.isFinite(candidate) && candidate > 0 ? candidate : existing;
+  if (!Number.isFinite(next) || next <= 0) return null;
   msgEl.dataset.messageCreatedAt = String(Math.round(next));
   if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
   return next;
@@ -10185,7 +10184,7 @@ function toggleMessageInfo(msgEl) {
 
 function bindMessageInfoToggle(msgEl) {
   if (!msgEl?.matches?.('.message.user, .message.assistant')) return;
-  setMessageCreatedAt(msgEl);
+  if (!messageCreatedAt(msgEl)) return;
   msgEl.tabIndex = 0;
   msgEl.title = t('sp.message_info.hint');
   msgEl.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
@@ -10230,6 +10229,7 @@ function applyMessageCompletion(msgEl, completion = {}) {
 
 function refreshOpenMessageInfoRows() {
   messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant').forEach((msgEl) => {
+    if (!messageCreatedAt(msgEl)) return;
     msgEl.title = t('sp.message_info.hint');
     if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
   });
@@ -10286,7 +10286,7 @@ function addMessage(role, content, options = {}) {
     messagesEl.appendChild(msgEl);
   }
   if (role === 'user' || role === 'assistant') {
-    setMessageCreatedAt(msgEl, options.createdAt);
+    setMessageCreatedAt(msgEl, options.createdAt ?? Date.now());
     bindMessageInfoToggle(msgEl);
   }
 
