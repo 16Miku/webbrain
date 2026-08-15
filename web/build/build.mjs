@@ -125,6 +125,7 @@ const FAQ_KEYS = [
   'faq.offline',
   'faq.models_supported',
   'faq.recommended_model',
+  'faq.webgpu_apocalypse',
   'faq.cors',
   'faq.ollama_origins',
   'faq.firefox',
@@ -141,6 +142,7 @@ const FAQ_KEYS = [
   'faq.screenshot_redaction',
   'faq.cookies_paywalls',
   'faq.multilingual',
+  'faq.page_context',
   'faq.token_conscious',
   'faq.contribute',
 ];

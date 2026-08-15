@@ -11,6 +11,13 @@
 // since this runs before any module hydration.
 (function () {
   try {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get('standalone') === 'true') {
+      document.documentElement.setAttribute('data-standalone', 'true');
+    }
+  } catch (_) { /* ignore */ }
+
+  try {
     var mode = localStorage.getItem('wbTheme');
     if (mode !== 'light' && mode !== 'dark') mode = 'system';
     var theme = (mode === 'system')

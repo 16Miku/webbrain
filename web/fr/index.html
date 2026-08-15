@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Pourquoi WebGPU est-il disponible uniquement dans le mode Apocalypse ?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Parce que nous ne considérons pas encore l'inférence de texte WebGPU dans le navigateur comme suffisamment fiable pour la plupart des utilisateurs, et nous ne voulons pas vous imposer une mauvaise expérience. Si vous souhaitez utiliser localement le même modèle LFM2.5 2.6B, exécutez l'inférence sur votre machine avec llama.cpp ou Ollama, puis configurez WebBrain pour utiliser ce point de terminaison local au lieu de dépendre de WebGPU. Le mécanisme de secours visuel WebGPU reste disponible, car son modèle est beaucoup plus petit et il n'est utilisé qu'occasionnellement."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "J'obtiens « Failed to fetch » en me connectant à un serveur LLM local (vLLM, Ollama, llama.cpp) sur mon réseau",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "À partir de la version 7.0.0, pas encore. Le mode dry-run est prévu et figure déjà sur la feuille de route."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain envoie-t-il l’intégralité du DOM au modèle d’IA ?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Non. Par défaut, WebBrain n’envoie ni le HTML brut ni une copie brute du DOM. Il commence par l’URL et le titre de la page, les indications correspondant au site et, si la vision est activée, une capture facultative de la zone visible. Lorsqu’une tâche nécessite le contenu de la page, WebBrain le lit à la demande sous forme d’arbre d’accessibilité sémantique réduit ou de texte extrait. Les lectures sont filtrées selon la visibilité lorsque c’est pertinent, limitées en nombre de caractères et paginées. L’accès au code source brut de la page est réservé au mode Dev."
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>Pourquoi WebGPU est-il disponible uniquement dans le mode Apocalypse ?</summary>
+      <p>Parce que nous ne considérons pas encore l'inférence de texte WebGPU dans le navigateur comme suffisamment fiable pour la plupart des utilisateurs, et nous ne voulons pas vous imposer une mauvaise expérience. Si vous souhaitez utiliser localement le même modèle LFM2.5 2.6B, exécutez l'inférence sur votre machine avec <strong>llama.cpp</strong> ou <strong>Ollama</strong>, puis configurez WebBrain pour utiliser ce point de terminaison local au lieu de dépendre de WebGPU.</p><p>Le mécanisme de secours visuel WebGPU reste disponible, car son modèle est beaucoup plus petit et il n'est utilisé qu'occasionnellement.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>J&#39;obtiens « Failed to fetch » en me connectant à un serveur LLM local (vLLM, Ollama, llama.cpp) sur mon réseau</summary>
       <p>Si votre serveur LLM est sur une autre machine du réseau local (par ex. <code>http://192.168.1.x:8000</code>), Chrome bloque la requête sauf si le serveur envoie des <strong>en-têtes CORS</strong>. La solution dépend du serveur :</p><p><strong>vLLM :</strong> démarrer avec <code>--allowed-origins '["*"]'</code> (la valeur doit être une liste JSON).<br><strong>Ollama :</strong> définir la variable <code>OLLAMA_ORIGINS=*</code> avant le démarrage.<br><strong>llama.cpp :</strong> CORS est activé par défaut — rien à changer.</p><p>Si votre serveur tourne sur <code>localhost</code> (même machine que le navigateur), CORS n'est généralement pas requis. Le problème concerne seulement les connexions entre machines sur le réseau local. Vérifiez que l'URL de base dans les paramètres WebBrain se termine par <code>/v1</code> (par ex. <code>http://192.168.1.47:8000/v1</code>). Exception : Ollama utilisé depuis une extension navigateur peut quand même nécessiter <code>OLLAMA_ORIGINS</code> ; consultez la FAQ Ollama ci-dessous.</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>WebBrain prend-il en charge un mode dry-run ?</summary>
       <p>À partir de la version <strong>7.0.0</strong>, pas encore. Le mode dry-run est prévu et figure déjà sur la feuille de route.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain envoie-t-il l’intégralité du DOM au modèle d’IA ?</summary>
+      <p>Non. Par défaut, WebBrain n’envoie ni le HTML brut ni une copie brute du DOM. Il commence par l’URL et le titre de la page, les indications correspondant au site et, si la vision est activée, une capture facultative de la zone visible.</p><p>Lorsqu’une tâche nécessite le contenu de la page, WebBrain le lit à la demande sous forme d’arbre d’accessibilité sémantique réduit ou de texte extrait. Les lectures sont filtrées selon la visibilité lorsque c’est pertinent, limitées en nombre de caractères et paginées. L’accès au code source brut de la page est réservé au mode Dev.</p>
     </details>
 
     <details class="faq-item">

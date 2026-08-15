@@ -1,6 +1,8 @@
 // Turkish (tr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Yanıt akışı kesildi; bu Ask turu akış olmadan yeniden deneniyor.',
@@ -328,6 +330,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'yüklenmiş modeli kullanmak için boş bırak',
 
   'st.vision.desc': 'Ayarlandığında, sayfa okuma için ekran görüntüleri bu modele gönderilir; planlama ve araç çağrılarını aktif sağlayıcı yürütür. Görme için de aktif sağlayıcıyı kullanmak istiyorsan boş bırak. Yalnızca OpenAI uyumlu uç noktalar.',
+  'st.vision.local.title': 'LFM2.5-VL yerel yedek modeli',
+  'st.vision.local.desc': 'LiquidAI/LFM2.5-VL-450M-ONNX modelini GPU’nuzda çalıştırır. Ekran görüntüleri bu cihazda kalır; ilk kullanımda Hugging Face’ten yaklaşık 770 MB arka planda indirilir ve yerel olarak önbelleğe alınır. İndirme sırasında sekme değiştirebilir veya Ayarlar’ı kapatabilirsiniz; Chrome’u açık tutun.',
+  'st.vision.local.enable': 'Yerel yedek modeli kullan',
+  'st.vision.local.disable': 'Yerel yedek modeli devre dışı bırak',
+  'st.vision.local.saved': 'Yerel görüntü yedek modeli etkinleştirildi.',
+  'st.vision.local.testing': 'Yerel görüntü modeli yükleniyor ve test ediliyor… İlk kullanımda yaklaşık 770 MB arka planda indirilir. Sekme değiştirebilir veya Ayarlar’ı kapatabilirsiniz; Chrome’u açık tutun.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Kaydet',
   'st.vision.test': 'Bağlantıyı sına',
   'st.vision.clear': 'Temizle',
@@ -677,6 +686,7 @@ export default {
   'st.display.search.placeholder': 'Genel ayarları ara',
   'st.display.search.empty': 'Eşleşen Genel ayar yok.',
   'st.display.advanced': 'Gelişmiş',
+  ...getApocalypseModeCopy('tr'),
   'st.display.cloud_bridge.label': 'Cloud köprüsü',
   'st.display.cloud_bridge.desc': 'Bu Chromium profiline tek bir yerel denetleyici bağlayın. WebBrain Cloud için 17373, MCP istemcileri için 17374 veya LM Studio için 17375 portunu kullanın. Aynı anda yalnızca bir köprü etkin olabilir; normal izin istemleri geçerliliğini korur.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL’si',
@@ -806,6 +816,7 @@ export default {
   "sp.slash.teach": "Eylemlerinizi kayıtlı bir iş akışı olarak kaydedin",
   "sp.slash.run_workflow": "Kaydedilmiş iş akışını kimliğe göre çalıştır",
   "sp.workflows.run_prompt": "Kaydedilmiş “{name}” iş akışını çalıştır",
+  "sp.workflows.standalone_unavailable": "Bu bağımsız pencere yalnızca Sor modu içindir. Kaydedilmiş iş akışlarını Harekete Geç modunda çalıştırmak için WebBrain'i yan panelde açın.",
   "sp.workflows.parameters_for": "“{name}” için parametreleri girin. Değerler yalnızca bu çalıştırmada kullanılır.",
   "sp.workflows.parameter_required": "“{name}” zorunludur.",
   "sp.slash.save_workflow": "En son başarılı kaydedilmiş çalışmayı sakla",
@@ -1034,4 +1045,25 @@ export default {
   "st.sync.confirm.reset": "Şifrelenmiş bulut kopyası bu cihazın mevcut WebBrain kurulumuyla değiştirilsin mi?",
   "st.sync.consent.legacy": "Şifreli senkronizasyon açılsın mı? WebBrain, anılarınızın, profil otomatik doldurmanızın ve API anahtarı sağlayıcı ayarlarınızın uçtan uca şifrelenmiş bir kopyasını WebBrain Cloud'a iletecektir. Sohbet geçmişi ve OAuth oturum açma işlemleri senkronize edilmez.",
   "st.sync.consent.denied": "Şifrelenmiş senkronizasyon izni verilmedi.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_download.title': 'WebGPU model files',
+  'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
+  'st.providers.webgpu_download.checking': 'Checking local model files…',
+  'st.providers.webgpu_download.not_downloaded': 'Not downloaded',
+  'st.providers.webgpu_download.downloading': 'Downloading · {progress}%',
+  'st.providers.webgpu_download.paused': 'Paused · {progress}%',
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.ready': 'Ready for local chat',
+  'st.providers.webgpu_download.error': 'Download needs attention',
+  'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
+  'st.providers.webgpu_download.required': 'Download the selected model before choosing WebGPU for chat.',
+  'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
+  'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
+  'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
+  'st.providers.webgpu_download.start': 'Start download',
+  'st.providers.webgpu_download.pause': 'Pause',
+  'st.providers.webgpu_download.resume': 'Resume',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
 };

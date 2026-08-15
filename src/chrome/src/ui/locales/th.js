@@ -1,6 +1,8 @@
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'การสตรีมคำตอบถูกขัดจังหวะ กำลังลอง Ask รอบนี้อีกครั้งโดยไม่ใช้สตรีม',
@@ -289,6 +291,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'เว้นว่างเพื่อใช้โมเดลที่โหลดไว้',
 
   'st.vision.desc': 'หากตั้งค่าไว้ ภาพหน้าจอจะถูกส่งไปยังโมเดลนี้เพื่ออ่านหน้า ขณะที่ผู้ให้บริการที่ใช้งานอยู่จะดูแลการวางแผนและการเรียกใช้เครื่องมือ เว้นว่างเพื่อให้ผู้ให้บริการที่ใช้งานอยู่ดูแลการมองเห็นด้วย รองรับเฉพาะปลายทางที่เข้ากันได้กับ OpenAI',
+  'st.vision.local.title': 'ตัวเลือกสำรอง LFM2.5-VL แบบภายในเครื่อง',
+  'st.vision.local.desc': 'เรียกใช้ LiquidAI/LFM2.5-VL-450M-ONNX บน GPU ของคุณ ภาพหน้าจอจะอยู่ในอุปกรณ์นี้เท่านั้น เมื่อใช้งานครั้งแรก ระบบจะดาวน์โหลดข้อมูลประมาณ 770 MB จาก Hugging Face ในเบื้องหลังและแคชไว้ในเครื่อง คุณสามารถสลับแท็บหรือปิดการตั้งค่าระหว่างดาวน์โหลดได้ แต่ต้องเปิด Chrome ไว้',
+  'st.vision.local.enable': 'ใช้ตัวเลือกสำรองในเครื่อง',
+  'st.vision.local.disable': 'ปิดตัวเลือกสำรองในเครื่อง',
+  'st.vision.local.saved': 'เปิดใช้ตัวเลือกสำรองการมองเห็นในเครื่องแล้ว',
+  'st.vision.local.testing': 'กำลังโหลดและทดสอบการมองเห็นในเครื่อง… เมื่อใช้งานครั้งแรก ระบบจะดาวน์โหลดข้อมูลประมาณ 770 MB ในเบื้องหลัง คุณสามารถสลับแท็บหรือปิดการตั้งค่าได้ แต่ต้องเปิด Chrome ไว้',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'บันทึก',
   'st.vision.test': 'ทดสอบการเชื่อมต่อ',
   'st.vision.clear': 'ล้าง',
@@ -672,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'ค้นหาการตั้งค่าทั่วไป',
   'st.display.search.empty': 'ไม่พบการตั้งค่าทั่วไปที่ตรงกัน',
   'st.display.advanced': 'ขั้นสูง',
+  ...getApocalypseModeCopy('th'),
   'st.display.cloud_bridge.label': 'บริดจ์คลาวด์',
   'st.display.cloud_bridge.desc': 'เชื่อมต่อตัวควบคุมภายในเครื่องหนึ่งตัวกับโปรไฟล์ Chromium นี้ ใช้พอร์ต 17373 สำหรับ WebBrain Cloud, 17374 สำหรับไคลเอนต์ MCP หรือ 17375 สำหรับ LM Studio เปิดใช้บริดจ์ได้ครั้งละหนึ่งตัวเท่านั้น และยังคงมีการขอสิทธิ์ตามปกติ',
   'st.display.cloud_bridge.url_label': 'URL ของ WebSocket',
@@ -807,6 +817,7 @@ export default {
   "sp.slash.teach": "บันทึกการทำงานของคุณเป็นเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.run_workflow": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ด้วย ID",
   "sp.workflows.run_prompt": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ “{name}”",
+  "sp.workflows.standalone_unavailable": "หน้าต่างแยกนี้ใช้ได้เฉพาะโหมดถาม เปิด WebBrain ในแผงด้านข้างเพื่อเรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ในโหมดลงมือทำ",
   "sp.workflows.parameters_for": "ป้อนพารามิเตอร์สำหรับ “{name}” ค่าจะใช้สำหรับการเรียกใช้ครั้งนี้เท่านั้น",
   "sp.workflows.parameter_required": "ต้องระบุ “{name}”",
   "sp.slash.save_workflow": "บันทึกการทำงานล่าสุดที่สำเร็จและมีการติดตาม",
@@ -1035,4 +1046,25 @@ export default {
   "st.sync.confirm.reset": "แทนที่สำเนาบนคลาวด์ที่เข้ารหัสด้วยการตั้งค่า WebBrain ปัจจุบันของอุปกรณ์นี้หรือไม่",
   "st.sync.consent.legacy": "เปิดการซิงค์ที่เข้ารหัสไหม WebBrain จะส่งสำเนาความทรงจำของคุณ การกรอกโปรไฟล์อัตโนมัติ และการตั้งค่าผู้ให้บริการคีย์ API ที่เข้ารหัสจากต้นทางถึงปลายทางไปยัง WebBrain Cloud ประวัติการแชทและการลงชื่อเข้าใช้ OAuth จะไม่ซิงค์กัน",
   "st.sync.consent.denied": "ไม่ได้รับสิทธิ์การซิงค์ที่เข้ารหัส",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_download.title': 'WebGPU model files',
+  'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
+  'st.providers.webgpu_download.checking': 'Checking local model files…',
+  'st.providers.webgpu_download.not_downloaded': 'Not downloaded',
+  'st.providers.webgpu_download.downloading': 'Downloading · {progress}%',
+  'st.providers.webgpu_download.paused': 'Paused · {progress}%',
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.ready': 'Ready for local chat',
+  'st.providers.webgpu_download.error': 'Download needs attention',
+  'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
+  'st.providers.webgpu_download.required': 'Download the selected model before choosing WebGPU for chat.',
+  'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
+  'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
+  'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
+  'st.providers.webgpu_download.start': 'Start download',
+  'st.providers.webgpu_download.pause': 'Pause',
+  'st.providers.webgpu_download.resume': 'Resume',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
 };

@@ -1,6 +1,8 @@
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Strumieniowanie odpowiedzi zostało przerwane; ponawiam tę turę Ask bez strumieniowania.',
@@ -654,6 +656,7 @@ export default {
   'st.display.search.placeholder': 'Szukaj w ustawieniach ogólnych',
   'st.display.search.empty': 'Brak pasujących ustawień ogólnych.',
   'st.display.advanced': 'Zaawansowane',
+  ...getApocalypseModeCopy('pl'),
   'st.display.clarify_timeout.label': 'Limit czasu dopytania',
   'st.display.clarify_timeout.desc': 'Jak długo czekać na odpowiedź na dopytanie, zanim automatycznie wybrana zostanie pierwsza opcja (lub upłynie limit, gdy brak opcji). 0 = Natychmiast (zawsze auto-wybór). Powyżej 1200s czekaj bez limitu (Wył.). Domyślnie 60s. Nie dotyczy uprawnień ani potwierdzeń wysyłki formularza.',
   'st.display.clarify_timeout.off': 'Wył.',
@@ -775,6 +778,7 @@ export default {
   "sp.slash.teach": "Nagraj działania jako zapisany przepływ pracy",
   "sp.slash.run_workflow": "Uruchom zapisany przepływ pracy według ID",
   "sp.workflows.run_prompt": "Uruchom zapisany przepływ pracy „{name}”",
+  "sp.workflows.standalone_unavailable": "To samodzielne okno działa tylko w trybie Pytaj. Otwórz WebBrain w panelu bocznym, aby uruchamiać zapisane przepływy pracy w trybie Działaj.",
   "sp.workflows.parameters_for": "Wprowadź parametry dla „{name}”. Wartości zostaną użyte tylko w tym uruchomieniu.",
   "sp.workflows.parameter_required": "Pole „{name}” jest wymagane.",
   "sp.slash.save_workflow": "Zapisz ostatnie udane zarejestrowane wykonanie",
@@ -957,4 +961,5 @@ export default {
   "st.sync.confirm.reset": "Zastąpić zaszyfrowaną kopię w chmurze bieżącą konfiguracją WebBrain tego urządzenia?",
   "st.sync.consent.legacy": "Włączyć szyfrowaną synchronizację? WebBrain prześle kompleksowo zaszyfrowaną kopię Twoich wspomnień, autouzupełniania profilu i ustawień dostawcy klucza API do chmury WebBrain. Historia czatów i logowania OAuth nie są synchronizowane.",
   "st.sync.consent.denied": "Nie przyznano zezwolenia na szyfrowaną synchronizację.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

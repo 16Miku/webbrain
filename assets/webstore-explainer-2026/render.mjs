@@ -1,1201 +1,493 @@
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(DIR, '../..');
 
+// No product logo or wordmark in this variant — the Web Store already shows both beside the listing.
 const assets = {
-  logo: dataUri('assets/store-icon-128.png'),
   ask: dataUri('assets/screenshot-1-ask-mode.png'),
-  act: dataUri('assets/screenshot-2-act-mode.png'),
-  settings: dataUri('assets/screenshot-3-settings.png'),
-  search: dataUri('assets/screenshots_v1/s6-act-search.png'),
+  modelProviders: dataUri('assets/webstore-explainer-2026-5/model-providers-short.png'),
 };
 
-const scenes = [
-  {
-    file: '01-ask-any-page.png',
-    width: 1280,
-    height: 800,
-    theme: 'read',
-    label: 'Ask mode',
-    title: 'Ask any page. Get the useful part fast.',
-    body: 'WebBrain reads the current tab, turns messy pages into clean answers, and stays read-only by default.',
-    chips: ['Summaries', 'Links', 'Tables', 'PDFs', 'Page structure'],
-    screenshot: assets.ask,
-    direction: 'copy-left',
-    prompt: 'Summarize this article in 3 bullet points',
-    note: 'Read-only by default',
-  },
-  {
-    file: '02-act-browser-control.png',
-    width: 1280,
-    height: 800,
-    theme: 'act',
-    label: 'Act mode',
-    title: 'Tell the browser what to do.',
-    body: 'When you approve Act mode, WebBrain can click, type, scroll, navigate, and complete multi-step tasks in the page.',
-    chips: ['Click', 'Type', 'Scroll', 'Navigate', 'Wait and verify'],
-    screenshot: assets.act,
-    direction: 'copy-left',
-    prompt: 'Search for flights and compare the best options',
-    note: 'Visible page inspection banner',
-  },
-  {
-    file: '03-plan-before-act.png',
-    width: 1280,
-    height: 800,
-    theme: 'plan',
-    label: 'Plan before Act',
-    title: 'Review the plan before WebBrain touches the page.',
-    body: 'For sensitive workflows, WebBrain can draft the steps first, wait for approval, then pin the approved plan to context.',
-    chips: ['Inspect', 'Plan', 'Approve', 'Run', 'Keep context'],
-    kind: 'plan',
-  },
-  {
-    file: '04-any-llm-your-choice.png',
-    width: 1280,
-    height: 800,
-    theme: 'provider',
-    label: 'Any LLM',
-    title: 'Use the model you trust.',
-    body: 'Choose WebBrain Cloud, local models, OpenAI, Anthropic, Gemini, OpenRouter, or any OpenAI-compatible endpoint.',
-    chips: ['Cloud or local', 'Your keys', 'Open source', 'Per-provider settings'],
-    screenshot: assets.settings,
-    direction: 'copy-left',
-    prompt: 'Switch providers without changing how you browse',
-    note: 'Provider-agnostic browser agent',
-  },
-  {
-    file: '05-real-workflows.png',
-    width: 1280,
-    height: 800,
-    theme: 'workflow',
-    label: 'Workflows',
-    title: 'Not just chat. Real browser workflows.',
-    body: 'Research pages, extract data, fill forms, compare results, capture screenshots, record tabs, and keep long tasks moving.',
-    chips: ['Research', 'Forms', 'Data extraction', 'Screenshots', 'Scheduled tasks'],
-    screenshot: assets.search,
-    direction: 'workflow',
-    prompt: 'Find the top 3 results and explain why they matter',
-    note: 'Multi-step agent loop',
-  },
-  {
-    file: 'promo-1400x560.png',
-    width: 1400,
-    height: 560,
-    theme: 'promo',
-    label: 'WebBrain',
-    title: 'Open-source AI browser agent',
-    body: 'Ask. Act. Automate. Any LLM.',
-    chips: ['Chrome and Firefox', 'Local or cloud', 'MIT licensed'],
-    kind: 'promo',
-  },
-  {
-    file: 'small-promo-440x280.png',
-    width: 440,
-    height: 280,
-    theme: 'smallpromo',
-    label: 'WebBrain',
-    title: 'AI browser agent',
-    body: 'Ask. Act. Automate.',
-    chips: ['Any LLM', 'Open source'],
-    kind: 'smallPromo',
-  },
+const browserLogos = [
+  ['Chrome', svgUri('chrome.svg')],
+  ['Firefox', svgUri('firefox.svg')],
+  ['Microsoft Edge', svgUri('edge.svg')],
+  ['Opera', svgUri('opera.svg')],
+  ['Vivaldi', svgUri('vivaldi.svg')],
+  ['Brave Browser', svgUri('brave.svg')],
 ];
 
+// Vendored so renders never depend on what happens to be installed locally. See fonts/OFL-*.txt.
+const fonts = {
+  display: fontUri('bricolage-grotesque-var.woff2'),
+  sans: fontUri('instrument-sans-var.woff2'),
+  mono: fontUri('geist-mono-var.woff2'),
+};
+
 function dataUri(relativePath) {
-  const ext = path.extname(relativePath).toLowerCase();
-  const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
   const bytes = readFileSync(path.join(ROOT, relativePath));
-  return `data:${mime};base64,${bytes.toString('base64')}`;
+  return `data:image/png;base64,${bytes.toString('base64')}`;
 }
 
-function esc(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+function svgUri(name) {
+  const bytes = readFileSync(path.join(DIR, 'browser-logos', name));
+  return `data:image/svg+xml;base64,${bytes.toString('base64')}`;
 }
 
-function css(width, height) {
-  return `
-    :root {
-      color-scheme: light;
-    }
-    * {
-      box-sizing: border-box;
-    }
-    html,
-    body {
-      margin: 0;
-      width: ${width}px;
-      height: ${height}px;
-      overflow: hidden;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      letter-spacing: 0;
-    }
-    body {
-      background: #11131f;
-    }
-    .canvas {
-      position: relative;
-      width: ${width}px;
-      height: ${height}px;
-      overflow: hidden;
-      color: #171827;
-      isolation: isolate;
-    }
-    .canvas:before,
-    .canvas:after {
-      content: "";
-      position: absolute;
-      z-index: 0;
-      pointer-events: none;
-    }
-    .canvas:before {
-      inset: 0;
-      background: linear-gradient(135deg, var(--bg1), var(--bg2));
-    }
-    .canvas:after {
-      right: -120px;
-      bottom: -140px;
-      width: 540px;
-      height: 360px;
-      background:
-        linear-gradient(90deg, transparent 0 28px, rgba(255,255,255,0.16) 28px 30px, transparent 30px 72px),
-        linear-gradient(0deg, transparent 0 28px, rgba(255,255,255,0.14) 28px 30px, transparent 30px 72px);
-      transform: rotate(-8deg);
-      opacity: 0.8;
-    }
-    .read {
-      --bg1: #fffaf3;
-      --bg2: #eef5ff;
-      --ink: #171827;
-      --muted: #565e70;
-      --accent: #6757ff;
-      --accent2: #ff6f9d;
-      --panel: rgba(255, 255, 255, 0.88);
-      --border: rgba(37, 42, 66, 0.12);
-      --shadow: 0 28px 70px rgba(31, 35, 62, 0.20);
-    }
-    .act {
-      --bg1: #f7fbff;
-      --bg2: #fff4ef;
-      --ink: #182033;
-      --muted: #596473;
-      --accent: #df573f;
-      --accent2: #4d7df5;
-      --panel: rgba(255, 255, 255, 0.9);
-      --border: rgba(31, 40, 64, 0.14);
-      --shadow: 0 28px 70px rgba(68, 50, 40, 0.20);
-    }
-    .plan {
-      --bg1: #111827;
-      --bg2: #223040;
-      --ink: #f8fafc;
-      --muted: #c7d2de;
-      --accent: #45d483;
-      --accent2: #ffc857;
-      --panel: rgba(255, 255, 255, 0.08);
-      --border: rgba(255, 255, 255, 0.18);
-      --shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
-    }
-    .provider {
-      --bg1: #f6f8fb;
-      --bg2: #eef8f1;
-      --ink: #182033;
-      --muted: #5b6574;
-      --accent: #3e6ff4;
-      --accent2: #28a96b;
-      --panel: rgba(255, 255, 255, 0.9);
-      --border: rgba(25, 38, 68, 0.13);
-      --shadow: 0 28px 70px rgba(24, 52, 90, 0.19);
-    }
-    .workflow {
-      --bg1: #fbfbfd;
-      --bg2: #eff7f9;
-      --ink: #171827;
-      --muted: #566070;
-      --accent: #8d47e8;
-      --accent2: #0aa5b8;
-      --panel: rgba(255, 255, 255, 0.9);
-      --border: rgba(33, 38, 60, 0.13);
-      --shadow: 0 28px 70px rgba(42, 54, 84, 0.18);
-    }
-    .promo {
-      --bg1: #121525;
-      --bg2: #243044;
-      --ink: #ffffff;
-      --muted: #d5d9e3;
-      --accent: #f56ca8;
-      --accent2: #65d69d;
-      --panel: rgba(255, 255, 255, 0.08);
-      --border: rgba(255, 255, 255, 0.16);
-      --shadow: 0 28px 70px rgba(0, 0, 0, 0.32);
-    }
-    .smallpromo {
-      --bg1: #121525;
-      --bg2: #253247;
-      --ink: #ffffff;
-      --muted: #d8deea;
-      --accent: #f56ca8;
-      --accent2: #65d69d;
-      --panel: rgba(255, 255, 255, 0.09);
-      --border: rgba(255, 255, 255, 0.16);
-      --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
-    }
-    .content {
-      position: relative;
-      z-index: 1;
-      width: 100%;
-      height: 100%;
-      padding: 46px 54px;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      color: var(--ink);
-      font-size: 23px;
-      font-weight: 760;
-      line-height: 1;
-    }
-    .brand img {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
-      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.13);
-    }
-    .brand .sub {
-      padding-left: 14px;
-      border-left: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 15px;
-      font-weight: 620;
-    }
-    .stage {
-      display: grid;
-      grid-template-columns: 0.9fr 1.35fr;
-      gap: 36px;
-      align-items: center;
-      height: calc(100% - 62px);
-      padding-top: 34px;
-    }
-    .copy-right .stage {
-      grid-template-columns: 705px 1fr;
-      gap: 28px;
-    }
-    .copy {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      max-width: 470px;
-    }
-    .copy-right .copy {
-      order: 2;
-      max-width: 425px;
-    }
-    .copy-right .copy h1 {
-      max-width: 425px;
-      font-size: 54px;
-    }
-    .copy-right .copy p {
-      max-width: 405px;
-    }
-    .copy-right .prompt-card {
-      min-width: 380px;
-      max-width: 418px;
-    }
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 9px 13px;
-      color: var(--accent);
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      font-size: 14px;
-      font-weight: 760;
-      text-transform: uppercase;
-      line-height: 1;
-      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.07);
-    }
-    .eyebrow .dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-      background: var(--accent2);
-      box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent2) 18%, transparent);
-    }
-    h1 {
-      margin: 22px 0 16px;
-      color: var(--ink);
-      font-size: 58px;
-      line-height: 1.03;
-      font-weight: 820;
-      max-width: 560px;
-      text-wrap: balance;
-    }
-    p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 22px;
-      line-height: 1.38;
-      font-weight: 480;
-      max-width: 510px;
-    }
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 26px;
-      max-width: 520px;
-    }
-    .chip {
-      padding: 10px 13px;
-      color: var(--ink);
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      font-size: 15px;
-      font-weight: 700;
-      line-height: 1;
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-      white-space: nowrap;
-    }
-    .prompt-card {
-      position: relative;
-      margin-top: 26px;
-      padding: 15px 17px;
-      min-width: 420px;
-      color: var(--ink);
-      background: rgba(255, 255, 255, 0.82);
-      border: 1px solid var(--border);
-      border-left: 5px solid var(--accent);
-      border-radius: 14px;
-      font-size: 17px;
-      font-weight: 700;
-      line-height: 1.35;
-      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.08);
-    }
-    .plan .prompt-card,
-    .promo .prompt-card {
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--ink);
-    }
-    .note {
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 760;
-      text-transform: uppercase;
-    }
-    .visual {
-      position: relative;
-      min-width: 0;
-    }
-    .browser-frame {
-      position: relative;
-      overflow: hidden;
-      border: 1px solid var(--border);
-      border-radius: 26px;
-      background: #ffffff;
-      box-shadow: var(--shadow);
-    }
-    .browser-frame img {
-      display: block;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .browser-frame.large {
-      width: 760px;
-      height: 475px;
-    }
-    .copy-right .browser-frame.large {
-      width: 690px;
-      height: 431px;
-    }
-    .copy-right .floating-panel {
-      right: auto;
-      left: 105px;
-      bottom: -42px;
-    }
-    .browser-frame.tilt-left {
-      transform: rotate(-1.5deg);
-    }
-    .browser-frame.tilt-right {
-      transform: rotate(1.25deg);
-    }
-    .floating-panel {
-      position: absolute;
-      right: -8px;
-      bottom: -36px;
-      width: 360px;
-      padding: 20px;
-      color: #ffffff;
-      background: #171827;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 22px;
-      box-shadow: 0 26px 70px rgba(0, 0, 0, 0.30);
-    }
-    .floating-panel .mini-title {
-      color: #ffffff;
-      font-size: 17px;
-      font-weight: 790;
-      margin-bottom: 13px;
-    }
-    .mini-list {
-      display: grid;
-      gap: 9px;
-    }
-    .mini-item {
-      display: grid;
-      grid-template-columns: 28px 1fr;
-      align-items: center;
-      gap: 10px;
-      color: #d9deea;
-      font-size: 14px;
-      font-weight: 650;
-    }
-    .mini-icon {
-      display: grid;
-      place-items: center;
-      width: 28px;
-      height: 28px;
-      color: #ffffff;
-      background: var(--accent);
-      border-radius: 9px;
-      font-size: 12px;
-      font-weight: 850;
-    }
-    .plan-layout {
-      display: grid;
-      grid-template-columns: 0.9fr 1.12fr;
-      gap: 42px;
-      align-items: center;
-      height: calc(100% - 62px);
-      padding-top: 32px;
-    }
-    .plan-mock {
-      position: relative;
-      height: 542px;
-    }
-    .page-shell {
-      position: absolute;
-      inset: 32px 28px 36px 0;
-      padding: 28px;
-      background: #f8fafc;
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      border-radius: 26px;
-      box-shadow: var(--shadow);
-    }
-    .page-bar {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      height: 36px;
-      padding: 0 13px;
-      background: #e5e9f0;
-      border-radius: 12px;
-      color: #667085;
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .page-dots {
-      display: flex;
-      gap: 6px;
-    }
-    .page-dots span {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: #a7b0bf;
-    }
-    .fake-page {
-      margin-top: 24px;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-    }
-    .fake-card {
-      min-height: 124px;
-      padding: 18px;
-      border-radius: 17px;
-      background: #ffffff;
-      border: 1px solid #e5e7ef;
-    }
-    .line {
-      height: 11px;
-      margin-bottom: 12px;
-      border-radius: 999px;
-      background: #d7ddea;
-    }
-    .line.short {
-      width: 58%;
-    }
-    .line.mid {
-      width: 78%;
-    }
-    .field {
-      height: 44px;
-      margin-top: 15px;
-      border: 1px solid #ccd4e0;
-      border-radius: 11px;
-      background: #f8fafc;
-    }
-    .plan-card {
-      position: absolute;
-      top: 0;
-      right: 0;
-      width: 425px;
-      padding: 22px;
-      color: #eef8f3;
-      background: #151c2a;
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      border-radius: 25px;
-      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.42);
-    }
-    .plan-card h2 {
-      margin: 0 0 16px;
-      font-size: 24px;
-      line-height: 1.2;
-    }
-    .steps {
-      display: grid;
-      gap: 10px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-    .steps li {
-      display: grid;
-      grid-template-columns: 30px 1fr;
-      gap: 10px;
-      align-items: start;
-      color: #d7e2ea;
-      font-size: 15px;
-      line-height: 1.32;
-      font-weight: 630;
-    }
-    .step-num {
-      display: grid;
-      place-items: center;
-      width: 30px;
-      height: 30px;
-      color: #102319;
-      background: var(--accent);
-      border-radius: 10px;
-      font-weight: 850;
-    }
-    .approve-row {
-      display: flex;
-      gap: 10px;
-      margin-top: 18px;
-    }
-    .button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 116px;
-      height: 42px;
-      padding: 0 16px;
-      border-radius: 13px;
-      font-size: 14px;
-      font-weight: 790;
-    }
-    .button.primary {
-      color: #102319;
-      background: var(--accent);
-    }
-    .button.secondary {
-      color: #e9eef6;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      background: rgba(255, 255, 255, 0.08);
-    }
-    .provider-grid {
-      position: absolute;
-      left: 64px;
-      bottom: -28px;
-      width: 520px;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-    .provider-tile {
-      padding: 16px;
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.92);
-      box-shadow: 0 16px 38px rgba(24, 52, 90, 0.12);
-    }
-    .provider-tile b {
-      display: block;
-      color: var(--ink);
-      font-size: 17px;
-      margin-bottom: 4px;
-    }
-    .provider-tile span {
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 650;
-    }
-    .workflow-layout {
-      display: grid;
-      grid-template-columns: 0.86fr 1.1fr;
-      gap: 36px;
-      align-items: center;
-      height: calc(100% - 62px);
-      padding-top: 32px;
-    }
-    .workflow-board {
-      position: relative;
-      height: 535px;
-    }
-    .workflow-board .browser-frame {
-      position: absolute;
-      right: 0;
-      top: 16px;
-      width: 642px;
-      height: 402px;
-      transform: rotate(1.2deg);
-    }
-    .task-stack {
-      position: absolute;
-      left: 0;
-      bottom: 0;
-      display: grid;
-      gap: 13px;
-      width: 450px;
-    }
-    .task-card {
-      display: grid;
-      grid-template-columns: 46px 1fr;
-      gap: 13px;
-      align-items: center;
-      padding: 16px;
-      background: rgba(255, 255, 255, 0.94);
-      border: 1px solid var(--border);
-      border-radius: 19px;
-      box-shadow: 0 16px 40px rgba(34, 44, 70, 0.13);
-    }
-    .task-card .badge {
-      display: grid;
-      place-items: center;
-      width: 46px;
-      height: 46px;
-      border-radius: 15px;
-      color: #ffffff;
-      background: var(--accent);
-      font-size: 15px;
-      font-weight: 850;
-    }
-    .task-card b {
-      display: block;
-      color: var(--ink);
-      font-size: 17px;
-      margin-bottom: 4px;
-    }
-    .task-card span {
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 650;
-    }
-    .promo .content {
-      padding: 44px 56px;
-    }
-    .promo-layout {
-      display: grid;
-      grid-template-columns: 0.9fr 1.1fr;
-      align-items: center;
-      gap: 34px;
-      height: calc(100% - 38px);
-      padding-top: 22px;
-    }
-    .promo-copy h1 {
-      color: var(--ink);
-      font-size: 72px;
-      line-height: 1.02;
-      margin: 20px 0 14px;
-      max-width: 650px;
-    }
-    .promo-copy p {
-      color: var(--muted);
-      font-size: 30px;
-      line-height: 1.2;
-    }
-    .promo-visual {
-      position: relative;
-      height: 420px;
-    }
-    .promo-panel {
-      position: absolute;
-      width: 590px;
-      right: 0;
-      top: 14px;
-      padding: 22px;
-      border: 1px solid var(--border);
-      border-radius: 26px;
-      background: rgba(255, 255, 255, 0.08);
-      box-shadow: var(--shadow);
-    }
-    .mini-browser {
-      height: 330px;
-      overflow: hidden;
-      border-radius: 18px;
-      background: #f7f8fb;
-    }
-    .mini-browser-top {
-      height: 42px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 14px;
-      background: #e9edf4;
-    }
-    .mini-browser-top span {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: #aeb7c7;
-    }
-    .mini-browser-body {
-      display: grid;
-      grid-template-columns: 1fr 260px;
-      height: 288px;
-    }
-    .site-side {
-      padding: 26px;
-      background: #ffffff;
-    }
-    .panel-side {
-      padding: 20px;
-      background: #151827;
-      color: #ffffff;
-    }
-    .webbrain-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      color: #ffffff;
-      background: #635bff;
-      font-size: 13px;
-      font-weight: 800;
-    }
-    .mini-message {
-      margin-top: 18px;
-      padding: 14px;
-      border-radius: 14px;
-      background: #2d3050;
-      font-size: 14px;
-      line-height: 1.35;
-      font-weight: 680;
-    }
-    .mini-result {
-      margin-top: 12px;
-      padding: 14px;
-      border-radius: 14px;
-      background: #202338;
-      color: #dce2ef;
-      font-size: 12px;
-      line-height: 1.45;
-      font-weight: 650;
-    }
-    .smallpromo .content {
-      padding: 22px 24px;
-    }
-    .smallpromo .brand {
-      gap: 10px;
-      font-size: 20px;
-      color: var(--ink);
-    }
-    .smallpromo .brand img {
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-    }
-    .smallpromo .brand .sub {
-      display: none;
-    }
-    .small-layout {
-      display: grid;
-      grid-template-columns: 1fr 148px;
-      gap: 16px;
-      align-items: center;
-      height: calc(100% - 38px);
-      padding-top: 14px;
-    }
-    .small-copy h1 {
-      margin: 0 0 8px;
-      color: var(--ink);
-      font-size: 42px;
-      line-height: 0.98;
-      font-weight: 840;
-      max-width: 230px;
-    }
-    .small-copy p {
-      color: var(--muted);
-      font-size: 18px;
-      line-height: 1.2;
-      font-weight: 720;
-    }
-    .small-copy .chips {
-      margin-top: 16px;
-      gap: 7px;
-    }
-    .small-copy .chip {
-      padding: 8px 10px;
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.11);
-      border-color: rgba(255, 255, 255, 0.17);
-      font-size: 12px;
-    }
-    .small-card {
-      position: relative;
-      height: 178px;
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.08);
-      box-shadow: var(--shadow);
-      overflow: hidden;
-    }
-    .small-card-top {
-      height: 28px;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      padding: 0 10px;
-      background: rgba(255, 255, 255, 0.15);
-    }
-    .small-card-top span {
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.5);
-    }
-    .small-card-body {
-      display: grid;
-      grid-template-columns: 1fr 58px;
-      height: 150px;
-      background: #ffffff;
-    }
-    .small-page {
-      padding: 16px 12px;
-    }
-    .small-page .line {
-      height: 8px;
-      margin-bottom: 8px;
-      background: #d6dce8;
-    }
-    .small-page .fake-card {
-      margin-top: 12px;
-      min-height: 48px;
-      padding: 10px;
-      border-radius: 10px;
-    }
-    .small-side {
-      padding: 13px 9px;
-      background: #151827;
-    }
-    .small-side .bubble {
-      height: 23px;
-      margin-bottom: 8px;
-      border-radius: 8px;
-      background: #635bff;
-    }
-    .small-side .bubble.dark {
-      height: 48px;
-      background: #252840;
-    }
-  `;
+function fontUri(name) {
+  const bytes = readFileSync(path.join(DIR, 'fonts', name));
+  return `data:font/woff2;base64,${bytes.toString('base64')}`;
 }
 
-function standardScene(scene) {
-  const copy = copyBlock(scene);
-  const visual = `
-    <div class="visual">
-      <div class="browser-frame large ${scene.direction === 'copy-left' ? 'tilt-right' : 'tilt-left'}">
-        <img src="${scene.screenshot}" alt="">
-      </div>
-      <div class="floating-panel">
-        <div class="mini-title">${esc(scene.prompt)}</div>
-        <div class="mini-list">
-          ${scene.chips.slice(0, 5).map((chip, index) => `
-            <div class="mini-item">
-              <div class="mini-icon">${index + 1}</div>
-              <div>${esc(chip)}</div>
-            </div>
-          `).join('')}
+const W = 1280;
+const H = 800;
+
+const baseCss = `
+  @font-face { font-family: 'Bricolage Grotesque'; font-weight: 200 800; font-style: normal;
+    src: url(${fonts.display}) format('woff2'); }
+  @font-face { font-family: 'Instrument Sans'; font-weight: 400 700; font-style: normal;
+    src: url(${fonts.sans}) format('woff2'); }
+  @font-face { font-family: 'Geist Mono'; font-weight: 400 700; font-style: normal;
+    src: url(${fonts.mono}) format('woff2'); }
+  :root {
+    color-scheme: light;
+    --display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+    --ui: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; width: ${W}px; height: ${H}px; overflow: hidden;
+    font-family: var(--ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  .canvas {
+    position: relative; width: ${W}px; height: ${H}px; overflow: hidden;
+    background: linear-gradient(135deg, var(--bg1), var(--bg2));
+    color: var(--ink); isolation: isolate;
+  }
+  .canvas:after {
+    content: ""; position: absolute; z-index: 0; pointer-events: none;
+    right: -120px; bottom: -140px; width: 540px; height: 360px;
+    background:
+      linear-gradient(90deg, transparent 0 28px, rgba(255,255,255,0.14) 28px 30px, transparent 30px 72px),
+      linear-gradient(0deg, transparent 0 28px, rgba(255,255,255,0.12) 28px 30px, transparent 30px 72px);
+    transform: rotate(-8deg); opacity: 0.8;
+  }
+  .dark { --bg1:#121525; --bg2:#243044; --ink:#ffffff; --muted:#d5d9e3;
+    --accent:#f56ca8; --accent2:#65d69d; --border:rgba(255,255,255,0.16);
+    --panel:rgba(255,255,255,0.08); --shadow:0 28px 70px rgba(0,0,0,0.32); }
+  .act { --bg1:#f7fbff; --bg2:#fff4ef; --ink:#182033; --muted:#596473;
+    --accent:#df573f; --accent2:#4d7df5; --border:rgba(31,40,64,0.14);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(68,50,40,0.20); }
+  .read { --bg1:#fffaf3; --bg2:#eef5ff; --ink:#171827; --muted:#565e70;
+    --accent:#6757ff; --accent2:#ff6f9d; --border:rgba(37,42,66,0.12);
+    --panel:rgba(255,255,255,0.88); --shadow:0 28px 70px rgba(31,35,62,0.20); }
+  .plan { --bg1:#111827; --bg2:#223040; --ink:#f8fafc; --muted:#c7d2de;
+    --accent:#45d483; --accent2:#ffc857; --border:rgba(255,255,255,0.18);
+    --panel:rgba(255,255,255,0.08); --shadow:0 28px 80px rgba(0,0,0,0.34); }
+  .provider { --bg1:#f6f8fb; --bg2:#eef8f1; --ink:#182033; --muted:#5b6574;
+    --accent:#3e6ff4; --accent2:#28a96b; --border:rgba(25,38,68,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(24,52,90,0.19); }
+  .hero-light { --bg1:#f7f9ff; --bg2:#fff1f6; --ink:#141828; --muted:#586074;
+    --accent:#d6417f; --accent2:#12a06a; --border:rgba(28,34,64,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(40,44,80,0.18); }
+  .plan-light { --bg1:#f5fbf7; --bg2:#eef4ff; --ink:#141b26; --muted:#586374;
+    --accent:#12a25f; --accent2:#dd9414; --border:rgba(24,38,48,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(28,50,44,0.18); }
+  .proof { --bg1:#f7f6ff; --bg2:#eef4ff; --ink:#171a2b; --muted:#5a6274;
+    --accent:#6e56cf; --accent2:#f0a52b; --border:rgba(30,34,64,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(38,34,78,0.18); }
+  .content { position: relative; z-index: 1; padding: 38px 48px; }
+  h1 {
+    margin: 18px 0 0; font-family: var(--display); font-size: 62px; line-height: 1.05;
+    font-weight: 800; letter-spacing: -0.02em; font-variation-settings: 'opsz' 72;
+    text-wrap: balance;
+  }
+  .sub { margin-top: 16px; color: var(--muted); font-size: 24px; font-weight: 520; letter-spacing: -0.005em; }
+  .num { font-family: var(--display); font-weight: 800; letter-spacing: -0.03em;
+    font-variation-settings: 'opsz' 96; }
+  .stack { height: 100%; display: flex; flex-direction: column; justify-content: center; }
+  .crop-frame {
+    overflow: hidden; border: 1px solid var(--border); border-radius: 24px;
+    background: #ffffff; box-shadow: var(--shadow); position: relative;
+  }
+  .crop-frame img { display: block; }
+`;
+
+/* ---------- 01 HERO (dark + light variant) ---------- */
+function hero(light = false) {
+  return {
+    scale: 1.3,
+    file: light ? '01-hero-light.png' : '01-hero.png',
+    theme: light ? 'hero-light' : 'dark',
+    body: `
+      <div style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+        <div style="font-family:var(--mono); font-size:16px; font-weight:650; letter-spacing:0.2em;
+          text-transform:uppercase; color:var(--muted);">WebBrain</div>
+        <h1 style="margin-top:26px; font-size:78px; line-height:1.03; max-width:960px;">Your open-source<br>AI browser agent</h1>
+        <div class="sub" style="font-size:29px; font-weight:600; color:var(--ink); margin-top:24px;">
+          <span style="color:var(--accent);">Ask.</span>
+          <span style="color:var(--accent2);">Act.</span>
+          Automate. <span style="opacity:0.85;">Any LLM.</span>
         </div>
-      </div>
-    </div>
-  `;
-  return `
-    <div class="stage ${scene.direction}">
-      ${scene.direction === 'copy-right' ? visual + copy : copy + visual}
-    </div>
-  `;
+        <div style="display:flex; gap:10px; margin-top:30px;">
+          ${['Chromium browsers and Firefox', 'Local or cloud models', 'MIT licensed'].map((c) => `
+            <span style="padding:11px 16px; border:1px solid var(--border); background:var(--panel);
+              border-radius:999px; font-family:var(--mono); font-size:13.5px; font-weight:650;
+              letter-spacing:0.05em; text-transform:uppercase; color:var(--muted);">${c}</span>`).join('')}
+        </div>
+        <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin-top:20px;"
+          aria-label="Supported browsers">
+          ${browserLogos.map(([name, src]) => `
+            <span title="${name}" style="width:46px; height:46px; display:grid; place-items:center;
+              border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,0.92);
+              box-shadow:0 10px 24px rgba(34,40,72,0.10);">
+              <img src="${src}" alt="${name}" style="display:block; width:30px; height:30px; object-fit:contain;">
+            </span>`).join('')}
+        </div>
+      </div>`,
+  };
 }
 
-function copyBlock(scene) {
-  return `
-    <section class="copy">
-      <div class="eyebrow"><span class="dot"></span>${esc(scene.label)}</div>
-      <h1>${esc(scene.title)}</h1>
-      <p>${esc(scene.body)}</p>
-      <div class="prompt-card">${esc(scene.prompt)}</div>
-      <div class="note">${esc(scene.note)}</div>
-      <div class="chips">
-        ${scene.chips.map((chip) => `<span class="chip">${esc(chip)}</span>`).join('')}
+/* ---------- 02 TELL THE BROWSER (command front and center) ---------- */
+function actScene() {
+  const steps = [
+    ['done', 'Found the flight search form'],
+    ['done', 'Typed “Istanbul (IST)”'],
+    ['done', 'Typed “San Francisco (SFO)”'],
+    ['live', 'Clicking Search…'],
+  ];
+  return {
+    scale: 1.08,
+    file: '02-tell-the-browser.png',
+    theme: 'act',
+    body: `
+      <div class="stack">
+      <div style="text-align:center;">
+        <h1 style="margin:0; font-size:58px;">Tell the browser what to do.</h1>
       </div>
-    </section>
-  `;
-}
 
-function planScene(scene) {
-  return `
-    <div class="plan-layout">
-      ${copyBlock({ ...scene, prompt: 'Check availability, compare options, then stop before submitting.', note: 'Human approval stays in the loop' })}
-      <div class="plan-mock">
-        <div class="page-shell">
-          <div class="page-bar">
-            <div class="page-dots"><span></span><span></span><span></span></div>
-            checkout.example / travel / dashboard
+      <!-- The command, front and center -->
+      <div style="width:940px; margin:40px auto 0; display:flex; align-items:center; gap:16px;
+        background:#ffffff; border:1px solid var(--border); border-radius:22px; padding:20px 22px;
+        box-shadow:0 24px 60px rgba(68,50,40,0.18);">
+        <div style="flex:1; font-size:25px; font-weight:680; color:var(--ink); line-height:1.25;">
+          Search for the cheapest flights from Istanbul to San Francisco<span
+            style="display:inline-block; width:3px; height:26px; background:var(--accent); margin-left:5px; vertical-align:-4px; border-radius:2px;"></span>
+        </div>
+        <div style="width:52px; height:52px; border-radius:16px; background:var(--accent); color:#fff;
+          display:grid; place-items:center; font-size:24px; font-weight:900; box-shadow:0 12px 26px rgba(223,87,63,0.4);">&#8593;</div>
+      </div>
+
+      <!-- The browser acting on it -->
+      <div style="display:grid; grid-template-columns: 1fr 360px; gap:24px; width:1060px; margin:44px auto 0; align-items:stretch;">
+        <div class="crop-frame" style="border-radius:20px;">
+          <div style="height:44px; display:flex; align-items:center; gap:10px; padding:0 16px; background:#e9edf4;">
+            <span style="width:10px;height:10px;border-radius:99px;background:#aeb7c7;"></span>
+            <span style="width:10px;height:10px;border-radius:99px;background:#aeb7c7;"></span>
+            <span style="width:10px;height:10px;border-radius:99px;background:#aeb7c7;"></span>
+            <span style="flex:1; height:26px; border-radius:8px; background:#f6f8fb; color:#667085;
+              font-family:var(--mono); font-size:12.5px; font-weight:500; display:flex; align-items:center;
+              padding:0 12px;">google.com/travel/flights</span>
           </div>
-          <div class="fake-page">
-            <div class="fake-card">
-              <div class="line mid"></div>
-              <div class="line"></div>
-              <div class="field"></div>
+          <div style="padding:26px 28px 30px; background:#ffffff;">
+            <div style="font-size:27px; font-weight:800;"><span style="color:#4285f4;">Google</span> <span style="color:#5f6368; font-weight:500;">Flights</span></div>
+            <div style="display:grid; grid-template-columns:1fr 34px 1fr; gap:10px; align-items:center; margin-top:20px;">
+              <div style="border:2px solid var(--accent2); border-radius:12px; padding:14px 16px; font-size:18px; font-weight:650; color:#202124; background:#fbfdff;">Istanbul (IST)</div>
+              <div style="text-align:center; color:#5f6368; font-size:20px;">&#8594;</div>
+              <div style="border:2px solid var(--accent2); border-radius:12px; padding:14px 16px; font-size:18px; font-weight:650; color:#202124; background:#fbfdff;">San Francisco (SFO)</div>
             </div>
-            <div class="fake-card">
-              <div class="line short"></div>
-              <div class="line mid"></div>
-              <div class="field"></div>
+            <div style="position:relative; margin-top:22px; display:flex; justify-content:center;">
+              <div style="padding:13px 34px; border-radius:999px; background:#1a73e8; color:#fff; font-size:17px; font-weight:750; box-shadow:0 10px 24px rgba(26,115,232,0.35);">Search</div>
+              <svg width="30" height="30" viewBox="0 0 24 24" style="position:absolute; right:calc(50% - 66px); top:26px; filter:drop-shadow(0 3px 5px rgba(0,0,0,0.35));">
+                <path d="M5 3 L19 12 L12 13.5 L9.5 20 Z" fill="#111" stroke="#fff" stroke-width="1.6"/>
+              </svg>
             </div>
-            <div class="fake-card">
-              <div class="line"></div>
-              <div class="line short"></div>
-              <div class="field"></div>
-            </div>
-            <div class="fake-card">
-              <div class="line mid"></div>
-              <div class="line"></div>
-              <div class="field"></div>
-            </div>
-          </div>
-        </div>
-        <div class="plan-card">
-          <h2>Proposed browser plan</h2>
-          <ol class="steps">
-            <li><span class="step-num">1</span><span>Read the visible form and identify required fields.</span></li>
-            <li><span class="step-num">2</span><span>Fill only the fields the user asked for.</span></li>
-            <li><span class="step-num">3</span><span>Pause before any purchase, submit, or irreversible action.</span></li>
-            <li><span class="step-num">4</span><span>Keep the approved plan pinned while the agent works.</span></li>
-          </ol>
-          <div class="approve-row">
-            <div class="button primary">Approve</div>
-            <div class="button secondary">Adjust</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function providerScene(scene) {
-  return `
-    <div class="stage ${scene.direction}">
-      ${copyBlock(scene)}
-      <div class="visual">
-        <div class="browser-frame large tilt-right">
-          <img src="${scene.screenshot}" alt="">
-        </div>
-        <div class="provider-grid">
-          <div class="provider-tile"><b>WebBrain Cloud</b><span>No local setup required</span></div>
-          <div class="provider-tile"><b>Local models</b><span>llama.cpp, Ollama, LM Studio</span></div>
-          <div class="provider-tile"><b>Cloud APIs</b><span>OpenAI, Anthropic, Gemini</span></div>
-          <div class="provider-tile"><b>Compatible APIs</b><span>OpenRouter and custom endpoints</span></div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function workflowScene(scene) {
-  return `
-    <div class="workflow-layout">
-      ${copyBlock(scene)}
-      <div class="workflow-board">
-        <div class="browser-frame">
-          <img src="${scene.screenshot}" alt="">
-        </div>
-        <div class="task-stack">
-          <div class="task-card"><div class="badge">R</div><div><b>Research across pages</b><span>Read search results, articles, docs, and PDFs.</span></div></div>
-          <div class="task-card"><div class="badge">F</div><div><b>Fill and verify forms</b><span>Use page refs, wait for changes, stop at risky actions.</span></div></div>
-          <div class="task-card"><div class="badge">D</div><div><b>Extract structured data</b><span>Turn pages into tables, summaries, and next steps.</span></div></div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function promoScene(scene) {
-  return `
-    <div class="promo-layout">
-      <section class="promo-copy">
-        <div class="eyebrow"><span class="dot"></span>${esc(scene.label)}</div>
-        <h1>${esc(scene.title)}</h1>
-        <p>${esc(scene.body)}</p>
-        <div class="chips">
-          ${scene.chips.map((chip) => `<span class="chip">${esc(chip)}</span>`).join('')}
-        </div>
-      </section>
-      <div class="promo-visual">
-        <div class="promo-panel">
-          <div class="mini-browser">
-            <div class="mini-browser-top"><span></span><span></span><span></span></div>
-            <div class="mini-browser-body">
-              <div class="site-side">
-                <div class="line mid"></div>
-                <div class="line"></div>
-                <div class="line short"></div>
-                <div class="fake-card" style="margin-top:24px; min-height:118px;">
-                  <div class="line"></div>
-                  <div class="line mid"></div>
-                  <div class="line short"></div>
-                </div>
+            <div style="display:grid; gap:10px; margin-top:26px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; border:1px solid #e5e7ef; border-radius:12px; padding:12px 16px;">
+                <span style="height:10px; width:42%; border-radius:99px; background:#d7ddea;"></span>
+                <span style="font-size:15px; font-weight:750; color:#188038;">$612</span>
               </div>
-              <div class="panel-side">
-                <div class="webbrain-pill"><img src="${assets.logo}" style="width:18px;height:18px;border-radius:5px;"> WebBrain</div>
-                <div class="mini-message">Summarize this page and find the best next action.</div>
-                <div class="mini-result">Reading page...<br>Extracting key points...<br>Preparing answer...</div>
+              <div style="display:flex; justify-content:space-between; align-items:center; border:1px solid #e5e7ef; border-radius:12px; padding:12px 16px;">
+                <span style="height:10px; width:56%; border-radius:99px; background:#e2e7f0;"></span>
+                <span style="font-size:15px; font-weight:750; color:#5f6368;">$688</span>
               </div>
             </div>
           </div>
         </div>
+        <div style="background:#171827; border:1px solid rgba(255,255,255,0.12); border-radius:20px; padding:20px;
+          color:#fff; box-shadow:0 24px 60px rgba(0,0,0,0.28);">
+          <div style="font-family:var(--mono); font-size:13px; font-weight:650; color:#aeb4c9;
+            text-transform:uppercase; letter-spacing:0.07em; margin-bottom:16px;">WebBrain is acting</div>
+          <div style="display:grid; gap:11px;">
+            ${steps.map(([state, label]) => `
+              <div style="display:grid; grid-template-columns:26px 1fr; gap:10px; align-items:center; font-size:15.5px; font-weight:640; color:${state === 'live' ? '#ffffff' : '#c9d0e0'};">
+                <span style="width:26px; height:26px; border-radius:9px; display:grid; place-items:center; font-size:14px; font-weight:900;
+                  background:${state === 'live' ? 'var(--accent2)' : 'rgba(101,214,157,0.22)'}; color:${state === 'live' ? '#fff' : '#65d69d'};">${state === 'live' ? '&#9679;' : '&#10003;'}</span>
+                <span>${label}</span>
+              </div>`).join('')}
+          </div>
+          <div style="margin-top:16px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.1); color:#8d93a8; font-size:13px; font-weight:700;">
+            Pauses before anything irreversible
+          </div>
+        </div>
       </div>
-    </div>
-  `;
+      </div>`,
+  };
 }
 
-function smallPromoScene(scene) {
-  return `
-    <div class="small-layout">
-      <section class="small-copy">
-        <h1>${esc(scene.title)}</h1>
-        <p>${esc(scene.body)}</p>
-        <div class="chips">
-          ${scene.chips.map((chip) => `<span class="chip">${esc(chip)}</span>`).join('')}
+/* ---------- 03 ASK ANY PAGE (cropped to the answer panel) ---------- */
+function askScene() {
+  // Source 1280x800. Relevant UI: sidebar below header x 905-1280, y 122-474. Scale 1.62.
+  const s = 1.62;
+  const x = 906, y = 122, w = 374, h = 352;
+  return {
+    scale: 1.03,
+    file: '03-ask-any-page.png',
+    theme: 'read',
+    body: `
+      <div style="display:grid; grid-template-columns: 480px 1fr; gap:48px; align-items:center; height:100%;">
+        <div>
+          <h1>Ask any page.<br>Get the useful part.</h1>
+          <div class="sub">Clean answers from messy pages. Read-only by default.</div>
         </div>
-      </section>
-      <div class="small-card">
-        <div class="small-card-top"><span></span><span></span><span></span></div>
-        <div class="small-card-body">
-          <div class="small-page">
-            <div class="line mid"></div>
-            <div class="line"></div>
-            <div class="line short"></div>
-            <div class="fake-card">
-              <div class="line mid"></div>
-              <div class="line short"></div>
+        <div style="display:flex; justify-content:center;">
+          <div class="crop-frame" style="width:${w * s}px; height:${h * s}px; transform:rotate(1.1deg); background:#252838;">
+            <img src="${assets.ask}" style="width:${1280 * s}px; margin-left:${-x * s}px; margin-top:${-y * s}px;" alt="">
+          </div>
+        </div>
+      </div>`,
+  };
+}
+
+/* ---------- 04 ANY LLM (large provider rows, cropped to their useful content) ---------- */
+function modelsScene() {
+  // Source 1472x976. Each provider card is isolated so the screenshot's beige
+  // backdrop disappears. The left 924px carries the useful identity/model data;
+  // the masked edge lets it fade naturally into the slide rather than looking cut.
+  const sourceW = 1472;
+  const sourceScale = 0.7;
+  const cropX = 18;
+  const cropW = 924;
+  const cropH = 91;
+  const rowStarts = [23, 143, 263, 383, 503, 623, 743, 863];
+  const displayW = cropW * sourceScale;
+  const displayH = cropH * sourceScale;
+  return {
+    scale: 1.04,
+    file: '04-any-llm.png',
+    theme: 'provider',
+    body: `
+      <div style="display:grid; grid-template-columns: 430px 1fr; gap:28px; align-items:center; height:100%;">
+        <div>
+          <h1>Use the model you trust.</h1>
+          <div class="sub">Local, cloud, or your own keys &mdash; switch anytime.</div>
+          <div style="display:inline-flex; align-items:center; margin-top:38px; padding:11px 20px;
+            border:1px solid var(--border); border-radius:999px; background:rgba(255,255,255,0.68);
+            color:var(--muted); font-size:15px; font-weight:700; box-shadow:0 8px 24px rgba(24,52,90,0.06);">
+            100+ providers are supported!
+          </div>
+        </div>
+        <div style="display:grid; gap:10px; justify-content:start; align-content:center;">
+          ${rowStarts.map((y, index) => `
+            <div style="position:relative; width:${displayW}px; height:${displayH}px; overflow:hidden;
+              border-radius:12px;
+              -webkit-mask-image:linear-gradient(to right, #000 0%, #000 86%, transparent 100%);
+              mask-image:linear-gradient(to right, #000 0%, #000 86%, transparent 100%);
+              filter:drop-shadow(0 9px 14px rgba(24,52,90,${index === 2 ? '0.10' : '0.055'}));">
+              <img src="${assets.modelProviders}" alt="" style="position:absolute; display:block;
+                width:${sourceW * sourceScale}px; max-width:none;
+                left:${-cropX * sourceScale}px; top:${-y * sourceScale}px;">
+            </div>`).join('')}
+        </div>
+      </div>`,
+  };
+}
+
+/* ---------- 05 PLAN BEFORE ACT (dark + light variant) ---------- */
+function planScene(light = false) {
+  const steps = [
+    'Read the visible form and required fields',
+    'Fill only what you asked for',
+    'Pause before any purchase or submit',
+  ];
+  const card = light
+    ? { bg: '#ffffff', border: 'var(--border)', shadow: '0 30px 70px rgba(28,50,44,0.18)',
+        label: 'var(--muted)', step: 'var(--ink)', onAccent: '#ffffff' }
+    : { bg: '#151c2a', border: 'rgba(255,255,255,0.16)', shadow: '0 30px 80px rgba(0,0,0,0.42)',
+        label: '#8d99ad', step: '#d7e2ea', onAccent: '#102319' };
+  return {
+    scale: 1.22,
+    file: light ? '05-plan-before-act-light.png' : '05-plan-before-act.png',
+    theme: light ? 'plan-light' : 'plan',
+    body: `
+      <div style="display:grid; grid-template-columns: 440px 1fr; gap:40px; align-items:center; height:100%;">
+        <div>
+          <h1>See the plan before it touches the page.</h1>
+          <div class="sub">Approve first. You stay in the loop.</div>
+        </div>
+        <div style="display:flex; justify-content:center;">
+          <div style="width:470px; padding:28px; background:${card.bg}; border:1px solid ${card.border};
+            border-radius:26px; box-shadow:${card.shadow}; transform:rotate(1.1deg);">
+            <div style="font-family:var(--mono); font-size:13px; font-weight:650; color:${card.label};
+              text-transform:uppercase; letter-spacing:0.07em;">Proposed browser plan</div>
+            <div style="display:grid; gap:14px; margin-top:20px;">
+              ${steps.map((label, i) => `
+                <div style="display:grid; grid-template-columns:36px 1fr; gap:14px; align-items:center; color:${card.step}; font-size:19px; font-weight:640; line-height:1.3;">
+                  <span style="width:36px; height:36px; border-radius:12px; display:grid; place-items:center;
+                    background:var(--accent); color:${card.onAccent}; font-size:17px; font-weight:850;">${i + 1}</span>
+                  <span>${label}</span>
+                </div>`).join('')}
+            </div>
+            <div style="display:flex; gap:12px; margin-top:26px;">
+              <span style="display:inline-flex; align-items:center; justify-content:center; min-width:140px; height:50px;
+                border-radius:14px; background:var(--accent); color:${card.onAccent}; font-size:17px; font-weight:800;">Approve</span>
+              <span style="display:inline-flex; align-items:center; justify-content:center; min-width:140px; height:50px;
+                border-radius:14px; border:1px solid ${light ? 'var(--border)' : 'rgba(255,255,255,0.2)'};
+                background:${light ? '#f4f6fa' : 'rgba(255,255,255,0.07)'};
+                color:${light ? 'var(--ink)' : '#e9eef6'}; font-size:17px; font-weight:800;">Adjust</span>
             </div>
           </div>
-          <div class="small-side">
-            <div class="bubble"></div>
-            <div class="bubble dark"></div>
-          </div>
         </div>
-      </div>
-    </div>
-  `;
+      </div>`,
+  };
 }
 
-function sceneMarkup(scene) {
-  if (scene.kind === 'plan') return planScene(scene);
-  if (scene.kind === 'promo') return promoScene(scene);
-  if (scene.kind === 'smallPromo') return smallPromoScene(scene);
-  if (scene.theme === 'provider') return providerScene(scene);
-  if (scene.direction === 'workflow') return workflowScene(scene);
-  return standardScene(scene);
+/* ---------- 06 LAUNCH OFFER ---------- */
+function offerScene() {
+  return {
+    scale: 1.3,
+    file: '06-launch-offer.png',
+    theme: 'dark',
+    body: `
+      <div style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+        <h1 style="font-size:60px;">WebBrain Cloud launch pricing</h1>
+        <div style="display:flex; align-items:baseline; gap:28px; margin-top:30px;">
+          <!-- Bricolage sets line-through low on heavy figures, so the strike is drawn manually. -->
+          <span class="num" style="position:relative; font-size:60px; line-height:1; color:var(--muted);">$8
+            <span style="position:absolute; left:-8%; right:-8%; top:46%; height:5px; border-radius:3px;
+              background:var(--accent); transform:rotate(-7deg);"></span>
+          </span>
+          <span class="num" style="font-size:122px; line-height:1;">$5<span style="font-family:var(--ui); font-size:32px; font-weight:600; color:var(--muted); letter-spacing:0; margin-left:4px;">/mo</span></span>
+          <span style="padding:13px 19px; border-radius:999px; background:var(--accent); color:#fff; font-family:var(--mono); font-size:18px; font-weight:600; letter-spacing:0.06em;
+            text-transform:uppercase; transform:rotate(3deg); box-shadow:0 14px 34px rgba(245,108,168,0.35);">Save 35%</span>
+        </div>
+        <div class="sub" style="font-size:24px; margin-top:30px;">No setup, no API keys &mdash; just install and go.</div>
+        <div class="sub" style="font-size:19px; margin-top:12px; opacity:0.8;">Or free forever with your own keys or local models.</div>
+      </div>`,
+  };
 }
+
+/* ---------- 07 SOCIAL PROOF ---------- */
+function proofScene() {
+  const icon = (paths, color) =>
+    `<svg width="46" height="46" viewBox="0 0 24 24" fill="${color}" aria-hidden="true">${paths}</svg>`;
+  const stats = [
+    [icon('<path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>', 'var(--accent2)'),
+      '700+', 'GitHub stars'],
+    [icon('<path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.2.3a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2ZM9 13.2c-3.4 0-6.6 1.75-6.6 3.9V20h13.2v-2.9c0-2.15-3.2-3.9-6.6-3.9Zm7.2.2c-.62 0-1.2.05-1.74.14 1.2.94 1.94 2.11 1.94 3.56V20h5.2v-2.5c0-1.9-2.5-3.1-5.4-3.1Z"/>', 'var(--accent)'),
+      '40+', 'contributors'],
+    [icon('<path d="M12 2.4c.6 0 1.1.5 1.1 1.1v.9l6.4 1.2a1 1 0 0 1-.18 1.98l-.5-.02 2.6 5.9c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.55-5.8-3.67-.68V18.6h3.3a1.1 1.1 0 1 1 0 2.2H7.6a1.1 1.1 0 1 1 0-2.2h3.3V6.81l-3.67.68 2.55 5.8c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.6-5.9-.5.02a1 1 0 0 1-.18-1.98l6.4-1.2v-.9c0-.6.5-1.1 1.1-1.1Zm5.82 7.7-1.5 3.42h3l-1.5-3.42Zm-11.64 0-1.5 3.42h3l-1.5-3.42Z"/>', 'var(--accent)'),
+      'MIT', 'licensed, free forever'],
+  ];
+  // Decorative contributor avatars: initials over a fixed palette.
+  const avatars = [
+    ['ES', '#6e56cf'], ['MK', '#e0644f'], ['AY', '#2b9f6b'], ['JR', '#2f6fe0'],
+    ['LP', '#c8478f'], ['DT', '#e08b2b'], ['SN', '#4a5568'], ['KV', '#0f9aa8'],
+    ['BW', '#8b5cf6'], ['RO', '#d14f6d'],
+  ];
+  return {
+    scale: 1.12,
+    file: '07-social-proof.png',
+    theme: 'proof',
+    body: `
+
+      <div class="stack">
+      <div style="text-align:center;">
+        <h1 style="margin:0; font-size:64px;">Built in the open.</h1>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:26px; width:1040px; margin:52px auto 0;">
+        ${stats.map(([glyph, value, label]) => `
+          <div style="background:var(--panel); border:1px solid var(--border); border-radius:26px;
+            padding:40px 24px 36px; text-align:center; box-shadow:var(--shadow);">
+            <div style="height:46px; line-height:0;">${glyph}</div>
+            <div class="num" style="margin-top:20px; font-size:84px; line-height:1;">${value}</div>
+            <div style="margin-top:14px; font-size:22px; font-weight:680; color:var(--muted);">${label}</div>
+          </div>`).join('')}
+      </div>
+
+      <div style="width:1040px; margin:44px auto 0; display:flex; align-items:center; justify-content:space-between;
+        gap:24px; background:#171827; border:1px solid rgba(255,255,255,0.12); border-radius:22px;
+        padding:22px 26px; color:#fff; box-shadow:0 24px 60px rgba(23,26,43,0.3);">
+        <div style="display:flex; align-items:center; gap:14px; min-width:0;">
+          <svg width="34" height="34" viewBox="0 0 16 16" fill="#ffffff" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <div style="min-width:0;">
+            <div style="font-family:var(--mono); font-size:19px; font-weight:600;">github.com/webbrain-one/webbrain</div>
+            <div style="font-size:15px; font-weight:640; color:#9ba3b8; margin-top:4px;">Star it, fork it, ship a PR.</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px;">
+          <div style="display:flex; align-items:center;">
+            ${avatars.map(([initials, bg], i) => `
+              <span style="width:44px; height:44px; border-radius:999px; background:${bg}; color:#fff;
+                display:grid; place-items:center; font-size:15px; font-weight:800; letter-spacing:0.01em;
+                border:2px solid #171827; margin-left:${i === 0 ? 0 : -12}px;">${initials}</span>`).join('')}
+            <span style="height:44px; padding:0 14px; border-radius:999px; background:rgba(255,255,255,0.14);
+              color:#e7eaf3; display:grid; place-items:center; font-size:15px; font-weight:800;
+              border:2px solid #171827; margin-left:-12px;">+10</span>
+          </div>
+          <span style="display:inline-flex; align-items:center; gap:9px; height:46px; padding:0 20px; border-radius:12px;
+            background:var(--accent2); color:#2b1c00; font-family:var(--mono); font-size:15px; font-weight:600;
+            letter-spacing:0.08em; text-transform:uppercase; white-space:nowrap;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="#2b1c00" aria-hidden="true">
+              <path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>
+            </svg>Star</span>
+        </div>
+      </div>
+      </div>`,
+  };
+}
+
+const scenes = [
+  hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
+  hero(true), planScene(true),
+];
 
 function html(scene) {
-  return `<!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=${scene.width}, initial-scale=1">
-      <style>${css(scene.width, scene.height)}</style>
-    </head>
-    <body>
-      <main class="canvas ${scene.theme}">
-        <div class="content">
-          <div class="brand">
-            <img src="${assets.logo}" alt="">
-            <span>WebBrain</span>
-            <span class="sub">Open-source AI browser agent</span>
-          </div>
-          ${sceneMarkup(scene)}
-        </div>
-      </main>
-    </body>
-  </html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">
+    <style>${baseCss}</style></head>
+    <body><main class="canvas ${scene.theme}"><div class="content" style="width:${W / (scene.scale ?? 1)}px;
+      height:${H / (scene.scale ?? 1)}px; zoom:${scene.scale ?? 1};">${scene.body}</div></main></body></html>`;
 }
 
 async function renderAll() {
   await mkdir(DIR, { recursive: true });
   const browser = await chromium.launch();
-  for (const scene of scenes) {
-    const page = await browser.newPage({
-      viewport: { width: scene.width, height: scene.height },
-      deviceScaleFactor: 1,
-    });
+  const only = new Set((process.env.ONLY ?? '').split(',').map((name) => name.trim()).filter(Boolean));
+  for (const scene of scenes.filter((candidate) => only.size === 0 || only.has(candidate.file))) {
+    const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
     await page.setContent(html(scene), { waitUntil: 'load' });
     await page.evaluate(async () => {
-      const images = Array.from(document.images);
-      await Promise.all(images.map((img) => img.complete ? undefined : new Promise((resolve, reject) => {
-        img.addEventListener('load', resolve, { once: true });
-        img.addEventListener('error', reject, { once: true });
+      await Promise.all(Array.from(document.images).map((img) => img.complete ? undefined : new Promise((res, rej) => {
+        img.addEventListener('load', res, { once: true });
+        img.addEventListener('error', rej, { once: true });
       })));
       await document.fonts.ready;
     });
     await page.screenshot({ path: path.join(DIR, scene.file) });
     await page.close();
+    console.log('rendered', scene.file);
   }
   await browser.close();
-
-  const readme = `# Web Store explainer visuals 2026
-
-Generated Chrome Web Store-style visuals for WebBrain.
-
-Files:
-- 01-ask-any-page.png: Ask mode page reading and summarization
-- 02-act-browser-control.png: Act mode browser control
-- 03-plan-before-act.png: Plan review before browser actions
-- 04-any-llm-your-choice.png: Provider choice and local/cloud setup
-- 05-real-workflows.png: Multi-step workflows
-- promo-1400x560.png: Wide promotional tile
-- small-promo-440x280.png: Small promotional tile
-
-Regenerate:
-
-\`\`\`bash
-node assets/webstore-explainer-2026/render.mjs
-\`\`\`
-`;
-  await writeFile(path.join(DIR, 'README.md'), readme, 'utf8');
 }
 
-renderAll().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+renderAll().catch((error) => { console.error(error); process.exit(1); });

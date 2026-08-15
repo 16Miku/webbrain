@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Mengapa WebGPU hanya tersedia di Mode Apocalypse?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Karena kami belum menilai inferensi teks WebGPU di browser cukup baik untuk sebagian besar pengguna, dan kami tidak ingin Anda mengalami pengalaman yang buruk. Jika ingin menggunakan model LFM2.5 2.6B yang sama secara lokal, jalankan inferensi di komputer Anda dengan llama.cpp atau Ollama lalu arahkan WebBrain ke endpoint lokal tersebut alih-alih mengandalkan WebGPU. Fallback visi WebGPU tetap tersedia karena modelnya jauh lebih kecil dan fallback ini hanya digunakan sesekali."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Saya mendapat \"Failed to fetch\" saat menghubungkan ke server LLM lokal (vLLM, Ollama, llama.cpp) di jaringan saya",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "Per 7.0.0, belum. Mode dry-run direncanakan dan sudah ada di roadmap."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Apakah WebBrain mengirim seluruh DOM ke model AI?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan. Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev."
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>Mengapa WebGPU hanya tersedia di Mode Apocalypse?</summary>
+      <p>Karena kami belum menilai inferensi teks WebGPU di browser cukup baik untuk sebagian besar pengguna, dan kami tidak ingin Anda mengalami pengalaman yang buruk. Jika ingin menggunakan model LFM2.5 2.6B yang sama secara lokal, jalankan inferensi di komputer Anda dengan <strong>llama.cpp</strong> atau <strong>Ollama</strong> lalu arahkan WebBrain ke endpoint lokal tersebut alih-alih mengandalkan WebGPU.</p><p>Fallback visi WebGPU tetap tersedia karena modelnya jauh lebih kecil dan fallback ini hanya digunakan sesekali.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Saya mendapat &quot;Failed to fetch&quot; saat menghubungkan ke server LLM lokal (vLLM, Ollama, llama.cpp) di jaringan saya</summary>
       <p>Jika server LLM Anda berada di mesin lain dalam jaringan lokal (mis. <code>http://192.168.1.x:8000</code>), Chrome memblokir permintaan kecuali server mengirim <strong>header CORS</strong>. Solusinya bergantung pada server Anda:</p><p><strong>vLLM:</strong> Mulai dengan <code>--allowed-origins '["*"]'</code> (nilainya harus berupa list JSON).<br><strong>Ollama:</strong> Atur variabel lingkungan <code>OLLAMA_ORIGINS=*</code> sebelum memulai.<br><strong>llama.cpp:</strong> CORS aktif secara bawaan — tidak perlu perubahan.</p><p>Jika server berjalan di <code>localhost</code> (mesin yang sama dengan peramban), CORS biasanya tidak diperlukan. Masalah ini hanya menyangkut koneksi antar mesin di jaringan lokal. Pastikan base URL pada pengaturan WebBrain diakhiri dengan <code>/v1</code> (mis. <code>http://192.168.1.47:8000/v1</code>). Pengecualian: Ollama yang dipakai dari ekstensi browser mungkin tetap membutuhkan <code>OLLAMA_ORIGINS</code>; lihat FAQ Ollama di bawah.</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>Apakah WebBrain mendukung mode dry-run?</summary>
       <p>Per <strong>7.0.0</strong>, belum. Mode dry-run direncanakan dan sudah ada di roadmap.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Apakah WebBrain mengirim seluruh DOM ke model AI?</summary>
+      <p>Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan.</p><p>Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev.</p>
     </details>
 
     <details class="faq-item">

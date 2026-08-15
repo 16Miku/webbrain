@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Warum ist WebGPU nur im Apokalypse-Modus verfügbar?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Weil wir die WebGPU-Textinferenz im Browser noch nicht für gut genug für die meisten Nutzer halten und Ihnen keine schlechte Erfahrung zumuten möchten. Wenn Sie dasselbe LFM2.5 2.6B-Modell lokal verwenden möchten, führen Sie die Inferenz auf Ihrem Rechner mit llama.cpp oder Ollama aus und verbinden Sie WebBrain mit diesem lokalen Endpunkt, anstatt sich auf WebGPU zu verlassen. Der WebGPU-Vision-Fallback bleibt verfügbar, weil sein Modell deutlich kleiner ist und der Fallback nur gelegentlich verwendet wird."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Ich erhalte \"Failed to fetch\" beim Verbinden mit einem lokalen LLM-Server (vLLM, Ollama, llama.cpp) in meinem Netzwerk",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "Ab Version 7.0.0, noch nicht. Der Dry-Run-Modus ist geplant und bereits auf der Roadmap."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Sendet WebBrain das gesamte DOM an das KI-Modell?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nein. WebBrain sendet standardmäßig weder rohes HTML noch einen rohen DOM-Dump. Zunächst werden die URL und der Titel der Seite, passende Website-Hinweise und bei aktivierter Bildverarbeitung optional ein Screenshot des sichtbaren Bereichs verwendet. Wenn eine Aufgabe Seiteninhalte benötigt, liest WebBrain sie bei Bedarf als reduzierten semantischen Accessibility Tree oder als extrahierten Text. Die Lesevorgänge werden, wo sinnvoll, nach Sichtbarkeit gefiltert, in der Zeichenzahl begrenzt und paginiert. Der Zugriff auf den rohen Seitenquelltext ist nur im Dev-Modus verfügbar."
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>Warum ist WebGPU nur im Apokalypse-Modus verfügbar?</summary>
+      <p>Weil wir die WebGPU-Textinferenz im Browser noch nicht für gut genug für die meisten Nutzer halten und Ihnen keine schlechte Erfahrung zumuten möchten. Wenn Sie dasselbe LFM2.5 2.6B-Modell lokal verwenden möchten, führen Sie die Inferenz auf Ihrem Rechner mit <strong>llama.cpp</strong> oder <strong>Ollama</strong> aus und verbinden Sie WebBrain mit diesem lokalen Endpunkt, anstatt sich auf WebGPU zu verlassen.</p><p>Der WebGPU-Vision-Fallback bleibt verfügbar, weil sein Modell deutlich kleiner ist und der Fallback nur gelegentlich verwendet wird.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Ich erhalte &quot;Failed to fetch&quot; beim Verbinden mit einem lokalen LLM-Server (vLLM, Ollama, llama.cpp) in meinem Netzwerk</summary>
       <p>Wenn Ihr LLM-Server auf einer anderen Maschine in Ihrem lokalen Netzwerk läuft (z.B. <code>http://192.168.1.x:8000</code>), blockiert Chrome die Anfrage, es sei denn, der Server sendet <strong>CORS-Header</strong>. Die Lösung hängt von Ihrem Server ab:</p><p><strong>vLLM:</strong> Starten Sie mit <code>--allowed-origins '["*"]'</code> (der Wert muss eine JSON-Liste sein).<br><strong>Ollama:</strong> Setzen Sie die Umgebungsvariable <code>OLLAMA_ORIGINS=*</code> vor dem Start.<br><strong>llama.cpp:</strong> CORS ist standardmäßig aktiviert — keine Änderungen nötig.</p><p>Wenn Ihr Server auf <code>localhost</code> läuft (dieselbe Maschine wie der Browser), ist CORS normalerweise nicht erforderlich. Das Problem betrifft nur maschinenübergreifende Verbindungen im lokalen Netzwerk. Stellen Sie sicher, dass Ihre Basis-URL in den WebBrain-Einstellungen auf <code>/v1</code> endet (z.B. <code>http://192.168.1.47:8000/v1</code>). Ausnahme: Ollama, das aus einer Browser-Erweiterung verwendet wird, benötigt möglicherweise noch <code>OLLAMA_ORIGINS</code>; siehe die Ollama-FAQ unten.</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>Unterstützt WebBrain einen Dry-Run-Modus?</summary>
       <p>Ab Version <strong>7.0.0</strong>, noch nicht. Der Dry-Run-Modus ist geplant und bereits auf der Roadmap.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Sendet WebBrain das gesamte DOM an das KI-Modell?</summary>
+      <p>Nein. WebBrain sendet standardmäßig weder rohes HTML noch einen rohen DOM-Dump. Zunächst werden die URL und der Titel der Seite, passende Website-Hinweise und bei aktivierter Bildverarbeitung optional ein Screenshot des sichtbaren Bereichs verwendet.</p><p>Wenn eine Aufgabe Seiteninhalte benötigt, liest WebBrain sie bei Bedarf als reduzierten semantischen Accessibility Tree oder als extrahierten Text. Die Lesevorgänge werden, wo sinnvoll, nach Sichtbarkeit gefiltert, in der Zeichenzahl begrenzt und paginiert. Der Zugriff auf den rohen Seitenquelltext ist nur im Dev-Modus verfügbar.</p>
     </details>
 
     <details class="faq-item">

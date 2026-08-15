@@ -14,6 +14,21 @@ function isGmailThreadIdentifier(value = '') {
   return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
 }
 
+function isGmailConversationHash(hash = '') {
+  const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+  const route = String(segments[0] || '').toLowerCase();
+  const threadId = segments.at(-1);
+  if (!isGmailThreadIdentifier(threadId)) return false;
+  if (route === 'label') {
+    // Label names may contain slashes and may themselves look like legacy
+    // hexadecimal thread IDs. Only Gmail's unambiguous modern ID prefix can
+    // terminate a variable-depth label conversation route.
+    return segments.length >= 3 && /^FMfc[A-Za-z0-9_-]+$/.test(threadId);
+  }
+  if (route === 'search' || route === 'category') return segments.length === 3;
+  return segments.length === 2;
+}
+
 export function normalizeReadScope(value) {
   const scope = String(value || '').trim();
   return READ_SCOPES.has(scope) ? scope : null;
@@ -44,8 +59,7 @@ export function isCommunicationThreadContext(url = '', adapterName = '') {
   const adapter = String(adapterName || '').trim().toLowerCase();
   if (EMAIL_HOST_RE.test(host) || EMAIL_ADAPTERS.has(adapter)) {
     if (/(?:^|\.)google\.com$/i.test(host) || host === 'gmail.com') {
-      const hashSegments = parsed.hash.replace(/^#/, '').split('/').filter(Boolean);
-      return hashSegments.length >= 2 && isGmailThreadIdentifier(hashSegments.at(-1));
+      return isGmailConversationHash(parsed.hash);
     }
     return /(?:^|[/?#])(?:messages?|message|thread|conversation|id|p)(?:[/?#])[^/?#\s]+/i.test(route)
       || /(?:^|[/?#])(?:inbox|sent|all|archive|folders?|labels?)(?:[/?#])[^/?#\s]+/i.test(route);
@@ -139,6 +153,7 @@ function normalizedTreeScope(args = {}) {
     maxChars: normalizedTreeMaxChars(args),
     ref_id: typeof args?.ref_id === 'string' ? args.ref_id.trim() : '',
     page: normalizedTreePage(args, null),
+    tree_revision: typeof args?.tree_revision === 'string' ? args.tree_revision.trim() : '',
   };
 }
 
@@ -164,15 +179,21 @@ function restartGmailRootDiscovery(state) {
 
 function gmailAccessibilityTreeState(state, args, result) {
   const requestedRefId = typeof args?.ref_id === 'string' ? args.ref_id.trim() : '';
+  const requestedTreeRevision = typeof args?.tree_revision === 'string'
+    ? args.tree_revision.trim()
+    : '';
   const resultRootRefId = typeof result?.conversationRootRefId === 'string'
     ? result.conversationRootRefId.trim()
+    : '';
+  const resultTreeRevision = typeof result?.treeRevision === 'string'
+    ? result.treeRevision.trim()
     : '';
   const previousRootRefId = state.conversationRootRefId;
   if (!resultRootRefId && previousRootRefId && (
     requestedRefId === previousRootRefId
     || (!result?.error && typeof result?.pageContent === 'string')
   )) return restartGmailRootDiscovery(state);
-  if (result?.error || typeof result?.pageContent !== 'string' || !resultRootRefId) return state;
+  if (!resultRootRefId) return state;
   const currentRootRefId = resultRootRefId;
 
   const rootChanged = !!previousRootRefId && previousRootRefId !== currentRootRefId;
@@ -192,6 +213,28 @@ function gmailAccessibilityTreeState(state, args, result) {
     ref_id: currentRootRefId,
     page: 1,
   };
+
+  const revisionMismatch = trustedThreadRead
+    && !!requestedTreeRevision
+    && requestedTreeRevision !== resultTreeRevision;
+  const revisionMissing = trustedThreadRead && !resultTreeRevision;
+  if (revisionMismatch || revisionMissing) {
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: false,
+      expansionConfirmed,
+      treeKey: '',
+      treePages: [],
+      treeTerminalPage: null,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0) + (expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: startArgs,
+    };
+  }
+  if (result?.error || typeof result?.pageContent !== 'string') return state;
 
   if (!trustedThreadRead) {
     const discoveredRoot = !previousRootRefId && !!currentRootRefId;
@@ -254,9 +297,8 @@ function gmailAccessibilityTreeState(state, args, result) {
   }
 
   const page = normalizedTreePage(args, result);
-  const totalChars = result.totalChars == null ? Number.NaN : Number(result.totalChars);
-  const treeKey = Number.isFinite(totalChars)
-    ? `gmail|${currentRootRefId}|${totalChars}|${maxDepth}|${maxChars}`
+  const treeKey = resultTreeRevision
+    ? `gmail|${currentRootRefId}|${resultTreeRevision}|${maxDepth}|${maxChars}`
     : '';
   const treeChanged = !!(treeKey && state.treeKey && treeKey !== state.treeKey);
   if (treeChanged && page > 1) {
@@ -300,6 +342,7 @@ function gmailAccessibilityTreeState(state, args, result) {
         maxChars,
         ref_id: currentRootRefId,
         page: Math.trunc(nextPage),
+        tree_revision: resultTreeRevision,
       }
     : null;
 

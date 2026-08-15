@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "为什么 WebGPU 仅在末日模式中可用？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "因为我们认为浏览器内的 WebGPU 文本推理目前对大多数用户来说还不够好，不希望您忍受糟糕的体验。如果您想在本地使用相同的 LFM2.5 2.6B 模型，请在自己的机器上通过 llama.cpp 或 Ollama 运行推理，并让 WebBrain 连接到该本地端点，而不是依赖 WebGPU。 WebGPU 视觉回退仍然可用，因为它的模型小得多，而且这个回退功能只会偶尔使用。"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "连接到我网络上的本地 LLM 服务器(vLLM、Ollama、llama.cpp)时出现「Failed to fetch」",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "截至 7.0.0 版本, 还不支持。dry-run 模式已在路线图中, 后续会提供。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain 会把整个 DOM 发送给 AI 模型吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "不会。默认情况下，WebBrain 不会发送原始 HTML 或完整的 DOM 转储。它首先使用页面 URL 和标题、匹配的网站指引，并在启用视觉功能时选择性地提供当前视口截图。 当任务需要页面内容时，WebBrain 会按需读取精简的语义化无障碍树或提取后的文本。读取结果会在适当情况下按可见性过滤，并设置字符上限和分页。只有 Dev 模式可以访问原始页面源代码。"
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>为什么 WebGPU 仅在末日模式中可用？</summary>
+      <p>因为我们认为浏览器内的 WebGPU 文本推理目前对大多数用户来说还不够好，不希望您忍受糟糕的体验。如果您想在本地使用相同的 LFM2.5 2.6B 模型，请在自己的机器上通过 <strong>llama.cpp</strong> 或 <strong>Ollama</strong> 运行推理，并让 WebBrain 连接到该本地端点，而不是依赖 WebGPU。</p><p>WebGPU 视觉回退仍然可用，因为它的模型小得多，而且这个回退功能只会偶尔使用。</p>
+    </details>
+
+    <details class="faq-item">
       <summary>连接到我网络上的本地 LLM 服务器(vLLM、Ollama、llama.cpp)时出现「Failed to fetch」</summary>
       <p>如果你的 LLM 服务器在本地网络中的另一台机器上(例如 <code>http://192.168.1.x:8000</code>),除非服务器发送 <strong>CORS 头</strong>,否则 Chrome 会拦截该请求。解决方案因服务器而异:</p><p><strong>vLLM:</strong>启动时添加 <code>--allowed-origins '["*"]'</code>(值必须是 JSON 列表)。<br><strong>Ollama:</strong>启动前设置环境变量 <code>OLLAMA_ORIGINS=*</code>。<br><strong>llama.cpp:</strong>默认启用 CORS,无需更改。</p><p>如果你的服务器运行在 <code>localhost</code>(与浏览器同一台机器),通常不需要 CORS。该问题仅影响本地网络上跨机器的连接。请确保 WebBrain 设置中的基础 URL 以 <code>/v1</code> 结尾(例如 <code>http://192.168.1.47:8000/v1</code>)。 例外：从浏览器扩展使用 Ollama 时仍可能需要 <code>OLLAMA_ORIGINS</code>；请参见下方的 Ollama FAQ。</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>WebBrain 支持 dry-run（演练）模式吗？</summary>
       <p>截至 <strong>7.0.0</strong> 版本, 还不支持。dry-run 模式已在路线图中, 后续会提供。</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain 会把整个 DOM 发送给 AI 模型吗？</summary>
+      <p>不会。默认情况下，WebBrain 不会发送原始 HTML 或完整的 DOM 转储。它首先使用页面 URL 和标题、匹配的网站指引，并在启用视觉功能时选择性地提供当前视口截图。</p><p>当任务需要页面内容时，WebBrain 会按需读取精简的语义化无障碍树或提取后的文本。读取结果会在适当情况下按可见性过滤，并设置字符上限和分页。只有 Dev 模式可以访问原始页面源代码。</p>
     </details>
 
     <details class="faq-item">

@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "¿Por qué WebGPU solo está disponible en el Modo Apocalipsis?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Porque todavía no consideramos que la inferencia de texto mediante WebGPU dentro del navegador sea lo bastante buena para la mayoría de los usuarios, y no queremos que tengas que soportar una mala experiencia. Si quieres usar localmente el mismo modelo LFM2.5 2.6B, ejecuta la inferencia en tu equipo con llama.cpp u Ollama y configura WebBrain para que apunte a ese endpoint local en lugar de depender de WebGPU. El respaldo de visión mediante WebGPU sigue disponible porque su modelo es mucho más pequeño y este respaldo solo se usa ocasionalmente."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Recibo «Failed to fetch» al conectar con un servidor LLM local (vLLM, Ollama, llama.cpp) en mi red",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "A partir de la versión 7.0.0, todavía no. El modo dry-run está planificado y ya está en la hoja de ruta."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿WebBrain envía todo el DOM al modelo de IA?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. De forma predeterminada, WebBrain no envía HTML sin procesar ni un volcado completo del DOM. Empieza con la URL y el título de la página, las indicaciones correspondientes al sitio y, si la visión está activada, una captura opcional del área visible. Cuando una tarea necesita contenido de la página, WebBrain lo lee bajo demanda como un árbol de accesibilidad semántico reducido o como texto extraído. Las lecturas se filtran por visibilidad cuando corresponde, tienen límites de caracteres y se paginan. El acceso al código fuente sin procesar de la página solo está disponible en el modo Dev."
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>¿Por qué WebGPU solo está disponible en el Modo Apocalipsis?</summary>
+      <p>Porque todavía no consideramos que la inferencia de texto mediante WebGPU dentro del navegador sea lo bastante buena para la mayoría de los usuarios, y no queremos que tengas que soportar una mala experiencia. Si quieres usar localmente el mismo modelo LFM2.5 2.6B, ejecuta la inferencia en tu equipo con <strong>llama.cpp</strong> u <strong>Ollama</strong> y configura WebBrain para que apunte a ese endpoint local en lugar de depender de WebGPU.</p><p>El respaldo de visión mediante WebGPU sigue disponible porque su modelo es mucho más pequeño y este respaldo solo se usa ocasionalmente.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Recibo «Failed to fetch» al conectar con un servidor LLM local (vLLM, Ollama, llama.cpp) en mi red</summary>
       <p>Si tu servidor LLM está en otra máquina de tu red local (por ejemplo <code>http://192.168.1.x:8000</code>), Chrome bloquea la petición salvo que el servidor envíe <strong>cabeceras CORS</strong>. La solución depende del servidor:</p><p><strong>vLLM:</strong> arranca con <code>--allowed-origins '["*"]'</code> (el valor debe ser una lista JSON).<br><strong>Ollama:</strong> define la variable de entorno <code>OLLAMA_ORIGINS=*</code> antes de arrancar.<br><strong>llama.cpp:</strong> CORS está activado por defecto — no hay que cambiar nada.</p><p>Si tu servidor se ejecuta en <code>localhost</code> (la misma máquina que el navegador), normalmente no hace falta CORS. El problema afecta solo a conexiones entre máquinas en la red local. Asegúrate de que la URL base en los ajustes de WebBrain termina en <code>/v1</code> (por ejemplo <code>http://192.168.1.47:8000/v1</code>). Excepción: Ollama usado desde una extensión de navegador puede seguir necesitando <code>OLLAMA_ORIGINS</code>; consulta la pregunta de Ollama más abajo.</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>¿WebBrain tiene modo de simulación (dry-run)?</summary>
       <p>A partir de la versión <strong>7.0.0</strong>, todavía no. El modo dry-run está planificado y ya está en la hoja de ruta.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>¿WebBrain envía todo el DOM al modelo de IA?</summary>
+      <p>No. De forma predeterminada, WebBrain no envía HTML sin procesar ni un volcado completo del DOM. Empieza con la URL y el título de la página, las indicaciones correspondientes al sitio y, si la visión está activada, una captura opcional del área visible.</p><p>Cuando una tarea necesita contenido de la página, WebBrain lo lee bajo demanda como un árbol de accesibilidad semántico reducido o como texto extraído. Las lecturas se filtran por visibilidad cuando corresponde, tienen límites de caracteres y se paginan. El acceso al código fuente sin procesar de la página solo está disponible en el modo Dev.</p>
     </details>
 
     <details class="faq-item">

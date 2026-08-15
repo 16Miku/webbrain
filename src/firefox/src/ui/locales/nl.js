@@ -1,6 +1,8 @@
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'De antwoordstream is onderbroken; deze Ask-beurt wordt opnieuw geprobeerd zonder streaming.',
@@ -130,6 +132,7 @@ export default {
   "sp.slash.teach": "Acties opnemen als opgeslagen workflow",
   'sp.slash.run_workflow': 'Voer een opgeslagen workflow uit op ID',
   'sp.workflows.run_prompt': 'Opgeslagen workflow "{name}" uitvoeren',
+  "sp.workflows.standalone_unavailable": "Dit zelfstandige venster is alleen voor de Vraagmodus. Open WebBrain in het zijpaneel om opgeslagen workflows in de Actiemodus uit te voeren.",
   'sp.workflows.parameters_for': 'Voer parameters in voor "{name}". Waarden worden alleen voor deze uitvoering gebruikt.',
   'sp.workflows.parameter_required': '"{name}" is verplicht.',
   'sp.slash.save_workflow': 'Sla de laatste succesvolle opgenomen uitvoering op',
@@ -494,6 +497,7 @@ export default {
   'st.display.search.placeholder': 'Zoek in Algemene instellingen',
   'st.display.search.empty': 'Geen algemene instellingen gevonden.',
   'st.display.advanced': 'Geavanceerd',
+  ...getApocalypseModeCopy('nl'),
   'st.display.help_improve.label': 'Help WebBrain verbeteren',
   'st.display.help_improve.desc_html': 'Sta toe dat geschikte WebBrain Cloud-tekst- en toolinteracties worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Standaard ingeschakeld. Als u dit uitschakelt, wordt het huidige gesprek permanent uitgesloten; opnieuw inschakelen geldt vanaf het volgende nieuwe gesprek. Screenshots en afbeeldingsbytes worden niet bewaard in de WebBrain-verbeteringsdatabase. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacybeleid →</a>',
   'st.display.clarify_timeout.label': 'Verduidelijkingstime-out',
@@ -970,4 +974,5 @@ export default {
   "st.sync.confirm.reset": "De gecodeerde cloudkopie vervangen door de huidige WebBrain-installatie van dit apparaat?",
   "st.sync.consent.legacy": "Versleutelde synchronisatie inschakelen? WebBrain verzendt een end-to-end gecodeerde kopie van uw herinneringen, automatisch aanvullen van profielen en API-sleutelproviderinstellingen naar WebBrain Cloud. Chatgeschiedenis en OAuth-aanmeldingen worden niet gesynchroniseerd.",
   "st.sync.consent.denied": "Er is geen versleutelde synchronisatietoestemming verleend.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

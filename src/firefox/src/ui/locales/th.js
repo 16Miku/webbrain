@@ -1,6 +1,8 @@
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'การสตรีมคำตอบถูกขัดจังหวะ กำลังลอง Ask รอบนี้อีกครั้งโดยไม่ใช้สตรีม',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'ค้นหาการตั้งค่าทั่วไป',
   'st.display.search.empty': 'ไม่พบการตั้งค่าทั่วไปที่ตรงกัน',
   'st.display.advanced': 'ขั้นสูง',
+  ...getApocalypseModeCopy('th'),
   'st.display.clarify_timeout.label': 'หมดเวลา clarify',
   'st.display.clarify_timeout.desc': 'ระยะเวลารอคำตอบ clarify ก่อนเลือกตัวเลือกแรกอัตโนมัติ (หรือหมดเวลาหากไม่มีตัวเลือก) 0 = ทันที (เลือกอัตโนมัติเสมอ) เกิน 1200 วินาที = รอไม่จำกัด (ปิด) ค่าเริ่มต้น 60 วินาที ไม่ใช้กับสิทธิ์หรือการยืนยันส่งฟอร์ม',
   'st.display.clarify_timeout.off': 'ปิด',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "บันทึกการทำงานของคุณเป็นเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.run_workflow": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ด้วย ID",
   "sp.workflows.run_prompt": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ “{name}”",
+  "sp.workflows.standalone_unavailable": "หน้าต่างแยกนี้ใช้ได้เฉพาะโหมดถาม เปิด WebBrain ในแผงด้านข้างเพื่อเรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ในโหมดลงมือทำ",
   "sp.workflows.parameters_for": "ป้อนพารามิเตอร์สำหรับ “{name}” ค่าจะใช้สำหรับการเรียกใช้ครั้งนี้เท่านั้น",
   "sp.workflows.parameter_required": "ต้องระบุ “{name}”",
   "sp.slash.save_workflow": "บันทึกการทำงานล่าสุดที่สำเร็จและมีการติดตาม",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "แทนที่สำเนาบนคลาวด์ที่เข้ารหัสด้วยการตั้งค่า WebBrain ปัจจุบันของอุปกรณ์นี้หรือไม่",
   "st.sync.consent.legacy": "เปิดการซิงค์ที่เข้ารหัสไหม WebBrain จะส่งสำเนาความทรงจำของคุณ การกรอกโปรไฟล์อัตโนมัติ และการตั้งค่าผู้ให้บริการคีย์ API ที่เข้ารหัสจากต้นทางถึงปลายทางไปยัง WebBrain Cloud ประวัติการแชทและการลงชื่อเข้าใช้ OAuth จะไม่ซิงค์กัน",
   "st.sync.consent.denied": "ไม่ได้รับสิทธิ์การซิงค์ที่เข้ารหัส",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

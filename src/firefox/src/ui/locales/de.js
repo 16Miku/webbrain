@@ -1,6 +1,8 @@
 ﻿// German (de).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Der Antwortstream wurde unterbrochen; dieser Ask-Durchgang wird ohne Streaming erneut versucht.',
@@ -166,6 +168,7 @@ export default {
   'sp.slash.import_config': 'WebBrain-Konfigurations-Snapshot als JSON importieren',
   'sp.slash.import_config_file': 'WebBrain-Konfigurations-JSON-Datei auswählen',
   'sp.workflows.run_prompt': 'Gespeicherten Workflow „{name}" ausführen',
+  "sp.workflows.standalone_unavailable": "Dieses eigenständige Fenster ist nur für den Fragen-Modus vorgesehen. Öffnen Sie WebBrain in der Seitenleiste, um gespeicherte Workflows im Handeln-Modus auszuführen.",
   'sp.workflows.parameters_for': 'Parameter für „{name}" eingeben. Die Werte werden nur für diesen Durchlauf verwendet.',
   'sp.workflows.parameter_required': '„{name}" ist erforderlich.',
   'sp.recommended.title': 'Vorgeschlagene Aktionen',
@@ -512,6 +515,7 @@ export default {
   'st.display.search.placeholder': 'Allgemeine Einstellungen durchsuchen',
   'st.display.search.empty': 'Keine passenden allgemeinen Einstellungen.',
   'st.display.advanced': 'Erweitert',
+  ...getApocalypseModeCopy('de'),
   'st.display.help_improve.label': 'Bei der Verbesserung von WebBrain helfen',
   'st.display.help_improve.desc_html': 'Ermöglichen Sie, dass geeignete WebBrain Cloud-Text- und Tool-Interaktionen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Standardmäßig aktiviert. Wenn Sie dies deaktivieren, wird die aktuelle Unterhaltung dauerhaft ausgeschlossen; eine erneute Aktivierung gilt ab der nächsten neuen Unterhaltung. Screenshots und Bilddaten werden nicht in der WebBrain-Verbesserungsdatenbank gespeichert. <u>Anfragen an lokale Modelle und mit eigenen APIs werden niemals von WebBrain erfasst.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Datenschutzrichtlinie →</a>',
   'st.display.clarify_timeout.label': 'Zeitlimit für Klärungsfragen',
@@ -990,4 +994,5 @@ export default {
   "st.sync.confirm.reset": "Die verschlüsselte Cloud-Kopie durch das aktuelle WebBrain-Setup dieses Geräts ersetzen?",
   "st.sync.consent.legacy": "Verschlüsselte Synchronisierung aktivieren? WebBrain überträgt eine Ende-zu-Ende-verschlüsselte Kopie Ihrer Erinnerungen, des automatischen Ausfüllens Ihres Profils und der Einstellungen des API-Schlüsselanbieters an die WebBrain Cloud. Chatverlauf und OAuth-Anmeldungen werden nicht synchronisiert.",
   "st.sync.consent.denied": "Die Berechtigung zur verschlüsselten Synchronisierung wurde nicht erteilt.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

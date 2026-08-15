@@ -36,7 +36,7 @@ dialog "Add a product" [ref_166]
 **Parameters:**
 | Parameter | Default | Description |
 |---|---|---|
-| `filter` | `'all'` | `'all'` (whole DOM), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
+| `filter` | `'all'` | `'all'` (whole rendered document scope), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
 | `maxDepth` | `15` | Max tree depth to descend |
 | `maxChars` | Filter-dependent | Structured page size. Defaults to 6,000 for `all`, 3,000 for `visible`, and 3,500 for `interactive`; larger trees return continuation metadata. See [adaptive read windows](#adaptive-read-windows). |
 | `ref_id` | — | Anchor at a specific element's subtree instead of `document.body` |

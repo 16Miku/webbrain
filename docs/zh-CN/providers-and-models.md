@@ -45,6 +45,8 @@ class BaseLLMProvider {
 | `sglang` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
+| `webgpu`（Chromium） | `webgpu` | 本地 | LFM2.5 2.6B（经过测试的默认值）或实验性自定义 HF 仓库（很可能不兼容） | 否 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |
@@ -69,7 +71,8 @@ class BaseLLMProvider {
 
 WebBrain 从 OpenCode 提供商目录提交
 `62e4641235d7847dadc60da37cca8a023dd54fc1` 的快照中新增了 76 张默认禁用的
-提供商卡片。加上原有 28 张，设置中共有 **104 个内置提供商**。完整 ID
+提供商卡片。设置中在 **Chromium 上共有 106 个内置提供商**，在 **Firefox
+上共有 105 个**；两者的差异是仅 Chromium 提供的本地 WebGPU 运行时。完整 ID
 列表如下：
 
 `302ai`、`abacus`、`aihubmix`、`alibaba-coding-plan`、
@@ -108,7 +111,8 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 
 ### 本地提供商
 
-七个本地提供商默认启用，无需 API 密钥（除非本地服务器启动时启用了认证）：
+九个本地端点提供商默认启用。模型运行时无需 API 密钥（除非服务器启用了认证）；
+通用代理卡片必须填写客户端密钥：
 
 - **llama.cpp**：`http://localhost:8080` — 运行 `llama-server -m model.gguf`
 - **Ollama**：`http://localhost:11434/v1` — `ollama serve`，或 `ollama launch webbrain --model <model>`
@@ -117,6 +121,30 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 - **vLLM**：`http://localhost:8000/v1` — vLLM 的 OpenAI 兼容服务器
 - **SGLang**：`http://localhost:30000/v1` — SGLang 的 OpenAI 兼容服务器
 - **LocalAI**：`http://localhost:8080/v1` — LocalAI 的 OpenAI 兼容服务器
+- **GPT4All**：`http://localhost:4891/v1` — GPT4All 本地 API 服务器
+- **本地 OpenAI 兼容代理**：`http://127.0.0.1:8317/v1` — 通用的、带认证的
+  本地网关；模型和代理客户端 API 密钥均为必填
+
+#### 订阅代理示例（CLIProxyAPI）
+
+**本地 OpenAI 兼容代理**卡片可连接单独管理的
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 实例。按照
+[官方快速入门](https://help.router-for.me/introduction/quick-start)安装，或从源码执行
+`go build -o cli-proxy-api ./cmd/server` 并把 `config.example.yaml` 复制为
+`config.yaml`。先设置 `host: "127.0.0.1"`、`port: 8317`，并在 `api-keys` 中生成
+强随机密钥。使用 `./cli-proxy-api --config ./config.yaml --codex-login` 登录
+ChatGPT/Codex，或用 `--claude-login` 登录 Claude；Gemini CLI 需先安装
+[官方插件](https://github.com/router-for-me/cpa-plugin-gemini-cli)：启用可信插件，在
+CLIProxyAPI 官方插件商店安装 `gemini-cli`，重启代理，再使用 `--geminicli-login`
+（参见[插件管理说明](https://help.router-for.me/cn/management/api#插件)）。最后运行
+`./cli-proxy-api --config ./config.yaml` 启动服务。
+在 WebBrain 中保留 `http://127.0.0.1:8317/v1`，填写同一密钥，加载并选择模型，
+最后测试连接。
+
+不要把代理暴露到局域网或公网：CLIProxyAPI 的空 host 默认监听所有网络接口，TLS
+默认关闭，空 `api-keys` 列表会允许未认证请求。这是一条实验性、由社区支持的兼容
+路径。代理进程在本机运行，但可能把请求上下文转发给上游账户；上游 OAuth 凭据始终
+保留在 CLIProxyAPI 中。
 
 Ollama、llama.cpp、LM Studio 和 LocalAI 默认使用 `visionMode: auto`。WebBrain 在
 页面上下文增强前读取所选模型的原生服务器元数据，只有服务器明确报告支持图像输入时才

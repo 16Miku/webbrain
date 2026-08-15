@@ -313,7 +313,6 @@ export class LoopDetector {
       refId: typeof value?.ref_id === 'string' ? value.ref_id.trim() : '',
     });
     const page = Number(args?.page || 1);
-    const hasRef = typeof args?.ref_id === 'string' && args.ref_id.trim() !== '';
     const currentScopeKey = scopeKeyFor(args);
     const currentPageKey = `${currentScopeKey}|${page}`;
     const sequentialPage = previous.total > 0
@@ -321,10 +320,14 @@ export class LoopDetector {
       && page === previous.nextPage
       && currentScopeKey === previous.scopeKey
       && !previous.seenPages.has(currentPageKey);
-    const repeatedRootOrPage = previous.total > 0 && !sequentialPage;
-    const content = String(result?.pageContent || '').trim();
-    const meaningfulLines = content ? content.split(/\r?\n/).filter(line => line.trim()).length : 0;
-    const suspicious = !sequentialPage && (hasRef || repeatedRootOrPage || (hasRef && meaningfulLines <= 1));
+    const repeatedScopeOutOfSequence = previous.total > 0
+      && currentScopeKey === previous.scopeKey
+      && !sequentialPage;
+    const repeatedExactPage = previous.seenPages.has(currentPageKey);
+    // A first read of a new ref-anchored subtree is legitimate drill-down
+    // progress. Only repeated/out-of-order reads of the same scope are loop
+    // evidence; the total-read cap below still bounds endless ref hopping.
+    const suspicious = !sequentialPage && (repeatedExactPage || repeatedScopeOutOfSequence);
 
     const state = {
       total: previous.total + 1,

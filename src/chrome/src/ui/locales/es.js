@@ -1,6 +1,8 @@
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Se interrumpió la transmisión de la respuesta; reintentando este turno de Ask sin transmisión.',
@@ -289,6 +291,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'déjalo en blanco para usar el modelo cargado',
 
   'st.vision.desc': 'Si se define, las capturas de pantalla se envían a este modelo para leer la página, mientras el proveedor activo se encarga de la planificación y las llamadas a herramientas. Déjalo en blanco para usar también el proveedor activo para la visión. Solo endpoints compatibles con OpenAI.',
+  'st.vision.local.title': 'Alternativa local LFM2.5-VL',
+  'st.vision.local.desc': 'Ejecuta LiquidAI/LFM2.5-VL-450M-ONNX en tu GPU. Las capturas de pantalla permanecen en este dispositivo; la primera vez se descargan unos 770 MB de Hugging Face en segundo plano y se guardan en la caché local. Puedes cambiar de pestaña o cerrar Configuración durante la descarga; mantén Chrome abierto.',
+  'st.vision.local.enable': 'Usar alternativa local',
+  'st.vision.local.disable': 'Desactivar alternativa local',
+  'st.vision.local.saved': 'Alternativa local de visión activada.',
+  'st.vision.local.testing': 'Cargando y probando la visión local… La primera vez se descargan unos 770 MB en segundo plano. Puedes cambiar de pestaña o cerrar Configuración; mantén Chrome abierto.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Guardar',
   'st.vision.test': 'Probar conexión',
   'st.vision.clear': 'Limpiar',
@@ -672,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Buscar en ajustes generales',
   'st.display.search.empty': 'No hay ajustes generales que coincidan.',
   'st.display.advanced': 'Avanzado',
+  ...getApocalypseModeCopy('es'),
   'st.display.cloud_bridge.label': 'Puente en la nube',
   'st.display.cloud_bridge.desc': 'Conecta un controlador local a este perfil de Chromium. Usa el puerto 17373 para WebBrain Cloud, 17374 para clientes MCP o 17375 para LM Studio. Solo puede haber un puente activo; los avisos de permisos siguen aplicándose.',
   'st.display.cloud_bridge.url_label': 'URL de WebSocket',
@@ -807,6 +817,7 @@ export default {
   "sp.slash.teach": "Graba tus acciones como un flujo de trabajo guardado",
   "sp.slash.run_workflow": "Ejecutar un flujo guardado por ID",
   "sp.workflows.run_prompt": "Ejecutar el flujo guardado «{name}»",
+  "sp.workflows.standalone_unavailable": "Esta ventana independiente solo admite el modo Preguntar. Abre WebBrain en el panel lateral para ejecutar flujos guardados en el modo Actuar.",
   "sp.workflows.parameters_for": "Introduce los parámetros de «{name}». Los valores solo se usan en esta ejecución.",
   "sp.workflows.parameter_required": "«{name}» es obligatorio.",
   "sp.slash.save_workflow": "Guardar la última ejecución registrada correctamente",
@@ -1035,4 +1046,25 @@ export default {
   "st.sync.confirm.reset": "¿Reemplazar la copia cifrada en la nube con la configuración actual de WebBrain de este dispositivo?",
   "st.sync.consent.legacy": "¿Activar sincronización cifrada? WebBrain transmitirá una copia cifrada de extremo a extremo de sus recuerdos, el autocompletado de perfiles y la configuración del proveedor de claves API a WebBrain Cloud. El historial de chat y los inicios de sesión de OAuth no están sincronizados.",
   "st.sync.consent.denied": "No se concedió el permiso de sincronización cifrada.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_download.title': 'WebGPU model files',
+  'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
+  'st.providers.webgpu_download.checking': 'Checking local model files…',
+  'st.providers.webgpu_download.not_downloaded': 'Not downloaded',
+  'st.providers.webgpu_download.downloading': 'Downloading · {progress}%',
+  'st.providers.webgpu_download.paused': 'Paused · {progress}%',
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.ready': 'Ready for local chat',
+  'st.providers.webgpu_download.error': 'Download needs attention',
+  'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
+  'st.providers.webgpu_download.required': 'Download the selected model before choosing WebGPU for chat.',
+  'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
+  'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
+  'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
+  'st.providers.webgpu_download.start': 'Start download',
+  'st.providers.webgpu_download.pause': 'Pause',
+  'st.providers.webgpu_download.resume': 'Resume',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
 };

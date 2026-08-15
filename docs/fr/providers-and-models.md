@@ -45,6 +45,8 @@ class BaseLLMProvider {
 | `sglang` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
+| `local_openai_proxy` | `openai` | local | (requis) | Désactivée / bascule manuelle |
+| `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (valeur par défaut testée) ou dépôt HF personnalisé expérimental, probablement incompatible | Non |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Regex nom de modèle |
@@ -69,9 +71,10 @@ class BaseLLMProvider {
 
 WebBrain ajoute 76 cartes désactivées par défaut depuis l’instantané du
 catalogue OpenCode au commit
-`62e4641235d7847dadc60da37cca8a023dd54fc1`. Avec les 28 cartes existantes,
-les Paramètres proposent **104 fournisseurs intégrés**. La liste exacte des
-identifiants est :
+`62e4641235d7847dadc60da37cca8a023dd54fc1`. Avec les cartes existantes,
+les Paramètres proposent **106 fournisseurs intégrés sur Chromium** et **105
+sur Firefox** ; la différence est le moteur WebGPU local à Chromium. La liste
+exacte des identifiants est :
 
 `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`,
 `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`,
@@ -114,8 +117,9 @@ Entrées volontairement exclues : `github-models` (retrait de GitHub Models le
 
 ### Fournisseurs Locaux
 
-Sept fournisseurs locaux sont activés par défaut sans clé API requise sauf si le
-serveur local a été démarré avec authentification :
+Neuf fournisseurs à terminaison locale sont activés par défaut. Les moteurs de
+modèles n'exigent pas de clé sauf si le serveur utilise l'authentification ; la
+carte proxy générique exige une clé client :
 
 - **llama.cpp** : `http://localhost:8080` — exécutez `llama-server -m model.gguf`
 - **Ollama** : `http://localhost:11434/v1` — `ollama serve`, ou `ollama launch webbrain --model <model>`
@@ -124,6 +128,34 @@ serveur local a été démarré avec authentification :
 - **vLLM** : `http://localhost:8000/v1` — le serveur compatible OpenAI de vLLM
 - **SGLang** : `http://localhost:30000/v1` — le serveur compatible OpenAI de SGLang
 - **LocalAI** : `http://localhost:8080/v1` — le serveur compatible OpenAI de LocalAI
+- **GPT4All** : `http://localhost:4891/v1` — le serveur API local de GPT4All
+- **Proxy local compatible OpenAI** : `http://127.0.0.1:8317/v1` — passerelle
+  locale générique authentifiée ; le modèle et la clé API client sont requis
+
+#### Exemple de proxy d'abonnement (CLIProxyAPI)
+
+La carte **Proxy local compatible OpenAI** peut joindre une instance
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) gérée séparément.
+Installez-le via le [guide de démarrage officiel](https://help.router-for.me/introduction/quick-start)
+ou compilez-le (`go build -o cli-proxy-api ./cmd/server`), copiez
+`config.example.yaml` vers `config.yaml`, puis configurez `host: "127.0.0.1"`,
+`port: 8317` et une valeur forte et aléatoire dans `api-keys`. Authentifiez le
+compte avec `./cli-proxy-api --config ./config.yaml --codex-login` ou
+`--claude-login`. Gemini CLI nécessite le
+[plugin officiel](https://github.com/router-for-me/cpa-plugin-gemini-cli) :
+activez les plugins de confiance, installez `gemini-cli` depuis le Plugin Store
+officiel, redémarrez le proxy, puis utilisez `--geminicli-login` (voir le
+[guide de gestion](https://help.router-for.me/management/api#plugins)). Démarrez enfin avec
+`./cli-proxy-api --config ./config.yaml`. Dans WebBrain, conservez l'URL
+`http://127.0.0.1:8317/v1`, saisissez la même clé, chargez les modèles,
+sélectionnez-en un puis testez la connexion.
+
+Ne publiez pas ce proxy sur le réseau local ou Internet : l'hôte vide par
+défaut écoute toutes les interfaces, TLS est désactivé par défaut et une liste
+`api-keys` vide autorise les requêtes sans authentification. Ce chemin est
+expérimental et communautaire. Le processus est local, mais il peut transmettre
+le contexte à un compte en amont ; les identifiants OAuth amont restent dans
+CLIProxyAPI.
 
 Ollama, llama.cpp, LM Studio et LocalAI utilisent `visionMode: auto` par défaut.
 WebBrain lit les métadonnées natives du modèle sélectionné avant l'enrichissement et

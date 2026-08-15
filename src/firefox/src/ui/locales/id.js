@@ -1,6 +1,8 @@
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Streaming respons terputus; mencoba kembali giliran Ask ini tanpa streaming.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Cari pengaturan Umum',
   'st.display.search.empty': 'Tidak ada pengaturan Umum yang cocok.',
   'st.display.advanced': 'Lanjutan',
+  ...getApocalypseModeCopy('id'),
   'st.display.clarify_timeout.label': 'Batas waktu klarifikasi',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan pada prompt klarifikasi sebelum memilih opsi pertama secara otomatis (atau timeout jika tidak ada opsi). 0 = Instan (selalu pilih otomatis). Di atas 1200 detik menunggu tanpa batas (Nonaktif). Default 60 detik. Tidak berlaku untuk izin atau konfirmasi kirim formulir.',
   'st.display.clarify_timeout.off': 'Nonaktif',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "Rekam tindakan Anda sebagai alur kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan alur kerja tersimpan berdasarkan ID",
   "sp.workflows.run_prompt": "Jalankan alur kerja tersimpan “{name}”",
+  "sp.workflows.standalone_unavailable": "Jendela mandiri ini hanya untuk mode Tanya. Buka WebBrain di panel samping untuk menjalankan alur kerja tersimpan dalam mode Bertindak.",
   "sp.workflows.parameters_for": "Masukkan parameter untuk “{name}”. Nilai hanya digunakan untuk proses ini.",
   "sp.workflows.parameter_required": "“{name}” wajib diisi.",
   "sp.slash.save_workflow": "Simpan proses terekam terbaru yang berhasil",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Ganti salinan cloud terenkripsi dengan pengaturan WebBrain perangkat ini saat ini?",
   "st.sync.consent.legacy": "Aktifkan sinkronisasi terenkripsi? WebBrain akan mengirimkan salinan memori Anda yang terenkripsi ujung ke ujung, pengisian otomatis profil, dan pengaturan penyedia kunci API ke WebBrain Cloud. Riwayat obrolan dan proses masuk OAuth tidak disinkronkan.",
   "st.sync.consent.denied": "Izin sinkronisasi terenkripsi tidak diberikan.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

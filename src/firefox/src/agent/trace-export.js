@@ -107,6 +107,17 @@ function renderAttachmentMetadata(attachments) {
   return items.join('; ');
 }
 
+function renderLocalWikipediaRag(value) {
+  if (!value || typeof value !== 'object') return '';
+  if (value.attempted !== true) return ` · local Wikipedia RAG ${oneLine(value.status || 'skipped')}`;
+  const matches = Math.max(0, Number(value.matchCount) || 0);
+  const dates = (Array.isArray(value.archiveDates) ? value.archiveDates : [])
+    .map(oneLine)
+    .filter(Boolean)
+    .slice(0, 3);
+  return ` · local Wikipedia RAG ${oneLine(value.status || 'attempted')} · ${matches} match${matches === 1 ? '' : 'es'}${dates.length ? ` · archive ${dates.join(', ')}` : ''}`;
+}
+
 function exportedRunStatus(run, events = []) {
   const status = oneLine(run?.status || '');
   const sawLoopError = events.some(ev => ev?.kind === 'error' && ev?.data?.phase === 'loop');
@@ -184,7 +195,7 @@ export function tracesToMarkdown(runsWithEvents, {
           Number.isFinite(d.imageBlockCount) ? `${d.imageBlockCount} image block${d.imageBlockCount === 1 ? '' : 's'}` : '',
           Number.isFinite(d.documentBlockCount) ? `${d.documentBlockCount} document block${d.documentBlockCount === 1 ? '' : 's'}` : '',
         ].filter(Boolean).join(' · ');
-        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderPromptProvenance(d.promptProvenance)}\n`;
+        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderLocalWikipediaRag(d.localWikipediaRag)}${renderPromptProvenance(d.promptProvenance)}\n`;
       } else if (ev.kind === 'llm_response') {
         const content = String(d.content || '').trim();
         if (!content) continue;
@@ -222,6 +233,9 @@ export function tracesToMarkdown(runsWithEvents, {
         const attempts = Number(d.extra?.attempts) || 2;
         const reason = oneLine(d.extra?.reason || 'invalid_output');
         md += `- ⚠️ Planning failed after ${attempts} attempts · continued in Act mode · reason=${reason}\n`;
+      } else if (ev.kind === 'note' && d.note === 'standalone_wikipedia_search_requested') {
+        const queries = Math.max(1, Number(d.extra?.queryCount) || 1);
+        md += `- 📚 On-device model requested local Wikipedia retrieval · ${queries} quer${queries === 1 ? 'y' : 'ies'}\n`;
       } else if (ev.kind === 'note' && /screenshot|vision|attachment|visual/i.test(String(d.note || ''))) {
         md += `- ℹ️ ${oneLine(d.note)}\n`;
       }

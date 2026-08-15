@@ -4,6 +4,148 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.0.0] - 2026-08-14
+
+### Added
+- Added opt-in Apocalypse Mode for downloading or importing Wikipedia Kiwix/ZIM archives and searching them locally when the built-in Wikipedia skill cannot reach its online source.
+- Added an on-device archive manager, available from the ☢ Apocalypse Mode link beside Support in the Settings header, with expanded language choices, full-text archives with an optional images toggle, background download progress, storage estimates, update checks, removal controls, and reauthorization for external archive files.
+- Added browser-native ZIM parsing and search, including Zstandard-compressed clusters, without uploading archive contents.
+- On supported Chromium browsers, enabling Apocalypse Mode now enables and downloads the local LFM2.5-VL vision fallback automatically, with persistent progress shown on the management page.
+- Localized the Apocalypse Mode interface across all supported Chrome and Firefox locales.
+
+### Fixed
+- Isolated browser-managed archive storage per download so reinstalling the same archive cannot corrupt another record.
+- Required explicit Apocalypse Mode opt-in before catalog or Metalink network access.
+- Made stale-import recovery generation-safe and preserved partial data while a live importer may still be writing.
+- Added explicit permission recovery for external ZIM files after browser restarts and prevented automatic retries while authorization is required.
+- Removed unbounded alarm retries after unexpected archive-download failures.
+- Routed local vision progress through the service worker, probed WebGPU before automatic selection, restored the prior vision provider after automatic preload failures, preserved later local-vision opt-outs, and refreshed the Settings controls after cross-tab changes.
+
+### Tests
+- Added mirrored Chrome and Firefox regression coverage for ZIM validation and search, archive downloads and imports, opt-in network gates, recovery races, external-file permissions, and retry behavior.
+
+## [31.0.1] - 2026-08-14
+
+### Changed
+- blog: announce WebGPU vision and correct EXL3 date
+- i18n: localize local vision fallback
+- dist: rebuild submission zips for v31.0.0
+- fix: use visual local vision health probe
+- docs: add 31.0.0 changelog
+- version up
+- dist: rebuild extension packages
+- fix: make local vision probe reliable
+- dist: rebuild extension packages
+- fix: harden WebGPU vision lifecycle
+- improvements
+- Retry quantized WebGPU map failures with fp16 before aborting
+- Skip WASM fallback for quantized WebGPU models
+- Retry WebGPU unaligned-access failures with fp16 dtype
+- Reset WebGPU mode when WASM kernel init fails
+- Improve WebGPU fallback errors and switch default ONNX model to Gemma
+- Add robust fallback for WebGPU buffer map failures
+- Handle WebGPU OrtRun buffer download/CPU data failures with retry mode
+- Fix WebGPU CPU tensor access error in worker pipeline
+- 9.0.2
+- 9.0.0
+- WebGPU: keep outputs on GPU to avoid mapAsync OOM
+- title change
+- WebGPU: move inference to a dedicated Worker + upgrade to Qwen 3.5 0.8B
+- WebGPU: disable wasm-cache for chrome-extension scheme
+- WebGPU: address PR #66 codex review (tool-call streaming + cache key)
+- WebGPU: enable cross-origin isolation for SharedArrayBuffer
+- WebGPU: force .jsep wasm variant so WebGPU EP actually engages
+- WebGPU: surface fallback-adapter / no-GPU case in Test Connection
+- WebGPU: document fp16 fallback when q4f16 kernel overflows
+- WebGPU: switch default dtype from q4 to q4f16
+- WebGPU: vendor asyncify WASM variant for CPU fallback ops
+- WebGPU: vendor onnxruntime-common, patch second bare specifier
+- WebGPU: vendor UNMINIFIED builds (Web Store policy + readability)
+- WebGPU: fix bare-specifier import (vendor ort.webgpu.bundle, patch specifier)
+- version up
+- Vendor @huggingface/transformers 4.2.0 (WebGPU + ONNX runtime)
+- WebGPU: download progress indicator
+- Update offscreen.html
+- chore: bump version 7.3.1 → 7.4.0
+- WebGPU + ONNX provider (Qwen 3 0.6B, in-browser, no server needed)
+
+## [31.0.0] - 2026-08-14
+
+### Added
+- Added a one-click, Chrome-only in-browser vision fallback powered by WebGPU, using LiquidAI's LFM2.5-VL-450M ONNX model as a dedicated screenshot-description sidecar rather than a general planning provider.
+
+## [30.0.7] - 2026-08-14
+
+### Changed
+- fix(memory): validate extraction confidence defaults
+- fix(actions): preserve Messenger thread routes
+- fix(session): recompute recent boundary after filtering
+- 30.0.6
+- docs: explain page context reduction
+- Default extraction confidence to 1 when the model omits it
+- Reject lookalike commerce hosts and short-link DM paths
+- Drop tool results orphaned by assistant compaction in session snapshots
+- Clarify the non-finite overflow comment per review feedback
+- Fix clipped plan review steps
+- Reject non-finite numbers in cloud output schema validation
+- Added Product Hunt
+
+### Fixed
+- Keep ordinary and forced-recovery answers in the trusted user-request language while allowing explicit translation targets, user-edited plan targets, multilingual deliverables, and source-faithful quotations to use their requested languages.
+- Shrink the response-language instruction on ordinary turns from about 150 tokens to about 40, stop repeating it in the `done` tool schema when the system prompt already carries it, and keep an explicitly empty planner deliverable list instead of discarding it as malformed. Translation, multilingual, approved-plan-override, and forced-delivery turns keep the full wording.
+
+## [30.0.5] - 2026-08-13
+
+### Changed
+- bugfixes
+- Handle nested opaque iframe origins
+- Fix agent safety and reliability regressions
+- removed unnecessary files
+
+## [30.0.3] - 2026-08-13
+
+### Changed
+- feat: add local OpenAI-compatible proxy provider
+- fix: recognize localized Gmail expansion controls
+- Preserve hidden prompts for restored retries
+- Fix thread actions and anchored pagination
+
+## [30.0.2] - 2026-08-13
+
+### Changed
+- Packaged the current extension fixes for browser stores.
+
+## [30.0.1] - 2026-08-12
+
+### Changed
+- fix: disambiguate nested Gmail label routes
+- fix: reject Gmail list routes with hex names
+- fix: bind tree pagination to content revisions
+- fix: require fresh Gmail root metadata
+- Update contributor count in webstore explainer
+- fix: reject Gmail list routes for thread reads
+- fix: polish standalone window UX
+- feat: add standalone Ask window
+- Fix Gmail thread read completeness
+- Polish selection shortcut actions
+- fix: isolate standalone chat context
+- fix: require verified download completion
+- 29.0.3
+- updated numbers
+- Fix #466: Expand sidepanel into standalone window
+- Fix #2752: Derive planner download completion requirements without prose heuristics
+- fix: preserve legacy click dispatch behavior
+- refactor: reconcile screenshot clicks through semantic AX targets
+- fix: constrain general knowledge to custom selections
+- fix(planner): require structured download completion evidence
+- feat: add general knowledge selection scope
+- feat: resolve visual targets to semantic refs
+
+## [30.0.0] - 2026-08-12
+
+### Changed
+- Expanded the side panel into a standalone window.
+
 ## [29.0.2] - 2026-08-12
 
 ### Changed

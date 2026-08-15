@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Por que o WebGPU está disponível apenas no Modo Apocalipse?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Porque ainda não consideramos a inferência de texto via WebGPU no navegador boa o suficiente para a maioria dos usuários e não queremos que você tenha uma experiência ruim. Se quiser usar localmente o mesmo modelo LFM2.5 2.6B, execute a inferência na sua máquina com llama.cpp ou Ollama e aponte o WebBrain para esse endpoint local em vez de depender do WebGPU. O fallback de visão via WebGPU continua disponível porque seu modelo é muito menor e esse fallback é usado apenas ocasionalmente."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Estou recebendo \"Falha ao buscar\" ao conectar-me a um servidor LLM local (vLLM, Ollama, llama.cpp) na minha rede",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "A partir de 7.0.0, ainda não. O modo de simulação está planejado e já está no roteiro."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "O WebBrain envia todo o DOM para o modelo de IA?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Não. Por padrão, o WebBrain não envia HTML bruto nem uma cópia bruta do DOM. Ele começa com o URL e o título da página, as orientações correspondentes ao site e, quando a visão está ativada, uma captura opcional da área visível. Quando uma tarefa precisa do conteúdo da página, o WebBrain o lê sob demanda como uma árvore de acessibilidade semântica reduzida ou como texto extraído. As leituras são filtradas por visibilidade quando apropriado, têm limites de caracteres e são paginadas. O acesso ao código-fonte bruto da página está disponível apenas no modo Dev."
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>Por que o WebGPU está disponível apenas no Modo Apocalipse?</summary>
+      <p>Porque ainda não consideramos a inferência de texto via WebGPU no navegador boa o suficiente para a maioria dos usuários e não queremos que você tenha uma experiência ruim. Se quiser usar localmente o mesmo modelo LFM2.5 2.6B, execute a inferência na sua máquina com <strong>llama.cpp</strong> ou <strong>Ollama</strong> e aponte o WebBrain para esse endpoint local em vez de depender do WebGPU.</p><p>O fallback de visão via WebGPU continua disponível porque seu modelo é muito menor e esse fallback é usado apenas ocasionalmente.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Estou recebendo &quot;Falha ao buscar&quot; ao conectar-me a um servidor LLM local (vLLM, Ollama, llama.cpp) na minha rede</summary>
       <p>Se o seu servidor LLM estiver em uma máquina diferente na sua rede local (por exemplo, <code>http://192.168.1.x:8000</code>), Chrome bloqueia a solicitação, a menos que o servidor envie <strong>Cabeçalhos CORS</strong>. A correção depende do seu servidor:</p><p><strong>vLLM:</strong> Comece com <code>--allowed-origins '["*"]'</code> (o valor deve ser uma lista JSON).<br><strong>Ollama:</strong> Defina a variável de ambiente <code>OLLAMA_ORIGINS=*</code> antes de começar.<br><strong>llama.cpp:</strong> O CORS está habilitado por padrão – nenhuma alteração é necessária.</p><p>Se o seu servidor for executado em <code>localhost</code> (mesma máquina do navegador), o CORS geralmente não é necessário. O problema afeta apenas conexões entre máquinas na rede local. Certifique-se de que seu URL base nas configurações WebBrain termine com <code>/v1</code> (por exemplo <code>http://192.168.1.47:8000/v1</code>). Exceção: Ollama usado em uma extensão do navegador ainda pode precisar <code>OLLAMA_ORIGINS</code>; consulte as perguntas frequentes sobre Ollama abaixo.</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>O WebBrain oferece suporte ao modo de simulação?</summary>
       <p>A partir de <strong>7.0.0</strong>, ainda não. O modo de simulação está planejado e já está no roteiro.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>O WebBrain envia todo o DOM para o modelo de IA?</summary>
+      <p>Não. Por padrão, o WebBrain não envia HTML bruto nem uma cópia bruta do DOM. Ele começa com o URL e o título da página, as orientações correspondentes ao site e, quando a visão está ativada, uma captura opcional da área visível.</p><p>Quando uma tarefa precisa do conteúdo da página, o WebBrain o lê sob demanda como uma árvore de acessibilidade semântica reduzida ou como texto extraído. As leituras são filtradas por visibilidade quando apropriado, têm limites de caracteres e são paginadas. O acesso ao código-fonte bruto da página está disponível apenas no modo Dev.</p>
     </details>
 
     <details class="faq-item">

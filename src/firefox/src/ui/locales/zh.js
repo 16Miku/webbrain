@@ -1,6 +1,8 @@
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '响应流已中断；正在以非流式方式重试本次 Ask。',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': '搜索通用设置',
   'st.display.search.empty': '没有匹配的通用设置。',
   'st.display.advanced': '高级',
+  ...getApocalypseModeCopy('zh'),
   'st.display.clarify_timeout.label': '澄清超时',
   'st.display.clarify_timeout.desc': '等待澄清问题回复的时长；超时后自动选择第一个选项（若无选项则记为超时）。0 = 立即（始终自动选择）。超过 1200 秒为无限等待（关闭）。默认 60 秒。不适用于权限或表单提交确认。',
   'st.display.clarify_timeout.off': '关闭',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",
   "sp.workflows.run_prompt": "运行已保存的工作流“{name}”",
+  "sp.workflows.standalone_unavailable": "此独立窗口仅支持“询问”模式。请在侧边栏中打开 WebBrain，以“操作”模式运行已保存的工作流。",
   "sp.workflows.parameters_for": "请输入“{name}”的参数。参数值仅用于本次运行。",
   "sp.workflows.parameter_required": "“{name}”为必填项。",
   "sp.slash.save_workflow": "保存最近一次成功且已记录的运行",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "使用该设备当前的 WebBrain 设置替换加密的云副本？",
   "st.sync.consent.legacy": "开启加密同步？ WebBrain 会将您的记忆、个人资料自动填充和 API 密钥提供商设置的端到端加密副本传输到 WebBrain Cloud。聊天历史记录和 OAuth 登录不同步。",
   "st.sync.consent.denied": "未授予加密同步权限。",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

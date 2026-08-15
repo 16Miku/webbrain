@@ -15,6 +15,8 @@ const BOOLEAN_FIELDS = Object.freeze([
   'api_mutations_allowed',
   'user_memory_enabled',
   'selection_grounded',
+  'standalone_chat_profile',
+  'standalone_webgpu_profile',
 ]);
 
 // Bounds keep the payload sane, not to re-validate settings: each range is a

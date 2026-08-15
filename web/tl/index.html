@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Bakit sa Apocalypse Mode lang available ang WebGPU?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Dahil hindi pa namin itinuturing na sapat na mahusay ang in-browser WebGPU text inference para sa karamihan ng mga user, at ayaw naming pagtiisan ninyo ang mahinang karanasan. Kung gusto ninyong gamitin nang lokal ang parehong LFM2.5 2.6B model, patakbuhin ang inference sa inyong computer gamit ang llama.cpp o Ollama at ituro ang WebBrain sa lokal na endpoint na iyon sa halip na umasa sa WebGPU. Available pa rin ang WebGPU vision fallback dahil mas maliit ang model nito at paminsan-minsan lang ginagamit ang fallback."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Nakakakuha ako ng \"Failed to fetch\" pag nag-co-connect sa isang lokal na LLM server (vLLM, Ollama, llama.cpp) sa aking network",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "Sa 7.0.0, hindi pa. Ang dry-run mode ay planado at nasa roadmap na."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Ipinapadala ba ng WebBrain ang buong DOM sa AI model?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Hindi. Bilang default, hindi ipinapadala ng WebBrain ang raw HTML o isang raw DOM dump. Nagsisimula ito sa URL at pamagat ng page, kaugnay na gabay para sa site, at opsyonal na screenshot ng nakikitang bahagi kapag naka-enable ang vision. Kapag kailangan ng isang gawain ang nilalaman ng page, binabasa ito ng WebBrain kapag kailangan bilang pinaikling semantic accessibility tree o extracted text. Ang mga pagbasa ay sinasala ayon sa visibility kapag naaangkop, nililimitahan ang bilang ng character, at hinahati sa mga page. Ang access sa raw page source ay available lamang sa Dev mode."
       }
     },
     {
@@ -3823,6 +3839,11 @@
     </details>
 
     <details class="faq-item">
+      <summary>Bakit sa Apocalypse Mode lang available ang WebGPU?</summary>
+      <p>Dahil hindi pa namin itinuturing na sapat na mahusay ang in-browser WebGPU text inference para sa karamihan ng mga user, at ayaw naming pagtiisan ninyo ang mahinang karanasan. Kung gusto ninyong gamitin nang lokal ang parehong LFM2.5 2.6B model, patakbuhin ang inference sa inyong computer gamit ang <strong>llama.cpp</strong> o <strong>Ollama</strong> at ituro ang WebBrain sa lokal na endpoint na iyon sa halip na umasa sa WebGPU.</p><p>Available pa rin ang WebGPU vision fallback dahil mas maliit ang model nito at paminsan-minsan lang ginagamit ang fallback.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Nakakakuha ako ng &quot;Failed to fetch&quot; pag nag-co-connect sa isang lokal na LLM server (vLLM, Ollama, llama.cpp) sa aking network</summary>
       <p>Kung ang iyong LLM server ay nasa ibang makina sa iyong lokal na network (hal. <code>http://192.168.1.x:8000</code>), hinaharangan ng Chrome ang request maliban kung magpadala ang server ng <strong>CORS headers</strong>. Ang ayos ay depende sa iyong server:</p><p><strong>vLLM:</strong> Simulan gamit ang <code>--allowed-origins '["*"]'</code> (ang value ay dapat na JSON list).<br><strong>Ollama:</strong> Itakda ang environment variable na <code>OLLAMA_ORIGINS=*</code> bago magsimula.<br><strong>llama.cpp:</strong> Naka-enable ang CORS by default — walang kailangang baguhin.</p><p>Kung tumatakbo ang iyong server sa <code>localhost</code> (parehong makina ng browser), kadalasan ay hindi kinakailangan ang CORS. Ang isyu ay para lamang sa cross-machine na koneksyon sa lokal na network. Tiyaking nagtatapos sa <code>/v1</code> ang base URL sa setting ng WebBrain (hal. <code>http://192.168.1.47:8000/v1</code>). Exception: Maaaring kailanganin pa rin ng Ollama na ginagamit mula sa browser extension ang <code>OLLAMA_ORIGINS</code>; tingnan ang Ollama FAQ sa ibaba.</p>
     </details>
@@ -3905,6 +3926,11 @@
     <details class="faq-item">
       <summary>Sinusuportahan ba ng WebBrain ang dry-run mode?</summary>
       <p>Sa <strong>7.0.0</strong>, hindi pa. Ang dry-run mode ay planado at nasa roadmap na.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Ipinapadala ba ng WebBrain ang buong DOM sa AI model?</summary>
+      <p>Hindi. Bilang default, hindi ipinapadala ng WebBrain ang raw HTML o isang raw DOM dump. Nagsisimula ito sa URL at pamagat ng page, kaugnay na gabay para sa site, at opsyonal na screenshot ng nakikitang bahagi kapag naka-enable ang vision.</p><p>Kapag kailangan ng isang gawain ang nilalaman ng page, binabasa ito ng WebBrain kapag kailangan bilang pinaikling semantic accessibility tree o extracted text. Ang mga pagbasa ay sinasala ayon sa visibility kapag naaangkop, nililimitahan ang bilang ng character, at hinahati sa mga page. Ang access sa raw page source ay available lamang sa Dev mode.</p>
     </details>
 
     <details class="faq-item">

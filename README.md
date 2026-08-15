@@ -21,12 +21,13 @@
   <a href="docs/">Docs</a> ·
   <a href="https://webbrain.one">Website</a> ·
   <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
+  <a href="https://www.producthunt.com/products/webbrain">Product Hunt</a> ·
   <a href="LICENSE">MIT License</a>
 </p>
 
 ![WebBrain reading a page, filling in a form, and fetching a file](assets/webbrain-demo.gif)
 
-WebBrain is a browser extension that puts an AI agent in a side panel next to
+WebBrain is a web browser extension that puts an AI agent in a side panel next to
 your tabs. Ask it about the page you're on, or hand it a task and let it click,
 type, and navigate its way through. It runs on the model you choose — a local
 llama.cpp or Ollama server, a frontier cloud API, or the managed default that
@@ -86,8 +87,11 @@ vllm serve your-model --port 8000                     # vLLM    → :8000/v1
 python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
-LM Studio (`:1234/v1`), Jan (`:1337/v1`), and LocalAI (`:8080/v1`) work the same
-way. Load a model with **at least a 16k-token context window** — 8k works only
+LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
+(`:4891/v1`) work the same way. A generic **Local OpenAI-compatible Proxy** card
+also supports authenticated loopback gateways such as CLIProxyAPI; see the
+[secure subscription proxy setup](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi).
+Load a model with **at least a 16k-token context window** — 8k works only
 with the Compact tier, and 4k is too small for the system prompt plus tool
 schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
 Studio, and auto-compacts the conversation as it fills up. For Ollama,
@@ -101,8 +105,10 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-Settings ships **104 built-in provider cards** with base URLs and default models
-pre-filled — see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
+Settings ships **106 built-in provider cards on Chromium** (105 on Firefox),
+including an endpoint-free local WebGPU option with the tested LFM2.5 2.6B
+preset and an experimental custom Hugging Face ONNX repository option —
+see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
 ## Features
 
@@ -185,7 +191,7 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | [Architecture](docs/architecture.md)                                                                                     | System overview, turn flow, subsystems                   |
 | [Agent tools](docs/agent-tools.md)                                                                                       | Tiers, modes, and the full tool matrix                   |
 | [Slash commands](docs/slash-commands.md)                                                                                 | Every command and flag                                   |
-| [Providers and models](docs/providers-and-models.md)                                                                     | All 104 provider cards, local setup, tiers               |
+| [Providers and models](docs/providers-and-models.md)                                                                     | All 105 provider cards, local setup, tiers               |
 | [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
 | [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
 | [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |
@@ -270,7 +276,7 @@ npx -y @webbrain/mcp-server
 
 Once the server is running, open **WebBrain → Settings → General → Advanced →
 Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
-**Chromium only** — the control and bridge runtime use the extension's offscreen
+**Chromium only** — the control and bridge runtime use the extension's off-screen
 document, which the Firefox build does not have.
 
 If Settings reports **Connection error: WebSocket error**, nothing is normally

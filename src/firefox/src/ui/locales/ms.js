@@ -1,6 +1,8 @@
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Penstriman respons terganggu; mencuba semula giliran Ask ini tanpa penstriman.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Cari tetapan Umum',
   'st.display.search.empty': 'Tiada tetapan Umum yang sepadan.',
   'st.display.advanced': 'Lanjutan',
+  ...getApocalypseModeCopy('ms'),
   'st.display.clarify_timeout.label': 'Tamat masa penjelasan',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan soalan penjelasan sebelum memilih pilihan pertama secara automatik (atau tamat masa jika tiada pilihan). 0 = Segera (sentiasa auto-pilih). Melebihi 1200s tunggu tanpa had (Mati). Lalai 60s. Tidak digunakan untuk kebenaran atau pengesahan hantar borang.',
   'st.display.clarify_timeout.off': 'Mati',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",
   "sp.workflows.run_prompt": "Jalankan aliran kerja tersimpan “{name}”",
+  "sp.workflows.standalone_unavailable": "Tetingkap kendiri ini hanya untuk mod Tanya. Buka WebBrain dalam panel sisi untuk menjalankan aliran kerja tersimpan dalam mod Tindakan.",
   "sp.workflows.parameters_for": "Masukkan parameter untuk “{name}”. Nilai hanya digunakan untuk larian ini.",
   "sp.workflows.parameter_required": "“{name}” diperlukan.",
   "sp.slash.save_workflow": "Simpan pelaksanaan berjaya terkini yang direkodkan",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Gantikan salinan awan yang disulitkan dengan persediaan WebBrain semasa peranti ini?",
   "st.sync.consent.legacy": "Hidupkan penyegerakan yang disulitkan? WebBrain akan menghantar salinan memori anda yang disulitkan hujung ke hujung, autolengkap profil dan tetapan pembekal kunci API ke WebBrain Cloud. Sejarah sembang dan log masuk OAuth tidak disegerakkan.",
   "st.sync.consent.denied": "Kebenaran penyegerakan yang disulitkan tidak diberikan.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

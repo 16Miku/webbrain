@@ -1,6 +1,8 @@
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '応答ストリームが中断されました。この Ask ターンをストリーミングなしで再試行します。',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': '一般設定を検索',
   'st.display.search.empty': '一致する一般設定はありません。',
   'st.display.advanced': '詳細設定',
+  ...getApocalypseModeCopy('ja'),
   'st.display.clarify_timeout.label': '確認のタイムアウト',
   'st.display.clarify_timeout.desc': 'clarify の返答を待つ時間。経過すると最初の選択肢を自動選択（選択肢がなければタイムアウト）。0 で即時（常に自動選択）。1200 秒超は無制限（オフ）。既定 60 秒。権限やフォーム送信確認には適用されません。',
   'st.display.clarify_timeout.off': 'オフ',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",
   "sp.workflows.run_prompt": "保存済みワークフロー「{name}」を実行",
+  "sp.workflows.standalone_unavailable": "このスタンドアロンウィンドウは質問モード専用です。保存済みワークフローを操作モードで実行するには、サイドパネルで WebBrain を開いてください。",
   "sp.workflows.parameters_for": "「{name}」のパラメーターを入力してください。値は今回の実行だけに使用されます。",
   "sp.workflows.parameter_required": "「{name}」は必須です。",
   "sp.slash.save_workflow": "直近の成功した記録済み実行を保存",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "暗号化されたクラウド コピーをこのデバイスの現在の WebBrain セットアップに置き換えますか?",
   "st.sync.consent.legacy": "暗号化された同期をオンにしますか? WebBrain は、エンドツーエンドで暗号化された思い出、プロファイルの自動入力、API キー プロバイダー設定のコピーを WebBrain Cloud に送信します。チャット履歴と OAuth サインインは同期されません。",
   "st.sync.consent.denied": "暗号化された同期権限が付与されませんでした。",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

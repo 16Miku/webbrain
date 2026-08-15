@@ -1,6 +1,8 @@
 // French (fr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Le flux de réponse a été interrompu ; nouvelle tentative de ce tour Ask sans streaming.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Rechercher dans les paramètres généraux',
   'st.display.search.empty': 'Aucun paramètre général correspondant.',
   'st.display.advanced': 'Avancé',
+  ...getApocalypseModeCopy('fr'),
   'st.display.clarify_timeout.label': 'Délai des questions de clarification',
   'st.display.clarify_timeout.desc': 'Durée d’attente d’une réponse à une question de clarification avant de sélectionner automatiquement la première option (ou d’expirer s’il n’y a pas d’options). 0 = Immédiat (auto-sélection). Au-delà de 1200s = attendre indéfiniment (Désactivé). Par défaut 60s. Ne s’applique pas aux permissions ni aux confirmations d’envoi de formulaire.',
   'st.display.clarify_timeout.off': 'Désactivé',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "Enregistrer vos actions comme workflow sauvegardé",
   "sp.slash.run_workflow": "Exécuter un workflow enregistré par ID",
   "sp.workflows.run_prompt": "Exécuter le workflow enregistré « {name} »",
+  "sp.workflows.standalone_unavailable": "Cette fenêtre autonome est réservée au mode Demander. Ouvrez WebBrain dans le panneau latéral pour exécuter des workflows enregistrés en mode Agir.",
   "sp.workflows.parameters_for": "Saisissez les paramètres de « {name} ». Les valeurs ne servent qu’à cette exécution.",
   "sp.workflows.parameter_required": "« {name} » est obligatoire.",
   "sp.slash.save_workflow": "Enregistrer la dernière exécution réussie et tracée",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Remplacer la copie cloud cryptée par la configuration WebBrain actuelle de cet appareil ?",
   "st.sync.consent.legacy": "Activer la synchronisation chiffrée ? WebBrain transmettra une copie cryptée de bout en bout de vos souvenirs, du remplissage automatique de votre profil et des paramètres du fournisseur de clé API à WebBrain Cloud. L'historique des discussions et les connexions OAuth ne sont pas synchronisés.",
   "st.sync.consent.denied": "L'autorisation de synchronisation chiffrée n'a pas été accordée.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

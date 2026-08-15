@@ -1,6 +1,8 @@
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Penstriman respons terganggu; mencuba semula giliran Ask ini tanpa penstriman.',
@@ -289,6 +291,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'biarkan kosong untuk menggunakan model yang telah dimuatkan',
 
   'st.vision.desc': 'Jika ditetapkan, tangkapan skrin dihantar kepada model ini untuk membaca halaman, manakala pembekal aktif mengendalikan perancangan dan panggilan alat. Biarkan kosong agar pembekal aktif juga mengendalikan penglihatan. Hanya hujung yang serasi dengan OpenAI.',
+  'st.vision.local.title': 'Model sandaran setempat LFM2.5-VL',
+  'st.vision.local.desc': 'Menjalankan LiquidAI/LFM2.5-VL-450M-ONNX pada GPU anda. Tangkapan skrin kekal pada peranti ini; penggunaan pertama memuat turun kira-kira 770 MB daripada Hugging Face di latar belakang dan menyimpannya dalam cache setempat. Anda boleh bertukar tab atau menutup Tetapan semasa muat turun; pastikan Chrome terus dibuka.',
+  'st.vision.local.enable': 'Gunakan model sandaran setempat',
+  'st.vision.local.disable': 'Lumpuhkan model sandaran setempat',
+  'st.vision.local.saved': 'Model sandaran penglihatan setempat diaktifkan.',
+  'st.vision.local.testing': 'Memuatkan dan menguji penglihatan setempat… Penggunaan pertama memuat turun kira-kira 770 MB di latar belakang. Anda boleh bertukar tab atau menutup Tetapan; pastikan Chrome terus dibuka.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'Simpan',
   'st.vision.test': 'Uji sambungan',
   'st.vision.clear': 'Kosongkan',
@@ -672,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Cari tetapan Umum',
   'st.display.search.empty': 'Tiada tetapan Umum yang sepadan.',
   'st.display.advanced': 'Lanjutan',
+  ...getApocalypseModeCopy('ms'),
   'st.display.cloud_bridge.label': 'Jambatan awan',
   'st.display.cloud_bridge.desc': 'Sambungkan satu pengawal setempat ke profil Chromium ini. Gunakan port 17373 untuk WebBrain Cloud, 17374 untuk klien MCP atau 17375 untuk LM Studio. Hanya satu jambatan boleh aktif; gesaan kebenaran biasa masih digunakan.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',
@@ -807,6 +817,7 @@ export default {
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",
   "sp.workflows.run_prompt": "Jalankan aliran kerja tersimpan “{name}”",
+  "sp.workflows.standalone_unavailable": "Tetingkap kendiri ini hanya untuk mod Tanya. Buka WebBrain dalam panel sisi untuk menjalankan aliran kerja tersimpan dalam mod Tindakan.",
   "sp.workflows.parameters_for": "Masukkan parameter untuk “{name}”. Nilai hanya digunakan untuk larian ini.",
   "sp.workflows.parameter_required": "“{name}” diperlukan.",
   "sp.slash.save_workflow": "Simpan pelaksanaan berjaya terkini yang direkodkan",
@@ -1035,4 +1046,25 @@ export default {
   "st.sync.confirm.reset": "Gantikan salinan awan yang disulitkan dengan persediaan WebBrain semasa peranti ini?",
   "st.sync.consent.legacy": "Hidupkan penyegerakan yang disulitkan? WebBrain akan menghantar salinan memori anda yang disulitkan hujung ke hujung, autolengkap profil dan tetapan pembekal kunci API ke WebBrain Cloud. Sejarah sembang dan log masuk OAuth tidak disegerakkan.",
   "st.sync.consent.denied": "Kebenaran penyegerakan yang disulitkan tidak diberikan.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_download.title': 'WebGPU model files',
+  'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
+  'st.providers.webgpu_download.checking': 'Checking local model files…',
+  'st.providers.webgpu_download.not_downloaded': 'Not downloaded',
+  'st.providers.webgpu_download.downloading': 'Downloading · {progress}%',
+  'st.providers.webgpu_download.paused': 'Paused · {progress}%',
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.ready': 'Ready for local chat',
+  'st.providers.webgpu_download.error': 'Download needs attention',
+  'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
+  'st.providers.webgpu_download.required': 'Download the selected model before choosing WebGPU for chat.',
+  'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
+  'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
+  'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
+  'st.providers.webgpu_download.start': 'Start download',
+  'st.providers.webgpu_download.pause': 'Pause',
+  'st.providers.webgpu_download.resume': 'Resume',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
 };

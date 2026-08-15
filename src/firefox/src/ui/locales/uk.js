@@ -1,6 +1,8 @@
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Потік відповіді перервано; цей запит Ask повторюється без потокової передачі.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Пошук у загальних налаштуваннях',
   'st.display.search.empty': 'Немає збігів у загальних налаштуваннях.',
   'st.display.advanced': 'Розширені',
+  ...getApocalypseModeCopy('uk'),
   'st.display.clarify_timeout.label': 'Таймаут уточнення',
   'st.display.clarify_timeout.desc': 'Скільки чекати відповіді на уточнювальне запитання, перш ніж автоматично обрати перший варіант (або зафіксувати таймаут без варіантів). 0 — миттєво (завжди автовибір). Понад 1200 с — чекати необмежено (Вимк.). За замовчуванням 60 с. Не застосовується до дозволів і підтверджень надсилання форм.',
   'st.display.clarify_timeout.off': 'Вимк.',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",
   "sp.workflows.run_prompt": "Запустити збережений сценарій «{name}»",
+  "sp.workflows.standalone_unavailable": "Це окреме вікно працює лише в режимі «Запитати». Відкрийте WebBrain на бічній панелі, щоб запускати збережені сценарії в режимі «Діяти».",
   "sp.workflows.parameters_for": "Введіть параметри для «{name}». Значення використовуються лише для цього запуску.",
   "sp.workflows.parameter_required": "Поле «{name}» обов’язкове.",
   "sp.slash.save_workflow": "Зберегти останній успішний записаний запуск",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Замінити зашифровану хмарну копію на поточні налаштування WebBrain цього пристрою?",
   "st.sync.consent.legacy": "Увімкнути зашифровану синхронізацію? WebBrain передасть наскрізну зашифровану копію ваших спогадів, автозаповнення профілю та налаштувань постачальника ключа API до WebBrain Cloud. Історія чату та вхід OAuth не синхронізуються.",
   "st.sync.consent.denied": "Дозвіл на зашифровану синхронізацію не надано.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

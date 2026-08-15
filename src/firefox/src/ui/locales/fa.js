@@ -1,4 +1,6 @@
 // Persian — translated from the canonical English locale.
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'جریان پاسخ قطع شد؛ این نوبت Ask بدون پخش جریانی دوباره امتحان می‌شود.',
   'sp.providers.no_setup_group': "بدون نیاز به راه اندازی",
@@ -134,6 +136,7 @@ export default {
   "sp.slash.teach": "اقدامات خود را به‌صورت گردش‌کار ذخیره‌شده ضبط کنید",
   'sp.slash.run_workflow': "یک گردش کار ذخیره شده توسط ID را اجرا کنید",
   'sp.workflows.run_prompt': "اجرای گردش کار ذخیره شده \"{name}\"",
+  "sp.workflows.standalone_unavailable": "این پنجرهٔ مستقل فقط برای حالت پرسش است. برای اجرای گردش‌کارهای ذخیره‌شده در حالت اقدام، WebBrain را در پنل کناری باز کنید.",
   'sp.workflows.parameters_for': "پارامترهای \"{name}\" را وارد کنید. مقادیر فقط برای این اجرا استفاده می شود.",
   'sp.workflows.parameter_required': "\"{name}\" مورد نیاز است.",
   'sp.slash.save_workflow': "آخرین اجرای موفق ثبت شده را ذخیره کنید",
@@ -517,6 +520,7 @@ export default {
   'st.display.search.placeholder': "تنظیمات عمومی را جستجو کنید",
   'st.display.search.empty': "تنظیمات عمومی مطابقت ندارد.",
   'st.display.advanced': "پیشرفته",
+  ...getApocalypseModeCopy('fa'),
   'st.display.help_improve.label': "به بهبود WebBrain کمک کنید",
   'st.display.help_improve.desc_html': "اجازه دهید تا تعاملات متن و ابزار Cloud واجد شرایط WebBrain حفظ شود و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شود. به طور پیش فرض روشن است. با خاموش کردن این حالت به طور دائم از مکالمه فعلی انصراف داده می شود. روشن کردن مجدد آن برای مکالمه جدید بعدی اعمال می شود. عکس های صفحه و بایت های تصویر در پایگاه داده بهبود WebBrain حفظ نمی شوند. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سیاست حفظ حریم خصوصی →</a>",
   'st.display.clarify_timeout.label': "روشن کردن مهلت زمانی",
@@ -1017,4 +1021,5 @@ export default {
   "st.sync.confirm.reset": "کپی ابری رمزگذاری شده با راه‌اندازی فعلی WebBrain این دستگاه جایگزین شود؟",
   "st.sync.consent.legacy": "همگام سازی رمزگذاری شده روشن شود؟ WebBrain یک نسخه رمزگذاری شده سرتاسر از خاطرات، تکمیل خودکار نمایه و تنظیمات ارائه دهنده کلید API شما را به WebBrain Cloud منتقل می کند. سابقه گپ و ورود به سیستم OAuth همگام سازی نمی شوند.",
   "st.sync.consent.denied": "مجوز همگام‌سازی رمزگذاری شده داده نشد.",
+  'st.providers.webgpu_note.body': '{modelLink} بدون هیچ نقطهٔ پایانی API کاملاً در Chrome اجرا می‌شود. نخستین تولید حدود 4.85 GB دانلود می‌کند و آن را در مرورگر ذخیره می‌کند. آزمایش اتصال، محیط اجرایی بسته‌بندی‌شده و آداپتور سخت‌افزاری را بدون دانلود مدل بررسی می‌کند.',
 };

@@ -1,4 +1,6 @@
 // English — canonical locale. Other locales inherit key names from this file.
+import apocalypseModeCopy from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'Response streaming was interrupted; retrying this Ask turn without streaming.',
   'sp.providers.no_setup_group': 'No setup required',
@@ -134,6 +136,7 @@ export default {
   "sp.slash.teach": "Record your actions as a saved workflow",
   'sp.slash.run_workflow': 'Run a saved workflow by ID',
   'sp.workflows.run_prompt': 'Run saved workflow “{name}”',
+  "sp.workflows.standalone_unavailable": "This standalone window is Ask-only. Open WebBrain in the side panel to run saved workflows in Act mode.",
   'sp.workflows.parameters_for': 'Enter parameters for “{name}”. Values are used only for this run.',
   'sp.workflows.parameter_required': '“{name}” is required.',
   'sp.slash.save_workflow': 'Save the latest successful recorded run',
@@ -517,6 +520,7 @@ export default {
   'st.display.search.placeholder': 'Search General settings',
   'st.display.search.empty': 'No General settings match.',
   'st.display.advanced': 'Advanced',
+  ...apocalypseModeCopy,
   'st.display.help_improve.label': 'Help Improve WebBrain',
   'st.display.help_improve.desc_html': 'Allow eligible WebBrain Cloud text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
   'st.display.clarify_timeout.label': 'Clarify timeout',
@@ -1019,4 +1023,5 @@ export default {
   'st.sync.confirm.reset': 'Replace the encrypted cloud copy with this device’s current WebBrain setup?',
   'st.sync.consent.legacy': 'Turn on encrypted sync? WebBrain will transmit an end-to-end encrypted copy of your memories, profile autofill, and API-key provider settings to WebBrain Cloud. Chat history and OAuth sign-ins are not synced.',
   'st.sync.consent.denied': 'Encrypted sync permission was not granted.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

@@ -336,6 +336,24 @@ const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDoma
 const { firefoxRestrictedDomainForUrl, firefoxRestrictedDomainFailure, firefoxHostPermissionFailure } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/firefox-restricted-domains.js').replace(/\\/g, '/')
 );
+const WikipediaOfflineCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
+);
+const WikipediaOfflineFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
+);
+const ApocalypseModeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
+const ApocalypseModeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
+const EmergencyBoxCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/emergency-box.js').replace(/\\/g, '/')
+);
+const EmergencyBoxFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/emergency-box.js').replace(/\\/g, '/')
+);
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
 );
@@ -448,6 +466,7 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT,
   PLANNER_API_REPLAY_RULE,
   PLANNER_RESPONSE_ONLY_RULES,
+  PLANNER_RESPONSE_LANGUAGE_RULES,
   READ_SCOPE_SYSTEM_PROMPT,
   PLANNER_RESPONSE_JSON_SCHEMA,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
@@ -458,6 +477,9 @@ const {
   parseReadScopeFromContent,
   formatPlanMarkdown,
   formatPlanScratchpad,
+  fallbackResponseLanguagePolicy,
+  normalizeResponseLanguagePolicy,
+  formatResponseLanguagePolicyInstruction,
   normalizePlan,
   userMessageToText,
   buildPlannerMessages,
@@ -469,6 +491,7 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT: PLANNER_INTENT_SYSTEM_PROMPT_FX,
   PLANNER_API_REPLAY_RULE: PLANNER_API_REPLAY_RULE_FX,
   PLANNER_RESPONSE_ONLY_RULES: PLANNER_RESPONSE_ONLY_RULES_FX,
+  PLANNER_RESPONSE_LANGUAGE_RULES: PLANNER_RESPONSE_LANGUAGE_RULES_FX,
   READ_SCOPE_SYSTEM_PROMPT: READ_SCOPE_SYSTEM_PROMPT_FX,
   PLANNER_RESPONSE_JSON_SCHEMA: PLANNER_RESPONSE_JSON_SCHEMA_FX,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA: PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX,
@@ -478,6 +501,9 @@ const {
   buildReadScopeMessages: buildReadScopeMessagesFx,
   parsePlanFromContent: parsePlanFromContentFx,
   parseReadScopeFromContent: parseReadScopeFromContentFx,
+  fallbackResponseLanguagePolicy: fallbackResponseLanguagePolicyFx,
+  normalizeResponseLanguagePolicy: normalizeResponseLanguagePolicyFx,
+  formatResponseLanguagePolicyInstruction: formatResponseLanguagePolicyInstructionFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/planner.js').replace(/\\/g, '/')
 );
@@ -767,6 +793,23 @@ const { ProviderManager: ProviderManagerCh } = await import(
 );
 const { ProviderManager: ProviderManagerFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/manager.js').replace(/\\/g, '/')
+);
+const {
+  WebGPUProvider,
+  WebGPUVisionProvider,
+  WEBGPU_DTYPE,
+  WEBGPU_LFM25_MODEL_ID,
+  WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  WEBGPU_VISION_DTYPE,
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
+  WEBGPU_VISION_ENABLED_KEY,
+  WEBGPU_VISION_MODEL_ID,
+  normalizeWebgpuModelId,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
 );
 const ProviderCatalogCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/provider-catalog.js').replace(/\\/g, '/')
@@ -1533,6 +1576,210 @@ test('redaction collectors filter offscreen fields and report incomplete region 
   }
 });
 
+test('exact iframe geometry claims stay source-bound, allow opaque sandbox origins, and keep their contention window', () => {
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
+    const sourceBinding = source.indexOf('.find(candidate => candidate.contentWindow === event.source)');
+    const originBinding = source.indexOf('event.origin !== expectedChildOrigin', sourceBinding);
+    assert.ok(sourceBinding >= 0 && originBinding > sourceBinding,
+      `${browserName}: frame claims must bind the exact source before applying origin exceptions`);
+    assert.match(source, /event\.origin === 'null'[\s\S]*allowOpaqueChildOrigin === true \|\| hasOpaqueSandboxOrigin\(frame\)/,
+      `${browserName}: opaque origins should be limited to sandboxed frames without allow-same-origin`);
+    assert.match(source, /event\.origin !== expectedChildOrigin && !opaqueSandboxClaim/,
+      `${browserName}: frame claims must verify the child origin`);
+    assert.match(source, /parentOrigin \|\| '\*'/,
+      `${browserName}: child announcements must target a known parent origin when available`);
+    assert.match(source, /if \(!claimant\) \{[\s\S]*contentionTimer = setTimeout[\s\S]*return;[\s\S]*Duplicate delivery from the same frame/,
+      `${browserName}: duplicate same-source claims must not resolve before contention expires`);
+  }
+});
+
+test('exact iframe geometry accepts null origins only for opaque sandboxed source frames', async () => {
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
+    const claim = async ({ eventOrigin, sandboxValue, allowOpaqueChildOrigin = false }) => {
+      let runtimeListener = null;
+      let windowMessageListener = null;
+      const timers = [];
+      const setTestTimeout = (callback, delay) => {
+        const timer = { callback, delay, active: true };
+        timers.push(timer);
+        return timer;
+      };
+      const clearTestTimeout = timer => {
+        if (timer) timer.active = false;
+      };
+      const runTimer = delay => {
+        const timer = timers.find(candidate => candidate.active && candidate.delay === delay);
+        assert.ok(timer, `${browserName}: expected a ${delay}ms claim timer`);
+        timer.active = false;
+        timer.callback();
+      };
+      const childWindow = {};
+      const frame = {
+        contentWindow: childWindow,
+        isConnected: true,
+        tagName: 'IFRAME',
+        id: 'sandbox-child',
+        offsetWidth: 120,
+        offsetHeight: 80,
+        clientWidth: 120,
+        clientHeight: 80,
+        clientLeft: 0,
+        clientTop: 0,
+        getAttribute(name) {
+          if (name === 'sandbox') return sandboxValue;
+          return null;
+        },
+        getBoundingClientRect() {
+          return { left: 10, top: 20, right: 130, bottom: 100, width: 120, height: 80 };
+        },
+      };
+      const runtime = { onMessage: { addListener(listener) { runtimeListener = listener; } } };
+      const context = {
+        chrome: { runtime },
+        browser: browserName === 'firefox' ? { runtime } : undefined,
+        window: {
+          innerWidth: 800,
+          innerHeight: 600,
+          scrollX: 0,
+          scrollY: 0,
+          pageXOffset: 0,
+          pageYOffset: 0,
+          addEventListener(type, listener) {
+            if (type === 'message') windowMessageListener = listener;
+          },
+          removeEventListener(type, listener) {
+            if (type === 'message' && windowMessageListener === listener) windowMessageListener = null;
+          },
+        },
+        document: {
+          querySelectorAll(selector) {
+            if (selector === 'iframe, frame') return [frame];
+            return [];
+          },
+        },
+        setTimeout: setTestTimeout,
+        clearTimeout: clearTestTimeout,
+      };
+      vm.runInNewContext(source, context);
+      assert.equal(typeof runtimeListener, 'function', `${browserName}: collector listener should register`);
+      const resultPromise = new Promise(resolve => {
+        const pending = runtimeListener({
+          target: 'redaction-content',
+          action: 'wait_for_exact_child_frame_rect',
+          params: { token: 'opaque-token', expectedChildOrigin: 'https://child.test', allowOpaqueChildOrigin },
+        }, null, resolve);
+        assert.equal(pending, true, `${browserName}: exact-frame request should stay asynchronous`);
+      });
+      assert.equal(typeof windowMessageListener, 'function', `${browserName}: message listener should register`);
+      windowMessageListener({
+        data: { __webbrainExactFrameRectToken: 'opaque-token' },
+        origin: eventOrigin,
+        source: childWindow,
+      });
+      const accepted = timers.some(timer => timer.active && timer.delay === 30);
+      runTimer(accepted ? 30 : 750);
+      return resultPromise;
+    };
+
+    assert.equal(
+      (await claim({ eventOrigin: 'null', sandboxValue: 'allow-scripts' })).found,
+      true,
+      `${browserName}: an opaque sandbox frame should resolve its exact geometry`,
+    );
+    assert.equal(
+      (await claim({ eventOrigin: 'null', sandboxValue: null })).found,
+      false,
+      `${browserName}: an unsandboxed frame should not bypass its expected origin`,
+    );
+    assert.equal(
+      (await claim({ eventOrigin: 'null', sandboxValue: 'allow-scripts allow-same-origin' })).found,
+      false,
+      `${browserName}: allow-same-origin frames should not use the opaque-origin exception`,
+    );
+    const inheritedOpaque = await claim({
+      eventOrigin: 'null',
+      sandboxValue: null,
+      allowOpaqueChildOrigin: true,
+    });
+    assert.equal(inheritedOpaque.found, true,
+      `${browserName}: a child of an opaque sandbox frame should inherit the origin exception`);
+    assert.equal(inheritedOpaque.childOriginOpaque, true,
+      `${browserName}: inherited opacity should propagate to deeper descendants`);
+    assert.equal(
+      (await claim({ eventOrigin: 'https://child.test', sandboxValue: null })).found,
+      true,
+      `${browserName}: ordinary exact-origin claims should remain valid`,
+    );
+  }
+});
+
+test('rich-text frame geometry uses wildcard delivery only for known opaque sandbox parents', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const announcements = [];
+      const waits = [];
+      const runtime = {
+        tabs: {
+          async sendMessage(_tabId, message, options) {
+            const frameId = options?.frameId;
+            if (message.action === 'get_redaction_regions') {
+              return { viewport: { width: 100, height: 100, scrollX: 0, scrollY: 0 } };
+            }
+            if (message.action === 'wait_for_exact_child_frame_rect') {
+              waits.push({ frameId, ...message.params });
+              return {
+                found: true,
+                childOriginOpaque: frameId === 0 || message.params.allowOpaqueChildOrigin === true,
+                outerRect: { x: 10, y: 10, w: 100, h: 100, pageX: 10, pageY: 10 },
+                contentRect: { x: 10, y: 10, w: 100, h: 100 },
+                ownerMeta: { tag: 'iframe' },
+              };
+            }
+            if (message.action === 'announce_exact_child_frame') {
+              announcements.push({ frameId, ...message.params });
+              return { announced: true };
+            }
+            throw new Error(`Unexpected action: ${message.action}`);
+          },
+        },
+      };
+      globalThis.chrome = build === 'chrome'
+        ? { ...runtime, scripting: { executeScript: async () => [] } }
+        : originalChrome;
+      globalThis.browser = build === 'firefox'
+        ? { ...runtime, tabs: { ...runtime.tabs, executeScript: async () => [] } }
+        : originalBrowser;
+      const { RichTextToolbarProbe } = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`),
+      ).href);
+      const geometry = await new RichTextToolbarProbe({}).frameGeometryToTop(77, [
+        { frameId: 0, parentFrameId: -1, url: 'https://top.test/' },
+        { frameId: 1, parentFrameId: 0, url: 'https://middle.test/sandboxed' },
+        { frameId: 2, parentFrameId: 1, url: 'https://child.test/editor' },
+      ], 2, { x: 5, y: 6, w: 20, h: 10 });
+
+      assert.ok(geometry?.annotationRect, `${build}: nested geometry should resolve`);
+      assert.equal(announcements[0]?.parentOrigin, 'https://top.test',
+        `${build}: ordinary parents should retain exact-origin delivery`);
+      assert.equal(announcements[1]?.parentOrigin, '',
+        `${build}: opaque sandbox parents should request wildcard delivery`);
+      assert.equal(waits[0]?.allowOpaqueChildOrigin, false,
+        `${build}: the top-level receiver should not enable inherited opacity`);
+      assert.equal(waits[1]?.allowOpaqueChildOrigin, true,
+        `${build}: an opaque receiver should accept and propagate null child origins`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('redaction collectors expose a per-frame overflow sentinel', () => {
   const visibleRect = { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 };
   for (const browserName of ['chrome', 'firefox']) {
@@ -1735,6 +1982,16 @@ test('ref-id action tools are state changes in both browser agents', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const name of ['click_ax', 'set_checked', 'type_ax', 'set_field']) {
       assert.equal(AgentClass.STATE_CHANGE_TOOLS.has(name), true, `${label} missing ${name} from STATE_CHANGE_TOOLS`);
+    }
+  }
+});
+
+test('iframe mutations require a stable frame scope in both browser tool schemas', () => {
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    for (const name of ['iframe_click', 'iframe_type']) {
+      const tool = getTools('act').find(item => item.function.name === name);
+      assert.ok(tool, `${label}: ${name} tool is missing`);
+      assert.equal(tool.function.parameters.required.includes('urlFilter'), true, `${label}: ${name} does not require urlFilter`);
     }
   }
 });
@@ -2523,6 +2780,31 @@ test('user memory extraction applies only high-confidence safe operations', () =
     ], { now: 500 });
     assert.equal(deduped.changed, true, `${label}: duplicate adds may refresh the existing record`);
     assert.equal(deduped.created, false, `${label}: duplicate adds should not report a newly formed memory`);
+
+    // Missing confidence is accepted at the configured threshold, but malformed
+    // confidence must not be promoted to a trusted memory.
+    const defaulted = memory.parseUserMemoryExtractionResult(JSON.stringify({
+      memories: [{ op: 'add', text: 'Always cite sources in drafts.', kind: 'workflow_preference' }],
+    }));
+    assert.equal(defaulted[0].confidence, memory.USER_MEMORY_EXTRACTION_CONFIDENCE_THRESHOLD,
+      `${label}: missing confidence should default to the acceptance threshold`);
+    const defaultedApplied = memory.applyUserMemoryExtractionOperations(base, defaulted, { now: 600, threshold: 0.85 });
+    assert.equal(defaultedApplied.created, true, `${label}: confidence-less extraction should apply`);
+    assert.equal(defaultedApplied.store.records.length, 2, `${label}: confidence-less extraction should persist a record`);
+
+    for (const invalidConfidence of [null, '', 'high', true, {}, []]) {
+      const malformed = memory.parseUserMemoryExtractionResult(JSON.stringify({
+        memories: [{ op: 'add', text: 'Use a questionable preference.', kind: 'preference', confidence: invalidConfidence }],
+      }));
+      assert.equal(malformed[0].confidence, 0, `${label}: malformed confidence should be rejected`);
+      const malformedApplied = memory.applyUserMemoryExtractionOperations(base, malformed, { now: 700, threshold: 0.85 });
+      assert.equal(malformedApplied.changed, false, `${label}: malformed confidence should not apply`);
+    }
+
+    const numericString = memory.parseUserMemoryExtractionResult(JSON.stringify({
+      memories: [{ op: 'add', text: 'Prefer compact tables.', kind: 'preference', confidence: '0.9' }],
+    }));
+    assert.equal(numericString[0].confidence, 0.9, `${label}: nonblank numeric confidence should remain supported`);
 
     const extractionMessages = memory.buildUserMemoryExtractionMessages({
       userText: 'Remember that I prefer terse replies.',
@@ -5391,6 +5673,13 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project', 'gmail'), false, `${label}: Gmail search results were mistaken for a thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Work', 'gmail'), false, `${label}: Gmail label results were mistaken for a thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/promotions', 'gmail'), false, `${label}: Gmail category results were mistaken for a thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail search results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail label results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail category results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Projects/deadbeefcafe', 'gmail'), false, `${label}: nested hexadecimal Gmail label was mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/deadbeefcafe', 'gmail'), true, `${label}: legacy hexadecimal Gmail inbox thread was rejected`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project/deadbeefcafe', 'gmail'), true, `${label}: legacy hexadecimal Gmail search thread was rejected`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Projects/Subproject/FMfc123', 'gmail'), true, `${label}: modern nested-label Gmail thread was rejected`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/messages/123-456', 'twitter'), true, `${label}: direct-message thread route was missed`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/example-profile', 'twitter'), false, `${label}: social profile was mistaken for a message thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://example.com/article', ''), false, `${label}: unrelated page was mistaken for a communication thread`);
@@ -5515,6 +5804,8 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(nonGmailState.coverageRevision, 0, `${label}: generic document pages received trusted Gmail progress credit`);
 
     const gmailRootRef = 'ref_trusted_main';
+    const gmailRevisionA = 'fnv1a64:1111111111111111';
+    const gmailRevisionB = 'fnv1a64:2222222222222222';
     let gmailState = runtime.createReadCompletenessState(`${label}-gmail-tree`, true, true, 'gmail');
     const beforeDiscovery = gmailState;
     gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'visible', maxDepth: 12, maxChars: 12000 }, {
@@ -5524,6 +5815,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       truncated: true,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeDiscovery, gmailState), true, `${label}: trusted Gmail root discovery was not meaningful progress`);
     assert.deepEqual(gmailState.continuationArgs, {
@@ -5542,6 +5834,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeArbitraryRef, gmailState), false, `${label}: arbitrary Gmail subtree was credited as whole-thread progress`);
     assert.equal(gmailState.treeCoverageComplete, false, `${label}: arbitrary Gmail subtree satisfied complete-thread coverage`);
@@ -5558,6 +5851,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeSkippedPage, gmailState), false, `${label}: non-sequential Gmail page was credited as progress`);
     assert.deepEqual(gmailState.continuationArgs, {
@@ -5575,6 +5869,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(gmailState.treeCoverageComplete, true, `${label}: terminal trusted Gmail thread read did not finish pagination`);
     assert.equal(gmailState.complete, false, `${label}: collapsed Gmail messages were mistaken for complete coverage`);
@@ -5604,20 +5899,23 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { ...expandedPage1Args, page: 2 },
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     const beforeDriftedPage = gmailState;
-    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2 }, {
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA }, {
       pageContent: 'tree changed before page two',
       page: 2,
-      totalChars: 2500,
+      totalChars: 2400,
       hasMore: false,
       truncated: false,
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionB,
+      treeRevisionMismatch: true,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeDriftedPage, gmailState), false, `${label}: changed Gmail tree page was credited as deterministic progress`);
     assert.deepEqual(gmailState.continuationArgs, expandedPage1Args, `${label}: changed Gmail tree did not restart at trusted page one`);
@@ -5629,11 +5927,12 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { ...expandedPage1Args, page: 2 },
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
-    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2 }, {
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA }, {
       pageContent: 'listitem "Latest message"',
       page: 2,
       totalChars: 2500,
@@ -5642,6 +5941,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
     assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged trusted Gmail thread remained blocked`);
@@ -5661,13 +5961,14 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { ...expandedPage1Args, page: 2 },
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     const beforeMissingRoot = missingRootState;
     missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
-      ...expandedPage1Args, page: 2,
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
     }, {
       pageContent: 'detached thread page two',
       page: 2,
@@ -5700,9 +6001,10 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_A', page: 2 },
+      continuationArgs: { filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_A', page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: 'ref_root_A',
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
       filter: 'visible', maxDepth: 12, maxChars: 12000,
@@ -5722,6 +6024,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       truncated: false,
       continuationArgs: null,
       conversationRootRefId: 'ref_root_B',
+      treeRevision: gmailRevisionB,
     });
     assert.equal(changedRootState.treeCoverageComplete, true, `${label}: new Gmail root terminal coverage was not recorded`);
     assert.equal(changedRootState.complete, false, `${label}: a new Gmail root completed with stale expansion evidence`);
@@ -5805,6 +6108,7 @@ test('Ask returns a fixed limitation when Gmail expansion cannot be verified', a
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: 'fnv1a64:3333333333333333',
     });
 
     const messages = [];
@@ -6143,10 +6447,19 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
-  assert.match(chromeSource, /const continuationBase = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
+  assert.match(chromeSource, /const baseTreeScope = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
+  assert.match(chromeSource, /tree_revision: treeRevision/, 'anchored tree continuationArgs do not bind a content revision');
+  assert.match(chromeSource, /const gmailSnapshotEligible = !!refId[\s\S]*?refId === conversationRootRefId[\s\S]*?effFilter === 'all'[\s\S]*?Number\(opts\.maxDepth\) >= 15;/, 'snapshot reuse is not limited to trusted complete Gmail thread reads');
+  assert.match(chromeSource, /gmailSnapshotEligible && requestedPage > 1 && requestedTreeRevision[\s\S]*?findTreeSnapshot/, 'trusted Gmail continuation pages do not reuse the bounded page-one snapshot');
+  assert.match(chromeSource, /gmailSnapshotEligible && \([\s\S]*?requestedPage === 1[\s\S]*?rememberTreeSnapshot/, 'trusted Gmail page one does not establish a fresh snapshot');
+  assert.match(chromeSource, /actionSignatures: actionableTreeSnapshotSignatures\(lines\)/, 'cached Gmail snapshots do not bind actionable refs to current semantics');
+  assert.match(chromeSource, /function snapshotActionsAreCurrent\(snapshot\) \{[\s\S]*?formatLine\(el, 0\) !== signature/, 'cached Gmail actions are not revalidated before ref reuse');
+  assert.match(chromeSource, /const restartArgs = \{\s*\.\.\.baseTreeScope,\s*page: 1,\s*\};/, 'revision recovery widens non-root subtree reads to the Gmail conversation root');
+  assert.match(chromeSource, /nextPage: 1,[\s\S]*?continuationArgs: restartArgs/, 'expired tree snapshots do not expose exact page-one recovery arguments');
   assert.match(chromeSource, /conversationRootRefId/, 'trusted Gmail conversation-root metadata is not returned');
   assert.match(chromeSource, /candidate\.closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body landmarks can spoof the trusted Gmail conversation root');
   assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
+  assert.match(chromeSource, /function gmailConversationExpansionControlState\(control\) \{[\s\S]*?jsname === 'xvWlrc'[\s\S]*?jsname === 'tRarif'[\s\S]*?name === 'Collapse all'[\s\S]*?name === 'Expand all'/, 'Gmail expansion detection still depends exclusively on English labels');
   assert.match(chromeSource, /closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body controls can spoof Gmail expansion evidence');
 
   for (const [label, getTools, prompt] of [
@@ -6156,6 +6469,7 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
     const tool = getTools('ask').find(item => item.function.name === 'get_accessibility_tree');
     assert.match(tool?.function?.description || '', /exact returned `continuationArgs`[\s\S]*whole-page or whole-thread[\s\S]*hasMore:false/i, `${label}: tree tool lacks terminal continuation guidance`);
     assert.match(tool?.function?.parameters?.properties?.page?.description || '', /any tree filter[\s\S]*exact continuationArgs/i, `${label}: page schema still limits paging to one filter`);
+    assert.match(tool?.function?.parameters?.properties?.tree_revision?.description || '', /opaque tree snapshot revision[\s\S]*exact continuationArgs/i, `${label}: tree schema does not preserve snapshot identity`);
     assert.equal(tool?.function?.parameters?.properties?.maxChars?.maximum, 6000, `${label}: model-visible tree pages can exceed the structured result window`);
     assert.match(tool?.function?.parameters?.properties?.maxChars?.description || '', /continuationArgs/i, `${label}: maxChars still describes an abort instead of structured paging`);
     assert.match(prompt, /whole-page, whole-document, or whole-thread[\s\S]*hasMore:false/i, `${label}: Ask prompt permits partial whole-thread answers`);
@@ -7149,6 +7463,7 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     api_mutations_allowed: true,
     user_memory_enabled: true,
     selection_grounded: false,
+    standalone_webgpu_profile: true,
     max_agent_steps: 130,
     max_image_dimension: 1568,
     max_screenshots_per_turn: 4,
@@ -7172,6 +7487,7 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     api_mutations_allowed: true,
     user_memory_enabled: true,
     selection_grounded: false,
+    standalone_webgpu_profile: true,
     max_agent_steps: 130,
     max_image_dimension: 1568,
     max_screenshots_per_turn: 4,
@@ -8147,6 +8463,11 @@ test('loop-stop recovery surfaces a checkpointed draft in chat without claiming 
 test('delivery recovery exposes only done and persists a partial terminal result', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
+    agent.responseLanguagePolicies.set(913, {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    });
     const messages = [
       { role: 'system', content: 'ordinary agent prompt' },
       { role: 'user', content: 'Find remote jobs and give me the links.' },
@@ -8190,12 +8511,74 @@ test('delivery recovery exposes only done and persists a partial terminal result
     assert.deepEqual(request?.options?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum, ['partial', 'failed'], `${label}: forced done must forbid success`);
     assert.deepEqual(request?.options?.toolChoice, { type: 'function', function: { name: 'done' } }, `${label}: done should be explicitly requested`);
     assert.match(request?.sentMessages?.[0]?.content || '', /Call the done tool exactly once/i, `${label}: forced terminal system prompt missing`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /Use English \(en\) for explanatory framing/i, `${label}: recovery prompt lost English framing`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /authored deliverables in English \(en\)/i, `${label}: recovery prompt lost the deliverable language`);
+    assert.match(request?.options?.tools?.[0]?.function?.description || '', /authored deliverables in English \(en\)/i, `${label}: forced done schema lost language guidance`);
     assert.equal(updates.some(update => update.type === 'tool_call' && update.data?.name === 'done'), true, `${label}: forced done call was not surfaced`);
     assert.equal(updates.some(update => update.type === 'run_status' && update.data?.status === 'partial'), true, `${label}: partial run status missing`);
     const persistedResult = JSON.parse(messages.at(-1)?.content || '{}');
     assert.equal(messages.at(-1)?.role, 'tool', `${label}: forced done tool result was not persisted structurally`);
     assert.equal(persistedResult.done, true, `${label}: persisted forced done result missing`);
     assert.equal(persistedResult.outcome, 'partial', `${label}: persisted forced done outcome mismatch`);
+  }
+});
+
+test('active response-language policy reaches the normal system prompt without breaking translation jobs', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const tabId = 916;
+    const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    const translation = {
+      framing_locale: 'en',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    agent._setResponseLanguagePolicy(tabId, translation, 'en');
+    const systemPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(systemPrompt, /Use English \(en\) for explanatory framing/i, `${label}: normal system prompt lost framing language`);
+    assert.match(systemPrompt, /authored deliverables in Spanish \(es\)/i, `${label}: normal system prompt overrode the translation target`);
+
+    agent._setResponseLanguagePolicy(tabId, null, 'tr');
+    const fallbackPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(fallbackPrompt, /Match the language of the latest genuine user request/i, `${label}: planner bypass stopped deriving framing from the user request`);
+    assert.match(fallbackPrompt, /if unclear, use Turkish \(tr\)/i, `${label}: UI locale was not retained as a soft fallback`);
+    assert.doesNotMatch(fallbackPrompt, /Respond in Turkish \(tr\)/i, `${label}: Ask-mode fallback became a hard UI-locale requirement`);
+    assert.doesNotMatch(fallbackPrompt, /authored deliverable itself in/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
+  }
+});
+
+test('ordinary response-language policies use the short rendering and never ride on normal-turn tool schemas', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const tabId = 917;
+    const ordinary = { framing_locale: 'tr', deliverable_locales: ['tr'], preserve_source_text: true };
+    const translation = { framing_locale: 'en', deliverable_locales: ['es'], preserve_source_text: false };
+
+    const full = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+    full.conversationModes.set(tabId, 'act');
+    full.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    full._setResponseLanguagePolicy(tabId, ordinary, 'tr');
+    const ordinaryPrompt = full.conversations.get(tabId)?.[0]?.content || '';
+    assert.match(ordinaryPrompt, /\[Response language\] Respond in Turkish \(tr\)\./, `${label}: ordinary policy did not use the short rendering`);
+    assert.match(ordinaryPrompt, /leave code, identifiers, URLs, product names, and personal names unchanged/i, `${label}: short rendering dropped the stable-token rule`);
+    assert.match(ordinaryPrompt, /unless the user explicitly asks to translate or transliterate them/i, `${label}: short rendering turned the stable-token rule into an unconditional ban`);
+    assert.doesNotMatch(ordinaryPrompt, /RESPONSE LANGUAGE POLICY/, `${label}: ordinary policy still paid for the long block`);
+
+    // The done schema no longer repeats what the system prompt already carries.
+    const doneTool = getTools('act', { tier: 'full' }).find(tool => tool?.function?.name === 'done');
+    assert.doesNotMatch(doneTool?.function?.description || '', /Response language/i, `${label}: normal-turn done schema regained duplicate language guidance`);
+
+    const compact = new AgentClass({ getActive: () => ({ promptTier: 'compact' }) });
+    compact.conversationModes.set(tabId, 'act');
+    compact.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    compact._setResponseLanguagePolicy(tabId, translation, 'en');
+    const compactPrompt = compact.conversations.get(tabId)?.[0]?.content || '';
+    assert.doesNotMatch(compactPrompt, /RESPONSE LANGUAGE POLICY/, `${label}: compact tier still carried the long block`);
+    assert.match(compactPrompt, /Respond in English \(en\)\./, `${label}: compact tier lost the framing language`);
+    assert.match(compactPrompt, /deliverable itself in Spanish \(es\)/i, `${label}: compact tier lost the translation target`);
   }
 });
 
@@ -8323,7 +8706,7 @@ test('Enter SPA route changes reset dead-scroll state and defer queued ref reuse
   }
 });
 
-test('accessibility-tree ref enumeration nudges at three and stops at six', () => {
+test('accessibility-tree allows bounded unique ref drill-downs and still stops enumeration', () => {
   const d = new ConfiguredLoopDetector();
   const tab = 21;
   const root = d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { filter: 'visible' }, {
@@ -8334,10 +8717,16 @@ test('accessibility-tree ref enumeration nudges at three and stops at six', () =
   assert.equal(root.kind, 'none');
   assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_1' }, { pageContent: 'form [ref_1]\n textbox "Subject" [ref_2]' }).kind, 'none');
   assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_2' }, { pageContent: 'textbox "Subject" [ref_2]' }).kind, 'none');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_3' }, { pageContent: 'generic [ref_3]' }).kind, 'nudge');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_4' }, { pageContent: 'generic [ref_4]' }).kind, 'none');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_5' }, { pageContent: 'generic [ref_5]' }).kind, 'none');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_6' }, { pageContent: 'generic [ref_6]' }).kind, 'stop');
+  for (let ref = 3; ref <= 10; ref++) {
+    assert.equal(
+      d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: `ref_${ref}` }, { pageContent: `generic [ref_${ref}]` }).kind,
+      'none',
+    );
+  }
+  assert.equal(
+    d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_11' }, { pageContent: 'generic [ref_11]' }).kind,
+    'stop',
+  );
 });
 
 test('accessibility-tree nextPage pagination past the read cap is not suspicious and other tools reset it', () => {
@@ -10175,12 +10564,14 @@ test('loop detection classifies mutating tools from each build tool list, not a 
     for (const name of ['read_page', 'extract_data', 'get_accessibility_tree', 'fetch_url', 'find_text', 'done']) {
       assert.equal(agent._isBrowserMutationTool(name), false, `${label}: ${name} must not count as a mutation`);
     }
-    // iframe_type now needs state-change screenshots for its toolbar safety
-    // preflight as well as its ordinary post-action evidence.
-    assert.equal(stateChangeTools.has('iframe_type'), true, `${label}: iframe_type must trigger state-change screenshots`);
-    // The remaining frame/upload tools act on the page but are not
+    // Iframe mutations need state-change screenshots for post-action evidence;
+    // iframe_type also uses them for its toolbar safety preflight.
+    for (const name of ['iframe_click', 'iframe_type']) {
+      assert.equal(stateChangeTools.has(name), true, `${label}: ${name} must trigger state-change screenshots`);
+    }
+    // The remaining upload/challenge tools act on the page but are not
     // auto-screenshot state changes, so the two sets must not be collapsed.
-    for (const name of ['iframe_click', 'upload_file', 'solve_captcha']) {
+    for (const name of ['upload_file', 'solve_captcha']) {
       assert.equal(stateChangeTools.has(name), false, `${label}: ${name} must stay out of STATE_CHANGE_TOOLS`);
       assert.equal(mutationTools.has(name), true, `${label}: ${name} must be a browser mutation`);
     }
@@ -13130,6 +13521,28 @@ test('firefox manifest declares required data collection permissions for AMO', (
   assert.deepEqual(manifest.browser_specific_settings?.gecko?.data_collection_permissions?.required, ['none']);
 });
 
+test('firefox minimum version covers declared manifest capabilities', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
+  const declaredVersion = manifest.browser_specific_settings?.gecko?.strict_min_version;
+  const declaredVersionMatch = /^(\d+)(?:\.\d+)*$/.exec(declaredVersion);
+  const requirements = [];
+  if (manifest.permissions?.includes('tabGroups')) {
+    requirements.push({ feature: 'tabGroups permission', minimum: 139 });
+  }
+  if (manifest.browser_specific_settings?.gecko?.data_collection_permissions) {
+    requirements.push({ feature: 'data_collection_permissions', minimum: 140 });
+  }
+
+  assert.ok(declaredVersionMatch, 'Firefox strict_min_version must be a dotted numeric version');
+  const declaredMinimumMajor = Number(declaredVersionMatch[1]);
+  for (const requirement of requirements) {
+    assert.ok(
+      declaredMinimumMajor >= requirement.minimum,
+      `${requirement.feature} requires Firefox ${requirement.minimum}+, but strict_min_version is ${declaredVersion}`,
+    );
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Context-aware recommended actions
 // ────────────────────────────────────────────────────────────────────────
@@ -13948,6 +14361,38 @@ test('communication threads get reply, summary, and follow-up suggestions', () =
   }
 });
 
+test('recommended actions reject lookalike commerce hosts and short-link DM paths', () => {
+  for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+    const ids = (pageInfo) => buildRecommendedActions(pageInfo).map((a) => a.id);
+
+    // A lookalike merchant host with a price signal must not trigger price
+    // comparison, while the real top-level host still does.
+    const priceSignal = { title: 'Product', description: 'Price $19.99 Add to Cart' };
+    assert.equal(ids({ url: 'https://amazon.com.evil.test/', ...priceSignal }).includes('compare-price'), false,
+      `${label}: lookalike amazon host got compare-price`);
+    assert.equal(ids({ url: 'https://ebay.com.evil.test/', ...priceSignal }).includes('compare-price'), false,
+      `${label}: lookalike ebay host got compare-price`);
+    assert.equal(ids({ url: 'https://mercadolibre.com.evil.test/', ...priceSignal }).includes('compare-price'), false,
+      `${label}: lookalike mercadolibre host got compare-price`);
+    assert.equal(ids({ url: 'https://www.amazon.com/', ...priceSignal }).includes('compare-price'), true,
+      `${label}: real amazon host lost compare-price`);
+    assert.equal(ids({ url: 'https://shopee.co.id/', ...priceSignal }).includes('compare-price'), true,
+      `${label}: real shopee country domain lost compare-price`);
+
+    // Bare /t short-link routes are not message threads.
+    const dmPills = (url) => ids({ url, title: 'page' }).filter((id) =>
+      ['draft-reply', 'summarize-thread', 'find-followups'].includes(id));
+    assert.deepEqual(dmPills('https://x.com/t'), [], `${label}: x.com/t got DM suggestions`);
+    assert.deepEqual(dmPills('https://reddit.com/t/top'), [], `${label}: reddit.com/t got DM suggestions`);
+    assert.ok(dmPills('https://www.messenger.com/t/1784').includes('draft-reply'),
+      `${label}: Messenger /t thread lost DM suggestions`);
+    assert.ok(dmPills('https://www.instagram.com/direct/t/1784').includes('draft-reply'),
+      `${label}: instagram /direct/t thread lost DM suggestions`);
+    assert.ok(dmPills('https://x.com/messages').includes('draft-reply'),
+      `${label}: x.com/messages lost DM suggestions`);
+  }
+});
+
 test('focused compose boxes get rewrite suggestions', () => {
   const composePage = {
     url: 'https://x.com/compose/post',
@@ -14587,6 +15032,19 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       [{ items: false }, [1], false],
       [{ anyOf: [false, { minLength: 3 }] }, 'abc', true],
       [{ anyOf: [false, { minLength: 3 }] }, 'a', false],
+      // A JSON numeral can overflow to Infinity (JSON.parse('1e400')). A
+      // non-finite number is never a valid JSON instance, so it must fail the
+      // type check and the minimum/maximum bounds instead of passing both.
+      [{ type: 'number', maximum: 100 }, Infinity, false],
+      [{ type: 'number', maximum: 100 }, -Infinity, false],
+      [{ type: 'number', minimum: 0 }, Infinity, false],
+      [{ type: 'number', minimum: 0 }, -Infinity, false],
+      [{ type: 'number' }, Infinity, false],
+      [{ type: 'number', maximum: 100 }, JSON.parse('1e400'), false],
+      // Constraint-only schemas have no type check, so the bounds themselves
+      // have to reject a non-finite instance.
+      [{ maximum: 100 }, Infinity, false],
+      [{ minimum: 0 }, -Infinity, false],
     ]) {
       assert.equal(
         cloudModule.validateCloudOutput(value, spec).ok,
@@ -14666,6 +15124,55 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       false,
       `${label}: nullable optional widened past its declared type`,
     );
+  }
+});
+
+test('done_json and validateCloudOutput reject non-finite numbers instead of completing with null', async () => {
+  const cloudModules = [];
+  for (const label of ['chrome', 'firefox']) {
+    cloudModules.push(await import(
+      pathToFileURL(path.join(ROOT, `src/${label}/src/agent/cloud-output.js`)).href
+    ));
+  }
+  for (const [label, handle, cloudModule] of [
+    ['chrome', handleDoneJsonCh, cloudModules[0]],
+    ['firefox', handleDoneJsonFx, cloudModules[1]],
+  ]) {
+    const schema = {
+      type: 'object',
+      properties: { count: { type: 'number', maximum: 100 } },
+      required: ['count'],
+      additionalProperties: false,
+    };
+    const overflow = JSON.parse('1e400');
+    const underflow = JSON.parse('-1e400');
+
+    // A bounded number must not accept a numeral-overflow instance.
+    const first = handle({ outputSchema: schema, schemaRepairUsed: false }, {
+      result: { count: overflow },
+      summary: 's',
+    });
+    assert.equal(first.done, undefined, `[${label}] Infinity passed number maximum bounds`);
+    assert.equal(first.schemaValidationError, true, `[${label}] Infinity was not a schema failure`);
+    assert.equal(first.cloudResult, undefined, `[${label}] Infinity completed a run with a corrupt result`);
+
+    // The one repair attempt must not complete the run either.
+    const terminal = handle({ outputSchema: schema, schemaRepairUsed: true }, {
+      result: { count: underflow },
+      summary: 's',
+    });
+    assert.equal(terminal.done, true, `[${label}] -Infinity did not terminate the run after repair`);
+    assert.equal(terminal.cloudFailed, true, `[${label}] -Infinity completed a failed cloud run`);
+
+    // The shorthand number token has the same finiteness contract.
+    assert.equal(cloudModule.validateCloudOutput(overflow, 'number').ok, false,
+      `[${label}] shorthand number accepted Infinity`);
+    assert.equal(cloudModule.validateCloudOutput(underflow, 'number').ok, false,
+      `[${label}] shorthand number accepted -Infinity`);
+
+    // A finite value that respects the bounds still validates.
+    assert.equal(cloudModule.validateCloudOutput(100, { type: 'number', maximum: 100 }).ok, true,
+      `[${label}] a finite bound-respecting number was rejected`);
   }
 });
 
@@ -16754,6 +17261,14 @@ test('completion invariant state machine enforces post-action observation with C
     assert.equal(iframeFormState.iframeFormVerificationDebt, false, `${label}: matching iframe verify_form did not clear form debt`);
     assert.equal(invariant.completionDoneBlock(iframeFormState, 'done', { outcome: 'success' }), null);
 
+    const unscopedIframeState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-unscoped-iframe-form`),
+      'iframe_type',
+      { selector: '#field', text: 'value' },
+      { success: true, dispatched: true, verified: true, frameId: 7, value: 'value' },
+    );
+    assert.equal(unscopedIframeState.iframeFormVerificationDebt, false, `${label}: an unscoped iframe edit created debt that verify_form cannot address`);
+
     let multiIframeState = invariant.createCompletionInvariantState(`${label}-multi-iframe-form`);
     multiIframeState = invariant.recordCompletionToolResult(
       multiIframeState,
@@ -16905,22 +17420,26 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       'chrome',
       CompletionInvariantCh,
       'iframe_type',
-      { selector: '::invalid' },
-      await chromeAgent.executeTool(6401, 'iframe_type', { selector: '::invalid', text: 'x' }),
+      { urlFilter: 'example.test', selector: '::invalid' },
+      await chromeAgent.executeTool(6401, 'iframe_type', { urlFilter: 'example.test', selector: '::invalid', text: 'x' }),
     );
+
+    const unscopedChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { selector: '#field', text: 'x' });
+    assertNoDebt('chrome', CompletionInvariantCh, 'iframe_type', { selector: '#field', text: 'x' }, unscopedChromeIframe);
+    assert.match(unscopedChromeIframe.error, /urlFilter is required/);
 
     chromeIframeTypeResponse = {
       success: false,
       dispatched: true,
       error: 'event handler threw after target resolution',
     };
-    const ambiguousChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { selector: '#field', text: 'x' });
+    const ambiguousChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { urlFilter: 'example.test', selector: '#field', text: 'x' });
     assert.equal(ambiguousChromeIframe.dispatched, true, 'chrome: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
       CompletionInvariantCh.recordCompletionToolResult(
         CompletionInvariantCh.createCompletionInvariantState('chrome-ambiguous-iframe'),
         'iframe_type',
-        { selector: '#field', text: 'x' },
+        { urlFilter: 'example.test', selector: '#field', text: 'x' },
         ambiguousChromeIframe,
       ).verificationDebt,
       true,
@@ -16984,22 +17503,26 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       'firefox',
       CompletionInvariantFx,
       'iframe_type',
-      { selector: '::invalid' },
-      await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '::invalid', text: 'x' }),
+      { urlFilter: 'example.test', selector: '::invalid' },
+      await firefoxAgent.executeTool(6402, 'iframe_type', { urlFilter: 'example.test', selector: '::invalid', text: 'x' }),
     );
+
+    const unscopedFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '#field', text: 'x' });
+    assertNoDebt('firefox', CompletionInvariantFx, 'iframe_type', { selector: '#field', text: 'x' }, unscopedFirefoxIframe);
+    assert.match(unscopedFirefoxIframe.error, /urlFilter is required/);
 
     firefoxIframeTypeResponse = {
       success: false,
       dispatched: true,
       error: 'event handler threw after target resolution',
     };
-    const ambiguousFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '#field', text: 'x' });
+    const ambiguousFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { urlFilter: 'example.test', selector: '#field', text: 'x' });
     assert.equal(ambiguousFirefoxIframe.dispatched, true, 'firefox: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
       CompletionInvariantFx.recordCompletionToolResult(
         CompletionInvariantFx.createCompletionInvariantState('firefox-ambiguous-iframe'),
         'iframe_type',
-        { selector: '#field', text: 'x' },
+        { urlFilter: 'example.test', selector: '#field', text: 'x' },
         ambiguousFirefoxIframe,
       ).verificationDebt,
       true,
@@ -20463,6 +20986,2517 @@ test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
   }
 });
 
+test('Emergency Box maps the OpenStax catalog and resolves compact PDFs on demand', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const requests = [];
+    const fetchImpl = async (url) => {
+      requests.push(String(url));
+      if (String(url).includes('/pages/?')) {
+        return new Response(JSON.stringify({ items: [{
+          id: 38,
+          title: 'Algebra and Trigonometry',
+          meta: {
+            detail_url: 'https://openstax.example/books/38',
+            html_url: 'https://openstax.org/details/books/algebra-and-trigonometry',
+            first_published_at: '2016-03-09T00:00:00Z',
+            locale: 'en',
+          },
+        }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        low_resolution_pdf_url: 'https://openstax.example/algebra-low.pdf',
+        high_resolution_pdf_url: 'https://openstax.example/algebra-high.pdf',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const catalog = await runtime.loadOpenStaxCatalog(fetchImpl);
+    assert.equal(catalog.length, 1, `${label}: OpenStax catalog item missing`);
+    assert.equal(catalog[0].id, 'openstax-38', `${label}: OpenStax identity is unstable`);
+    assert.equal(catalog[0].category, 'education', `${label}: OpenStax item is not categorized as education`);
+    const resolved = await runtime.resolveEmergencyResource(catalog[0], fetchImpl);
+    assert.equal(resolved.url, 'https://openstax.example/algebra-low.pdf', `${label}: compact OpenStax PDF should be preferred`);
+    assert.equal(requests.length, 2, `${label}: resolving one book made unexpected catalog requests`);
+    assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.length >= 100, `${label}: bundled OpenStax catalog is unexpectedly incomplete`);
+    assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.some(item => item.id === 'openstax-38'), `${label}: bundled OpenStax catalog lost a stable book`);
+    assert.match(runtime.OPENSTAX_CATALOG_SNAPSHOT_DATE, /^\d{4}-\d{2}-\d{2}$/, `${label}: bundled OpenStax catalog has no snapshot date`);
+
+    const who = await runtime.resolveEmergencyResource({
+      id: 'who-fixture', title: 'WHO Fixture', whoHandle: '10665/371090', sourceUrl: 'https://iris.who.int/handle/10665/371090',
+    }, async (url) => {
+      if (String(url).includes('/handle/')) {
+        return { ok: true, status: 200, url: 'https://iris.who.int/items/0bd7f7b4-0c31-47a4-adb2-69cb4f38c0da' };
+      }
+      return new Response(JSON.stringify({ _embedded: { bundles: { _embedded: { bundles: [{
+        name: 'ORIGINAL',
+        _embedded: { bitstreams: { _embedded: { bitstreams: [
+          { name: 'guide_fra.pdf', _links: { content: { href: 'https://iris.example/french' } } },
+          { name: 'guide_eng.pdf', _links: { content: { href: 'https://iris.example/english' } } },
+        ] } } },
+      }] } } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    assert.equal(who.url, 'https://iris.example/english', `${label}: WHO DSpace resolver did not select the English original PDF`);
+
+    const archive = await runtime.resolveEmergencyResource({
+      id: 'archive-fixture', title: 'Archive Fixture', archiveIdentifier: 'field-manual', sourceUrl: 'https://archive.org/details/field-manual',
+    }, async () => new Response(JSON.stringify({ files: [
+      { name: 'manual_text.pdf', size: '99999' },
+      { name: 'manual.pdf', size: '50000' },
+      { name: 'preview.pdf', size: '1000' },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    assert.equal(archive.url, 'https://archive.org/download/field-manual/manual.pdf', `${label}: archive resolver did not select the largest non-derived PDF`);
+  }
+});
+
+test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF responses', async () => {
+  function memoryAdapters(initial = new Uint8Array()) {
+    const records = new Map();
+    let committed = initial.slice();
+    return {
+      records,
+      store: {
+        async get(id) { return records.get(id); },
+        async put(record) { records.set(record.id, { ...record }); return record; },
+        async delete(id) { records.delete(id); },
+      },
+      storage: {
+        async open() { return new Blob([committed], { type: 'application/pdf' }); },
+        async size() { return committed.byteLength; },
+        async createWriter() {
+          let working = committed.slice();
+          return {
+            async write(position, bytes) {
+              const needed = position + bytes.byteLength;
+              if (working.byteLength < needed) {
+                const expanded = new Uint8Array(needed);
+                expanded.set(working);
+                working = expanded;
+              }
+              working.set(bytes, position);
+            },
+            async truncate(size) { working = working.slice(0, size); },
+            async close() { committed = working; },
+            async abort() {},
+          };
+        },
+        async delete() { committed = new Uint8Array(); },
+      },
+      bytes() { return new TextDecoder().decode(committed); },
+    };
+  }
+
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const adapters = memoryAdapters();
+    const pdf = '%PDF-1.7\nEmergency Box fixture';
+    const resource = {
+      id: 'fixture-pdf', title: 'Fixture', category: 'health', publisher: 'Fixture Publisher',
+      url: 'https://example.test/fixture.pdf', sourceUrl: 'https://example.test/source',
+    };
+    const ready = await runtime.downloadEmergencyResource(resource, {
+      ...adapters,
+      fetchImpl: async () => new Response(pdf, { status: 200, headers: { 'content-type': 'application/pdf' } }),
+    });
+    assert.equal(ready.status, 'ready', `${label}: valid PDF did not become readable`);
+    assert.equal(adapters.bytes(), pdf, `${label}: streamed PDF bytes were not preserved`);
+    assert.equal(ready.bytesReceived, new TextEncoder().encode(pdf).byteLength, `${label}: installed byte count is wrong`);
+
+    const invalid = memoryAdapters();
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-html' }, {
+        ...invalid,
+        fetchImpl: async () => new Response('<html>blocked</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+      }),
+      /not a valid PDF/i,
+      `${label}: HTML error page was accepted as an emergency PDF`,
+    );
+    assert.equal(invalid.records.get('fixture-html')?.status, 'error', `${label}: invalid PDF failure was not actionable`);
+    assert.equal(invalid.bytes(), '', `${label}: invalid PDF bytes were retained`);
+  }
+});
+
+test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
+  const files = [
+    'src/agent/emergency-box.js',
+    'src/agent/openstax-catalog.js',
+    'src/ui/emergency-box.html',
+    'src/ui/emergency-box.css',
+    'src/ui/emergency-box.js',
+    'src/ui/emergency-pdf.html',
+    'src/ui/emergency-pdf.css',
+    'src/ui/emergency-pdf.js',
+    'src/ui/locales/emergency-copy.mjs',
+    'src/ui/wikipedia-reader.html',
+    'src/ui/wikipedia-reader.css',
+    'src/ui/wikipedia-reader.js',
+  ];
+  for (const relative of files) {
+    const chrome = fs.readFileSync(path.join(ROOT, 'src/chrome', relative), 'utf8');
+    const firefox = fs.readFileSync(path.join(ROOT, 'src/firefox', relative), 'utf8');
+    assert.equal(firefox, chrome, `${relative}: Emergency Box browser implementations diverged`);
+  }
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+    const apocalypse = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.html'), 'utf8');
+    const box = fs.readFileSync(path.join(uiDir, 'emergency-box.html'), 'utf8');
+    const reader = fs.readFileSync(path.join(uiDir, 'emergency-pdf.html'), 'utf8');
+    const readerCss = fs.readFileSync(path.join(uiDir, 'emergency-pdf.css'), 'utf8');
+    assert.match(apocalypse, /href="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
+    assert.match(box, /id="load-openstax"/, `${browser}: OpenStax catalog control missing`);
+    assert.match(box, /id="download-all"/, `${browser}: bulk emergency download control missing`);
+    assert.match(box, /id="resource-list"/, `${browser}: resource browser missing`);
+    assert.match(reader, /id="pdf-canvas"/, `${browser}: internal PDF renderer missing`);
+    assert.match(reader, /id="save-copy"/, `${browser}: PDF export control missing`);
+    assert.match(readerCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/, `${browser}: reader hidden states can expose a stale canvas`);
+    assert.match(fs.readFileSync(path.join(uiDir, 'wikipedia-reader.html'), 'utf8'), /id="article-text"/, `${browser}: text-only Wikipedia reader is missing`);
+  }
+});
+
+test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata before install', () => {
+  const catalogXml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
+    <entry><id>urn:uuid:test-mini</id><title>Wikipedia 100</title><updated>2026-07-17T00:00:00Z</updated>
+      <summary>Top hundred Wikipedia articles</summary><language>eng</language><name>wikipedia_en_100</name><flavour>mini</flavour>
+      <category>wikipedia</category><tags>wikipedia;_ftindex:yes;_pictures:no</tags><articleCount>5032</articleCount>
+      <author><name>Wikipedia</name></author><publisher><name>openZIM</name></publisher>
+      <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/example.zim.meta4" length="331961344" />
+      <dc:issued>2026-07-17T00:00:00Z</dc:issued>
+    </entry></feed>`;
+  const metalinkXml = `<?xml version="1.0"?><metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="example.zim">
+    <size>4621915</size><hash type="sha-256">b3d5db724e2ef884eaf43e3677ba2dc5c4d17619114b3de4602c119ca23dcfcd</hash>
+    <pieces length="4194304" type="sha-1"><hash>f6dc33924096656d9952a6ffe0de101d1b3aa5c6</hash><hash>33534cc215d7a94fba21cf264a64f2ef954dedce</hash></pieces>
+    <url priority="2">https://mirror.example.test/wikipedia/example.zim</url>
+    <url priority="1">https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim</url>
+  </file></metalink>`;
+  const libraryXml = `<?xml version="1.0"?><library version="20110515">
+    <book id="static-text" size="324181" articleCount="5918889" title="Wikipedia" description="The free encyclopedia" language="eng"
+      creator="Wikipedia" publisher="openZIM" name="wikipedia_en_all" date="2026-07-17" flavour="nopic"
+      tags="wikipedia;_category:wikipedia;_pictures:no" url="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_all_nopic_2026-07.zim.meta4" />
+    <book id="wrong-language" size="100" articleCount="10" title="Wikipédia" language="fra" creator="Wikipedia" publisher="openZIM"
+      name="wikipedia_fr_all" date="2026-07-17" flavour="mini" url="https://example.test/fr.zim.meta4" />
+    <book id="wrong-category" size="100" articleCount="10" title="Other" language="eng" creator="Other" publisher="openZIM"
+      name="gutenberg_en_all" date="2026-07-17" flavour="mini" url="https://example.test/other.zim.meta4" />
+  </library>`;
+
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const [item] = runtime.parseKiwixCatalog(catalogXml);
+    assert.equal(item.language, 'eng', `${label}: catalog language was not preserved`);
+    assert.equal(item.tier, 'starter', `${label}: small archive tier was not classified`);
+    assert.equal(item.source, 'Wikipedia / openZIM', `${label}: catalog publisher provenance was replaced by a generic label`);
+    assert.equal(item.licenseDeclared, false, `${label}: missing OPDS rights metadata was presented as a publisher-declared license`);
+    assert.match(item.license, /not declared/i, `${label}: missing OPDS rights metadata was not disclosed before confirmation`);
+    assert.equal(item.catalogSize, 331961344, `${label}: catalog-reported size was lost`);
+    const resolved = runtime.resolveKiwixDownload(item, metalinkXml);
+    assert.equal(resolved.size, 4621915, `${label}: install did not use the Metalink exact size`);
+    assert.equal(resolved.pieceLength, 4194304, `${label}: resumable piece size was not preserved`);
+    assert.deepEqual(resolved.pieceHashes, ['f6dc33924096656d9952a6ffe0de101d1b3aa5c6', '33534cc215d7a94fba21cf264a64f2ef954dedce'], `${label}: piece integrity hashes were lost`);
+    assert.equal(resolved.downloadUrl, 'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim', `${label}: mirror URL was not selected`);
+    assert.deepEqual(resolved.mirrors, [
+      'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim',
+      'https://mirror.example.test/wikipedia/example.zim',
+    ], `${label}: priority-ordered Metalink mirrors were not retained`);
+    const [staticItem] = runtime.parseKiwixLibrary(libraryXml, 'eng');
+    assert.equal(staticItem.id, 'static-text', `${label}: static Kiwix catalog fallback did not preserve archive identity`);
+    assert.equal(staticItem.tier, 'text', `${label}: static Kiwix archive flavour was not classified`);
+    assert.equal(staticItem.catalogSize, 324181 * 1024, `${label}: static Kiwix size was not converted from KiB`);
+    assert.equal(runtime.parseKiwixLibrary(libraryXml, 'eng').length, 1, `${label}: static fallback did not filter language and category`);
+    const catalogUrl = new URL(runtime.kiwixCatalogUrl('eng'));
+    assert.equal(catalogUrl.searchParams.get('category'), 'wikipedia', `${label}: OPDS request does not use the supported category filter`);
+  }
+});
+
+test('Apocalypse Mode falls back to the official static Kiwix catalog', async () => {
+  const libraryXml = `<?xml version="1.0"?><library><book id="fallback" size="512" articleCount="100" title="Wikipedia Mini"
+    description="A small archive" language="eng" creator="Wikipedia" publisher="openZIM" name="wikipedia_en_100" date="2026-08-01"
+    flavour="mini" tags="wikipedia;_category:wikipedia" url="https://lb.download.kiwix.org/zim/wikipedia/fallback.zim.meta4" /></library>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const urls = [];
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store: {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return []; },
+      },
+      storage: {},
+      fetchImpl: async (url) => {
+        urls.push(String(url));
+        if (String(url).includes('opds.library.kiwix.org')) return { ok: false, status: 503 };
+        return { ok: true, status: 200, async text() { return libraryXml; } };
+      },
+    });
+
+    const items = await controller.catalog('eng');
+    assert.deepEqual(items.map(item => item.id), ['fallback'], `${label}: static Kiwix fallback did not recover the catalog`);
+    assert.equal(urls.length, 2, `${label}: catalog fallback made an unexpected number of requests`);
+    assert.match(urls[1], /download\.kiwix\.org\/library\/library_zim\.xml/, `${label}: fallback did not use Kiwix's static library catalog`);
+  }
+});
+
+function minimalWikipediaZimFixture(options = {}) {
+  const encoder = new TextEncoder();
+  const language = options.language || 'eng';
+  const sourceLanguage = ({ ben: 'bn', tgl: 'tl' })[language] || language.slice(0, 2);
+  const metadata = options.wikipedia === false ? {
+    Language: 'eng', Name: 'project_gutenberg_en', Source: 'www.gutenberg.org', Tags: '_category:books',
+  } : {
+    Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`, Tags: 'wikipedia;_category:wikipedia',
+  };
+  const entries = [
+    {
+      namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
+      contents: '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
+    },
+    ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
+  ];
+  if (options.redirectTrap) {
+    entries.push(
+      { namespace: 'C', url: 'Science', title: 'Science', redirectUrl: 'The_New_York_Times' },
+      { namespace: 'C', url: 'Science_article', title: 'Science article', mimeType: 0, contents: '<p>Science is the systematic study of the natural world.</p>' },
+      { namespace: 'C', url: 'The_New_York_Times', title: 'The New York Times', mimeType: 0, contents: '<p>A newspaper based in New York City.</p>' },
+    );
+  }
+  if (options.caseSensitiveTitle) {
+    for (let index = 0; index < 30; index += 1) {
+      entries.push({
+        namespace: 'C', url: `New_Example_${String(index).padStart(2, '0')}`, title: `New Example ${index}`, mimeType: 0,
+        contents: `<p>Prefix decoy ${index}.</p>`,
+      });
+    }
+    entries.push({
+      namespace: 'C', url: 'New_York_City', title: 'New York City', mimeType: 0,
+      contents: '<p>New York City is the most populous city in the United States.</p>',
+    });
+    entries.push({ namespace: 'C', url: 'NYC', title: 'NYC', redirectUrl: 'New_York_City' });
+    entries.push({
+      namespace: 'C', url: 'iPhone', title: 'iPhone', mimeType: 0,
+      contents: '<p>The iPhone is a line of smartphones designed by Apple.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'YouTube', title: 'YouTube', mimeType: 0,
+      contents: '<p>YouTube is an online video sharing platform.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'YouTube_TV', title: 'YouTube TV', mimeType: 0,
+      contents: '<p>YouTube TV is a streaming television service.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'OpenAI', title: 'OpenAI', mimeType: 0,
+      contents: '<p>OpenAI is an artificial intelligence research organization.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'United_States', title: 'United States', mimeType: 0,
+      contents: '<p>The United States is a country in North America.</p>',
+    });
+    entries.push({ namespace: 'C', url: 'USA', title: 'USA', redirectUrl: 'United_States' });
+    entries.push({ namespace: 'C', url: 'Big_Apple', title: 'Big Apple', redirectUrl: 'New_York_City' });
+  }
+  entries.sort((left, right) => {
+    const leftKey = `${left.namespace}/${left.url}`;
+    const rightKey = `${right.namespace}/${right.url}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const blobs = entries.filter(entry => entry.contents != null);
+  blobs.forEach((entry, index) => { entry.blobIndex = index; });
+  const mime = encoder.encode('text/html\0text/plain\0\0');
+  const offsetsBytes = (blobs.length + 1) * 4;
+  const encodedBlobs = blobs.map(entry => encoder.encode(entry.contents));
+  const cluster = new Uint8Array(1 + offsetsBytes + encodedBlobs.reduce((sum, value) => sum + value.length, 0));
+  cluster[0] = 1;
+  const clusterView = new DataView(cluster.buffer);
+  let blobOffset = offsetsBytes;
+  encodedBlobs.forEach((value, index) => {
+    clusterView.setUint32(1 + index * 4, blobOffset, true);
+    cluster.set(value, 1 + blobOffset);
+    blobOffset += value.length;
+  });
+  clusterView.setUint32(1 + blobs.length * 4, blobOffset, true);
+  const directories = entries.map((entry) => {
+    const url = encoder.encode(entry.url);
+    const title = encoder.encode(entry.title);
+    const redirect = Boolean(entry.redirectUrl);
+    const directory = new Uint8Array((redirect ? 12 : 16) + url.length + 1 + title.length + 1);
+    const directoryView = new DataView(directory.buffer);
+    directoryView.setUint16(0, redirect ? 0xffff : entry.mimeType, true);
+    directory[3] = entry.namespace.charCodeAt(0);
+    directoryView.setUint32(8, redirect ? entries.findIndex(candidate => candidate.url === entry.redirectUrl && candidate.namespace === 'C') : 0, true);
+    if (!redirect) directoryView.setUint32(12, entry.blobIndex, true);
+    directory.set(url, redirect ? 12 : 16);
+    directory.set(title, (redirect ? 13 : 17) + url.length);
+    return directory;
+  });
+  // Use the common ZIM layout where directory entries precede cluster data.
+  // The final cluster therefore ends at checksumPos, not at the first URL
+  // pointer's directory-entry offset.
+  const urlPointerPosition = 128;
+  const clusterPointerPosition = urlPointerPosition + entries.length * 8;
+  const directoryStart = clusterPointerPosition + 8;
+  const directoryPositions = [];
+  let directoryOffset = directoryStart;
+  for (const directory of directories) {
+    directoryPositions.push(directoryOffset);
+    directoryOffset += directory.length;
+  }
+  const clusterStart = directoryOffset;
+  const checksumPosition = clusterStart + cluster.length;
+  const bytes = new Uint8Array(checksumPosition + 16);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x044d495a, true);
+  view.setUint16(4, 6, true);
+  view.setUint16(6, 3, true);
+  view.setUint32(24, entries.length, true);
+  view.setUint32(28, 1, true);
+  view.setBigUint64(32, BigInt(urlPointerPosition), true);
+  view.setBigUint64(40, 0xffffffffffffffffn, true);
+  view.setBigUint64(48, BigInt(clusterPointerPosition), true);
+  view.setBigUint64(56, 80n, true);
+  view.setUint32(64, 0, true);
+  view.setUint32(68, 0xffffffff, true);
+  view.setBigUint64(72, BigInt(checksumPosition), true);
+  bytes.set(mime, 80);
+  bytes.set(cluster, clusterStart);
+  directories.forEach((directory, index) => {
+    bytes.set(directory, directoryPositions[index]);
+    view.setBigUint64(urlPointerPosition + index * 8, BigInt(directoryPositions[index]), true);
+  });
+  view.setBigUint64(clusterPointerPosition, BigInt(clusterStart), true);
+  return new Blob([bytes], { type: 'application/x-zim' });
+}
+
+test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture(), {
+      language: 'eng',
+      archiveDate: '2026-07-17',
+      license: 'CC BY-SA 4.0',
+    });
+    assert.deepEqual(archive.metadata, {
+      language: 'eng', archiveDate: '2026-07-17', source: 'https://en.wikipedia.org/', license: 'CC BY-SA 4.0', licenseDeclared: true,
+    }, `${label}: validated import metadata was unavailable before confirmation`);
+    const [passage] = await archive.search('Alan Turing', { limit: 3 });
+    assert.equal(passage.title, 'Alan Turing', `${label}: local ZIM title was not read`);
+    assert.match(passage.excerpt, /computer scientist/, `${label}: local ZIM article text was not extracted`);
+    assert.equal(passage.url, 'https://en.wikipedia.org/wiki/Alan_Turing', `${label}: canonical Wikipedia attribution was lost`);
+    assert.equal(passage.language, 'eng', `${label}: archive language was lost`);
+    assert.equal(passage.archiveDate, '2026-07-17', `${label}: archive date was lost`);
+    assert.equal(passage.license, 'CC BY-SA 4.0', `${label}: archive license was lost`);
+    assert.equal(passage.path, 'Alan_Turing', `${label}: reader path was not preserved by archive search`);
+    const article = await archive.readArticle(passage.path);
+    assert.equal(article.title, 'Alan Turing', `${label}: text reader opened the wrong article`);
+    assert.match(article.text, /computer scientist/, `${label}: text reader did not extract the complete local article`);
+    assert.equal(article.truncated, false, `${label}: short local article was incorrectly marked truncated`);
+    assert.equal(archive.embeddedMetadata.Name, 'wikipedia_en_test', `${label}: embedded archive identity was not exposed for import validation`);
+  }
+  const corrupt = new Blob([new Uint8Array(96)]);
+  await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
+});
+
+test('Apocalypse Mode short-circuits exact ZIM casing probes and bounds directory reads', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const padded = new Blob([minimalWikipediaZimFixture(), new Uint8Array(128 * 1024)]);
+    const reads = [];
+    const source = {
+      size: padded.size,
+      slice(start, end) {
+        reads.push([start, end]);
+        return padded.slice(start, end);
+      },
+    };
+    const archive = await runtime.openKiwixZim(source, {});
+    reads.length = 0;
+
+    const [result] = await archive.search('alan turing', { limit: 1 });
+
+    assert.equal(result?.title, 'Alan Turing', `${label}: exact common-case search lost its result`);
+    assert.ok(reads.length < 20, `${label}: exact common-case search expanded through every casing variant`);
+    assert.ok(reads.every(([start, end]) => end - start <= 4 * 1024),
+      `${label}: ordinary directory lookup still issued a 64 KiB read`);
+  }
+});
+
+test('Apocalypse Mode reuses one random-access ZIM handle for search and text reading', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let opens = 0;
+    const archiveCache = new Map();
+    const provider = runtime.createKiwixZimProvider({
+      archiveCache,
+      storage: { async open() { opens += 1; return minimalWikipediaZimFixture(); } },
+    });
+    const record = {
+      id: 'cached-wikipedia', archiveKind: 'wikipedia', status: 'ready', generation: 1,
+      updatedAt: 100, size: 1024, language: 'eng', archiveDate: '2026-07-17',
+      target: { kind: 'opfs', key: 'wikipedia.zim' },
+    };
+    const [first] = await provider.search(record, 'Alan Turing');
+    await provider.search(record, 'Alan Turing');
+    const article = await provider.read(record, first.path);
+    assert.equal(opens, 1, `${label}: repeated reads reopened the large ZIM archive`);
+    assert.match(article.text, /computer scientist/, `${label}: cached reader returned the wrong article text`);
+    assert.equal(article.archiveId, record.id, `${label}: cached reader lost archive identity`);
+  }
+});
+
+test('Apocalypse Mode maps Bengali and Tagalog ZIM languages to canonical Wikipedia hosts', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const [language, host] of [['ben', 'bn'], ['tgl', 'tl']]) {
+      const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ language }));
+      const [passage] = await archive.search('Alan Turing');
+      assert.equal(passage?.url, `https://${host}.wikipedia.org/wiki/Alan_Turing`, `${label}: ${language} used the wrong Wikipedia host`);
+    }
+  }
+});
+
+test('Apocalypse Mode reranks resolved redirect destinations before returning ZIM search results', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ redirectTrap: true }));
+    const [passage] = await archive.search('Science', { limit: 1 });
+    assert.equal(passage?.title, 'Science article', `${label}: an exact-looking redirect alias displaced the relevant destination`);
+    assert.doesNotMatch(passage?.url || '', /The_New_York_Times/, `${label}: an unrelated redirect destination escaped relevance scoring`);
+  }
+});
+
+test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM titles', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ caseSensitiveTitle: true }));
+    const [passage] = await archive.search('new york city', { limit: 1 });
+    assert.equal(passage?.title, 'New York City', `${label}: lowercase proper-name query missed the case-sensitive ZIM path`);
+    assert.match(passage?.excerpt || '', /most populous city/i, `${label}: case-correct lookup returned the wrong prefix match`);
+    const [redirect] = await archive.search('nyc', { limit: 1 });
+    assert.equal(redirect?.title, 'New York City', `${label}: exact redirect alias lost its destination title`);
+    assert.equal(redirect?.url, 'https://en.wikipedia.org/wiki/New_York_City', `${label}: exact redirect alias lost its destination URL`);
+    assert.match(redirect?.excerpt || '', /most populous city/i, `${label}: exact redirect alias lost its destination content`);
+    const [mixedCase] = await archive.search('iphone', { limit: 1 });
+    assert.equal(mixedCase?.title, 'iPhone', `${label}: lowercase query missed a mixed-case ZIM title`);
+    assert.match(mixedCase?.excerpt || '', /smartphones designed by Apple/i, `${label}: mixed-case lookup returned the wrong article`);
+    const [combinedCase] = await archive.search('youtube', { limit: 1 });
+    assert.equal(combinedCase?.title, 'YouTube', `${label}: lowercase query missed combined leading and internal capitals`);
+    assert.match(combinedCase?.excerpt || '', /video sharing platform/i, `${label}: combined-case lookup returned the wrong article`);
+    const [crossTokenCase] = await archive.search('youtube tv', { limit: 1 });
+    assert.equal(crossTokenCase?.title, 'YouTube TV', `${label}: lowercase query missed mixed capitalization across tokens`);
+    assert.match(crossTokenCase?.excerpt || '', /streaming television service/i, `${label}: cross-token mixed-case lookup returned the wrong article`);
+    const [multipleCapitals] = await archive.search('openai', { limit: 1 });
+    assert.equal(multipleCapitals?.title, 'OpenAI', `${label}: lowercase query missed multiple internal capitals`);
+    assert.match(multipleCapitals?.excerpt || '', /research organization/i, `${label}: multi-capital lookup returned the wrong article`);
+    const [broaderAlias] = await archive.search('usa', { limit: 1 });
+    assert.equal(broaderAlias?.title, 'United States', `${label}: exact extended initialism alias lost its destination title`);
+    assert.match(broaderAlias?.excerpt || '', /country in North America/i, `${label}: exact extended initialism alias lost its content`);
+    const [semanticAlias] = await archive.search('big apple', { limit: 1 });
+    assert.equal(semanticAlias?.title, 'New York City', `${label}: exact semantic alias lost its destination title`);
+    assert.match(semanticAlias?.excerpt || '', /most populous city/i, `${label}: exact semantic alias lost its destination content`);
+  }
+});
+
+test('Apocalypse Mode accepts only self-identified Wikipedia ZIM imports', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: 'https://fr.wikipedia.org/', Name: 'other', Tags: '' }), true, `${label}: Wikipedia Source metadata was rejected`);
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: '', Name: 'wikipedia_en_all', Tags: '' }), true, `${label}: Wikipedia Name metadata was rejected`);
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: '', Name: 'other', Tags: '_category:wikipedia' }), true, `${label}: Wikipedia Tags metadata was rejected`);
+    assert.throws(() => runtime.assertWikipediaZimArchive({ Source: 'https://www.gutenberg.org/', Name: 'books_en', Tags: '_category:books' }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: a non-Wikipedia archive was accepted`);
+    assert.throws(() => runtime.assertWikipediaZimArchive({ Source: 'https://wikipedia.org.evil.test/', Name: 'books_en', Tags: '' }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: a lookalike Wikipedia hostname was accepted`);
+    const file = minimalWikipediaZimFixture({ wikipedia: false });
+    Object.defineProperty(file, 'name', { value: 'pretend-wikipedia.zim' });
+    await assert.rejects(runtime.importKiwixArchive(file, { source: 'User supplied', filename: file.name }, {
+      store: { async getConfig() { return { enabled: true }; } },
+      storage: { async estimate() { return {}; } },
+      id: 'not-wikipedia',
+    }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: caller-supplied provenance bypassed embedded archive identity`);
+  }
+});
+
+test('Apocalypse Mode ranks multi-word ZIM titles and preserves embedded provenance', () => {
+  const candidates = [
+    { index: 1, url: 'World_Heritage_Site', title: 'World Heritage Site' },
+    { index: 2, url: 'World_War_II', title: 'World War II' },
+    { index: 3, url: 'War', title: 'War' },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const ranked = runtime.rankZimTitleCandidates(candidates, 'World War II', 3);
+    assert.deepEqual(ranked.map(item => item.url), ['World_War_II'], `${label}: one-token title matches displaced the relevant article`);
+    assert.deepEqual(runtime.mergeZimProvenance({
+      language: 'eng', archiveDate: '2024-01-01', source: 'Catalog source', license: 'Catalog license',
+    }, {
+      Language: 'deu', Date: '2026-07-17', Source: 'Embedded source', License: 'Embedded license',
+    }), {
+      language: 'deu', archiveDate: '2026-07-17', source: 'Embedded source', license: 'Embedded license', licenseDeclared: true,
+    }, `${label}: generic catalog provenance overrode archive-embedded metadata`);
+  }
+});
+
+test('Apocalypse Mode ZIM ranking is independent of the browser locale', () => {
+  const originalLocaleLowerCase = String.prototype.toLocaleLowerCase;
+  String.prototype.toLocaleLowerCase = function localeLowerCase() {
+    return originalLocaleLowerCase.call(this, 'tr');
+  };
+  try {
+    for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+      const ranked = runtime.rankZimTitleCandidates([
+        { index: 1, url: 'Istanbul', title: 'Istanbul' },
+      ], 'istanbul', 1);
+      assert.equal(ranked[0]?.url, 'Istanbul', `${label}: Turkish browser locale changed ZIM title matching`);
+    }
+  } finally {
+    String.prototype.toLocaleLowerCase = originalLocaleLowerCase;
+  }
+});
+
+test('Apocalypse Mode selects only a newer matching catalog archive', () => {
+  const installed = { name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-01-01' };
+  const items = [
+    { id: 'wrong-flavour', name: installed.name, flavour: 'mini', archiveDate: '2026-08-01' },
+    { id: 'older', name: installed.name, flavour: installed.flavour, archiveDate: '2025-12-01' },
+    { id: 'newest', name: installed.name, flavour: installed.flavour, archiveDate: '2026-07-01' },
+    { id: 'newer', name: installed.name, flavour: installed.flavour, archiveDate: '2026-05-01' },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.selectKiwixUpdate(installed, items)?.id, 'newest', `${label}: manual update selected the wrong archive`);
+    assert.equal(runtime.selectKiwixUpdate({ ...installed, archiveDate: '2027-01-01' }, items), null, `${label}: older archives were offered as updates`);
+    assert.deepEqual(runtime.normalizeStorageEstimate({ quota: null, usage: 10 }), {
+      known: false, usage: 10, quota: null, free: null,
+    }, `${label}: null quota was misclassified as exhausted storage`);
+    assert.deepEqual(runtime.normalizeStorageEstimate({ quota: 10, usage: 10 }), {
+      known: true, usage: 10, quota: 10, free: 0,
+    }, `${label}: zero free space was misclassified as an unknown estimate`);
+  }
+});
+
+test('Apocalypse Mode requires opt-in and removal wins an in-flight download race', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: false, updatePolicy: 'manual' };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return { ...record }; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const removals = [];
+    const storage = {
+      async write(ref, offset, bytes) { writes.push([ref, offset, bytes.byteLength]); },
+      async remove(ref) { removals.push(ref); },
+    };
+    let releaseFetch;
+    const fetchImpl = async () => await new Promise(resolve => { releaseFetch = resolve; });
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl,
+      digestHex: async () => 'aa',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'archive-1',
+      now: () => 1000,
+    });
+    const download = {
+      id: 'catalog-1', filename: 'example.zim', title: 'Wikipedia', language: 'eng', tier: 'starter', archiveDate: '2026-07-17',
+      size: 2, pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'], downloadUrl: 'https://example.test/example.zim',
+      source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0',
+    };
+
+    await assert.rejects(manager.install(download, { kind: 'opfs', key: 'example.zim' }), /disabled/i, `${label}: download started before explicit opt-in`);
+    await manager.setEnabled(true);
+    await manager.install(download, { kind: 'opfs', key: 'example.zim' });
+    const schedulesBeforeRace = scheduled.length;
+    const running = manager.processNext();
+    while (!releaseFetch) await new Promise(resolve => setTimeout(resolve, 0));
+    await manager.remove('archive-1');
+    releaseFetch({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1, 2).buffer; } });
+    await running;
+
+    assert.equal(records.has('archive-1'), false, `${label}: removed archive record was repopulated by an in-flight fetch`);
+    assert.equal(writes.length, 0, `${label}: removed archive bytes were written after cancellation`);
+    assert.deepEqual(removals, [{ kind: 'opfs', key: 'archive-1-example.zim' }], `${label}: archive removal did not delete its record-scoped managed storage`);
+    assert.equal(scheduled.length, schedulesBeforeRace, `${label}: cancelled work rescheduled itself after removal`);
+  }
+});
+
+test('Apocalypse Mode rearms queued work after pausing or deleting the active download', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const action of ['pause', 'remove']) {
+      const active = {
+        id: `${action}-active`, status: 'queued', generation: 1, updatedAt: 100,
+        filename: 'active.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+        downloadUrl: 'https://example.test/active.zim', target: { kind: 'opfs', key: 'active.zim' },
+        pieceIndex: 0, bytesDownloaded: 0, retryCount: 0,
+      };
+      const queued = {
+        ...active,
+        id: `${action}-queued`,
+        filename: 'queued.zim',
+        downloadUrl: 'https://example.test/queued.zim',
+        target: { kind: 'opfs', key: 'queued.zim' },
+      };
+      const records = new Map([[active.id, active], [queued.id, queued]]);
+      const store = {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+        async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+        async putArchive(record) { records.set(record.id, { ...record }); return record; },
+        async deleteArchive(id) { records.delete(id); },
+      };
+      let markFetchStarted;
+      const fetchStarted = new Promise(resolve => { markFetchStarted = resolve; });
+      const scheduled = [];
+      const manager = runtime.createApocalypseArchiveManager({
+        store,
+        storage: { async remove() {} },
+        fetchImpl: async (_url, request) => await new Promise((_resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true });
+          markFetchStarted();
+        }),
+        digestHex: async () => 'aa',
+        schedule: delay => scheduled.push(delay),
+        randomId: () => `${action}-lease`,
+        now: () => 1000,
+      });
+
+      const running = manager.processNext();
+      await fetchStarted;
+      await manager[action](active.id);
+      const result = await running;
+
+      assert.equal(result.reason, 'cancelled', `${label}: ${action} did not cancel the active download`);
+      assert.deepEqual(scheduled, [0], `${label}: ${action} stranded the next queued archive`);
+      assert.equal(records.get(queued.id)?.status, 'queued', `${label}: ${action} changed the next archive state`);
+      if (action === 'pause') assert.equal(records.get(active.id)?.status, 'paused', `${label}: pause state was lost`);
+      else assert.equal(records.has(active.id), false, `${label}: removed active archive metadata was retained`);
+    }
+  }
+});
+
+test('Apocalypse Mode disabling loses atomically to concurrent archive deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const record = { id: 'disable-race', status: 'queued', generation: 3, updatedAt: 123 };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    let expectedState;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(_next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        records.delete(record.id);
+        return false;
+      },
+    };
+    const manager = runtime.createApocalypseArchiveManager({ store, storage: {}, now: () => 456 });
+
+    await manager.setEnabled(false);
+
+    assert.equal(config.enabled, false, `${label}: disabling did not persist the configuration`);
+    assert.equal(compareAttempts, 1, `${label}: disabling did not compare-and-swap incomplete metadata`);
+    assert.deepEqual(expectedState, { status: 'queued', generation: 3, updatedAt: 123 },
+      `${label}: disabling did not guard the original record state`);
+    assert.equal(records.has(record.id), false, `${label}: disabling recreated concurrently deleted metadata`);
+  }
+});
+
+test('Apocalypse Mode pause and resume lose atomically to concurrent archive deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const [action, status] of [['pause', 'queued'], ['resume', 'paused']]) {
+      const record = { id: `${action}-race`, status, generation: 7, updatedAt: 321 };
+      const records = new Map([[record.id, record]]);
+      let compareAttempts = 0;
+      let expectedState;
+      const scheduled = [];
+      const store = {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()]; },
+        async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+        async putArchive(next) { records.set(next.id, { ...next }); return next; },
+        async putArchiveIfCurrent(_next, expected) {
+          compareAttempts += 1;
+          expectedState = { ...expected };
+          records.delete(record.id);
+          return false;
+        },
+      };
+      const manager = runtime.createApocalypseArchiveManager({
+        store, storage: {}, schedule: delay => scheduled.push(delay), now: () => 654,
+      });
+
+      const result = await manager[action](record.id);
+
+      assert.equal(result, null, `${label}: ${action} returned stale metadata after deletion won`);
+      assert.equal(compareAttempts, 1, `${label}: ${action} did not compare-and-swap metadata`);
+      assert.deepEqual(expectedState, { status, generation: 7, updatedAt: 321 },
+        `${label}: ${action} did not guard the original record state`);
+      assert.equal(records.has(record.id), false, `${label}: ${action} recreated concurrently deleted metadata`);
+      assert.deepEqual(scheduled, [], `${label}: cancelled ${action} scheduled stale work`);
+    }
+  }
+});
+
+test('Apocalypse Mode lifecycle actions cannot revive a deleting archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const action of ['pause', 'resume', 'disable']) {
+      const record = { id: `${action}-deleting`, status: 'deleting', generation: 9, updatedAt: 321 };
+      const records = new Map([[record.id, record]]);
+      let writes = 0;
+      const config = { enabled: true };
+      const store = {
+        async getConfig() { return { ...config }; },
+        async setConfig(next) { Object.assign(config, next); return { ...config }; },
+        async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+        async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+        async putArchive(next) { writes += 1; records.set(next.id, { ...next }); return next; },
+        async putArchiveIfCurrent() { writes += 1; throw new Error('deleting record was rewritten'); },
+      };
+      const manager = runtime.createApocalypseArchiveManager({ store, storage: {}, schedule() {} });
+
+      const result = action === 'disable' ? await manager.setEnabled(false) : await manager[action](record.id);
+
+      assert.equal(records.get(record.id)?.status, 'deleting', `${label}: ${action} revived a deleting archive`);
+      assert.equal(records.get(record.id)?.generation, 9, `${label}: ${action} changed deletion ownership`);
+      assert.equal(writes, 0, `${label}: ${action} wrote stale metadata over deletion`);
+      if (action === 'disable') assert.equal(result.enabled, false, `${label}: disabling did not persist the global setting`);
+      else assert.equal(result?.status, 'deleting', `${label}: ${action} did not return the current deleting state`);
+    }
+  }
+});
+
+test('Apocalypse Mode schedules the next archive after completing another download', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const ids = ['first-archive', 'second-archive', 'download-lease'];
+    const store = {
+      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => ids.shift(),
+      now: () => 1000,
+    });
+    const download = {
+      filename: 'archive.zim', size: 1, pieceLength: 1,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/archive.zim',
+    };
+    await manager.install(download, { kind: 'opfs', key: 'first.zim' });
+    await manager.install(download, { kind: 'opfs', key: 'second.zim' });
+    scheduled.length = 0;
+
+    await manager.processNext();
+
+    assert.equal(records.get('first-archive')?.status, 'ready', `${label}: first archive did not complete`);
+    assert.equal(records.get('second-archive')?.status, 'queued', `${label}: second archive did not remain eligible`);
+    assert.deepEqual(scheduled, [0], `${label}: finishing one archive stranded the next queued archive`);
+  }
+});
+
+test('Apocalypse Mode rearms a pending retry after another archive completes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const retrying = {
+      id: 'retry-later', status: 'retrying', generation: 1, updatedAt: 100,
+      nextRetryAt: 1500, pieceIndex: 0, retryCount: 1,
+      filename: 'retry.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'],
+      downloadUrl: 'https://example.test/retry.zim', target: { kind: 'opfs', key: 'retry.zim' },
+    };
+    const queued = {
+      ...retrying, id: 'finish-now', status: 'queued', nextRetryAt: 0, retryCount: 0,
+      filename: 'finish.zim', downloadUrl: 'https://example.test/finish.zim', target: { kind: 'opfs', key: 'finish.zim' },
+    };
+    const records = new Map([[retrying.id, retrying], [queued.id, queued]]);
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'finish-lease',
+      now: () => 1000,
+    });
+
+    await manager.processNext();
+
+    assert.equal(records.get(queued.id)?.status, 'ready', `${label}: eligible archive did not complete before the pending retry`);
+    assert.equal(records.get(retrying.id)?.status, 'retrying', `${label}: future retry state was lost`);
+    assert.deepEqual(scheduled, [500], `${label}: completing another archive lost the pending retry alarm`);
+  }
+});
+
+test('Apocalypse Mode removal wins while a completed download is being validated', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const records = new Map();
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return { ...record }; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && current.leaseToken === expected.leaseToken
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const fixture = minimalWikipediaZimFixture();
+    let releaseValidation;
+    let markValidationStarted;
+    const validationStarted = new Promise(resolve => { markValidationStarted = resolve; });
+    const validatingBlob = {
+      size: fixture.size,
+      slice(start, end) {
+        const bytes = fixture.slice(start, end);
+        return {
+          async arrayBuffer() {
+            if (start === 0 && end === 80) {
+              markValidationStarted();
+              await new Promise(resolve => { releaseValidation = resolve; });
+            }
+            return await bytes.arrayBuffer();
+          },
+        };
+      },
+    };
+    const storage = {
+      async write() {}, async truncate() {}, async open() { return validatingBlob; }, async remove() {},
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return fixture.arrayBuffer(); } }),
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'validation-race',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: fixture.size, pieceLength: fixture.size,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+
+    const running = manager.processNext();
+    await validationStarted;
+    await manager.remove('validation-race');
+    releaseValidation();
+    const result = await running;
+
+    assert.equal(result.reason, 'cancelled', `${label}: deleted final-piece validation was reported as complete`);
+    assert.equal(compareAttempts, 1, `${label}: final download state did not use compare-and-swap storage`);
+    assert.equal(records.has('validation-race'), false, `${label}: completed validation recreated a deleted archive`);
+  }
+});
+
+test('Apocalypse Mode gives repeated catalog installs independent OPFS targets', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const removed = [];
+    const ids = ['install-one', 'install-two'];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async remove(target) { removed.push(target); }, async exists() { return false; } },
+      randomId: () => ids.shift(),
+      schedule() {},
+    });
+    const download = {
+      id: 'catalog-entry', filename: 'wikipedia.zim', size: 2, pieceLength: 2,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'], downloadUrl: 'https://example.test/wikipedia.zim',
+    };
+    const first = await manager.install(download, { kind: 'opfs', key: 'catalog-entry-wikipedia.zim' });
+    const second = await manager.install(download, { kind: 'opfs', key: 'catalog-entry-wikipedia.zim' });
+    assert.notEqual(first.id, second.id, `${label}: duplicate installs reused one archive record`);
+    assert.notEqual(first.target.key, second.target.key, `${label}: duplicate installs still share one OPFS file`);
+    assert.match(first.target.key, /^install-one-/, `${label}: first OPFS target is not record-scoped`);
+    assert.match(second.target.key, /^install-two-/, `${label}: second OPFS target is not record-scoped`);
+    await manager.remove(first.id);
+    assert.equal(records.has(first.id), false, `${label}: removed duplicate record was retained`);
+    assert.equal(records.has(second.id), true, `${label}: removing one duplicate deleted the other record`);
+    assert.deepEqual(removed, [first.target], `${label}: removal targeted bytes owned by another record`);
+  }
+});
+
+test('Apocalypse Mode catalog and Metalink network access require opt-in', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: false };
+    let fetches = 0;
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return []; }, async getArchive() { return null; }, async putArchive(record) { return record; },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; } },
+      fetchImpl: async () => {
+        fetches += 1;
+        return { ok: true, async text() {
+          return '<feed><entry><id>urn:uuid:enabled</id><title>Wikipedia</title><language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/archive.meta4" /></entry></feed>';
+        } };
+      },
+      clearUpdateChecks() {},
+    });
+    await assert.rejects(controller.handle('catalog', { language: 'eng' }), /disabled/i, `${label}: catalog fetch was allowed before opt-in`);
+    await assert.rejects(controller.handle('resolve', { item: { name: 'wikipedia_en_all', metaUrl: 'https://example.test/archive.meta4' } }), /disabled/i, `${label}: Metalink fetch was allowed before opt-in`);
+    assert.equal(fetches, 0, `${label}: archive network activity occurred before opt-in`);
+    config.enabled = true;
+    const result = await controller.handle('catalog', { language: 'eng' });
+    assert.deepEqual(result.items.map(item => item.id), ['enabled'], `${label}: enabled catalog request failed`);
+    assert.equal(fetches, 1, `${label}: enabled catalog request did not use the network exactly once`);
+  }
+});
+
+test('Apocalypse Mode retains actionable metadata when managed-byte deletion fails', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'delete-me', status: 'ready', generation: 2, target: { kind: 'opfs', key: 'delete-me.zim' }, size: 4096 };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    let failRemoval = true;
+    const storage = {
+      async remove() { if (failRemoval) throw new Error('OPFS file is locked'); },
+      async exists() { return failRemoval; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({ store, storage, now: () => 1234 });
+    await assert.rejects(manager.remove(record.id), /deletion failed.*locked/i, `${label}: storage deletion failure was reported as success`);
+    assert.equal(records.get(record.id)?.status, 'error', `${label}: failed deletion discarded its archive record`);
+    assert.equal(records.get(record.id)?.errorKind, 'delete-failed', `${label}: failed deletion was not actionable`);
+    assert.match(records.get(record.id)?.error || '', /Retry deletion/i, `${label}: failed deletion omitted recovery guidance`);
+    failRemoval = false;
+    assert.equal(await manager.remove(record.id), true, `${label}: a recoverable deletion could not be retried`);
+    assert.equal(records.has(record.id), false, `${label}: successful retry retained archive metadata`);
+  }
+});
+
+test('Apocalypse Mode OPFS deletion verifies removal and treats an absent file as deleted', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const entries = new Set(['archive.zim']);
+    const directory = {
+      async getFileHandle(key) {
+        if (!entries.has(key)) throw new DOMException('missing', 'NotFoundError');
+        return { kind: 'file', name: key };
+      },
+      async removeEntry(key) {
+        if (!entries.delete(key)) throw new DOMException('missing', 'NotFoundError');
+      },
+    };
+    const storage = runtime.createOpfsArchiveStorage({
+      async getDirectory() { return { async getDirectoryHandle() { return directory; } }; },
+    });
+    const target = { kind: 'opfs', key: 'archive.zim' };
+    assert.equal(await storage.exists(target), true, `${label}: existing OPFS archive was not detected`);
+    await storage.remove(target);
+    assert.equal(await storage.exists(target), false, `${label}: OPFS archive remained after removal`);
+    await storage.remove(target);
+    assert.equal(await storage.exists(target), false, `${label}: retrying deletion of absent bytes was not idempotent`);
+  }
+});
+
+test('Apocalypse Mode OPFS storage reuses one writable for a multi-piece batch', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const operations = [];
+    let writableCount = 0;
+    const handle = {
+      async createWritable(options) {
+        writableCount += 1;
+        operations.push(['open', options]);
+        return {
+          async seek(offset) { operations.push(['seek', offset]); },
+          async write(bytes) { operations.push(['write', ...bytes]); },
+          async truncate(size) { operations.push(['truncate', size]); },
+          async close() { operations.push(['close']); },
+          async abort() { operations.push(['abort']); },
+        };
+      },
+    };
+    const storage = runtime.createOpfsArchiveStorage({
+      async getDirectory() {
+        return { async getDirectoryHandle() { return { async getFileHandle() { return handle; } }; } };
+      },
+    });
+    const writer = await storage.createWriter({ kind: 'opfs', key: 'archive.zim' });
+    await writer.write(0, Uint8Array.of(1, 2));
+    await writer.write(2, Uint8Array.of(3, 4));
+    await writer.truncate(4);
+    await writer.close();
+
+    assert.equal(writableCount, 1, `${label}: OPFS reopened its temporary writable between pieces`);
+    assert.deepEqual(operations, [
+      ['open', { keepExistingData: true }],
+      ['seek', 0], ['write', 1, 2],
+      ['seek', 2], ['write', 3, 4],
+      ['truncate', 4], ['close'],
+    ], `${label}: OPFS batch writes were not committed through one random-access stream`);
+  }
+});
+
+test('Apocalypse Mode automatic policy checks daily but still requires confirmation before download', async () => {
+  const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
+    <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/new.zim.meta4" length="100" /></entry></feed>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const record = { id: 'installed', status: 'ready', name: 'wikipedia_en_all', flavour: 'nopic', language: 'eng', archiveDate: '2026-07-01', target: { kind: 'opfs', key: 'old.zim' } };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const scheduled = [];
+    let cleared = 0;
+    let fetches = 0;
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; }, async remove() {} },
+      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return catalogXml; } }; },
+      scheduleUpdateChecks: () => scheduled.push('daily'),
+      clearUpdateChecks: () => { cleared += 1; },
+    });
+    let snapshot = await controller.setUpdatePolicy('automatic');
+    assert.equal(snapshot.updatePolicy, 'automatic', `${label}: automatic update policy was not persisted`);
+    assert.deepEqual(scheduled, ['daily'], `${label}: automatic policy did not schedule periodic checks`);
+    snapshot = await controller.checkForUpdates();
+    assert.equal(fetches, 1, `${label}: automatic update check did not consult the catalog`);
+    assert.equal(snapshot.archives[0].updateAvailable?.id, 'new', `${label}: newer matching archive was not surfaced`);
+    assert.equal(snapshot.archives.length, 1, `${label}: update check downloaded or installed before confirmation`);
+    await controller.setUpdatePolicy('manual');
+    assert.equal(cleared, 1, `${label}: manual policy did not clear automatic checks`);
+  }
+});
+
+test('Apocalypse Mode startup preserves update alarms and rearms persisted downloads', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'automatic' };
+    let records = [{ id: 'queued', status: 'queued' }];
+    let existingUpdateAlarm = { name: runtime.APOCALYPSE_UPDATE_ALARM, scheduledTime: 50_000 };
+    const updateSchedules = [];
+    const downloadSchedules = [];
+    const store = {
+      async getConfig() { return { ...config }; },
+      async listArchives() { return records.map(record => ({ ...record })); },
+    };
+    const controller = runtime.createApocalypseController({
+      alarms: {
+        async get(name) {
+          assert.equal(name, runtime.APOCALYPSE_UPDATE_ALARM, `${label}: startup queried the wrong update alarm`);
+          return existingUpdateAlarm;
+        },
+        create(name, details) { updateSchedules.push([name, details]); },
+        async clear() {},
+      },
+    }, {
+      store,
+      storage: {},
+      schedule: delay => downloadSchedules.push(delay),
+      now: () => 10_000,
+    });
+
+    await controller.syncUpdateSchedule();
+    assert.deepEqual(updateSchedules, [], `${label}: startup replaced an existing daily update alarm`);
+    existingUpdateAlarm = null;
+    await controller.syncUpdateSchedule();
+    assert.equal(updateSchedules.length, 1, `${label}: a missing daily update alarm was not restored`);
+
+    assert.equal(await controller.syncDownloadSchedule(), 0, `${label}: queued startup work was not due immediately`);
+    assert.deepEqual(downloadSchedules, [0], `${label}: queued startup work was not rearmed`);
+    records = [
+      { id: 'leased', status: 'downloading', leaseUntil: 12_000 },
+      { id: 'retry', status: 'retrying', nextRetryAt: 16_000 },
+      { id: 'ready', status: 'ready' },
+    ];
+    assert.equal(await controller.syncDownloadSchedule(), 2_000, `${label}: startup did not schedule the earliest persisted attempt`);
+    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: an unexpired lease was not rearmed for its expiry`);
+    config.enabled = false;
+    assert.equal(await controller.syncDownloadSchedule(), null, `${label}: disabled Apocalypse Mode rearmed downloads`);
+    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: disabled startup created a download alarm`);
+  }
+});
+
+test('Apocalypse Mode status snapshots omit private download metadata', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'large-archive', status: 'ready', filename: 'wikipedia.zim', size: 100, bytesDownloaded: 100,
+      downloadUrl: 'https://primary.example.test/wikipedia.zim',
+      pieceHashes: Array.from({ length: 10_000 }, (_, index) => `hash-${index}`),
+      pieceLength: 4_194_304, pieceHashAlgorithm: 'sha-1', sha256: 'private-integrity-value',
+      mirrors: ['https://primary.example.test/wikipedia.zim', 'https://backup.example.test/wikipedia.zim'],
+      mirrorIndex: 1, leaseToken: 'private-lease', leaseUntil: 50_000,
+      target: { kind: 'opfs', key: 'large-archive.zim' },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store: {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return [{ ...record }]; },
+      },
+      storage: { async estimate() { return {}; } },
+    });
+    const [visible] = (await controller.snapshot()).archives;
+
+    for (const field of ['pieceHashes', 'pieceLength', 'pieceHashAlgorithm', 'sha256', 'mirrors', 'mirrorIndex', 'leaseToken', 'leaseUntil']) {
+      assert.equal(Object.hasOwn(visible, field), false, `${label}: status snapshot exposed ${field}`);
+    }
+    assert.equal(visible.downloadUrl, record.downloadUrl, `${label}: lifecycle UI lost its managed-download marker`);
+    assert.equal(visible.bytesDownloaded, record.bytesDownloaded, `${label}: status snapshot lost visible progress`);
+  }
+});
+
+test('Apocalypse Mode update checks cannot recreate a concurrently deleted archive', async () => {
+  const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
+    <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/new.zim.meta4" length="100" /></entry></feed>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'automatic' };
+    const record = {
+      id: 'deleted-during-check',
+      status: 'ready',
+      generation: 7,
+      updatedAt: 100,
+      name: 'wikipedia_en_all',
+      flavour: 'nopic',
+      language: 'eng',
+      archiveDate: '2026-07-01',
+      target: { kind: 'opfs', key: 'old.zim' },
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    let markCatalogStarted;
+    let releaseCatalog;
+    const catalogStarted = new Promise(resolve => { markCatalogStarted = resolve; });
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; } },
+      fetchImpl: async () => {
+        const response = new Promise(resolve => { releaseCatalog = resolve; });
+        markCatalogStarted();
+        return await response;
+      },
+      now: () => 200,
+    });
+
+    const checking = controller.checkForUpdates();
+    await catalogStarted;
+    records.delete(record.id);
+    releaseCatalog({ ok: true, async text() { return catalogXml; } });
+    const snapshot = await checking;
+
+    assert.equal(compareAttempts, 1, `${label}: update metadata did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: update check recreated a deleted archive record`);
+    assert.equal(snapshot.archives.length, 0, `${label}: deleted archive reappeared in the update snapshot`);
+  }
+});
+
+test('Apocalypse Mode resumes verified pieces after a background restart', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), value => ({ ...value })); },
+      async getArchive(id) { return records.has(id) ? { ...records.get(id) } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const storage = { async write(target, offset, value) { writes.push([offset, ...value]); }, async remove() {} };
+    const ranges = [];
+    const fetchImpl = async (_url, request) => {
+      ranges.push(request.headers.Range);
+      const second = request.headers.Range === 'bytes=2-3';
+      return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.from(second ? [3, 4] : [1, 2]).buffer; } };
+    };
+    const managerOptions = {
+      store, storage, fetchImpl, digestHex: async bytesValue => bytesValue[0] < 3 ? 'first' : 'second',
+      schedule() {}, randomId: () => 'archive-restart', now: () => 5000, maxPiecesPerWake: 1,
+    };
+    const firstWorker = runtime.createApocalypseArchiveManager(managerOptions);
+    await firstWorker.install({
+      id: 'catalog-entry', title: 'Wikipedia', filename: 'wikipedia.zim', language: 'eng', size: 4,
+      pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['first', 'second'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+    await firstWorker.processNext();
+    assert.equal(records.get('archive-restart').pieceIndex, 1, `${label}: first verified cursor was not persisted`);
+
+    const restartedWorker = runtime.createApocalypseArchiveManager(managerOptions);
+    await restartedWorker.processNext();
+    assert.equal(records.get('archive-restart').status, 'ready', `${label}: restarted worker did not finish the archive`);
+    assert.deepEqual(ranges, ['bytes=0-1', 'bytes=2-3'], `${label}: restart repeated or skipped a byte range`);
+    assert.deepEqual(writes, [[0, 1, 2], [2, 3, 4]], `${label}: verified pieces were written at the wrong offsets`);
+  }
+});
+
+test('Apocalypse Mode processes every verified piece in one background wake', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const ranges = [];
+    const writes = [];
+    const scheduled = [];
+    let writersOpened = 0;
+    let writersClosed = 0;
+    let writersAborted = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {
+        async createWriter() {
+          writersOpened += 1;
+          return {
+            async write(offset, bytes) { writes.push([offset, ...bytes]); },
+            async truncate() {},
+            async close() { writersClosed += 1; },
+            async abort() { writersAborted += 1; },
+          };
+        },
+      },
+      fetchImpl: async (_url, request) => {
+        ranges.push(request.headers.Range);
+        const offset = Number(request.headers.Range.match(/bytes=(\d+)-/)[1]);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(offset + 1).buffer; } };
+      },
+      digestHex: async bytes => `hash-${bytes[0]}`,
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'continuous-download',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['hash-1', 'hash-2', 'hash-3'], downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+    scheduled.length = 0;
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.status, 'ready', `${label}: one wake did not finish all available pieces`);
+    assert.deepEqual(ranges, ['bytes=0-0', 'bytes=1-1', 'bytes=2-2'], `${label}: one wake skipped or repeated a piece`);
+    assert.deepEqual(writes, [[0, 1], [1, 2], [2, 3]], `${label}: continuous pieces were written at the wrong offsets`);
+    assert.equal(writersOpened, 1, `${label}: one writable was not reused for the complete piece batch`);
+    assert.equal(writersClosed, 1, `${label}: the successful write batch was not committed exactly once`);
+    assert.equal(writersAborted, 0, `${label}: the successful write batch was unexpectedly aborted`);
+    assert.deepEqual(scheduled, [], `${label}: continuous download paid an alarm delay between pieces`);
+  }
+});
+
+test('Apocalypse Mode rolls back an interrupted OPFS write session before resuming', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'interrupted-write', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['hash-1', 'hash-2', 'hash-3'], downloadUrl: 'https://example.test/archive.zim',
+      target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 2, bytesDownloaded: 2,
+      writeSessionStartPiece: 0, writeSessionStartBytes: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    const ranges = [];
+    const writes = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {
+        async createWriter() {
+          return {
+            async write(offset, bytes) { writes.push([offset, ...bytes]); },
+            async close() {},
+            async abort() {},
+          };
+        },
+      },
+      fetchImpl: async (_url, request) => {
+        ranges.push(request.headers.Range);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+      },
+      digestHex: async () => 'hash-1',
+      schedule() {},
+      randomId: () => 'recovery-lease',
+      now: () => 1000,
+      maxPiecesPerWake: 1,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.pieceIndex, 1, `${label}: interrupted cursor was not rolled back before resuming`);
+    assert.deepEqual(ranges, ['bytes=0-0'], `${label}: resume trusted bytes from an uncommitted write session`);
+    assert.deepEqual(writes, [[0, 1]], `${label}: resumed write used the wrong durable offset`);
+    assert.equal(records.get(record.id).writeSessionStartPiece, null, `${label}: committed batch left a recovery marker behind`);
+  }
+});
+
+test('Apocalypse Mode rejects a corrupt piece before storage and backs off', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    let writes = 0;
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store, storage: { async write() { writes += 1; }, async remove() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(9, 9).buffer; } }),
+      digestHex: async () => 'wrong', schedule: delay => scheduled.push(delay), randomId: () => 'corrupt', now: () => 10_000,
+    });
+    await manager.install({ filename: 'bad.zim', size: 2, pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['expected'], downloadUrl: 'https://example.test/bad.zim' }, { kind: 'opfs', key: 'bad.zim' });
+    await manager.processNext();
+    assert.equal(writes, 0, `${label}: corrupt bytes reached durable storage`);
+    assert.equal(records.get('corrupt').status, 'retrying', `${label}: corruption did not enter bounded retry state`);
+    assert.equal(records.get('corrupt').nextRetryAt, 70_000, `${label}: first retry did not use exponential backoff`);
+    assert.deepEqual(scheduled.slice(-1), [60_000], `${label}: retry alarm delay was not bounded`);
+  }
+});
+
+test('Apocalypse Mode rotates Metalink mirrors across automatic and manual retries', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    let timestamp = 1_000;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const urls = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async (url) => { urls.push(url); return { ok: false, status: 503 }; },
+      schedule() {},
+      randomId: () => 'mirror-rotation',
+      now: () => timestamp,
+    });
+    const primary = 'https://primary.example.test/archive.zim';
+    const backup = 'https://backup.example.test/archive.zim';
+    await manager.install({
+      filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      mirrors: [primary, backup], downloadUrl: primary,
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await manager.processNext();
+      const current = records.get('mirror-rotation');
+      if (current.status === 'retrying') timestamp = current.nextRetryAt;
+    }
+    assert.equal(records.get('mirror-rotation').status, 'error', `${label}: retry exhaustion did not become actionable`);
+    await manager.retry('mirror-rotation');
+    await manager.processNext();
+
+    assert.deepEqual(urls, [primary, backup, primary, backup, primary, backup, primary],
+      `${label}: automatic or manual retry reused a failed mirror`);
+  }
+});
+
+test('Apocalypse Mode failed-piece state loses atomically to concurrent deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'failed-piece-race', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/archive.zim', target: { kind: 'opfs', key: 'archive.zim' },
+      pieceIndex: 0, retryCount: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const schedules = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent() {
+        compareAttempts += 1;
+        records.delete(record.id);
+        return false;
+      },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async () => ({ ok: false, status: 503 }),
+      schedule: delay => schedules.push(delay),
+      randomId: () => 'failure-lease',
+      now: () => 100,
+    });
+    const result = await manager.processNext();
+
+    assert.equal(result.reason, 'cancelled', `${label}: stale failed-piece state was reported as current`);
+    assert.equal(compareAttempts, 1, `${label}: failed-piece state did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: failed-piece state recreated deleted metadata`);
+    assert.deepEqual(schedules, [], `${label}: cancelled failure scheduled a retry`);
+  }
+});
+
+test('Apocalypse Mode schedules another archive after a terminal download failure', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const failed = {
+      id: 'terminal-failure', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'failed.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/failed.zim', target: { kind: 'opfs', key: 'failed.zim' },
+      pieceIndex: 0, retryCount: 5,
+    };
+    const queued = {
+      ...failed, id: 'queued-next', filename: 'next.zim', downloadUrl: 'https://example.test/next.zim',
+      target: { kind: 'opfs', key: 'next.zim' }, retryCount: 0,
+    };
+    const records = new Map([[failed.id, failed], [queued.id, queued]]);
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async () => ({ ok: false, status: 503 }),
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'terminal-lease',
+      now: () => 100,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.reason, 'error', `${label}: exhausted download did not reach a terminal failure`);
+    assert.equal(records.get(failed.id)?.status, 'error', `${label}: exhausted archive did not persist its error`);
+    assert.equal(records.get(queued.id)?.status, 'queued', `${label}: next archive lost eligibility`);
+    assert.deepEqual(scheduled, [0], `${label}: terminal failure stranded the next queued archive`);
+  }
+});
+
+test('Apocalypse Mode cancellation removes a partial imported archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    const store = {
+      async getConfig() { return config; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const removals = [];
+    const storage = {
+      async write(target, offset, bytesValue) { writes.push([target, offset, bytesValue.byteLength]); },
+      async remove(target) { removals.push(target); },
+    };
+    const controller = new AbortController();
+    const padded = new Blob([minimalWikipediaZimFixture(), new Uint8Array(2 * 1024 * 1024)]);
+    await assert.rejects(runtime.importKiwixArchive(padded, { filename: 'import.zim' }, {
+      store, storage, id: 'import-1', chunkSize: 1024 * 1024, signal: controller.signal,
+      onProgress: () => controller.abort(),
+    }), /cancel/i, `${label}: cancelled import should reject`);
+    assert.equal(records.has('import-1'), false, `${label}: cancelled import metadata was retained`);
+    assert.equal(writes.length, 1, `${label}: import continued writing after cancellation`);
+    assert.equal(removals.length, 1, `${label}: partial imported bytes were not removed`);
+  }
+});
+
+test('Apocalypse Mode imports every chunk through one OPFS writable', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const writes = [];
+    let writersOpened = 0;
+    let writersClosed = 0;
+    let writersAborted = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      async estimate() { return {}; },
+      async createWriter() {
+        writersOpened += 1;
+        return {
+          async write(offset, bytes) { writes.push([offset, bytes.byteLength]); },
+          async truncate() {},
+          async close() { writersClosed += 1; },
+          async abort() { writersAborted += 1; },
+        };
+      },
+      async remove() {},
+    };
+    const source = new Blob([minimalWikipediaZimFixture(), new Uint8Array(2 * 1024 * 1024)]);
+
+    const result = await runtime.importKiwixArchive(source, { filename: 'batched-import.zim' }, {
+      store, storage, id: 'batched-import', chunkSize: 1024 * 1024,
+    });
+
+    assert.equal(result.status, 'ready', `${label}: batched import did not complete`);
+    assert.ok(writes.length > 1, `${label}: fixture did not exercise multiple import chunks`);
+    assert.equal(writersOpened, 1, `${label}: import reopened its OPFS writable between chunks`);
+    assert.equal(writersClosed, 1, `${label}: import did not commit its OPFS writable exactly once`);
+    assert.equal(writersAborted, 0, `${label}: successful import aborted its OPFS writable`);
+  }
+});
+
+test('Apocalypse Mode preflights import capacity and removes partial bytes after write failure', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const archive = minimalWikipediaZimFixture();
+    let writes = 0;
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: { async estimate() { return { quota: archive.size - 1, usage: 0 }; }, async write() { writes += 1; }, async remove() {} },
+      id: 'no-space',
+    }), /space|storage/i, `${label}: insufficient extension storage was not rejected`);
+    assert.equal(writes, 0, `${label}: capacity preflight happened after writing bytes`);
+    assert.equal(records.has('no-space'), false, `${label}: rejected capacity preflight created an archive record`);
+
+    const removals = [];
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: {
+        async estimate() { return {}; },
+        async write() { throw new Error('quota exhausted during write'); },
+        async remove(target) { removals.push(target); },
+      },
+      id: 'write-failure',
+    }), /quota exhausted/i, `${label}: write failure was hidden`);
+    assert.equal(records.get('write-failure')?.status, 'error', `${label}: failed import did not remain actionable`);
+    assert.equal(records.get('write-failure')?.bytesDownloaded, 0, `${label}: failed import retained partial progress`);
+    assert.equal(removals.length, 1, `${label}: failed import retained partial extension-owned bytes`);
+  }
+});
+
+test('Apocalypse Mode keeps partial-import metadata when cleanup itself fails', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const store = {
+      async getConfig() { return { enabled: true }; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    await assert.rejects(runtime.importKiwixArchive(minimalWikipediaZimFixture(), {}, {
+      store,
+      storage: {
+        async estimate() { return {}; }, async write() { throw new Error('write failed'); },
+        async remove() { throw new Error('OPFS cleanup denied'); },
+      },
+      id: 'cleanup-failure',
+    }), /cleanup failed.*denied/i, `${label}: cleanup failure was swallowed`);
+    assert.equal(records.get('cleanup-failure')?.status, 'error', `${label}: cleanup failure discarded the recovery record`);
+    assert.equal(records.get('cleanup-failure')?.errorKind, 'delete-failed', `${label}: cleanup failure was not classified for retry`);
+  }
+});
+
+test('Apocalypse Mode import failure loses atomically to concurrent deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    let importingSnapshot;
+    let expectedState;
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) {
+        records.set(record.id, { ...record });
+        if (record.status === 'importing' && !importingSnapshot) importingSnapshot = { ...record };
+        return record;
+      },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && current.generation === expected.generation
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    const archive = minimalWikipediaZimFixture();
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: {
+        async estimate() { return {}; },
+        async write() {
+          const current = records.get('import-delete-race');
+          records.set(current.id, {
+            ...current, status: 'deleting', generation: current.generation + 1, updatedAt: current.updatedAt + 1,
+          });
+          throw new Error('write failed while deletion started');
+        },
+        async remove() {},
+      },
+      id: 'import-delete-race',
+    }), /write failed while deletion started/i, `${label}: concurrent import failure was hidden`);
+
+    assert.equal(compareAttempts, 1, `${label}: import failure did not compare-and-swap its state`);
+    assert.deepEqual(expectedState, {
+      status: 'importing', generation: importingSnapshot.generation, updatedAt: importingSnapshot.updatedAt,
+    }, `${label}: import failure did not guard the original importing state`);
+    assert.equal(records.get('import-delete-race')?.status, 'deleting', `${label}: import failure overwrote concurrent deletion`);
+    assert.equal(records.get('import-delete-race')?.generation, importingSnapshot.generation + 1,
+      `${label}: import failure restored a stale generation`);
+  }
+});
+
+test('Apocalypse Mode rejects a managed download when reported free space is zero', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let installs = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
+      async listArchives() { return []; }, async putArchive() { installs += 1; }, async getArchive() { return null; }, async deleteArchive() {},
+    };
+    const controller = runtime.createApocalypseController({ alarms: { create() {} } }, {
+      store,
+      storage: { async estimate() { return { quota: 1024, usage: 1024 }; }, async remove() {} },
+    });
+    await assert.rejects(controller.handle('install', { download: {
+      id: 'no-room', filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashes: ['aa'], downloadUrl: 'https://example.test/archive.zim',
+    } }), /not enough|storage/i, `${label}: exhausted quota still admitted a managed download`);
+    assert.equal(installs, 0, `${label}: rejected managed download persisted metadata`);
+  }
+});
+
+test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'archive-1', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'future-provider' } };
+    let searched = 0;
+    const results = await runtime.searchApocalypseArchives('Alan Turing', {
+      store: { async getConfig() { return { enabled: true }; }, async listArchives() { return [record]; } },
+      storage: {},
+      providers: [{
+        id: 'test-provider',
+        supports(candidate) { return candidate.target.kind === 'future-provider'; },
+        async search(candidate, query) { searched += 1; return [{ title: query, archiveId: candidate.id }]; },
+      }],
+    });
+    assert.equal(searched, 1, `${label}: selected provider did not receive the archive query`);
+    assert.deepEqual(results, [{ title: 'Alan Turing', archiveId: 'archive-1' }], `${label}: provider result was not preserved`);
+  }
+});
+
+test('Apocalypse Mode marks unreadable ready archives as actionable errors', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'corrupt-ready', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'corrupt.zim' } };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { enabled: true }; }, async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, next); return next; },
+    };
+    await assert.rejects(runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      storage: {},
+      providers: [{ supports() { return true; }, async search() { throw new Error('ZIM checksum is corrupt'); } }],
+    }), /could not be read|corrupt/i, `${label}: unreadable ready archive was silently treated as no match`);
+    assert.equal(records.get(record.id)?.status, 'error', `${label}: corrupt ready archive remained ready`);
+    assert.equal(records.get(record.id)?.errorKind, 'archive-unreadable', `${label}: corruption did not receive an actionable lifecycle classification`);
+  }
+});
+
+test('Apocalypse Mode failed searches cannot recreate a concurrently deleted archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'deleted-during-search', status: 'ready', generation: 3, updatedAt: 100,
+      archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'deleted.zim' },
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    let releaseSearch;
+    let markSearchStarted;
+    const searchStarted = new Promise(resolve => { markSearchStarted = resolve; });
+    const searching = runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      storage: {},
+      providers: [{
+        supports() { return true; },
+        async search() {
+          markSearchStarted();
+          await new Promise(resolve => { releaseSearch = resolve; });
+          throw new Error('ZIM read failed after deletion');
+        },
+      }],
+    });
+
+    await searchStarted;
+    records.delete(record.id);
+    releaseSearch();
+    await assert.rejects(searching, /could not be read|deletion/i, `${label}: failed archive search was hidden`);
+
+    assert.equal(compareAttempts, 1, `${label}: failed search metadata did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: failed search recreated a deleted archive record`);
+  }
+});
+
+test('Apocalypse Mode can register a user-selected ZIM handle without copying bytes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const file = minimalWikipediaZimFixture();
+    Object.defineProperty(file, 'name', { value: 'wikipedia_en_test.zim' });
+    const handle = { name: file.name, async getFile() { return file; } };
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async putArchive(record) { records.set(record.id, record); return record; },
+    };
+    const record = await runtime.registerKiwixArchiveHandle(handle, { language: 'eng' }, { store, id: 'external-1' });
+    assert.equal(record.status, 'ready', `${label}: validated file handle was not ready`);
+    assert.equal(record.target.kind, 'file-handle', `${label}: external storage target was not preserved`);
+    assert.equal(record.target.handle, handle, `${label}: persistent handle was replaced or copied`);
+    assert.equal(record.bytesDownloaded, file.size, `${label}: external archive size was not recorded`);
+  }
+});
+
+test('Apocalypse Mode marks a stale interrupted import without racing its bytes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map([['stale-import', {
+      id: 'stale-import', status: 'importing', updatedAt: 0, bytesDownloaded: 1024,
+      target: { kind: 'opfs', key: 'stale.zim' }, size: 2048,
+    }]]);
+    const removals = [];
+    const store = {
+      async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      async remove(target) { removals.push(target); }, async estimate() { return {}; },
+      async write() { throw new Error('unexpected write'); },
+    };
+    const controller = runtime.createApocalypseController({ alarms: { create() {} } }, { store, storage, importStaleMs: 30_000 });
+    const snapshot = await controller.snapshot();
+    const recovered = snapshot.archives.find(record => record.id === 'stale-import');
+    assert.equal(recovered.status, 'error', `${label}: stale import did not become an actionable error`);
+    assert.equal(recovered.bytesDownloaded, 1024, `${label}: stale import hid the retained partial bytes`);
+    assert.equal(recovered.generation, 1, `${label}: stale import recovery did not invalidate the old writer`);
+    assert.equal(recovered.errorKind, 'import-interrupted', `${label}: stale import did not receive an actionable classification`);
+    assert.match(recovered.error, /interrupted/i, `${label}: stale import recovery omitted its reason`);
+    assert.match(recovered.error, /partial archive bytes were retained/i, `${label}: stale import did not disclose retained bytes`);
+    assert.deepEqual(removals, [], `${label}: background recovery deleted bytes that may still have an active writer`);
+  }
+});
+
+test('Apocalypse Mode stale-import recovery loses safely to a concurrent completion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'active-import', status: 'importing', generation: 4, updatedAt: 0, bytesDownloaded: 1024,
+      target: { kind: 'opfs', key: 'active.zim' }, size: 2048,
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent() {
+        compareAttempts += 1;
+        records.set(record.id, { ...record, status: 'ready', bytesDownloaded: record.size, updatedAt: 90_000 });
+        return false;
+      },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; }, async remove() { throw new Error('recovery must not remove bytes'); } },
+      importStaleMs: 30_000,
+      now: () => 90_000,
+    });
+    assert.equal(await controller.recoverInterruptedImports(), 0, `${label}: a completed import was claimed as interrupted`);
+    assert.equal(compareAttempts, 1, `${label}: stale recovery did not use compare-and-swap state`);
+    assert.equal(records.get(record.id).status, 'ready', `${label}: stale recovery overwrote a concurrent completion`);
+    assert.equal(records.get(record.id).bytesDownloaded, record.size, `${label}: stale recovery corrupted completed progress`);
+  }
+});
+
+test('Apocalypse Mode file-handle permission expiry stops retries until reauthorization', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let permission = 'prompt';
+    let writableCalls = 0;
+    let fetches = 0;
+    const queriedModes = [];
+    const handle = {
+      name: 'wikipedia.zim',
+      async queryPermission({ mode }) {
+        queriedModes.push(mode);
+        return permission;
+      },
+      async createWritable() { writableCalls += 1; throw new Error('permission preflight was skipped'); },
+    };
+    const storage = runtime.createOpfsArchiveStorage();
+    const target = { kind: 'file-handle', handle, access: 'readwrite' };
+    await assert.rejects(storage.write(target, 0, Uint8Array.of(1)), (error) => {
+      assert.equal(error.code, runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, `${label}: expired handle lacked a stable error classification`);
+      return true;
+    });
+    assert.equal(writableCalls, 0, `${label}: browser write was attempted before permission was granted`);
+
+    const config = { enabled: true };
+    const records = new Map();
+    const scheduled = [];
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async () => { fetches += 1; return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }; },
+      digestHex: async () => 'aa',
+      randomId: () => 'external-download',
+      schedule: delay => scheduled.push(delay),
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/wikipedia.zim',
+    }, target);
+    const result = await manager.processNext();
+    assert.equal(result.reason, 'error', `${label}: expired handle entered an automatic retry state`);
+    assert.equal(fetches, 0, `${label}: expired file permission was detected only after downloading another piece`);
+    assert.equal(records.get('external-download').errorKind, runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, `${label}: expired handle was not marked for reauthorization`);
+    assert.deepEqual(scheduled, [0], `${label}: expired handle scheduled an automatic retry`);
+    assert.deepEqual(queriedModes, ['readwrite', 'readwrite'], `${label}: external download did not consistently preflight write permission`);
+
+    permission = 'granted';
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store, storage, schedule: delay => scheduled.push(delay), now: () => 2000,
+    });
+    await controller.reauthorizeFile('external-download');
+    assert.equal(records.get('external-download').status, 'queued', `${label}: granted file permission did not resume the download`);
+    assert.equal(records.get('external-download').errorKind, '', `${label}: successful reauthorization retained the permission error`);
+    assert.deepEqual(scheduled, [0, 0], `${label}: successful reauthorization did not schedule one resumed attempt`);
+
+    records.set('external-download', {
+      ...records.get('external-download'), status: 'error', errorKind: runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED,
+      bytesDownloaded: 1, size: 1,
+    });
+    await controller.reauthorizeFile('external-download');
+    assert.equal(records.get('external-download').status, 'ready', `${label}: completed external archive was incorrectly queued for redownload`);
+    assert.deepEqual(scheduled, [0, 0], `${label}: completed external archive scheduled a redownload after reauthorization`);
+    assert.equal(queriedModes.at(-1), 'read', `${label}: completed external archive requested unnecessary write permission`);
+  }
+});
+
+test('Apocalypse Mode completed-file reauthorization loses atomically to deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'reauthorize-race', status: 'error', generation: 4, updatedAt: 500,
+      errorKind: runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, error: 'permission required',
+      downloadUrl: 'https://example.test/archive.zim', size: 10, bytesDownloaded: 10,
+    };
+    const records = new Map();
+    const handle = {
+      async queryPermission() {
+        records.delete(record.id);
+        return 'granted';
+      },
+    };
+    records.set(record.id, { ...record, target: { kind: 'file-handle', handle } });
+    let compareAttempts = 0;
+    let expectedState;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(_next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        return false;
+      },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, { store, storage: {}, now: () => 600 });
+
+    const result = await controller.reauthorizeFile(record.id);
+
+    assert.equal(result, null, `${label}: reauthorization returned stale metadata after deletion`);
+    assert.equal(compareAttempts, 1, `${label}: reauthorization did not compare-and-swap completed metadata`);
+    assert.deepEqual(expectedState, { status: 'error', generation: 4, updatedAt: 500 },
+      `${label}: reauthorization did not guard the original record state`);
+    assert.equal(records.has(record.id), false, `${label}: reauthorization recreated concurrently deleted metadata`);
+  }
+});
+
+test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const start = source.indexOf("if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM)");
+    const end = source.indexOf('} else if (alarm?.name === APOCALYPSE_UPDATE_ALARM)', start);
+    assert.notEqual(start, -1, `${label}: Apocalypse download alarm listener is missing`);
+    assert.notEqual(end, -1, `${label}: Apocalypse update alarm boundary is missing`);
+    const downloadAlarm = source.slice(start, end);
+    assert.match(downloadAlarm, /processNext\(\)\.catch/, `${label}: unexpected download failures are not logged`);
+    assert.doesNotMatch(downloadAlarm, /alarms\.create/, `${label}: unexpected download failures still recreate an unbounded alarm`);
+    if (label === 'chrome') {
+      assert.match(downloadAlarm, /const releaseKeepalive = acquireRunKeepalive\(\)/,
+        'chrome: archive download alarm does not acquire the MV3 keepalive');
+      assert.match(downloadAlarm, /processNext\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
+        'chrome: archive download alarm does not hold the keepalive until processing settles');
+    }
+  }
+});
+
+test('Apocalypse Mode has a dedicated header gateway and management page in both builds', () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
+    const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
+    const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const apocalypseCopy = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/apocalypse-copy.mjs'), 'utf8');
+    assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
+    assert.doesNotMatch(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier select should be hidden`);
+    for (const tier of ['all', 'starter', 'introductions']) {
+      assert.doesNotMatch(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: unsupported ${tier} archive tier is still selectable`);
+    }
+    assert.match(pageScript, /catalogItems = Array\.isArray\(result\.items\) \? result\.items : \[\]/,
+      `${prefix}: catalog items are discarded before tier selection`);
+    assert.match(pageScript, /SUPPORTED_CATALOG_TIERS = new Set\(\['text', 'full'\]\)/,
+      `${prefix}: catalog results are not restricted to the two supported archive types`);
+    assert.match(pageScript, /catalogItems = catalogItems\.filter\(item => SUPPORTED_CATALOG_TIERS\.has\(item\.tier\)\)/,
+      `${prefix}: unsupported catalog entries are not removed before rendering`);
+    assert.match(pageScript, /const items = catalogItems;/, `${prefix}: full-text and full archives are not rendered together`);
+    assert.match(pageScript, /if \(installReviewInFlight\) return;[\s\S]*?installReviewInFlight = true;/,
+      `${prefix}: Review & install can start duplicate metadata requests`);
+    assert.match(pageScript, /sourceButton\.disabled = true;[\s\S]*?sourceButton\.textContent = t\('ap\.review_loading'\)/,
+      `${prefix}: Review & install does not show immediate busy feedback`);
+    assert.match(pageScript, /reviewInstall\(visible\[Number\(button\.dataset\.install\)\], button\)/,
+      `${prefix}: catalog install buttons are not bound to the single-flight review flow`);
+    assert.doesNotMatch(pageScript, /await command\('process'\)/,
+      `${prefix}: status polling blocks behind the long-running download loop`);
+    assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?await refresh\(\)/,
+      `${prefix}: status polling does not refresh independently of download processing`);
+    assert.match(pageScript, /t\(`ap\.tier\.\$\{item\.tier\}`\)/, `${prefix}: archive tier is not rendered`);
+    assert.match(pageHtml, /id="vision-model-card"[^>]*hidden/, `${prefix}: local vision status must start hidden on unsupported browsers`);
+    assert.match(pageHtml, /data-i18n="ap\.vision\.auto"/, `${prefix}: automatic local vision download is not disclosed`);
+    assert.match(pageScript, /webgpuVisionDownloadState/, `${prefix}: local vision download status is not rendered`);
+    assert.match(pageScript, /chrome\?\.offscreen\?\.createDocument/, `${prefix}: Chromium vision capability is not detected safely`);
+    if (prefix === 'src/chrome') {
+      assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
+      assert.match(pageHtml, /id="webgpu-provider-card"[^>]*hidden/, 'chrome: the WebGPU provider block is missing from Apocalypse Mode');
+      const heroStart = pageHtml.indexOf('<section class="card hero">');
+      const textModel = pageHtml.indexOf('id="webgpu-provider-card"', heroStart);
+      const visionModel = pageHtml.indexOf('id="vision-model-card"', heroStart);
+      const heroEnd = pageHtml.indexOf('</section>', visionModel);
+      assert.ok(heroStart >= 0 && textModel > heroStart && visionModel > textModel && heroEnd > visionModel,
+        'chrome: local text and vision models must be stacked text-first inside the hero');
+      assert.match(pageHtml, /data-model-kind="text"[\s\S]*?<svg[\s\S]*?data-webgpu-download-panel/,
+        'chrome: the text model is missing its icon or download box');
+      assert.doesNotMatch(pageHtml, /id="webgpu-test"/,
+        'chrome: the local text model should not expose a Test action');
+      assert.match(pageHtml, /data-i18n="ap\.webgpu\.rag"/, 'chrome: local Wikipedia RAG is not explained beside the WebGPU model');
+      assert.match(pageHtml, /data-model-kind="vision"[\s\S]*?<svg[\s\S]*?id="vision-model-test"/,
+        'chrome: the vision model is missing its icon or Test action');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID/, 'chrome: Apocalypse Mode does not configure the fixed WebGPU download');
+      assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
+        'chrome: the removed local text Test action is still wired');
+      assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
+        'chrome: the local vision Test action does not exercise the fallback');
+      assert.doesNotMatch(pageScript, /set_active_provider/, 'chrome: Apocalypse Mode must not change the global chat provider');
+    } else {
+      assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
+      assert.doesNotMatch(pageHtml, /id="webgpu-provider-card"/, 'firefox: Chromium-only WebGPU provider block leaked into Apocalypse Mode');
+    }
+    for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
+      assert.match(pageScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing`);
+    }
+    const headerStart = settingsHtml.indexOf('<div class="header-row">');
+    const apocalypseLink = settingsHtml.indexOf('id="apocalypse-mode-link"', headerStart);
+    const supportLink = settingsHtml.indexOf('href="https://webbrain.one/docs"', headerStart);
+    const tabsStart = settingsHtml.indexOf('<nav class="tabs"', headerStart);
+    assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
+      `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
+    assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    assert.match(pageHtml, /<header><span class="apocalypse-icon" aria-hidden="true">☢<\/span>/,
+      `${prefix}: Apocalypse Mode page header does not match the radioactive settings gateway icon`);
+    assert.match(pageHtml, /class="header-copy"[\s\S]*?data-i18n="ap\.title"[\s\S]*?data-i18n="ap\.subtitle"/,
+      `${prefix}: Apocalypse Mode title and offline slogan are not grouped in the page header`);
+    assert.match(apocalypseCopy, /'ap\.subtitle': 'WebBrain, ready when the internet isn’t\.'/,
+      `${prefix}: Apocalypse Mode header does not advertise offline access`);
+    assert.match(apocalypseCopy, /'ap\.hero\.desc': '[^']*offline search and factual answers[^']*without an internet connection/,
+      `${prefix}: Apocalypse Mode does not explain how offline Wikipedia helps the user`);
+    assert.match(apocalypseCopy, /'ap\.catalog\.title': 'Download Wikipedia for offline use'/,
+      `${prefix}: the archive catalog is described with implementation terminology`);
+    assert.match(apocalypseCopy, /'ap\.import\.desc': '[^']*\.zim[^']*file format[^']*offline use\.'/,
+      `${prefix}: the optional .zim import format is not explained in plain language`);
+    assert.doesNotMatch(apocalypseCopy, /'ap\.import\.desc': '[^']*Kiwix/,
+      `${prefix}: the import introduction assumes the user already understands Kiwix`);
+    assert.match(pageHtml, /\.apocalypse-icon \{[^}]*font-size:48px/,
+      `${prefix}: Apocalypse Mode page icon is too small for the page header`);
+    assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
+    const advancedStart = settingsHtml.indexOf('<details class="advanced-settings">');
+    const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
+    assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
+    assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
+    assert.match(pageScript, /data-action="read"/, `${prefix}: installed archives have no text reader action`);
+    assert.match(pageScript, /wikipedia-reader\.html\?id=/, `${prefix}: text reader action is not wired to its archive`);
+    assert.match(pageHtml, /id="catalog-status"[^>]*role="status"/, `${prefix}: catalog loading and errors are not visible beside the archive list`);
+    for (const icon of ['storage', 'catalog', 'import']) {
+      assert.match(pageHtml, new RegExp(`class="section-icon" data-kind="${icon}"[\\s\\S]*?<svg`), `${prefix}: ${icon} section icon is missing`);
+    }
+    assert.match(pageScript, /if \(snapshot\?\.enabled === true\) void loadCatalog\(\)/,
+      `${prefix}: enabled Apocalypse Mode does not load the catalog automatically`);
+    assert.match(pageScript, /elements\.language\.addEventListener\('change', loadCatalog\)/,
+      `${prefix}: changing Wikipedia language does not reload the catalog`);
+    assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
+    assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
+    assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /data-action="update"/, `${prefix}: manual update action is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /requestPermission[\s\S]*?reauthorize_file/, `${prefix}: file-handle reauthorization flow is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /installedCount[\s\S]*?totalBytes[\s\S]*?updatePolicy/, `${prefix}: Advanced settings does not summarize live archive state`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8'), /APOCALYPSE_UPDATE_ALARM[\s\S]*?checkForUpdates/, `${prefix}: automatic update checks are not wired to a background alarm`);
+    assert.match(backgroundScript, /syncUpdateSchedule\(\)[\s\S]*?syncDownloadSchedule\(\)/,
+      `${prefix}: startup does not restore both Apocalypse schedules`);
+    assert.match(pageHtml, /data-i18n="ap\.hero\.consent"/, `${prefix}: localized opt-in boundary is not visible`);
+  }
+});
+
+test('Wikipedia tools use installed Apocalypse Mode archives only after online failure', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const tool = {
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia',
+      sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    };
+    const result = await runtime.executeWikipediaSkillTool(tool, { q: 'Alan Turing', limit: 3 }, {
+      executeOnline: async () => ({ success: false, error: 'network unavailable' }),
+      apocalypseSearch: async () => [{
+        title: 'Alan Turing', excerpt: 'Alan Turing was an English computer scientist and cryptanalyst.',
+        url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng',
+        archiveDate: '2026-07-17', source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0',
+      }],
+    });
+    assert.equal(result.success, true, `${label}: installed ZIM should recover an offline search`);
+    assert.equal(result.provider, 'local Kiwix/ZIM archive', `${label}: local provider was not identified`);
+    assert.equal(result.resultPolicy, 'untrusted', `${label}: local archive bytes must remain untrusted`);
+    assert.equal(result.data.pages[0].archiveDate, '2026-07-17', `${label}: archive provenance was lost`);
+  }
+});
+
+test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passages', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Who was Alan Turing?'), true, `${label}: factual question did not trigger local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Alan Turing'), true, `${label}: short encyclopedia topic did not trigger local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Write an email to Alan'), false, `${label}: writing request triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('What is the weather today?'), false, `${label}: current-data question triggered a stale archive lookup`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('are you high?'), false, `${label}: assistant banter triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia("how can i patch my dog's yara"), false, `${label}: first-person practical advice triggered encyclopedia retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia("it's a cut"), false, `${label}: a conversational follow-up triggered a title search`);
+    assert.equal(runtime.localWikipediaSearchQuery('What is photosynthesis?'), 'photosynthesis', `${label}: factual question was not reduced to a searchable article topic`);
+    assert.equal(runtime.localWikipediaSearchQuery('what is a chocolate made of'), 'chocolate', `${label}: composition question was not reduced to its article topic`);
+    assert.equal(runtime.localWikipediaSearchQuery('who founded ottoman empire?'), 'ottoman empire', `${label}: founder question was not reduced to its entity topic`);
+    assert.equal(
+      runtime.localWikipediaSearchQuery('tell me more about sokullu mehmed pasha when was he born?'),
+      'sokullu mehmed pasha',
+      `${label}: compound biography question was not reduced to the article subject`,
+    );
+    let limit = 0;
+    let searchQuery = '';
+    const records = await runtime.retrieveLocalWikipediaForStandalone('Who was Alan Turing?', {
+      apocalypseSearch: async (_query, options) => {
+        searchQuery = _query;
+        limit = options.limit;
+        return [{
+          title: 'Alan Turing', excerpt: 'Alan Turing was an English mathematician and computer scientist.',
+          url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng', archiveDate: '2026-07-17',
+          archiveTitle: 'Wikipedia English full text', source: 'Kiwix / openZIM',
+        }];
+      },
+    });
+    assert.equal(searchQuery, 'Alan Turing', `${label}: standalone RAG searched the whole question instead of its topic`);
+    assert.equal(limit, 6, `${label}: local RAG did not inspect a bounded candidate set before relevance filtering`);
+    assert.deepEqual(runtime.formatLocalWikipediaRag(records), [{
+      title: 'Alan Turing', passage: 'Alan Turing was an English mathematician and computer scientist.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng', archiveDate: '2026-07-17',
+      archiveTitle: 'Wikipedia English full text', source: 'Kiwix / openZIM',
+    }], `${label}: local RAG lost archive attribution`);
+    const strictRecords = runtime.rankLocalWikipediaRagRecords([
+      { title: 'Ottoman Empire', excerpt: 'A general history of the empire.' },
+      { title: 'Sokollu Mehmed Pasha', excerpt: 'Sokollu Mehmed Pasha was born around 1505.' },
+    ], 'Sokollu Mehmed Pasha Ottoman Empire biography');
+    assert.deepEqual(strictRecords.map(record => record.title), ['Sokollu Mehmed Pasha'],
+      `${label}: generic contextual titles outranked the requested person`);
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords(
+        [{ title: 'Ottoman Empire', excerpt: 'A general history of the empire.' }],
+        'Sokollu Mehmed Pasha Ottoman Empire biography',
+      ),
+      [],
+      `${label}: a generic Ottoman Empire page passed strict entity relevance`,
+    );
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords([
+        { title: 'Chocolate (color)', excerpt: 'A color resembling chocolate.' },
+        { title: 'Chocolate', excerpt: 'A food made from cacao beans.' },
+      ], 'chocolate').map(record => record.title),
+      ['Chocolate'],
+      `${label}: an exact article title did not suppress weaker related titles`,
+    );
+  }
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.match(agentSource, /_isStandaloneWebgpuRun\(runOptions = \{\}\)[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?providerId \|\| ''\) === 'webgpu'/,
+    'chrome: local Wikipedia RAG is not guarded to standalone WebGPU runs');
+  assert.match(agentSource, /_wrapUntrusted\('local_wikipedia_archive'/,
+    'chrome: local Wikipedia RAG passages are not marked as untrusted data');
+  assert.equal((agentSource.match(/_applyStandaloneWikipediaRag\(enriched, userMessage, runOptions,/g) || []).length, 2,
+    'chrome: local Wikipedia RAG is not applied to both standalone message entry paths');
+});
+
+test('standalone WebGPU uses a compact tool-free chat profile with no browser context', async () => {
+  const agent = new AgentCh({
+    getActive() { throw new Error('standalone prompt must not consult the globally selected provider'); },
+  });
+  const tabId = 1701;
+  agent._standaloneWebgpuRunTabs.add(tabId);
+  const prompt = agent._buildSystemPrompt('ask', tabId);
+  assert.match(prompt, /private on-device chat assistant/);
+  assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
+  assert.match(prompt, /Offline Wikipedia/);
+  assert.ok(prompt.length < 1400, `standalone WebGPU system prompt is unexpectedly large (${prompt.length} chars)`);
+  assert.doesNotMatch(prompt, /cookie|paywall|click_ax|get_accessibility_tree|CAPTCHA|User profile/i);
+  assert.match(
+    agent._wrapUntrusted('local_wikipedia_archive', '{"reference":"quoted data"}'),
+    /^<untrusted_page_content id="[a-z0-9]+">[\s\S]*<\/untrusted_page_content id="[a-z0-9]+">$/,
+    'local Wikipedia passages must be enclosed in the real untrusted-content boundary',
+  );
+
+  agent.alwaysAllowApiMutations = true;
+  const question = 'tell me more about sokullu mehmed pasha when was he born?';
+  const enriched = await agent._enrichUserMessageWithCurrentPage(tabId, [], question, null, {
+    standaloneChat: true,
+    providerId: 'webgpu',
+  });
+  assert.deepEqual(enriched, { role: 'user', content: question },
+    'standalone WebGPU must not receive runtime, page, recording, API, adapter, or screenshot context');
+
+  const provenance = buildPromptTraceProvenanceCh([
+    { role: 'system', content: prompt },
+    { role: 'user', content: question },
+  ], [], 'ask');
+  assert.equal(provenance.systemPromptVariant, 'standalone_webgpu');
+  assert.equal(provenance.systemPromptMode, 'ask');
+  assert.equal(provenance.toolCount, 0);
+  assert.equal(provenance.systemPromptMatchesRuntime, true);
+
+  const standaloneRun = { standaloneChat: true, providerId: 'webgpu' };
+  const inventedGoogleCalls = "<|tool_call_start|>[google(query='Sokollu Mehmed Pasha birth date biography'), google(query='Sokollu Mehmed Pasha Ottoman Empire biography')]<|tool_call_end|>";
+  const inventedOfflineWikipediaCall = "<|tool_call_start|>[offline_wikipedia(query='Sokollu Mehmed Pasha', limit=5)]<|tool_call_end|>";
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedGoogleCalls, standaloneRun),
+    ['Sokollu Mehmed Pasha birth date biography', 'Sokollu Mehmed Pasha Ottoman Empire biography'],
+    'standalone WebGPU must reinterpret the native Google markup as bounded local search queries',
+  );
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedOfflineWikipediaCall, standaloneRun),
+    ['Sokollu Mehmed Pasha'],
+    'standalone WebGPU must reinterpret native offline_wikipedia markup as a local search query',
+  );
+  for (const alias of [
+    'local_wikipedia', 'local_wikipedia_search', 'offline_wikipedia_search',
+    'search_local_wikipedia', 'search_offline_wikipedia', 'search_wiki',
+    'search_wikipedia', 'wiki_search', 'wikipedia', 'wikipedia_search',
+  ]) {
+    const markup = `<|tool_call_start|>[${alias}(query='Sokollu Mehmed Pasha')]<|tool_call_end|>`;
+    assert.deepEqual(
+      agent._standaloneWikipediaSearchQueriesFromModelText(markup, standaloneRun),
+      ['Sokollu Mehmed Pasha'],
+      `standalone WebGPU did not reinterpret the ${alias} alias as local retrieval`,
+    );
+  }
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(
+      "<|tool_call_start|>[browse_web(query='Sokollu Mehmed Pasha')]<|tool_call_end|>",
+      standaloneRun,
+    ),
+    [],
+    'unknown invented tools must remain rejected instead of becoming local retrieval aliases',
+  );
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedGoogleCalls, { standaloneChat: false, providerId: 'webgpu' }),
+    [],
+    'Google markup translation must not escape the standalone WebGPU profile',
+  );
+  const fallbackEnriched = { role: 'user', content: question };
+  const fallbackRag = await agent._applyStandaloneWikipediaModelSearch(
+    fallbackEnriched,
+    inventedOfflineWikipediaCall,
+    standaloneRun,
+    {
+      apocalypseSearch: async query => query.includes('Sokollu') ? [{
+        title: 'Sokollu Mehmed Pasha',
+        excerpt: 'Sokollu Mehmed Pasha was born in 1505.',
+        url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+        language: 'eng',
+        archiveDate: '2026-07-17',
+        archiveTitle: 'Wikipedia English full text',
+        source: 'Kiwix / openZIM',
+      }] : [],
+    },
+  );
+  assert.deepEqual(
+    { status: fallbackRag.status, matchCount: fallbackRag.matchCount, modelSearchFallback: fallbackRag.modelSearchFallback },
+    { status: 'matched', matchCount: 1, modelSearchFallback: true },
+    'invented Google calls must produce local RAG metadata without becoming executable tools',
+  );
+  const fallbackModelContent = JSON.stringify(fallbackEnriched.content);
+  assert.match(fallbackModelContent, /Local Wikipedia archive references found for the requested local search:/);
+  assert.match(fallbackModelContent, /<untrusted_page_content id=/);
+  assert.match(fallbackModelContent, /Sokollu Mehmed Pasha was born in 1505/);
+  const persistedFallback = agent._standalonePersistedUserMessage(fallbackEnriched, standaloneRun);
+  assert.equal(persistedFallback.content, question,
+    'local Wikipedia passages must be removed from the durable conversation turn');
+  assert.doesNotMatch(JSON.stringify(persistedFallback), /Wikipedia|Sokollu Mehmed Pasha was born/,
+    'durable conversation history retained ephemeral RAG content');
+  const legacyHistory = [{
+    role: 'user',
+    content: `${question}\n\nLocal Wikipedia archive references found for the requested local search:\n<untrusted_page_content id="legacy1">{"references":[{"passage":"stale Ottoman context"}]}</untrusted_page_content id="legacy1">`,
+  }];
+  assert.equal(agent._stripPersistedStandaloneWikipediaContext(legacyHistory), true,
+    'legacy persisted RAG context was not detected');
+  assert.equal(legacyHistory[0].content, question,
+    'legacy persisted RAG context was not removed from conversation history');
+  const attributed = agent._withStandaloneWikipediaAttribution('He was born around 1505.', [{
+    title: 'Sokollu Mehmed Pasha',
+    archiveDate: '2026-07-17',
+    url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+  }], standaloneRun);
+  assert.match(attributed, /Offline Wikipedia — Sokollu Mehmed Pasha \(archive 2026-07-17\): https:\/\/en\.wikipedia\.org\/wiki\/Sokollu_Mehmed_Pasha/,
+    'standalone RAG answers must receive deterministic archive attribution');
+  assert.deepEqual(
+    agent._mergeStandaloneWikipediaReferences(
+      [{ title: 'Initial match', url: 'https://en.wikipedia.org/wiki/Initial', archiveDate: '2026-07-17' }],
+      [
+        { title: 'Initial duplicate', url: 'https://en.wikipedia.org/wiki/Initial', archiveDate: '2026-07-17' },
+        { title: 'Fallback match', url: 'https://en.wikipedia.org/wiki/Fallback', archiveDate: '2026-07-17' },
+      ],
+    ).map(reference => reference.title),
+    ['Initial match', 'Fallback match'],
+    'fallback retrieval must preserve initial attribution sources while deduplicating repeats',
+  );
+
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.equal(
+    (agentSource.match(/if \(selectionOnly \|\| standaloneChatRun\) tools = \[\];/g) || []).length,
+    4,
+    'both initial and repeated requests on both agent entry paths must suppress tools',
+  );
+  assert.equal(
+    (agentSource.match(/steps > 0 && !selectionOnly && !standaloneChatRun/g) || []).length,
+    2,
+    'standalone chat must not re-inject page adapters on a follow-up generation step',
+  );
+  assert.match(agentSource, /_beginReadCompleteness[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?createReadCompletenessState\(token, false, false, ''\)/,
+    'standalone chat must not inspect the current page for thread-read classification');
+  assert.equal(
+    (agentSource.match(/standaloneWikipediaModelSearchAttempted = true;/g) || []).length,
+    2,
+    'both standalone agent entry paths must bound model-requested local RAG to one retry',
+  );
+  assert.match(agentSource, /standalone_wikipedia_search_requested[\s\S]*?lfm_native_search_markup/,
+    'intercepted local search markup is not reclassified in traces');
+});
+
+test('standalone chat isolates browser context and inherited sidepanel history for every provider', async () => {
+  for (const [label, AgentClass, provenanceBuilder] of [
+    ['chrome', AgentCh, buildPromptTraceProvenanceCh],
+    ['firefox', AgentFx, buildPromptTraceProvenanceFx],
+  ]) {
+    const agent = new AgentClass({
+      getActive() { throw new Error('standalone prompt must not inspect the active provider'); },
+    });
+    const tabId = label === 'chrome' ? 1702 : 1703;
+    agent._standaloneChatRunTabs.add(tabId);
+    const prompt = agent._buildSystemPrompt('ask', tabId);
+    assert.match(prompt, /standalone chat assistant/);
+    assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
+    assert.doesNotMatch(prompt, /click_ax|get_accessibility_tree|User profile|cookie|paywall/i);
+
+    const question = 'What year was Ada Lovelace born?';
+    const enriched = await agent._enrichUserMessageWithCurrentPage(tabId, [], question, null, {
+      standaloneChat: true,
+      providerId: 'openai',
+    });
+    assert.deepEqual(enriched, { role: 'user', content: question },
+      `${label}: non-WebGPU standalone chat received browser/runtime context`);
+
+    const persisted = agent._standalonePersistedUserMessage(enriched, { standaloneChat: true });
+    const inherited = [
+      { role: 'system', content: prompt },
+      { role: 'user', content: '[Current page context — URL: https://example.test]\nRead this page' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'old-tool', function: { name: 'read_page', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'old-tool', content: 'secret page text' },
+      persisted,
+    ];
+    const modelMessages = agent._messagesForStandaloneChatRun(inherited, persisted, enriched);
+    assert.deepEqual(modelMessages, [
+      { role: 'system', content: prompt },
+      { role: 'user', content: question },
+    ], `${label}: inherited sidepanel page/tool history crossed into standalone chat`);
+    assert.doesNotMatch(JSON.stringify(modelMessages), /example\.test|read_page|secret page text/);
+
+    inherited.push({ role: 'assistant', content: '' });
+    inherited.push({ role: 'user', content: '[System nudge: answer directly.]' });
+    const retryMessages = agent._messagesForStandaloneChatRun(inherited, persisted, enriched);
+    assert.equal(retryMessages.at(-1)?.content, '[System nudge: answer directly.]',
+      `${label}: standalone recovery nudge was dropped from the isolated model view`);
+
+    const provenance = provenanceBuilder(modelMessages, [], 'ask');
+    assert.equal(provenance.systemPromptVariant, 'standalone_chat');
+    assert.equal(provenance.systemPromptMatchesRuntime, true);
+  }
+});
+
+test('trace export reports local Wikipedia RAG without passage text', () => {
+  const runs = [{
+    run: { runId: 'local-rag', userMessage: 'Who was Sokullu Mehmed Pasha?', model: 'LFM2.5', status: 'done' },
+    events: [{
+      runId: 'local-rag', seq: 1, kind: 'llm_request', data: {
+        messageCount: 2,
+        toolsCount: 0,
+        localWikipediaRag: {
+          attempted: true,
+          status: 'matched',
+          matchCount: 2,
+          archiveDates: ['2026-07-17'],
+          queryNormalized: true,
+        },
+      },
+    }, {
+      runId: 'local-rag', seq: 2, kind: 'note', data: {
+        step: 1,
+        note: 'standalone_wikipedia_search_requested',
+        extra: { queryCount: 2, source: 'lfm_native_search_markup' },
+      },
+    }],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /0 tools · local Wikipedia RAG matched · 2 matches · archive 2026-07-17/,
+      `${label}: RAG activation and archive date are missing from the trace export`);
+    assert.doesNotMatch(markdown, /passage|Sokullu was born/,
+      `${label}: trace metadata must not persist retrieved passage text`);
+    assert.match(markdown, /On-device model requested local Wikipedia retrieval · 2 queries/,
+      `${label}: intercepted search was not represented as local retrieval`);
+    assert.doesNotMatch(markdown, /tool_call_start|google\(/,
+      `${label}: intercepted native search markup leaked into the conversation export`);
+  }
+});
+
+test('Wikipedia online success neither populates nor consults offline storage', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const online = { success: true, status: 200, data: { pages: [{ title: 'Alan Turing' }] } };
+    let offlineCalls = 0;
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia',
+      sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => online,
+      apocalypseSearch: async () => { offlineCalls += 1; return []; },
+    });
+    assert.equal(result, online, `${label}: online response shape should remain unchanged`);
+    assert.equal(offlineCalls, 0, `${label}: online success should not touch offline archives`);
+  }
+});
+
+test('Wikipedia offline routing surfaces an unreadable archive instead of a false no-match', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia', sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => ({ success: false, error: 'network unavailable' }),
+      apocalypseSearch: async () => { throw new Error('Installed archive could not be read; re-import it.'); },
+    });
+    assert.equal(result.success, false, `${label}: unreadable archive produced a successful result`);
+    assert.match(result.error, /could not be read/i, `${label}: archive corruption reason was hidden`);
+    assert.doesNotMatch(result.error, /No matching/i, `${label}: archive corruption was misreported as no match`);
+  }
+});
+
+test('Wikipedia offline routing requires exact built-in provenance', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    let onlineCalls = 0;
+    let offlineCalls = 0;
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', sourceType: 'url', sourceUrl: 'https://example.test/skill.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => { onlineCalls += 1; return { success: false, error: 'spoof rejected' }; },
+      apocalypseSearch: async () => { offlineCalls += 1; return []; },
+    });
+    assert.equal(result.error, 'spoof rejected', `${label}: spoofed skill should remain on its declared online path`);
+    assert.equal(onlineCalls, 1, `${label}: spoofed skill was not delegated exactly once`);
+    assert.equal(offlineCalls, 0, `${label}: spoofed skill reached privileged local archives`);
+  }
+});
 test('packaged Open-Meteo and Open Library skills are opt-in with read-only HTTP tools', () => {
   for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
     ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
@@ -21288,6 +24322,40 @@ test('all locales cover English keys and preserve interpolation placeholders', a
   }
 });
 
+test('Apocalypse Mode copy is translated instead of inherited from English in every locale', async () => {
+  const requiredTranslatedKeys = [
+    'st.display.apocalypse_mode.desc',
+    'st.display.apocalypse_mode.status.off',
+    'ap.subtitle',
+    'ap.hero.desc',
+    'ap.hero.consent',
+    'ap.vision.auto',
+    'ap.vision.waiting',
+    'ap.catalog.desc',
+    'ap.download_background',
+    'ap.include_images',
+    'ap.import.title',
+    'ap.import.desc',
+    'ap.import.button',
+    'ap.file_description',
+    'ap.confirm_install',
+    'ap.confirm_import',
+    'ap.update_policy.automatic_notice',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
+    const englishCopy = (await import(pathToFileURL(path.join(localeDir, 'apocalypse-copy.mjs')).href)).default;
+    for (const filename of fs.readdirSync(localeDir).filter(name => name.endsWith('.js') && name !== 'en.js').sort()) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      const changed = Object.keys(englishCopy).filter(key => locale[key] !== englishCopy[key]);
+      assert.ok(changed.length >= Object.keys(englishCopy).length * 0.8, `${browser}/${filename}: Apocalypse Mode still relies on English fallback copy`);
+      for (const key of requiredTranslatedKeys) {
+        assert.notEqual(locale[key], englishCopy[key], `${browser}/${filename}: ${key} is still English fallback copy`);
+      }
+    }
+  }
+});
+
 test('Cloud Sync settings localize security-sensitive copy in every browser locale', async () => {
   const requiredKeys = [
     'st.sync.title',
@@ -21835,7 +24903,7 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
     assert.match(html, /id="language-picker-btn"[^>]+aria-haspopup="listbox"[^>]+aria-controls="language-picker-menu"/, `${label}: language picker trigger should expose listbox semantics`);
     assert.match(html, /id="language-picker-menu" role="listbox"/, `${label}: language picker menu should be an accessible listbox`);
     assert.match(html, /id="language-picker-flag" src="\.\.\/\.\.\/icons\/flags\/us\.svg"[^>]+aria-hidden="true"/, `${label}: English should show the bundled US flag in the closed picker`);
-    assert.match(html, /id="language-picker-code">EN</, `${label}: closed picker should expose a compact language code`);
+    assert.doesNotMatch(html, /id="language-picker-code"/, `${label}: closed picker should stay flag-only to preserve header space`);
     assert.match(panel, /function initializeLanguagePicker\(\)[\s\S]*?if \(index === 2\) appendLanguagePickerSeparator\(\)/, `${label}: pinned languages should be separated from the alphabetical list`);
     assert.match(panel, /function focusLanguagePickerByPrefix\(key\)/, `${label}: language picker should support typeahead`);
     assert.match(panel, /moveLanguagePickerFocus\(1\)[\s\S]*?moveLanguagePickerFocus\(-1\)[\s\S]*?activateFocusedLanguagePickerOption\(\)[\s\S]*?event\.key === 'Escape'/, `${label}: language picker should support arrow, activation, and Escape keys`);
@@ -21989,6 +25057,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       `(() => { ${panel.slice(workflowStart, workflowEnd)}; return startSavedWorkflowRun; })()`,
       {
         currentTabId: 92,
+        rejectStandaloneWorkflowRun: () => false,
         ensureActMode: async () => false,
         inputEl: workflowInput,
         t: () => 'workflow prompt',
@@ -23278,7 +26347,7 @@ test('chrome offscreen helper recreates an evicted document after ready cache is
   }
 });
 
-test('chrome fetch fallback clears offscreen proxy timeout after success', async () => {
+test('chrome non-idempotent fetch uses one offscreen transport and clears its timeout', async () => {
   const previousChrome = globalThis.chrome;
   const previousFetch = globalThis.fetch;
   const previousSetTimeout = globalThis.setTimeout;
@@ -23294,7 +26363,9 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
   globalThis.clearTimeout = (handle) => {
     if (handle) handle.cleared = true;
   };
+  let directAttempts = 0;
   globalThis.fetch = async () => {
+    directAttempts += 1;
     throw new TypeError('Failed to fetch');
   };
   globalThis.chrome = {
@@ -23336,7 +26407,8 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
 
     assert.equal(res.status, 200, 'chrome: fallback should synthesize the proxied response');
     assert.equal(await res.text(), '{"ok":true}', 'chrome: fallback response body should survive proxy conversion');
-    assert.equal(timers.length, 2, 'chrome: direct fetch and offscreen proxy should each install one timeout');
+    assert.equal(directAttempts, 0, 'chrome: a POST must not be replayed after a direct network failure');
+    assert.equal(timers.length, 1, 'chrome: the single offscreen transport should install one timeout');
     assert.equal(timers.every((timer) => timer.cleared), true, 'chrome: offscreen proxy timeout should be cleared after success');
   } finally {
     globalThis.setTimeout = previousSetTimeout;
@@ -24305,8 +27377,8 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
     assert.match(panel, /const restoredAllowanceCardMissing = !!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
     assert.match(panel, /type: 'run_complete',[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,/, `${label}: restored terminal cards should retain durable-turn proof`);
     assert.match(panel, /case 'run_complete':[\s\S]*?if \(textEl && parseCostAllowanceError\(data\.finalContent\)\)[\s\S]*?renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?\} else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored terminal allowance cards should render before the empty-text fallback guard`);
-    assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct retry routing from persisted chat metadata`);
-    assert.match(panel, /assistantEl\.dataset\.retryApiMutationsAllowed = apiMutationsAllowedForSend \? 'true' : 'false';[\s\S]*?assistantEl\.dataset\.retryAttachmentCount = String\(attachmentsForSend\.length\);/, `${label}: fresh chats should persist retry metadata needed after a panel reload`);
+    assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?dataset\.retryAgentPrompt[\s\S]*?displayText,[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct hidden-prompt retry routing from persisted chat metadata`);
+    assert.match(panel, /assistantEl\.dataset\.retryApiMutationsAllowed = apiMutationsAllowedForSend \? 'true' : 'false';[\s\S]*?assistantEl\.dataset\.retryAttachmentCount = String\(attachmentsForSend\.length\);[\s\S]*?if \(agentPrompt\) assistantEl\.dataset\.retryAgentPrompt = agentPrompt;/, `${label}: fresh chats should persist retry metadata and hidden prompts needed after a panel reload`);
     assert.match(panel, /activeRetryPayloadForRequest\(eventTabId, msg\.requestId\)[\s\S]*?\|\| retryPayloadForRunAssistant\(currentAssistantEl\)/, `${label}: restored terminal cards should use the reconstructed retry payload when live state is gone`);
     assert.match(panel, /const attachmentCount = Number\.isFinite\(Number\(retryPayload\.attachmentCount\)\)[\s\S]*?btn\.dataset\.retryAttachmentCount = String\(attachmentCount\);/, `${label}: reconstructed retries should preserve missing-attachment warnings`);
     assert.match(background, /async function sendAgentRunComplete\(tabId, snapshot = null\)[\s\S]*?snapshot\.kind === 'continue'[\s\S]*?agent\.hasDurableSubmittedTurn\([\s\S]*?submittedTurnDurable,/, `${label}: terminal UI events should treat continuations as resumable and carry durable-turn proof`);
@@ -25600,6 +28672,67 @@ test('tab-chat persistence never evicts other chats when shared quota remains ex
   }
 });
 
+test('tab-chat quota recovery removes only a provably closed tab chat', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, persistence, runtimeKey] of [
+      ['chrome', TabChatPersistenceCh, 'chrome'],
+      ['firefox', TabChatPersistenceFx, 'browser'],
+    ]) {
+      delete globalThis.chrome;
+      delete globalThis.browser;
+      globalThis[runtimeKey] = {
+        tabs: {
+          async get(tabId) {
+            if (tabId === 41) throw new Error('No tab with id: 41');
+            if (tabId === 40) throw new Error('Tabs API temporarily unavailable');
+            return { id: tabId };
+          },
+        },
+      };
+      const quota = 1200 * 1024;
+      const values = { unrelatedSessionState: 'keep' };
+      const unknownKey = persistence.TAB_CHAT_PREFIX + '40';
+      const staleKey = persistence.TAB_CHAT_PREFIX + '41';
+      const openKey = persistence.TAB_CHAT_PREFIX + '42';
+      const currentKey = persistence.TAB_CHAT_PREFIX + '43';
+      values[unknownKey] = 'u'.repeat(750 * 1024);
+      values[staleKey] = 's'.repeat(700 * 1024);
+      values[openKey] = 'o'.repeat(300 * 1024);
+      const storageBytes = next => Object.entries(next)
+        .reduce((total, [storedKey, value]) => total + storedKey.length + String(value).length, 0);
+      const storageArea = {
+        async get() { return { ...values }; },
+        async set(patch) {
+          const next = { ...values, ...patch };
+          if (storageBytes(next) > quota) throw new Error('QUOTA_BYTES exceeded');
+          Object.assign(values, patch);
+        },
+        async remove(key) { delete values[key]; },
+      };
+
+      const result = await persistence.persistTabChatToSession(
+        storageArea,
+        currentKey,
+        `<div>${'current '.repeat(80 * 1024)}</div>`,
+      );
+      assert.equal(result.ok, true, `${label}: stale closed-tab data should unblock persistence`);
+      assert.deepEqual(result.evictedKeys, [staleKey], `${label}: only the closed tab should be reclaimed`);
+      assert.equal(values[staleKey], undefined, `${label}: closed tab chat was retained`);
+      assert.equal(values[unknownKey]?.length > 0, true, `${label}: a tab with unknown liveness was evicted`);
+      assert.equal(values[openKey]?.length > 0, true, `${label}: open tab chat was evicted`);
+      assert.equal(typeof values[currentKey], 'string', `${label}: current compact snapshot was not stored`);
+      assert.equal(values.unrelatedSessionState, 'keep', `${label}: unrelated session state changed`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('tab-chat handoff coordinator orders a returning-panel read behind the outgoing snapshot', async () => {
   for (const [label, persistence] of [
     ['chrome', TabChatPersistenceCh],
@@ -25949,10 +29082,10 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     const staleGuard = '!ok) return';
     const staleGuardIdx = body.indexOf(staleGuard);
     const secondSourceGuardIdx = body.indexOf(sourceGuard, firstSourceGuardIdx + 1);
-    const inputIdx = body.indexOf('inputEl.value = prompt;');
-    const sendIdx = body.indexOf('sendMessage(recommendedActionSendParams(action));');
+    const inputIdx = body.indexOf('inputEl.value = displayText;');
+    const sendIdx = body.indexOf('sendMessage(recommendedActionSendParams(action, { tabId, displayText }));');
     const sourceHelperMatch = panel.match(/async function recommendedActionSourceStillCurrent\(action, tabId\) \{([\s\S]*?)\n\}/);
-    const helperMatch = panel.match(/function recommendedActionSendParams\(action\) \{([\s\S]*?)\n\}/);
+    const helperMatch = panel.match(/function recommendedActionSendParams\(action, \{ tabId = null, displayText = '' \} = \{\}\) \{([\s\S]*?)\n\}/);
     assert.ok(sourceHelperMatch, `${label}: recommendedActionSourceStillCurrent missing`);
     assert.ok(helperMatch, `${label}: recommendedActionSendParams missing`);
     const sourceHelperBody = sourceHelperMatch[1];
@@ -25968,9 +29101,84 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     assert.match(sourceHelperBody, /const sourceUrl = typeof action\?\.sourceUrl === 'string' \? action\.sourceUrl : '';/, `${label}: source URL helper should read bound action source`);
     assert.match(sourceHelperBody, /const tab = await (chrome|browser)\.tabs\.get\(tabId\);[\s\S]*?return \(tab\?\.url \|\| ''\) === sourceUrl;/, `${label}: source URL helper should compare against the live tab URL`);
     assert.ok(helperBody.includes('const params = action?.runOptions ? { recommendedAction: action.runOptions } : {};'), `${label}: recommended-action send params should preserve trusted run options`);
+    assert.ok(helperBody.includes('params.__agentPrompt = action.prompt.trim();'), `${label}: recommended-action send params should retain the detailed internal prompt`);
+    assert.ok(helperBody.includes("params.__agentDisplayText = String(displayText || '').trim();"), `${label}: recommended-action send params should bind the visible label`);
+    assert.ok(helperBody.includes('params.__agentTabId = tabId;'), `${label}: recommended-action send params should bind the initiating tab`);
     assert.ok(helperBody.includes("if (['ask', 'act', 'dev'].includes(action?.mode)) {"), `${label}: recommended-action send params should only allow known modes`);
     assert.ok(helperBody.includes('params.__mode = action.mode;'), `${label}: recommended-action send params should pass the declared action mode`);
+    assert.match(body, /const displayText = typeof action === 'string'[\s\S]*?String\(action\?\.label \|\| prompt \|\| ''\)\.trim\(\)/, `${label}: recommended actions should render their short label instead of the internal prompt`);
+    assert.match(panel, /const agentPrompt = typeof chatExtraParams\.__agentPrompt === 'string'[\s\S]*?const agentDisplayText = typeof chatExtraParams\.__agentDisplayText === 'string'[\s\S]*?const agentTabId = Number\.isFinite\(rawAgentTabId\)[\s\S]*?delete chatExtraParams\.__agentPrompt;[\s\S]*?delete chatExtraParams\.__agentDisplayText;[\s\S]*?delete chatExtraParams\.__agentTabId;/, `${label}: hidden recommended-action context should be captured and removed from background extras`);
+    assert.match(panel, /await waitForVisibleSidePanelStateRefresh\(\);[\s\S]*?if \(agentPrompt && \([\s\S]*?!agentDisplayText[\s\S]*?!sameTabId\(currentTabId, agentTabId\)[\s\S]*?!sameTabId\(renderedTabId, agentTabId\)[\s\S]*?inputEl\.value\.trim\(\) !== agentDisplayText[\s\S]*?\)\) return false;/, `${label}: hidden prompts should fail closed when their tab or visible label changes during refresh`);
+    assert.match(panel, /if \(agentPrompt && isProcessing\) return false;[\s\S]*?if \(isProcessing\) \{/, `${label}: a hidden prompt should never enter the user-visible busy queue`);
+    assert.match(panel, /let text = inputEl\.value\.trim\(\);[\s\S]*?const submittedText = text;[\s\S]*?if \(!text\) \{[\s\S]*?if \(agentPrompt\) text = agentPrompt;/, `${label}: recommended actions should require a visible label before executing the hidden internal prompt`);
+    assert.match(panel, /addMessage\('user', agentPrompt \? submittedText : text,/, `${label}: recommended actions should persist only the short user-facing label in chat`);
+    assert.match(panel, /const retryPayload = \{\s*text,\s*displayText: agentPrompt \? submittedText : text,/, `${label}: retries should retain the short label separately from the internal prompt`);
+    assert.match(panel, /inputEl\.value = payload\.displayText;[\s\S]*?payload\.displayText !== payload\.text \? \{[\s\S]*?__agentPrompt: payload\.text,[\s\S]*?__agentDisplayText: payload\.displayText,[\s\S]*?__agentTabId: currentTabId,/, `${label}: retrying a recommended action should keep its hidden prompt bound to the visible label and tab`);
     assert.equal(captureIdx < initialGuardIdx && initialGuardIdx < firstSourceGuardIdx && firstSourceGuardIdx < ensureIdx && ensureIdx < staleGuardIdx && staleGuardIdx < secondSourceGuardIdx && secondSourceGuardIdx < inputIdx && inputIdx < sendIdx, true, `${label}: stale click guards must run before mutating the composer`);
+  }
+});
+
+test('sidepanel restored suggested-action retries preserve hidden prompts', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const retryStart = panel.indexOf('function retryPayloadForRunAssistant(assistantEl) {');
+    const retryEnd = panel.indexOf('\n}\n\nfunction userMessageForRunAssistant', retryStart);
+    const userStart = panel.indexOf('function userMessageForRunAssistant(assistantEl) {', retryEnd);
+    const userEnd = panel.indexOf('\n}\n\nfunction plannerRequestFailureUpdate', userStart);
+    assert.notEqual(retryStart, -1, `${label}: retry payload reconstruction helper missing`);
+    assert.notEqual(retryEnd, -1, `${label}: retry payload reconstruction boundary missing`);
+    assert.notEqual(userStart, -1, `${label}: run user-message lookup helper missing`);
+    assert.notEqual(userEnd, -1, `${label}: run user-message lookup boundary missing`);
+
+    let visibleText = 'Summarize this thread';
+    const retryPayloadForRunAssistant = Function(
+      'getComposerHistoryTextFromMessage',
+      'normalizeSelectionSourceGrounding',
+      'normalizeSelectionAction',
+      'agentMode',
+      `${panel.slice(retryStart, retryEnd + 2)}\n${panel.slice(userStart, userEnd + 2)}\nreturn retryPayloadForRunAssistant;`,
+    )(
+      () => visibleText,
+      value => String(value || '').trim(),
+      value => String(value || '').trim(),
+      'ask',
+    );
+
+    const internalPrompt = 'Read the complete active thread, follow every continuation, then summarize it.';
+    const userEl = {
+      previousElementSibling: null,
+      matches: selector => selector === '.message.user',
+    };
+    const assistantEl = {
+      previousElementSibling: userEl,
+      dataset: {
+        retryAgentPrompt: internalPrompt,
+        runMode: 'act',
+        retryApiMutationsAllowed: 'false',
+        retryForeground: 'true',
+        retrySourceGrounding: '',
+        retrySelectionAction: '',
+        retryAttachmentCount: '0',
+      },
+    };
+
+    const restored = retryPayloadForRunAssistant(assistantEl);
+    assert.equal(restored.text, internalPrompt, `${label}: restored retry lost the internal suggested-action prompt`);
+    assert.equal(restored.displayText, visibleText, `${label}: restored retry exposed the internal prompt instead of retaining the short label`);
+    assert.equal(restored.mode, 'act', `${label}: restored retry lost its original mode`);
+    assert.equal(restored.foreground, true, `${label}: restored retry lost its foreground setting`);
+
+    delete assistantEl.dataset.retryAgentPrompt;
+    const ordinary = retryPayloadForRunAssistant(assistantEl);
+    assert.equal(ordinary.text, visibleText, `${label}: ordinary restored retries should still use the visible user message`);
+    assert.equal(ordinary.displayText, visibleText, `${label}: ordinary restored retries should keep matching display text`);
+
+    visibleText = '';
+    assistantEl.dataset.retryAgentPrompt = internalPrompt;
+    assert.equal(retryPayloadForRunAssistant(assistantEl), null, `${label}: a hidden prompt without a visible user label should fail closed`);
   }
 });
 
@@ -26033,12 +29241,16 @@ test('sidepanel drops stale provider selection and connection checks', () => {
     const changeCaptureIdx = changeBody.indexOf('const providerId = providerSelect.value;');
     const changeRequestIdx = changeBody.indexOf('const requestId = ++providerSelectionRequestId;');
     const invalidateIdx = changeBody.indexOf('providerTestRequestId += 1;');
-    const activateIdx = changeBody.indexOf("await sendToBackground('set_active_provider', { providerId });");
+    const activateIdx = changeBody.indexOf(label === 'chrome'
+      ? 'await setActiveChatProvider(providerId);'
+      : "await sendToBackground('set_active_provider', { providerId });");
     const catchIdx = changeBody.indexOf('} catch (e) {');
     const failureGuardIdx = changeBody.indexOf('if (requestId === providerSelectionRequestId && providerSelect.value === providerId) {');
     const failureStatusIdx = changeBody.indexOf('markSelectedProviderFailed(e);');
     const changeStaleGuardIdx = changeBody.indexOf('if (requestId !== providerSelectionRequestId || providerSelect.value !== providerId) {');
-    const repairIdx = changeBody.indexOf("sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
+    const repairIdx = changeBody.indexOf(label === 'chrome'
+      ? 'setActiveChatProvider(latestProviderId).catch(() => {});'
+      : "sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
     const changeTestIdx = changeBody.indexOf('await testConnection({ providerId });');
     assert.notEqual(changeCaptureIdx, -1, `${label}: provider change should capture the intended provider`);
     assert.notEqual(changeRequestIdx, -1, `${label}: provider change should increment a request sequence`);
@@ -26225,8 +29437,8 @@ test('settings warns on missing or short API keys and shows the Ollama localhost
     assert.match(settings, /const MIN_API_KEY_LENGTH = 12;/, `${label}: conservative API-key minimum missing`);
     assert.match(
       settings,
-      /function providerApiKeyWarning\(id, config\) \{[\s\S]*?data-key="apiKey"[\s\S]*?const keyIsOptional = providersData\[id\]\?\.category === 'local';[\s\S]*?apiKey\.length < MIN_API_KEY_LENGTH[\s\S]*?aria-invalid[\s\S]*?st\.providers\.api_key_warning/,
-      `${label}: API-key warning should cover required empty keys and short non-empty keys while allowing empty local auth`,
+      /function providerApiKeyWarning\(id, config\) \{[\s\S]*?data-key="apiKey"[\s\S]*?const keyIsOptional = providersData\[id\]\?\.category === 'local' && config\.requiresApiKey !== true;[\s\S]*?apiKey\.length < MIN_API_KEY_LENGTH[\s\S]*?aria-invalid[\s\S]*?st\.providers\.api_key_warning/,
+      `${label}: API-key warning should allow ordinary empty local auth while enforcing authenticated local proxies`,
     );
     assert.match(
       settings,
@@ -27836,7 +31048,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(modeCaptureIdx < parseIdx && apiCaptureIdx < parseIdx, true, `${label}: stale-tab residual sends should not read visible-tab options after slash parsing`);
     assert.match(
       sendBody,
-      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, text\);[\s\S]*?return false;[\s\S]*?\}/,
+      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, agentPrompt \? submittedText : text\);[\s\S]*?return false;[\s\S]*?\}/,
       `${label}: stale residual slash-command prompts should be preserved as drafts instead of hidden runs`,
     );
     assert.match(
@@ -27856,7 +31068,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(staleReturnIdx < sendIdx, true, `${label}: stale-tab residual guard must run before chat dispatch`);
     assert.match(
       sendBody,
-      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
+      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
       `${label}: stale-tab residual sends should not mutate or render chat UI in the currently visible tab`,
     );
     assert.doesNotMatch(
@@ -28542,6 +31754,88 @@ test('standalone chat runs omit active extension-page context and screenshots', 
   }
 });
 
+test('standalone WebGPU control uses a per-run provider without changing global selection', async () => {
+  const markup = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8');
+  const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src/chrome/styles/sidepanel.css'), 'utf8');
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+
+  assert.match(markup, /id="btn-webgpu-standalone"[\s\S]*?☢/, 'standalone header is missing the nuclear WebGPU control');
+  assert.match(css, /\.standalone-webgpu-toggle\.active\s*\{[\s\S]*?background: var\(--success\)/,
+    'active WebGPU control should turn green');
+  assert.match(panel, /standaloneWebgpuBtn\.hidden = !isStandaloneWindow/,
+    'the WebGPU control must stay out of the ordinary side panel');
+  assert.match(panel, /providerSelect\.disabled = standaloneWebgpuActive[\s\S]*?providerPickerBtn\.disabled = standaloneWebgpuActive/,
+    'the ordinary provider picker should lock while the WebGPU override is active');
+  assert.match(panel, /standaloneWebgpuBtn\.disabled = !standaloneWebgpuEnabled/,
+    'the nuclear control should be clickable whenever Apocalypse Mode is enabled');
+  assert.match(panel, /function standaloneWebgpuRunPayload\(\) \{\s*return isStandaloneWindow && standaloneWebgpuActive \? \{ providerId: 'webgpu' \} : \{\};/,
+    'standalone WebGPU state is not carried as a run-scoped override');
+  assert.match(background, /case 'get_providers': \{[\s\S]*?delete providers\.webgpu/,
+    'WebGPU must never appear in the ordinary provider picker');
+  assert.match(background, /case 'set_active_provider': \{[\s\S]*?msg\.providerId === 'webgpu'[\s\S]*?nuclear WebGPU control/,
+    'WebGPU must not become the globally active provider');
+  assert.match(background, /case 'get_standalone_webgpu_status': \{[\s\S]*?enabled: apocalypse\?\.enabled === true[\s\S]*?ready:/,
+    'the standalone control should distinguish Apocalypse enablement from model readiness');
+  assert.match(background, /type: 'apocalypse-mode-state'[\s\S]*?enabled: snapshot\.enabled === true/,
+    'open standalone windows should be notified when Apocalypse Mode changes');
+  assert.match(agentSource, /this\._runProviderOverrides = new Map\(\)/);
+  assert.match(agentSource, /getProvider\(overrideId\)/);
+
+  const globalProvider = { name: 'global' };
+  const webgpuProvider = { name: 'webgpu' };
+  const manager = {
+    getActive: () => globalProvider,
+    getProvider: id => id === 'webgpu' ? webgpuProvider : null,
+  };
+  const agent = new AgentCh(manager);
+  agent._runProviderOverrides.set(71, 'webgpu');
+  assert.equal(agent._activeProvider(71), webgpuProvider, 'the standalone tab should resolve WebGPU');
+  assert.equal(agent._activeProvider(72), globalProvider, 'another tab should keep the global provider');
+
+  const helperStart = background.indexOf('async function standaloneRunProviderId(msg) {');
+  const helperEnd = background.indexOf('\n}', helperStart) + 2;
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'standalone WebGPU background guard is missing');
+  const apocalypseState = { enabled: true };
+  const webgpuState = { ready: true };
+  const standaloneRunProviderId = vm.runInNewContext(
+    `(${background.slice(helperStart, helperEnd)})`,
+    {
+      WEBGPU_MODEL_ID: 'LiquidAI/LFM2.5-2.6B-ONNX',
+      apocalypseController: {
+        handle: async () => ({ enabled: apocalypseState.enabled }),
+      },
+      providerManager: {
+        getAll: () => ({
+          webgpu: { model: 'LiquidAI/LFM2.5-2.6B-ONNX' },
+        }),
+        getWebgpuDownloadStatus: async () => ({ ready: webgpuState.ready }),
+      },
+    },
+  );
+  assert.equal(await standaloneRunProviderId({}), null);
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: false }),
+    /standalone chat control/,
+  );
+  assert.equal(
+    await standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    'webgpu',
+  );
+  apocalypseState.enabled = false;
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    /Enable Apocalypse Mode/,
+  );
+  apocalypseState.enabled = true;
+  webgpuState.ready = false;
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    /Download LFM2\.5 2\.6B/,
+  );
+});
+
 test('standalone window transport, sizing, and translations are mirrored', async () => {
   const localeCodes = [
     'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
@@ -28550,9 +31844,12 @@ test('standalone window transport, sizing, and translations are mirrored', async
   const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
 
   for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const markup = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const bootstrap = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/theme-bootstrap.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     assert.match(panel, /isStandaloneWindow \? \{ standaloneChat: true \} : \{\}/, `${label}: standalone flag is not sent with chat_start`);
     assert.equal(
       [...background.matchAll(/msg\.standaloneChat === true \? \{ standaloneChat: true \} : \{\}/g)].length,
@@ -28565,6 +31862,52 @@ test('standalone window transport, sizing, and translations are mirrored', async
     assert.match(panel, /availableWidth \* 0\.9/, `${label}: popup width is not derived from available screen size`);
     assert.match(panel, /availableHeight \* 0\.9/, `${label}: popup height is not derived from available screen size`);
     assert.doesNotMatch(panel, /type: 'popup',\s*width: 400,\s*height: 600/, `${label}: popup retained fixed compact dimensions`);
+    assert.match(markup, /id="btn-expand"[\s\S]*?<svg data-icon="external-link"[\s\S]*?M10 14 21 3[\s\S]*?M18 13v6/, `${label}: standalone launcher does not use the external-window icon`);
+    assert.doesNotMatch(markup, /id="btn-expand"[\s\S]*?M9 21H3v-6[\s\S]*?M3 21l7-7/, `${label}: standalone launcher still uses the maximize icon`);
+    assert.match(bootstrap, /params\.get\('standalone'\) === 'true'[\s\S]*?setAttribute\('data-standalone', 'true'\)/, `${label}: standalone mode is not marked before first paint`);
+    assert.match(css, /html\[data-standalone="true"\] #mode-toggle \{\s*display: none;/, `${label}: standalone window still shows the mode selector`);
+    assert.match(panel, /function normalizeAgentMode\(mode\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: standalone mode is not pinned to Ask`);
+    assert.match(panel, /function setMode\(mode\) \{\s*mode = normalizeAgentMode\(mode\);/, `${label}: visible mode changes bypass the standalone Ask boundary`);
+    assert.match(panel, /function modeForMessageText\(text\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: slash commands can change standalone mode`);
+    assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{\s*if \(isStandaloneWindow\) \{\s*if \(extraChatParams\?\.workflowId\) \{\s*rejectStandaloneWorkflowRun\(\);\s*return false;[\s\S]*?__mode: 'ask',[\s\S]*?__retry: \{ \.\.\.retryOptions, mode: 'ask' \}/, `${label}: standalone starts, retries, or workflow replays can escape Ask mode`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\) \{\s*if \(isStandaloneWindow\) options = \{ \.\.\.options, mode: 'ask' \};/, `${label}: standalone continuations can escape Ask mode`);
+    assert.match(panel, /if \(!isStandaloneWindow\) \{\s*actions\.append\(savedWorkflowManagerActionButton\('run'/, `${label}: standalone workflow manager still exposes its Act-only Run action`);
+    assert.match(panel, /function rejectStandaloneWorkflowRun\(\) \{\s*if \(!isStandaloneWindow\) return false;\s*showComposerToast\(t\('sp\.workflows\.standalone_unavailable'\), \{ duration: 6000 \}\);\s*return true;/, `${label}: standalone workflow rejection has no actionable user message`);
+    assert.match(panel, /async function prepareSavedWorkflowRun\(id, tabId = currentTabId\) \{\s*if \(rejectStandaloneWorkflowRun\(\)\) return false;/, `${label}: standalone workflow preparation is not blocked`);
+    assert.match(background, /if \(msg\.standaloneChat === true && msg\.workflowId\) \{\s*throw new Error\('Saved workflows are unavailable in standalone Ask mode\.'\);/, `${label}: background accepts forged standalone workflow runs`);
+
+    const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
+    const workflowEnd = panel.indexOf('\n\nasync function submitSavedWorkflowParameters', workflowStart);
+    assert.ok(workflowStart >= 0 && workflowEnd > workflowStart, `${label}: saved workflow launcher missing`);
+    let workflowSends = 0;
+    let actModeRequests = 0;
+    const workflowToasts = [];
+    const workflowInput = { value: 'keep this draft' };
+    const startSavedWorkflowRun = vm.runInNewContext(
+      `(() => { ${panel.slice(workflowStart, workflowEnd)}; return startSavedWorkflowRun; })()`,
+      {
+        currentTabId: 92,
+        isStandaloneWindow: true,
+        rejectStandaloneWorkflowRun: () => {
+          workflowToasts.push('standalone Ask-only message');
+          return true;
+        },
+        ensureActMode: async () => { actModeRequests += 1; return true; },
+        inputEl: workflowInput,
+        t: () => 'workflow prompt',
+        autoResizeInput: () => {},
+        sendMessage: async () => { workflowSends += 1; return true; },
+      },
+    );
+    assert.equal(
+      await startSavedWorkflowRun({ id: 'workflow_standalone_guard', name: 'Blocked workflow' }, {}, 92),
+      false,
+      `${label}: standalone saved workflow launch should be rejected`,
+    );
+    assert.equal(actModeRequests, 0, `${label}: standalone workflow should stop before requesting Act mode`);
+    assert.equal(workflowSends, 0, `${label}: standalone workflow should not reach sendMessage`);
+    assert.equal(workflowInput.value, 'keep this draft', `${label}: rejected standalone workflow should preserve the composer draft`);
+    assert.deepEqual(workflowToasts, ['standalone Ask-only message'], `${label}: standalone workflow rejection should notify the user once`);
   }
 
   for (const locale of localeCodes) {
@@ -28572,8 +31915,11 @@ test('standalone window transport, sizing, and translations are mirrored', async
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
     assert.equal(firefoxLocale['sp.btn.expand'], chromeLocale['sp.btn.expand'], `${locale}: expand translation differs across browsers`);
     assert.ok(chromeLocale['sp.btn.expand']?.trim(), `${locale}: expand translation is empty`);
+    assert.equal(firefoxLocale['sp.workflows.standalone_unavailable'], chromeLocale['sp.workflows.standalone_unavailable'], `${locale}: standalone workflow message differs across browsers`);
+    assert.ok(chromeLocale['sp.workflows.standalone_unavailable']?.trim(), `${locale}: standalone workflow message is empty`);
     if (locale !== 'en') {
       assert.notEqual(chromeLocale['sp.btn.expand'], english['sp.btn.expand'], `${locale}: expand label fell back to English`);
+      assert.notEqual(chromeLocale['sp.workflows.standalone_unavailable'], english['sp.workflows.standalone_unavailable'], `${locale}: standalone workflow message fell back to English`);
     }
   }
 });
@@ -29296,7 +32642,7 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       agent,
-      /plannerTabInfo = selectionOnly \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
+      /plannerTabInfo = selectionOnly \|\| standaloneChatRun \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
       `${label}: Act planner should not receive page URL or title for a selection-only run`,
     );
     assert.match(
@@ -30007,7 +33353,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let text = inputEl\.value\.trim\(\);\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
+      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
       `${label}: an empty refreshed composer should release and retry an owned prompt`,
     );
     assert.match(
@@ -30269,7 +33615,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /resetChatNavigation\(\);\s*userEl = addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
+      /resetChatNavigation\(\);\s*userEl = addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
       `${label}: a submitted turn should enter reading-first mode and reveal its question before streaming`,
     );
     assert.match(
@@ -39647,8 +42993,8 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   const streamingStart = agentSource.indexOf('async _processMessageStreamInner(');
   const standardPath = agentSource.slice(standardStart, streamingStart);
   const streamingPath = agentSource.slice(streamingStart);
-  assert.match(standardPath, /if \(mode === 'dev'\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
-  assert.match(streamingPath, /if \(mode === 'dev'\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
+  assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
+  assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
@@ -39876,6 +43222,8 @@ test('inspect_event_listeners walks from open shadow roots through their hosts',
 });
 
 test('Chrome Dev mutation and state-change classifications cover the new toolkit', () => {
+  assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('upload_file'), true, 'chrome: upload results must remain inside the untrusted boundary');
+  assert.equal(UNTRUSTED_CONTENT_TOOLS.has('upload_file'), true, 'firefox: upload results must remain inside the untrusted boundary');
   for (const name of ['inject_css', 'remove_injected_css', 'patch_element', 'revert_patch', 'inspect_event_listeners', 'highlight_element']) {
     assert.equal(capabilityForCh(name, {}), CapabilityCh.DEV_PATCH, `${name} should require the Dev patch capability`);
     assert.equal(AgentCh.STATE_CHANGE_TOOLS.has(name), true, `${name} should trigger state-change screenshots`);
@@ -39892,6 +43240,38 @@ test('Chrome Dev mutation and state-change classifications cover the new toolkit
   }
   assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('inspect_event_listeners'), true);
   assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('highlight_element'), true);
+});
+
+test('toolbar retry guards fail closed without consuming unresolved targets', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const content = fs.readFileSync(path.join(ROOT, `src/${build}/src/content/content.js`), 'utf8');
+    const clickStart = content.indexOf('function clickElement(');
+    const selectorMiss = content.indexOf('if (params.selector && !el)', clickStart);
+    const consumeBinding = content.indexOf('_consumeDispatchBinding(params.dispatchBinding?.token, el)', clickStart);
+    assert.ok(clickStart >= 0 && selectorMiss > clickStart && selectorMiss < consumeBinding,
+      `${build}: selector misses must return before consuming a dispatch binding`);
+
+    const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    const toolBlockStart = agent.indexOf('async _richTextToolbarToolBlock(');
+    const retryProbe = agent.indexOf('this._probeRichTextToolbarRetryTarget(', toolBlockStart);
+    const unresolvedBranch = agent.indexOf('if (!probe?.resolved)', retryProbe);
+    const refBlock = agent.indexOf('this._richTextToolbarGuard.blockRef(', unresolvedBranch);
+    const unresolvedFallback = agent.indexOf('return DISPATCH_BINDING_TOOLS.has(toolName)', refBlock);
+    assert.ok(
+      toolBlockStart >= 0
+      && retryProbe > toolBlockStart
+      && unresolvedBranch > retryProbe
+      && refBlock > unresolvedBranch
+      && refBlock < unresolvedFallback,
+      `${build}: unresolved probes must enforce known blocked refs before the generic fallback`,
+    );
+
+    const probe = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`), 'utf8');
+    assert.match(probe, /const explicitMatchIndex = Number\.isInteger\(args\?\.matchIndex\) && args\.matchIndex >= 0/,
+      `${build}: null matchIndex must not select iframe match zero`);
+    assert.match(probe, /const matchIndex = Number\.isInteger\(requestedMatchIndex\) && requestedMatchIndex >= 0/,
+      `${build}: the legacy iframe fallback must also treat null matchIndex as omitted`);
+  }
 });
 
 test('HLS implicit-IV derivation does not 32-bit-truncate the media sequence', () => {
@@ -40066,13 +43446,734 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
 
 console.log('\nprovider categorization');
 
+test('Chrome exposes separate endpoint-free WebGPU text and vision providers', async () => {
+  const previousChrome = globalThis.chrome;
+  const sentMessages = [];
+  let localEnabled = true;
+  let textModelReady = true;
+  let webgpuExecutionError = '';
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-vision-dispose') callback({ ok: true, disposed: true });
+          else if (message.type === 'webgpu-dispose') callback({ ok: true, disposed: true });
+          else if (message.type === 'webgpu-probe') callback({ ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: '4.2.0' });
+          else if (message.type === 'webgpu-download-status') callback({ ok: true, status: textModelReady ? 'ready' : 'not-downloaded', ready: textModelReady });
+          else if (message.type === 'webgpu-chat') callback(webgpuExecutionError
+            ? { ok: false, error: webgpuExecutionError }
+            : { ok: true, content: 'Local answer.' });
+          else callback({ ok: true, content: 'A settings page is visible.' });
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({
+            visionModel: {
+              type: 'openai',
+              baseUrl: 'https://vision.example/v1',
+              apiKey: 'preserved-secret',
+              model: 'remote-vision',
+            },
+            [WEBGPU_VISION_ENABLED_KEY]: localEnabled,
+          }),
+          set: async () => {},
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    const webgpuConfig = manager._defaultConfigs().webgpu;
+    assert.equal(webgpuConfig.model, WEBGPU_MODEL_ID);
+    assert.equal(WEBGPU_MODEL_ID, WEBGPU_LFM25_MODEL_ID);
+    assert.equal(webgpuConfig.baseUrl, '');
+    assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
+    const generalProvider = manager._createProvider('webgpu', webgpuConfig);
+    assert.ok(generalProvider instanceof WebGPUProvider);
+    assert.equal(generalProvider.promptTier, 'compact');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID }).promptTier, 'compact');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID, promptTier: 'full' }).promptTier, 'full');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_MODEL_ID }).model, WEBGPU_LFM25_MODEL_ID);
+    const customProvider = new WebGPUProvider({ model: 'custom-owner/custom-model' });
+    assert.equal(customProvider.model, 'custom-owner/custom-model');
+    assert.equal(customProvider.requiresToolTemplate, true);
+    assert.equal(generalProvider.requiresToolTemplate, false);
+    assert.equal(
+      new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
+      'custom-owner/custom-model',
+    );
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B' },
+    ]);
+    assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
+    assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
+    assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
+    assert.equal(generalProvider.supportsTools, true);
+    assert.equal(generalProvider.supportsVision, false);
+    const probe = await generalProvider.testConnection();
+    assert.equal(probe.ok, true);
+    assert.equal(probe.libraryVersion, '4.2.0');
+    assert.deepEqual(sentMessages[0], { type: 'webgpu-probe' });
+    const tools = [{ type: 'function', function: { name: 'read_page', parameters: { type: 'object' } } }];
+    const localResult = await generalProvider.chat([{ role: 'user', content: 'Hello' }], { maxTokens: 123, tools });
+    assert.equal(localResult.content, 'Local answer.');
+    assert.deepEqual(sentMessages[1], {
+      type: 'webgpu-download-status',
+      model: WEBGPU_MODEL_ID,
+      dtype: WEBGPU_DTYPE,
+    });
+    assert.deepEqual(sentMessages[2], {
+      type: 'webgpu-chat',
+      model: WEBGPU_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_DTYPE,
+      requireTools: false,
+      messages: [{ role: 'user', content: 'Hello' }],
+      options: { maxTokens: 123, tools },
+    });
+    const textDisposed = await generalProvider.dispose();
+    assert.deepEqual(textDisposed, { ok: true, disposed: true });
+    assert.deepEqual(sentMessages[3], { type: 'webgpu-dispose' });
+
+    const provider = await manager.getVisionProvider();
+    assert.ok(provider instanceof WebGPUVisionProvider);
+    assert.equal(provider.name, 'webgpu-vision');
+    assert.equal(provider.supportsVision, true);
+    assert.equal(provider.supportsTools, false);
+    assert.equal(provider.config.category, 'local');
+
+    const messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Describe this screenshot.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+      ],
+    }];
+    const result = await provider.chat(messages, { maxTokens: 321 });
+    assert.equal(result.content, 'A settings page is visible.');
+    assert.equal(result.toolCalls, null);
+    assert.deepEqual(sentMessages[4], {
+      type: 'webgpu-vision-chat',
+      model: WEBGPU_VISION_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_VISION_DTYPE,
+      messages,
+      options: { maxTokens: 321 },
+    });
+
+    const disposed = await manager.disposeWebgpuVisionRuntime();
+    assert.deepEqual(disposed, { ok: true, disposed: true });
+    assert.deepEqual(sentMessages[5], { type: 'webgpu-vision-dispose' });
+
+    manager.providers.set('webgpu', generalProvider);
+    manager.providers.set('remote', { config: { type: 'openai', model: 'remote-model' } });
+    manager.activeProviderId = 'webgpu';
+    await manager.setActive('remote');
+    assert.deepEqual(sentMessages[6], { type: 'webgpu-dispose' });
+
+    textModelReady = false;
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
+      /not downloaded/,
+    );
+    await assert.rejects(manager.setActive('webgpu'), /Download LFM2\.5 2\.6B/);
+    assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
+
+    textModelReady = true;
+    webgpuExecutionError = 'failed to call OrtRun(): BufferManager::Download mapAsync GPUBuffer failed';
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Exercise the GPU.' }]),
+      error => error.isAskStreamTerminalError === true && /OrtRun/.test(error.message),
+      'fatal WebGPU execution failures should bypass the generic network retry',
+    );
+    webgpuExecutionError = `${WEBGPU_MODEL_ID} used its generation budget before finishing reasoning. Retry with a shorter prompt.`;
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Exercise the deterministic token limit.' }]),
+      error => error.isAskStreamTerminalError === true && /generation budget/.test(error.message),
+      'a deterministic WebGPU generation-budget failure should not repeat the same expensive request',
+    );
+
+    const preload = await new WebGPUVisionProvider().preload();
+    assert.deepEqual(preload, { ok: true, started: true, ready: false });
+    assert.deepEqual(sentMessages.at(-1), {
+      type: 'webgpu-vision-preload',
+      model: WEBGPU_VISION_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_VISION_DTYPE,
+    });
+    assert.equal(WEBGPU_VISION_DOWNLOAD_STATE_KEY, 'webgpuVisionDownloadState');
+
+    localEnabled = false;
+    const preservedRemote = await manager.getVisionProvider();
+    assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
+    assert.equal(preservedRemote.config.baseUrl, 'https://vision.example/v1');
+    assert.equal(preservedRemote.config.apiKey, 'preserved-secret');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('Apocalypse vision probes before automatic selection and rolls back failed starts', async () => {
+  const previousChrome = globalThis.chrome;
+  const storageState = {
+    visionModel: {
+      type: 'openai',
+      baseUrl: 'https://vision.example/v1',
+      apiKey: 'preserved-secret',
+      model: 'remote-vision',
+    },
+  };
+  const sentMessages = [];
+  let hasWebGPU = true;
+  let preloadResponse = { ok: true, started: true };
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-probe') {
+            callback({ ok: true, hasWebGPU, isFallbackAdapter: false, libraryVersion: 'test' });
+            return;
+          }
+          callback(preloadResponse);
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({ ...storageState }),
+          set: async patch => Object.assign(storageState, patch),
+          remove: async keys => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete storageState[key];
+          },
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    const started = await manager.enableAndPreloadWebgpuVision();
+    assert.deepEqual(started, { ok: true, started: true, ready: false });
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-probe',
+      'webgpu-vision-preload',
+    ]);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], true);
+
+    delete storageState[WEBGPU_VISION_ENABLED_KEY];
+    delete storageState[WEBGPU_VISION_AUTO_SELECTED_KEY];
+    sentMessages.length = 0;
+    hasWebGPU = false;
+    const unsupported = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(unsupported.ok, false);
+    assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe']);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+
+    sentMessages.length = 0;
+    hasWebGPU = true;
+    preloadResponse = { ok: false, error: 'download dispatch failed' };
+    const failedAutomaticStart = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedAutomaticStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+
+    storageState[WEBGPU_VISION_ENABLED_KEY] = true;
+    sentMessages.length = 0;
+    const failedExplicitStart = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedExplicitStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true,
+      'an existing explicit local selection must not be rolled back as an automatic choice');
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
+  const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
+  const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
+  const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
+  const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
+  const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
+  assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
+  assert.match(worker, /AutoProcessor\.from_pretrained/);
+  assert.match(worker, /apply_chat_template/);
+  assert.match(worker, /load_image\(imageUrl\)/);
+  assert.match(worker, /decoder_model_merged:\s*'q4'/);
+  assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
+  assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
+  assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
+  assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeAllRuntimes\)/);
+  assert.match(worker, /type === 'preload'[\s\S]*?preloadRuntime\(payload\)/);
+  assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime[\s\S]*?await disposeVisionRuntime/);
+  assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(host, /'webgpu-vision-preload'/);
+  assert.match(host, /webgpu-vision-download-state/);
+  assert.doesNotMatch(host, /chrome\.storage/, 'offscreen documents only expose chrome.runtime from extension APIs');
+  assert.match(host, /chrome\.runtime\.sendMessage\(\{[\s\S]*?VISION_DOWNLOAD_STATE_MESSAGE/);
+  assert.match(host, /data\?\.type === 'progress'[\s\S]*?updateVisionDownloadProgress/);
+  assert.match(host, /data\?\.type === 'progress'[\s\S]{0,240}!progressMatchesActiveVisionModel[\s\S]{0,240}updateVisionDownloadProgress/,
+    'shared-worker progress must be filtered before it mutates vision download state');
+  const progressFilterStart = host.indexOf('function progressMatchesActiveVisionModel');
+  const progressFilterEnd = host.indexOf('\n}', progressFilterStart) + 2;
+  assert.ok(progressFilterStart >= 0 && progressFilterEnd > progressFilterStart,
+    'vision progress model filter is missing');
+  const progressMatchesActiveVisionModel = vm.runInNewContext(
+    `(${host.slice(progressFilterStart, progressFilterEnd)})`,
+  );
+  const activePreload = Promise.resolve();
+  const visionModel = 'LiquidAI/LFM2.5-VL-450M';
+  assert.equal(progressMatchesActiveVisionModel({ modelId: visionModel }, visionModel, activePreload), true,
+    'active vision-model progress should be retained');
+  assert.equal(progressMatchesActiveVisionModel({ modelId: 'webbrain-one/Ling-3.0-tiny-ONNX' }, visionModel, activePreload), false,
+    'Ling text-model progress must not overwrite vision preload state');
+  assert.equal(progressMatchesActiveVisionModel({ modelId: visionModel }, visionModel, null), false,
+    'late progress must not update state after vision preload settles');
+  assert.match(background, /message\?\.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE/);
+  assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
+  assert.match(background, /normalized\.status === 'error'[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY[\s\S]*?WEBGPU_VISION_ENABLED_KEY/);
+  assert.match(background, /async function resumeInterruptedVisionPreload\(\)[\s\S]*?WEBGPU_VISION_ENABLED_KEY[\s\S]*?state\.status === 'starting'[\s\S]*?state\.status === 'downloading'[\s\S]*?enableApocalypseVisionModel\(\)/,
+    'Chrome startup must resume an enabled, incomplete local-vision preload');
+  assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
+    'local-vision recovery must run with the service-worker startup restoration');
+  const startupRecovery = background.slice(
+    background.indexOf('Promise.all([', background.indexOf('async function resumeInterruptedVisionPreload')),
+    background.indexOf('const agent = new Agent', background.indexOf('async function resumeInterruptedVisionPreload')),
+  );
+  assert.doesNotMatch(startupRecovery, /apocalypseController\.handle\('status'\)/,
+    'service-worker startup must not override a later local-vision opt-out');
+  assert.match(worker, /let visionRuntime = null/);
+  assert.match(worker, /let textRuntime = null/);
+  const visionLoader = worker.slice(worker.indexOf('async function getVisionRuntime'), worker.indexOf('async function getTextRuntime'));
+  const textLoader = worker.slice(worker.indexOf('async function getTextRuntime'), worker.indexOf('function enqueueModelOperation'));
+  assert.match(visionLoader, /disposeVisionRuntime\(\)/);
+  assert.doesNotMatch(visionLoader, /disposeTextRuntime\(\)/);
+  assert.match(textLoader, /disposeTextRuntime\(\)/);
+  assert.doesNotMatch(textLoader, /disposeVisionRuntime\(\)/);
+  assert.match(worker, /type === 'dispose-vision'[\s\S]*?enqueueModelOperation\(disposeVisionRuntime\)/);
+  assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
+  assert.match(worker, /pipeline\('text-generation', modelId/);
+  assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
+  assert.match(worker, /function textDtypeKey\(dtype\)/);
+  assert.match(worker, /Object\.entries\(dtype\)\.sort/);
+  assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
+  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 512/);
+  assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
+  assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
+  assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
+  assert.match(worker, /GPU detail:/);
+  assert.doesNotMatch(worker, /cannot execute Ling/);
+  assert.match(worker, /preserve_thinking: false/);
+  assert.match(worker, /enable_thinking: false/);
+  assert.match(worker, /tools: tools\.length \? tools : undefined/);
+  assert.match(host, /'webgpu-chat'/);
+  assert.match(host, /'webgpu-download-start'/);
+  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendResponse\(await sendVisionWorkerMessage\('start-download-text'/);
+  assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
+  assert.match(host, /'webgpu-download-pause'/);
+  assert.match(host, /'webgpu-download-stop'/);
+  assert.match(host, /'webgpu-download-status'/);
+  assert.match(host, /'webgpu-dispose'/);
+  assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
+  assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
+  assert.match(worker, /type === 'start-download-text'/);
+  assert.match(worker, /function assertTextDownloadCanStart/);
+  assert.match(worker, /function assertToolCapableTextRuntime/);
+  assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
+  assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
+  assert.match(settingsScript, /addEventListener\('focus'[\s\S]{0,180}loadVisionConfig/);
+  assert.match(settingsScript, /changes\[WEBGPU_VISION_ENABLED_KEY\][\s\S]{0,100}loadVisionConfig/);
+  assert.match(settingsScript, /chrome\.storage\.local\.remove\(WEBGPU_VISION_AUTO_SELECTED_KEY\)/,
+    'an explicit local-vision selection must clear automatic-selection provenance');
+  assert.match(settingsScript, /dispose_webgpu_vision/);
+  assert.match(apocalypseHtml, /id="webgpu-provider-card"[^>]*hidden/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="start"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="pause"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="resume"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="stop"/);
+  assert.match(apocalypseScript, /get_webgpu_download_status/);
+  assert.match(apocalypseScript, /webgpu-text-download-state/);
+  assert.doesNotMatch(settingsScript, /data-webgpu-download-action=/,
+    'the WebGPU provider download block must live on Apocalypse Mode, not Settings');
+  assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
+  assert.match(settingsScript, /Object\.entries\(providersData\)\.filter\(\(\[id\]\) => id !== 'webgpu'\)/,
+    'Settings still renders the WebGPU provider card');
+  assert.match(apocalypseHtml, /LFM2\.5 2\.6B local chat/);
+  assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
+  assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
+  assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
+  assert.match(apocalypseHtml, /id="vision-model-test"[^>]*data-i18n="st\.vision\.test"[^>]*disabled/);
+  assert.doesNotMatch(apocalypseHtml, /(?:base-url|api-key|__custom__|data-webgpu-model-link)/);
+  assert.doesNotMatch(apocalypseScript, /WEBGPU_MODEL_PRESETS|normalizeWebgpuModelId|set_active_provider/);
+  assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
+  assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
+  assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
+  assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
+  assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
+  assert.match(englishLocale, /Download it in Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
+
+  const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
+  const multimodal = settings.indexOf('data-panel="multimodal"');
+  const visionCard = settings.indexOf('id="vision-card"', multimodal);
+  const localToggle = settings.indexOf('id="btn-use-webgpu-vision"', visionCard);
+  const transcription = settings.indexOf('id="transcription-card"', localToggle);
+  assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
+
+  const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  const transformersBundle = fs.readFileSync(path.join(vendorDir, 'transformers.web.js'), 'utf8');
+  assert.match(transformersBundle, /Gemma4ForCausalLM/);
+  assert.match(transformersBundle, /Gemma4ForConditionalGeneration/);
+  assert.match(transformersBundle, /q2f16/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'ort.webgpu.mjs'), 'utf8'), /ONNX Runtime Web v1\.27\.0/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'README.md'), 'utf8'), /Qwen3\/QMoE correctness fixes/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
+  assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
+});
+
+test('WebGPU worker replays text tool history and applies model-specific generation contracts', async () => {
+  const previousSelf = globalThis.self;
+  const previousCounts = globalThis.__webgpuRuntimeCounts;
+  const previousHoldTextDownload = globalThis.__holdWebgpuTextDownload;
+  const previousReleaseTextDownload = globalThis.__releaseWebgpuTextDownload;
+  const previousGenerationOptions = globalThis.__webgpuGenerationOptions;
+  const previousPipelineOptions = globalThis.__webgpuPipelineOptions;
+  let workerListener = null;
+  const posted = [];
+  try {
+    globalThis.self = {
+      addEventListener(type, listener) {
+        if (type === 'message') workerListener = listener;
+      },
+      postMessage(message) {
+        posted.push(message);
+      },
+    };
+    const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
+    const { prepareTextMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
+    const messages = [
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_1',
+          type: 'function',
+          function: {
+            name: 'click_ax',
+            arguments: '{"ref_id":"ref_7","force":true}',
+          },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"success":true}' },
+    ];
+
+    const prepared = prepareTextMessages(messages);
+    assert.deepEqual(prepared[0].tool_calls[0].function.arguments, { ref_id: 'ref_7', force: true });
+    assert.equal(prepared[0].content, '');
+    assert.equal(prepared[1].content, '{"success":true}');
+    assert.equal(messages[0].tool_calls[0].function.arguments, '{"ref_id":"ref_7","force":true}', 'normalization must not mutate persisted history');
+    assert.deepEqual(splitThinking('<think>private trace</think>Visible answer'), {
+      content: 'Visible answer',
+      reasoningContent: 'private trace',
+      incompleteReasoning: false,
+    });
+    assert.deepEqual(splitThinking('implicit private trace</think>Visible answer', { openingTagInPrompt: true }), {
+      content: 'Visible answer',
+      reasoningContent: 'implicit private trace',
+      incompleteReasoning: false,
+    });
+    assert.deepEqual(splitThinking('unfinished private trace', { openingTagInPrompt: true }), {
+      content: '',
+      reasoningContent: 'unfinished private trace',
+      incompleteReasoning: true,
+    });
+    assert.equal(tokenizerSupportsTools({ chat_template: '{% if tools %}{{ tools }}{% endif %}{{ messages }}' }), true);
+    assert.equal(tokenizerSupportsTools({ chat_template: '{{ messages }}' }), false);
+    assert.equal(tokenizerSupportsTools({
+      chat_template: {
+        default: '{{ messages }}',
+        tool_use: '{% for tool in tools %}{{ tool }}{% endfor %}',
+      },
+    }), true);
+
+    globalThis.__webgpuRuntimeCounts = {
+      visionProcessorLoads: 0,
+      visionModelLoads: 0,
+      textLoads: 0,
+      visionProcessorDisposals: 0,
+      visionModelDisposals: 0,
+      textDisposals: 0,
+    };
+    const runtimeModule = `
+      export const env = { version: 'test', backends: { onnx: { wasm: {} } } };
+      export class RawImage { constructor(data, width, height, channels) { Object.assign(this, { data, width, height, channels }); } }
+      export const AutoProcessor = {
+        async from_pretrained() {
+          globalThis.__webgpuRuntimeCounts.visionProcessorLoads++;
+          const processor = async () => ({ input_ids: { dims: { at: () => 1 } } });
+          processor.apply_chat_template = () => 'vision prompt';
+          processor.batch_decode = () => ['vision answer'];
+          processor.dispose = async () => { globalThis.__webgpuRuntimeCounts.visionProcessorDisposals++; };
+          return processor;
+        },
+      };
+      export const AutoModelForImageTextToText = {
+        async from_pretrained() {
+          globalThis.__webgpuRuntimeCounts.visionModelLoads++;
+          return {
+            generate: async () => ({ slice: () => ({}) }),
+            dispose: async () => { globalThis.__webgpuRuntimeCounts.visionModelDisposals++; },
+          };
+        },
+      };
+      export async function pipeline(task, modelId, options) {
+        globalThis.__webgpuRuntimeCounts.textLoads++;
+        options.session_options.extra.session ??= {};
+        options.session_options.extra.session.use_ort_model_bytes_directly ??= '1';
+        globalThis.__webgpuPipelineOptions = { task, modelId, options };
+        if (globalThis.__holdWebgpuTextDownload) {
+          await new Promise(resolve => { globalThis.__releaseWebgpuTextDownload = resolve; });
+        }
+        const instance = async (input, options) => {
+          globalThis.__webgpuGenerationOptions = options;
+          const content = modelId === 'LiquidAI/LFM2.5-2.6B-ONNX'
+            ? 'private model reasoning</think>Hello!'
+            : 'text answer';
+          return [{ generated_text: [...input, { role: 'assistant', content }] }];
+        };
+        instance.model = {};
+        instance.tokenizer = {
+          chat_template: modelId === 'custom-no-tools'
+            ? '{{ messages }}'
+            : '{% if tools %}{{ tools }}{% endif %}{{ messages }}',
+        };
+        instance.dispose = async () => { globalThis.__webgpuRuntimeCounts.textDisposals++; };
+        return instance;
+      }
+    `;
+    let requestId = 1;
+    const dispatch = async (type, payload = {}) => {
+      const id = requestId++;
+      await workerListener({ data: { id, type, payload } });
+      const response = posted.find(message => message.id === id);
+      assert.ok(response, `worker did not answer ${type}`);
+      assert.equal(response.ok, true, response.error || `${type} failed`);
+      return response;
+    };
+    await dispatch('init', {
+      transformersUrl: `data:text/javascript,${encodeURIComponent(runtimeModule)}`,
+      wasmMjsUrl: 'test.mjs',
+      wasmUrl: 'test.wasm',
+    });
+    const visionPayload = {
+      modelId: 'vision-model',
+      device: 'webgpu',
+      dtype: { decoder_model_merged: 'q4' },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe this.' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+        ],
+      }],
+      options: { visionProbe: true, maxTokens: 1 },
+    };
+    const textPayload = {
+      modelId: 'text-model',
+      device: 'webgpu',
+      dtype: 'q4f16',
+      messages: [{ role: 'user', content: 'Continue.' }],
+      options: { maxTokens: 4096 },
+    };
+    await dispatch('chat', visionPayload);
+    const beforeDownloadId = requestId++;
+    await workerListener({ data: { id: beforeDownloadId, type: 'text-chat', payload: textPayload } });
+    const beforeDownload = posted.find(message => message.id === beforeDownloadId);
+    assert.equal(beforeDownload.ok, false);
+    assert.match(beforeDownload.error, /not downloaded/);
+    await dispatch('download-text', textPayload);
+    await dispatch('text-chat', textPayload);
+    assert.equal(
+      globalThis.__webgpuPipelineOptions.options.session_options.extra['ep.webgpuexecutionprovider.storageBufferCacheMode'],
+      'simple',
+      'Ling must avoid ORT WebGPU bucket-cache amplification',
+    );
+    assert.equal(globalThis.__webgpuGenerationOptions.max_new_tokens, 256, 'Ling generation must keep a browser-safe output budget');
+    await dispatch('chat', visionPayload);
+    await dispatch('text-chat', textPayload);
+    assert.deepEqual(globalThis.__webgpuRuntimeCounts, {
+      visionProcessorLoads: 1,
+      visionModelLoads: 1,
+      textLoads: 1,
+      visionProcessorDisposals: 0,
+      visionModelDisposals: 0,
+      textDisposals: 0,
+    }, 'alternating calls should reuse both resident runtimes');
+
+    await dispatch('dispose-vision');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionProcessorDisposals, 1);
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelDisposals, 1);
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, 0, 'vision disposal must preserve Ling');
+    await dispatch('dispose-text');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, 1);
+
+    await dispatch('stop-text-download', textPayload);
+    const stopped = await dispatch('text-download-status', textPayload);
+    assert.equal(stopped.status, 'not-downloaded');
+    assert.equal(stopped.ready, false);
+
+    globalThis.__holdWebgpuTextDownload = true;
+    const pausedDownloadId = requestId++;
+    const pausedDownloadPromise = workerListener({
+      data: { id: pausedDownloadId, type: 'download-text', payload: textPayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextDownload; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'download should reach the controllable pipeline');
+    const paused = await dispatch('pause-text-download');
+    assert.equal(paused.status, 'paused');
+    globalThis.__releaseWebgpuTextDownload();
+    await pausedDownloadPromise;
+    const pausedDownload = posted.find(message => message.id === pausedDownloadId);
+    assert.equal(pausedDownload.ok, true);
+    assert.equal(pausedDownload.status, 'paused');
+
+    globalThis.__holdWebgpuTextDownload = false;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const resumed = await dispatch('download-text', textPayload);
+    assert.equal(resumed.status, 'ready');
+    assert.equal(resumed.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = true;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const activePayload = { ...textPayload, modelId: 'text-model-active' };
+    const otherPayload = { ...textPayload, modelId: 'text-model-other' };
+    const activeDownloadId = requestId++;
+    const activeDownloadPromise = workerListener({
+      data: { id: activeDownloadId, type: 'download-text', payload: activePayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextDownload; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'second download should reach the controllable pipeline');
+
+    const conflictId = requestId++;
+    await workerListener({
+      data: { id: conflictId, type: 'start-download-text', payload: otherPayload },
+    });
+    const conflict = posted.find(message => message.id === conflictId);
+    assert.equal(conflict.ok, false);
+    assert.match(conflict.error, /Finish or stop the text-model-active download/);
+
+    const otherStatus = await dispatch('text-download-status', otherPayload);
+    assert.equal(otherStatus.modelId, otherPayload.modelId);
+    assert.equal(otherStatus.status, 'not-downloaded');
+    const stopOtherId = requestId++;
+    const stopOtherPromise = workerListener({
+      data: { id: stopOtherId, type: 'stop-text-download', payload: otherPayload },
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    globalThis.__releaseWebgpuTextDownload();
+    await Promise.all([activeDownloadPromise, stopOtherPromise]);
+
+    const activeDownload = posted.find(message => message.id === activeDownloadId);
+    assert.equal(activeDownload.ok, true);
+    assert.equal(activeDownload.modelId, activePayload.modelId, 'another model status/stop request must not relabel the active transfer');
+    assert.equal(activeDownload.status, 'ready', 'stopping another model must not abort the active transfer');
+    const stoppedOther = posted.find(message => message.id === stopOtherId);
+    assert.equal(stoppedOther.modelId, otherPayload.modelId);
+    assert.equal(stoppedOther.status, 'not-downloaded');
+    const activeStatus = await dispatch('text-download-status', activePayload);
+    assert.equal(activeStatus.status, 'ready');
+    assert.equal(activeStatus.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = false;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const objectDtypePayload = {
+      ...textPayload,
+      modelId: 'text-model-object-dtype',
+      dtype: { decoder_model_merged: 'q2f16', embed_tokens: 'q2f16' },
+    };
+    const objectDtypeDownload = await dispatch('download-text', objectDtypePayload);
+    assert.equal(objectDtypeDownload.status, 'ready');
+    const objectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q2f16', decoder_model_merged: 'q2f16' },
+    });
+    assert.equal(objectDtypeStatus.status, 'ready', 'dtype-map key order must not change model readiness');
+    const wrongObjectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q4f16', decoder_model_merged: 'q4f16' },
+    });
+    assert.equal(wrongObjectDtypeStatus.status, 'not-downloaded', 'different dtype maps must have separate ready markers');
+
+    const lfmPayload = {
+      ...textPayload,
+      modelId: WEBGPU_LFM25_MODEL_ID,
+    };
+    await dispatch('download-text', lfmPayload);
+    const lfmResponse = await dispatch('text-chat', lfmPayload);
+    assert.equal(lfmResponse.content, 'Hello!');
+    assert.equal(lfmResponse.reasoningContent, 'private model reasoning');
+    assert.deepEqual(globalThis.__webgpuGenerationOptions, {
+      do_sample: true,
+      temperature: 0.1,
+      top_k: 50,
+      repetition_penalty: 1.1,
+      max_new_tokens: 512,
+      tools: undefined,
+      tokenizer_encode_kwargs: { preserve_thinking: false },
+    }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');
+
+    const incompatiblePayload = {
+      ...textPayload,
+      modelId: 'custom-no-tools',
+      requireTools: true,
+    };
+    const incompatibleId = requestId++;
+    await workerListener({
+      data: { id: incompatibleId, type: 'download-text', payload: incompatiblePayload },
+    });
+    const incompatible = posted.find(message => message.id === incompatibleId);
+    assert.equal(incompatible.ok, false);
+    assert.match(incompatible.error, /chat template that accepts tools/);
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+    if (previousCounts === undefined) delete globalThis.__webgpuRuntimeCounts;
+    else globalThis.__webgpuRuntimeCounts = previousCounts;
+    if (previousHoldTextDownload === undefined) delete globalThis.__holdWebgpuTextDownload;
+    else globalThis.__holdWebgpuTextDownload = previousHoldTextDownload;
+    if (previousReleaseTextDownload === undefined) delete globalThis.__releaseWebgpuTextDownload;
+    else globalThis.__releaseWebgpuTextDownload = previousReleaseTextDownload;
+    if (previousGenerationOptions === undefined) delete globalThis.__webgpuGenerationOptions;
+    else globalThis.__webgpuGenerationOptions = previousGenerationOptions;
+    if (previousPipelineOptions === undefined) delete globalThis.__webgpuPipelineOptions;
+    else globalThis.__webgpuPipelineOptions = previousPipelineOptions;
+  }
+});
+
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
   }
+  assert.equal(ProviderManagerCh.categoryFor('webgpu', { type: 'webgpu' }), 'local');
 });
 
 test('categoryFor: cloud family (openai / anthropic / gemini / mistral / deepseek / xai / oauth)', () => {
@@ -40198,7 +44299,7 @@ test('llama.cpp, LM Studio, and LocalAI migrate to tri-state vision alongside Ol
       const migratedOff = manager._migrateStoredProviderConfigs({ [id]: { model: 'fixed', supportsVision: false } })[id];
       assert.equal(migratedOff.visionMode, 'off');
       const migratedAuto = manager._migrateStoredProviderConfigs({ [id]: { model: 'fixed', supportsVision: true } })[id];
-      assert.equal(migratedAuto.visionMode, 'auto');
+      assert.equal(migratedAuto.visionMode, 'on');
       const migratedBlank = manager._migrateStoredProviderConfigs({
         [id]: { model: '', visionMode: 'auto', visionDetection: { supportsVision: true } },
       })[id];
@@ -40366,7 +44467,7 @@ test('tri-state local vision controls and pre-enrichment preparation stay mirror
 
 test('inferContextWindow: model-aware cloud/router defaults and local 16k fallback', () => {
   for (const infer of [inferContextWindowCh, inferContextWindowFx]) {
-    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
       assert.equal(infer({ category: 'local', providerName, model: 'qwen3.7-plus' }), 16384);
     }
     for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
@@ -40849,7 +44950,7 @@ test('Ollama vision detection fails closed and ignores stale responses', async (
       assert.equal(mgr.getActive().supportsVision, false, `${label}: metadata failure should fail closed`);
       assert.equal(mgr.getActive().config.visionDetection, null, `${label}: metadata failure must not persist text-only detection`);
       await mgr.prepareActiveProviderCapabilities();
-      assert.equal(fetchCalls, 2, `${label}: a failed key should still be checked only once per worker lifetime`);
+      assert.equal(fetchCalls, 3, `${label}: a failed key should be evicted so a later turn can retry`);
 
       await mgr.updateProvider('ollama', { model: 'malformed-model' });
       const malformed = await mgr.prepareActiveProviderCapabilities();
@@ -40860,7 +44961,7 @@ test('Ollama vision detection fails closed and ignores stale responses', async (
       const timedOut = await mgr.prepareActiveProviderCapabilities();
       assert.equal(timedOut.ok, false, `${label}: a metadata timeout should fail closed`);
       assert.equal(mgr.getActive().supportsVision, false, `${label}: a timed-out turn must remain text-only`);
-      assert.equal(fetchCalls, 4, `${label}: each distinct model should receive one metadata request`);
+      assert.equal(fetchCalls, 5, `${label}: distinct models and the retried failed key should each issue metadata requests`);
 
       const managerSource = fs.readFileSync(path.join(ROOT, `src/${label}/src/providers/manager.js`), 'utf8');
       assert.match(managerSource, /OLLAMA_VISION_METADATA_TIMEOUT_MS\s*=\s*3000/,
@@ -41381,7 +45482,7 @@ test('listProviderModels sends saved API keys for auth-enabled OpenAI-compatible
 
   try {
     for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
         const mgr = new PM();
         const config = {
           ...mgr._defaultConfigs()[id],
@@ -41936,8 +46037,8 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       globalThis[runtimeKey] = makeRuntime(legacyVisionOnStorage);
       const legacyVisionOnManager = new PM();
       await legacyVisionOnManager.load();
-      assert.equal(legacyVisionOnManager.providers.get('ollama')?.config.visionMode, 'auto', `${label}: legacy vision=true should migrate to auto detection`);
-      assert.equal(legacyVisionOnManager.providers.get('ollama')?.supportsVision, false, `${label}: auto mode should fail closed before metadata detection`);
+      assert.equal(legacyVisionOnManager.providers.get('ollama')?.config.visionMode, 'on', `${label}: legacy vision=true should remain an explicit override`);
+      assert.equal(legacyVisionOnManager.providers.get('ollama')?.supportsVision, true, `${label}: migrated on mode should preserve working vision`);
 
       const legacyVisionMissingStorage = {
         webbrainDeviceGuid: validGuid,
@@ -42108,7 +46209,12 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    assert.equal(Object.keys(defaults).length, 104, `${label}: expected 28 original + 76 new providers`);
+    const expectedDefaultCount = label === 'chrome' ? 106 : 105;
+    assert.equal(
+      Object.keys(defaults).length,
+      expectedDefaultCount,
+      `${label}: unexpected built-in provider count`,
+    );
     for (const id of expectedIds) {
       const config = defaults[id];
       assert.ok(config, `${label}: missing ${id}`);
@@ -42907,13 +47013,103 @@ test('_defaultConfigs: new offline providers present and enabled by default', ()
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     const mgr = new PM();
     const defaults = mgr._defaultConfigs();
-    for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
       assert.ok(defaults[id], `${PM.name}: missing default config for ${id}`);
       assert.equal(defaults[id].type, 'openai', `${PM.name}: ${id} should use OpenAI-compatible provider`);
       assert.equal(defaults[id].category, 'local', `${PM.name}: ${id} should be local`);
       assert.equal(defaults[id].enabled, true, `${PM.name}: ${id} should default to enabled`);
-      assert.ok(defaults[id].baseUrl?.startsWith('http://localhost:'), `${PM.name}: ${id} should use localhost by default`);
+      assert.match(defaults[id].baseUrl || '', /^http:\/\/(?:localhost|127\.0\.0\.1):/, `${PM.name}: ${id} should use a loopback host by default`);
     }
+  }
+});
+
+test('_defaultConfigs: generic local OpenAI-compatible proxy is safe and configurable', () => {
+  for (const [label, PM, settingsRel] of [
+    ['chrome', ProviderManagerCh, 'src/chrome/src/ui/settings.js'],
+    ['firefox', ProviderManagerFx, 'src/firefox/src/ui/settings.js'],
+  ]) {
+    const config = new PM()._defaultConfigs().local_openai_proxy;
+    assert.ok(config, `${label}: missing generic local proxy provider`);
+    assert.equal(config.type, 'openai', `${label}: proxy should reuse the OpenAI-compatible adapter`);
+    assert.equal(config.category, 'local', `${label}: proxy endpoint should appear under Local`);
+    assert.equal(config.label, 'Local OpenAI-compatible Proxy');
+    assert.equal(config.providerName, 'local-openai-proxy');
+    assert.equal(config.model, '', `${label}: users must choose a proxy-exposed model`);
+    assert.equal(config.requiresModel, true, `${label}: proxy requests need an explicit model`);
+    assert.equal(config.contextWindow, 16384, `${label}: proxy should inherit the conservative local context default`);
+    assert.equal(config.apiKey, '', `${label}: no shared credential should ship`);
+    assert.equal(config.requiresApiKey, true, `${label}: proxy authentication must be required`);
+    assert.equal(config.supportsAskStreaming, true, `${label}: compatible proxy should use Ask streaming with fallback`);
+    assert.equal(config.supportsVision, false, `${label}: unknown proxy models should default to text-only`);
+    assert.equal(config.enabled, true, `${label}: provider card should be available on upgrade`);
+
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const block = settings.slice(
+      settings.indexOf('local_openai_proxy: {'),
+      settings.indexOf('azure_openai: {'),
+    );
+    assert.match(block, /key: 'baseUrl'/, `${label}: proxy Base URL field missing`);
+    assert.match(block, /key: 'apiKey'/, `${label}: proxy API key field missing`);
+    assert.match(block, /key: 'model'/, `${label}: proxy model field missing`);
+    assert.match(block, /CONTEXT_WINDOW_FIELD/, `${label}: proxy context field missing`);
+    assert.match(block, /key: 'supportsVision'/, `${label}: proxy vision override missing`);
+    assert.match(block, /PROMPT_TIER_FIELD/, `${label}: proxy prompt tier field missing`);
+  }
+});
+
+test('generic local proxy requires authentication and supports non-streaming chat', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, PM] of [
+      ['chrome', ProviderManagerCh],
+      ['firefox', ProviderManagerFx],
+    ]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().local_openai_proxy;
+      const missingKeyProvider = manager._createProvider('local_openai_proxy', {
+        ...defaults,
+        model: 'test-model',
+      });
+      let fetchCount = 0;
+      globalThis.fetch = async () => {
+        fetchCount += 1;
+        throw new Error('unauthenticated request should not be sent');
+      };
+      await assert.rejects(
+        missingKeyProvider.chat([{ role: 'user', content: 'hello' }]),
+        /Local OpenAI-compatible Proxy API key is required/,
+        `${label}: chat should fail closed without the proxy client key`,
+      );
+      manager.providers.set('local_openai_proxy', missingKeyProvider);
+      assert.deepEqual(
+        await manager.listProviderModels('local_openai_proxy'),
+        { ok: false, error: 'Local OpenAI-compatible Proxy API key is required' },
+        `${label}: model listing should fail closed without the proxy client key`,
+      );
+      assert.equal(fetchCount, 0, `${label}: missing-key calls must stop before fetch`);
+
+      let request = null;
+      globalThis.fetch = async (url, init) => {
+        request = { url: String(url), headers: init.headers, body: JSON.parse(init.body) };
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'proxy answer' } }],
+          usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const provider = manager._createProvider('local_openai_proxy', {
+        ...defaults,
+        apiKey: 'strong-local-proxy-key',
+        model: 'account-model',
+      });
+      const result = await provider.chat([{ role: 'user', content: 'hello' }]);
+      assert.equal(result.content, 'proxy answer', `${label}: chat response mismatch`);
+      assert.equal(request.url, 'http://127.0.0.1:8317/v1/chat/completions');
+      assert.equal(request.headers.Authorization, 'Bearer strong-local-proxy-key');
+      assert.equal(request.body.model, 'account-model');
+      assert.deepEqual(request.body.messages, [{ role: 'user', content: 'hello' }]);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -43069,17 +47265,17 @@ test('Kimi settings keep K2.5 as the default and list every supported model', ()
   }
 });
 
-test('_defaultConfigs: chrome and firefox share the same provider set', () => {
+test('_defaultConfigs: chrome and firefox differ only by the Chromium WebGPU provider', () => {
   const chDefaults = new ProviderManagerCh()._defaultConfigs();
   const fxDefaults = new ProviderManagerFx()._defaultConfigs();
   assert.deepEqual(
-    Object.keys(chDefaults).sort(),
+    Object.keys(chDefaults).filter(id => id !== 'webgpu').sort(),
     Object.keys(fxDefaults).sort(),
-    'chrome and firefox provider lists diverged'
+    'provider lists diverged beyond the Chromium-only WebGPU runtime'
   );
   // Categories must also match — drift here would mean the filter UI
   // shows different buckets on each platform.
-  for (const id of Object.keys(chDefaults)) {
+  for (const id of Object.keys(fxDefaults)) {
     assert.equal(
       chDefaults[id].category, fxDefaults[id].category,
       `provider ${id}: category differs (chrome=${chDefaults[id].category}, firefox=${fxDefaults[id].category})`
@@ -43249,6 +47445,7 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     'sglang',
     'localai',
     'gpt4all',
+    'local_openai_proxy',
     'azure_openai',
     'anthropic',
     'gemini',
@@ -43268,7 +47465,10 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     for (const id of enabledIds) {
       assert.equal(defaults[id].supportsAskStreaming, true, `${PM.name}/${id}: default capability missing`);
       assert.equal(
-        manager._createProvider(id, defaults[id])._supportsInteractiveAskStreaming(),
+        manager._createProvider(id, {
+          ...defaults[id],
+          model: defaults[id].model || 'test-model',
+        })._supportsInteractiveAskStreaming(),
         true,
         `${PM.name}/${id}: provider should expose interactive Ask streaming`,
       );
@@ -43826,6 +48026,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
     'sglang',
     'localai',
     'gpt4all',
+    'local_openai_proxy',
     'gemini',
     'mistral',
     'deepseek',
@@ -43851,7 +48052,11 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
           `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } })}\n\n`,
           'data: [DONE]\n\n',
         ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
-        const provider = manager._createProvider(id, defaults[id]);
+        const provider = manager._createProvider(id, {
+          ...defaults[id],
+          model: defaults[id].model || 'test-model',
+          apiKey: defaults[id].requiresApiKey ? 'strong-test-proxy-key' : defaults[id].apiKey,
+        });
         const chunks = [];
         for await (const chunk of provider.chatStream([{ role: 'user', content: 'hello' }])) chunks.push(chunk);
         assert.deepEqual(chunks, [
@@ -45090,6 +49295,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
       { category: 'local', providerName: 'sglang' },
       { category: 'local', providerName: 'localai' },
       { category: 'local', providerName: 'gpt4all' },
+      { category: 'local', providerName: 'local-openai-proxy' },
       { category: 'local', providerName: 'openai' },
     ]) {
       const provider = new Provider(config);
@@ -45102,7 +49308,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
 
 test('OpenAI-compatible local providers always use legacy request token fields', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
       const provider = new Provider({
         category: 'local',
         providerName,
@@ -46833,7 +51039,7 @@ test('approved submit confirmation is one-time and skips generic click always gr
   }
 });
 
-test('approved iframe submit keeps host gate fail-closed without urlFilter', async () => {
+test('iframe submit without urlFilter fails before confirmation or dispatch', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 5115;
@@ -46882,12 +51088,14 @@ test('approved iframe submit keeps host gate fail-closed without urlFilter', asy
       1,
     );
 
-    assert.equal(submitPrompts, 1, `${AgentClass.name}: expected submit confirmation before iframe host gate`);
+    assert.equal(submitPrompts, 0, `${AgentClass.name}: invalid iframe args should not request submit confirmation`);
     assert.equal(executed, false, `${AgentClass.name}: iframe submit ran without a target host gate`);
     assert.equal(messages.length, 1, `${AgentClass.name}: expected fail-closed tool result`);
     const denied = JSON.parse(messages[0].content);
-    assert.equal(denied.denied, true, `${AgentClass.name}: fail-closed result should be denied`);
-    assert.match(denied.error, /urlFilter/, `${AgentClass.name}: error should tell the model to provide urlFilter`);
+    assert.equal(denied.success, false, `${AgentClass.name}: invalid iframe args should fail`);
+    assert.equal(denied.invalidArguments, true, `${AgentClass.name}: failure should identify invalid arguments`);
+    assert.equal(denied.noDispatch, true, `${AgentClass.name}: invalid iframe args should be marked no-dispatch`);
+    assert.match(denied.detail, /urlFilter/, `${AgentClass.name}: detail should identify the missing urlFilter`);
   }
 });
 
@@ -54288,6 +58496,9 @@ function plannerIntentFixture({
   readScope = null,
   scheduling = null,
   locale = 'en',
+  framingLocale = locale,
+  deliverableLocales = [locale],
+  preserveSourceText = false,
   localizedSummary = 'Carry out the requested task.',
   localizedSteps = ['Inspect the current state.', 'Complete the requested task.'],
   localizedRisks = [],
@@ -54323,6 +58534,11 @@ function plannerIntentFixture({
       summary: localizedSummary,
       steps: localizedSteps.map((action, index) => ({ id: String(index + 1), action })),
       risks: localizedRisks,
+    },
+    response_language: {
+      framing_locale: framingLocale,
+      deliverable_locales: deliverableLocales,
+      preserve_source_text: preserveSourceText,
     },
     mode: 'act',
   });
@@ -55271,6 +59487,7 @@ test('planner-bypassed managed cloud runs never enable the execution guard', () 
 
 test('trusted continuation carries consequential evidence without repeating the mutation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
     const responses = [
       {
         content: null,
@@ -55303,7 +59520,11 @@ test('trusted continuation carries consequential evidence without repeating the 
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: async (messages, options) => {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
         const next = responses.shift();
         assert.ok(next, `${AgentClass.name}: continuation requested an unexpected model turn`);
         return next;
@@ -55313,10 +59534,30 @@ test('trusted continuation carries consequential evidence without repeating the 
     const tabId = 8644 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `continuation_conv_${index}`);
+    const persistedLanguagePolicies = [];
+    agent._persistNow = async () => {
+      persistedLanguagePolicies.push(
+        agent._conversationStorageEntry(tabId)?.continuationResponseLanguagePolicy || null,
+      );
+      return { ok: true };
+    };
+    let gateCalls = 0;
+    const fallbackPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: [],
+      preserve_source_text: true,
+      _framing_locale_is_fallback: true,
+    };
+    const englishPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    };
     agent._maybeRunPlannerGate = async () => ({
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
+      responseLanguagePolicy: gateCalls++ === 0 ? fallbackPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -55328,14 +59569,25 @@ test('trusted continuation carries consequential evidence without repeating the 
     };
 
     agent.maxSteps = 1;
-    await agent.processMessage(tabId, 'Submit the form and verify it.', () => {}, 'act');
+    await agent.processMessage(tabId, 'Envía el formulario y verifica el resultado.', () => {}, 'act');
     assert.equal(
       agent._continuationExecutionEvidence.get(tabId)?.successfulConsequentialToolCalls,
       1,
       `${AgentClass.name}: first run did not preserve mutation evidence`,
     );
+    assert.deepEqual(
+      agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
+      fallbackPolicy,
+      `${AgentClass.name}: first run did not preserve its response language policy`,
+    );
+    assert.deepEqual(
+      persistedLanguagePolicies.at(-1)?.policy,
+      fallbackPolicy,
+      `${AgentClass.name}: first run returned before its response language policy was durable`,
+    );
 
     agent.maxSteps = 3;
+    const persistenceCountBeforeContinuation = persistedLanguagePolicies.length;
     const final = await agent.continueProcessing(tabId, () => {}, 'act');
 
     assert.equal(final, 'Prior mutation verified.', `${AgentClass.name}: continuation rejected prior mutation evidence`);
@@ -55345,6 +59597,143 @@ test('trusted continuation carries consequential evidence without repeating the 
       `${AgentClass.name}: continuation repeated a consequential action`,
     );
     assert.equal(responses.length, 0, `${AgentClass.name}: continuation entered recovery`);
+    assert.equal(requests.length, 2, `${AgentClass.name}: continuation made an unexpected number of model requests`);
+    assert.match(
+      requests[1].systemPrompt,
+      /synthetic Continue control/,
+      `${AgentClass.name}: continuation system prompt did not identify the synthetic user turn`,
+    );
+    assert.match(
+      requests[1].systemPrompt,
+      /most recent earlier genuine user request/,
+      `${AgentClass.name}: fallback continuation did not anchor framing to the original request`,
+    );
+    assert.match(
+      requests[1].systemPrompt,
+      /must not influence response or deliverable language/,
+      `${AgentClass.name}: continuation prompt treated the synthetic turn as a language instruction`,
+    );
+    assert.match(
+      requests[1].systemPrompt,
+      /No fixed authored-deliverable language was inferred/,
+      `${AgentClass.name}: fallback continuation invented a fixed deliverable language`,
+    );
+    assert.doesNotMatch(
+      requests[1].doneDescription,
+      /authored-deliverable language|explanatory framing/,
+      `${AgentClass.name}: normal-turn done schema duplicated the system prompt's language policy`,
+    );
+    assert.doesNotMatch(
+      requests[1].systemPrompt,
+      /Use English \(en\) for explanatory framing/,
+      `${AgentClass.name}: synthetic continuation prompt replaced the prior language policy`,
+    );
+    assert.equal(
+      persistedLanguagePolicies[persistenceCountBeforeContinuation],
+      null,
+      `${AgentClass.name}: trusted continuation did not durably consume the one-shot policy`,
+    );
+    assert.equal(
+      agent._continuationResponseLanguagePolicies.has(tabId),
+      false,
+      `${AgentClass.name}: completed continuation retained a stale language policy`,
+    );
+    assert.equal(
+      persistedLanguagePolicies.at(-1),
+      null,
+      `${AgentClass.name}: completed continuation restored the durable one-shot policy`,
+    );
+  }
+});
+
+test('trusted continuation language policy persists across worker restart without crossing conversations', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [AgentClass, apiName, tabId] of [
+      [AgentCh, 'chrome', 8654],
+      [AgentFx, 'browser', 8655],
+    ]) {
+      const conversationId = `continuation_restart_conv_${tabId}`;
+      const policy = {
+        framing_locale: 'es',
+        deliverable_locales: ['es'],
+        preserve_source_text: false,
+        approved_plan_language_override: true,
+      };
+      const original = new AgentClass({});
+      original.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      original.conversationIds.set(tabId, conversationId);
+      original.responseLanguagePolicies.set(tabId, policy);
+      assert.equal(original._storeContinuationResponseLanguagePolicy(tabId), true);
+      const storedEntry = original._conversationStorageEntry(tabId);
+      assert.deepEqual(
+        storedEntry.continuationResponseLanguagePolicy,
+        { policy, conversationId },
+        `${AgentClass.name}: session snapshot omitted the continuation language policy`,
+      );
+
+      globalThis[apiName] = {
+        storage: {
+          session: {
+            get: async key => ({ [key]: storedEntry }),
+          },
+        },
+      };
+      const restarted = new AgentClass({});
+      await restarted._hydrate(tabId);
+      assert.deepEqual(
+        restarted._continuationResponseLanguagePolicies.get(tabId),
+        { policy, conversationId },
+        `${AgentClass.name}: worker restart lost the continuation language policy`,
+      );
+      assert.deepEqual(
+        restarted._takeContinuationResponseLanguagePolicy(tabId),
+        policy,
+        `${AgentClass.name}: restored continuation policy could not be consumed`,
+      );
+      assert.equal(
+        restarted._continuationResponseLanguagePolicies.has(tabId),
+        false,
+        `${AgentClass.name}: restored continuation policy was not one-shot`,
+      );
+
+      const replacementTabId = tabId + 10;
+      const replacementEntry = {
+        ...storedEntry,
+        conversationId: `replacement_${conversationId}`,
+      };
+      globalThis[apiName].storage.session.get = async key => ({ [key]: replacementEntry });
+      const replacement = new AgentClass({});
+      await replacement._hydrate(replacementTabId);
+      assert.equal(
+        replacement._continuationResponseLanguagePolicies.has(replacementTabId),
+        false,
+        `${AgentClass.name}: persisted continuation policy crossed into a replacement conversation`,
+      );
+
+      const malformedTabId = tabId + 20;
+      const malformedEntry = {
+        ...storedEntry,
+        continuationResponseLanguagePolicy: {
+          conversationId,
+          policy: { ...policy, framing_locale: 'Spanish' },
+        },
+      };
+      globalThis[apiName].storage.session.get = async key => ({ [key]: malformedEntry });
+      const malformed = new AgentClass({});
+      await malformed._hydrate(malformedTabId);
+      assert.equal(
+        malformed._continuationResponseLanguagePolicies.has(malformedTabId),
+        false,
+        `${AgentClass.name}: malformed persisted language policy was accepted`,
+      );
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
   }
 });
 
@@ -55437,6 +59826,7 @@ test('trusted continuation carries verified submit state without permitting ordi
 
 test('streamed runs preserve consequential evidence for a trusted continuation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
     const provider = {
       supportsTools: true,
       supportsVision: false,
@@ -55444,7 +59834,11 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      async *chatStream() {
+      async *chatStream(messages, options) {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
         yield {
           type: 'tool_call',
           content: [{
@@ -55455,31 +59849,49 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
         };
         yield { type: 'done' };
       },
-      chat: async () => ({
-        content: null,
-        toolCalls: [
-          {
-            id: `stream_continuation_verify_${index}`,
-            function: { name: 'read_page', arguments: '{}' },
-          },
-          {
-            id: `stream_continuation_done_${index}`,
-            function: {
-              name: 'done',
-              arguments: JSON.stringify({ summary: 'Streamed mutation verified.', outcome: 'success' }),
+      chat: async (messages, options) => {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
+        return {
+          content: null,
+          toolCalls: [
+            {
+              id: `stream_continuation_verify_${index}`,
+              function: { name: 'read_page', arguments: '{}' },
             },
-          },
-        ],
-      }),
+            {
+              id: `stream_continuation_done_${index}`,
+              function: {
+                name: 'done',
+                arguments: JSON.stringify({ summary: 'Streamed mutation verified.', outcome: 'success' }),
+              },
+            },
+          ],
+        };
+      },
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8647 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `stream_continuation_conv_${index}`);
+    let gateCalls = 0;
+    const spanishPolicy = {
+      framing_locale: 'es',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    const englishPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    };
     agent._maybeRunPlannerGate = async () => ({
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
+      responseLanguagePolicy: gateCalls++ === 0 ? spanishPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -55491,11 +59903,16 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
     };
 
     agent.maxSteps = 1;
-    await agent.processMessageStream(tabId, 'Submit the form and verify it.', () => {}, 'act');
+    await agent.processMessageStream(tabId, 'Envía el formulario y verifica el resultado.', () => {}, 'act');
     assert.equal(
       agent._continuationExecutionEvidence.get(tabId)?.successfulConsequentialToolCalls,
       1,
       `${AgentClass.name}: streamed run did not preserve mutation evidence`,
+    );
+    assert.deepEqual(
+      agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
+      spanishPolicy,
+      `${AgentClass.name}: streamed run did not preserve its response language policy`,
     );
 
     agent.maxSteps = 3;
@@ -55506,6 +59923,22 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       toolCalls,
       ['click_ax', 'read_page', 'done'],
       `${AgentClass.name}: continuation repeated the streamed mutation`,
+    );
+    assert.equal(requests.length, 2, `${AgentClass.name}: streamed continuation made unexpected model requests`);
+    assert.match(
+      requests[1].systemPrompt,
+      /Use Spanish \(es\) for explanatory framing/,
+      `${AgentClass.name}: streamed continuation system prompt lost the prior framing language`,
+    );
+    assert.match(
+      requests[1].systemPrompt,
+      /Write authored deliverables in Spanish \(es\)/,
+      `${AgentClass.name}: streamed continuation lost the prior deliverable language`,
+    );
+    assert.doesNotMatch(
+      requests[1].doneDescription,
+      /Spanish \(es\)/,
+      `${AgentClass.name}: normal-turn done schema duplicated the system prompt's language policy`,
     );
   }
 });
@@ -58779,7 +63212,7 @@ test('text tool-call parser is production code with format and allowlist coverag
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
     'chrome and firefox tool-call parsers must remain byte-identical',
   );
-  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page']);
+  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page', 'scroll']);
   const cases = [
     {
       label: 'tool_call JSON with nested arguments',
@@ -58797,9 +63230,48 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{ name: 'navigate', args: { url: 'https://example.test/path' } }],
     },
     {
+      label: 'LFM2.5 native Python-style tool call',
+      raw: '<|tool_call_start|>[read_page(includeChrome=False, offset=4000, limit=6000)]<|tool_call_end|>',
+      expected: [{
+        name: 'read_page',
+        args: { includeChrome: false, offset: 4000, limit: 6000 },
+      }],
+    },
+    {
+      label: 'LFM2.5 deterministic scrolldown alias',
+      raw: '<|tool_call_start|>[scrolldown()]<|tool_call_end|>',
+      expected: [{ name: 'scroll', args: { direction: 'down' } }],
+    },
+    {
+      label: 'LFM2.5 native batch with escaped strings and nested JSON',
+      raw: [
+        '<|tool_call_start|>[',
+        "navigate(url='https://example.test/a\\'b'), ",
+        'read_page(includeChrome=True, selector={"roles":["main","dialog"]}, offsets=[1,2], empty=None)',
+        ']<|tool_call_end|>',
+      ].join(''),
+      expected: [
+        { name: 'navigate', args: { url: "https://example.test/a'b" } },
+        {
+          name: 'read_page',
+          args: {
+            includeChrome: true,
+            selector: { roles: ['main', 'dialog'] },
+            offsets: [1, 2],
+            empty: null,
+          },
+        },
+      ],
+    },
+    {
       label: 'custom quote tokens',
       raw: 'call:click{text:<|"|>Save<|"|>}',
       expected: [{ name: 'click', args: { text: 'Save' } }],
+    },
+    {
+      label: 'bare-key repair does not rewrite string contents',
+      raw: 'call:click{text:<|"|>Keep, status: pending<|"|>}',
+      expected: [{ name: 'click', args: { text: 'Keep, status: pending' } }],
     },
     {
       label: 'bare JSON with string arguments',
@@ -58832,6 +63304,14 @@ test('text tool-call parser is production code with format and allowlist coverag
     {
       label: 'whole-response one-line JSON array preserves order',
       raw: ' \n[{"name":"read_page","arguments":{}},{"name":"click","arguments":{"text":"Go"}}]\n ',
+      expected: [
+        { name: 'read_page', args: {} },
+        { name: 'click', args: { text: 'Go' } },
+      ],
+    },
+    {
+      label: 'recognized tool wrapper accepts an atomic compact array',
+      raw: '<tool_call>[{"name":"read_page","arguments":{}},{"name":"click","arguments":{"text":"Go"}}]</tool_call>',
       expected: [
         { name: 'read_page', args: {} },
         { name: 'click', args: { text: 'Go' } },
@@ -58871,6 +63351,21 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{
         name: 'click',
         args: { name: 'Save', index: 2, force: true, coordinates: [10, 20] },
+      }],
+    },
+    {
+      label: 'Ling Bailing V3 arg key/value parameters',
+      raw: [
+        '<tool_call>click_ax',
+        '<arg_key>ref_id</arg_key>',
+        '<arg_value>"ref_7"</arg_value>',
+        '<arg_key>force</arg_key>',
+        '<arg_value>true</arg_value>',
+        '</tool_call>',
+      ].join('\n'),
+      expected: [{
+        name: 'click_ax',
+        args: { ref_id: 'ref_7', force: true },
       }],
     },
     {
@@ -58918,6 +63413,51 @@ test('text tool-call parser is production code with format and allowlist coverag
       parser.parseToolCallsFromText('x'.repeat(10001), allowed),
       [],
       'oversized model text was parsed',
+    );
+    assert.deepEqual(
+      parser.parseToolCallsFromText('call:click{text:<|"|>unterminated}', allowed),
+      [],
+      'malformed fallback arguments dispatched an empty-argument action',
+    );
+    for (const [label, unsafe] of [
+      [
+        'mixed allowlisted and denied calls',
+        '<|tool_call_start|>[read_page(), execute_js(code=\'alert(1)\')]<|tool_call_end|>',
+      ],
+      [
+        'positional arguments',
+        '<|tool_call_start|>[navigate(\'https://example.test\')]<|tool_call_end|>',
+      ],
+      [
+        'duplicate arguments',
+        '<|tool_call_start|>[read_page(offset=0, offset=1)]<|tool_call_end|>',
+      ],
+      [
+        'directional alias contradicts its explicit direction',
+        '<|tool_call_start|>[scrolldown(direction=\'up\')]<|tool_call_end|>',
+      ],
+      [
+        'narrated native call',
+        'For example: <|tool_call_start|>[read_page()]<|tool_call_end|>',
+      ],
+      [
+        'malformed nested JSON containing an allowlisted name',
+        '<|tool_call_start|>[read_page(selector={"name":"click") ]<|tool_call_end|>',
+      ],
+    ]) {
+      assert.deepEqual(
+        parser.parseToolCallsFromText(unsafe, allowed),
+        [],
+        `unsafe LFM2.5 call was dispatched (${label})`,
+      );
+    }
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '<|tool_call_start|>[scrolldown()]<|tool_call_end|>',
+        new Set(['read_page']),
+      ),
+      [],
+      'LFM2.5 scroll alias bypassed the canonical scroll allowlist',
     );
 
     // A parsed call replaces the model's prose entirely (the caller sets
@@ -62055,7 +66595,10 @@ test('Chrome iframe_click fallback never treats the top document as an iframe ta
     };
     const agent = new AgentCh({});
     agent._probeRichTextToolbarIframeTarget = async () => null;
-    const result = await agent.executeTool(42, 'iframe_click', { selector: 'button[type=submit]' });
+    const result = await agent.executeTool(42, 'iframe_click', {
+      urlFilter: 'host.example',
+      selector: 'button[type=submit]',
+    });
     assert.equal(result.success, false);
     assert.equal(result.noDispatch, true);
     assert.equal(result.matchCount, 0);
@@ -62688,6 +67231,15 @@ test('planner: canonical fields recover missing and partial localization without
       `${label}: localized risk holes shifted translations away from their canonical positions`,
     );
 
+    partialLocalization.risks = ['', 'Second canonical risk'];
+    partialLocalization.localized.risks = ['Wrong shifted translation', 'Correct second risk'];
+    const blankCanonical = parse(JSON.stringify(partialLocalization), { requireIntent: true, locale: 'tr' });
+    assert.deepEqual(
+      blankCanonical?.localized.risks,
+      ['Correct second risk'],
+      `${label}: filtering a blank canonical risk shifted the localized risk index`,
+    );
+
     const malformedClarification = parse(JSON.stringify({
       request_kind: 'clarify',
       requires_state_change: false,
@@ -62715,6 +67267,157 @@ test('planner schemas require structured download completion metadata in both br
     assert.equal(completion?.additionalProperties, false, `${label}: completion requirements accept undeclared fields`);
     assert.deepEqual(completion?.required, ['download'], `${label}: download requirement is optional`);
     assert.equal(completion?.properties?.download?.type, 'boolean', `${label}: download requirement is not boolean`);
+  }
+});
+
+test('planner schemas require a structured response-language policy in both browsers', () => {
+  for (const [label, schema] of [
+    ['chrome full', PLANNER_RESPONSE_JSON_SCHEMA],
+    ['chrome intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA],
+    ['firefox full', PLANNER_RESPONSE_JSON_SCHEMA_FX],
+    ['firefox intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX],
+  ]) {
+    assert.ok(schema.required.includes('response_language'), `${label}: response language policy is optional`);
+    const language = schema.properties.response_language;
+    assert.equal(language?.type, 'object', `${label}: response language policy is not structured`);
+    assert.equal(language?.additionalProperties, false, `${label}: response language policy accepts undeclared fields`);
+    assert.deepEqual(
+      language?.required,
+      ['framing_locale', 'deliverable_locales', 'preserve_source_text'],
+      `${label}: response language policy fields are optional`,
+    );
+    assert.equal(language?.properties?.framing_locale?.type, 'string', `${label}: framing locale is not a string`);
+    assert.equal(language?.properties?.deliverable_locales?.type, 'array', `${label}: deliverable locales are not an array`);
+    assert.equal(language?.properties?.preserve_source_text?.type, 'boolean', `${label}: source preservation is not boolean`);
+  }
+});
+
+test('response-language policy keeps framing, translation targets, and source preservation separate', () => {
+  for (const [label, fallback, normalize, format] of [
+    ['chrome', fallbackResponseLanguagePolicy, normalizeResponseLanguagePolicy, formatResponseLanguagePolicyInstruction],
+    ['firefox', fallbackResponseLanguagePolicyFx, normalizeResponseLanguagePolicyFx, formatResponseLanguagePolicyInstructionFx],
+  ]) {
+    assert.deepEqual(
+      fallback('EN_us'),
+      {
+        framing_locale: 'en-us',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: fallback should remain translation-safe instead of hard-coding the UI locale as a deliverable`,
+    );
+
+    const ordinary = normalize({
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    }, 'tr');
+    assert.deepEqual(
+      ordinary,
+      { framing_locale: 'en', deliverable_locales: ['en'], preserve_source_text: false },
+      `${label}: ordinary English policy drifted`,
+    );
+
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: ['es'],
+      }, 'tr'),
+      {
+        framing_locale: 'tr',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: incomplete planner policy translated source text instead of failing closed`,
+    );
+
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: ['Spanish', 'not a locale'],
+        preserve_source_text: false,
+      }, 'tr'),
+      {
+        framing_locale: 'tr',
+        deliverable_locales: [],
+        preserve_source_text: true,
+        _framing_locale_is_fallback: true,
+      },
+      `${label}: invalid deliverable locales were replaced with the framing locale instead of failing closed`,
+    );
+
+    const translation = normalize({
+      framing_locale: 'en',
+      deliverable_locales: ['ES', 'es', 'fr', 'de', 'it', 'pt', 'not a locale'],
+      preserve_source_text: false,
+    }, 'tr');
+    assert.deepEqual(
+      translation,
+      { framing_locale: 'en', deliverable_locales: ['es', 'fr', 'de', 'it', 'pt'], preserve_source_text: false },
+      `${label}: multilingual targets were truncated, duplicated, or replaced by invalid locale data`,
+    );
+    const translationInstruction = format(translation, 'tr');
+    assert.match(translationInstruction, /Use English \(en\) for explanatory framing/i, `${label}: framing language missing`);
+    assert.match(translationInstruction, /authored deliverables in Spanish \(es\)/i, `${label}: translation target missing`);
+    assert.match(translationInstruction, /takes precedence over the framing language/i, `${label}: translation precedence missing`);
+    assert.match(translationInstruction, /Do not translate code, identifiers, URLs/i, `${label}: stable-token exception missing`);
+
+    // An explicitly empty deliverable list is a coherent planner answer, unlike
+    // a list whose entries were all invalid. Only the latter fails closed.
+    assert.deepEqual(
+      normalize({
+        framing_locale: 'en',
+        deliverable_locales: [],
+        preserve_source_text: false,
+      }, 'tr'),
+      { framing_locale: 'en', deliverable_locales: [], preserve_source_text: false },
+      `${label}: an explicit "no fixed deliverable language" answer was discarded as malformed`,
+    );
+
+    const preserved = normalize({
+      framing_locale: 'en',
+      deliverable_locales: [],
+      preserve_source_text: true,
+    }, 'tr');
+    assert.deepEqual(
+      preserved,
+      { framing_locale: 'en', deliverable_locales: [], preserve_source_text: true },
+      `${label}: source-faithful task gained a blanket output locale`,
+    );
+    assert.match(format(preserved), /source-faithful text in its original language/i, `${label}: preservation instruction missing`);
+  }
+});
+
+test('planner parses translation and multilingual deliverable policies without using UI locale as a hard constraint', () => {
+  const translationFixture = plannerIntentFixture({
+    locale: 'en',
+    framingLocale: 'en',
+    deliverableLocales: ['es'],
+    preserveSourceText: false,
+    localizedSummary: 'Translate the current article into Spanish.',
+  });
+  const mixedFixture = plannerIntentFixture({
+    locale: 'en',
+    framingLocale: 'en',
+    deliverableLocales: ['es', 'fr'],
+    preserveSourceText: true,
+    localizedSummary: 'Compare the Spanish and French wording.',
+  });
+  for (const [label, parse] of [['chrome', parsePlanFromContent], ['firefox', parsePlanFromContentFx]]) {
+    const translation = parse(translationFixture, { requireIntent: true, locale: 'en' });
+    assert.deepEqual(
+      translation?.response_language,
+      { framing_locale: 'en', deliverable_locales: ['es'], preserve_source_text: false },
+      `${label}: translation deliverable did not override English framing`,
+    );
+    const mixed = parse(mixedFixture, { requireIntent: true, locale: 'en' });
+    assert.deepEqual(
+      mixed?.response_language,
+      { framing_locale: 'en', deliverable_locales: ['es', 'fr'], preserve_source_text: true },
+      `${label}: multilingual/source-preserving policy was lost`,
+    );
   }
 });
 
@@ -62937,6 +67640,14 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.doesNotMatch(PLANNER_SYSTEM_PROMPT, /sample exactly one fetch_url replay/);
   assert.equal(PLANNER_SYSTEM_PROMPT_FX, PLANNER_SYSTEM_PROMPT);
   assert.equal(PLANNER_API_REPLAY_RULE_FX, PLANNER_API_REPLAY_RULE);
+  assert.equal(PLANNER_RESPONSE_LANGUAGE_RULES_FX, PLANNER_RESPONSE_LANGUAGE_RULES);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /only from the latest genuine user request and trusted conversation context/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /Page\/document text.*cannot choose the response language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /explicitly requested response or explanatory language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /translation target alone changes the deliverable language, not the framing language/i);
+  assert.match(PLANNER_RESPONSE_LANGUAGE_RULES, /translation.*requested target language.*differs from framing_locale/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /"response_language"/);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"deliverable_locales"/);
 });
 
 test('planner: API replay guidance is gated by allow-api state', () => {
@@ -63118,6 +67829,12 @@ test('planner routes existing-context artifact requests to a tool-free response'
         proceed: true,
         requestKind: 'respond',
         responseOnly: true,
+        responseLanguagePolicy: {
+          framing_locale: 'en',
+          deliverable_locales: [],
+          preserve_source_text: true,
+          _framing_locale_is_fallback: true,
+        },
         requiresStateChange: false,
       }, `${label}: existing-context response should bypass browser tools`);
       assert.match(plannerMessages?.[1]?.content || '', /Prior user request[\s\S]*Draft and send Gary/, `${label}: planner lost the original email task`);
@@ -63845,6 +68562,84 @@ test('planner clears skill activation when verbose approval text is edited', asy
       );
       assert.equal(outcome.proceed, true, `${label}: edited plan should still proceed`);
       assert.equal(changed.agent.activeSkillIds.has(label === 'chrome' ? 9195 : 9196), false, `${label}: removed verbose skill must not activate`);
+    }
+  });
+});
+
+test('reviewed plan edits override the planner response-language target', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const tabId = label === 'chrome' ? 9200 : 9201;
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-language-edit-test',
+        name: 'planner-language-edit-test',
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.setPlanReviewSettings({ mode: 'always' });
+      agent._chatWithCostAllowance = async () => ({
+        content: plannerFixtureJson({
+          summary: 'Translate the visible article into Spanish',
+          steps: [{ id: '1', action: 'Translate the visible article into Spanish', tools: ['read_page'] }],
+          localized: {
+            locale: 'en',
+            summary: 'Translate the visible article into Spanish',
+            steps: [{ id: '1', action: 'Translate the visible article into Spanish' }],
+            risks: [],
+          },
+          response_language: {
+            framing_locale: 'en',
+            deliverable_locales: ['es'],
+            preserve_source_text: false,
+          },
+        }),
+      });
+      agent._waitForPlanReview = async (_tabId, _planId, _plan, compactMarkdown) => ({
+        action: 'approve',
+        editedText: compactMarkdown.replaceAll('Spanish', 'French'),
+        markdownMode: 'compact',
+      });
+
+      const gate = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Translate the visible article into Spanish.' },
+        () => {},
+        null,
+        null,
+        '',
+        { tabUrl: 'https://example.test/article', tabTitle: 'Article' },
+        'try',
+        'act',
+        { locale: 'en' },
+      );
+
+      assert.equal(gate.proceed, true, `${label}: edited translation plan did not proceed`);
+      assert.equal(gate.responseLanguageApprovedPlanOverride, true, `${label}: edited plan retained an authoritative stale target`);
+      assert.match(gate.approvedScratchpadText || '', /French/, `${label}: edited translation target was not pinned`);
+
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('act', tabId) }]);
+      agent.conversationModes.set(tabId, 'act');
+      agent._runPlannerGate = async () => gate;
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        agent.conversations.get(tabId),
+        { role: 'user', content: 'Translate the visible article into Spanish.' },
+        () => {},
+        'act',
+        null,
+        null,
+        { tabUrl: 'https://example.test/article', tabTitle: 'Article' },
+        { locale: 'en' },
+      );
+      assert.equal(outcome.responseLanguageApprovedPlanOverride, true, `${label}: edited-plan override was dropped by the planner wrapper`);
+      agent._setResponseLanguagePolicy(tabId, outcome.responseLanguagePolicy, 'en', {
+        approvedPlanLanguageOverride: outcome.responseLanguageApprovedPlanOverride === true,
+      });
+      const systemPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
+      assert.match(systemPrompt, /user edited the approved plan after this policy was inferred/i, `${label}: edited-plan language override did not reach the system prompt`);
+      assert.match(systemPrompt, /Keep them unless.*approved plan.*explicitly changes/i, `${label}: unrelated plan edits discarded the earlier language target`);
+      assert.match(systemPrompt, /No other scratchpad content gains authority/i, `${label}: edited-plan exception was not narrowly scoped`);
+      assert.doesNotMatch(systemPrompt, /Write authored deliverables in Spanish/i, `${label}: stale Spanish target still unconditionally overrode the French edit`);
     }
   });
 });
@@ -66799,7 +71594,7 @@ function loadPlanReviewAutosizeHelper(panelRel, runtime) {
     'document',
     'requestAnimationFrame',
     'cancelAnimationFrame',
-    `${block}\nreturn { autosizePlanReviewField, capturePlanReviewScrollSnapshot };`,
+    `${block}\nreturn { autosizePlanReviewField, autosizePlanReviewFields, schedulePlanReviewFieldsAutosize, handlePlanReviewContainerResize, capturePlanReviewScrollSnapshot };`,
   )(
     runtime.document,
     runtime.requestAnimationFrame,
@@ -67004,6 +71799,95 @@ test('plan review: textarea autosize preserves an active off-bottom scroll posit
       source,
       /summaryInput\.addEventListener\('beforeinput', \(\) => capturePlanReviewScrollSnapshot\(summaryInput\)\);/,
       `${file} should snapshot summary-editor scroll before the browser edits the value`,
+    );
+  }
+});
+
+test('plan review: structured fields reflow after detached mount and width changes', () => {
+  for (const file of [
+    'src/chrome/src/ui/sidepanel.js',
+    'src/firefox/src/ui/sidepanel.js',
+  ]) {
+    const frames = new Map();
+    let nextFrame = 1;
+    const document = { activeElement: null };
+    const runtime = {
+      document,
+      requestAnimationFrame(callback) {
+        const id = nextFrame++;
+        frames.set(id, callback);
+        return id;
+      },
+      cancelAnimationFrame(id) {
+        frames.delete(id);
+      },
+    };
+    const {
+      schedulePlanReviewFieldsAutosize,
+      handlePlanReviewContainerResize,
+    } = loadPlanReviewAutosizeHelper(file, runtime);
+    let connected = false;
+    let availableWidth = 420;
+    const fields = [
+      { tagName: 'TEXTAREA', style: {} },
+      { tagName: 'TEXTAREA', style: {} },
+    ];
+    for (const field of fields) {
+      Object.defineProperty(field, 'scrollHeight', {
+        get() {
+          if (!connected) return 0;
+          return availableWidth <= 240 ? 72 : 28;
+        },
+      });
+    }
+    const root = {
+      querySelectorAll(selector) {
+        assert.equal(selector, '.plan-review-summary-input, .plan-review-step-input', file);
+        return fields;
+      },
+    };
+    const flushFrames = () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback();
+    };
+
+    // Mount/bind can happen before the card is attached. The deferred frame
+    // must measure after attachment instead of pinning the one-line minimum.
+    schedulePlanReviewFieldsAutosize(root);
+    assert.equal(frames.size, 1, `${file} should defer initial measurement`);
+    connected = true;
+    flushFrames();
+    assert.deepEqual(fields.map(field => field.style.height), ['28px', '28px'], file);
+
+    // Narrowing wraps the same values, so both summary and step controls must
+    // be remeasured to reveal all lines.
+    availableWidth = 220;
+    handlePlanReviewContainerResize([{ target: root, contentRect: { width: 220, height: 100 } }]);
+    assert.equal(frames.size, 1, `${file} should schedule after a width change`);
+    flushFrames();
+    assert.deepEqual(fields.map(field => field.style.height), ['72px', '72px'], file);
+
+    // Textarea height changes also resize the observed container. Ignore that
+    // notification when its width is unchanged to prevent observer churn.
+    handlePlanReviewContainerResize([{ target: root, contentRect: { width: 220, height: 188 } }]);
+    assert.equal(frames.size, 0, `${file} should ignore height-only resize notifications`);
+
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(
+      source,
+      /function bindPlanReviewEditorControls\([\s\S]*?schedulePlanReviewFieldsAutosize\(card\);\s*\}/,
+      `${file} should schedule autosize from the initial and restored card binder`,
+    );
+    assert.match(
+      source,
+      /new ResizeObserver\(\(entries\) => \{[\s\S]*?handlePlanReviewContainerResize\(entries\)/,
+      `${file} should route container ResizeObserver entries through width deduplication`,
+    );
+    assert.match(
+      source,
+      /addEventListener\?\.\('resize', scheduleSidepanelResponsiveUpdates\)/,
+      `${file} should keep a window-resize fallback`,
     );
   }
 });
@@ -69989,9 +74873,10 @@ test('attachments: slash screenshots stage for the next turn and sent bubbles re
     assert.match(panel, /sendToBackground\('capture_viewport_screenshot', \{ tabId \}\)[\s\S]*stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*modelRedactionReady:[\s\S]*modelDataUrl:[\s\S]*addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must retain the capture-bound model copy before rendering its result card`);
     assert.match(panel, /source: 'slash_screenshot'[\s\S]*redactionSnapshotReady: redactionSnapshotReady === true,[\s\S]*modelRedactionReady: modelRedactionReady === true,[\s\S]*modelDataUrl[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must retain capture-time privacy data and model pixels in the tab-scoped pending attachment list`);
     assert.match(panel, /data-screenshot-attachment-id=[\s\S]*data-staged-screenshot=[\s\S]*actualSize !== size[\s\S]*function restoreStagedScreenshotAttachments[\s\S]*screenshot-attachment-note/, `${label}: staged screenshot cards must carry a byte-checked restore envelope and clear an unrecoverable staged claim`);
+    assert.match(panel, /pendingScreenshotIdsBeforeLoad[\s\S]*!pendingScreenshotIdsBeforeLoad\.has\(attachment\.stagedAttachmentId\)/, `${label}: a screenshot captured during restore must remain pending`);
     assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?restoreStagedScreenshotAttachments\(\);/, `${label}: restored chats must reconstruct valid staged screenshots before rebinding controls`);
     assert.match(panel, /function clearPendingAttachmentsForTab[\s\S]*?setScreenshotAttachmentStaged\(numericTabId, attachment, false\)[\s\S]*?pendingAttachmentsByTab\.delete/, `${label}: sending or clearing attachments must remove stale staged screenshot claims`);
-    assert.match(panel, /userEl = addMessage\('user', text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the actual send attachment set`);
+    assert.match(panel, /userEl = addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the visible prompt and actual send attachment set`);
     assert.match(panel, /function attachmentStateLabel[\s\S]*t\('sp\.attach\.state\.included'\)[\s\S]*t\('sp\.attach\.state\.not_sent'\)[\s\S]*t\('sp\.attach\.state\.unknown'\)[\s\S]*t\('sp\.attach\.state\.sending'\)/, `${label}: attachment bubble must localize delivery labels`);
     assert.match(panel, /function setMessageAttachmentState[\s\S]*item\.dataset\.deliveryState = state/, `${label}: attachment bubble delivery state must update after send outcome`);
     assert.match(panel, /sp\.screenshot\.staged_next_message[\s\S]*sp\.screenshot\.full_page_alt/, `${label}: screenshot result status and alt text must be localized`);
@@ -70129,7 +75014,7 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     );
     assert.match(
       source,
-      /const attachmentsRejected = attachmentsForSend\.length[\s\S]*?u\?\.type === 'attachment_rejected'\);[\s\S]*?if \(attachmentsRejected\) \{[\s\S]*?setMessageAttachmentState\(userEl, 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = text;[\s\S]*?saveInputDraftForTab\(tabId, text\);/,
+      /const attachmentsRejected = attachmentsForSend\.length[\s\S]*?u\?\.type === 'attachment_rejected'\);[\s\S]*?if \(attachmentsRejected\) \{[\s\S]*?setMessageAttachmentState\(userEl, 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = agentPrompt \? submittedText : text;[\s\S]*?saveInputDraftForTab\(tabId, agentPrompt \? submittedText : text\);/,
       `${label} should restore rejected attachments even after a tab switch and only overwrite an empty current-tab draft`,
     );
     assert.match(
@@ -70818,6 +75703,93 @@ test('profile sync keeps auxiliary timestamps independent from provider edits', 
   assert.equal(vault.auxiliaryProviders.visionModel.apiKey, 'remote-vision');
 });
 
+test('profile sync keeps Chromium-only WebGPU provider state out of portable vaults', async () => {
+  const chromeSync = await import(
+    'file://' + path.join(ROOT, 'src/chrome/src/profile-sync.js').replace(/\\/g, '/')
+  );
+  const firefoxSync = await import(
+    'file://' + path.join(ROOT, 'src/firefox/src/profile-sync.js').replace(/\\/g, '/')
+  );
+  const portableBase = {
+    version: 1,
+    providers: { openai: { type: 'openai', apiKey: 'portable-secret' } },
+    activeProvider: 'openai',
+    auxiliaryProviders: {},
+    profile: { enabled: false, text: '' },
+    memory: { records: [] },
+    tombstones: {},
+    meta: { providersAt: 5, providerItemsAt: { openai: 5 }, activeProviderAt: 5 },
+  };
+  const pollutedRemote = {
+    ...portableBase,
+    providers: {
+      ...portableBase.providers,
+      webgpu: { type: 'webgpu', model: WEBGPU_LFM25_MODEL_ID, configured: true },
+    },
+    activeProvider: 'webgpu',
+    meta: { providersAt: 20, providerItemsAt: { openai: 5, webgpu: 20 }, activeProviderAt: 20 },
+  };
+
+  for (const runtime of [chromeSync, firefoxSync]) {
+    const { vault } = runtime.mergeProfileVaults(portableBase, pollutedRemote);
+    assert.equal(vault.providers.webgpu, undefined);
+    assert.equal(vault.activeProvider, 'openai', 'a polluted WebGPU selection should retain the local portable selection');
+    assert.equal(vault.meta.providerItemsAt.webgpu, undefined);
+  }
+
+  const localState = {
+    providers: structuredClone(pollutedRemote.providers),
+    activeProvider: 'webgpu',
+    profileSyncPortableActiveProvider: 'openai',
+    profileSyncMetadataV1: structuredClone(pollutedRemote.meta),
+  };
+  const chromeWrites = [];
+  const chromeStorage = {
+    get: async () => structuredClone(localState),
+    set: async values => {
+      chromeWrites.push(structuredClone(values));
+      Object.assign(localState, structuredClone(values));
+    },
+  };
+  const chromeManager = new chromeSync.ProfileSyncManager(chromeStorage);
+  const localVault = await chromeManager.localVault();
+  assert.equal(localVault.providers.webgpu, undefined);
+  assert.equal(localVault.activeProvider, 'openai');
+  assert.equal(localVault.meta.providerItemsAt.webgpu, undefined);
+
+  await chromeManager.apply({
+    ...portableBase,
+    providers: { anthropic: { type: 'anthropic', apiKey: 'remote-secret' } },
+    activeProvider: 'anthropic',
+  }, []);
+  const chromeApplied = chromeWrites.at(-1);
+  assert.equal(chromeApplied.providers.webgpu.configured, true, 'Chrome should retain its local-only provider config');
+  assert.equal(chromeApplied.providers.anthropic.apiKey, 'remote-secret');
+  assert.equal(chromeApplied.activeProvider, 'webgpu', 'remote sync should not deactivate the local WebGPU provider');
+  assert.equal(chromeApplied.profileSyncPortableActiveProvider, 'anthropic');
+
+  let scheduled = 0;
+  chromeManager.schedule = () => { scheduled++; };
+  await chromeManager.noteChanges({
+    activeProvider: { oldValue: 'anthropic', newValue: 'webgpu' },
+    providers: {
+      oldValue: chromeApplied.providers,
+      newValue: { ...chromeApplied.providers, webgpu: { ...chromeApplied.providers.webgpu, contextWindow: 8192 } },
+    },
+  });
+  assert.equal(localState.profileSyncPortableActiveProvider, 'anthropic');
+  assert.equal(scheduled, 0, 'local-only WebGPU edits should not schedule a portable vault upload');
+
+  let firefoxApplied;
+  const firefoxManager = new firefoxSync.ProfileSyncManager({
+    set: async values => { firefoxApplied = structuredClone(values); },
+  });
+  await firefoxManager.apply(pollutedRemote, []);
+  assert.equal(firefoxApplied.providers.webgpu, undefined);
+  assert.equal(firefoxApplied.activeProvider, 'webbrain_cloud');
+  assert.equal(firefoxApplied.profileSyncMetadataV1.providerItemsAt.webgpu, undefined);
+});
+
 test('profile sync password change uploads a vault encrypted with the new password', async () => {
   const { ProfileSyncManager, decryptProfileVault } = await import(
     'file://' + path.join(ROOT, 'src/chrome/src/profile-sync.js').replace(/\\/g, '/')
@@ -71469,6 +76441,7 @@ test('teacher slash commands and value-free page capture are wired in both brows
     assert.match(background, /teacherRunInterlock\.record\(tabId, msg\.teacherAction\)/);
     assert.match(background, /teacherRunInterlock\.navigation\(tabId, url, options\)/);
     assert.match(background, /scheduler\.isRunning\(tabId\)/);
+    assert.match(background, /response\?\.teacherCaptureReady === true/, `${build}: teacher start must require the capture script's acknowledgement`);
     assert.match(background, /compileWorkflowFromDemonstration/);
 
     const scheduler = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/scheduler.js`), 'utf8');
@@ -71479,6 +76452,7 @@ test('teacher slash commands and value-free page capture are wired in both brows
     assert.match(capture, /event\.isTrusted/);
     assert.match(capture, /action: 'record_teacher_action'/);
     assert.match(capture, /action === 'flush_teacher_capture'/);
+    assert.match(capture, /sendResponse\(\{ teacherCaptureReady: true \}\)/, `${build}: teacher capture must acknowledge activation`);
     assert.match(capture, /document\.addEventListener\('submit'/);
     assert.match(capture, /event\.defaultPrevented/);
     assert.match(capture, /sendAction\(\{ \.\.\.pending\.action, submit: true \}\)/);
@@ -73574,6 +78548,17 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
         `${build}: hCaptcha compatibility token did not clear its exact manual gate`,
       );
     });
+  }
+});
+
+test('CAPTCHA gate identity compares malformed frame-path segments stably', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    assert.match(
+      source,
+      /expectedPath\.some\(\(value, index\) => !Object\.is\(value, candidatePath\[index\]\)\)/,
+      `${build}: NaN frame-path segments can make a persisted CAPTCHA identity permanently unmatchable`,
+    );
   }
 });
 
@@ -76172,6 +81157,44 @@ test('session conversation snapshots strip binary payloads and cap large tool re
   }
 });
 
+test('session conversation snapshots drop tool results orphaned by assistant compaction', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const persistence = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/conversation-persistence.js`)).href);
+    const messages = [];
+    for (let i = 0; i < 40; i++) {
+      messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: `tc${i}`, type: 'function', function: { name: 'x', arguments: '{"big":"' + 'a'.repeat(5000) + '"}' } }],
+      });
+      messages.push({ role: 'tool', tool_call_id: `tc${i}`, content: 'result '.repeat(2000) });
+    }
+    const serialized = persistence.serializeConversationForSession(messages, { maxBytes: 100_000 });
+    assert.equal(serialized.compacted, true, `${build}: oversized conversation was not compacted`);
+    assert.ok(serialized.bytes <= 100_000, `${build}: serialized conversation exceeded its requested bound`);
+    const toolCallIds = new Set(
+      serialized.messages
+        .filter(m => m.role === 'assistant')
+        .flatMap(m => Array.isArray(m.tool_calls) ? m.tool_calls.map(c => c.id) : []),
+    );
+    const orphaned = serialized.messages.filter(
+      m => m.role === 'tool' && !toolCallIds.has(m.tool_call_id),
+    );
+    assert.equal(orphaned.length, 0,
+      `${build}: snapshot left tool results with no matching assistant tool_calls`);
+
+    // A conversation that fits the budget is returned verbatim.
+    const small = [
+      { role: 'system', content: 'system' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'keep', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'keep', content: 'ok' },
+    ];
+    const untouched = persistence.serializeConversationForSession(small);
+    assert.equal(untouched.compacted, false, `${build}: in-budget conversation was modified`);
+    assert.equal(untouched.messages.length, 3, `${build}: in-budget conversation lost messages`);
+  }
+});
+
 test('quota exhaustion degrades recovery once, continues live, and disables automatic replay', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
@@ -76332,6 +81355,29 @@ test('OpenAI-compatible chat providers reject HTTP-200 error and non-completion 
   }
 });
 
+test('base chat completion ignores empty error metadata but preserves real errors', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const { BaseLLMProvider } = await import(pathToFileURL(
+      path.join(ROOT, `src/${build}/src/providers/base.js`),
+    ).href);
+    const provider = new BaseLLMProvider();
+    const message = { role: 'assistant', content: 'valid completion' };
+    assert.equal(
+      provider._chatCompletionMessage({ error: {}, choices: [{ message }] }),
+      message,
+      `${build}: empty error metadata overrode a valid completion`,
+    );
+    assert.throws(
+      () => provider._chatCompletionMessage({
+        error: { message: 'Quota exceeded.' },
+        choices: [{ message }],
+      }),
+      /Quota exceeded/,
+      `${build}: a completion choice masked a real provider error`,
+    );
+  }
+});
+
 test('dedicated vision descriptions suppress hidden reasoning and reuse one image for a bounded retry', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const vision = {
@@ -76443,8 +81489,24 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       const visionResult = await visionManager.testVisionProvider();
       assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
       assert.equal(visionCalls.length, 1);
-      assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+      assert.match(visionCalls[0].messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
       assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
+      assert.equal(visionCalls[0].options.webbrainVisionProbe, true);
+
+      if (label === 'chrome') {
+        visionManager.getVisionProvider = async () => ({
+          name: 'webgpu-vision',
+          model: WEBGPU_VISION_MODEL_ID,
+          baseUrl: 'local://webgpu',
+          chat: async (messages, options) => {
+            assert.match(messages[0].content[1].text, /three solid vertical color panels/i);
+            assert.equal(options.webbrainVisionProbe, true);
+            return { content: 'yellow, blue, red' };
+          },
+        });
+        const localVisionResult = await visionManager.testVisionProvider();
+        assert.equal(localVisionResult.ok, true, 'chrome: local color-panel vision probe should pass');
+      }
 
       visionManager.getVisionProvider = async () => ({
         model: 'text-only-model',
@@ -76606,7 +81668,7 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
 
     assert.equal(result.ok, true);
     assert.equal(result.text, 'fallback transcript');
-    assert.equal(directAttempts, 1);
+    assert.equal(directAttempts, 0);
     assert.equal(proxiedRequest.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
     assert.equal(proxiedRequest.bodyType, 'form-data-chunked');
     assert.equal(bodyChunkMessages.length, 1);

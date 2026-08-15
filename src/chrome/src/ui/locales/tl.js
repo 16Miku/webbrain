@@ -1,6 +1,8 @@
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Naputol ang pag-stream ng tugon; sinusubukang muli ang Ask turn na ito nang walang streaming.',
@@ -289,6 +291,13 @@ export default {
   'st.provider.field.model_loaded_hint': 'iwang blangko para gamitin ang na-load na modelo',
 
   'st.vision.desc': 'Kung naitakda, ipinapadala ang mga screenshot sa modelong ito para basahin ang pahina, habang ang aktibong provider ang humahawak sa pagpaplano at mga tool call. Iwang blangko para gamitin din ang aktibong provider para sa bisyon. Para lamang sa mga OpenAI-compatible na endpoint.',
+  'st.vision.local.title': 'Lokal na fallback ng LFM2.5-VL',
+  'st.vision.local.desc': 'Pinapagana ang LiquidAI/LFM2.5-VL-450M-ONNX sa iyong GPU. Nananatili sa device na ito ang mga screenshot; sa unang paggamit, nagda-download ito ng humigit-kumulang 770 MB mula sa Hugging Face sa background at kino-cache ito nang lokal. Maaari kang lumipat ng tab o isara ang Mga Setting habang nagda-download; panatilihing bukas ang Chrome.',
+  'st.vision.local.enable': 'Gamitin ang lokal na fallback',
+  'st.vision.local.disable': 'I-disable ang lokal na fallback',
+  'st.vision.local.saved': 'Naka-enable ang lokal na vision fallback.',
+  'st.vision.local.testing': 'Nilo-load at sinusubukan ang lokal na vision… Sa unang paggamit, nagda-download ng humigit-kumulang 770 MB sa background. Maaari kang lumipat ng tab o isara ang Mga Setting; panatilihing bukas ang Chrome.',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': 'I-save',
   'st.vision.test': 'Subukan ang Koneksyon',
   'st.vision.clear': 'I-clear',
@@ -672,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Maghanap sa General na mga setting',
   'st.display.search.empty': 'Walang tugmang General na mga setting.',
   'st.display.advanced': 'Advanced',
+  ...getApocalypseModeCopy('tl'),
   'st.display.cloud_bridge.label': 'Cloud bridge',
   'st.display.cloud_bridge.desc': 'Ikonekta ang isang lokal na controller sa Chromium profile na ito. Gamitin ang port 17373 para sa WebBrain Cloud, 17374 para sa mga MCP client, o 17375 para sa LM Studio. Isang bridge lang ang maaaring aktibo; nalalapat pa rin ang karaniwang mga prompt ng pahintulot.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',
@@ -807,6 +817,7 @@ export default {
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",
   "sp.workflows.run_prompt": "Patakbuhin ang naka-save na workflow na “{name}”",
+  "sp.workflows.standalone_unavailable": "Para lang sa mode na Magtanong ang hiwalay na window na ito. Buksan ang WebBrain sa side panel para patakbuhin ang mga naka-save na workflow sa mode na Kumilos.",
   "sp.workflows.parameters_for": "Ilagay ang mga parameter para sa “{name}”. Para sa run na ito lang gagamitin ang mga value.",
   "sp.workflows.parameter_required": "Kailangan ang “{name}”.",
   "sp.slash.save_workflow": "I-save ang pinakabagong matagumpay na naitalang run",
@@ -1035,4 +1046,25 @@ export default {
   "st.sync.confirm.reset": "Palitan ang naka-encrypt na cloud copy ng kasalukuyang setup ng WebBrain ng device na ito?",
   "st.sync.consent.legacy": "I-on ang naka-encrypt na pag-sync? Magpapadala ang WebBrain ng end-to-end na naka-encrypt na kopya ng iyong mga alaala, profile autofill, at API-key na mga setting ng provider sa WebBrain Cloud. Hindi naka-sync ang history ng chat at OAuth sign-in.",
   "st.sync.consent.denied": "Hindi ibinigay ang naka-encrypt na pahintulot sa pag-sync.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_download.title': 'WebGPU model files',
+  'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
+  'st.providers.webgpu_download.checking': 'Checking local model files…',
+  'st.providers.webgpu_download.not_downloaded': 'Not downloaded',
+  'st.providers.webgpu_download.downloading': 'Downloading · {progress}%',
+  'st.providers.webgpu_download.paused': 'Paused · {progress}%',
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.ready': 'Ready for local chat',
+  'st.providers.webgpu_download.error': 'Download needs attention',
+  'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
+  'st.providers.webgpu_download.required': 'Download the selected model before choosing WebGPU for chat.',
+  'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
+  'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
+  'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
+  'st.providers.webgpu_download.start': 'Start download',
+  'st.providers.webgpu_download.pause': 'Pause',
+  'st.providers.webgpu_download.resume': 'Resume',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
 };

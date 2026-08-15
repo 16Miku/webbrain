@@ -1,4 +1,6 @@
 // Vietnamese — translated from the canonical English locale.
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'Luồng phản hồi bị gián đoạn; đang thử lại lượt Ask này mà không phát trực tuyến.',
   'sp.providers.no_setup_group': "Không cần thiết lập",
@@ -134,6 +136,7 @@ export default {
   "sp.slash.teach": "Ghi lại thao tác của bạn thành quy trình đã lưu",
   'sp.slash.run_workflow': "Chạy quy trình công việc đã lưu theo ID",
   'sp.workflows.run_prompt': "Chạy quy trình làm việc đã lưu “{name}”",
+  "sp.workflows.standalone_unavailable": "Cửa sổ độc lập này chỉ dành cho chế độ Hỏi. Hãy mở WebBrain trong bảng bên để chạy quy trình đã lưu ở chế độ Hành động.",
   'sp.workflows.parameters_for': "Nhập thông số cho “{name}”. Các giá trị chỉ được sử dụng cho lần chạy này.",
   'sp.workflows.parameter_required': "Cần có “{name}”.",
   'sp.slash.save_workflow': "Lưu lần chạy được ghi thành công mới nhất",
@@ -517,6 +520,7 @@ export default {
   'st.display.search.placeholder': "Tìm kiếm Cài đặt chung",
   'st.display.search.empty': "Không có cài đặt chung nào khớp.",
   'st.display.advanced': "Nâng cao",
+  ...getApocalypseModeCopy('vi'),
   'st.display.help_improve.label': "Giúp cải thiện WebBrain",
   'st.display.help_improve.desc_html': "Cho phép giữ lại và sử dụng các tương tác văn bản và công cụ trên Đám mây WebBrain đủ điều kiện để đánh giá, cải tiến, tinh chỉnh và đào tạo. Bật theo mặc định. Tắt tính năng này vĩnh viễn sẽ chọn không tham gia cuộc trò chuyện hiện tại; việc bật lại sẽ áp dụng cho cuộc trò chuyện mới tiếp theo. Ảnh chụp màn hình và byte hình ảnh không được giữ lại trong cơ sở dữ liệu cải tiến WebBrain. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Chính sách bảo mật →</a>",
   'st.display.clarify_timeout.label': "Làm rõ thời gian chờ",
@@ -1017,4 +1021,5 @@ export default {
   "st.sync.confirm.reset": "Thay thế bản sao đám mây được mã hóa bằng thiết lập WebBrain hiện tại của thiết bị này?",
   "st.sync.consent.legacy": "Bật đồng bộ hóa được mã hóa? WebBrain sẽ truyền bản sao được mã hóa nối đầu các ký ức của bạn, tự động điền hồ sơ và cài đặt nhà cung cấp khóa API tới WebBrain Cloud. Lịch sử trò chuyện và thông tin đăng nhập OAuth không được đồng bộ hóa.",
   "st.sync.consent.denied": "Quyền đồng bộ hóa được mã hóa không được cấp.",
+  'st.providers.webgpu_note.body': '{modelLink} chạy hoàn toàn trong Chrome mà không cần điểm cuối API. Lần tạo đầu tiên tải xuống khoảng 4,85 GB và lưu vào bộ nhớ đệm của trình duyệt. Kiểm tra kết nối xác minh runtime đóng gói và bộ điều hợp phần cứng mà không tải mô hình.',
 };

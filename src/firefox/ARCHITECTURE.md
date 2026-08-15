@@ -1,13 +1,13 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 29.0.3 · Manifest V2 · Background Page
+> Version 32.0.0 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
 - **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
-- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's Firefox 109 minimum, and the manifest declares the required `<all_urls>` permission.
+- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's current minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
 - **Some Chrome-only tools/features remain absent** — no CDP full-page screenshot, CDP upload automation, tab recording, offscreen fetch proxy, Chrome-only `shadow_dom_query`, or closed-shadow-root traversal.
@@ -229,6 +229,13 @@ permission gate before saving files. Third-party results should use
 `resultPolicy: "untrusted"` so the agent wraps and digests them like page
 content instead of trusted instructions.
 
+The exact packaged Wikipedia skill uses `agent/wikipedia-offline.js` to fall
+back to user-installed Kiwix/ZIM archives after a live request fails.
+`agent/apocalypse-mode.js` owns the opt-in archive manager, resumable verified
+downloads, durable IndexedDB state, OPFS bytes, and local openZIM title lookup.
+No archive is downloaded by enabling the skill. Local passages retain their
+canonical URL, language, archive date, and license metadata and stay untrusted.
+
 ---
 
 ## Agent Loop
@@ -442,7 +449,7 @@ Plus the legacy handlers: `read_page`, `click`, `type_text`, `press_keys`, `scro
 ## Provider System
 
 Identical to Chrome at the provider-class and configuration layer:
-WebBrain Cloud, seven local backends, Azure OpenAI, AWS Bedrock, Anthropic, and
+WebBrain Cloud, nine local endpoints, Azure OpenAI, AWS Bedrock, Anthropic, and
 the current direct-cloud/router OpenAI-compatible configs use the same message
 format and conversion logic. The canonical current ID and default-model table
 is maintained in

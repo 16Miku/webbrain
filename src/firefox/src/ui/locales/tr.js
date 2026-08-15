@@ -1,6 +1,8 @@
 // Turkish (tr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Yanıt akışı kesildi; bu Ask turu akış olmadan yeniden deneniyor.',
@@ -668,6 +670,7 @@ export default {
   'st.display.search.placeholder': 'Genel ayarları ara',
   'st.display.search.empty': 'Eşleşen Genel ayar yok.',
   'st.display.advanced': 'Gelişmiş',
+  ...getApocalypseModeCopy('tr'),
   'st.display.clarify_timeout.label': 'Açıklama zaman aşımı',
   'st.display.clarify_timeout.desc': 'Açıklama sorusuna yanıt için ne kadar bekleneceği; süre dolunca ilk seçenek otomatik seçilir (seçenek yoksa zaman aşımı). 0 = Anında (her zaman otomatik seç). 1200 sn üzeri = süresiz bekle (Kapalı). Varsayılan 60 sn. İzin ve form gönderim onaylarına uygulanmaz.',
   'st.display.clarify_timeout.off': 'Kapalı',
@@ -783,6 +786,7 @@ export default {
   "sp.slash.teach": "Eylemlerinizi kayıtlı bir iş akışı olarak kaydedin",
   "sp.slash.run_workflow": "Kaydedilmiş iş akışını kimliğe göre çalıştır",
   "sp.workflows.run_prompt": "Kaydedilmiş “{name}” iş akışını çalıştır",
+  "sp.workflows.standalone_unavailable": "Bu bağımsız pencere yalnızca Sor modu içindir. Kaydedilmiş iş akışlarını Harekete Geç modunda çalıştırmak için WebBrain'i yan panelde açın.",
   "sp.workflows.parameters_for": "“{name}” için parametreleri girin. Değerler yalnızca bu çalıştırmada kullanılır.",
   "sp.workflows.parameter_required": "“{name}” zorunludur.",
   "sp.slash.save_workflow": "En son başarılı kaydedilmiş çalışmayı sakla",
@@ -996,4 +1000,5 @@ export default {
   "st.sync.confirm.reset": "Şifrelenmiş bulut kopyası bu cihazın mevcut WebBrain kurulumuyla değiştirilsin mi?",
   "st.sync.consent.legacy": "Şifreli senkronizasyon açılsın mı? WebBrain, anılarınızın, profil otomatik doldurmanızın ve API anahtarı sağlayıcı ayarlarınızın uçtan uca şifrelenmiş bir kopyasını WebBrain Cloud'a iletecektir. Sohbet geçmişi ve OAuth oturum açma işlemleri senkronize edilmez.",
   "st.sync.consent.denied": "Şifrelenmiş senkronizasyon izni verilmedi.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

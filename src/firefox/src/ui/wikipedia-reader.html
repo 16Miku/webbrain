@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="ar.page_title"></title>
+  <link rel="stylesheet" href="wikipedia-reader.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="back-button" href="apocalypse-mode.html" data-i18n-aria-label="ar.back">←</a>
+    <span class="apocalypse-icon" aria-hidden="true">☢</span>
+    <div class="title-block">
+      <h1 data-i18n="ar.title"></h1>
+      <p id="archive-name" data-i18n="ar.loading_archive"></p>
+    </div>
+    <span class="reader-badge" data-i18n="ar.text_only"></span>
+  </header>
+
+  <main class="reader-shell">
+    <aside class="search-pane">
+      <p class="eyebrow" data-i18n="ar.archive_index"></p>
+      <h2 data-i18n="ar.find_article"></h2>
+      <form id="search-form" class="search-form">
+        <label for="article-query" class="visually-hidden" data-i18n="ar.search_label"></label>
+        <input id="article-query" type="search" autocomplete="off" data-i18n-placeholder="ar.search_placeholder" required>
+        <button type="submit" data-i18n="ar.search"></button>
+      </form>
+      <p id="search-status" class="status" role="status" aria-live="polite"></p>
+      <div id="search-results" class="search-results" aria-live="polite">
+        <div class="empty-state" data-i18n="ar.search_invitation"></div>
+      </div>
+    </aside>
+
+    <article class="article-pane" aria-labelledby="article-title">
+      <div id="article-empty" class="article-empty">
+        <span aria-hidden="true">W</span>
+        <h2 data-i18n="ar.empty_title"></h2>
+        <p data-i18n="ar.empty_desc"></p>
+      </div>
+      <div id="article-view" hidden>
+        <div class="article-kicker">
+          <span id="article-provenance"></span>
+          <a id="article-source" target="_blank" rel="noopener noreferrer" data-i18n="ar.canonical"></a>
+        </div>
+        <h2 id="article-title"></h2>
+        <p id="article-note" class="article-note" hidden data-i18n="ar.truncated"></p>
+        <div id="article-text" class="article-text"></div>
+      </div>
+    </article>
+  </main>
+
+  <script type="module" src="wikipedia-reader.js"></script>
+</body>
+</html>

@@ -82,7 +82,9 @@ vllm serve your-model --port 8000                     # vLLM    → :8000/v1
 python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
-LM Studio（`:1234/v1`）、Jan（`:1337/v1`）和 LocalAI（`:8080/v1`）用法相同。请加载
+LM Studio（`:1234/v1`）、Jan（`:1337/v1`）、LocalAI（`:8080/v1`）和 GPT4All
+（`:4891/v1`）用法相同。通用的**本地 OpenAI 兼容代理**卡片也支持 CLIProxyAPI
+等带认证的回环网关；请参阅[安全代理配置](docs/zh-CN/providers-and-models.md#订阅代理示例cliproxyapi)。请加载
 **至少具有 16k 令牌上下文窗口**的模型 —— 8k 仅在 Compact 层级下可用，4k 无法容纳
 系统提示加工具 schema。WebBrain 会为 llama.cpp、Ollama 和 LM Studio 自动检测真实窗口，
 并在对话接近上限时自动压缩。此外还有预览版的
@@ -92,7 +94,8 @@ LM Studio（`:1234/v1`）、Jan（`:1337/v1`）和 LocalAI（`:8080/v1`）用法
 **云端 API** —— OpenAI、Anthropic Claude、Google Gemini、Azure OpenAI、AWS Bedrock、
 Mistral、DeepSeek、xAI Grok、MiniMax、Kimi、通义千问、z.ai GLM、Groq、Together、
 Cloudflare、Nvidia NIM、Hugging Face、Fireworks、OpenRouter 等。设置中内置
-**104 张提供商卡片**，已预填 base URL 和默认模型 —— 参见
+**Chromium 上有 106 张提供商卡片**（Firefox 上有 105 张），其中包括无需端点的
+本地 WebGPU 选项 —— 参见
 [完整目录](docs/zh-CN/providers-and-models.md#扩展提供商目录)。
 
 ## 功能特性
@@ -168,7 +171,7 @@ Chrome 侧边面板快捷键在 WebBrain 侧边面板获得焦点时生效。
 | [架构](docs/zh-CN/architecture.md) | 系统概览、轮次流程、子系统 |
 | [智能体工具](docs/zh-CN/agent-tools.md) | 层级、模式与完整工具矩阵 |
 | [斜杠命令](docs/zh-CN/slash-commands.md) | 所有命令与参数 |
-| [提供商与模型](docs/zh-CN/providers-and-models.md) | 全部 104 张提供商卡片、本地配置、层级 |
+| [提供商与模型](docs/zh-CN/providers-and-models.md) | Chromium 106 张、Firefox 105 张提供商卡片，本地配置、层级 |
 | [技能](docs/zh-CN/skills.md) | 内置技能、导入、技能工具 |
 | [安全模型](docs/zh-CN/security-model.md) | 权限、凭证、信任边界 |
 | [提示注入防御](docs/zh-CN/prompt-injection-defense.md) | 防御层级与已知缺口 |

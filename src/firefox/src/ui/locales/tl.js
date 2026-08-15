@@ -1,6 +1,8 @@
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Naputol ang pag-stream ng tugon; sinusubukang muli ang Ask turn na ito nang walang streaming.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Maghanap sa General na mga setting',
   'st.display.search.empty': 'Walang tugmang General na mga setting.',
   'st.display.advanced': 'Advanced',
+  ...getApocalypseModeCopy('tl'),
   'st.display.clarify_timeout.label': 'Timeout ng clarify',
   'st.display.clarify_timeout.desc': 'Gaano katagal maghintay ng sagot sa clarify bago awtomatikong piliin ang unang opsyon (o mag-timeout kung walang opsyon). 0 = Agad (palaging auto-select). Higit sa 1200s ay walang hangganan (Naka-off). Default 60s. Hindi para sa permission o form-submit confirmations.',
   'st.display.clarify_timeout.off': 'Naka-off',
@@ -784,6 +787,7 @@ export default {
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",
   "sp.workflows.run_prompt": "Patakbuhin ang naka-save na workflow na “{name}”",
+  "sp.workflows.standalone_unavailable": "Para lang sa mode na Magtanong ang hiwalay na window na ito. Buksan ang WebBrain sa side panel para patakbuhin ang mga naka-save na workflow sa mode na Kumilos.",
   "sp.workflows.parameters_for": "Ilagay ang mga parameter para sa “{name}”. Para sa run na ito lang gagamitin ang mga value.",
   "sp.workflows.parameter_required": "Kailangan ang “{name}”.",
   "sp.slash.save_workflow": "I-save ang pinakabagong matagumpay na naitalang run",
@@ -997,4 +1001,5 @@ export default {
   "st.sync.confirm.reset": "Palitan ang naka-encrypt na cloud copy ng kasalukuyang setup ng WebBrain ng device na ito?",
   "st.sync.consent.legacy": "I-on ang naka-encrypt na pag-sync? Magpapadala ang WebBrain ng end-to-end na naka-encrypt na kopya ng iyong mga alaala, profile autofill, at API-key na mga setting ng provider sa WebBrain Cloud. Hindi naka-sync ang history ng chat at OAuth sign-in.",
   "st.sync.consent.denied": "Hindi ibinigay ang naka-encrypt na pahintulot sa pag-sync.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

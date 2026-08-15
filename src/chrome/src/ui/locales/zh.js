@@ -1,6 +1,8 @@
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '响应流已中断；正在以非流式方式重试本次 Ask。',
@@ -289,6 +291,13 @@ export default {
   'st.provider.field.model_loaded_hint': '留空则使用已加载的模型',
 
   'st.vision.desc': '设置后，页面阅读的截图会发送给此模型，而当前提供商负责规划和工具调用。留空则视觉也使用当前提供商。仅限 OpenAI 兼容的端点。',
+  'st.vision.local.title': 'LFM2.5-VL 本地备用模型',
+  'st.vision.local.desc': '在您的 GPU 上运行 LiquidAI/LFM2.5-VL-450M-ONNX。屏幕截图仅保留在本设备上；首次使用时会在后台从 Hugging Face 下载约 770 MB 并缓存在本地。下载期间可以切换标签页或关闭“设置”，但请保持 Chrome 运行。',
+  'st.vision.local.enable': '使用本地备用模型',
+  'st.vision.local.disable': '禁用本地备用模型',
+  'st.vision.local.saved': '已启用本地视觉备用模型。',
+  'st.vision.local.testing': '正在加载并测试本地视觉模型… 首次使用时会在后台下载约 770 MB。您可以切换标签页或关闭“设置”，但请保持 Chrome 运行。',
+  'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': '保存',
   'st.vision.test': '测试连接',
   'st.vision.clear': '清除',
@@ -672,6 +681,7 @@ export default {
   'st.display.search.placeholder': '搜索通用设置',
   'st.display.search.empty': '没有匹配的通用设置。',
   'st.display.advanced': '高级',
+  ...getApocalypseModeCopy('zh'),
   'st.display.cloud_bridge.label': '云桥接',
   'st.display.cloud_bridge.desc': '将一个本地控制器连接到此 Chromium 配置文件。WebBrain Cloud 使用端口 17373，MCP 客户端使用 17374，LM Studio 使用 17375。一次只能启用一个桥接；常规权限提示仍然有效。',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',
@@ -807,6 +817,7 @@ export default {
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",
   "sp.workflows.run_prompt": "运行已保存的工作流“{name}”",
+  "sp.workflows.standalone_unavailable": "此独立窗口仅支持“询问”模式。请在侧边栏中打开 WebBrain，以“操作”模式运行已保存的工作流。",
   "sp.workflows.parameters_for": "请输入“{name}”的参数。参数值仅用于本次运行。",
   "sp.workflows.parameter_required": "“{name}”为必填项。",
   "sp.slash.save_workflow": "保存最近一次成功且已记录的运行",
@@ -1035,4 +1046,25 @@ export default {
   "st.sync.confirm.reset": "使用该设备当前的 WebBrain 设置替换加密的云副本？",
   "st.sync.consent.legacy": "开启加密同步？ WebBrain 会将您的记忆、个人资料自动填充和 API 密钥提供商设置的端到端加密副本传输到 WebBrain Cloud。聊天历史记录和 OAuth 登录不同步。",
   "st.sync.consent.denied": "未授予加密同步权限。",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_download.title': 'WebGPU model files',
+  'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
+  'st.providers.webgpu_download.checking': 'Checking local model files…',
+  'st.providers.webgpu_download.not_downloaded': 'Not downloaded',
+  'st.providers.webgpu_download.downloading': 'Downloading · {progress}%',
+  'st.providers.webgpu_download.paused': 'Paused · {progress}%',
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.ready': 'Ready for local chat',
+  'st.providers.webgpu_download.error': 'Download needs attention',
+  'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
+  'st.providers.webgpu_download.required': 'Download the selected model before choosing WebGPU for chat.',
+  'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
+  'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
+  'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
+  'st.providers.webgpu_download.start': 'Start download',
+  'st.providers.webgpu_download.pause': 'Pause',
+  'st.providers.webgpu_download.resume': 'Resume',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
 };

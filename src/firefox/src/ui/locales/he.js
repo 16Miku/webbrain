@@ -1,6 +1,8 @@
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'הזרמת התשובה נקטעה; מתבצע ניסיון חוזר לתור Ask הזה ללא הזרמה.',
@@ -420,6 +422,7 @@ export default {
   "sp.slash.teach": "הקלטת הפעולות שלך כתהליך עבודה שמור",
   "sp.slash.run_workflow": "הפעלת תהליך עבודה שמור לפי מזהה",
   "sp.workflows.run_prompt": "הפעלת תהליך העבודה השמור „{name}”",
+  "sp.workflows.standalone_unavailable": "החלון העצמאי הזה מיועד למצב שאל בלבד. פתחו את WebBrain בחלונית הצד כדי להריץ תהליכי עבודה שמורים במצב פעולה.",
   "sp.workflows.parameters_for": "יש להזין פרמטרים עבור „{name}”. הערכים משמשים להרצה זו בלבד.",
   "sp.workflows.parameter_required": "„{name}” הוא שדה חובה.",
   "sp.slash.save_workflow": "שמירת ההרצה המוקלטת והמוצלחת האחרונה",
@@ -482,6 +485,7 @@ export default {
   "st.display.search.placeholder": "חפש בהגדרות כלליות",
   "st.display.search.empty": "אין הגדרות כלליות תואמות.",
   "st.display.advanced": "מִתקַדֵם",
+  ...getApocalypseModeCopy('he'),
   "st.display.clarify_timeout.label": "פסק זמן להבהרה",
   "st.display.clarify_timeout.desc": "כמה זמן להמתין לתשובה לשאלת הבהרה לפני בחירה אוטומטית של האפשרות הראשונה (או פקיעת זמן אם אין אפשרויות). 0 = מיידי (בחירה אוטומטית תמיד). מעל 1200 שנ׳ = המתנה ללא הגבלה (כבוי). ברירת מחדל 60 שנ׳. לא חל על הרשאות או אישורי שליחת טופס.",
   "st.display.clarify_timeout.off": "כבוי",
@@ -950,4 +954,5 @@ export default {
   "st.sync.confirm.reset": "האם להחליף את עותק הענן המוצפן בהגדרות WebBrain הנוכחיות של המכשיר הזה?",
   "st.sync.consent.legacy": "להפעיל סנכרון מוצפן? WebBrain ישדר עותק מוצפן מקצה לקצה של הזיכרונות, המילוי האוטומטי של הפרופיל והגדרות ספק מפתח ה-API שלך ל-WebBrain Cloud. היסטוריית הצ'אט וכניסות OAuth אינן מסונכרנות.",
   "st.sync.consent.denied": "הרשאת סנכרון מוצפן לא ניתנה.",
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
 };

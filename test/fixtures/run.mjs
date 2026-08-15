@@ -231,6 +231,28 @@ async function setupAccessibilityTreeGmailHtml(page, html, sourcePath) {
   await page.waitForFunction(() => typeof window.__generateAccessibilityTree === 'function');
 }
 
+async function setupContentGmailHtml(page, html, browserKind) {
+  const firefox = browserKind === 'firefox';
+  await page.route('https://mail.google.com/**', route => {
+    if (route.request().resourceType() === 'document') {
+      return route.fulfill({ body: html, contentType: 'text/html' });
+    }
+    return route.fulfill({ body: '', contentType: 'text/plain' });
+  });
+  await page.addInitScript(firefox ? stubFirefoxBrowser : stubChrome);
+  await page.goto('https://mail.google.com/mail/u/0/#inbox/FMfc123', { waitUntil: 'domcontentloaded' });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxAccessibilityTreeJsPath : accessibilityTreeJsPath, 'utf-8'),
+  });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8'),
+  });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8'),
+  });
+  await page.waitForFunction(() => typeof window.__wb_handler === 'function');
+}
+
 async function rawContentCall(page, action, params) {
   return page.evaluate(({ action, params }) => new Promise((resolve) => {
     const ret = window.__wb_handler(
@@ -944,6 +966,10 @@ function normalizeTreeRefs(content) {
   });
 }
 
+function normalizeTreeRevision(content) {
+  return String(content || '').replace(/fnv1a64:[0-9a-f]{16}/g, 'tree_revision');
+}
+
 function assertGmailComposeRecipientTree(tree, label) {
   const content = String(tree?.pageContent || '');
   if (!/generic "Alex Russell \(gmail\.com\)" \[ref_\d+\]/.test(content)) {
@@ -995,6 +1021,7 @@ async function readAllConversationTreePages(page, sourcePath, label) {
       current.maxChars,
       null,
       current.page,
+      current.tree_revision,
     ), args);
     if (JSON.stringify(result).length > 8000) {
       throw new Error(`${label}: structured accessibility page exceeded the model-facing tool cap`);
@@ -1051,7 +1078,7 @@ const gmailThreadScopeFixture = `<!doctype html>
     ${Array.from({ length: 72 }, (_, index) => {
       const number = String(index + 1).padStart(3, '0');
       const injected = index === 0
-        ? '<main id="fake-main" role="main" aria-label="Injected fake thread"><button aria-label="Expand all">Expand all</button></main>'
+        ? '<main id="fake-main" role="main" aria-label="Injected fake thread"><button jsname="tRarif" aria-label="Tümünü genişlet">Tümünü genişlet</button></main>'
         : '';
       return `<article class="adn" role="listitem" aria-label="Thread message ${number}">${injected}<p>Message ${number}: project details, decisions, context, and follow-up.</p></article>`;
     }).join('')}
@@ -1095,13 +1122,21 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
       current.maxChars,
       current.ref_id,
       current.page,
+      current.tree_revision,
     ), args);
     if (result.conversationRootRefId !== discovery.conversationRootRefId) {
       throw new Error(`${label}: trusted Gmail root drifted during pagination`);
     }
     pages.push(result);
     if (!result.hasMore) break;
-    const expected = { ...args, page: args.page + 1 };
+    const expected = {
+      filter: args.filter,
+      maxDepth: args.maxDepth,
+      maxChars: args.maxChars,
+      ref_id: args.ref_id,
+      tree_revision: result.treeRevision,
+      page: args.page + 1,
+    };
     if (JSON.stringify(result.continuationArgs) !== JSON.stringify(expected)) {
       throw new Error(`${label}: Gmail thread continuation lost its trusted anchor: ${JSON.stringify(result.continuationArgs)}`);
     }
@@ -1118,6 +1153,138 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
     throw new Error(`${label}: trusted Gmail pagination leaked the background inbox`);
   }
 
+  const snapshotContinuation = await page.evaluate(continuation => {
+    const message = document.querySelector('#active-thread article p');
+    const previous = message.textContent;
+    message.textContent = previous.replace('project', 'product');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    message.textContent = previous;
+    return result;
+  }, pages[0].continuationArgs);
+  if (snapshotContinuation.treeRevisionMismatch || snapshotContinuation.error
+      || snapshotContinuation.treeRevision !== pages[0].treeRevision) {
+    throw new Error(`${label}: live Gmail mutations invalidated the bounded page-one snapshot`);
+  }
+
+  const actionableDrift = await page.evaluate(continuation => {
+    const control = document.getElementById('real-collapse');
+    const previous = control.getAttribute('aria-label');
+    control.setAttribute('aria-label', 'Delete permanently');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    control.setAttribute('aria-label', previous);
+    return result;
+  }, pages[0].continuationArgs);
+  if (actionableDrift.treeRevisionMismatch !== true || !actionableDrift.error
+      || actionableDrift.pageContent) {
+    throw new Error(`${label}: a changed Gmail action reused a stale cached ref`);
+  }
+
+  const revisionMismatch = await page.evaluate(continuation => {
+    window.__wbAxTreeSnapshots.clear();
+    const message = document.querySelector('#active-thread article p');
+    const previous = message.textContent;
+    message.textContent = previous.replace('project', 'product');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    message.textContent = previous;
+    return result;
+  }, pages[0].continuationArgs);
+  if (revisionMismatch.treeRevisionMismatch !== true || !revisionMismatch.error || revisionMismatch.pageContent) {
+    throw new Error(`${label}: an expired Gmail snapshot did not reject a changed live continuation`);
+  }
+  const expectedRestartArgs = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 1200,
+    ref_id: discovery.conversationRootRefId,
+    page: 1,
+  };
+  if (JSON.stringify(revisionMismatch.continuationArgs) !== JSON.stringify(expectedRestartArgs)
+      || revisionMismatch.nextPage !== 1) {
+    throw new Error(`${label}: revision recovery did not return exact page-one restart arguments`);
+  }
+
+  const restartedPageOne = await page.evaluate(args => window.__generateAccessibilityTree(
+    args.filter,
+    args.maxDepth,
+    args.maxChars,
+    args.ref_id,
+    1,
+    'fnv1a64:0000000000000000',
+  ), expectedRestartArgs);
+  if (restartedPageOne.error || restartedPageOne.treeRevisionMismatch || !restartedPageOne.pageContent
+      || restartedPageOne.page !== 1) {
+    throw new Error(`${label}: stale revision was not ignored while establishing a fresh page-one snapshot`);
+  }
+
+  const subtreeRecovery = await page.evaluate(() => {
+    const subtree = document.createElement('section');
+    subtree.setAttribute('aria-label', 'Paginated message subtree');
+    for (let index = 1; index <= 30; index += 1) {
+      const paragraph = document.createElement('p');
+      paragraph.textContent = `Subtree message ${index}: original details and follow-up context.`;
+      subtree.append(paragraph);
+    }
+    document.getElementById('active-thread').append(subtree);
+    const refId = window.__wb_ax_ref(subtree);
+    const first = window.__generateAccessibilityTree('all', 15, 220, refId, 1);
+    subtree.querySelector('p').textContent = 'Subtree message 1: changed details and follow-up context.';
+    const continuation = first.continuationArgs || {};
+    const second = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    subtree.remove();
+    return {
+      refId,
+      firstHasMore: first.hasMore,
+      mismatch: second.treeRevisionMismatch,
+      error: second.error || '',
+      pageContent: second.pageContent,
+      nextPage: second.nextPage,
+      continuationArgs: second.continuationArgs,
+    };
+  });
+  if (subtreeRecovery.firstHasMore !== true || subtreeRecovery.mismatch !== true
+      || !subtreeRecovery.error || subtreeRecovery.pageContent) {
+    throw new Error(`${label}: a changed non-root subtree reused a stale cached page`);
+  }
+  const expectedSubtreeRestart = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 220,
+    ref_id: subtreeRecovery.refId,
+    page: 1,
+  };
+  if (JSON.stringify(subtreeRecovery.continuationArgs) !== JSON.stringify(expectedSubtreeRestart)
+      || subtreeRecovery.nextPage !== 1) {
+    throw new Error(`${label}: non-root recovery widened to the Gmail conversation root`);
+  }
+
   const routeClassification = await page.evaluate(() => {
     const classify = hash => {
       window.history.replaceState(null, '', hash);
@@ -1131,19 +1298,26 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
       searchList: classify('#search/project'),
       labelList: classify('#label/Work'),
       categoryList: classify('#category/promotions'),
+      searchHexList: classify('#search/deadbeefcafe'),
+      labelHexList: classify('#label/deadbeefcafe'),
+      categoryHexList: classify('#category/deadbeefcafe'),
+      nestedLabelHexList: classify('#label/Projects/deadbeefcafe'),
       searchThread: classify('#search/project/FMfc123'),
       labelThread: classify('#label/Work/FMfc123'),
       categoryThread: classify('#category/promotions/FMfc123'),
+      inboxLegacyThread: classify('#inbox/deadbeefcafe'),
+      searchLegacyThread: classify('#search/project/deadbeefcafe'),
+      nestedLabelThread: classify('#label/Projects/Subproject/FMfc123'),
     };
     window.history.replaceState(null, '', '#inbox/FMfc123');
     return results;
   });
-  for (const routeName of ['searchList', 'labelList', 'categoryList']) {
+  for (const routeName of ['searchList', 'labelList', 'categoryList', 'searchHexList', 'labelHexList', 'categoryHexList', 'nestedLabelHexList']) {
     if (routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState != null) {
       throw new Error(`${label}: Gmail ${routeName} exposed trusted conversation metadata`);
     }
   }
-  for (const routeName of ['searchThread', 'labelThread', 'categoryThread']) {
+  for (const routeName of ['searchThread', 'labelThread', 'categoryThread', 'inboxLegacyThread', 'searchLegacyThread', 'nestedLabelThread']) {
     if (!routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState !== 'expanded') {
       throw new Error(`${label}: Gmail ${routeName} lost trusted conversation metadata`);
     }
@@ -1169,11 +1343,12 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
     totalChars: result.totalChars,
     hasMore: result.hasMore,
     truncated: result.truncated,
-    pageContent: normalizeTreeRefs(result.pageContent),
+    pageContent: normalizeTreeRevision(normalizeTreeRefs(result.pageContent)),
+    treeRevision: 'tree_revision',
     conversationRootRefId: 'ref_trusted_root',
     conversationExpansionState: result.conversationExpansionState,
     continuationArgs: result.continuationArgs
-      ? { ...result.continuationArgs, ref_id: 'ref_trusted_root' }
+      ? { ...result.continuationArgs, ref_id: 'ref_trusted_root', tree_revision: 'tree_revision' }
       : null,
   }));
 }
@@ -1186,6 +1361,88 @@ test('accessibility tree (Firefox): Gmail trusted thread metadata and pagination
   const firefoxPages = await readTrustedGmailThreadPages(page, firefoxAccessibilityTreeJsPath, 'firefox');
   if (JSON.stringify(firefoxPages) !== JSON.stringify(chromeGmailThreadScopePages)) {
     throw new Error('Chrome/Firefox trusted Gmail thread pages differ');
+  }
+});
+
+const collapsedGmailThreadFixture = `<!doctype html>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; font: 16px sans-serif; }
+    main { display: block; width: 900px; min-height: 600px; }
+    article { display: block; min-height: 30px; }
+    #older-message[hidden] { display: none; }
+  </style>
+  <main id="active-thread" aria-label="Collapsed project thread">
+    <h1>Collapsed project thread</h1>
+    <button id="expand-all" jsname="tRarif" aria-label="Tümünü genişlet">Tümünü genişlet</button>
+    <article class="adn" role="listitem" aria-label="Latest message">
+      <p>Latest visible project message.</p>
+      <button jsname="tRarif" aria-label="Tümünü genişlet">Untrusted message button</button>
+    </article>
+    <article id="older-message" class="adn" role="listitem" aria-label="Older message" hidden>
+      <p>Older collapsed decision that must be included.</p>
+    </article>
+  </main>
+  <script>
+    document.getElementById('expand-all').addEventListener('click', () => {
+      document.getElementById('older-message').hidden = false;
+      const control = document.getElementById('expand-all');
+      control.setAttribute('jsname', 'xvWlrc');
+      control.setAttribute('aria-label', 'Tümünü daralt');
+      control.textContent = 'Tümünü daralt';
+    });
+  </script>`;
+
+let chromeCollapsedGmailRead = null;
+
+async function readCollapsedGmailThread(page, browserKind) {
+  await setupContentGmailHtml(page, collapsedGmailThreadFixture, browserKind);
+  const discovery = await rawContentCall(page, 'get_accessibility_tree', {
+    filter: 'visible',
+    maxDepth: 12,
+    maxChars: 1200,
+    page: 1,
+  });
+  if (!discovery.conversationRootRefId || discovery.conversationExpansionState !== 'collapsed') {
+    throw new Error(`${browserKind}: collapsed Gmail thread was not discovered safely`);
+  }
+  const result = await rawContentCall(page, 'get_accessibility_tree', {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 6000,
+    ref_id: discovery.conversationRootRefId,
+    page: 1,
+  });
+  if (result.error || result.conversationAutoExpanded !== true
+      || result.conversationExpansionState !== 'expanded') {
+    throw new Error(`${browserKind}: anchored whole-thread read did not expand Gmail: ${JSON.stringify(result)}`);
+  }
+  if (!result.pageContent.includes('Older collapsed decision that must be included.')) {
+    throw new Error(`${browserKind}: anchored whole-thread read omitted the revealed older message`);
+  }
+  const state = await page.evaluate(() => ({
+    topLevelLabel: document.getElementById('expand-all').getAttribute('aria-label'),
+    topLevelJsname: document.getElementById('expand-all').getAttribute('jsname'),
+    olderHidden: document.getElementById('older-message').hidden,
+  }));
+  if (state.topLevelLabel !== 'Tümünü daralt' || state.topLevelJsname !== 'xvWlrc' || state.olderHidden) {
+    throw new Error(`${browserKind}: whole-thread preparation did not reveal the trusted conversation: ${JSON.stringify(state)}`);
+  }
+  return {
+    pageContent: normalizeTreeRefs(result.pageContent),
+    conversationExpansionState: result.conversationExpansionState,
+    conversationAutoExpanded: result.conversationAutoExpanded,
+  };
+}
+
+test('content tree (Chrome): anchored Gmail reads reveal collapsed messages in either agent mode', async (page) => {
+  chromeCollapsedGmailRead = await readCollapsedGmailThread(page, 'chrome');
+});
+
+test('content tree (Firefox): collapsed Gmail whole-thread preparation keeps Chrome parity', async (page) => {
+  const firefoxResult = await readCollapsedGmailThread(page, 'firefox');
+  if (JSON.stringify(firefoxResult) !== JSON.stringify(chromeCollapsedGmailRead)) {
+    throw new Error('Chrome/Firefox collapsed Gmail whole-thread reads differ');
   }
 });
 

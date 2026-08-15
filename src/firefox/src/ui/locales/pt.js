@@ -1,4 +1,6 @@
 // Portuguese — translated from the canonical English locale.
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'A transmissão da resposta foi interrompida; tentando novamente esta interação Ask sem transmissão.',
   'sp.providers.no_setup_group': "Nenhuma configuração necessária",
@@ -134,6 +136,7 @@ export default {
   "sp.slash.teach": "Grave suas ações como um fluxo de trabalho salvo",
   'sp.slash.run_workflow': "Execute um fluxo de trabalho salvo por ID",
   'sp.workflows.run_prompt': "Execute o fluxo de trabalho salvo “{name}”",
+  "sp.workflows.standalone_unavailable": "Esta janela independente funciona apenas no modo Perguntar. Abra o WebBrain no painel lateral para executar fluxos de trabalho salvos no modo Agir.",
   'sp.workflows.parameters_for': "Insira os parâmetros para “{name}”. Os valores são usados ​​apenas para esta execução.",
   'sp.workflows.parameter_required': "“{name}” é necessário.",
   'sp.slash.save_workflow': "Salve a última execução registrada com sucesso",
@@ -517,6 +520,7 @@ export default {
   'st.display.search.placeholder': "Pesquisar configurações gerais",
   'st.display.search.empty': "Nenhuma configuração geral corresponde.",
   'st.display.advanced': "Avançado",
+  ...getApocalypseModeCopy('pt'),
   'st.display.help_improve.label': "Ajude a melhorar WebBrain",
   'st.display.help_improve.desc_html': "Permitir que textos qualificados da nuvem WebBrain e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
   'st.display.clarify_timeout.label': "Esclarecer o tempo limite",
@@ -1017,4 +1021,5 @@ export default {
   "st.sync.confirm.reset": "Substituir a cópia criptografada na nuvem pela configuração atual do WebBrain deste dispositivo?",
   "st.sync.consent.legacy": "Ativar a sincronização criptografada? O WebBrain transmitirá uma cópia criptografada de ponta a ponta de suas memórias, preenchimento automático de perfil e configurações do provedor de chave API para o WebBrain Cloud. O histórico de bate-papo e os logins do OAuth não são sincronizados.",
   "st.sync.consent.denied": "A permissão de sincronização criptografada não foi concedida.",
+  'st.providers.webgpu_note.body': '{modelLink} é executado inteiramente no Chrome, sem endpoint de API. A primeira geração baixa cerca de 4,85 GB e armazena o modelo no cache do navegador. Testar conexão verifica o runtime incluído e o adaptador de hardware sem baixar o modelo.',
 };

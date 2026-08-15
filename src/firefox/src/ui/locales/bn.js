@@ -1,4 +1,6 @@
 // Bengali — translated from the canonical English locale.
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'প্রতিক্রিয়া স্ট্রিম বাধাগ্রস্ত হয়েছে; স্ট্রিমিং ছাড়া এই Ask পালাটি আবার চেষ্টা করা হচ্ছে।',
   'sp.providers.no_setup_group': "কোন সেটআপ প্রয়োজন",
@@ -134,6 +136,7 @@ export default {
   "sp.slash.teach": "আপনার কাজগুলো সংরক্ষিত ওয়ার্কফ্লো হিসেবে রেকর্ড করুন",
   'sp.slash.run_workflow': "আইডি দ্বারা একটি সংরক্ষিত ওয়ার্কফ্লো চালান",
   'sp.workflows.run_prompt': "সংরক্ষিত ওয়ার্কফ্লো চালান \"{name}\"",
+  "sp.workflows.standalone_unavailable": "এই স্বতন্ত্র উইন্ডোটি শুধু Ask মোডের জন্য। Act মোডে সংরক্ষিত ওয়ার্কফ্লো চালাতে সাইড প্যানেলে WebBrain খুলুন।",
   'sp.workflows.parameters_for': "\"{name}\" এর জন্য পরামিতি লিখুন। মান শুধুমাত্র এই রানের জন্য ব্যবহার করা হয়.",
   'sp.workflows.parameter_required': "\"{name}\" প্রয়োজন৷",
   'sp.slash.save_workflow': "সর্বশেষ সফল রেকর্ড করা রান সংরক্ষণ করুন",
@@ -517,6 +520,7 @@ export default {
   'st.display.search.placeholder': "সাধারণ সেটিংস অনুসন্ধান করুন",
   'st.display.search.empty': "কোনো সাধারণ সেটিংস মেলে না।",
   'st.display.advanced': "উন্নত",
+  ...getApocalypseModeCopy('bn'),
   'st.display.help_improve.label': "WebBrain উন্নত করতে সাহায্য করুন",
   'st.display.help_improve.desc_html': "যোগ্য WebBrain ক্লাউড টেক্সট এবং টুল ইন্টারঅ্যাকশনগুলিকে ধরে রাখার এবং মূল্যায়ন, উন্নতি, ফাইন-টিউনিং এবং প্রশিক্ষণের জন্য ব্যবহার করার অনুমতি দিন। ডিফল্টরূপে চালু এটি স্থায়ীভাবে বন্ধ করা বর্তমান কথোপকথন অপ্ট আউট করে; এটিকে আবার চালু করা পরবর্তী নতুন কথোপকথনের ক্ষেত্রে প্রযোজ্য। WebBrain উন্নতি ডাটাবেসে স্ক্রিনশট এবং ইমেজ বাইট রাখা হয় না। <u>স্থানীয়-মডেল এবং আন-আপনার-নিজের API অনুরোধগুলি WebBrain দ্বারা সংগ্রহ করা হয় না।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">গোপনীয়তা নীতি →</a>",
   'st.display.clarify_timeout.label': "সময়সীমা পরিষ্কার করুন",
@@ -1017,4 +1021,5 @@ export default {
   "st.sync.confirm.reset": "এই ডিভাইসের বর্তমান WebBrain সেটআপ দিয়ে এনক্রিপ্ট করা ক্লাউড কপি প্রতিস্থাপন করবেন?",
   "st.sync.consent.legacy": "এনক্রিপ্ট করা সিঙ্ক চালু করবেন? WebBrain আপনার স্মৃতি, প্রোফাইল অটোফিল এবং API-কী প্রদানকারী সেটিংসের একটি এন্ড-টু-এন্ড এনক্রিপ্টেড কপি WebBrain Cloud-এ প্রেরণ করবে। চ্যাট ইতিহাস এবং OAuth সাইন-ইন সিঙ্ক করা হয় না।",
   "st.sync.consent.denied": "এনক্রিপ্ট করা সিঙ্ক অনুমতি দেওয়া হয়নি।",
+  'st.providers.webgpu_note.body': '{modelLink} কোনো API এন্ডপয়েন্ট ছাড়াই সম্পূর্ণভাবে Chrome-এ চলে। প্রথম জেনারেশনে প্রায় 4.85 GB ডাউনলোড হয় এবং ব্রাউজারে ক্যাশ করা হয়। সংযোগ পরীক্ষা মডেল ডাউনলোড না করেই প্যাকেজ করা রানটাইম ও হার্ডওয়্যার অ্যাডাপ্টার যাচাই করে।',
 };

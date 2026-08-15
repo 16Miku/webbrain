@@ -1,4 +1,6 @@
 // Hindi — translated from the canonical English locale.
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   'sp.streaming.fallback': 'प्रतिक्रिया स्ट्रीम बाधित हुई; इस Ask टर्न को बिना स्ट्रीमिंग के फिर से आज़माया जा रहा है।',
   'sp.providers.no_setup_group': "किसी सेटअप की आवश्यकता नहीं है",
@@ -134,6 +136,7 @@ export default {
   "sp.slash.teach": "अपने कार्यों को सहेजे गए वर्कफ़्लो के रूप में रिकॉर्ड करें",
   'sp.slash.run_workflow': "आईडी द्वारा सहेजा गया वर्कफ़्लो चलाएँ",
   'sp.workflows.run_prompt': "सहेजे गए वर्कफ़्लो \"{name}\" चलाएँ",
+  "sp.workflows.standalone_unavailable": "यह स्वतंत्र विंडो केवल पूछें मोड के लिए है। सहेजे गए वर्कफ़्लो को क्रिया मोड में चलाने के लिए WebBrain को साइड पैनल में खोलें।",
   'sp.workflows.parameters_for': "\"{name}\" के लिए पैरामीटर दर्ज करें। मानों का उपयोग केवल इस रन के लिए किया जाता है।",
   'sp.workflows.parameter_required': "\"{name}\" आवश्यक है।",
   'sp.slash.save_workflow': "नवीनतम सफल रिकॉर्ड किए गए रन को सहेजें",
@@ -517,6 +520,7 @@ export default {
   'st.display.search.placeholder': "सामान्य सेटिंग्स खोजें",
   'st.display.search.empty': "कोई सामान्य सेटिंग मेल नहीं खाती.",
   'st.display.advanced': "उन्नत",
+  ...getApocalypseModeCopy('hi'),
   'st.display.help_improve.label': "WebBrain को बेहतर बनाने में सहायता करें",
   'st.display.help_improve.desc_html': "योग्य WebBrain क्लाउड टेक्स्ट और टूल इंटरैक्शन को बनाए रखने और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग करने की अनुमति दें। डिफ़ॉल्ट रूप से चालू. इसे बंद करने से वर्तमान वार्तालाप स्थायी रूप से बंद हो जाता है; इसे वापस चालू करना अगली नई बातचीत पर लागू होता है। स्क्रीनशॉट और छवि बाइट्स को WebBrain सुधार डेटाबेस में बरकरार नहीं रखा गया है। <u>स्थानीय-मॉडल और अपनी खुद की एपीआई अनुरोध WebBrain द्वारा कभी एकत्र नहीं किए जाते हैं।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">गोपनीयता नीति →</a>",
   'st.display.clarify_timeout.label': "टाइमआउट स्पष्ट करें",
@@ -1017,4 +1021,5 @@ export default {
   "st.sync.confirm.reset": "क्या एन्क्रिप्टेड क्लाउड कॉपी को इस डिवाइस के मौजूदा WebBrain सेटअप से बदलना है?",
   "st.sync.consent.legacy": "एन्क्रिप्टेड सिंक चालू करें? WebBrain आपकी यादों, प्रोफ़ाइल ऑटोफ़िल और API-कुंजी प्रदाता सेटिंग्स की एंड-टू-एंड एन्क्रिप्टेड कॉपी WebBrain Cloud को भेजेगा। चैट इतिहास और OAuth साइन-इन सिंक नहीं किए जाते।",
   "st.sync.consent.denied": "एन्क्रिप्टेड सिंक अनुमति नहीं दी गई थी.",
+  'st.providers.webgpu_note.body': '{modelLink} बिना किसी API एंडपॉइंट के पूरी तरह Chrome में चलता है। पहली जनरेशन लगभग 4.85 GB डाउनलोड करती है और इसे ब्राउज़र में कैश करती है। कनेक्शन जाँच मॉडल डाउनलोड किए बिना पैकेज किए गए रनटाइम और हार्डवेयर अडैप्टर की जाँच करती है।',
 };
