@@ -21063,6 +21063,7 @@ function minimalWikipediaZimFixture(options = {}) {
       contents: '<p>The United States is a country in North America.</p>',
     });
     entries.push({ namespace: 'C', url: 'USA', title: 'USA', redirectUrl: 'United_States' });
+    entries.push({ namespace: 'C', url: 'Big_Apple', title: 'Big Apple', redirectUrl: 'New_York_City' });
   }
   entries.sort((left, right) => {
     const leftKey = `${left.namespace}/${left.url}`;
@@ -21200,6 +21201,9 @@ test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM
     const [broaderAlias] = await archive.search('usa', { limit: 1 });
     assert.equal(broaderAlias?.title, 'United States', `${label}: exact extended initialism alias lost its destination title`);
     assert.match(broaderAlias?.excerpt || '', /country in North America/i, `${label}: exact extended initialism alias lost its content`);
+    const [semanticAlias] = await archive.search('big apple', { limit: 1 });
+    assert.equal(semanticAlias?.title, 'New York City', `${label}: exact semantic alias lost its destination title`);
+    assert.match(semanticAlias?.excerpt || '', /most populous city/i, `${label}: exact semantic alias lost its destination content`);
   }
 });
 
@@ -21236,6 +21240,23 @@ test('Apocalypse Mode ranks multi-word ZIM titles and preserves embedded provena
     }), {
       language: 'deu', archiveDate: '2026-07-17', source: 'Embedded source', license: 'Embedded license', licenseDeclared: true,
     }, `${label}: generic catalog provenance overrode archive-embedded metadata`);
+  }
+});
+
+test('Apocalypse Mode ZIM ranking is independent of the browser locale', () => {
+  const originalLocaleLowerCase = String.prototype.toLocaleLowerCase;
+  String.prototype.toLocaleLowerCase = function localeLowerCase() {
+    return originalLocaleLowerCase.call(this, 'tr');
+  };
+  try {
+    for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+      const ranked = runtime.rankZimTitleCandidates([
+        { index: 1, url: 'Istanbul', title: 'Istanbul' },
+      ], 'istanbul', 1);
+      assert.equal(ranked[0]?.url, 'Istanbul', `${label}: Turkish browser locale changed ZIM title matching`);
+    }
+  } finally {
+    String.prototype.toLocaleLowerCase = originalLocaleLowerCase;
   }
 });
 

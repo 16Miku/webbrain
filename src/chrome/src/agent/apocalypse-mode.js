@@ -189,8 +189,8 @@ function decodeHtmlText(html) {
 
 function relevantPassage(text, query, maxChars = 2400) {
   if (text.length <= maxChars) return text;
-  const lower = text.toLocaleLowerCase();
-  const offsets = String(query || '').toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u)
+  const lower = text.toLowerCase();
+  const offsets = String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
     .filter(token => token.length >= 3)
     .map(token => lower.indexOf(token))
     .filter(offset => offset >= 0)
@@ -238,28 +238,17 @@ function queryPaths(query) {
 }
 
 function normalizedTitleTerms(value) {
-  return String(value || '').toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
-}
-
-function redirectAliasMatchesDestination(alias, destination) {
-  const aliasTerms = normalizedTitleTerms(alias?.title || alias?.url);
-  const destinationTerms = normalizedTitleTerms(destination?.title || destination?.url);
-  if (aliasTerms.some(term => destinationTerms.includes(term))) return true;
-  const insignificant = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'the', 'to']);
-  const initials = destinationTerms.filter(term => !insignificant.has(term)).map(term => term[0]).join('');
-  if (aliasTerms.length !== 1 || aliasTerms[0].length < 2 || initials.length < 2) return false;
-  return aliasTerms[0] === initials
-    || (aliasTerms[0].startsWith(initials) && aliasTerms[0].length <= initials.length + 2);
+  return String(value || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
 }
 
 export function rankZimTitleCandidates(candidates, query, limit = 3) {
-  const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLocaleLowerCase();
+  const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
   const queryTerms = normalizedTitleTerms(query);
   const minimumMatches = queryTerms.length > 1 ? 2 : 1;
   const unique = new Map();
   for (const candidate of candidates || []) {
     if (!candidate || unique.has(candidate.index)) continue;
-    const normalizedTitle = String(candidate.searchTitle || candidate.searchUrl || candidate.title || candidate.url || '').replace(/\s+/g, '_').toLocaleLowerCase();
+    const normalizedTitle = String(candidate.searchTitle || candidate.searchUrl || candidate.title || candidate.url || '').replace(/\s+/g, '_').toLowerCase();
     const titleTerms = new Set(normalizedTitleTerms(normalizedTitle));
     const matches = queryTerms.filter(term => titleTerms.has(term)).length;
     const fullPrefix = normalizedTitle.startsWith(normalizedQuery);
@@ -267,7 +256,8 @@ export function rankZimTitleCandidates(candidates, query, limit = 3) {
     const exact = normalizedTitle === normalizedQuery;
     unique.set(candidate.index, {
       candidate,
-      score: (exact ? 1000 : 0) + (fullPrefix ? 400 : 0) + matches * 100 - Math.abs(titleTerms.size - queryTerms.length),
+      score: (exact ? 1000 : 0) + (fullPrefix ? 400 : 0) + matches * 100
+        - Math.abs(titleTerms.size - queryTerms.length) - (candidate.searchRedirectAlias ? 1100 : 0),
     });
   }
   return Array.from(unique.values())
@@ -288,9 +278,9 @@ export function mergeZimProvenance(metadata = {}, embedded = {}) {
 }
 
 export function assertWikipediaZimArchive(embedded = {}) {
-  const source = String(embedded.Source || '').toLocaleLowerCase();
-  const name = String(embedded.Name || '').toLocaleLowerCase();
-  const tags = String(embedded.Tags || '').toLocaleLowerCase().split(/[;,]/).map(tag => tag.trim());
+  const source = String(embedded.Source || '').toLowerCase();
+  const name = String(embedded.Name || '').toLowerCase();
+  const tags = String(embedded.Tags || '').toLowerCase().split(/[;,]/).map(tag => tag.trim());
   const wikipediaSource = /(?:^|[/:?\s(])(?:[a-z0-9-]+\.)*wikipedia\.org(?=$|[/:?#\s;,\)])/i.test(source);
   const wikipediaName = /^wikipedia(?:_|$)/i.test(name);
   const wikipediaTag = tags.some(tag => tag === 'wikipedia' || tag === '_category:wikipedia' || tag.startsWith('wikipedia:'));
@@ -446,15 +436,14 @@ export async function openKiwixZim(source, metadata = {}) {
       locatedCandidates.push(...await findPaths(path, Math.max(24, limit * 8)));
     }
     const resolvedCandidates = [];
-    const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLocaleLowerCase();
+    const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
     for (const located of locatedCandidates) {
       const entry = await resolvedEntry(located);
       if (!entry) continue;
       const exactRedirectAlias = located.redirectIndex != null
-        && String(located.url || '').toLocaleLowerCase() === normalizedQuery
-        && redirectAliasMatchesDestination(located, entry);
+        && String(located.url || '').toLowerCase() === normalizedQuery;
       resolvedCandidates.push(exactRedirectAlias
-        ? { ...entry, searchTitle: located.title, searchUrl: located.url }
+        ? { ...entry, searchTitle: located.title, searchUrl: located.url, searchRedirectAlias: true }
         : entry);
     }
     for (const entry of rankZimTitleCandidates(resolvedCandidates, query, limit)) {
