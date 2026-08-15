@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain ialah sambungan pelayar untuk pengguna akhir yang inginkan pembantu AI semasa mereka melayari. Rangka kerja ejen seperti OpenClaw ialah alat pembangun untuk membina pipeline pelayar automatik. Alat berbeza untuk kerja berbeza — dan anda boleh menggunakan kedua-duanya.",
   "faq.label": "FAQ",
   "faq.title": "Soalan Lazim",
+  "faq.page.skip_to_main": "Langkau ke kandungan utama",
   "faq.page.lede": "Jawapan ringkas tentang persediaan, model, pengebilan, keselamatan dan cara WebBrain berfungsi dalam pelayar anda.",
   "faq.page.search": "Cari soalan dan jawapan…",
   "faq.page.no_results": "Tiada jawapan yang sepadan dengan carian itu.",

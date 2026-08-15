@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain là một tiện ích mở rộng trình duyệt dành cho người dùng cuối muốn có trợ lý AI trong khi duyệt web. Các khung tác nhân như OpenClaw là công cụ dành cho nhà phát triển để xây dựng các đường dẫn trình duyệt tự động. Các công cụ khác nhau cho những công việc khác nhau — và bạn có thể sử dụng cả hai.",
   "faq.label": "Câu hỏi thường gặp",
   "faq.title": "Câu hỏi thường gặp",
+  "faq.page.skip_to_main": "Chuyển đến nội dung chính",
   "faq.page.lede": "Câu trả lời nhanh về thiết lập, mô hình, thanh toán, an toàn và cách WebBrain hoạt động trong trình duyệt của bạn.",
   "faq.page.search": "Tìm kiếm câu hỏi và câu trả lời…",
   "faq.page.no_results": "Không có câu trả lời nào khớp với tìm kiếm này.",

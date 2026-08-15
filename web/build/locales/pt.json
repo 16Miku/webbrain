@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain é uma extensão de navegador para usuários finais que desejam um assistente de IA enquanto navegam. Estruturas de agentes como OpenClaw são ferramentas de desenvolvedor para construir pipelines de navegador automatizados. Ferramentas diferentes para trabalhos diferentes — e você pode usar ambas.",
   "faq.label": "Perguntas frequentes",
   "faq.title": "Perguntas frequentes",
+  "faq.page.skip_to_main": "Ir para o conteúdo principal",
   "faq.page.lede": "Respostas rápidas sobre configuração, modelos, cobrança, segurança e como o WebBrain funciona no seu navegador.",
   "faq.page.search": "Pesquisar perguntas e respostas…",
   "faq.page.no_results": "Nenhuma resposta corresponde a essa pesquisa.",

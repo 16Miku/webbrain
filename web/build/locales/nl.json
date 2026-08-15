@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain is een browser extensie voor eindgebruikers die een AI-assistent willen tijdens het browsen. Agentframeworks zoals OpenClaw zijn ontwikkelaarstools voor het bouwen van geautomatiseerde browserpipelines. Verschillende tools voor verschillende klussen — en u kunt beide gebruiken.",
   "faq.label": "FAQ",
   "faq.title": "Veelgestelde Vragen",
+  "faq.page.skip_to_main": "Ga naar de hoofdinhoud",
   "faq.page.lede": "Snelle antwoorden over installatie, modellen, facturering, veiligheid en hoe WebBrain in je browser werkt.",
   "faq.page.search": "Vragen en antwoorden doorzoeken…",
   "faq.page.no_results": "Geen antwoorden komen overeen met deze zoekopdracht.",

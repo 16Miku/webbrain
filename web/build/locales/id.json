@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain adalah ekstensi peramban untuk pengguna akhir yang menginginkan asisten AI saat menjelajah. Kerangka agen seperti OpenClaw adalah alat pengembang untuk membangun pipeline peramban otomatis. Alat yang berbeda untuk pekerjaan yang berbeda — dan Anda bisa menggunakan keduanya.",
   "faq.label": "FAQ",
   "faq.title": "Pertanyaan yang Sering Diajukan",
+  "faq.page.skip_to_main": "Lewati ke konten utama",
   "faq.page.lede": "Jawaban singkat tentang penyiapan, model, penagihan, keamanan, dan cara kerja WebBrain di browser Anda.",
   "faq.page.search": "Cari pertanyaan dan jawaban…",
   "faq.page.no_results": "Tidak ada jawaban yang cocok dengan pencarian tersebut.",

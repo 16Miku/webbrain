@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain est une extension navigateur pour les utilisateurs qui veulent un assistant IA pendant qu'ils naviguent. Les frameworks comme OpenClaw sont des outils pour les développeurs qui construisent des pipelines automatisés. Des outils différents pour des besoins différents — et vous pouvez utiliser les deux.",
   "faq.label": "FAQ",
   "faq.title": "Foire aux questions",
+  "faq.page.skip_to_main": "Aller au contenu principal",
   "faq.page.lede": "Réponses rapides sur la configuration, les modèles, la facturation, la sécurité et le fonctionnement de WebBrain dans votre navigateur.",
   "faq.page.search": "Rechercher dans les questions et réponses…",
   "faq.page.no_results": "Aucune réponse ne correspond à cette recherche.",

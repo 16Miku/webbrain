@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain 是面向终端用户的浏览器扩展,适合希望在浏览时有 AI 助手陪伴的人。像 OpenClaw 这样的代理框架则是开发者用来构建自动化浏览器流水线的工具。不同工具适合不同工作 —— 两者可以并用。",
   "faq.label": "常见问题",
   "faq.title": "常见问题解答",
+  "faq.page.skip_to_main": "跳到主要内容",
   "faq.page.lede": "快速了解设置、模型、账单、安全性以及 WebBrain 在浏览器中的工作方式。",
   "faq.page.search": "搜索问题和答案…",
   "faq.page.no_results": "没有符合该搜索的答案。",

@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain, gezinirken bir AI asistanı isteyen son kullanıcılar için bir tarayıcı uzantısıdır. OpenClaw gibi ajan çatıları, otomatik tarayıcı işlem hatları inşa eden geliştiricilere yönelik araçlardır. Farklı işler için farklı araçlar — ve her ikisini de kullanabilirsin.",
   "faq.label": "SSS",
   "faq.title": "Sık Sorulan Sorular",
+  "faq.page.skip_to_main": "Ana içeriğe geç",
   "faq.page.lede": "Kurulum, modeller, faturalandırma, güvenlik ve WebBrain'in tarayıcınızda nasıl çalıştığı hakkında hızlı yanıtlar.",
   "faq.page.search": "Soru ve yanıtlarda ara…",
   "faq.page.no_results": "Bu aramayla eşleşen yanıt yok.",

@@ -241,6 +241,7 @@
   "compare.disclaimer": "WebBrain ist eine Browser-Erweiterung für Endbenutzer, die einen KI-Assistenten beim Browsen wollen. Agent-Frameworks wie OpenClaw sind Entwicklertools zum Bauen automatisierter Browser-Pipelines. Verschiedene Tools für verschiedene Aufgaben — und Sie können beide nutzen.",
   "faq.label": "FAQ",
   "faq.title": "Häufig gestellte Fragen",
+  "faq.page.skip_to_main": "Zum Hauptinhalt springen",
   "faq.page.lede": "Schnelle Antworten zu Einrichtung, Modellen, Abrechnung, Sicherheit und dazu, wie WebBrain in Ihrem Browser arbeitet.",
   "faq.page.search": "Fragen und Antworten durchsuchen…",
   "faq.page.no_results": "Keine Antworten entsprechen dieser Suche.",

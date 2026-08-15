@@ -191,6 +191,7 @@ const FAQ_CATEGORY = {
 const FAQ_PAGE_KEYS = [
   'faq.label',
   'faq.title',
+  'faq.page.skip_to_main',
   'faq.page.lede',
   'faq.page.search',
   'faq.page.no_results',
