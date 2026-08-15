@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': '현재 페이지의 기본 인쇄 대화상자 열기',
+  'sp.print.error': '인쇄 대화상자를 열 수 없습니다: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '응답 스트리밍이 중단되었습니다. 이 Ask 요청을 스트리밍 없이 다시 시도합니다.',
   'sp.providers.no_setup_group': '설정 필요 없음',

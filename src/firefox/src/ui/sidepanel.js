@@ -544,6 +544,7 @@ const SLASH_COMMANDS = [
   { value: '/compact', usage: '/compact [prompt]', descriptionKey: 'sp.slash.compact', action: 'compact', acceptsPayload: true },
   { value: '/verbose', usage: '/verbose', descriptionKey: 'sp.slash.verbose', action: 'toggle', outOfBand: true },
   { value: '/reset', usage: '/reset', descriptionKey: 'sp.slash.reset', action: 'reset' },
+  { value: '/print', usage: '/print', descriptionKey: 'sp.slash.print', action: 'print' },
   {
     value: '/screenshot',
     usage: '/screenshot',
@@ -7276,6 +7277,19 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       await renderClearedConversationForTab(tabId);
     } finally {
       setConversationClearInProgress(tabId, false);
+    }
+    return '';
+  }
+
+  if (command.value === '/print') {
+    try {
+      const tab = tabId == null ? null : await browser.tabs.get(tabId);
+      if (currentTabId !== tabId || !tab?.active) return '';
+      await browser.tabs.executeScript(tabId, { code: 'window.print();' });
+    } catch (error) {
+      if (currentTabId === tabId) {
+        showComposerToast(t('sp.print.error', { msg: error?.message || 'unknown error' }), { duration: 5000 });
+      }
     }
     return '';
   }

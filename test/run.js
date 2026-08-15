@@ -23494,6 +23494,43 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
   }
 });
 
+test('/print opens the current page native print dialog in both builds', () => {
+  const docs = fs.readFileSync(path.join(ROOT, 'docs/slash-commands.md'), 'utf8');
+  assert.match(docs, /\| `\/print` \| Open the current page's native print dialog \|/);
+
+  for (const [label, panelRel, localeRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales/en.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
+    const slash = loadSlashCommandRuntime(panelRel);
+    const invocation = slash.parseSlashInvocation('/print');
+
+    assert.equal(invocation.command.value, '/print', `${label}: /print should be discoverable`);
+    assert.equal(invocation.command.usage, '/print', `${label}: /print should not advertise format or selection arguments`);
+    assert.equal(invocation.action, 'print', `${label}: /print action missing`);
+    assert.equal(slash.slashInvocationIsOutOfBand(invocation), false, `${label}: /print should wait until an active run finishes`);
+    assert.equal(slash.parseSlashInvocation('/print selected')?.error, 'invalid-usage', `${label}: /print should reject unsupported selection or format arguments`);
+    assert.match(locale, /'sp\.slash\.print': 'Open the current page’s native print dialog'/, `${label}: /print description missing`);
+    assert.match(locale, /'sp\.print\.error': 'Could not open the print dialog: \{msg\}'/, `${label}: /print failure message missing`);
+
+    const routeStart = panel.indexOf("if (command.value === '/print') {");
+    assert.notEqual(routeStart, -1, `${label}: /print parser route missing`);
+    const routeEnd = panel.indexOf("if (command.value === '/screenshot'", routeStart);
+    assert.notEqual(routeEnd, -1, `${label}: /print parser route boundary missing`);
+    const route = panel.slice(routeStart, routeEnd);
+    assert.match(route, /tabs\.get\(tabId\)/, `${label}: /print should validate the initiating tab`);
+    assert.match(route, /currentTabId !== tabId \|\| !tab\?\.active/, `${label}: /print should not target a stale or background tab`);
+    assert.match(route, /sp\.print\.error/, `${label}: /print failures should be visible`);
+    if (label === 'chrome') {
+      assert.match(route, /chrome\.scripting\.executeScript\(\{[\s\S]*?target: \{ tabId \},[\s\S]*?func: \(\) => window\.print\(\)/, 'chrome: /print should invoke the page print dialog through MV3 scripting');
+    } else {
+      assert.match(route, /browser\.tabs\.executeScript\(tabId, \{ code: 'window\.print\(\);' \}\)/, 'firefox: /print should invoke the page print dialog through MV2 scripting');
+    }
+  }
+});
+
 test('/watch slash parser keeps Chrome and Firefox validation aligned', async () => {
   const chromeWatch = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/watch-command.js')).href);
   const firefoxWatch = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/watch-command.js')).href);

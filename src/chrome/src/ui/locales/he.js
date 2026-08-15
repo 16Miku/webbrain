@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'פתיחת תיבת הדו־שיח המקורית להדפסת הדף הנוכחי',
+  'sp.print.error': 'לא ניתן לפתוח את תיבת הדו־שיח להדפסה: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'הזרמת התשובה נקטעה; מתבצע ניסיון חוזר לתור Ask הזה ללא הזרמה.',
   'sp.providers.no_setup_group': 'ללא הגדרה',
