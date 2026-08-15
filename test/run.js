@@ -21058,6 +21058,10 @@ function minimalWikipediaZimFixture(options = {}) {
       contents: '<p>YouTube is an online video sharing platform.</p>',
     });
     entries.push({
+      namespace: 'C', url: 'YouTube_TV', title: 'YouTube TV', mimeType: 0,
+      contents: '<p>YouTube TV is a streaming television service.</p>',
+    });
+    entries.push({
       namespace: 'C', url: 'OpenAI', title: 'OpenAI', mimeType: 0,
       contents: '<p>OpenAI is an artificial intelligence research organization.</p>',
     });
@@ -21198,6 +21202,9 @@ test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM
     const [combinedCase] = await archive.search('youtube', { limit: 1 });
     assert.equal(combinedCase?.title, 'YouTube', `${label}: lowercase query missed combined leading and internal capitals`);
     assert.match(combinedCase?.excerpt || '', /video sharing platform/i, `${label}: combined-case lookup returned the wrong article`);
+    const [crossTokenCase] = await archive.search('youtube tv', { limit: 1 });
+    assert.equal(crossTokenCase?.title, 'YouTube TV', `${label}: lowercase query missed mixed capitalization across tokens`);
+    assert.match(crossTokenCase?.excerpt || '', /streaming television service/i, `${label}: cross-token mixed-case lookup returned the wrong article`);
     const [multipleCapitals] = await archive.search('openai', { limit: 1 });
     assert.equal(multipleCapitals?.title, 'OpenAI', `${label}: lowercase query missed multiple internal capitals`);
     assert.match(multipleCapitals?.excerpt || '', /research organization/i, `${label}: multi-capital lookup returned the wrong article`);
@@ -21659,6 +21666,44 @@ test('Apocalypse Mode OPFS deletion verifies removal and treats an absent file a
   }
 });
 
+test('Apocalypse Mode OPFS storage reuses one writable for a multi-piece batch', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const operations = [];
+    let writableCount = 0;
+    const handle = {
+      async createWritable(options) {
+        writableCount += 1;
+        operations.push(['open', options]);
+        return {
+          async seek(offset) { operations.push(['seek', offset]); },
+          async write(bytes) { operations.push(['write', ...bytes]); },
+          async truncate(size) { operations.push(['truncate', size]); },
+          async close() { operations.push(['close']); },
+          async abort() { operations.push(['abort']); },
+        };
+      },
+    };
+    const storage = runtime.createOpfsArchiveStorage({
+      async getDirectory() {
+        return { async getDirectoryHandle() { return { async getFileHandle() { return handle; } }; } };
+      },
+    });
+    const writer = await storage.createWriter({ kind: 'opfs', key: 'archive.zim' });
+    await writer.write(0, Uint8Array.of(1, 2));
+    await writer.write(2, Uint8Array.of(3, 4));
+    await writer.truncate(4);
+    await writer.close();
+
+    assert.equal(writableCount, 1, `${label}: OPFS reopened its temporary writable between pieces`);
+    assert.deepEqual(operations, [
+      ['open', { keepExistingData: true }],
+      ['seek', 0], ['write', 1, 2],
+      ['seek', 2], ['write', 3, 4],
+      ['truncate', 4], ['close'],
+    ], `${label}: OPFS batch writes were not committed through one random-access stream`);
+  }
+});
+
 test('Apocalypse Mode automatic policy checks daily but still requires confirmation before download', async () => {
   const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
     <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
@@ -21878,6 +21923,9 @@ test('Apocalypse Mode processes every verified piece in one background wake', as
     const ranges = [];
     const writes = [];
     const scheduled = [];
+    let writersOpened = 0;
+    let writersClosed = 0;
+    let writersAborted = 0;
     const store = {
       async getConfig() { return { enabled: true }; },
       async listArchives() { return [...records.values()].map(record => ({ ...record })); },
@@ -21886,7 +21934,17 @@ test('Apocalypse Mode processes every verified piece in one background wake', as
     };
     const manager = runtime.createApocalypseArchiveManager({
       store,
-      storage: { async write(_target, offset, bytes) { writes.push([offset, ...bytes]); } },
+      storage: {
+        async createWriter() {
+          writersOpened += 1;
+          return {
+            async write(offset, bytes) { writes.push([offset, ...bytes]); },
+            async truncate() {},
+            async close() { writersClosed += 1; },
+            async abort() { writersAborted += 1; },
+          };
+        },
+      },
       fetchImpl: async (_url, request) => {
         ranges.push(request.headers.Range);
         const offset = Number(request.headers.Range.match(/bytes=(\d+)-/)[1]);
@@ -21908,7 +21966,59 @@ test('Apocalypse Mode processes every verified piece in one background wake', as
     assert.equal(result.archive?.status, 'ready', `${label}: one wake did not finish all available pieces`);
     assert.deepEqual(ranges, ['bytes=0-0', 'bytes=1-1', 'bytes=2-2'], `${label}: one wake skipped or repeated a piece`);
     assert.deepEqual(writes, [[0, 1], [1, 2], [2, 3]], `${label}: continuous pieces were written at the wrong offsets`);
+    assert.equal(writersOpened, 1, `${label}: one writable was not reused for the complete piece batch`);
+    assert.equal(writersClosed, 1, `${label}: the successful write batch was not committed exactly once`);
+    assert.equal(writersAborted, 0, `${label}: the successful write batch was unexpectedly aborted`);
     assert.deepEqual(scheduled, [], `${label}: continuous download paid an alarm delay between pieces`);
+  }
+});
+
+test('Apocalypse Mode rolls back an interrupted OPFS write session before resuming', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'interrupted-write', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['hash-1', 'hash-2', 'hash-3'], downloadUrl: 'https://example.test/archive.zim',
+      target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 2, bytesDownloaded: 2,
+      writeSessionStartPiece: 0, writeSessionStartBytes: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    const ranges = [];
+    const writes = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {
+        async createWriter() {
+          return {
+            async write(offset, bytes) { writes.push([offset, ...bytes]); },
+            async close() {},
+            async abort() {},
+          };
+        },
+      },
+      fetchImpl: async (_url, request) => {
+        ranges.push(request.headers.Range);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+      },
+      digestHex: async () => 'hash-1',
+      schedule() {},
+      randomId: () => 'recovery-lease',
+      now: () => 1000,
+      maxPiecesPerWake: 1,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.pieceIndex, 1, `${label}: interrupted cursor was not rolled back before resuming`);
+    assert.deepEqual(ranges, ['bytes=0-0'], `${label}: resume trusted bytes from an uncommitted write session`);
+    assert.deepEqual(writes, [[0, 1]], `${label}: resumed write used the wrong durable offset`);
+    assert.equal(records.get(record.id).writeSessionStartPiece, null, `${label}: committed batch left a recovery marker behind`);
   }
 });
 
@@ -42777,6 +42887,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(background, /message\?\.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE/);
   assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
   assert.match(background, /normalized\.status === 'error'[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY[\s\S]*?WEBGPU_VISION_ENABLED_KEY/);
+  assert.match(background, /async function resumeInterruptedVisionPreload\(\)[\s\S]*?WEBGPU_VISION_ENABLED_KEY[\s\S]*?state\.status === 'starting'[\s\S]*?state\.status === 'downloading'[\s\S]*?enableApocalypseVisionModel\(\)/,
+    'Chrome startup must resume an enabled, incomplete local-vision preload');
+  assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
+    'local-vision recovery must run with the service-worker startup restoration');
   assert.doesNotMatch(background, /apocalypseController\.handle\('status'\)/,
     'service-worker startup must not override a later local-vision opt-out');
   assert.match(worker, /let visionRuntime = null/);

@@ -206,30 +206,41 @@ function queryPaths(query) {
   const pathTokens = normalized.split('_').filter(Boolean);
   const titleCasedTokens = pathTokens.map(token => token[0].toUpperCase() + token.slice(1));
   const titleCased = titleCasedTokens.join('_');
-  const mixedCase = [];
-  for (let tokenIndex = 0; tokenIndex < pathTokens.length && mixedCase.length < 64; tokenIndex += 1) {
-    const token = pathTokens[tokenIndex];
+  const variantsByToken = pathTokens.map((token, tokenIndex) => {
+    const variants = [titleCasedTokens[tokenIndex], token.toUpperCase()];
     const internalCount = Math.min(12, Math.max(0, token.length - 1));
     const maskLimit = 2 ** internalCount;
-    for (let capitalCount = 1; capitalCount <= internalCount && mixedCase.length < 64; capitalCount += 1) {
-      for (let mask = 1; mask < maskLimit && mixedCase.length < 64; mask += 1) {
+    for (let capitalCount = 1; capitalCount <= internalCount && variants.length < 64; capitalCount += 1) {
+      for (let mask = 1; mask < maskLimit && variants.length < 64; mask += 1) {
         let bits = mask;
         let setBits = 0;
         while (bits) { setBits += bits & 1; bits >>>= 1; }
         if (setBits !== capitalCount) continue;
-        for (const base of [token, titleCasedTokens[tokenIndex]]) {
-          if (mixedCase.length >= 64) break;
+        for (const base of [titleCasedTokens[tokenIndex], token]) {
+          if (variants.length >= 64) break;
           const characters = [...base];
           for (let bit = 0; bit < internalCount; bit += 1) {
             if (mask & (1 << bit)) characters[bit + 1] = characters[bit + 1].toUpperCase();
           }
-          const parts = [...titleCasedTokens];
-          parts[tokenIndex] = characters.join('');
-          mixedCase.push(parts.join('_'));
+          variants.push(characters.join(''));
         }
       }
     }
+    return Array.from(new Set(variants));
+  });
+  const mixedCase = [];
+  function combineTokenVariants(tokenIndex, parts) {
+    if (mixedCase.length >= 128) return;
+    if (tokenIndex >= variantsByToken.length) {
+      mixedCase.push(parts.join('_'));
+      return;
+    }
+    for (const variant of variantsByToken[tokenIndex]) {
+      combineTokenVariants(tokenIndex + 1, [...parts, variant]);
+      if (mixedCase.length >= 128) break;
+    }
   }
+  combineTokenVariants(0, []);
   const tokens = normalized.split('_').filter(token => token.length >= 3);
   return Array.from(new Set([
     normalized, capitalized, titleCased, normalized.toUpperCase(), ...mixedCase,
@@ -622,14 +633,40 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       await fileHandle(target, false, mode);
       return true;
     },
-    async write(target, offset, bytes) {
+    async createWriter(target) {
       const handle = await fileHandle(target, true, 'readwrite');
       const writable = await handle.createWritable({ keepExistingData: true });
+      let settled = false;
+      return {
+        async write(offset, bytes) {
+          if (settled) throw new Error('Archive writer is already closed.');
+          await writable.seek(offset);
+          await writable.write(bytes);
+        },
+        async truncate(size) {
+          if (settled) throw new Error('Archive writer is already closed.');
+          await writable.truncate(size);
+        },
+        async close() {
+          if (settled) return;
+          await writable.close();
+          settled = true;
+        },
+        async abort(reason) {
+          if (settled) return;
+          await writable.abort(reason);
+          settled = true;
+        },
+      };
+    },
+    async write(target, offset, bytes) {
+      const writer = await this.createWriter(target);
       try {
-        await writable.seek(offset);
-        await writable.write(bytes);
-      } finally {
-        await writable.close();
+        await writer.write(offset, bytes);
+        await writer.close();
+      } catch (error) {
+        await writer.abort(error).catch(() => {});
+        throw error;
       }
     },
     async remove(target) {
@@ -655,12 +692,13 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       return await (await fileHandle(target, false, 'read')).getFile();
     },
     async truncate(target, size) {
-      const handle = await fileHandle(target, false, 'readwrite');
-      const writable = await handle.createWritable({ keepExistingData: true });
+      const writer = await this.createWriter(target);
       try {
-        await writable.truncate(size);
-      } finally {
-        await writable.close();
+        await writer.truncate(size);
+        await writer.close();
+      } catch (error) {
+        await writer.abort(error).catch(() => {});
+        throw error;
       }
     },
     async estimate() {
@@ -889,9 +927,55 @@ export function createApocalypseArchiveManager(options = {}) {
       record = { ...record, status: 'downloading', leaseToken, leaseUntil: timestamp + 5 * 60_000, updatedAt: timestamp };
       await store.putArchive(record);
     }
+    if (record.writeSessionStartPiece != null) {
+      const recovered = {
+        ...record,
+        pieceIndex: Math.max(0, Number(record.writeSessionStartPiece) || 0),
+        bytesDownloaded: Math.max(0, Number(record.writeSessionStartBytes) || 0),
+        writeSessionStartPiece: null,
+        writeSessionStartBytes: null,
+        updatedAt: now(),
+      };
+      const saved = await putArchiveIfCurrent(store, recovered, {
+        status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
+      });
+      if (!saved) return { processed: false, reason: 'cancelled' };
+      record = recovered;
+    }
+    let writer = null;
+    let usedWriteSession = false;
+    let writeSessionCommitted = false;
+    async function abortWriteSession(reason) {
+      if (!writer) return;
+      const activeWriter = writer;
+      writer = null;
+      if (typeof activeWriter.abort === 'function') await activeWriter.abort(reason);
+    }
+    async function closeWriteSession() {
+      if (!writer) return;
+      const activeWriter = writer;
+      writer = null;
+      await activeWriter.close();
+      writeSessionCommitted = true;
+    }
     try {
       if (record.target?.kind === 'file-handle' && typeof storage.ensurePermission === 'function') {
         await storage.ensurePermission(record.target, 'readwrite');
+      }
+      if (typeof storage.createWriter === 'function') {
+        const marked = {
+          ...record,
+          writeSessionStartPiece: Number(record.pieceIndex) || 0,
+          writeSessionStartBytes: Number(record.bytesDownloaded) || 0,
+          updatedAt: now(),
+        };
+        const saved = await putArchiveIfCurrent(store, marked, {
+          status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
+        });
+        if (!saved) return { processed: false, reason: 'cancelled' };
+        record = marked;
+        writer = await storage.createWriter(record.target, record);
+        usedWriteSession = true;
       }
       let piecesProcessed = 0;
       while (true) {
@@ -917,22 +1001,34 @@ export function createApocalypseArchiveManager(options = {}) {
       if (!ownsDownloadClaim(current, generation, leaseToken, currentConfig)) {
         return { processed: false, reason: 'cancelled' };
       }
-      await storage.write(record.target, offset, bytes, record);
+      if (writer) await writer.write(offset, bytes);
+      else await storage.write(record.target, offset, bytes, record);
       current = await store.getArchive(record.id);
       currentConfig = await store.getConfig();
       if (!ownsDownloadClaim(current, generation, leaseToken, currentConfig)) {
+        await abortWriteSession(new Error('Archive download was cancelled.')).catch(() => {});
         if (!current) await storage.remove(record.target, record).catch(() => {});
         return { processed: false, reason: 'cancelled' };
       }
       const bytesDownloaded = offset + bytes.byteLength;
       const finished = bytesDownloaded >= Number(record.size);
       const continueInWake = !finished && piecesProcessed + 1 < maxPiecesPerWake;
-      if (finished && typeof storage.truncate === 'function') await storage.truncate(record.target, Number(record.size));
+      if (!continueInWake && writer) {
+        if (finished && typeof writer.truncate === 'function') await writer.truncate(Number(record.size));
+        await closeWriteSession();
+      }
+      if (finished && !usedWriteSession && typeof storage.truncate === 'function') {
+        await storage.truncate(record.target, Number(record.size));
+      }
       if (finished && typeof storage.open === 'function') {
         await openKiwixZim(await storage.open(record.target), record);
       }
       const next = {
         ...current,
+        ...(usedWriteSession ? {
+          writeSessionStartPiece: continueInWake ? current.writeSessionStartPiece : null,
+          writeSessionStartBytes: continueInWake ? current.writeSessionStartBytes : null,
+        } : {}),
         status: finished ? 'ready' : continueInWake ? 'downloading' : 'queued',
         leaseToken: continueInWake ? leaseToken : '',
         leaseUntil: continueInWake ? now() + 5 * 60_000 : 0,
@@ -948,7 +1044,12 @@ export function createApocalypseArchiveManager(options = {}) {
       const saved = await putArchiveIfCurrent(store, next, {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
-      if (!saved) return { processed: false, reason: 'cancelled' };
+      if (!saved) {
+        if (writeSessionCommitted && !await store.getArchive(record.id)) {
+          await storage.remove(record.target, record).catch(() => {});
+        }
+        return { processed: false, reason: 'cancelled' };
+      }
       piecesProcessed += 1;
       if (continueInWake) {
         record = next;
@@ -959,16 +1060,27 @@ export function createApocalypseArchiveManager(options = {}) {
       return { processed: true, archive: next };
       }
     } catch (error) {
+      await abortWriteSession(error).catch(() => {});
       const current = await store.getArchive(record.id);
       if (!current || current.generation !== generation || current.leaseToken !== leaseToken || controller.signal.aborted) {
+        if (!current && writeSessionCommitted) await storage.remove(record.target, record).catch(() => {});
         return { processed: false, reason: 'cancelled' };
       }
+      const rollbackWriteSession = current.writeSessionStartPiece != null && !writeSessionCommitted;
       const permissionRequired = isFilePermissionError(error, current.target);
       const retryCount = permissionRequired ? (Number(current.retryCount) || 0) : (Number(current.retryCount) || 0) + 1;
       const delay = retryDelay(retryCount);
       const retrying = !permissionRequired && retryCount < MAX_RETRY_ATTEMPTS;
       const next = {
         ...current,
+        ...(rollbackWriteSession ? {
+          pieceIndex: Math.max(0, Number(current.writeSessionStartPiece) || 0),
+          bytesDownloaded: Math.max(0, Number(current.writeSessionStartBytes) || 0),
+        } : {}),
+        ...(current.writeSessionStartPiece != null ? {
+          writeSessionStartPiece: null,
+          writeSessionStartBytes: null,
+        } : {}),
         ...(permissionRequired ? {} : advanceDownloadMirror(current)),
         status: retrying ? 'retrying' : 'error',
         leaseToken: '',
@@ -987,6 +1099,7 @@ export function createApocalypseArchiveManager(options = {}) {
       if (nextDelay != null) schedule(nextDelay);
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
     } finally {
+      await abortWriteSession(new Error('Archive write session ended before commit.')).catch(() => {});
       if (controllers.get(record.id) === controller) controllers.delete(record.id);
     }
     } finally {

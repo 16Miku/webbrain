@@ -151,24 +151,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function enableApocalypseVisionModel() {
   const result = await providerManager.enableAndPreloadWebgpuVision();
   if (result?.ok) return result;
-  await chrome.storage.local.set({
-    [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
-      modelId: WEBGPU_VISION_MODEL_ID,
-      status: 'error',
-      progress: 0,
-      loaded: 0,
-      total: 0,
-      error: String(result?.error || 'The local vision model download could not be started.').slice(0, 500),
-      updatedAt: Date.now(),
-    },
+  await persistVisionDownloadState({
+    modelId: WEBGPU_VISION_MODEL_ID,
+    status: 'error',
+    progress: 0,
+    loaded: 0,
+    total: 0,
+    error: String(result?.error || 'The local vision model download could not be started.').slice(0, 500),
+    updatedAt: Date.now(),
   }).catch(() => {});
   return result;
+}
+
+async function resumeInterruptedVisionPreload() {
+  const stored = await chrome.storage.local.get([
+    WEBGPU_VISION_ENABLED_KEY,
+    WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+  ]);
+  const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
+  const incomplete = state?.modelId === WEBGPU_VISION_MODEL_ID
+    && (state.status === 'starting' || state.status === 'downloading');
+  if (stored[WEBGPU_VISION_ENABLED_KEY] !== true || !incomplete) return { resumed: false };
+  return await enableApocalypseVisionModel();
 }
 Promise.all([
   apocalypseController.syncUpdateSchedule(),
   apocalypseController.syncDownloadSchedule(),
+  resumeInterruptedVisionPreload(),
 ]).catch((error) => {
-  console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
+  console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
 const agent = new Agent(providerManager);
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
