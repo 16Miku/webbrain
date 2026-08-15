@@ -60414,7 +60414,7 @@ test('text tool-call parser is production code with format and allowlist coverag
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
     'chrome and firefox tool-call parsers must remain byte-identical',
   );
-  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page']);
+  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page', 'scroll']);
   const cases = [
     {
       label: 'tool_call JSON with nested arguments',
@@ -60438,6 +60438,11 @@ test('text tool-call parser is production code with format and allowlist coverag
         name: 'read_page',
         args: { includeChrome: false, offset: 4000, limit: 6000 },
       }],
+    },
+    {
+      label: 'LFM2.5 deterministic scrolldown alias',
+      raw: '<|tool_call_start|>[scrolldown()]<|tool_call_end|>',
+      expected: [{ name: 'scroll', args: { direction: 'down' } }],
     },
     {
       label: 'LFM2.5 native batch with escaped strings and nested JSON',
@@ -60630,6 +60635,10 @@ test('text tool-call parser is production code with format and allowlist coverag
         '<|tool_call_start|>[read_page(offset=0, offset=1)]<|tool_call_end|>',
       ],
       [
+        'directional alias contradicts its explicit direction',
+        '<|tool_call_start|>[scrolldown(direction=\'up\')]<|tool_call_end|>',
+      ],
+      [
         'narrated native call',
         'For example: <|tool_call_start|>[read_page()]<|tool_call_end|>',
       ],
@@ -60644,6 +60653,14 @@ test('text tool-call parser is production code with format and allowlist coverag
         `unsafe LFM2.5 call was dispatched (${label})`,
       );
     }
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '<|tool_call_start|>[scrolldown()]<|tool_call_end|>',
+        new Set(['read_page']),
+      ),
+      [],
+      'LFM2.5 scroll alias bypassed the canonical scroll allowlist',
+    );
 
     // A parsed call replaces the model's prose entirely (the caller sets
     // result.content = null), so a call the model was describing rather than
