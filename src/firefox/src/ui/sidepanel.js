@@ -6121,7 +6121,7 @@ function appendProviderPickerGroup(label) {
   providerPickerMenu.appendChild(el);
 }
 
-function appendProviderPickerOption(id, name, meta) {
+function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   if (!providerPickerMenu) return;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -6132,7 +6132,7 @@ function appendProviderPickerOption(id, name, meta) {
 
   // Icons only in the open menu — closed header stays text-only so the
   // WebBrain mark (and other brand chips) don't compete with the chrome.
-  const iconSrc = providerIconUrl(id);
+  const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');
     img.className = 'provider-icon provider-icon-sm';
@@ -6372,7 +6372,7 @@ async function loadProviders() {
         opt.textContent = `${name} — ${t('sp.providers.active')}`;
         activeGroup.appendChild(opt);
         providerPickerLabelById.set(id, name);
-        appendProviderPickerOption(id, name, t('sp.providers.active'));
+        appendProviderPickerOption(id, name, t('sp.providers.active'), config.sourceProviderId || id);
       }
       providerSelect.appendChild(activeGroup);
     }
