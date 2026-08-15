@@ -21167,6 +21167,29 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
   await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
 });
 
+test('Apocalypse Mode short-circuits exact ZIM casing probes and bounds directory reads', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const padded = new Blob([minimalWikipediaZimFixture(), new Uint8Array(128 * 1024)]);
+    const reads = [];
+    const source = {
+      size: padded.size,
+      slice(start, end) {
+        reads.push([start, end]);
+        return padded.slice(start, end);
+      },
+    };
+    const archive = await runtime.openKiwixZim(source, {});
+    reads.length = 0;
+
+    const [result] = await archive.search('alan turing', { limit: 1 });
+
+    assert.equal(result?.title, 'Alan Turing', `${label}: exact common-case search lost its result`);
+    assert.ok(reads.length < 20, `${label}: exact common-case search expanded through every casing variant`);
+    assert.ok(reads.every(([start, end]) => end - start <= 4 * 1024),
+      `${label}: ordinary directory lookup still issued a 64 KiB read`);
+  }
+});
+
 test('Apocalypse Mode maps Bengali and Tagalog ZIM languages to canonical Wikipedia hosts', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     for (const [language, host] of [['ben', 'bn'], ['tgl', 'tl']]) {
@@ -21407,6 +21430,34 @@ test('Apocalypse Mode pause and resume lose atomically to concurrent archive del
         `${label}: ${action} did not guard the original record state`);
       assert.equal(records.has(record.id), false, `${label}: ${action} recreated concurrently deleted metadata`);
       assert.deepEqual(scheduled, [], `${label}: cancelled ${action} scheduled stale work`);
+    }
+  }
+});
+
+test('Apocalypse Mode lifecycle actions cannot revive a deleting archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const action of ['pause', 'resume', 'disable']) {
+      const record = { id: `${action}-deleting`, status: 'deleting', generation: 9, updatedAt: 321 };
+      const records = new Map([[record.id, record]]);
+      let writes = 0;
+      const config = { enabled: true };
+      const store = {
+        async getConfig() { return { ...config }; },
+        async setConfig(next) { Object.assign(config, next); return { ...config }; },
+        async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+        async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+        async putArchive(next) { writes += 1; records.set(next.id, { ...next }); return next; },
+        async putArchiveIfCurrent() { writes += 1; throw new Error('deleting record was rewritten'); },
+      };
+      const manager = runtime.createApocalypseArchiveManager({ store, storage: {}, schedule() {} });
+
+      const result = action === 'disable' ? await manager.setEnabled(false) : await manager[action](record.id);
+
+      assert.equal(records.get(record.id)?.status, 'deleting', `${label}: ${action} revived a deleting archive`);
+      assert.equal(records.get(record.id)?.generation, 9, `${label}: ${action} changed deletion ownership`);
+      assert.equal(writes, 0, `${label}: ${action} wrote stale metadata over deletion`);
+      if (action === 'disable') assert.equal(result.enabled, false, `${label}: disabling did not persist the global setting`);
+      else assert.equal(result?.status, 'deleting', `${label}: ${action} did not return the current deleting state`);
     }
   }
 });
@@ -22192,6 +22243,46 @@ test('Apocalypse Mode cancellation removes a partial imported archive', async ()
     assert.equal(records.has('import-1'), false, `${label}: cancelled import metadata was retained`);
     assert.equal(writes.length, 1, `${label}: import continued writing after cancellation`);
     assert.equal(removals.length, 1, `${label}: partial imported bytes were not removed`);
+  }
+});
+
+test('Apocalypse Mode imports every chunk through one OPFS writable', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const writes = [];
+    let writersOpened = 0;
+    let writersClosed = 0;
+    let writersAborted = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      async estimate() { return {}; },
+      async createWriter() {
+        writersOpened += 1;
+        return {
+          async write(offset, bytes) { writes.push([offset, bytes.byteLength]); },
+          async truncate() {},
+          async close() { writersClosed += 1; },
+          async abort() { writersAborted += 1; },
+        };
+      },
+      async remove() {},
+    };
+    const source = new Blob([minimalWikipediaZimFixture(), new Uint8Array(2 * 1024 * 1024)]);
+
+    const result = await runtime.importKiwixArchive(source, { filename: 'batched-import.zim' }, {
+      store, storage, id: 'batched-import', chunkSize: 1024 * 1024,
+    });
+
+    assert.equal(result.status, 'ready', `${label}: batched import did not complete`);
+    assert.ok(writes.length > 1, `${label}: fixture did not exercise multiple import chunks`);
+    assert.equal(writersOpened, 1, `${label}: import reopened its OPFS writable between chunks`);
+    assert.equal(writersClosed, 1, `${label}: import did not commit its OPFS writable exactly once`);
+    assert.equal(writersAborted, 0, `${label}: successful import aborted its OPFS writable`);
   }
 });
 

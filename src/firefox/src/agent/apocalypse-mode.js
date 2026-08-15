@@ -140,6 +140,8 @@ export function selectKiwixUpdate(installed, catalogItems) {
 
 const ZIM_MAGIC = 0x044d495a;
 const MAX_DIRECTORY_ENTRY_BYTES = 64 * 1024;
+const INITIAL_DIRECTORY_ENTRY_BYTES = 4 * 1024;
+const MAX_DIRECTORY_ENTRY_CACHE = 4096;
 const ISO_639_3_TO_1 = Object.freeze({
   ara: 'ar', ben: 'bn', deu: 'de', eng: 'en', spa: 'es', fas: 'fa', fra: 'fr', hin: 'hi',
   ind: 'id', ita: 'it', jpn: 'ja', kor: 'ko', nld: 'nl', pol: 'pl', por: 'pt',
@@ -338,10 +340,25 @@ export async function openKiwixZim(source, metadata = {}) {
   }
   if (!mimeTypes.length) throw new Error('ZIM MIME type list is corrupt or incomplete.');
 
-  async function directoryEntry(index) {
+  const directoryEntryCache = new Map();
+  async function loadDirectoryEntry(index) {
     if (!Number.isInteger(index) || index < 0 || index >= articleCount) throw new Error('ZIM directory index is outside the archive.');
     const position = await pointerAt(urlPointerPosition + index * 8);
-    const bytes = await blobBytes(blob, position, Math.min(blob.size, position + MAX_DIRECTORY_ENTRY_BYTES));
+    let byteLength = Math.min(INITIAL_DIRECTORY_ENTRY_BYTES, blob.size - position);
+    let bytes;
+    while (true) {
+      bytes = await blobBytes(blob, position, position + byteLength);
+      if (bytes.byteLength < 13) throw new Error('ZIM directory entry is truncated.');
+      const mimeType = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(0, true);
+      const urlOffset = mimeType === 0xffff ? 12 : 16;
+      const urlEnd = bytes.indexOf(0, urlOffset);
+      const titleEnd = urlEnd < 0 ? -1 : bytes.indexOf(0, urlEnd + 1);
+      if (titleEnd >= 0) break;
+      if (byteLength >= Math.min(MAX_DIRECTORY_ENTRY_BYTES, blob.size - position)) {
+        throw new Error('ZIM directory entry contains an unterminated string.');
+      }
+      byteLength = Math.min(byteLength * 2, MAX_DIRECTORY_ENTRY_BYTES, blob.size - position);
+    }
     if (bytes.byteLength < 13) throw new Error('ZIM directory entry is truncated.');
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const mimeType = view.getUint16(0, true);
@@ -360,6 +377,21 @@ export async function openKiwixZim(source, metadata = {}) {
       clusterIndex: redirect ? null : view.getUint32(8, true),
       blobIndex: redirect ? null : view.getUint32(12, true),
     };
+  }
+
+  async function directoryEntry(index) {
+    if (directoryEntryCache.has(index)) return await directoryEntryCache.get(index);
+    const pending = loadDirectoryEntry(index);
+    directoryEntryCache.set(index, pending);
+    if (directoryEntryCache.size > MAX_DIRECTORY_ENTRY_CACHE) {
+      directoryEntryCache.delete(directoryEntryCache.keys().next().value);
+    }
+    try {
+      return await pending;
+    } catch (error) {
+      if (directoryEntryCache.get(index) === pending) directoryEntryCache.delete(index);
+      throw error;
+    }
   }
 
   async function findPaths(path, limit, namespace = 'C') {
@@ -443,11 +475,13 @@ export async function openKiwixZim(source, metadata = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit) || 3));
     const results = [];
     const locatedCandidates = [];
+    const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
     for (const path of queryPaths(query)) {
-      locatedCandidates.push(...await findPaths(path, Math.max(24, limit * 8)));
+      const located = await findPaths(path, Math.max(24, limit * 8));
+      locatedCandidates.push(...located);
+      if (located.some(entry => String(entry.url || '').toLowerCase() === normalizedQuery)) break;
     }
     const resolvedCandidates = [];
-    const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
     for (const located of locatedCandidates) {
       const entry = await resolvedEntry(located);
       if (!entry) continue;
@@ -804,8 +838,8 @@ export function createApocalypseArchiveManager(options = {}) {
     if (!enabled) {
       const archives = await store.listArchives();
       await Promise.all(archives.map(async (record) => {
+        if (record.status === 'ready' || record.status === 'deleting') return;
         controllers.get(record.id)?.abort();
-        if (record.status === 'ready') return;
         await putArchiveIfCurrent(store, {
           ...record,
           generation: (Number(record.generation) || 0) + 1,
@@ -851,7 +885,7 @@ export function createApocalypseArchiveManager(options = {}) {
 
   async function pause(id) {
     const record = await store.getArchive(id);
-    if (!record || record.status === 'ready') return record;
+    if (!record || record.status === 'ready' || record.status === 'deleting') return record;
     controllers.get(id)?.abort();
     const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'paused', updatedAt: now() };
     const saved = await putArchiveIfCurrent(store, next, {
@@ -862,7 +896,7 @@ export function createApocalypseArchiveManager(options = {}) {
 
   async function resume(id) {
     const record = await store.getArchive(id);
-    if (!record || record.status === 'ready') return record;
+    if (!record || record.status === 'ready' || record.status === 'deleting') return record;
     const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'queued', retryCount: 0, nextRetryAt: 0, error: '', errorKind: '', updatedAt: now() };
     const saved = await putArchiveIfCurrent(store, next, {
       status: record.status, generation: record.generation, updatedAt: record.updatedAt,
@@ -1209,13 +1243,17 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
   let record = importedArchiveRecord(metadata, blob, inspected, id, target, 'importing');
   await store.putArchive(record);
   const chunkSize = Math.max(1024 * 1024, Number(options.chunkSize) || 4 * 1024 * 1024);
+  let writer = null;
+  let writerCommitted = false;
   try {
+    if (typeof storage.createWriter === 'function') writer = await storage.createWriter(target, record);
     for (let offset = 0; offset < blob.size; offset += chunkSize) {
       if (options.signal?.aborted) throw new DOMException('Import cancelled.', 'AbortError');
       const current = await store.getArchive(id);
       if (!current || current.generation !== record.generation) throw new DOMException('Import cancelled.', 'AbortError');
       const bytes = new Uint8Array(await blob.slice(offset, Math.min(blob.size, offset + chunkSize)).arrayBuffer());
-      await storage.write(target, offset, bytes, record);
+      if (writer) await writer.write(offset, bytes);
+      else await storage.write(target, offset, bytes, record);
       const afterWrite = await store.getArchive(id);
       if (!afterWrite || afterWrite.generation !== record.generation || options.signal?.aborted) {
         throw new DOMException('Import cancelled.', 'AbortError');
@@ -1229,6 +1267,12 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
       if (typeof options.onProgress === 'function') options.onProgress(record);
     }
     if (options.signal?.aborted) throw new DOMException('Import cancelled.', 'AbortError');
+    if (writer) {
+      if (typeof writer.truncate === 'function') await writer.truncate(blob.size);
+      await writer.close();
+      writer = null;
+      writerCommitted = true;
+    }
     const ready = { ...record, status: 'ready', completedAt: Date.now(), updatedAt: Date.now() };
     const saved = await putArchiveIfCurrent(store, ready, {
       status: 'importing', generation: record.generation, updatedAt: record.updatedAt,
@@ -1237,6 +1281,10 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
     record = ready;
     return record;
   } catch (error) {
+    if (writer && !writerCommitted) {
+      if (typeof writer.abort === 'function') await writer.abort(error).catch(() => {});
+      writer = null;
+    }
     let cleanupError = null;
     try {
       await storage.remove(target);
