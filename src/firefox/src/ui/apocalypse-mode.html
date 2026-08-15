@@ -9,10 +9,24 @@
     * { box-sizing:border-box; }
     body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif; }
     header { border-bottom:1px solid var(--border);padding:20px max(24px,calc((100vw - 1120px)/2));display:flex;align-items:center;gap:16px;position:sticky;top:0;background:rgba(17,19,34,.96);z-index:2; }
+    .apocalypse-icon { color:var(--warn);font-size:48px;line-height:1; }
+    .header-copy { display:grid;gap:1px; }
+    .header-copy .muted { font-size:13px; }
     h1,h2,h3,p { margin:0; } h1 { font-size:21px; } h2 { font-size:17px;margin-bottom:12px; } h3 { font-size:14px; }
     main { max-width:1120px;margin:24px auto;padding:0 24px 48px;display:grid;gap:18px; }
     .card { background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px; }
+    .section-heading { display:flex;align-items:flex-start;gap:12px;margin-bottom:14px; }
+    .section-heading h2 { margin-bottom:2px; }
+    .section-icon { width:36px;height:36px;flex:0 0 36px;display:grid;place-items:center;border:1px solid rgba(124,114,255,.35);border-radius:9px;background:rgba(124,114,255,.1);color:#a9a3ff; }
+    .section-icon[data-kind="catalog"] { border-color:rgba(96,211,178,.35);background:rgba(96,211,178,.09);color:#60d3b2; }
+    .section-icon[data-kind="import"] { border-color:rgba(255,180,84,.35);background:rgba(255,180,84,.09);color:var(--warn); }
+    .section-icon[data-kind="emergency"] { border-color:rgba(85,199,133,.38);background:rgba(85,199,133,.09);color:var(--good); }
+    .section-icon svg { width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
     .hero { display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center; }
+    .emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .emergency-callout h2 { margin-bottom:2px; }
+    .button-link { display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 13px;border:1px solid rgba(85,199,133,.45);border-radius:8px;color:#d5ffe6;background:rgba(85,199,133,.1);font-weight:700;text-decoration:none;white-space:nowrap; }
+    .button-link:hover { border-color:var(--good);background:rgba(85,199,133,.16); }
     .muted,.meta { color:var(--muted); } .warning { color:var(--warn);margin-top:8px; }
     .toggle { display:flex;gap:10px;align-items:center;font-weight:700; }
     .toggle input { width:42px;height:22px;accent-color:var(--accent); }
@@ -34,13 +48,21 @@
     .item { border:1px solid var(--border);border-radius:9px;padding:13px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center; }
     .item .meta { font-size:12px;margin-top:3px;overflow-wrap:anywhere; } .actions { display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end; }
     progress { width:100%;height:7px;margin-top:8px;accent-color:var(--accent); }
+    .section-status { min-height:20px;margin-top:10px;color:var(--muted);font-size:12px;font-weight:650; }
+    .section-status:not(:empty)::before { content:"";display:inline-block;width:7px;height:7px;margin-inline-end:7px;border-radius:50%;background:currentColor;vertical-align:1px; }
+    .section-status[data-kind="loading"] { color:#60d3b2; }
+    .section-status[data-kind="loading"]::before { animation:status-pulse 1.2s ease-in-out infinite; }
+    .section-status[data-kind="success"] { color:var(--good); }
+    .section-status[data-kind="error"] { color:var(--bad); }
     #notice { min-height:21px;color:var(--muted); } #notice[data-kind=error] { color:var(--bad); } #notice[data-kind=success] { color:var(--good); }
     .empty { color:var(--muted);padding:12px 0; }
-    @media(max-width:700px){ .hero,.item{grid-template-columns:1fr}.actions{justify-content:flex-start} }
+    @keyframes status-pulse { 50% { opacity:.35;transform:scale(.75); } }
+    @media(prefers-reduced-motion:reduce){.section-status[data-kind="loading"]::before{animation:none}}
+    @media(max-width:700px){ .hero,.item,.emergency-callout{grid-template-columns:1fr}.actions{justify-content:flex-start}.emergency-callout .section-icon{display:none}.button-link{justify-self:start} }
   </style>
 </head>
 <body>
-  <header><span aria-hidden="true">🏕️</span><h1 data-i18n="ap.title"></h1><span class="muted" data-i18n="ap.subtitle"></span></header>
+  <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div></header>
   <main>
     <section class="card hero">
       <div>
@@ -58,8 +80,17 @@
       <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
     </section>
 
+    <section class="card emergency-callout">
+      <span class="section-icon" data-kind="emergency" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
+      <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p></div>
+      <a class="button-link" href="emergency-box.html" target="_blank" rel="noopener" data-i18n="ap.emergency.open"></a>
+    </section>
+
     <section class="card">
-      <h2 data-i18n="ap.lifecycle"></h2>
+      <div class="section-heading">
+        <span class="section-icon" data-kind="storage" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7.5" ry="3"/><path d="M4.5 5v7c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V5M4.5 12v7c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-7"/></svg></span>
+        <div><h2 data-i18n="ap.lifecycle"></h2></div>
+      </div>
       <div class="status-grid">
         <div class="metric"><span class="muted" data-i18n="ap.metric.installed"></span><strong id="installed-count">0</strong></div>
         <div class="metric"><span class="muted" data-i18n="ap.metric.archive_bytes"></span><strong id="archive-bytes">0 B</strong></div>
@@ -70,27 +101,29 @@
     </section>
 
     <section class="card">
-      <h2 data-i18n="ap.catalog.title"></h2>
-      <p class="muted" data-i18n="ap.catalog.desc"></p>
+      <div class="section-heading">
+        <span class="section-icon" data-kind="catalog" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
+        <div><h2 data-i18n="ap.catalog.title"></h2><p class="muted" data-i18n="ap.catalog.desc"></p></div>
+      </div>
       <p class="warning" data-i18n="ap.download_background"></p>
       <div class="controls">
         <label class="field"><span data-i18n="ap.language"></span>
           <select id="language"></select>
-        </label>
-        <label class="field"><span data-i18n="ap.tier"></span>
-          <select id="catalog-tier"><option value="all" data-i18n="ap.tier.all"></option><option value="starter" data-i18n="ap.tier.starter"></option><option value="introductions" data-i18n="ap.tier.introductions"></option><option value="text" data-i18n="ap.tier.text" selected></option><option value="full" data-i18n="ap.tier.full"></option></select>
         </label>
         <label class="field"><span data-i18n="ap.storage_location"></span>
           <select id="storage-target"><option value="opfs" data-i18n="ap.storage.browser"></option><option id="external-storage-option" value="file" hidden data-i18n="ap.storage.file"></option></select>
         </label>
         <button id="load-catalog" class="primary" data-i18n="ap.catalog.load"></button>
       </div>
-      <div id="catalog" class="list"><div class="empty" data-i18n="ap.catalog.empty"></div></div>
+      <div id="catalog-status" class="section-status" role="status" aria-live="polite"></div>
+      <div id="catalog" class="list" aria-live="polite"><div class="empty" data-i18n="ap.catalog.empty"></div></div>
     </section>
 
     <section class="card">
-      <h2 data-i18n="ap.import.title"></h2>
-      <p class="muted" data-i18n="ap.import.desc"></p>
+      <div class="section-heading">
+        <span class="section-icon" data-kind="import" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M4 14v5.5h16V14"/></svg></span>
+        <div><h2 data-i18n="ap.import.title"></h2><p class="muted" data-i18n="ap.import.desc"></p></div>
+      </div>
       <div class="controls">
         <input id="import-file" type="file" accept=".zim,application/x-zim">
         <label class="field"><span data-i18n="ap.language"></span><select id="import-language"></select></label>

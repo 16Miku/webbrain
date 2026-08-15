@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Tại sao WebGPU chỉ có trong Chế độ Apocalypse?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vì chúng tôi chưa cho rằng suy luận văn bản WebGPU trong trình duyệt đủ tốt cho phần lớn người dùng, và không muốn bạn phải chịu trải nghiệm kém. Nếu muốn dùng cục bộ cùng mô hình LFM2.5 2.6B, hãy chạy suy luận trên máy của bạn bằng llama.cpp hoặc Ollama rồi trỏ WebBrain đến endpoint cục bộ đó thay vì phụ thuộc vào WebGPU. Tính năng dự phòng thị giác qua WebGPU vẫn có sẵn vì mô hình của nó nhỏ hơn nhiều và chỉ thỉnh thoảng mới được dùng."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Tôi nhận được thông báo \"Không tìm nạp được\" khi kết nối với máy chủ LLM cục bộ (vLLM, Ollama, llama.cpp) trên mạng của mình",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3828,6 +3836,11 @@
     <details class="faq-item">
       <summary>Mô hình được khuyên dùng nhất là gì?</summary>
       <p>kể từ <strong>Ngày 21 tháng 4 năm 2026</strong>, khuyến nghị hàng đầu là <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. Tại sao: trong tiêu chuẩn tầm nhìn của chúng tôi (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">tầm nhìn-mô hình-bắn súng</a>), nó vượt trội hơn Gemma 4 về khả năng hiểu ảnh chụp màn hình trong khi vẫn thực tế cho suy luận cục bộ.</p><p>Đối với GPU dành cho người tiêu dùng, RTX 5090 là lý tưởng và RTX 4090 thường có thể hoạt động được với lượng tử hóa INT4 AutoRound thông qua <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a>.</p><p>Để có tốc độ tối đa, chúng tôi khuyên bạn nên phân phát trên <strong>vLLM</strong>. Lệnh mẫu:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>Giải mã suy đoán DFlash là tùy chọn.</em></p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Tại sao WebGPU chỉ có trong Chế độ Apocalypse?</summary>
+      <p>Vì chúng tôi chưa cho rằng suy luận văn bản WebGPU trong trình duyệt đủ tốt cho phần lớn người dùng, và không muốn bạn phải chịu trải nghiệm kém. Nếu muốn dùng cục bộ cùng mô hình LFM2.5 2.6B, hãy chạy suy luận trên máy của bạn bằng <strong>llama.cpp</strong> hoặc <strong>Ollama</strong> rồi trỏ WebBrain đến endpoint cục bộ đó thay vì phụ thuộc vào WebGPU.</p><p>Tính năng dự phòng thị giác qua WebGPU vẫn có sẵn vì mô hình của nó nhỏ hơn nhiều và chỉ thỉnh thoảng mới được dùng.</p>
     </details>
 
     <details class="faq-item">

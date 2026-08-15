@@ -19,6 +19,8 @@ function messageContentChars(content) {
 
 function systemPromptVariant(prompt) {
   const text = String(prompt || '');
+  if (text.startsWith("You are WebBrain's private on-device chat assistant")) return 'standalone_webgpu';
+  if (text.startsWith("You are WebBrain's standalone chat assistant")) return 'standalone_chat';
   if (text.startsWith('You are WebBrain, a helpful AI browser assistant running in Ask mode.')) return 'ask';
 
   let actTier = '';
@@ -36,7 +38,7 @@ function systemPromptVariant(prompt) {
 }
 
 function variantMode(variant) {
-  if (variant === 'ask') return 'ask';
+  if (variant === 'ask' || variant === 'standalone_chat' || variant === 'standalone_webgpu') return 'ask';
   if (variant.startsWith('act_')) return 'act';
   if (variant.startsWith('dev_')) return 'dev';
   return null;

@@ -844,7 +844,7 @@ async function runText(payload) {
   const dtype = payload?.dtype || 'q4f16';
   const usesLfm25ReasoningTemplate = modelId === WEBGPU_LFM25_MODEL_ID;
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
+    throw new Error(`${modelId} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
