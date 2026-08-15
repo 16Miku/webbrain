@@ -21366,6 +21366,60 @@ test('Apocalypse Mode requires opt-in and removal wins an in-flight download rac
   }
 });
 
+test('Apocalypse Mode rearms queued work after pausing or deleting the active download', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const action of ['pause', 'remove']) {
+      const active = {
+        id: `${action}-active`, status: 'queued', generation: 1, updatedAt: 100,
+        filename: 'active.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+        downloadUrl: 'https://example.test/active.zim', target: { kind: 'opfs', key: 'active.zim' },
+        pieceIndex: 0, bytesDownloaded: 0, retryCount: 0,
+      };
+      const queued = {
+        ...active,
+        id: `${action}-queued`,
+        filename: 'queued.zim',
+        downloadUrl: 'https://example.test/queued.zim',
+        target: { kind: 'opfs', key: 'queued.zim' },
+      };
+      const records = new Map([[active.id, active], [queued.id, queued]]);
+      const store = {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+        async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+        async putArchive(record) { records.set(record.id, { ...record }); return record; },
+        async deleteArchive(id) { records.delete(id); },
+      };
+      let markFetchStarted;
+      const fetchStarted = new Promise(resolve => { markFetchStarted = resolve; });
+      const scheduled = [];
+      const manager = runtime.createApocalypseArchiveManager({
+        store,
+        storage: { async remove() {} },
+        fetchImpl: async (_url, request) => await new Promise((_resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true });
+          markFetchStarted();
+        }),
+        digestHex: async () => 'aa',
+        schedule: delay => scheduled.push(delay),
+        randomId: () => `${action}-lease`,
+        now: () => 1000,
+      });
+
+      const running = manager.processNext();
+      await fetchStarted;
+      await manager[action](active.id);
+      const result = await running;
+
+      assert.equal(result.reason, 'cancelled', `${label}: ${action} did not cancel the active download`);
+      assert.deepEqual(scheduled, [0], `${label}: ${action} stranded the next queued archive`);
+      assert.equal(records.get(queued.id)?.status, 'queued', `${label}: ${action} changed the next archive state`);
+      if (action === 'pause') assert.equal(records.get(active.id)?.status, 'paused', `${label}: pause state was lost`);
+      else assert.equal(records.has(active.id), false, `${label}: removed active archive metadata was retained`);
+    }
+  }
+});
+
 test('Apocalypse Mode disabling loses atomically to concurrent archive deletion', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const config = { enabled: true, updatePolicy: 'manual' };

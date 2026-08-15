@@ -822,6 +822,19 @@ export function createApocalypseArchiveManager(options = {}) {
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');
 
+  async function cancelledResult() {
+    try {
+      const config = await store.getConfig();
+      if (config?.enabled === true) {
+        const nextDelay = nextArchiveScheduleDelay(await store.listArchives(), now());
+        if (nextDelay != null) schedule(nextDelay);
+      }
+    } catch {
+      // Preserve the cancellation result if rearming the shared alarm fails.
+    }
+    return { processed: false, reason: 'cancelled' };
+  }
+
   async function getSnapshot() {
     const [config, archives] = await Promise.all([store.getConfig(), store.listArchives()]);
     return {
@@ -973,7 +986,7 @@ export function createApocalypseArchiveManager(options = {}) {
       const saved = await putArchiveIfCurrent(store, recovered, {
         status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
       });
-      if (!saved) return { processed: false, reason: 'cancelled' };
+      if (!saved) return await cancelledResult();
       record = recovered;
     }
     let writer = null;
@@ -1006,7 +1019,7 @@ export function createApocalypseArchiveManager(options = {}) {
         const saved = await putArchiveIfCurrent(store, marked, {
           status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
         });
-        if (!saved) return { processed: false, reason: 'cancelled' };
+        if (!saved) return await cancelledResult();
         record = marked;
         writer = await storage.createWriter(record.target, record);
         usedWriteSession = true;
@@ -1033,7 +1046,7 @@ export function createApocalypseArchiveManager(options = {}) {
       let current = await store.getArchive(record.id);
       let currentConfig = await store.getConfig();
       if (!ownsDownloadClaim(current, generation, leaseToken, currentConfig)) {
-        return { processed: false, reason: 'cancelled' };
+        return await cancelledResult();
       }
       if (writer) await writer.write(offset, bytes);
       else await storage.write(record.target, offset, bytes, record);
@@ -1042,7 +1055,7 @@ export function createApocalypseArchiveManager(options = {}) {
       if (!ownsDownloadClaim(current, generation, leaseToken, currentConfig)) {
         await abortWriteSession(new Error('Archive download was cancelled.')).catch(() => {});
         if (!current) await storage.remove(record.target, record).catch(() => {});
-        return { processed: false, reason: 'cancelled' };
+        return await cancelledResult();
       }
       const bytesDownloaded = offset + bytes.byteLength;
       const finished = bytesDownloaded >= Number(record.size);
@@ -1082,7 +1095,7 @@ export function createApocalypseArchiveManager(options = {}) {
         if (writeSessionCommitted && !await store.getArchive(record.id)) {
           await storage.remove(record.target, record).catch(() => {});
         }
-        return { processed: false, reason: 'cancelled' };
+        return await cancelledResult();
       }
       piecesProcessed += 1;
       if (continueInWake) {
@@ -1098,7 +1111,7 @@ export function createApocalypseArchiveManager(options = {}) {
       const current = await store.getArchive(record.id);
       if (!current || current.generation !== generation || current.leaseToken !== leaseToken || controller.signal.aborted) {
         if (!current && writeSessionCommitted) await storage.remove(record.target, record).catch(() => {});
-        return { processed: false, reason: 'cancelled' };
+        return await cancelledResult();
       }
       const rollbackWriteSession = current.writeSessionStartPiece != null && !writeSessionCommitted;
       const permissionRequired = isFilePermissionError(error, current.target);
@@ -1128,7 +1141,7 @@ export function createApocalypseArchiveManager(options = {}) {
       const saved = await putArchiveIfCurrent(store, next, {
         status: 'downloading', generation, leaseToken, updatedAt: current.updatedAt,
       });
-      if (!saved) return { processed: false, reason: 'cancelled' };
+      if (!saved) return await cancelledResult();
       const nextDelay = nextArchiveScheduleDelay(await store.listArchives(), now());
       if (nextDelay != null) schedule(nextDelay);
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
