@@ -792,13 +792,16 @@ const {
   WebGPUProvider,
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
+  WEBGPU_LFM25_MODEL_ID,
   WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  normalizeWebgpuModelId,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
 );
@@ -24029,7 +24032,7 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
     assert.match(html, /id="language-picker-btn"[^>]+aria-haspopup="listbox"[^>]+aria-controls="language-picker-menu"/, `${label}: language picker trigger should expose listbox semantics`);
     assert.match(html, /id="language-picker-menu" role="listbox"/, `${label}: language picker menu should be an accessible listbox`);
     assert.match(html, /id="language-picker-flag" src="\.\.\/\.\.\/icons\/flags\/us\.svg"[^>]+aria-hidden="true"/, `${label}: English should show the bundled US flag in the closed picker`);
-    assert.match(html, /id="language-picker-code">EN</, `${label}: closed picker should expose a compact language code`);
+    assert.doesNotMatch(html, /id="language-picker-code"/, `${label}: closed picker should stay flag-only to preserve header space`);
     assert.match(panel, /function initializeLanguagePicker\(\)[\s\S]*?if \(index === 2\) appendLanguagePickerSeparator\(\)/, `${label}: pinned languages should be separated from the alphabetical list`);
     assert.match(panel, /function focusLanguagePickerByPrefix\(key\)/, `${label}: language picker should support typeahead`);
     assert.match(panel, /moveLanguagePickerFocus\(1\)[\s\S]*?moveLanguagePickerFocus\(-1\)[\s\S]*?activateFocusedLanguagePickerOption\(\)[\s\S]*?event\.key === 'Escape'/, `${label}: language picker should support arrow, activation, and Escape keys`);
@@ -42528,11 +42531,29 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const manager = new ProviderManagerCh();
     const webgpuConfig = manager._defaultConfigs().webgpu;
     assert.equal(webgpuConfig.model, WEBGPU_MODEL_ID);
+    assert.equal(WEBGPU_MODEL_ID, WEBGPU_LFM25_MODEL_ID);
     assert.equal(webgpuConfig.baseUrl, '');
     assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
     assert.ok(generalProvider instanceof WebGPUProvider);
-    assert.equal(new WebGPUProvider({ model: 'unexpected/override' }).model, WEBGPU_MODEL_ID);
+    assert.equal(generalProvider.promptTier, 'compact');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID }).promptTier, 'compact');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID, promptTier: 'full' }).promptTier, 'full');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_MODEL_ID }).model, WEBGPU_LFM25_MODEL_ID);
+    const customProvider = new WebGPUProvider({ model: 'custom-owner/custom-model' });
+    assert.equal(customProvider.model, 'custom-owner/custom-model');
+    assert.equal(customProvider.requiresToolTemplate, true);
+    assert.equal(generalProvider.requiresToolTemplate, false);
+    assert.equal(
+      new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
+      'custom-owner/custom-model',
+    );
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B' },
+    ]);
+    assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
+    assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
+    assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
     assert.equal(generalProvider.supportsTools, true);
     assert.equal(generalProvider.supportsVision, false);
     const probe = await generalProvider.testConnection();
@@ -42552,6 +42573,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       model: WEBGPU_MODEL_ID,
       device: 'webgpu',
       dtype: WEBGPU_DTYPE,
+      requireTools: false,
       messages: [{ role: 'user', content: 'Hello' }],
       options: { maxTokens: 123, tools },
     });
@@ -42600,7 +42622,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
       /not downloaded/,
     );
-    await assert.rejects(manager.setActive('webgpu'), /Download Ling 3\.0 Tiny/);
+    await assert.rejects(manager.setActive('webgpu'), /Download LFM2\.5 2\.6B/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     textModelReady = true;
@@ -42710,7 +42732,7 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
   }
 });
 
-test('WebGPU worker follows the Ling text-generation and LiquidAI vision contracts', () => {
+test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
@@ -42769,15 +42791,22 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
   assert.match(worker, /pipeline\('text-generation', modelId/);
   assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
+  assert.match(worker, /function textDtypeKey\(dtype\)/);
+  assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
+  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 512/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
   assert.match(worker, /GPU detail:/);
-  assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
+  assert.doesNotMatch(worker, /cannot execute Ling/);
+  assert.match(worker, /preserve_thinking: false/);
+  assert.match(worker, /enable_thinking: false/);
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
   assert.match(host, /'webgpu-download-start'/);
+  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendResponse\(await sendVisionWorkerMessage\('start-download-text'/);
+  assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
   assert.match(host, /'webgpu-download-status'/);
@@ -42785,6 +42814,9 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
   assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
+  assert.match(worker, /type === 'start-download-text'/);
+  assert.match(worker, /function assertTextDownloadCanStart/);
+  assert.match(worker, /function assertToolCapableTextRuntime/);
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
   assert.match(settingsScript, /addEventListener\('focus'[\s\S]{0,180}loadVisionConfig/);
@@ -42805,10 +42837,16 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   );
   assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
   assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
-  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey|model)'/);
+  assert.match(webgpuSettingsBlock, /key: 'model'/);
+  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
+  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey)'/);
+  assert.match(settingsScript, /normalizeWebgpuModelId/);
+  assert.match(settingsScript, /<option value="__custom__"/);
+  assert.match(settingsScript, /data-webgpu-model-link/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
+  assert.match(englishLocale, /LFM2\.5 2\.6B is the only tested model[\s\S]*Other models entered through Custom are untested and likely will not work/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
@@ -42818,6 +42856,10 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
 
   const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  const transformersBundle = fs.readFileSync(path.join(vendorDir, 'transformers.web.js'), 'utf8');
+  assert.match(transformersBundle, /Gemma4ForCausalLM/);
+  assert.match(transformersBundle, /Gemma4ForConditionalGeneration/);
+  assert.match(transformersBundle, /q2f16/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ort.webgpu.mjs'), 'utf8'), /ONNX Runtime Web v1\.27\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'README.md'), 'utf8'), /Qwen3\/QMoE correctness fixes/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
@@ -42825,7 +42867,7 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
 });
 
-test('WebGPU worker replays Ling tool history without coupling text and vision lifecycles', async () => {
+test('WebGPU worker replays text tool history and applies model-specific generation contracts', async () => {
   const previousSelf = globalThis.self;
   const previousCounts = globalThis.__webgpuRuntimeCounts;
   const previousHoldTextDownload = globalThis.__holdWebgpuTextDownload;
@@ -42844,7 +42886,7 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
       },
     };
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
-    const { prepareTextMessages } = await import(workerUrl);
+    const { prepareTextMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
     const messages = [
       {
         role: 'assistant',
@@ -42866,6 +42908,29 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     assert.equal(prepared[0].content, '');
     assert.equal(prepared[1].content, '{"success":true}');
     assert.equal(messages[0].tool_calls[0].function.arguments, '{"ref_id":"ref_7","force":true}', 'normalization must not mutate persisted history');
+    assert.deepEqual(splitThinking('<think>private trace</think>Visible answer'), {
+      content: 'Visible answer',
+      reasoningContent: 'private trace',
+      incompleteReasoning: false,
+    });
+    assert.deepEqual(splitThinking('implicit private trace</think>Visible answer', { openingTagInPrompt: true }), {
+      content: 'Visible answer',
+      reasoningContent: 'implicit private trace',
+      incompleteReasoning: false,
+    });
+    assert.deepEqual(splitThinking('unfinished private trace', { openingTagInPrompt: true }), {
+      content: '',
+      reasoningContent: 'unfinished private trace',
+      incompleteReasoning: true,
+    });
+    assert.equal(tokenizerSupportsTools({ chat_template: '{% if tools %}{{ tools }}{% endif %}{{ messages }}' }), true);
+    assert.equal(tokenizerSupportsTools({ chat_template: '{{ messages }}' }), false);
+    assert.equal(tokenizerSupportsTools({
+      chat_template: {
+        default: '{{ messages }}',
+        tool_use: '{% for tool in tools %}{{ tool }}{% endfor %}',
+      },
+    }), true);
 
     globalThis.__webgpuRuntimeCounts = {
       visionProcessorLoads: 0,
@@ -42907,10 +42972,17 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
         }
         const instance = async (input, options) => {
           globalThis.__webgpuGenerationOptions = options;
-          return [{ generated_text: [...input, { role: 'assistant', content: 'text answer' }] }];
+          const content = modelId === 'LiquidAI/LFM2.5-2.6B-ONNX'
+            ? 'private model reasoning</think>Hello!'
+            : 'text answer';
+          return [{ generated_text: [...input, { role: 'assistant', content }] }];
         };
         instance.model = {};
-        instance.tokenizer = {};
+        instance.tokenizer = {
+          chat_template: modelId === 'custom-no-tools'
+            ? '{{ messages }}'
+            : '{% if tools %}{{ tools }}{% endif %}{{ messages }}',
+        };
         instance.dispose = async () => { globalThis.__webgpuRuntimeCounts.textDisposals++; };
         return instance;
       }
@@ -43008,6 +43080,100 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     const resumed = await dispatch('download-text', textPayload);
     assert.equal(resumed.status, 'ready');
     assert.equal(resumed.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = true;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const activePayload = { ...textPayload, modelId: 'text-model-active' };
+    const otherPayload = { ...textPayload, modelId: 'text-model-other' };
+    const activeDownloadId = requestId++;
+    const activeDownloadPromise = workerListener({
+      data: { id: activeDownloadId, type: 'download-text', payload: activePayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextDownload; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'second download should reach the controllable pipeline');
+
+    const conflictId = requestId++;
+    await workerListener({
+      data: { id: conflictId, type: 'start-download-text', payload: otherPayload },
+    });
+    const conflict = posted.find(message => message.id === conflictId);
+    assert.equal(conflict.ok, false);
+    assert.match(conflict.error, /Finish or stop the text-model-active download/);
+
+    const otherStatus = await dispatch('text-download-status', otherPayload);
+    assert.equal(otherStatus.modelId, otherPayload.modelId);
+    assert.equal(otherStatus.status, 'not-downloaded');
+    const stopOtherId = requestId++;
+    const stopOtherPromise = workerListener({
+      data: { id: stopOtherId, type: 'stop-text-download', payload: otherPayload },
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    globalThis.__releaseWebgpuTextDownload();
+    await Promise.all([activeDownloadPromise, stopOtherPromise]);
+
+    const activeDownload = posted.find(message => message.id === activeDownloadId);
+    assert.equal(activeDownload.ok, true);
+    assert.equal(activeDownload.modelId, activePayload.modelId, 'another model status/stop request must not relabel the active transfer');
+    assert.equal(activeDownload.status, 'ready', 'stopping another model must not abort the active transfer');
+    const stoppedOther = posted.find(message => message.id === stopOtherId);
+    assert.equal(stoppedOther.modelId, otherPayload.modelId);
+    assert.equal(stoppedOther.status, 'not-downloaded');
+    const activeStatus = await dispatch('text-download-status', activePayload);
+    assert.equal(activeStatus.status, 'ready');
+    assert.equal(activeStatus.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = false;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const objectDtypePayload = {
+      ...textPayload,
+      modelId: 'text-model-object-dtype',
+      dtype: { decoder_model_merged: 'q2f16', embed_tokens: 'q2f16' },
+    };
+    const objectDtypeDownload = await dispatch('download-text', objectDtypePayload);
+    assert.equal(objectDtypeDownload.status, 'ready');
+    const objectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q2f16', decoder_model_merged: 'q2f16' },
+    });
+    assert.equal(objectDtypeStatus.status, 'ready', 'dtype-map key order must not change model readiness');
+    const wrongObjectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q4f16', decoder_model_merged: 'q4f16' },
+    });
+    assert.equal(wrongObjectDtypeStatus.status, 'not-downloaded', 'different dtype maps must have separate ready markers');
+
+    const lfmPayload = {
+      ...textPayload,
+      modelId: WEBGPU_LFM25_MODEL_ID,
+    };
+    await dispatch('download-text', lfmPayload);
+    const lfmResponse = await dispatch('text-chat', lfmPayload);
+    assert.equal(lfmResponse.content, 'Hello!');
+    assert.equal(lfmResponse.reasoningContent, 'private model reasoning');
+    assert.deepEqual(globalThis.__webgpuGenerationOptions, {
+      do_sample: true,
+      temperature: 0.1,
+      top_k: 50,
+      repetition_penalty: 1.1,
+      max_new_tokens: 512,
+      tools: undefined,
+      tokenizer_encode_kwargs: { preserve_thinking: false },
+    }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');
+
+    const incompatiblePayload = {
+      ...textPayload,
+      modelId: 'custom-no-tools',
+      requireTools: true,
+    };
+    const incompatibleId = requestId++;
+    await workerListener({
+      data: { id: incompatibleId, type: 'download-text', payload: incompatiblePayload },
+    });
+    const incompatible = posted.find(message => message.id === incompatibleId);
+    assert.equal(incompatible.ok, false);
+    assert.match(incompatible.error, /chat template that accepts tools/);
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;
@@ -62070,7 +62236,7 @@ test('text tool-call parser is production code with format and allowlist coverag
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
     'chrome and firefox tool-call parsers must remain byte-identical',
   );
-  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page']);
+  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page', 'scroll']);
   const cases = [
     {
       label: 'tool_call JSON with nested arguments',
@@ -62086,6 +62252,40 @@ test('text tool-call parser is production code with format and allowlist coverag
       label: 'functioncall wrapper',
       raw: '<functioncall>{"name":"navigate","arguments":{"url":"https://example.test/path"}}</functioncall>',
       expected: [{ name: 'navigate', args: { url: 'https://example.test/path' } }],
+    },
+    {
+      label: 'LFM2.5 native Python-style tool call',
+      raw: '<|tool_call_start|>[read_page(includeChrome=False, offset=4000, limit=6000)]<|tool_call_end|>',
+      expected: [{
+        name: 'read_page',
+        args: { includeChrome: false, offset: 4000, limit: 6000 },
+      }],
+    },
+    {
+      label: 'LFM2.5 deterministic scrolldown alias',
+      raw: '<|tool_call_start|>[scrolldown()]<|tool_call_end|>',
+      expected: [{ name: 'scroll', args: { direction: 'down' } }],
+    },
+    {
+      label: 'LFM2.5 native batch with escaped strings and nested JSON',
+      raw: [
+        '<|tool_call_start|>[',
+        "navigate(url='https://example.test/a\\'b'), ",
+        'read_page(includeChrome=True, selector={"roles":["main","dialog"]}, offsets=[1,2], empty=None)',
+        ']<|tool_call_end|>',
+      ].join(''),
+      expected: [
+        { name: 'navigate', args: { url: "https://example.test/a'b" } },
+        {
+          name: 'read_page',
+          args: {
+            includeChrome: true,
+            selector: { roles: ['main', 'dialog'] },
+            offsets: [1, 2],
+            empty: null,
+          },
+        },
+      ],
     },
     {
       label: 'custom quote tokens',
@@ -62242,6 +62442,46 @@ test('text tool-call parser is production code with format and allowlist coverag
       parser.parseToolCallsFromText('call:click{text:<|"|>unterminated}', allowed),
       [],
       'malformed fallback arguments dispatched an empty-argument action',
+    );
+    for (const [label, unsafe] of [
+      [
+        'mixed allowlisted and denied calls',
+        '<|tool_call_start|>[read_page(), execute_js(code=\'alert(1)\')]<|tool_call_end|>',
+      ],
+      [
+        'positional arguments',
+        '<|tool_call_start|>[navigate(\'https://example.test\')]<|tool_call_end|>',
+      ],
+      [
+        'duplicate arguments',
+        '<|tool_call_start|>[read_page(offset=0, offset=1)]<|tool_call_end|>',
+      ],
+      [
+        'directional alias contradicts its explicit direction',
+        '<|tool_call_start|>[scrolldown(direction=\'up\')]<|tool_call_end|>',
+      ],
+      [
+        'narrated native call',
+        'For example: <|tool_call_start|>[read_page()]<|tool_call_end|>',
+      ],
+      [
+        'malformed nested JSON containing an allowlisted name',
+        '<|tool_call_start|>[read_page(selector={"name":"click") ]<|tool_call_end|>',
+      ],
+    ]) {
+      assert.deepEqual(
+        parser.parseToolCallsFromText(unsafe, allowed),
+        [],
+        `unsafe LFM2.5 call was dispatched (${label})`,
+      );
+    }
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '<|tool_call_start|>[scrolldown()]<|tool_call_end|>',
+        new Set(['read_page']),
+      ),
+      [],
+      'LFM2.5 scroll alias bypassed the canonical scroll allowlist',
     );
 
     // A parsed call replaces the model's prose entirely (the caller sets
@@ -74508,7 +74748,7 @@ test('profile sync keeps Chromium-only WebGPU provider state out of portable vau
     ...portableBase,
     providers: {
       ...portableBase.providers,
-      webgpu: { type: 'webgpu', model: 'webbrain-one/Ling-3.0-tiny-ONNX', configured: true },
+      webgpu: { type: 'webgpu', model: WEBGPU_LFM25_MODEL_ID, configured: true },
     },
     activeProvider: 'webgpu',
     meta: { providersAt: 20, providerItemsAt: { openai: 5, webgpu: 20 }, activeProviderAt: 20 },

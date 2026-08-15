@@ -50,7 +50,7 @@ The user chooses their provider in Settings. Options include:
 - **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials and are never collected by WebBrain
 - **Local model runtimes**: llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang,
   LocalAI, and GPT4All — inference requests stay on the user's machine
-- **WebGPU (In-browser), Chromium only**: Ling 3.0 Tiny runs in an extension
+- **WebGPU (In-browser), Chromium only**: the selected text model runs in an extension
   Worker with no API key, base URL, localhost server, or model endpoint
 - **Local OpenAI-compatible Proxy**: WebBrain connects only to the configured
   local gateway, but the gateway may forward the request context to an upstream

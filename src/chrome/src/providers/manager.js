@@ -14,6 +14,7 @@ import {
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  webgpuModelDisplayName,
 } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
@@ -1169,7 +1170,7 @@ export class ProviderManager {
     if (nextProvider instanceof WebGPUProvider) {
       const download = await nextProvider.downloadStatus();
       if (!download.ready) {
-        throw new Error('Download Ling 3.0 Tiny in Settings > Providers > WebGPU before selecting it for chat.');
+        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Settings > Providers > WebGPU before selecting it for chat.`);
       }
     }
     this.activeProviderId = id;

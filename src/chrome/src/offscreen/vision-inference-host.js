@@ -188,21 +188,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-download-start') {
-        void sendVisionWorkerMessage('download-text', {
+        sendResponse(await sendVisionWorkerMessage('start-download-text', {
           modelId: message.model,
           device: message.device,
           dtype: message.dtype,
-        }).catch(() => {});
-        sendResponse({
-          ok: true,
-          status: 'downloading',
-          ready: false,
-          modelId: message.model,
-          dtype: message.dtype,
-          loaded: 0,
-          total: 0,
-          progress: 0,
-        });
+          requireTools: message.requireTools === true,
+        }));
         return;
       }
       if (message.type === 'webgpu-download-pause') {
@@ -236,6 +227,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           modelId: message.model,
           device: message.device,
           dtype: message.dtype,
+          requireTools: message.requireTools === true,
           messages: message.messages || [],
           options: message.options || {},
         }));

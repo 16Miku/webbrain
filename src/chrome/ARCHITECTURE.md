@@ -550,7 +550,7 @@ class BaseProvider {
 | `AnthropicProvider` | `/v1/messages` | `claude-(3\|sonnet-4\|opus-4)` patterns |
 | `LlamaCppProvider` | `localhost:8080/v1/chat/completions` | Enabled by default, configurable |
 | OpenAI-compatible configs | Provider-specific `/v1` endpoint | Model-name regex or explicit config |
-| `WebGPUProvider` | Chrome offscreen worker; no endpoint | Text-only Ling 3.0 Tiny with native tools |
+| `WebGPUProvider` | Chrome offscreen worker; no endpoint | Text-only selectable Hugging Face ONNX model |
 | `WebGPUVisionProvider` | Chrome offscreen worker; no endpoint | Always; dedicated screenshot-description sidecar only |
 
 `ProviderManager` seeds WebBrain Cloud, one Chromium in-browser WebGPU provider,

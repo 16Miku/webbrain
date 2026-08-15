@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
-| `webgpu`（Chromium） | `webgpu` | 本地 | `webbrain-one/Ling-3.0-tiny-ONNX` | 否 |
+| `webgpu`（Chromium） | `webgpu` | 本地 | LFM2.5 2.6B（经过测试的默认值）或实验性自定义 HF 仓库（很可能不兼容） | 否 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |

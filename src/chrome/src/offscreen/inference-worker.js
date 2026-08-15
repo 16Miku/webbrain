@@ -16,17 +16,20 @@ let visionRuntimeLoadPromise = null;
 let visionRuntimeLoadKey = '';
 let textRuntime = null;
 let textRuntimeKey = '';
+let textRuntimeModelKey = '';
 let textRuntimeLoadPromise = null;
 let textRuntimeLoadKey = '';
 let modelOperationQueue = Promise.resolve();
 const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 const TEXT_DOWNLOAD_EVENT = 'text-download-state';
 const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
+const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
+const WEBGPU_LFM25_MAX_NEW_TOKENS = 512;
 function createWebGpuTextSessionOptions() {
   return {
     extra: {
       // ORT's default bucket cache can retain rounded-up transient buffers. That
-      // is especially costly for Ling's dynamic prefill/decode shapes on Metal.
+      // is especially costly for dynamic prefill/decode shapes on Metal.
       'ep.webgpuexecutionprovider.storageBufferCacheMode': 'simple',
     },
   };
@@ -35,6 +38,7 @@ const readyTextModelKeys = new Set();
 const textDownloadFiles = new Map();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
 let activeTextDownloadModelId = '';
+let queuedTextDownload = null;
 let textDownloadAbortController = null;
 let textDownloadCancelMode = '';
 let lastTextProgressPostAt = 0;
@@ -55,8 +59,35 @@ let textDownloadState = {
   error: '',
 };
 
+function textDtypeKey(dtype) {
+  if (!dtype || typeof dtype !== 'object' || Array.isArray(dtype)) return String(dtype || '').trim();
+  return JSON.stringify(Object.fromEntries(
+    Object.entries(dtype).sort(([left], [right]) => left.localeCompare(right)),
+  ));
+}
+
 function textModelKey(modelId, dtype) {
-  return `${String(modelId || '').trim()}|${String(dtype || '').trim()}`;
+  return `${String(modelId || '').trim()}|${textDtypeKey(dtype)}`;
+}
+
+function sameTextModel(leftModelId, leftDtype, rightModelId, rightDtype) {
+  return textModelKey(leftModelId, leftDtype) === textModelKey(rightModelId, rightDtype);
+}
+
+function assertTextDownloadCanStart(payload) {
+  const modelId = String(payload?.modelId || '').trim();
+  if (!modelId) throw new Error('No text-generation model was specified.');
+  const dtype = payload?.dtype || 'q4f16';
+  const conflictsWithTransfer = textDownloadState.modelId
+    && !sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype)
+    && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status);
+  const conflictsWithQueued = queuedTextDownload
+    && !sameTextModel(queuedTextDownload.modelId, queuedTextDownload.dtype, modelId, dtype);
+  if (conflictsWithTransfer || conflictsWithQueued) {
+    const blockingModel = conflictsWithTransfer ? textDownloadState.modelId : queuedTextDownload.modelId;
+    throw new Error(`Finish or stop the ${blockingModel} download before downloading ${modelId}.`);
+  }
+  return { modelId, dtype, key: textModelKey(modelId, dtype) };
 }
 
 function textReadyMarkerUrl(modelId, dtype) {
@@ -215,7 +246,7 @@ async function enrichWebGpuExecutionError(error) {
   const suffix = [
     details.length ? `GPU detail: ${details.join(' ')}` : '',
     adapter ? `Adapter: ${adapter}.` : '',
-    'Close other GPU-heavy tabs/apps and retry with a short prompt. If it persists, this GPU/driver cannot execute Ling with the current WebGPU runtime.',
+    'Close other GPU-heavy tabs/apps and retry with a short prompt. If it persists, this GPU/driver cannot execute this model with the current WebGPU runtime.',
   ].filter(Boolean).join(' ');
   return new Error(`${error?.message || String(error)} ${suffix}`);
 }
@@ -287,6 +318,7 @@ async function disposeTextRuntime() {
   const runtime = textRuntime;
   textRuntime = null;
   textRuntimeKey = '';
+  textRuntimeModelKey = '';
   await disposeRuntime(runtime);
 }
 
@@ -404,6 +436,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
       tokenizer: pipeline.tokenizer,
     };
     textRuntimeKey = key;
+    textRuntimeModelKey = textModelKey(modelId, dtype);
     return textRuntime;
   })();
   textRuntimeLoadPromise = loadPromise;
@@ -418,11 +451,31 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
   }
 }
 
+function chatTemplateText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(chatTemplateText).join('\n');
+  if (value && typeof value === 'object') return Object.values(value).map(chatTemplateText).join('\n');
+  return '';
+}
+
+export function tokenizerSupportsTools(tokenizer) {
+  const template = chatTemplateText(tokenizer?.chat_template ?? tokenizer?.chatTemplate);
+  return /\btools\b/.test(template);
+}
+
+function assertToolCapableTextRuntime(runtime, modelId) {
+  if (tokenizerSupportsTools(runtime?.tokenizer)) return;
+  throw new Error(`${modelId} is not compatible with WebBrain: custom repositories must provide a chat template that accepts tools.`);
+}
+
 async function getTextDownloadStatus(modelId, dtype) {
   const ready = await isTextModelReady(modelId, dtype);
-  const sameModel = textDownloadState.modelId === modelId && textDownloadState.dtype === dtype;
-  if (ready && (!sameModel || !['downloading', 'stopping'].includes(textDownloadState.status))) {
-    textDownloadState = {
+  const sameModel = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
+  if (sameModel && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status)) {
+    return textDownloadSnapshot();
+  }
+  if (ready) {
+    return {
       status: 'ready',
       ready: true,
       modelId,
@@ -433,28 +486,37 @@ async function getTextDownloadStatus(modelId, dtype) {
       progress: 100,
       error: '',
     };
-  } else if (!ready && !sameModel) {
-    textDownloadState = {
-      status: 'not-downloaded',
-      ready: false,
-      modelId,
-      dtype,
-      file: '',
-      loaded: 0,
-      total: 0,
-      progress: 0,
-      error: '',
-    };
   }
-  return textDownloadSnapshot();
+  if (sameModel && textDownloadState.status === 'error') return textDownloadSnapshot();
+  return {
+    status: 'not-downloaded',
+    ready: false,
+    modelId,
+    dtype,
+    file: '',
+    loaded: 0,
+    total: 0,
+    progress: 0,
+    error: '',
+  };
 }
 
-async function downloadTextModel(payload) {
+async function downloadTextModel(payload, { onStarted } = {}) {
   const modelId = String(payload?.modelId || '').trim();
   if (!modelId) throw new Error('No text-generation model was specified.');
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
+  const tracksDifferentTransfer = textDownloadState.modelId
+    && !sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype)
+    && ['downloading', 'paused', 'stopping'].includes(textDownloadState.status);
+  if (tracksDifferentTransfer) {
+    throw new Error(`Finish or stop the ${textDownloadState.modelId} download before downloading ${modelId}.`);
+  }
   if (await isTextModelReady(modelId, dtype)) {
+    if (payload?.requireTools === true) {
+      const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
+      assertToolCapableTextRuntime(runtime, modelId);
+    }
     textDownloadState = {
       ...textDownloadState,
       status: 'ready',
@@ -469,8 +531,7 @@ async function downloadTextModel(payload) {
   }
 
   const resuming = textDownloadState.status === 'paused'
-    && textDownloadState.modelId === modelId
-    && textDownloadState.dtype === dtype;
+    && sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
   if (!resuming) textDownloadFiles.clear();
   activeTextDownloadModelId = modelId;
   textDownloadCancelMode = '';
@@ -488,9 +549,11 @@ async function downloadTextModel(payload) {
     error: '',
   };
   postTextDownloadState({ force: true });
+  onStarted?.(textDownloadSnapshot());
 
   try {
-    await getTextRuntime(modelId, dtype, device);
+    const runtime = await getTextRuntime(modelId, dtype, device);
+    if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
     if (textDownloadCancelMode) {
       await disposeTextRuntime();
       return textDownloadSnapshot();
@@ -540,7 +603,7 @@ function pauseTextDownload() {
 }
 
 async function clearTextModelCache(modelId, dtype) {
-  await disposeTextRuntime();
+  if (textRuntimeModelKey === textModelKey(modelId, dtype)) await disposeTextRuntime();
   const modelPath = `/${modelId}/`;
   const markerUrl = textReadyMarkerUrl(modelId, dtype);
   if (typeof caches !== 'undefined') {
@@ -557,7 +620,7 @@ async function clearTextModelCache(modelId, dtype) {
   readyTextModelKeys.delete(textModelKey(modelId, dtype));
   textDownloadFiles.clear();
   textDownloadCancelMode = '';
-  textDownloadState = {
+  const clearedState = {
     status: 'not-downloaded',
     ready: false,
     modelId,
@@ -568,8 +631,13 @@ async function clearTextModelCache(modelId, dtype) {
     progress: 0,
     error: '',
   };
-  postTextDownloadState({ force: true });
-  return textDownloadSnapshot();
+  const sameModel = !textDownloadState.modelId
+    || sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
+  if (sameModel) {
+    textDownloadState = clearedState;
+    postTextDownloadState({ force: true });
+  }
+  return { ...clearedState };
 }
 
 function enqueueModelOperation(operation) {
@@ -737,13 +805,35 @@ export function prepareTextMessages(messages) {
   });
 }
 
-function splitThinking(content) {
+export function splitThinking(content, { openingTagInPrompt = false } = {}) {
   const source = String(content || '').trim();
   const match = /^<think>\s*([\s\S]*?)\s*<\/think>\s*([\s\S]*)$/i.exec(source);
-  if (!match) return { content: source, reasoningContent: null };
+  if (match) {
+    return {
+      content: String(match[2] || '').trim(),
+      reasoningContent: String(match[1] || '').trim() || null,
+      incompleteReasoning: false,
+    };
+  }
+  if (!openingTagInPrompt) {
+    return { content: source, reasoningContent: null, incompleteReasoning: false };
+  }
+
+  // LFM2.5's official template places `<think>` in the generation prompt.
+  // Transformers.js therefore returns only the generated suffix: reasoning,
+  // `</think>`, then the user-facing answer.
+  const closingTag = /<\/think>/i.exec(source);
+  if (!closingTag) {
+    return {
+      content: '',
+      reasoningContent: source || null,
+      incompleteReasoning: !!source,
+    };
+  }
   return {
-    content: String(match[2] || '').trim(),
-    reasoningContent: String(match[1] || '').trim() || null,
+    content: source.slice(closingTag.index + closingTag[0].length).trim(),
+    reasoningContent: source.slice(0, closingTag.index).trim() || null,
+    incompleteReasoning: false,
   };
 }
 
@@ -752,24 +842,34 @@ async function runText(payload) {
   if (!modelId) throw new Error('No text-generation model was specified.');
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
+  const usesLfm25ReasoningTemplate = modelId === WEBGPU_LFM25_MODEL_ID;
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error('Ling 3.0 Tiny is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.');
+    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
+  if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const requestedTokens = Number(payload?.options?.maxTokens);
-  const maxNewTokens = Number.isFinite(requestedTokens)
-    ? Math.max(1, Math.min(WEBGPU_TEXT_MAX_NEW_TOKENS, Math.round(requestedTokens)))
+  const maxTokenLimit = usesLfm25ReasoningTemplate
+    ? WEBGPU_LFM25_MAX_NEW_TOKENS
     : WEBGPU_TEXT_MAX_NEW_TOKENS;
+  const maxNewTokens = Number.isFinite(requestedTokens)
+    ? Math.max(1, Math.min(maxTokenLimit, Math.round(requestedTokens)))
+    : maxTokenLimit;
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
   let output;
   try {
     output = await runtime.pipeline(prepareTextMessages(payload?.messages), {
-      do_sample: false,
+      do_sample: usesLfm25ReasoningTemplate,
+      ...(usesLfm25ReasoningTemplate
+        ? { temperature: 0.1, top_k: 50, repetition_penalty: 1.1 }
+        : {}),
       max_new_tokens: maxNewTokens,
       tools: tools.length ? tools : undefined,
-      tokenizer_encode_kwargs: { enable_thinking: false },
+      tokenizer_encode_kwargs: usesLfm25ReasoningTemplate
+        ? { preserve_thinking: false }
+        : { enable_thinking: false },
     });
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await enrichWebGpuExecutionError(error);
@@ -782,7 +882,11 @@ async function runText(payload) {
   if (typeof content !== 'string') {
     throw new Error('The WebGPU model returned no generated text.');
   }
-  return splitThinking(content);
+  const result = splitThinking(content, { openingTagInPrompt: usesLfm25ReasoningTemplate });
+  if (result.incompleteReasoning) {
+    throw new Error(`${modelId} used its generation budget before finishing reasoning. Retry with a shorter prompt.`);
+  }
+  return { content: result.content, reasoningContent: result.reasoningContent };
 }
 
 async function probeRuntime() {
@@ -849,6 +953,25 @@ self.addEventListener('message', async event => {
       self.postMessage({ id, ok: true, ...state });
       return;
     }
+    if (type === 'start-download-text') {
+      const request = assertTextDownloadCanStart(payload);
+      queuedTextDownload = request;
+      let acknowledged = false;
+      const operation = enqueueModelOperation(() => downloadTextModel(payload, {
+        onStarted(state) {
+          acknowledged = true;
+          self.postMessage({ id, ok: true, ...state });
+        },
+      }));
+      void operation.then((state) => {
+        if (!acknowledged) self.postMessage({ id, ok: true, ...state });
+      }).catch((error) => {
+        if (!acknowledged) self.postMessage({ id, ok: false, error: error?.message || String(error) });
+      }).finally(() => {
+        if (queuedTextDownload?.key === request.key) queuedTextDownload = null;
+      });
+      return;
+    }
     if (type === 'pause-text-download') {
       self.postMessage({ id, ok: true, ...pauseTextDownload() });
       return;
@@ -856,10 +979,13 @@ self.addEventListener('message', async event => {
     if (type === 'stop-text-download') {
       const modelId = String(payload?.modelId || '').trim();
       const dtype = payload?.dtype || 'q4f16';
-      textDownloadCancelMode = 'stop';
-      textDownloadState = { ...textDownloadState, status: 'stopping', ready: false, error: '' };
-      textDownloadAbortController?.abort();
-      postTextDownloadState({ force: true });
+      const targetsTrackedTransfer = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
+      if (targetsTrackedTransfer) {
+        textDownloadCancelMode = 'stop';
+        textDownloadState = { ...textDownloadState, status: 'stopping', ready: false, error: '' };
+        if (activeTextDownloadModelId === modelId) textDownloadAbortController?.abort();
+        postTextDownloadState({ force: true });
+      }
       const state = await enqueueModelOperation(() => clearTextModelCache(modelId, dtype));
       self.postMessage({ id, ok: true, ...state });
       return;

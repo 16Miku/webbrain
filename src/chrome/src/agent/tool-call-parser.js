@@ -118,6 +118,168 @@ function parseWholeResponseJsonArray(text, allowedNames) {
 }
 
 /**
+ * Split on a delimiter only when it is outside strings and nested containers.
+ * LFM2.5 emits Python-style calls, but argument arrays and objects are JSON.
+ */
+function splitLfmTopLevel(source, delimiter) {
+  const parts = [];
+  const closing = { '(': ')', '[': ']', '{': '}' };
+  const stack = [];
+  let quote = '';
+  let escaped = false;
+  let start = 0;
+
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (closing[char]) {
+      stack.push(closing[char]);
+      continue;
+    }
+    if (char === ')' || char === ']' || char === '}') {
+      if (stack.pop() !== char) return null;
+      continue;
+    }
+    if (char === delimiter && stack.length === 0) {
+      parts.push(source.slice(start, i));
+      start = i + 1;
+    }
+  }
+
+  if (quote || escaped || stack.length > 0) return null;
+  parts.push(source.slice(start));
+  return parts;
+}
+
+function parseLfmString(source) {
+  const quote = source[0];
+  if ((quote !== '"' && quote !== "'") || source.at(-1) !== quote) return null;
+  let output = '';
+  const escapes = {
+    '\\': '\\',
+    '"': '"',
+    "'": "'",
+    n: '\n',
+    r: '\r',
+    t: '\t',
+    b: '\b',
+    f: '\f',
+  };
+
+  for (let i = 1; i < source.length - 1; i++) {
+    const char = source[i];
+    if (char === quote) return null;
+    if (char !== '\\') {
+      if (char === '\n' || char === '\r') return null;
+      output += char;
+      continue;
+    }
+    if (++i >= source.length - 1) return null;
+    const escaped = source[i];
+    if (Object.hasOwn(escapes, escaped)) {
+      output += escapes[escaped];
+      continue;
+    }
+    const width = escaped === 'u' ? 4 : escaped === 'x' ? 2 : 0;
+    const hex = width ? source.slice(i + 1, i + 1 + width) : '';
+    if (!width || !new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) return null;
+    output += String.fromCodePoint(Number.parseInt(hex, 16));
+    i += width;
+  }
+  return output;
+}
+
+function parseLfmValue(source) {
+  const value = source.trim();
+  if (!value) return { ok: false };
+  if (value[0] === '"' || value[0] === "'") {
+    const parsed = parseLfmString(value);
+    return parsed === null ? { ok: false } : { ok: true, value: parsed };
+  }
+  if (value[0] === '[' || value[0] === '{') {
+    try {
+      return { ok: true, value: JSON.parse(value) };
+    } catch {
+      return { ok: false };
+    }
+  }
+  if (value === 'True' || value === 'true') return { ok: true, value: true };
+  if (value === 'False' || value === 'false') return { ok: true, value: false };
+  if (value === 'None' || value === 'null') return { ok: true, value: null };
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(value)) {
+    const number = Number(value);
+    return Number.isFinite(number) ? { ok: true, value: number } : { ok: false };
+  }
+  return { ok: false };
+}
+
+const LFM_DIRECTIONAL_SCROLL_ALIASES = Object.freeze({
+  scrollup: 'up',
+  scrolldown: 'down',
+  scrolltop: 'top',
+  scrollbottom: 'bottom',
+});
+
+/**
+ * Parse LFM2/LFM2.5's documented native format:
+ * <|tool_call_start|>[tool_name(key='value', flag=False)]<|tool_call_end|>
+ *
+ * The wrapper must occupy the whole response, and every call must be valid and
+ * allowlisted. A recognized but unsafe block returns an empty atomic batch so
+ * later generic scanners cannot execute JSON fragments embedded inside it.
+ */
+function parseLfmToolCalls(text, allowedNames) {
+  const startToken = '<|tool_call_start|>';
+  const endToken = '<|tool_call_end|>';
+  const source = text.trim();
+  if (!source.includes(startToken) && !source.includes(endToken)) return null;
+  if (!source.startsWith(startToken) || !source.endsWith(endToken)) return [];
+  const inner = source.slice(startToken.length, -endToken.length).trim();
+  if (inner.includes(startToken) || inner.includes(endToken)) return [];
+  if (!inner.startsWith('[') || !inner.endsWith(']')) return [];
+
+  const callParts = splitLfmTopLevel(inner.slice(1, -1), ',');
+  if (!callParts || callParts.length === 0 || callParts.some(part => !part.trim())) return [];
+  const calls = [];
+  for (const part of callParts) {
+    const match = /^([A-Za-z_]\w*)\s*\(([\s\S]*)\)$/.exec(part.trim());
+    if (!match) return [];
+    const aliasDirection = LFM_DIRECTIONAL_SCROLL_ALIASES[match[1]] || '';
+    const toolName = aliasDirection ? 'scroll' : match[1];
+    if (!allowedNames.has(toolName)) return [];
+    const args = Object.create(null);
+    if (match[2].trim()) {
+      const argParts = splitLfmTopLevel(match[2], ',');
+      if (!argParts || argParts.some(arg => !arg.trim())) return [];
+      for (const arg of argParts) {
+        const assignment = splitLfmTopLevel(arg, '=');
+        if (!assignment || assignment.length !== 2) return [];
+        const key = assignment[0].trim();
+        if (!/^[A-Za-z_]\w*$/.test(key) || Object.hasOwn(args, key)) return [];
+        const parsed = parseLfmValue(assignment[1]);
+        if (!parsed.ok) return [];
+        args[key] = parsed.value;
+      }
+    }
+    if (aliasDirection) {
+      if (Object.hasOwn(args, 'direction') && args.direction !== aliasDirection) return [];
+      args.direction = aliasDirection;
+    }
+    calls.push({ name: toolName, arguments: args });
+  }
+  return calls;
+}
+
+/**
  * Quote relaxed `key:` tokens only when they occur outside JSON strings and
  * after an object boundary. A regular-expression replacement corrupts string
  * values such as "Keep, status: pending" before JSON.parse sees them.
@@ -184,6 +346,9 @@ function toFallbackToolCalls(objects) {
  */
 export function parseToolCallsFromText(text, allowedNames) {
   if (!text || text.length > 10000) return [];
+
+  const lfmCalls = parseLfmToolCalls(text, allowedNames);
+  if (lfmCalls !== null) return toFallbackToolCalls(lfmCalls);
 
   const wholeResponseArray = parseWholeResponseJsonArray(text, allowedNames);
   if (wholeResponseArray !== null) {

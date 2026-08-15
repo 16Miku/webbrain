@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (loaded model) | Auto metadata / override |
 | `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
 | `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
-| `webgpu` (Chromium) | `webgpu` | local | `webbrain-one/Ling-3.0-tiny-ONNX` | No |
+| `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (tested default) or experimental custom HF repo | No |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
@@ -147,17 +147,25 @@ duplicate request.
 
 ### Local Providers
 
-On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider. It
-runs [`webbrain-one/Ling-3.0-tiny-ONNX`](https://huggingface.co/webbrain-one/Ling-3.0-tiny-ONNX/)
-through the packaged Transformers.js 4.2 runtime in a dedicated extension
-Worker. It supports Ling's native tool-calling template, is text-only, and
-defaults to the Compact prompt tier with a conservative 16k practical context
-setting. The first generation downloads approximately 4.85 GB of `q4f16`
-model data into Chrome's browser cache; **Test Connection** checks only the
-packaged runtime and hardware WebGPU adapter, so it does not trigger that
-download. There is no API key, base URL, localhost server, or OpenAI-compatible
-endpoint. Firefox does not expose the card because its build does not package
-the Chromium MV3 offscreen/WebGPU runtime.
+On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider. Its
+model selector offers the tested
+[`LiquidAI/LFM2.5-2.6B-ONNX`](https://huggingface.co/LiquidAI/LFM2.5-2.6B-ONNX/)
+preset or a custom Hugging Face repository. Custom repositories have not been
+tested and are likely not to work. They must be compatible with Transformers.js
+text generation, provide a `q4f16` ONNX variant, and use a chat template that
+accepts `tools`; WebBrain validates the template after loading and rejects
+incompatible repositories. The selected model runs through the packaged
+Transformers.js 4.2 runtime in a dedicated extension Worker. The provider is
+text-only and defaults to the Compact prompt tier with a conservative 16k
+practical context setting. LFM2.5 2.6B downloads about 1.55 GB and uses its
+official pure
+reasoning template; WebBrain keeps text before `</think>` out of the visible
+answer and reports an error if reasoning exhausts the output budget. Each
+repository is cached separately in Chrome. **Test Connection**
+checks only the packaged runtime and hardware WebGPU adapter, so it does not
+trigger a model download. There is no API key, base URL, localhost server, or
+OpenAI-compatible endpoint. Firefox does not expose the card because its build
+does not package the Chromium MV3 offscreen/WebGPU runtime.
 
 Nine local endpoint providers are enabled by default. The model runtimes need no
 API key unless the server was started with auth; the generic proxy card requires
