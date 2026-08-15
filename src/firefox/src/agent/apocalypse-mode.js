@@ -207,14 +207,26 @@ function queryPaths(query) {
   const titleCasedTokens = pathTokens.map(token => token[0].toUpperCase() + token.slice(1));
   const titleCased = titleCasedTokens.join('_');
   const mixedCase = [];
-  for (let tokenIndex = 0; tokenIndex < pathTokens.length && mixedCase.length < 24; tokenIndex += 1) {
+  for (let tokenIndex = 0; tokenIndex < pathTokens.length && mixedCase.length < 64; tokenIndex += 1) {
     const token = pathTokens[tokenIndex];
-    for (let index = 1; index < token.length && mixedCase.length < 24; index += 1) {
-      for (const base of [token, titleCasedTokens[tokenIndex]]) {
-        if (mixedCase.length >= 24) break;
-        const parts = [...titleCasedTokens];
-        parts[tokenIndex] = `${base.slice(0, index)}${base[index].toUpperCase()}${base.slice(index + 1)}`;
-        mixedCase.push(parts.join('_'));
+    const internalCount = Math.min(12, Math.max(0, token.length - 1));
+    const maskLimit = 2 ** internalCount;
+    for (let capitalCount = 1; capitalCount <= internalCount && mixedCase.length < 64; capitalCount += 1) {
+      for (let mask = 1; mask < maskLimit && mixedCase.length < 64; mask += 1) {
+        let bits = mask;
+        let setBits = 0;
+        while (bits) { setBits += bits & 1; bits >>>= 1; }
+        if (setBits !== capitalCount) continue;
+        for (const base of [token, titleCasedTokens[tokenIndex]]) {
+          if (mixedCase.length >= 64) break;
+          const characters = [...base];
+          for (let bit = 0; bit < internalCount; bit += 1) {
+            if (mask & (1 << bit)) characters[bit + 1] = characters[bit + 1].toUpperCase();
+          }
+          const parts = [...titleCasedTokens];
+          parts[tokenIndex] = characters.join('');
+          mixedCase.push(parts.join('_'));
+        }
       }
     }
   }
@@ -235,7 +247,9 @@ function redirectAliasMatchesDestination(alias, destination) {
   if (aliasTerms.some(term => destinationTerms.includes(term))) return true;
   const insignificant = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'the', 'to']);
   const initials = destinationTerms.filter(term => !insignificant.has(term)).map(term => term[0]).join('');
-  return aliasTerms.length === 1 && aliasTerms[0].length >= 2 && aliasTerms[0] === initials;
+  if (aliasTerms.length !== 1 || aliasTerms[0].length < 2 || initials.length < 2) return false;
+  return aliasTerms[0] === initials
+    || (aliasTerms[0].startsWith(initials) && aliasTerms[0].length <= initials.length + 2);
 }
 
 export function rankZimTitleCandidates(candidates, query, limit = 3) {

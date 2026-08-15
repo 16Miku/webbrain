@@ -27,6 +27,7 @@ let snapshot = null;
 let catalogItems = [];
 let importController = null;
 let polling = false;
+let processingDownload = false;
 let visionDownloadState = null;
 const fileHandles = new Map();
 const pageManager = createApocalypseArchiveManager({
@@ -368,7 +369,10 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    if ((snapshot?.archives || []).some(record => ['queued', 'downloading', 'retrying'].includes(record.status))) await command('process');
+    if (!processingDownload && (snapshot?.archives || []).some(record => ['queued', 'downloading', 'retrying'].includes(record.status))) {
+      processingDownload = true;
+      command('process').catch(() => {}).finally(() => { processingDownload = false; });
+    }
     await refresh();
   } catch { /* The next poll or persisted alarm retries. */ }
   finally { polling = false; }

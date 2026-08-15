@@ -21054,6 +21054,15 @@ function minimalWikipediaZimFixture(options = {}) {
       namespace: 'C', url: 'YouTube', title: 'YouTube', mimeType: 0,
       contents: '<p>YouTube is an online video sharing platform.</p>',
     });
+    entries.push({
+      namespace: 'C', url: 'OpenAI', title: 'OpenAI', mimeType: 0,
+      contents: '<p>OpenAI is an artificial intelligence research organization.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'United_States', title: 'United States', mimeType: 0,
+      contents: '<p>The United States is a country in North America.</p>',
+    });
+    entries.push({ namespace: 'C', url: 'USA', title: 'USA', redirectUrl: 'United_States' });
   }
   entries.sort((left, right) => {
     const leftKey = `${left.namespace}/${left.url}`;
@@ -21185,6 +21194,12 @@ test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM
     const [combinedCase] = await archive.search('youtube', { limit: 1 });
     assert.equal(combinedCase?.title, 'YouTube', `${label}: lowercase query missed combined leading and internal capitals`);
     assert.match(combinedCase?.excerpt || '', /video sharing platform/i, `${label}: combined-case lookup returned the wrong article`);
+    const [multipleCapitals] = await archive.search('openai', { limit: 1 });
+    assert.equal(multipleCapitals?.title, 'OpenAI', `${label}: lowercase query missed multiple internal capitals`);
+    assert.match(multipleCapitals?.excerpt || '', /research organization/i, `${label}: multi-capital lookup returned the wrong article`);
+    const [broaderAlias] = await archive.search('usa', { limit: 1 });
+    assert.equal(broaderAlias?.title, 'United States', `${label}: exact extended initialism alias lost its destination title`);
+    assert.match(broaderAlias?.excerpt || '', /country in North America/i, `${label}: exact extended initialism alias lost its content`);
   }
 });
 
@@ -22482,6 +22497,10 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
       `${prefix}: catalog items are discarded before tier selection`);
     assert.match(pageScript, /tier === 'all' \? catalogItems : catalogItems\.filter\(item => item\.tier === tier\)/,
       `${prefix}: catalog tier selection does not preserve all tiers`);
+    assert.doesNotMatch(pageScript, /await command\('process'\)/,
+      `${prefix}: status polling blocks behind the long-running download loop`);
+    assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?await refresh\(\)/,
+      `${prefix}: status polling does not refresh independently of download processing`);
     assert.match(pageScript, /t\(`ap\.tier\.\$\{item\.tier\}`\)/, `${prefix}: archive tier is not rendered`);
     assert.match(pageHtml, /id="vision-model-card"[^>]*hidden/, `${prefix}: local vision status must start hidden on unsupported browsers`);
     assert.match(pageHtml, /data-i18n="ap\.vision\.auto"/, `${prefix}: automatic local vision download is not disclosed`);
