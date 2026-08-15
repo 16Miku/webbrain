@@ -19,6 +19,7 @@
  *   {{docs_url}}         English docs, or the secondary Chinese docs for zh
  *   {{hreflang_links}}   <link rel="alternate" ...> block for this page
  *   {{faq_url}}          localized FAQ path under /docs/
+ *   {{faq_language_routes}} safe locale-to-FAQ route map for the selector
  *   {{faq_jsonld}}       FAQPage schema block generated from faq.* keys
  *   {{plausible_analytics}} shared privacy-friendly analytics partial
  *
@@ -288,8 +289,14 @@ function buildFaqSidebarLinks(dict) {
 
 function buildFaqLanguageOptions(activeLocale) {
   return LOCALES.map((locale) => (
-    `<option value="${faqPathFor(locale)}"${locale.code === activeLocale.code ? ' selected' : ''}>${escHtml(locale.label)}</option>`
+    `<option value="${locale.code}"${locale.code === activeLocale.code ? ' selected' : ''}>${escHtml(locale.label)}</option>`
   )).join('');
+}
+
+function buildFaqLanguageRoutes() {
+  return JSON.stringify(Object.fromEntries(
+    LOCALES.map((locale) => [locale.code, faqPathFor(locale)]),
+  ));
 }
 
 function validateFaqLocale(dict, localeCode) {
@@ -474,6 +481,7 @@ function applyTemplate(template, dict, locale) {
     .replace(/\{\{hreflang_links\}\}/g, buildHreflangBlock())
     .replace(/\{\{faq_hreflang_links\}\}/g, buildFaqHreflangBlock())
     .replace(/\{\{faq_language_options\}\}/g, buildFaqLanguageOptions(locale))
+    .replace(/\{\{faq_language_routes\}\}/g, buildFaqLanguageRoutes())
     .replace(/\{\{faq_sidebar_links\}\}/g, buildFaqSidebarLinks(dict))
     .replace(/\{\{faq_sections\}\}/g, buildFaqSections(dict))
     .replace(/\{\{faq_jsonld\}\}/g, buildFaqJsonLd(dict, locale.bcp47))

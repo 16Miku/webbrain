@@ -487,7 +487,7 @@
       <div class="header-tools">
         <label class="faq-language">
           <span class="visually-hidden">언어 선택</span>
-          <select data-faq-language aria-label="언어 선택"><option value="/docs/faq/">English</option><option value="/docs/es/faq/">Español</option><option value="/docs/fr/faq/">Français</option><option value="/docs/tr/faq/">Türkçe</option><option value="/docs/zh/faq/">中文</option><option value="/docs/ru/faq/">Русский</option><option value="/docs/uk/faq/">Українська</option><option value="/docs/ar/faq/">العربية</option><option value="/docs/ja/faq/">日本語</option><option value="/docs/ko/faq/" selected>한국어</option><option value="/docs/id/faq/">Bahasa Indonesia</option><option value="/docs/th/faq/">ไทย</option><option value="/docs/ms/faq/">Bahasa Melayu</option><option value="/docs/tl/faq/">Filipino</option><option value="/docs/he/faq/">עברית</option><option value="/docs/hi/faq/">हिन्दी</option><option value="/docs/pt/faq/">Português</option><option value="/docs/vi/faq/">Tiếng Việt</option><option value="/docs/bn/faq/">বাংলা</option><option value="/docs/fa/faq/">فارسی</option><option value="/docs/nl/faq/">Nederlands</option><option value="/docs/de/faq/">Deutsch</option></select>
+          <select data-faq-language aria-label="언어 선택"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko" selected>한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option><option value="hi">हिन्दी</option><option value="pt">Português</option><option value="vi">Tiếng Việt</option><option value="bn">বাংলা</option><option value="fa">فارسی</option><option value="nl">Nederlands</option><option value="de">Deutsch</option></select>
         </label>
         <button class="icon-button" type="button" data-theme-toggle aria-label="Toggle theme">☀</button>
         <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="주제">☰</button>
@@ -684,6 +684,7 @@
       const themeButton = document.querySelector('[data-theme-toggle]');
       const sidebarButton = document.querySelector('[data-sidebar-toggle]');
       const languageSelect = document.querySelector('[data-faq-language]');
+      const languageRoutes = Object.freeze({"en":"/docs/faq/","es":"/docs/es/faq/","fr":"/docs/fr/faq/","tr":"/docs/tr/faq/","zh":"/docs/zh/faq/","ru":"/docs/ru/faq/","uk":"/docs/uk/faq/","ar":"/docs/ar/faq/","ja":"/docs/ja/faq/","ko":"/docs/ko/faq/","id":"/docs/id/faq/","th":"/docs/th/faq/","ms":"/docs/ms/faq/","tl":"/docs/tl/faq/","he":"/docs/he/faq/","hi":"/docs/hi/faq/","pt":"/docs/pt/faq/","vi":"/docs/vi/faq/","bn":"/docs/bn/faq/","fa":"/docs/fa/faq/","nl":"/docs/nl/faq/","de":"/docs/de/faq/"});
       const searchInput = document.querySelector('[data-faq-search]');
       const emptyState = document.querySelector('[data-faq-empty]');
       const topics = Array.from(document.querySelectorAll('[data-faq-topic]'));
@@ -699,7 +700,8 @@
       });
 
       languageSelect.addEventListener('change', function () {
-        window.location.assign(languageSelect.value);
+        const route = languageRoutes[languageSelect.value];
+        if (route) window.location.assign(route);
       });
 
       sidebarButton.addEventListener('click', function () {
