@@ -21112,6 +21112,57 @@ test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF 
   }
 });
 
+test('Emergency Box commits partial PDF bytes before recording a paused download', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    let committed = new Uint8Array();
+    const records = new Map();
+    const controller = new AbortController();
+    const chunks = [new TextEncoder().encode('%PDF-partial'), new TextEncoder().encode('-ignored')];
+    const storage = {
+      async size() { return committed.byteLength; },
+      async createWriter() {
+        let working = committed.slice();
+        return {
+          async write(position, bytes) {
+            const expanded = new Uint8Array(position + bytes.byteLength);
+            expanded.set(working);
+            expanded.set(bytes, position);
+            working = expanded;
+          },
+          async truncate(size) { working = working.slice(0, size); },
+          async close() { committed = working; },
+          async abort() {},
+        };
+      },
+    };
+    let readIndex = 0;
+    const result = await runtime.downloadEmergencyResource({
+      id: 'paused-pdf', title: 'Paused PDF', url: 'https://example.test/paused.pdf',
+    }, {
+      signal: controller.signal,
+      storage,
+      store: {
+        async get(id) { return records.get(id); },
+        async put(record) { records.set(record.id, { ...record }); return record; },
+      },
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get() { return null; } },
+        body: { getReader() { return { async read() {
+          if (readIndex === 1) controller.abort();
+          if (readIndex >= chunks.length) return { done: true };
+          return { done: false, value: chunks[readIndex++] };
+        } }; } },
+      }),
+    });
+
+    assert.equal(result.status, 'paused', `${label}: aborted PDF did not become paused`);
+    assert.equal(result.bytesReceived, chunks[0].byteLength, `${label}: paused byte count was rolled back`);
+    assert.equal(committed.byteLength, chunks[0].byteLength, `${label}: partial PDF transaction was not committed`);
+  }
+});
+
 test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
   const files = [
     'src/agent/emergency-box.js',
@@ -22370,6 +22421,36 @@ test('Apocalypse Mode rolls back an interrupted OPFS write session before resumi
     assert.deepEqual(ranges, ['bytes=0-0'], `${label}: resume trusted bytes from an uncommitted write session`);
     assert.deepEqual(writes, [[0, 1]], `${label}: resumed write used the wrong durable offset`);
     assert.equal(records.get(record.id).writeSessionStartPiece, null, `${label}: committed batch left a recovery marker behind`);
+  }
+});
+
+test('Apocalypse Mode bounds production OPFS write sessions', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'bounded-session', status: 'queued', generation: 1, updatedAt: 1,
+      filename: 'archive.zim', size: 10, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: Array(10).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
+      target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 0, bytesDownloaded: 0, retryCount: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    let closes = 0;
+    const manager = runtime.createApocalypseArchiveManager({
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(value => ({ ...value })); },
+        async getArchive(id) { const value = records.get(id); return value ? { ...value } : null; },
+        async putArchive(value) { records.set(value.id, { ...value }); return value; },
+      },
+      storage: { async createWriter() { return { async write() {}, async close() { closes += 1; }, async abort() {} }; } },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid', schedule() {}, randomId: () => 'bounded-lease', now: () => 100,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive.status, 'queued', `${label}: default wake consumed the entire archive`);
+    assert.equal(result.archive.pieceIndex, 8, `${label}: default write batch was not bounded`);
+    assert.equal(closes, 1, `${label}: bounded write batch was not committed`);
   }
 });
 
@@ -43850,6 +43931,8 @@ test('WebGPU worker replays text tool history and applies model-specific generat
   const previousReleaseTextDownload = globalThis.__releaseWebgpuTextDownload;
   const previousGenerationOptions = globalThis.__webgpuGenerationOptions;
   const previousPipelineOptions = globalThis.__webgpuPipelineOptions;
+  const previousHoldTextGeneration = globalThis.__holdWebgpuTextGeneration;
+  const previousReleaseTextGeneration = globalThis.__releaseWebgpuTextGeneration;
   let workerListener = null;
   const posted = [];
   try {
@@ -43947,6 +44030,9 @@ test('WebGPU worker replays text tool history and applies model-specific generat
           await new Promise(resolve => { globalThis.__releaseWebgpuTextDownload = resolve; });
         }
         const instance = async (input, options) => {
+          if (globalThis.__holdWebgpuTextGeneration) {
+            await new Promise(resolve => { globalThis.__releaseWebgpuTextGeneration = resolve; });
+          }
           globalThis.__webgpuGenerationOptions = options;
           const content = modelId === 'LiquidAI/LFM2.5-2.6B-ONNX'
             ? 'private model reasoning</think>Hello!'
@@ -44100,6 +44186,24 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     assert.equal(activeStatus.status, 'ready');
     assert.equal(activeStatus.ready, true);
 
+    globalThis.__holdWebgpuTextGeneration = true;
+    const generationId = requestId++;
+    const generationPromise = workerListener({ data: { id: generationId, type: 'text-chat', payload: activePayload } });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextGeneration; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const queuedPayload = { ...textPayload, modelId: 'text-model-queued' };
+    const queuedId = requestId++;
+    const queuedPromise = workerListener({ data: { id: queuedId, type: 'start-download-text', payload: queuedPayload } });
+    const stopQueuedId = requestId++;
+    const stopQueuedPromise = workerListener({ data: { id: stopQueuedId, type: 'stop-text-download', payload: queuedPayload } });
+    globalThis.__releaseWebgpuTextGeneration();
+    await Promise.all([generationPromise, queuedPromise, stopQueuedPromise]);
+    assert.equal(posted.find(message => message.id === queuedId)?.status, 'not-downloaded', 'stopped queued download still started');
+    assert.equal(posted.find(message => message.id === stopQueuedId)?.status, 'not-downloaded', 'queued Stop did not clear the target model');
+    globalThis.__holdWebgpuTextGeneration = false;
+    globalThis.__releaseWebgpuTextGeneration = null;
+
     globalThis.__holdWebgpuTextDownload = false;
     globalThis.__releaseWebgpuTextDownload = null;
     const objectDtypePayload = {
@@ -44163,6 +44267,10 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     else globalThis.__webgpuGenerationOptions = previousGenerationOptions;
     if (previousPipelineOptions === undefined) delete globalThis.__webgpuPipelineOptions;
     else globalThis.__webgpuPipelineOptions = previousPipelineOptions;
+    if (previousHoldTextGeneration === undefined) delete globalThis.__holdWebgpuTextGeneration;
+    else globalThis.__holdWebgpuTextGeneration = previousHoldTextGeneration;
+    if (previousReleaseTextGeneration === undefined) delete globalThis.__releaseWebgpuTextGeneration;
+    else globalThis.__releaseWebgpuTextGeneration = previousReleaseTextGeneration;
   }
 });
 

@@ -957,12 +957,15 @@ self.addEventListener('message', async event => {
       const request = assertTextDownloadCanStart(payload);
       queuedTextDownload = request;
       let acknowledged = false;
-      const operation = enqueueModelOperation(() => downloadTextModel(payload, {
-        onStarted(state) {
-          acknowledged = true;
-          self.postMessage({ id, ok: true, ...state });
-        },
-      }));
+      const operation = enqueueModelOperation(() => {
+        if (queuedTextDownload !== request) return getTextDownloadStatus(request.modelId, request.dtype);
+        return downloadTextModel(payload, {
+          onStarted(state) {
+            acknowledged = true;
+            self.postMessage({ id, ok: true, ...state });
+          },
+        });
+      });
       void operation.then((state) => {
         if (!acknowledged) self.postMessage({ id, ok: true, ...state });
       }).catch((error) => {
@@ -979,6 +982,9 @@ self.addEventListener('message', async event => {
     if (type === 'stop-text-download') {
       const modelId = String(payload?.modelId || '').trim();
       const dtype = payload?.dtype || 'q4f16';
+      const targetsQueuedTransfer = queuedTextDownload
+        && sameTextModel(queuedTextDownload.modelId, queuedTextDownload.dtype, modelId, dtype);
+      if (targetsQueuedTransfer) queuedTextDownload = null;
       const targetsTrackedTransfer = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
       if (targetsTrackedTransfer) {
         textDownloadCancelMode = 'stop';

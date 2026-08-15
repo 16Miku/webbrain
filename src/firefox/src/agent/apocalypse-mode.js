@@ -821,6 +821,7 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
 }
 
 const MAX_RETRY_ATTEMPTS = 6;
+const DEFAULT_MAX_PIECES_PER_WAKE = 8;
 const BASE_RETRY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 export const APOCALYPSE_DOWNLOAD_ALARM = 'wb_apocalypse_archive_download';
@@ -896,7 +897,9 @@ export function createApocalypseArchiveManager(options = {}) {
   const randomId = options.randomId || (() => globalThis.crypto.randomUUID());
   const now = options.now || (() => Date.now());
   const configuredMaxPieces = Number(options.maxPiecesPerWake);
-  const maxPiecesPerWake = Number.isFinite(configuredMaxPieces) ? Math.max(1, Math.floor(configuredMaxPieces)) : Number.POSITIVE_INFINITY;
+  const maxPiecesPerWake = Number.isFinite(configuredMaxPieces)
+    ? Math.max(1, Math.floor(configuredMaxPieces))
+    : DEFAULT_MAX_PIECES_PER_WAKE;
   const controllers = new Map();
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');

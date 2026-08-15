@@ -378,7 +378,17 @@ export async function downloadEmergencyResource(resource, options = {}) {
       error: '',
     });
   } catch (error) {
-    try { await writer?.abort?.(error); } catch { /* keep the last committed partial file */ }
+    if (writer) {
+      try {
+        // OPFS writable streams are atomic: aborting rolls the file back to its
+        // pre-download size. Commit successfully written chunks so a pause or
+        // transient network failure can resume from durable progress.
+        await writer.close();
+      } catch {
+        try { await writer.abort?.(error); } catch { /* preserve the original failure */ }
+      }
+      writer = null;
+    }
     const bytesReceived = await storage.size(storageKey).catch(() => 0);
     const paused = error?.name === 'AbortError' || signal?.aborted;
     await persist({
