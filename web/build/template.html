@@ -31,9 +31,6 @@
   <script type="application/ld+json">
 {{software_jsonld}}
   </script>
-  <script type="application/ld+json">
-{{faq_jsonld}}
-  </script>
   <style>
     /* ================================================================
        RESET & BASE
@@ -2486,58 +2483,37 @@
     }
 
     /* ================================================================
-       FAQ
+       FAQ BRIDGE
        ================================================================ */
-    .faq-list {
+    .faq-bridge {
       max-width: 760px;
-      margin: 32px auto 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .faq-item {
-      background: var(--bg-card);
+      margin: 34px auto 0;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
-      transition: border-color 0.2s;
+      background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(45,212,191,0.05));
     }
-    .faq-item[open] {
-      border-color: rgba(108,99,255,0.25);
-    }
-    .faq-item summary {
-      padding: 16px 20px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: color 0.2s;
-    }
-    .faq-item summary::-webkit-details-marker { display: none; }
-    .faq-item summary::after {
-      content: '+';
-      font-size: 20px;
-      color: var(--text-dim);
-      flex-shrink: 0;
-      margin-inline-start: 16px;
-      transition: transform 0.2s;
-    }
-    .faq-item[open] summary::after {
-      content: '−';
-      color: var(--accent);
-    }
-    .faq-item summary:hover { color: var(--accent2); }
-    .faq-item p {
-      padding: 0 20px 16px;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .faq-item p a {
+    .faq-bridge-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(45,212,191,0.28);
+      border-radius: 50%;
       color: var(--accent2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 800;
+    }
+    .faq-bridge strong { font-size: 14px; }
+    .faq-bridge a { color: var(--accent2); font-size: 13px; font-weight: 700; }
+    .faq-bridge a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 560px) {
+      .faq-bridge { grid-template-columns: auto 1fr; }
+      .faq-bridge a { grid-column: 2; }
     }
 
     /* ================================================================
@@ -2675,6 +2651,7 @@
     </a>
     <div class="nav-links">
       <a href="{{docs_url}}">{{t:nav.docs}}</a>
+      <a href="{{faq_url}}">{{t:nav.faq}}</a>
       <a href="/blog">{{t:nav.blog}}</a>
       <a href="#download" class="nav-cta">{{t:nav.download}}</a>
       <div class="language-picker" id="language-picker">
@@ -3361,6 +3338,11 @@
       </div>
     </div>
   </div>
+  <aside class="faq-bridge" id="faq" aria-label="{{t:faq.title}}">
+    <span class="faq-bridge-mark" aria-hidden="true">?</span>
+    <strong>{{t:faq.title}}</strong>
+    <a href="{{faq_url}}">{{t:nav.faq}} <span aria-hidden="true">→</span></a>
+  </aside>
 </section>
 
 <!-- MCP SERVER -->
@@ -3521,154 +3503,6 @@
   </div>
 </dialog>
 
-<!-- FAQ -->
-<section class="section" id="faq">
-  <div class="section-label">{{t:faq.label}}</div>
-  <h2 class="section-title">{{t:faq.title}}</h2>
-
-  <div class="faq-list">
-    <details class="faq-item">
-      <summary>{{t:faq.alt_claude.q}}</summary>
-      <p>{{t-html:faq.alt_claude.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.cloud_subscription.q}}</summary>
-      {{t-html:faq.cloud_subscription.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.cloud_sync.q}}</summary>
-      {{t-html:faq.cloud_sync.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.vs_frameworks.q}}</summary>
-      <p>{{t-html:faq.vs_frameworks.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.offline.q}}</summary>
-      <p>{{t-html:faq.offline.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.models_supported.q}}</summary>
-      <p>{{t-html:faq.models_supported.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.recommended_model.q}}</summary>
-      {{t-html:faq.recommended_model.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.webgpu_apocalypse.q}}</summary>
-      {{t-html:faq.webgpu_apocalypse.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.cors.q}}</summary>
-      {{t-html:faq.cors.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.ollama_origins.q}}</summary>
-      {{t-html:faq.ollama_origins.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.firefox.q}}</summary>
-      <p>{{t-html:faq.firefox.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.firefox_sidebar_move.q}}</summary>
-      <p>{{t-html:faq.firefox_sidebar_move.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.vivaldi_dialogs.q}}</summary>
-      {{t-html:faq.vivaldi_dialogs.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.safe.q}}</summary>
-      <p>{{t-html:faq.safe.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.cdp.q}}</summary>
-      <p>{{t-html:faq.cdp.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.disable_approval_questions.q}}</summary>
-      <p>{{t-html:faq.disable_approval_questions.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.scraping.q}}</summary>
-      <p>{{t-html:faq.scraping.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.api_mutations.q}}</summary>
-      {{t-html:faq.api_mutations.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.lm_studio.q}}</summary>
-      <p>{{t-html:faq.lm_studio.a_html}}</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.scroll_during_run.q}}</summary>
-      {{t-html:faq.scroll_during_run.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.tab_switch_during_run.q}}</summary>
-      {{t-html:faq.tab_switch_during_run.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.profile.q}}</summary>
-      {{t-html:faq.profile.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.screenshot_redaction.q}}</summary>
-      {{t-html:faq.screenshot_redaction.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.cookies_paywalls.q}}</summary>
-      {{t-html:faq.cookies_paywalls.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.multilingual.q}}</summary>
-      {{t-html:faq.multilingual.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.page_context.q}}</summary>
-      {{t-html:faq.page_context.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.token_conscious.q}}</summary>
-      {{t-html:faq.token_conscious.a_html}}
-    </details>
-
-    <details class="faq-item">
-      <summary>{{t:faq.contribute.q}}</summary>
-      <p>{{t-html:faq.contribute.a_html}}</p>
-    </details>
-  </div>
-</section>
-
 <!-- SPREAD THE WORD / OPEN SOURCE -->
 <section class="section">
   <div class="oss-banner">
@@ -3712,6 +3546,7 @@
       </a>
       <a href="/blog">{{t:nav.blog}}</a>
       <a href="{{docs_url}}">{{t:nav.docs}}</a>
+      <a href="{{faq_url}}">{{t:nav.faq}}</a>
       <a href="/privacy">{{t:footer.link_privacy}}</a>
       <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">{{t:footer.link_report_bug}}</a>
       <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">{{t:footer.link_license}}</a>

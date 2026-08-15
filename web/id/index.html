@@ -78,231 +78,6 @@
   "screenshot": "https://webbrain.one/og-image.png"
 }
   </script>
-  <script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "inLanguage": "id-ID",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "Apakah WebBrain alternatif gratis untuk plugin peramban Claude?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ya. WebBrain menyediakan kapabilitas agen peramban AI yang serupa — membaca halaman, mengekstrak data, mengklik tombol, mengisi formulir, dan mengotomatiskan alur kerja multi-langkah. Tidak seperti plugin peramban Claude berpemilik yang membutuhkan langganan Claude Pro dan hanya bekerja dengan model Anthropic, WebBrain sepenuhnya gratis, open-source (lisensi MIT), dan mendukung beberapa penyedia LLM termasuk model lokal yang sepenuhnya berjalan di mesin Anda."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Berapa biaya langganan WebBrain Cloud?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain Cloud saat ini US$5/bulan per profil perangkat, jauh lebih murah daripada Claude Pro untuk sementara waktu. Penggunaan saat ini tidak dibatasi dalam kebijakan penggunaan wajar: penggunaan pribadi normal tidak masalah, tetapi penyalahgunaan, otomatisasi berlebihan, penjualan ulang, atau volume yang tidak wajar tidak diperbolehkan. Langganan ditautkan ke pengenal perangkat yang dibuat ekstensi untuk GUID browser + OS tersebut, bukan ke akun pengguna. Jika pengenal itu hilang karena Anda mereset penyimpanan ekstensi, menghapus profil browser, menginstal ulang browser, mengganti browser/OS, atau kehilangan perangkat, kami tidak dapat mengambil atau memindahkannya dan tidak memberikan pengembalian dana atas kehilangan tersebut. Anda dapat berlangganan atau mengelola penagihan dari bagian Account pada halaman pengaturan plugin dengan tombol Manage billing. Untuk membatalkan secara manual, kirim email kepada kami dengan alamat email yang Anda gunakan saat checkout."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bagaimana cara kerja Cloud Sync terenkripsi?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cloud Sync adalah fitur opsional untuk pelanggan aktif WebBrain Cloud. Fitur ini menyinkronkan memori WebBrain, teks isi otomatis Profil, dan konfigurasi penyedia yang didukung, termasuk kunci API. Fitur ini tidak menyinkronkan riwayat obrolan, riwayat peramban, tangkapan layar halaman, atau token akses dan refresh OAuth lama. Peramban Anda mengenkripsi vault sinkronisasi sebelum diunggah dengan kata sandi yang Anda pilih. WebBrain Cloud hanya menyimpan vault terenkripsi; tidak dapat membaca memori, teks profil, pengaturan penyedia, atau kunci API Anda, dan tidak dapat memulihkan kata sandi sinkronisasi untuk Anda. Kolom email untuk autentikasi penagihan/langganan magic-link WebBrain Cloud. Bukan kata sandi akun. Jika UI meminta mengubah kata sandi di Cloud Sync, yang dimaksud adalah kata sandi enkripsi sinkronisasi, bukan kata sandi akun WebBrain. Jika Anda lupa kata sandi sinkronisasi, vault cloud terenkripsi lama tidak dapat didekripsi. Anda dapat mereset vault cloud dan mengunggah salinan terenkripsi baru dari perangkat yang masih menyimpan data secara lokal."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bagaimana WebBrain dibandingkan dengan OpenClaw, Browser-Use, dan kerangka agen AI lainnya?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Mereka kategori alat yang berbeda. WebBrain adalah ekstensi peramban — Anda memasangnya di Chrome atau Firefox dan mengobrol di panel samping, tanpa coding. Kerangka seperti OpenClaw dan Browser-Use adalah SDK pengembang untuk membangun pipeline peramban otomatis dengan Python, biasanya menggunakan peramban headless dan CDP. Bayangkan begini: WebBrain untuk menjelajah sehari-hari bersama asisten AI; kerangka agen untuk membangun bot scraping dan otomasi pengujian. Anda bisa menggunakan keduanya — mereka saling melengkapi."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bisakah saya menggunakan WebBrain sepenuhnya offline?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ya. Penyedia bawaan WebBrain adalah llama.cpp, yang menjalankan model AI lokal di komputer Anda. Tidak perlu kunci API, AI tidak butuh internet, dan data tidak pernah meninggalkan mesin Anda. Cukup unduh model GGUF, jalankan llama-server, dan Anda punya agen peramban AI yang sepenuhnya privat. Anda juga dapat menggunakan Ollama dengan endpoint kompatibel-OpenAI miliknya."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Model AI apa saja yang didukung WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain mendukung empat jenis penyedia: llama.cpp (model GGUF lokal apa pun), OpenAI (GPT-4o, GPT-4, dsb.), Claude (Claude Opus, Sonnet, Haiku melalui API asli), dan OpenRouter (akses ke 100+ model dari berbagai penyedia). Endpoint API apa pun yang kompatibel-OpenAI dapat digunakan, jadi Anda juga bisa memakai layanan seperti Together AI, Groq, Mistral, atau server lokal apa pun dengan antarmuka kompatibel-OpenAI."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Model apa yang paling direkomendasikan?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Per 21 April 2026, rekomendasi teratas adalah Qwen 3.6 35B. Alasannya: pada tolok ukur visi kami (vision-model-shootout), ia mengungguli Gemma 4 pada pemahaman tangkapan layar sembari tetap praktis untuk inferensi lokal. Untuk GPU konsumen, RTX 5090 ideal, dan RTX 4090 sering kali bisa dijalankan dengan kuantisasi INT4 AutoRound via Intel/Qwen3.6-35B-A3B-int4-AutoRound. Untuk kecepatan maksimal, kami merekomendasikan menyajikan melalui vLLM. Contoh perintah: python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{\"image\": 4, \"video\": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '[\"*\"]' --speculative-config '{\"method\": \"dflash\", \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\", \"num_speculative_tokens\": 15}' --attention-backend flash_attn DFlash speculative decoding bersifat opsional."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Mengapa WebGPU hanya tersedia di Mode Apocalypse?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Karena kami belum menilai inferensi teks WebGPU di browser cukup baik untuk sebagian besar pengguna, dan kami tidak ingin Anda mengalami pengalaman yang buruk. Jika ingin menggunakan model LFM2.5 2.6B yang sama secara lokal, jalankan inferensi di komputer Anda dengan llama.cpp atau Ollama lalu arahkan WebBrain ke endpoint lokal tersebut alih-alih mengandalkan WebGPU. Fallback visi WebGPU tetap tersedia karena modelnya jauh lebih kecil dan fallback ini hanya digunakan sesekali."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Saya mendapat \"Failed to fetch\" saat menghubungkan ke server LLM lokal (vLLM, Ollama, llama.cpp) di jaringan saya",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Jika server LLM Anda berada di mesin lain dalam jaringan lokal (mis. http://192.168.1.x:8000), Chrome memblokir permintaan kecuali server mengirim header CORS. Solusinya bergantung pada server Anda: vLLM: Mulai dengan --allowed-origins '[\"*\"]' (nilainya harus berupa list JSON). Ollama: Atur variabel lingkungan OLLAMA_ORIGINS=* sebelum memulai. llama.cpp: CORS aktif secara bawaan — tidak perlu perubahan. Jika server berjalan di localhost (mesin yang sama dengan peramban), CORS biasanya tidak diperlukan. Masalah ini hanya menyangkut koneksi antar mesin di jaringan lokal. Pastikan base URL pada pengaturan WebBrain diakhiri dengan /v1 (mis. http://192.168.1.47:8000/v1). Pengecualian: Ollama yang dipakai dari ekstensi browser mungkin tetap membutuhkan OLLAMA_ORIGINS; lihat FAQ Ollama di bawah."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Mengapa Ollama di localhost mengembalikan 403 dari ekstensi WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Versi Ollama terbaru dapat menolak permintaan dari origin ekstensi browser meskipun Ollama berjalan di mesin yang sama. Ekstensi mengirim Origin seperti chrome-extension://... atau moz-extension://..., dan Ollama dapat menjawab 403 kecuali origin tersebut diizinkan. Tutup aplikasi desktop Ollama apa pun yang sudah memakai port 11434, lalu jalankan Ollama dengan salah satu perintah ini: OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve Biarkan URL dasar Ollama di WebBrain tetap http://localhost:11434/v1. Pemeriksaan curl di terminal masih bisa berhasil tanpa pengaturan ini karena tidak mengirim origin ekstensi browser."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apakah WebBrain bekerja di Firefox?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ya. WebBrain dirilis dengan versi Chrome (Manifest V3, menggunakan sidePanel API) dan versi Firefox (Manifest V2, menggunakan sidebar_action). Kedua versi memiliki fitur yang identik. Versi Firefox dapat dimuat sebagai add-on sementara untuk pengembangan, atau dipublikasikan ke addons.mozilla.org untuk pemasangan permanen."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bisakah saya memindahkan sidebar Firefox dari kiri ke kanan, seperti panel samping Chrome?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Bisa — sidebar Firefox bawaannya di kiri, tetapi Anda dapat memindahkannya. Klik kanan di mana saja pada header sidebar dan pilih Move Sidebar to Right (atau gunakan View → Sidebar → Move Sidebar to Right dari bilah menu). Posisinya tersimpan antar restart. sidePanel Chrome bawaannya di kanan dan tidak bisa dipindahkan pengguna dari panel itu sendiri."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apakah WebBrain aman digunakan? Bisakah ia memodifikasi halaman web?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain memiliki tiga mode. Mode Tanya (bawaan) hanya-baca dan tidak dapat mengubah apa pun pada halaman. Mode Aksi memungkinkan tindakan peramban seperti mengeklik, mengetik, dan menavigasi, sedangkan mode Dev menambahkan alat debug halaman. Tindakan yang berdampak memerlukan persetujuan secara bawaan; jika gerbang izin tersebut dimatikan, WebBrain menampilkan spanduk peringatan yang terlihat. Anda dapat menghentikan agen kapan saja dengan tombol Berhenti. Kode sumber ekstensi sepenuhnya terbuka untuk audit di GitHub."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apa itu spanduk «WebBrain started debugging this browser»? Mengapa WebBrain memakai CDP?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Agar dapat bertindak pada halaman dengan andal, WebBrain memakai Chrome DevTools Protocol (CDP) melalui API ekstensi standar chrome.debugger — itulah yang memicu spanduk Chrome «WebBrain started debugging this browser». CDP memungkinkan agen mengeklik dan mengetik dengan peristiwa input tepercaya yang benar-benar diterima situs modern; peristiwa sintetis yang dipicu dari content script ditolak oleh banyak situs, Web Components, dan bidang yang dikontrol framework. Lewat ini pula WebBrain mengambil tangkapan layar berpresisi piksel untuk cadangan visi dan menjangkau iframe lintas-asal dan shadow DOM yang tak terlihat oleh content script. Mode Tanya yang hanya-baca tidak memerlukan CDP — pembacaan halaman dan pohon aksesibilitas berjalan lewat content script biasa. Yang membutuhkannya adalah keandalan Mode Aksi dan pekerjaan lintas-asal, dan pada ekstensi Manifest V3 tidak ada API tanpa debugger untuk input tepercaya. WebBrain melampirkan debugger hanya saat sebuah tindakan membutuhkannya, per tab, dan seluruh ekstensi bersifat sumber terbuka sehingga Anda dapat mengaudit persis apa yang dilakukan sesi. CDP itu kuat, jadi kami memperlakukan jejaknya sebagai sesuatu yang harus dibatasi (lampirkan sesuai kebutuhan, jauhkan pembacaan darinya), dan memperketatnya lebih lanjut ada dalam peta jalan keamanan kami."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Pertanyaannya terlalu banyak. Bisakah saya menonaktifkannya?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Prompt persetujuan itu ada demi keselamatan Anda. Bahkan di situs yang Anda percayai, pelaku jahat dapat meniru instruksi LLM atau menyisipkan konten yang mencoba membuat agen melakukan hal-hal atas nama Anda yang tidak akan Anda setujui. Karena itu WebBrain meminta persetujuan sebelum tindakan yang berdampak. Jika Anda tetap tidak ingin melalui prompt tersebut, Anda dapat menonaktifkannya: buka plugin samping, klik ikon roda gigi di header, buka tab Permissions di settings.html, lalu matikan opsi Ask before consequential actions."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bagaimana cara menggunakan WebBrain untuk scraping web dan ekstraksi data?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cukup buka halaman web mana pun, buka panel samping WebBrain, dan minta dengan bahasa natural: \"Ekstrak semua nama produk dan harga dari halaman ini\", \"Ambil semua alamat email pada halaman ini\", atau \"Ringkas artikel ini dalam poin\". Agen AI membaca isi halaman, memahami strukturnya, dan mengembalikan data yang diekstraksi. Untuk scraping yang lebih kompleks, beralih ke mode Aksi — agen dapat berpindah antar halaman, mengeklik tombol pagination, dan mengagregasi data lintas banyak halaman."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apakah WebBrain memanggil API langsung, atau selalu mengeklik melalui UI?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Secara bawaan, WebBrain selalu melalui UI yang terlihat untuk setiap tindakan yang membuat, memodifikasi, menghapus, mengirim, mengeposkan, atau membeli sesuatu. Ia akan menavigasi ke halaman, mengisi formulir, dan mengeklik tombol — persis seperti yang akan Anda lakukan. Ia menolak memanggil endpoint REST/GraphQL secara langsung melalui fetch() latar belakang untuk mutasi. Ini disengaja: tindakan API tidak terlihat (Anda tidak melihat apa yang dikirim), sering memerlukan token autentikasi terpisah yang mungkin belum Anda konfigurasi, dan memiliki radius dampak yang jauh lebih besar daripada satu salah klik yang terlihat. UI-first berarti semuanya tampil di layar, di dalam sesi peramban normal Anda, dan dapat dihentikan. Untuk membaca data — mengambil README, melihat issue, membandingkan harga antar situs, memeriksa halaman status — WebBrain dengan bebas menggunakan permintaan HTTP latar belakang melalui alat fetch_url dan research_url. Membaca bukanlah tindakan; tidak mengubah apa pun pada layanan jarak jauh, sehingga kekhawatiran keamanan yang sama tidak berlaku. Jika Anda secara khusus ingin mengizinkan mutasi API untuk sebuah tugas tertentu, ketikkan /allow-api di awal pesan Anda (opsional diikuti dengan deskripsi tugas singkat). Override per-percakapan ini memungkinkan WebBrain jatuh ke endpoint API saat UI benar-benar gagal atau tak bisa digunakan, sembari tetap memprioritaskan UI saat UI bisa. Sebuah lencana tetap muncul di atas area input selama override aktif, dan akan hilang saat Anda mereset percakapan."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bisakah saya menggunakannya juga di LM Studio?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ya. Alat jaringan hanya-baca WebBrain — fetch_url dan research_url — juga hadir sebagai plugin LM Studio mandiri di webbrain/web-tools. Pasang dengan lms clone webbrain/web-tools dan aktifkan di obrolan LM Studio mana pun — model apa pun yang mendukung tool calling kemudian dapat memanggil kedua alat itu tanpa Anda memasang ekstensi peramban. Murni Node, tanpa peramban headless. Sumber: lmstudio-plugin/."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bisakah saya menggulir ke atas atau ke bawah saat WebBrain bekerja di tab saya?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Biasanya bisa — terutama dalam mode Ask untuk permintaan hanya-baca seperti “Ringkas halaman ini.” Anda dapat terus menggulir saat WebBrain bekerja. Kapan sebaiknya dihindari? Tangkapan layar otomatis mencerminkan viewport tab saat ini. Saat WebBrain sedang aktif memeriksa atau berinteraksi dengan konten yang terlihat dalam mode Act atau Dev, menggulir dapat menggeser target atau mengubah apa yang dilihat model. Tunggu hingga langkah tersebut selesai sebelum menggulir; di luar momen itu, Anda dapat terus menggunakan halaman."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bisakah saya beralih ke tab lain saat WebBrain sedang bekerja pada sebuah halaman?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ya. Sejak versi 27.0.0, WebBrain tidak mengambil alih fokus di peramban berbasis Chromium maupun Firefox kecuali akses latar depan benar-benar diperlukan. Proses tetap terikat pada tab tempat proses dimulai, sehingga Anda dapat bekerja dengan aman di tab lain. Jika suatu langkah yang jarang terjadi membutuhkan tab asli berada di latar depan, WebBrain mungkin memfokuskan tab tersebut sebentar. Hindari mengeklik atau mengetik di tab yang sama saat WebBrain sedang aktif bertindak di sana."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bagaimana isi-otomatis Profil bekerja, dan apakah aman?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Isi-otomatis profil adalah fitur opsional di Pengaturan → Profil. Anda memasukkan bio singkat — nama, email kerja, perusahaan, dan kata sandi sekali pakai untuk pendaftaran berisiko rendah — lalu mengaktifkannya. Saat aktif, WebBrain menambahkan teks itu ke prompt sistem agen sehingga ia dapat mengisi formulir pendaftaran tanpa bertanya setiap kali. Teks tersebut disimpan dalam bentuk teks biasa di penyimpanan lokal peramban Anda. Teks itu tidak dikirim ke proyek WebBrain, tetapi dikirim ke penyedia LLM yang Anda konfigurasi pada setiap giliran, sebagai bagian dari prompt sistem. Mati secara bawaan. Jangan menaruh kata sandi akun penting (Google, Apple, iCloud, perbankan, SSO kantor, email utama) di sini. Akun-akun itu seharusnya menggunakan 2FA dan tidak perlu Anda serahkan kepada agen. Kasus penggunaan yang dimaksud adalah kata sandi sekali pakai yang Anda pakai ulang untuk pendaftaran newsletter dan uji coba gratis."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apakah pengaturan Penyamaran tangkapan layar menjamin data pribadi saya tidak pernah sampai ke model visi cloud?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Tidak — pengaturan ini mengurangi risiko paparan, bukan jaminan. Saat diaktifkan (Pengaturan → Multimodal → Penyamaran tangkapan layar, nonaktif secara default), WebBrain mem-pixel-kan kolom formulir dan teks yang terlihat seperti alamat email atau nomor telepon pada setiap tangkapan layar sebelum dikirim ke model visi. Pendeteksian berjalan sepenuhnya di perangkat Anda menggunakan heuristik DOM; tidak ada yang dikirim ekstra. Ini bersifat best-effort dan fail-open. Jika detektor tidak bisa berjalan di suatu halaman — misalnya tepat setelah navigasi, di penampil PDF, atau di halaman browser yang dibatasi — tangkapan layar tetap dikirim tanpa disamarkan daripada membatalkan tugas Anda. Konten yang tidak bisa dilihat heuristik DOM (teks yang digambar di canvas, informasi pribadi di dalam gambar, widget yang tidak umum) juga bisa lolos. Dan pengaturan ini hanya mencakup tangkapan layar: teks halaman yang dikirim ke model tidak disamarkan olehnya. Untuk privasi visi yang penuh, gunakan model lokal. Dengan penyedia offline seperti llama.cpp atau Ollama, tangkapan layar dan teks halaman tidak pernah meninggalkan perangkat Anda, jadi sejak awal tidak ada yang perlu disamarkan — ini satu-satunya konfigurasi di mana privasi benar-benar terjamin. Lihat \"Bisakah saya menggunakan WebBrain sepenuhnya offline?\" di atas. Tidak punya perangkat yang mampu menjalankan model lokal dengan visi? Jalan tengah yang baik adalah menggunakan model lokal kecil untuk perencanaan dan pemanggilan alat (cukup ringan untuk CPU/GPU yang sederhana), dipadukan dengan penyedia cloud untuk sub-panggilan visi, dengan Penyamaran tangkapan layar diaktifkan. Percakapan dan teks halaman Anda tetap berada di perangkat, dan setiap tangkapan layar yang dikirim ke visi cloud sudah memiliki kolom formulir serta email/telepon yang terdeteksi dalam keadaan buram — paparan cloud berkurang tanpa perlu perangkat keras untuk model visi lokal penuh. Atur pembagian ini di Pengaturan → Visi (lihat \"Bagaimana WebBrain menjaga tagihan LLM cloud tetap terkendali?\" di atas)."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apa yang dilakukan WebBrain dengan spanduk cookie dan paywall?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Spanduk cookie: WebBrain mengenali spanduk persetujuan dari kerangka umum (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) dan menutupnya sebelum menalar halaman. Prioritasnya adalah \"Tolak semua\" / \"Tolak non-esensial\" / \"Hanya yang perlu\" jika terlihat jelas; jika tidak, ia jatuh ke \"Terima semua\" alih-alih hilang dalam labirin \"Kelola preferensi\". Paywall: WebBrain melaporkan paywall dengan jujur dan memberi tahu Anda apa yang sebenarnya dapat dilihatnya (judul, dek, paragraf pertama). Ia tidak mencoba menembus paywall — tidak ada archive.today, 12ft.io, pembersihan cookie, penonaktifan JS, atau trik mode pembaca. Jika ingin artikel penuh, masuk dengan langganan atau minta WebBrain mencari liputan gratis untuk cerita yang sama."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apakah WebBrain mendukung mode dry-run?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Per 7.0.0, belum. Mode dry-run direncanakan dan sudah ada di roadmap."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Apakah WebBrain mengirim seluruh DOM ke model AI?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan. Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bagaimana WebBrain menjaga tagihan LLM cloud tetap terkendali?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Tiga lapisan independen: Tangkapan layar hemat token. Sebelum gambar meninggalkan mesin Anda, WebBrain mengubah ukurannya (sisi pendek dibatasi, rasio aspek dipertahankan) dan mengompresi JPEG secara iteratif hingga muat dengan anggaran token gambar per giliran. Tangkapan layar 2000×1200 yang akan menghabiskan ~1.500 token input di GPT-4o akan dikompresi menjadi ~300–500 token tanpa kerugian praktis untuk tugas membaca halaman. Diimplementasikan di _fitImageDimensions dengan unit test untuk perhitungan anggarannya. Pemangkasan konteks cerdas. Riwayat percakapan, keluaran alat, dan dump DOM inline dibatasi per giliran dan dipangkas yang terlama lebih dulu saat jendela konteks model aktif mendekati penuh. Anda tidak akan melihat eksekusi diam-diam membengkak dari 10k token menjadi 100k karena read_page mengembalikan artikel sepanjang novel. Model visi khusus. Pasangkan model teks murah (mis. GPT-4o-mini) untuk perencanaan dan pemanggilan alat dengan model visi terpisah (mis. GPT-4o) hanya untuk tangkapan layar, sehingga Anda tidak membayar harga model multimodal di setiap giliran. Konfigurasikan di Pengaturan → Visi. Hasil akhirnya: sesi panjang dengan penyedia cloud tetap terprediksi. Untuk kendali penuh, gunakan llama.cpp secara lokal — biaya per token nol."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Bisakah saya berkontribusi ke WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Tentu saja! WebBrain berlisensi MIT dan menyambut kontribusi. Lihat repositori GitHub untuk issue, permintaan fitur, dan panduan kontribusi."
-      }
-    }
-  ]
-}
-  </script>
   <style>
     /* ================================================================
        RESET & BASE
@@ -2755,58 +2530,37 @@
     }
 
     /* ================================================================
-       FAQ
+       FAQ BRIDGE
        ================================================================ */
-    .faq-list {
+    .faq-bridge {
       max-width: 760px;
-      margin: 32px auto 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .faq-item {
-      background: var(--bg-card);
+      margin: 34px auto 0;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
-      transition: border-color 0.2s;
+      background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(45,212,191,0.05));
     }
-    .faq-item[open] {
-      border-color: rgba(108,99,255,0.25);
-    }
-    .faq-item summary {
-      padding: 16px 20px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: color 0.2s;
-    }
-    .faq-item summary::-webkit-details-marker { display: none; }
-    .faq-item summary::after {
-      content: '+';
-      font-size: 20px;
-      color: var(--text-dim);
-      flex-shrink: 0;
-      margin-inline-start: 16px;
-      transition: transform 0.2s;
-    }
-    .faq-item[open] summary::after {
-      content: '−';
-      color: var(--accent);
-    }
-    .faq-item summary:hover { color: var(--accent2); }
-    .faq-item p {
-      padding: 0 20px 16px;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .faq-item p a {
+    .faq-bridge-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(45,212,191,0.28);
+      border-radius: 50%;
       color: var(--accent2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 800;
+    }
+    .faq-bridge strong { font-size: 14px; }
+    .faq-bridge a { color: var(--accent2); font-size: 13px; font-weight: 700; }
+    .faq-bridge a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 560px) {
+      .faq-bridge { grid-template-columns: auto 1fr; }
+      .faq-bridge a { grid-column: 2; }
     }
 
     /* ================================================================
@@ -2951,6 +2705,7 @@
     </a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
+      <a href="/docs/id/faq/">FAQ</a>
       <a href="/blog">Blog</a>
       <a href="#download" class="nav-cta">Unduh</a>
       <div class="language-picker" id="language-picker">
@@ -3637,6 +3392,11 @@
       </div>
     </div>
   </div>
+  <aside class="faq-bridge" id="faq" aria-label="Pertanyaan yang Sering Diajukan">
+    <span class="faq-bridge-mark" aria-hidden="true">?</span>
+    <strong>Pertanyaan yang Sering Diajukan</strong>
+    <a href="/docs/id/faq/">FAQ <span aria-hidden="true">→</span></a>
+  </aside>
 </section>
 
 <!-- MCP SERVER -->
@@ -3797,154 +3557,6 @@
   </div>
 </dialog>
 
-<!-- FAQ -->
-<section class="section" id="faq">
-  <div class="section-label">FAQ</div>
-  <h2 class="section-title">Pertanyaan yang Sering Diajukan</h2>
-
-  <div class="faq-list">
-    <details class="faq-item">
-      <summary>Apakah WebBrain alternatif gratis untuk plugin peramban Claude?</summary>
-      <p>Ya. WebBrain menyediakan kapabilitas agen peramban AI yang serupa — membaca halaman, mengekstrak data, mengklik tombol, mengisi formulir, dan mengotomatiskan alur kerja multi-langkah. Tidak seperti plugin peramban Claude berpemilik yang membutuhkan langganan Claude Pro dan hanya bekerja dengan model Anthropic, WebBrain sepenuhnya gratis, open-source (lisensi MIT), dan mendukung beberapa penyedia LLM termasuk model lokal yang sepenuhnya berjalan di mesin Anda.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Berapa biaya langganan WebBrain Cloud?</summary>
-      <p>WebBrain Cloud saat ini <strong>US$5/bulan per profil perangkat</strong>, jauh lebih murah daripada Claude Pro untuk sementara waktu. Penggunaan saat ini tidak dibatasi dalam kebijakan penggunaan wajar: penggunaan pribadi normal tidak masalah, tetapi penyalahgunaan, otomatisasi berlebihan, penjualan ulang, atau volume yang tidak wajar tidak diperbolehkan.</p><p>Langganan ditautkan ke pengenal perangkat yang dibuat ekstensi untuk GUID browser + OS tersebut, bukan ke akun pengguna. Jika pengenal itu hilang karena Anda mereset penyimpanan ekstensi, menghapus profil browser, menginstal ulang browser, mengganti browser/OS, atau kehilangan perangkat, kami tidak dapat mengambil atau memindahkannya dan tidak memberikan pengembalian dana atas kehilangan tersebut.</p><p>Anda dapat berlangganan atau mengelola penagihan dari bagian <strong>Account</strong> pada halaman pengaturan plugin dengan tombol <strong>Manage billing</strong>. Untuk membatalkan secara manual, kirim email kepada kami dengan alamat email yang Anda gunakan saat checkout.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bagaimana cara kerja Cloud Sync terenkripsi?</summary>
-      <p>Cloud Sync adalah fitur opsional untuk pelanggan aktif WebBrain Cloud. Fitur ini menyinkronkan memori WebBrain, teks isi otomatis Profil, dan konfigurasi penyedia yang didukung, termasuk kunci API. Fitur ini <strong>tidak</strong> menyinkronkan riwayat obrolan, riwayat peramban, tangkapan layar halaman, atau token akses dan refresh OAuth lama.</p><p>Peramban Anda mengenkripsi vault sinkronisasi sebelum diunggah dengan kata sandi yang Anda pilih. WebBrain Cloud hanya menyimpan vault terenkripsi; tidak dapat membaca memori, teks profil, pengaturan penyedia, atau kunci API Anda, dan tidak dapat memulihkan kata sandi sinkronisasi untuk Anda.</p><p>Kolom email untuk autentikasi penagihan/langganan magic-link WebBrain Cloud. Bukan kata sandi akun. Jika UI meminta mengubah kata sandi di Cloud Sync, yang dimaksud adalah <strong>kata sandi enkripsi sinkronisasi</strong>, bukan kata sandi akun WebBrain.</p><p>Jika Anda lupa kata sandi sinkronisasi, vault cloud terenkripsi lama tidak dapat didekripsi. Anda dapat mereset vault cloud dan mengunggah salinan terenkripsi baru dari perangkat yang masih menyimpan data secara lokal.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bagaimana WebBrain dibandingkan dengan OpenClaw, Browser-Use, dan kerangka agen AI lainnya?</summary>
-      <p>Mereka kategori alat yang berbeda. WebBrain adalah ekstensi peramban — Anda memasangnya di Chrome atau Firefox dan mengobrol di panel samping, tanpa coding. Kerangka seperti OpenClaw dan Browser-Use adalah SDK pengembang untuk membangun pipeline peramban otomatis dengan Python, biasanya menggunakan peramban headless dan CDP. Bayangkan begini: WebBrain untuk menjelajah sehari-hari bersama asisten AI; kerangka agen untuk membangun bot scraping dan otomasi pengujian. Anda bisa menggunakan keduanya — mereka saling melengkapi.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bisakah saya menggunakan WebBrain sepenuhnya offline?</summary>
-      <p>Ya. Penyedia bawaan WebBrain adalah llama.cpp, yang menjalankan model AI lokal di komputer Anda. Tidak perlu kunci API, AI tidak butuh internet, dan data tidak pernah meninggalkan mesin Anda. Cukup unduh model GGUF, jalankan llama-server, dan Anda punya agen peramban AI yang sepenuhnya privat. Anda juga dapat menggunakan Ollama dengan endpoint kompatibel-OpenAI miliknya.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Model AI apa saja yang didukung WebBrain?</summary>
-      <p>WebBrain mendukung empat jenis penyedia: llama.cpp (model GGUF lokal apa pun), OpenAI (GPT-4o, GPT-4, dsb.), Claude (Claude Opus, Sonnet, Haiku melalui API asli), dan OpenRouter (akses ke 100+ model dari berbagai penyedia). Endpoint API apa pun yang kompatibel-OpenAI dapat digunakan, jadi Anda juga bisa memakai layanan seperti Together AI, Groq, Mistral, atau server lokal apa pun dengan antarmuka kompatibel-OpenAI.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Model apa yang paling direkomendasikan?</summary>
-      <p>Per <strong>21 April 2026</strong>, rekomendasi teratas adalah <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. Alasannya: pada tolok ukur visi kami (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">vision-model-shootout</a>), ia mengungguli Gemma 4 pada pemahaman tangkapan layar sembari tetap praktis untuk inferensi lokal.</p><p>Untuk GPU konsumen, RTX 5090 ideal, dan RTX 4090 sering kali bisa dijalankan dengan kuantisasi INT4 AutoRound via <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a>.</p><p>Untuk kecepatan maksimal, kami merekomendasikan menyajikan melalui <strong>vLLM</strong>. Contoh perintah:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>DFlash speculative decoding bersifat opsional.</em></p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Mengapa WebGPU hanya tersedia di Mode Apocalypse?</summary>
-      <p>Karena kami belum menilai inferensi teks WebGPU di browser cukup baik untuk sebagian besar pengguna, dan kami tidak ingin Anda mengalami pengalaman yang buruk. Jika ingin menggunakan model LFM2.5 2.6B yang sama secara lokal, jalankan inferensi di komputer Anda dengan <strong>llama.cpp</strong> atau <strong>Ollama</strong> lalu arahkan WebBrain ke endpoint lokal tersebut alih-alih mengandalkan WebGPU.</p><p>Fallback visi WebGPU tetap tersedia karena modelnya jauh lebih kecil dan fallback ini hanya digunakan sesekali.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Saya mendapat &quot;Failed to fetch&quot; saat menghubungkan ke server LLM lokal (vLLM, Ollama, llama.cpp) di jaringan saya</summary>
-      <p>Jika server LLM Anda berada di mesin lain dalam jaringan lokal (mis. <code>http://192.168.1.x:8000</code>), Chrome memblokir permintaan kecuali server mengirim <strong>header CORS</strong>. Solusinya bergantung pada server Anda:</p><p><strong>vLLM:</strong> Mulai dengan <code>--allowed-origins '["*"]'</code> (nilainya harus berupa list JSON).<br><strong>Ollama:</strong> Atur variabel lingkungan <code>OLLAMA_ORIGINS=*</code> sebelum memulai.<br><strong>llama.cpp:</strong> CORS aktif secara bawaan — tidak perlu perubahan.</p><p>Jika server berjalan di <code>localhost</code> (mesin yang sama dengan peramban), CORS biasanya tidak diperlukan. Masalah ini hanya menyangkut koneksi antar mesin di jaringan lokal. Pastikan base URL pada pengaturan WebBrain diakhiri dengan <code>/v1</code> (mis. <code>http://192.168.1.47:8000/v1</code>). Pengecualian: Ollama yang dipakai dari ekstensi browser mungkin tetap membutuhkan <code>OLLAMA_ORIGINS</code>; lihat FAQ Ollama di bawah.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Mengapa Ollama di localhost mengembalikan 403 dari ekstensi WebBrain?</summary>
-      <p>Versi Ollama terbaru dapat menolak permintaan dari origin ekstensi browser meskipun Ollama berjalan di mesin yang sama. Ekstensi mengirim <code>Origin</code> seperti <code>chrome-extension://...</code> atau <code>moz-extension://...</code>, dan Ollama dapat menjawab 403 kecuali origin tersebut diizinkan.</p><p>Tutup aplikasi desktop Ollama apa pun yang sudah memakai port <code>11434</code>, lalu jalankan Ollama dengan salah satu perintah ini:</p><p><code>OLLAMA_ORIGINS="*" ollama serve</code><br><code>OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ollama serve</code></p><p>Biarkan URL dasar Ollama di WebBrain tetap <code>http://localhost:11434/v1</code>. Pemeriksaan <code>curl</code> di terminal masih bisa berhasil tanpa pengaturan ini karena tidak mengirim origin ekstensi browser.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah WebBrain bekerja di Firefox?</summary>
-      <p>Ya. WebBrain dirilis dengan versi Chrome (Manifest V3, menggunakan sidePanel API) dan versi Firefox (Manifest V2, menggunakan sidebar_action). Kedua versi memiliki fitur yang identik. Versi Firefox dapat dimuat sebagai add-on sementara untuk pengembangan, atau dipublikasikan ke addons.mozilla.org untuk pemasangan permanen.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bisakah saya memindahkan sidebar Firefox dari kiri ke kanan, seperti panel samping Chrome?</summary>
-      <p>Bisa — sidebar Firefox bawaannya di kiri, tetapi Anda dapat memindahkannya. Klik kanan di mana saja pada header sidebar dan pilih <strong>Move Sidebar to Right</strong> (atau gunakan <strong>View → Sidebar → Move Sidebar to Right</strong> dari bilah menu). Posisinya tersimpan antar restart. sidePanel Chrome bawaannya di kanan dan tidak bisa dipindahkan pengguna dari panel itu sendiri.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah ada batasan saat menggunakan WebBrain di Web Panel Vivaldi?</summary>
-      <p>Ya. Web Panel Vivaldi memblokir dialog JavaScript bawaan seperti <code>confirm()</code>, <code>alert()</code>, dan <code>prompt()</code>. Peralihan mode Tanya, Aksi, dan Dev di WebBrain tidak lagi bergantung pada dialog tersebut, tetapi beberapa tindakan sekunder masih bergantung padanya.</p><p><strong>Perekaman:</strong> Untuk saat ini, jangan gunakan <code>/record</code> di Vivaldi. Jika perekaman gagal, Vivaldi dapat menyembunyikan peringatan galat sehingga tidak ada penjelasan yang terlihat.</p><p><strong>Pengaturan, Riwayat, Jejak, dan serah-terima Ollama:</strong> Halaman-halaman ini juga memiliki dialog bawaan, tetapi WebBrain biasanya membukanya sebagai tab biasa sehingga berfungsi. Jika Anda memasukkan salah satunya secara manual ke Web Panel, buka di tab biasa sebelum menggunakan tindakan yang bergantung pada dialog.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah WebBrain aman digunakan? Bisakah ia memodifikasi halaman web?</summary>
-      <p>WebBrain memiliki tiga mode. Mode Tanya (bawaan) hanya-baca dan tidak dapat mengubah apa pun pada halaman. Mode Aksi memungkinkan tindakan peramban seperti mengeklik, mengetik, dan menavigasi, sedangkan mode Dev menambahkan alat debug halaman. Tindakan yang berdampak memerlukan persetujuan secara bawaan; jika gerbang izin tersebut dimatikan, WebBrain menampilkan spanduk peringatan yang terlihat. Anda dapat menghentikan agen kapan saja dengan tombol Berhenti. Kode sumber ekstensi sepenuhnya terbuka untuk audit di GitHub.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apa itu spanduk «WebBrain started debugging this browser»? Mengapa WebBrain memakai CDP?</summary>
-      <p>Agar dapat bertindak pada halaman dengan andal, WebBrain memakai Chrome DevTools Protocol (CDP) melalui API ekstensi standar <code>chrome.debugger</code> — itulah yang memicu spanduk Chrome «WebBrain started debugging this browser». CDP memungkinkan agen mengeklik dan mengetik dengan <strong>peristiwa input tepercaya</strong> yang benar-benar diterima situs modern; peristiwa sintetis yang dipicu dari content script ditolak oleh banyak situs, Web Components, dan bidang yang dikontrol framework. Lewat ini pula WebBrain mengambil tangkapan layar berpresisi piksel untuk cadangan visi dan menjangkau <strong>iframe lintas-asal dan shadow DOM</strong> yang tak terlihat oleh content script.</p><p><strong>Mode Tanya</strong> yang hanya-baca <strong>tidak memerlukan CDP</strong> — pembacaan halaman dan pohon aksesibilitas berjalan lewat content script biasa. Yang membutuhkannya adalah keandalan <strong>Mode Aksi</strong> dan pekerjaan lintas-asal, dan pada ekstensi Manifest V3 tidak ada API tanpa debugger untuk input tepercaya. WebBrain melampirkan debugger <strong>hanya saat sebuah tindakan membutuhkannya</strong>, per tab, dan seluruh ekstensi bersifat sumber terbuka sehingga Anda dapat mengaudit persis apa yang dilakukan sesi. CDP itu kuat, jadi kami memperlakukan jejaknya sebagai sesuatu yang harus dibatasi (lampirkan sesuai kebutuhan, jauhkan pembacaan darinya), dan memperketatnya lebih lanjut ada dalam peta jalan keamanan kami.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Pertanyaannya terlalu banyak. Bisakah saya menonaktifkannya?</summary>
-      <p>Prompt persetujuan itu ada demi keselamatan Anda. Bahkan di situs yang Anda percayai, pelaku jahat dapat meniru instruksi LLM atau menyisipkan konten yang mencoba membuat agen melakukan hal-hal atas nama Anda yang tidak akan Anda setujui. Karena itu WebBrain meminta persetujuan sebelum tindakan yang berdampak. Jika Anda tetap tidak ingin melalui prompt tersebut, Anda dapat menonaktifkannya: buka plugin samping, klik ikon roda gigi di header, buka tab <strong>Permissions</strong> di <code>settings.html</code>, lalu matikan opsi <strong>Ask before consequential actions</strong>.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bagaimana cara menggunakan WebBrain untuk scraping web dan ekstraksi data?</summary>
-      <p>Cukup buka halaman web mana pun, buka panel samping WebBrain, dan minta dengan bahasa natural: "Ekstrak semua nama produk dan harga dari halaman ini", "Ambil semua alamat email pada halaman ini", atau "Ringkas artikel ini dalam poin". Agen AI membaca isi halaman, memahami strukturnya, dan mengembalikan data yang diekstraksi. Untuk scraping yang lebih kompleks, beralih ke mode Aksi — agen dapat berpindah antar halaman, mengeklik tombol pagination, dan mengagregasi data lintas banyak halaman.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah WebBrain memanggil API langsung, atau selalu mengeklik melalui UI?</summary>
-      <p>Secara bawaan, WebBrain <strong>selalu melalui UI yang terlihat</strong> untuk setiap tindakan yang membuat, memodifikasi, menghapus, mengirim, mengeposkan, atau membeli sesuatu. Ia akan menavigasi ke halaman, mengisi formulir, dan mengeklik tombol — persis seperti yang akan Anda lakukan. Ia menolak memanggil endpoint REST/GraphQL secara langsung melalui <code>fetch()</code> latar belakang untuk mutasi. Ini disengaja: tindakan API tidak terlihat (Anda tidak melihat apa yang dikirim), sering memerlukan token autentikasi terpisah yang mungkin belum Anda konfigurasi, dan memiliki radius dampak yang jauh lebih besar daripada satu salah klik yang terlihat. UI-first berarti semuanya tampil di layar, di dalam sesi peramban normal Anda, dan dapat dihentikan.</p><p>Untuk <strong>membaca</strong> data — mengambil README, melihat issue, membandingkan harga antar situs, memeriksa halaman status — WebBrain dengan bebas menggunakan permintaan HTTP latar belakang melalui alat <code>fetch_url</code> dan <code>research_url</code>. Membaca bukanlah tindakan; tidak mengubah apa pun pada layanan jarak jauh, sehingga kekhawatiran keamanan yang sama tidak berlaku.</p><p>Jika Anda secara khusus ingin mengizinkan mutasi API untuk sebuah tugas tertentu, ketikkan <code>/allow-api</code> di awal pesan Anda (opsional diikuti dengan deskripsi tugas singkat). Override per-percakapan ini memungkinkan WebBrain jatuh ke endpoint API saat UI benar-benar gagal atau tak bisa digunakan, sembari tetap memprioritaskan UI saat UI bisa. Sebuah lencana tetap muncul di atas area input selama override aktif, dan akan hilang saat Anda mereset percakapan.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bisakah saya menggunakannya juga di LM Studio?</summary>
-      <p>Ya. Alat jaringan hanya-baca WebBrain — <code>fetch_url</code> dan <code>research_url</code> — juga hadir sebagai plugin <a href="https://lmstudio.ai" target="_blank">LM Studio</a> mandiri di <a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/web-tools</a>. Pasang dengan <code>lms clone webbrain/web-tools</code> dan aktifkan di obrolan LM Studio mana pun — model apa pun yang mendukung tool calling kemudian dapat memanggil kedua alat itu tanpa Anda memasang ekstensi peramban. Murni Node, tanpa peramban headless. Sumber: <a href="https://github.com/webbrain-one/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bisakah saya menggulir ke atas atau ke bawah saat WebBrain bekerja di tab saya?</summary>
-      <p>Biasanya bisa — terutama dalam <strong>mode Ask</strong> untuk permintaan hanya-baca seperti “Ringkas halaman ini.” Anda dapat terus menggulir saat WebBrain bekerja.</p><p><strong>Kapan sebaiknya dihindari?</strong> Tangkapan layar otomatis mencerminkan viewport tab saat ini. Saat WebBrain sedang aktif memeriksa atau berinteraksi dengan konten yang terlihat dalam <strong>mode Act atau Dev</strong>, menggulir dapat menggeser target atau mengubah apa yang dilihat model. Tunggu hingga langkah tersebut selesai sebelum menggulir; di luar momen itu, Anda dapat terus menggunakan halaman.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bisakah saya beralih ke tab lain saat WebBrain sedang bekerja pada sebuah halaman?</summary>
-      <p>Ya. Sejak versi <strong>27.0.0</strong>, WebBrain tidak mengambil alih fokus di peramban berbasis Chromium maupun Firefox kecuali akses latar depan benar-benar diperlukan. Proses tetap terikat pada tab tempat proses dimulai, sehingga Anda dapat bekerja dengan aman di tab lain.</p><p>Jika suatu langkah yang jarang terjadi membutuhkan tab asli berada di latar depan, WebBrain mungkin memfokuskan tab tersebut sebentar. Hindari mengeklik atau mengetik di tab yang sama saat WebBrain sedang aktif bertindak di sana.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bagaimana isi-otomatis Profil bekerja, dan apakah aman?</summary>
-      <p>Isi-otomatis profil adalah fitur opsional di <strong>Pengaturan → Profil</strong>. Anda memasukkan bio singkat — nama, email kerja, perusahaan, dan kata sandi <em>sekali pakai</em> untuk pendaftaran berisiko rendah — lalu mengaktifkannya. Saat aktif, WebBrain menambahkan teks itu ke prompt sistem agen sehingga ia dapat mengisi formulir pendaftaran tanpa bertanya setiap kali.</p><p>Teks tersebut disimpan <strong>dalam bentuk teks biasa</strong> di penyimpanan lokal peramban Anda. Teks itu <strong>tidak</strong> dikirim ke proyek WebBrain, tetapi <strong>dikirim</strong> ke penyedia LLM yang Anda konfigurasi pada setiap giliran, sebagai bagian dari prompt sistem. Mati secara bawaan.</p><p><strong>Jangan menaruh kata sandi akun penting</strong> (Google, Apple, iCloud, perbankan, SSO kantor, email utama) di sini. Akun-akun itu seharusnya menggunakan 2FA dan tidak perlu Anda serahkan kepada agen. Kasus penggunaan yang dimaksud adalah kata sandi sekali pakai yang Anda pakai ulang untuk pendaftaran newsletter dan uji coba gratis.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah pengaturan Penyamaran tangkapan layar menjamin data pribadi saya tidak pernah sampai ke model visi cloud?</summary>
-      <p>Tidak — pengaturan ini mengurangi risiko paparan, bukan jaminan. Saat diaktifkan (<strong>Pengaturan → Multimodal → Penyamaran tangkapan layar</strong>, nonaktif secara default), WebBrain mem-pixel-kan kolom formulir dan teks yang terlihat seperti alamat email atau nomor telepon pada setiap tangkapan layar <em>sebelum</em> dikirim ke model visi. Pendeteksian berjalan sepenuhnya di perangkat Anda menggunakan heuristik DOM; tidak ada yang dikirim ekstra.</p><p><strong>Ini bersifat best-effort dan fail-open.</strong> Jika detektor tidak bisa berjalan di suatu halaman — misalnya tepat setelah navigasi, di penampil PDF, atau di halaman browser yang dibatasi — tangkapan layar tetap dikirim <em>tanpa disamarkan</em> daripada membatalkan tugas Anda. Konten yang tidak bisa dilihat heuristik DOM (teks yang digambar di canvas, informasi pribadi di dalam gambar, widget yang tidak umum) juga bisa lolos. Dan pengaturan ini hanya mencakup tangkapan layar: <em>teks</em> halaman yang dikirim ke model tidak disamarkan olehnya.</p><p><strong>Untuk privasi visi yang penuh, gunakan model lokal.</strong> Dengan penyedia offline seperti llama.cpp atau Ollama, tangkapan layar dan teks halaman tidak pernah meninggalkan perangkat Anda, jadi sejak awal tidak ada yang perlu disamarkan — ini satu-satunya konfigurasi di mana privasi benar-benar terjamin. Lihat "Bisakah saya menggunakan WebBrain sepenuhnya offline?" di atas.</p><p><strong>Tidak punya perangkat yang mampu menjalankan model lokal dengan visi?</strong> Jalan tengah yang baik adalah menggunakan model lokal kecil untuk perencanaan dan pemanggilan alat (cukup ringan untuk CPU/GPU yang sederhana), dipadukan dengan penyedia cloud untuk sub-panggilan visi, dengan Penyamaran tangkapan layar diaktifkan. Percakapan dan teks halaman Anda tetap berada di perangkat, dan setiap tangkapan layar yang dikirim ke visi cloud sudah memiliki kolom formulir serta email/telepon yang terdeteksi dalam keadaan buram — paparan cloud berkurang tanpa perlu perangkat keras untuk model visi lokal penuh. Atur pembagian ini di <strong>Pengaturan → Visi</strong> (lihat "Bagaimana WebBrain menjaga tagihan LLM cloud tetap terkendali?" di atas).</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apa yang dilakukan WebBrain dengan spanduk cookie dan paywall?</summary>
-      <p><strong>Spanduk cookie:</strong> WebBrain mengenali spanduk persetujuan dari kerangka umum (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) dan menutupnya sebelum menalar halaman. Prioritasnya adalah "Tolak semua" / "Tolak non-esensial" / "Hanya yang perlu" jika terlihat jelas; jika tidak, ia jatuh ke "Terima semua" alih-alih hilang dalam labirin "Kelola preferensi".</p><p><strong>Paywall:</strong> WebBrain melaporkan paywall dengan jujur dan memberi tahu Anda apa yang sebenarnya dapat dilihatnya (judul, dek, paragraf pertama). Ia <strong>tidak</strong> mencoba menembus paywall — tidak ada archive.today, 12ft.io, pembersihan cookie, penonaktifan JS, atau trik mode pembaca. Jika ingin artikel penuh, masuk dengan langganan atau minta WebBrain mencari liputan gratis untuk cerita yang sama.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah WebBrain mendukung mode dry-run?</summary>
-      <p>Per <strong>7.0.0</strong>, belum. Mode dry-run direncanakan dan sudah ada di roadmap.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Apakah WebBrain mengirim seluruh DOM ke model AI?</summary>
-      <p>Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan.</p><p>Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bagaimana WebBrain menjaga tagihan LLM cloud tetap terkendali?</summary>
-      <p>Tiga lapisan independen:</p><p><strong>Tangkapan layar hemat token.</strong> Sebelum gambar meninggalkan mesin Anda, WebBrain mengubah ukurannya (sisi pendek dibatasi, rasio aspek dipertahankan) dan mengompresi JPEG secara iteratif hingga muat dengan anggaran token gambar per giliran. Tangkapan layar 2000×1200 yang akan menghabiskan ~1.500 token input di GPT-4o akan dikompresi menjadi ~300–500 token tanpa kerugian praktis untuk tugas membaca halaman. Diimplementasikan di <code>_fitImageDimensions</code> dengan unit test untuk perhitungan anggarannya.</p><p><strong>Pemangkasan konteks cerdas.</strong> Riwayat percakapan, keluaran alat, dan dump DOM inline dibatasi per giliran dan dipangkas yang terlama lebih dulu saat jendela konteks model aktif mendekati penuh. Anda tidak akan melihat eksekusi diam-diam membengkak dari 10k token menjadi 100k karena <code>read_page</code> mengembalikan artikel sepanjang novel.</p><p><strong>Model visi khusus.</strong> Pasangkan model teks murah (mis. GPT-4o-mini) untuk perencanaan dan pemanggilan alat dengan model visi terpisah (mis. GPT-4o) hanya untuk tangkapan layar, sehingga Anda tidak membayar harga model multimodal di setiap giliran. Konfigurasikan di <strong>Pengaturan → Visi</strong>.</p><p>Hasil akhirnya: sesi panjang dengan penyedia cloud tetap terprediksi. Untuk kendali penuh, gunakan llama.cpp secara lokal — biaya per token nol.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Bisakah saya berkontribusi ke WebBrain?</summary>
-      <p>Tentu saja! WebBrain berlisensi MIT dan menyambut kontribusi. Lihat <a href="https://github.com/webbrain-one/webbrain" target="_blank">repositori GitHub</a> untuk issue, permintaan fitur, dan panduan kontribusi.</p>
-    </details>
-  </div>
-</section>
-
 <!-- SPREAD THE WORD / OPEN SOURCE -->
 <section class="section">
   <div class="oss-banner">
@@ -3988,6 +3600,7 @@
       </a>
       <a href="/blog">Blog</a>
       <a href="/docs/">Docs</a>
+      <a href="/docs/id/faq/">FAQ</a>
       <a href="/privacy">Kebijakan Privasi</a>
       <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">Laporkan Bug</a>
       <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">Lisensi MIT</a>

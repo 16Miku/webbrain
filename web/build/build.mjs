@@ -2,9 +2,12 @@
 /**
  * WebBrain marketing-site build.
  *
- * Reads web/build/template.html + web/build/locales/*.json and writes:
+ * Reads web/build/template.html, web/build/faq-template.html, and
+ * web/build/locales/*.json and writes:
  *   web/index.html
  *   web/{es,fr,tr,zh}/index.html
+ *   web/docs/faq/index.html
+ *   web/docs/{es,fr,tr,zh,...}/faq/index.html
  *   web/sitemap.xml
  *   web/robots.txt
  *
@@ -15,6 +18,8 @@
  *   {{locale_home_url}}  e.g. "https://webbrain.one/" or ".../es/"
  *   {{docs_url}}         English docs, or the secondary Chinese docs for zh
  *   {{hreflang_links}}   <link rel="alternate" ...> block for this page
+ *   {{faq_url}}          localized FAQ path under /docs/
+ *   {{faq_language_routes}} safe locale-to-FAQ route map for the selector
  *   {{faq_jsonld}}       FAQPage schema block generated from faq.* keys
  *   {{plausible_analytics}} shared privacy-friendly analytics partial
  *
@@ -37,6 +42,7 @@ const ROOT = path.resolve(__dirname, '..');           // web/
 const BUILD_DIR = __dirname;                          // web/build/
 const LOCALES_DIR = path.join(BUILD_DIR, 'locales');
 const TEMPLATE_PATH = path.join(BUILD_DIR, 'template.html');
+const FAQ_TEMPLATE_PATH = path.join(BUILD_DIR, 'faq-template.html');
 const SITE_ORIGIN = 'https://webbrain.one';
 const SOCIAL_IMAGE_URL = `${SITE_ORIGIN}/og-image.png`;
 const LOGO_IMAGE_URL = `${SITE_ORIGIN}/logo-github.png`;
@@ -120,6 +126,7 @@ const FAQ_KEYS = [
   // Order matters — this is the rendered order in-page AND in JSON-LD.
   'faq.alt_claude',
   'faq.cloud_subscription',
+  'faq.manage_subscription',
   'faq.cloud_sync',
   'faq.vs_frameworks',
   'faq.offline',
@@ -130,6 +137,7 @@ const FAQ_KEYS = [
   'faq.ollama_origins',
   'faq.firefox',
   'faq.firefox_sidebar_move',
+  'faq.vivaldi_dialogs',
   'faq.safe',
   'faq.cdp',
   'faq.disable_approval_questions',
@@ -145,6 +153,51 @@ const FAQ_KEYS = [
   'faq.page_context',
   'faq.token_conscious',
   'faq.contribute',
+];
+
+const FAQ_GROUPS = ['about', 'cloud', 'models', 'browsers', 'safety'];
+const FAQ_CATEGORY = {
+  'faq.alt_claude': 'about',
+  'faq.vs_frameworks': 'about',
+  'faq.firefox': 'about',
+  'faq.scraping': 'about',
+  'faq.multilingual': 'about',
+  'faq.contribute': 'about',
+  'faq.cloud_subscription': 'cloud',
+  'faq.manage_subscription': 'cloud',
+  'faq.cloud_sync': 'cloud',
+  'faq.token_conscious': 'cloud',
+  'faq.offline': 'models',
+  'faq.models_supported': 'models',
+  'faq.recommended_model': 'models',
+  'faq.webgpu_apocalypse': 'models',
+  'faq.cors': 'models',
+  'faq.ollama_origins': 'models',
+  'faq.lm_studio': 'models',
+  'faq.firefox_sidebar_move': 'browsers',
+  'faq.vivaldi_dialogs': 'browsers',
+  'faq.scroll_during_run': 'browsers',
+  'faq.tab_switch_during_run': 'browsers',
+  'faq.cookies_paywalls': 'browsers',
+  'faq.safe': 'safety',
+  'faq.cdp': 'safety',
+  'faq.disable_approval_questions': 'safety',
+  'faq.api_mutations': 'safety',
+  'faq.profile': 'safety',
+  'faq.screenshot_redaction': 'safety',
+  'faq.page_context': 'safety',
+};
+
+const FAQ_PAGE_KEYS = [
+  'faq.label',
+  'faq.title',
+  'faq.page.skip_to_main',
+  'faq.page.lede',
+  'faq.page.search',
+  'faq.page.no_results',
+  'faq.page.topics',
+  ...FAQ_GROUPS.map((group) => `faq.category.${group}`),
+  ...FAQ_KEYS.flatMap((base) => [`${base}.q`, `${base}.a_html`]),
 ];
 
 const STRIPE_SUBSCRIBE_URL = 'https://buy.stripe.com/bJebJ13at2kc5XP7eY8g00a';
@@ -167,6 +220,18 @@ function homeUrlFor(locale) {
   return locale.isDefault ? `${SITE_ORIGIN}/` : `${SITE_ORIGIN}/${locale.code}/`;
 }
 
+function faqPathFor(locale) {
+  return locale.isDefault ? '/docs/faq/' : `/docs/${locale.code}/faq/`;
+}
+
+function faqUrlFor(locale) {
+  return `${SITE_ORIGIN}${faqPathFor(locale)}`;
+}
+
+function docsPathFor(locale) {
+  return locale.code === 'zh' ? '/docs/zh/' : '/docs/';
+}
+
 function buildHreflangBlock() {
   const links = LOCALES.map(
     (l) => `  <link rel="alternate" hreflang="${l.code}" href="${homeUrlFor(l)}">`,
@@ -174,6 +239,80 @@ function buildHreflangBlock() {
   // x-default points at the default (English) homepage.
   const xDefault = `  <link rel="alternate" hreflang="x-default" href="${SITE_ORIGIN}/">`;
   return [...links, xDefault].join('\n');
+}
+
+function buildFaqHreflangBlock() {
+  const links = LOCALES.map(
+    (locale) => `  <link rel="alternate" hreflang="${locale.code}" href="${faqUrlFor(locale)}">`,
+  );
+  const xDefault = `  <link rel="alternate" hreflang="x-default" href="${faqUrlFor(LOCALES[0])}">`;
+  return [...links, xDefault].join('\n');
+}
+
+function faqAnchorFor(base) {
+  return base.replace(/^faq\./, '').replace(/_/g, '-');
+}
+
+function faqKeysForGroup(group) {
+  return FAQ_KEYS.filter((base) => FAQ_CATEGORY[base] === group);
+}
+
+function answerHtml(value) {
+  const html = String(value || '').trim();
+  return /^<p(?:\s|>)/i.test(html) ? html : `<p>${html}</p>`;
+}
+
+function buildFaqSections(dict) {
+  return FAQ_GROUPS.map((group) => {
+    const items = faqKeysForGroup(group);
+    const questions = items.map((base) => {
+      const id = faqAnchorFor(base);
+      return `      <details class="faq-question" id="${id}" data-faq-item>
+        <summary><span>${escHtml(dict[`${base}.q`])}</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer">${answerHtml(dict[`${base}.a_html`])}</div>
+      </details>`;
+    }).join('\n');
+    return `    <section class="faq-topic" id="topic-${group}" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>${escHtml(dict[`faq.category.${group}`])}</h2>
+        <span aria-label="${items.length}">${items.length}</span>
+      </header>
+${questions}
+    </section>`;
+  }).join('\n');
+}
+
+function buildFaqSidebarLinks(dict) {
+  return FAQ_GROUPS.map((group) => (
+    `<a href="#topic-${group}">${escHtml(dict[`faq.category.${group}`])}</a>`
+  )).join('');
+}
+
+function buildFaqLanguageOptions(activeLocale) {
+  return LOCALES.map((locale) => (
+    `<option value="${locale.code}"${locale.code === activeLocale.code ? ' selected' : ''}>${escHtml(locale.label)}</option>`
+  )).join('');
+}
+
+function buildFaqLanguageRoutes() {
+  return JSON.stringify(Object.fromEntries(
+    LOCALES.map((locale) => [locale.code, faqPathFor(locale)]),
+  ));
+}
+
+function validateFaqLocale(dict, localeCode) {
+  const missing = FAQ_PAGE_KEYS.filter((key) => !String(dict[key] || '').trim());
+  if (missing.length) {
+    throw new Error(`[${localeCode}] missing FAQ translations: ${missing.join(', ')}`);
+  }
+}
+
+function validateFaqRegistry() {
+  const uncategorized = FAQ_KEYS.filter((base) => !FAQ_CATEGORY[base]);
+  const unknown = Object.keys(FAQ_CATEGORY).filter((base) => !FAQ_KEYS.includes(base));
+  if (uncategorized.length || unknown.length) {
+    throw new Error(`Invalid FAQ category registry. Uncategorized: ${uncategorized.join(', ') || 'none'}; unknown: ${unknown.join(', ') || 'none'}`);
+  }
 }
 
 function htmlToPlain(html) {
@@ -324,7 +463,7 @@ function buildSubscribeHtml() {
 
 function applyTemplate(template, dict, locale) {
   const canonical = homeUrlFor(locale);
-  const docsUrl = locale.code === 'zh' ? '/docs/zh/' : '/docs/';
+  const docsUrl = docsPathFor(locale);
 
   // Build-time placeholders first (they're fixed per locale, not per key).
   let out = template
@@ -336,8 +475,16 @@ function applyTemplate(template, dict, locale) {
     .replace(/\{\{locale_dir\}\}/g, locale.dir || 'ltr')
     .replace(/\{\{locale_home_url\}\}/g, canonical)
     .replace(/\{\{docs_url\}\}/g, docsUrl)
+    .replace(/\{\{docs_language_label\}\}/g, locale.code === 'zh' ? '中文' : 'EN')
+    .replace(/\{\{faq_url\}\}/g, faqPathFor(locale))
+    .replace(/\{\{faq_canonical\}\}/g, faqUrlFor(locale))
     .replace(/\{\{plausible_analytics\}\}/g, PLAUSIBLE_ANALYTICS)
     .replace(/\{\{hreflang_links\}\}/g, buildHreflangBlock())
+    .replace(/\{\{faq_hreflang_links\}\}/g, buildFaqHreflangBlock())
+    .replace(/\{\{faq_language_options\}\}/g, buildFaqLanguageOptions(locale))
+    .replace(/\{\{faq_language_routes\}\}/g, buildFaqLanguageRoutes())
+    .replace(/\{\{faq_sidebar_links\}\}/g, buildFaqSidebarLinks(dict))
+    .replace(/\{\{faq_sections\}\}/g, buildFaqSections(dict))
     .replace(/\{\{faq_jsonld\}\}/g, buildFaqJsonLd(dict, locale.bcp47))
     .replace(/\{\{software_jsonld\}\}/g, buildSoftwareJsonLd(dict, locale));
 
@@ -371,6 +518,8 @@ function applyTemplate(template, dict, locale) {
 
 async function main() {
   const template = await readFile(TEMPLATE_PATH, 'utf8');
+  const faqTemplate = await readFile(FAQ_TEMPLATE_PATH, 'utf8');
+  validateFaqRegistry();
   await syncLanguageFlagAssets();
 
   // Load English first so others can fall back for missing keys.
@@ -378,9 +527,13 @@ async function main() {
 
   let totalMissing = 0;
   for (const locale of LOCALES) {
-    let dict = en;
+    const raw = locale.isDefault
+      ? en
+      : JSON.parse(await readFile(path.join(LOCALES_DIR, `${locale.code}.json`), 'utf8'));
+    validateFaqLocale(raw, locale.code);
+
+    let dict = raw;
     if (!locale.isDefault) {
-      const raw = JSON.parse(await readFile(path.join(LOCALES_DIR, `${locale.code}.json`), 'utf8'));
       // Fall back to English for any untranslated key so the build never
       // produces an empty slot.
       dict = { ...en, ...raw };
@@ -417,11 +570,22 @@ async function main() {
     }
     await writeFile(outPath, html, 'utf8');
     console.log(`✓ wrote ${path.relative(process.cwd(), outPath)} (${html.length.toLocaleString()} bytes)`);
+
+    const { html: faqHtml, missing: faqMissing } = applyTemplate(faqTemplate, dict, locale);
+    if (faqMissing.size) {
+      totalMissing += faqMissing.size;
+      console.warn(`[${locale.code}] ${faqMissing.size} missing FAQ page keys:`, [...faqMissing].join(', '));
+    }
+    const faqOutPath = path.join(ROOT, faqPathFor(locale).replace(/^\//, ''), 'index.html');
+    await mkdir(path.dirname(faqOutPath), { recursive: true });
+    await writeFile(faqOutPath, faqHtml, 'utf8');
+    console.log(`✓ wrote ${path.relative(process.cwd(), faqOutPath)} (${faqHtml.length.toLocaleString()} bytes)`);
   }
 
   // sitemap.xml — localized homes plus public utility, blog, and user-doc pages.
   const sitemapUrls = [
-    ...LOCALES.map((l) => ({ loc: homeUrlFor(l), hreflang: l.code })),
+    ...LOCALES.map((l) => ({ loc: homeUrlFor(l), alternates: 'home' })),
+    ...LOCALES.map((l) => ({ loc: faqUrlFor(l), alternates: 'faq' })),
     { loc: `${SITE_ORIGIN}/privacy` },
     { loc: `${SITE_ORIGIN}/subscribe/` },
     { loc: `${SITE_ORIGIN}/blog/` },
@@ -442,10 +606,11 @@ async function main() {
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"',
     '        xmlns:xhtml="http://www.w3.org/1999/xhtml">',
     ...sitemapUrls.map((u) => {
-      const alts = u.hreflang
+      const alternateUrlFor = u.alternates === 'faq' ? faqUrlFor : homeUrlFor;
+      const alts = u.alternates
         ? LOCALES.map(
-            (l) => `    <xhtml:link rel="alternate" hreflang="${l.code}" href="${homeUrlFor(l)}"/>`,
-          ).concat([`    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_ORIGIN}/"/>`]).join('\n') + '\n'
+            (l) => `    <xhtml:link rel="alternate" hreflang="${l.code}" href="${alternateUrlFor(l)}"/>`,
+          ).concat([`    <xhtml:link rel="alternate" hreflang="x-default" href="${alternateUrlFor(LOCALES[0])}"/>`]).join('\n') + '\n'
         : '';
       return `  <url>\n    <loc>${u.loc}</loc>\n${alts}  </url>`;
     }),
