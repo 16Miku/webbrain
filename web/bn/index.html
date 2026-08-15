@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "WebGPU কেন শুধু Apocalypse Mode-এ পাওয়া যায়?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "কারণ আমরা এখনও ব্রাউজারের ভেতরের WebGPU টেক্সট ইনফারেন্সকে অধিকাংশ ব্যবহারকারীর জন্য যথেষ্ট ভালো মনে করি না, এবং আমরা চাই না আপনাকে খারাপ অভিজ্ঞতা সহ্য করতে হোক। একই LFM2.5 2.6B মডেল স্থানীয়ভাবে ব্যবহার করতে চাইলে নিজের মেশিনে llama.cpp বা Ollama দিয়ে ইনফারেন্স চালান এবং WebGPU-র ওপর নির্ভর না করে WebBrain-কে সেই স্থানীয় এন্ডপয়েন্টে সংযুক্ত করুন। WebGPU ভিশন ফলব্যাকটি চালু আছে, কারণ এর মডেল অনেক ছোট এবং ফলব্যাকটি কেবল মাঝেমধ্যে ব্যবহার হয়।"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "আমার নেটওয়ার্কে স্থানীয় LLM সার্ভারে (vLLM, Ollama, llama.cpp) সংযোগ করার সময় আমি \"আনয়নে ব্যর্থ\" পাচ্ছি",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3828,6 +3836,11 @@
     <details class="faq-item">
       <summary>সবচেয়ে প্রস্তাবিত মডেল কি?</summary>
       <p>হিসাবে <strong>এপ্রিল 21, 2026</strong>, শীর্ষ সুপারিশ হয় <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. কেন: আমাদের ভিশন বেঞ্চমার্কে (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">দৃষ্টি-মডেল-শুটআউট</a>), এটি স্থানীয় অনুমানের জন্য ব্যবহারিক থাকাকালীন স্ক্রিনশট বোঝার ক্ষেত্রে Gemma 4-কে ছাড়িয়ে গেছে।</p><p>ভোক্তা GPU গুলির জন্য, RTX 5090 আদর্শ, এবং RTX 4090 প্রায়শই INT4 অটোরাউন্ড কোয়ান্টাইজেশনের মাধ্যমে কার্যকর হয় <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-অটোরাউন্ড</a>.</p><p>সর্বাধিক গতির জন্য, আমরা পরিবেশন করার পরামর্শ দিই <strong>ভিএলএলএম</strong>. নমুনা আদেশ:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>DFlash অনুমানমূলক ডিকোডিং ঐচ্ছিক।</em></p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebGPU কেন শুধু Apocalypse Mode-এ পাওয়া যায়?</summary>
+      <p>কারণ আমরা এখনও ব্রাউজারের ভেতরের WebGPU টেক্সট ইনফারেন্সকে অধিকাংশ ব্যবহারকারীর জন্য যথেষ্ট ভালো মনে করি না, এবং আমরা চাই না আপনাকে খারাপ অভিজ্ঞতা সহ্য করতে হোক। একই LFM2.5 2.6B মডেল স্থানীয়ভাবে ব্যবহার করতে চাইলে নিজের মেশিনে <strong>llama.cpp</strong> বা <strong>Ollama</strong> দিয়ে ইনফারেন্স চালান এবং WebGPU-র ওপর নির্ভর না করে WebBrain-কে সেই স্থানীয় এন্ডপয়েন্টে সংযুক্ত করুন।</p><p>WebGPU ভিশন ফলব্যাকটি চালু আছে, কারণ এর মডেল অনেক ছোট এবং ফলব্যাকটি কেবল মাঝেমধ্যে ব্যবহার হয়।</p>
     </details>
 
     <details class="faq-item">

@@ -142,6 +142,14 @@
     },
     {
       "@type": "Question",
+      "name": "Why is WebGPU only available in Apocalypse Mode?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because we do not think browser-based WebGPU text inference is good enough yet for most users, and we do not want you to suffer through a poor experience. If you want to use the same LFM2.5 2.6B model locally, run inference on your machine with llama.cpp or Ollama and point WebBrain to that local endpoint instead of relying on WebGPU. The WebGPU vision fallback remains available because its model is much smaller and the fallback is used only occasionally."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "I'm getting \"Failed to fetch\" when connecting to a local LLM server (vLLM, Ollama, llama.cpp) on my network",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3828,6 +3836,11 @@
     <details class="faq-item">
       <summary>What&#39;s the most recommended model?</summary>
       <p>As of <strong>April 21, 2026</strong>, the top recommendation is <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. Why: in our vision benchmark (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">vision-model-shootout</a>), it outperformed Gemma 4 on screenshot understanding while remaining practical for local inference.</p><p>For consumer GPUs, RTX 5090 is ideal, and RTX 4090 is often workable with INT4 AutoRound quantization via <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a>.</p><p>For max speed, we recommend serving on <strong>vLLM</strong>. Sample command:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>DFlash speculative decoding is optional.</em></p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Why is WebGPU only available in Apocalypse Mode?</summary>
+      <p>Because we do not think browser-based WebGPU text inference is good enough yet for most users, and we do not want you to suffer through a poor experience. If you want to use the same LFM2.5 2.6B model locally, run inference on your machine with <strong>llama.cpp</strong> or <strong>Ollama</strong> and point WebBrain to that local endpoint instead of relying on WebGPU.</p><p>The WebGPU vision fallback remains available because its model is much smaller and the fallback is used only occasionally.</p>
     </details>
 
     <details class="faq-item">

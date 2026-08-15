@@ -1,5 +1,6 @@
 import { ProviderManager } from './providers/manager.js';
 import {
+  WEBGPU_MODEL_ID,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
@@ -1827,6 +1828,24 @@ function launchDetachedRun(action, msg, sender) {
   return { ok: true, accepted: true, requestId };
 }
 
+async function standaloneRunProviderId(msg) {
+  const providerId = String(msg.providerId || '').trim();
+  if (!providerId) return null;
+  if (providerId !== 'webgpu' || msg.standaloneChat !== true) {
+    throw new Error('WebGPU is available only through the standalone chat control.');
+  }
+  const apocalypse = await apocalypseController.handle('status');
+  if (apocalypse?.enabled !== true) {
+    throw new Error('Enable Apocalypse Mode before using WebGPU in standalone chat.');
+  }
+  const config = providerManager.getAll().webgpu;
+  const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
+  if (config?.model !== WEBGPU_MODEL_ID || download?.ready !== true) {
+    throw new Error('Download LFM2.5 2.6B in Apocalypse Mode before using WebGPU in standalone chat.');
+  }
+  return providerId;
+}
+
 async function sendAgentRunComplete(tabId, snapshot = null) {
   if (tabId == null || !snapshot) return;
   const submittedTurnDurable = snapshot.kind === 'continue'
@@ -2244,8 +2263,14 @@ async function handleMessage(msg, sender) {
   switch (msg.action) {
     case 'apocalypse_mode': {
       const snapshot = await apocalypseController.handle(msg.command, msg);
-      if (msg.command === 'enable' && msg.enabled === true) {
-        return { ...snapshot, visionModel: await enableApocalypseVisionModel() };
+      if (msg.command === 'enable') {
+        chrome.runtime.sendMessage({
+          type: 'apocalypse-mode-state',
+          enabled: snapshot.enabled === true,
+        }).catch(() => {});
+        if (msg.enabled === true) {
+          return { ...snapshot, visionModel: await enableApocalypseVisionModel() };
+        }
       }
       return snapshot;
     }
@@ -2560,6 +2585,7 @@ async function handleMessage(msg, sender) {
     }
 
     case 'chat_start': {
+      await standaloneRunProviderId(msg);
       const claim = msg.contextMenuClaim;
       if (!claim?.promptId || !claim?.claimantId) {
         return launchDetachedRun('chat', msg, sender);
@@ -2596,6 +2622,7 @@ async function handleMessage(msg, sender) {
     }
 
     case 'continue_start':
+      await standaloneRunProviderId(msg);
       return launchDetachedRun('continue', msg, sender);
 
     case 'chat': {
@@ -2604,6 +2631,7 @@ async function handleMessage(msg, sender) {
       if (msg.standaloneChat === true && msg.workflowId) {
         throw new Error('Saved workflows are unavailable in standalone Ask mode.');
       }
+      const runProviderId = await standaloneRunProviderId(msg);
       assertRunCanStart(tabId, msg);
       const isWorkflowRun = !!msg.workflowId;
       const mode = isWorkflowRun ? 'act' : (msg.mode || 'ask');
@@ -2657,6 +2685,7 @@ async function handleMessage(msg, sender) {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
+          ...(runProviderId ? { providerId: runProviderId } : {}),
           ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
               sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
@@ -2775,6 +2804,7 @@ async function handleMessage(msg, sender) {
     case 'chat_stream': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) throw new Error('No tab ID');
+      const runProviderId = await standaloneRunProviderId(msg);
       assertNoActiveTabRun(tabId);
       const mode = msg.mode || 'ask';
       const runUi = beginRunUiSnapshot(tabId, msg.requestId, {
@@ -2798,6 +2828,7 @@ async function handleMessage(msg, sender) {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
+          ...(runProviderId ? { providerId: runProviderId } : {}),
           ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
               sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
@@ -2848,6 +2879,7 @@ async function handleMessage(msg, sender) {
     case 'continue': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) throw new Error('No tab ID');
+      const runProviderId = await standaloneRunProviderId(msg);
       assertRunCanStart(tabId, msg);
       const mode = msg.mode || 'ask';
       const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, {
@@ -2870,6 +2902,7 @@ async function handleMessage(msg, sender) {
           sendAgentUpdate(tabId, runUi.requestId, type, data);
         }, mode, {
           ...(msg.foreground ? { foreground: true } : {}),
+          ...(runProviderId ? { providerId: runProviderId } : {}),
           detachedRequestId: runUi.requestId,
           isDetachedStartCancelled: () => isDetachedRunStartCancelled(tabId, msg),
           beforeConsequentialTool: () => flushRunUiSnapshot(tabId, runUi.requestId),
@@ -3236,7 +3269,21 @@ async function handleMessage(msg, sender) {
 
     // --- Provider Management ---
     case 'get_providers': {
-      return { providers: providerManager.getAll(), active: providerManager.activeProviderId };
+      const providers = providerManager.getAll();
+      delete providers.webgpu;
+      return { providers, active: providerManager.activeProviderId };
+    }
+
+    case 'get_standalone_webgpu_status': {
+      const apocalypse = await apocalypseController.handle('status');
+      const config = providerManager.getAll().webgpu;
+      const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
+      return {
+        ok: true,
+        enabled: apocalypse?.enabled === true,
+        ready: config?.model === WEBGPU_MODEL_ID && download?.ready === true,
+        status: download?.status || 'not-downloaded',
+      };
     }
 
     case 'get_active_prompt_tier': {
@@ -3250,6 +3297,9 @@ async function handleMessage(msg, sender) {
     }
 
     case 'set_active_provider': {
+      if (msg.providerId === 'webgpu') {
+        throw new Error('Use the nuclear WebGPU control in standalone chat.');
+      }
       await providerManager.setActive(msg.providerId);
       return { ok: true };
     }

@@ -348,6 +348,12 @@ const ApocalypseModeCh = await import(
 const ApocalypseModeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
 );
+const EmergencyBoxCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/emergency-box.js').replace(/\\/g, '/')
+);
+const EmergencyBoxFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/emergency-box.js').replace(/\\/g, '/')
+);
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
 );
@@ -7457,6 +7463,7 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     api_mutations_allowed: true,
     user_memory_enabled: true,
     selection_grounded: false,
+    standalone_webgpu_profile: true,
     max_agent_steps: 130,
     max_image_dimension: 1568,
     max_screenshots_per_turn: 4,
@@ -7480,6 +7487,7 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     api_mutations_allowed: true,
     user_memory_enabled: true,
     selection_grounded: false,
+    standalone_webgpu_profile: true,
     max_agent_steps: 130,
     max_image_dimension: 1568,
     max_screenshots_per_turn: 4,
@@ -20978,6 +20986,169 @@ test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
   }
 });
 
+test('Emergency Box maps the OpenStax catalog and resolves compact PDFs on demand', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const requests = [];
+    const fetchImpl = async (url) => {
+      requests.push(String(url));
+      if (String(url).includes('/pages/?')) {
+        return new Response(JSON.stringify({ items: [{
+          id: 38,
+          title: 'Algebra and Trigonometry',
+          meta: {
+            detail_url: 'https://openstax.example/books/38',
+            html_url: 'https://openstax.org/details/books/algebra-and-trigonometry',
+            first_published_at: '2016-03-09T00:00:00Z',
+            locale: 'en',
+          },
+        }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        low_resolution_pdf_url: 'https://openstax.example/algebra-low.pdf',
+        high_resolution_pdf_url: 'https://openstax.example/algebra-high.pdf',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const catalog = await runtime.loadOpenStaxCatalog(fetchImpl);
+    assert.equal(catalog.length, 1, `${label}: OpenStax catalog item missing`);
+    assert.equal(catalog[0].id, 'openstax-38', `${label}: OpenStax identity is unstable`);
+    assert.equal(catalog[0].category, 'education', `${label}: OpenStax item is not categorized as education`);
+    const resolved = await runtime.resolveEmergencyResource(catalog[0], fetchImpl);
+    assert.equal(resolved.url, 'https://openstax.example/algebra-low.pdf', `${label}: compact OpenStax PDF should be preferred`);
+    assert.equal(requests.length, 2, `${label}: resolving one book made unexpected catalog requests`);
+    assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.length >= 100, `${label}: bundled OpenStax catalog is unexpectedly incomplete`);
+    assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.some(item => item.id === 'openstax-38'), `${label}: bundled OpenStax catalog lost a stable book`);
+    assert.match(runtime.OPENSTAX_CATALOG_SNAPSHOT_DATE, /^\d{4}-\d{2}-\d{2}$/, `${label}: bundled OpenStax catalog has no snapshot date`);
+
+    const who = await runtime.resolveEmergencyResource({
+      id: 'who-fixture', title: 'WHO Fixture', whoHandle: '10665/371090', sourceUrl: 'https://iris.who.int/handle/10665/371090',
+    }, async (url) => {
+      if (String(url).includes('/handle/')) {
+        return { ok: true, status: 200, url: 'https://iris.who.int/items/0bd7f7b4-0c31-47a4-adb2-69cb4f38c0da' };
+      }
+      return new Response(JSON.stringify({ _embedded: { bundles: { _embedded: { bundles: [{
+        name: 'ORIGINAL',
+        _embedded: { bitstreams: { _embedded: { bitstreams: [
+          { name: 'guide_fra.pdf', _links: { content: { href: 'https://iris.example/french' } } },
+          { name: 'guide_eng.pdf', _links: { content: { href: 'https://iris.example/english' } } },
+        ] } } },
+      }] } } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    assert.equal(who.url, 'https://iris.example/english', `${label}: WHO DSpace resolver did not select the English original PDF`);
+
+    const archive = await runtime.resolveEmergencyResource({
+      id: 'archive-fixture', title: 'Archive Fixture', archiveIdentifier: 'field-manual', sourceUrl: 'https://archive.org/details/field-manual',
+    }, async () => new Response(JSON.stringify({ files: [
+      { name: 'manual_text.pdf', size: '99999' },
+      { name: 'manual.pdf', size: '50000' },
+      { name: 'preview.pdf', size: '1000' },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    assert.equal(archive.url, 'https://archive.org/download/field-manual/manual.pdf', `${label}: archive resolver did not select the largest non-derived PDF`);
+  }
+});
+
+test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF responses', async () => {
+  function memoryAdapters(initial = new Uint8Array()) {
+    const records = new Map();
+    let committed = initial.slice();
+    return {
+      records,
+      store: {
+        async get(id) { return records.get(id); },
+        async put(record) { records.set(record.id, { ...record }); return record; },
+        async delete(id) { records.delete(id); },
+      },
+      storage: {
+        async open() { return new Blob([committed], { type: 'application/pdf' }); },
+        async size() { return committed.byteLength; },
+        async createWriter() {
+          let working = committed.slice();
+          return {
+            async write(position, bytes) {
+              const needed = position + bytes.byteLength;
+              if (working.byteLength < needed) {
+                const expanded = new Uint8Array(needed);
+                expanded.set(working);
+                working = expanded;
+              }
+              working.set(bytes, position);
+            },
+            async truncate(size) { working = working.slice(0, size); },
+            async close() { committed = working; },
+            async abort() {},
+          };
+        },
+        async delete() { committed = new Uint8Array(); },
+      },
+      bytes() { return new TextDecoder().decode(committed); },
+    };
+  }
+
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const adapters = memoryAdapters();
+    const pdf = '%PDF-1.7\nEmergency Box fixture';
+    const resource = {
+      id: 'fixture-pdf', title: 'Fixture', category: 'health', publisher: 'Fixture Publisher',
+      url: 'https://example.test/fixture.pdf', sourceUrl: 'https://example.test/source',
+    };
+    const ready = await runtime.downloadEmergencyResource(resource, {
+      ...adapters,
+      fetchImpl: async () => new Response(pdf, { status: 200, headers: { 'content-type': 'application/pdf' } }),
+    });
+    assert.equal(ready.status, 'ready', `${label}: valid PDF did not become readable`);
+    assert.equal(adapters.bytes(), pdf, `${label}: streamed PDF bytes were not preserved`);
+    assert.equal(ready.bytesReceived, new TextEncoder().encode(pdf).byteLength, `${label}: installed byte count is wrong`);
+
+    const invalid = memoryAdapters();
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-html' }, {
+        ...invalid,
+        fetchImpl: async () => new Response('<html>blocked</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+      }),
+      /not a valid PDF/i,
+      `${label}: HTML error page was accepted as an emergency PDF`,
+    );
+    assert.equal(invalid.records.get('fixture-html')?.status, 'error', `${label}: invalid PDF failure was not actionable`);
+    assert.equal(invalid.bytes(), '', `${label}: invalid PDF bytes were retained`);
+  }
+});
+
+test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
+  const files = [
+    'src/agent/emergency-box.js',
+    'src/agent/openstax-catalog.js',
+    'src/ui/emergency-box.html',
+    'src/ui/emergency-box.css',
+    'src/ui/emergency-box.js',
+    'src/ui/emergency-pdf.html',
+    'src/ui/emergency-pdf.css',
+    'src/ui/emergency-pdf.js',
+    'src/ui/locales/emergency-copy.mjs',
+    'src/ui/wikipedia-reader.html',
+    'src/ui/wikipedia-reader.css',
+    'src/ui/wikipedia-reader.js',
+  ];
+  for (const relative of files) {
+    const chrome = fs.readFileSync(path.join(ROOT, 'src/chrome', relative), 'utf8');
+    const firefox = fs.readFileSync(path.join(ROOT, 'src/firefox', relative), 'utf8');
+    assert.equal(firefox, chrome, `${relative}: Emergency Box browser implementations diverged`);
+  }
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+    const apocalypse = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.html'), 'utf8');
+    const box = fs.readFileSync(path.join(uiDir, 'emergency-box.html'), 'utf8');
+    const reader = fs.readFileSync(path.join(uiDir, 'emergency-pdf.html'), 'utf8');
+    const readerCss = fs.readFileSync(path.join(uiDir, 'emergency-pdf.css'), 'utf8');
+    assert.match(apocalypse, /href="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
+    assert.match(box, /id="load-openstax"/, `${browser}: OpenStax catalog control missing`);
+    assert.match(box, /id="download-all"/, `${browser}: bulk emergency download control missing`);
+    assert.match(box, /id="resource-list"/, `${browser}: resource browser missing`);
+    assert.match(reader, /id="pdf-canvas"/, `${browser}: internal PDF renderer missing`);
+    assert.match(reader, /id="save-copy"/, `${browser}: PDF export control missing`);
+    assert.match(readerCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/, `${browser}: reader hidden states can expose a stale canvas`);
+    assert.match(fs.readFileSync(path.join(uiDir, 'wikipedia-reader.html'), 'utf8'), /id="article-text"/, `${browser}: text-only Wikipedia reader is missing`);
+  }
+});
+
 test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata before install', () => {
   const catalogXml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
     <entry><id>urn:uuid:test-mini</id><title>Wikipedia 100</title><updated>2026-07-17T00:00:00Z</updated>
@@ -20993,6 +21164,15 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
     <url priority="2">https://mirror.example.test/wikipedia/example.zim</url>
     <url priority="1">https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim</url>
   </file></metalink>`;
+  const libraryXml = `<?xml version="1.0"?><library version="20110515">
+    <book id="static-text" size="324181" articleCount="5918889" title="Wikipedia" description="The free encyclopedia" language="eng"
+      creator="Wikipedia" publisher="openZIM" name="wikipedia_en_all" date="2026-07-17" flavour="nopic"
+      tags="wikipedia;_category:wikipedia;_pictures:no" url="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_all_nopic_2026-07.zim.meta4" />
+    <book id="wrong-language" size="100" articleCount="10" title="Wikipédia" language="fra" creator="Wikipedia" publisher="openZIM"
+      name="wikipedia_fr_all" date="2026-07-17" flavour="mini" url="https://example.test/fr.zim.meta4" />
+    <book id="wrong-category" size="100" articleCount="10" title="Other" language="eng" creator="Other" publisher="openZIM"
+      name="gutenberg_en_all" date="2026-07-17" flavour="mini" url="https://example.test/other.zim.meta4" />
+  </library>`;
 
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const [item] = runtime.parseKiwixCatalog(catalogXml);
@@ -21011,6 +21191,39 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
       'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim',
       'https://mirror.example.test/wikipedia/example.zim',
     ], `${label}: priority-ordered Metalink mirrors were not retained`);
+    const [staticItem] = runtime.parseKiwixLibrary(libraryXml, 'eng');
+    assert.equal(staticItem.id, 'static-text', `${label}: static Kiwix catalog fallback did not preserve archive identity`);
+    assert.equal(staticItem.tier, 'text', `${label}: static Kiwix archive flavour was not classified`);
+    assert.equal(staticItem.catalogSize, 324181 * 1024, `${label}: static Kiwix size was not converted from KiB`);
+    assert.equal(runtime.parseKiwixLibrary(libraryXml, 'eng').length, 1, `${label}: static fallback did not filter language and category`);
+    const catalogUrl = new URL(runtime.kiwixCatalogUrl('eng'));
+    assert.equal(catalogUrl.searchParams.get('category'), 'wikipedia', `${label}: OPDS request does not use the supported category filter`);
+  }
+});
+
+test('Apocalypse Mode falls back to the official static Kiwix catalog', async () => {
+  const libraryXml = `<?xml version="1.0"?><library><book id="fallback" size="512" articleCount="100" title="Wikipedia Mini"
+    description="A small archive" language="eng" creator="Wikipedia" publisher="openZIM" name="wikipedia_en_100" date="2026-08-01"
+    flavour="mini" tags="wikipedia;_category:wikipedia" url="https://lb.download.kiwix.org/zim/wikipedia/fallback.zim.meta4" /></library>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const urls = [];
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store: {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return []; },
+      },
+      storage: {},
+      fetchImpl: async (url) => {
+        urls.push(String(url));
+        if (String(url).includes('opds.library.kiwix.org')) return { ok: false, status: 503 };
+        return { ok: true, status: 200, async text() { return libraryXml; } };
+      },
+    });
+
+    const items = await controller.catalog('eng');
+    assert.deepEqual(items.map(item => item.id), ['fallback'], `${label}: static Kiwix fallback did not recover the catalog`);
+    assert.equal(urls.length, 2, `${label}: catalog fallback made an unexpected number of requests`);
+    assert.match(urls[1], /download\.kiwix\.org\/library\/library_zim\.xml/, `${label}: fallback did not use Kiwix's static library catalog`);
   }
 });
 
@@ -21161,6 +21374,11 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
     assert.equal(passage.language, 'eng', `${label}: archive language was lost`);
     assert.equal(passage.archiveDate, '2026-07-17', `${label}: archive date was lost`);
     assert.equal(passage.license, 'CC BY-SA 4.0', `${label}: archive license was lost`);
+    assert.equal(passage.path, 'Alan_Turing', `${label}: reader path was not preserved by archive search`);
+    const article = await archive.readArticle(passage.path);
+    assert.equal(article.title, 'Alan Turing', `${label}: text reader opened the wrong article`);
+    assert.match(article.text, /computer scientist/, `${label}: text reader did not extract the complete local article`);
+    assert.equal(article.truncated, false, `${label}: short local article was incorrectly marked truncated`);
     assert.equal(archive.embeddedMetadata.Name, 'wikipedia_en_test', `${label}: embedded archive identity was not exposed for import validation`);
   }
   const corrupt = new Blob([new Uint8Array(96)]);
@@ -21187,6 +21405,28 @@ test('Apocalypse Mode short-circuits exact ZIM casing probes and bounds director
     assert.ok(reads.length < 20, `${label}: exact common-case search expanded through every casing variant`);
     assert.ok(reads.every(([start, end]) => end - start <= 4 * 1024),
       `${label}: ordinary directory lookup still issued a 64 KiB read`);
+  }
+});
+
+test('Apocalypse Mode reuses one random-access ZIM handle for search and text reading', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let opens = 0;
+    const archiveCache = new Map();
+    const provider = runtime.createKiwixZimProvider({
+      archiveCache,
+      storage: { async open() { opens += 1; return minimalWikipediaZimFixture(); } },
+    });
+    const record = {
+      id: 'cached-wikipedia', archiveKind: 'wikipedia', status: 'ready', generation: 1,
+      updatedAt: 100, size: 1024, language: 'eng', archiveDate: '2026-07-17',
+      target: { kind: 'opfs', key: 'wikipedia.zim' },
+    };
+    const [first] = await provider.search(record, 'Alan Turing');
+    await provider.search(record, 'Alan Turing');
+    const article = await provider.read(record, first.path);
+    assert.equal(opens, 1, `${label}: repeated reads reopened the large ZIM archive`);
+    assert.match(article.text, /computer scientist/, `${label}: cached reader returned the wrong article text`);
+    assert.equal(article.archiveId, record.id, `${label}: cached reader lost archive identity`);
   }
 });
 
@@ -21708,14 +21948,20 @@ test('Apocalypse Mode catalog and Metalink network access require opt-in', async
     const controller = runtime.createApocalypseController({ alarms: {} }, {
       store,
       storage: { async estimate() { return {}; } },
-      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return '<feed></feed>'; } }; },
+      fetchImpl: async () => {
+        fetches += 1;
+        return { ok: true, async text() {
+          return '<feed><entry><id>urn:uuid:enabled</id><title>Wikipedia</title><language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/archive.meta4" /></entry></feed>';
+        } };
+      },
       clearUpdateChecks() {},
     });
     await assert.rejects(controller.handle('catalog', { language: 'eng' }), /disabled/i, `${label}: catalog fetch was allowed before opt-in`);
     await assert.rejects(controller.handle('resolve', { item: { name: 'wikipedia_en_all', metaUrl: 'https://example.test/archive.meta4' } }), /disabled/i, `${label}: Metalink fetch was allowed before opt-in`);
     assert.equal(fetches, 0, `${label}: archive network activity occurred before opt-in`);
     config.enabled = true;
-    assert.deepEqual(await controller.handle('catalog', { language: 'eng' }), { items: [] }, `${label}: enabled catalog request failed`);
+    const result = await controller.handle('catalog', { language: 'eng' });
+    assert.deepEqual(result.items.map(item => item.id), ['enabled'], `${label}: enabled catalog request failed`);
     assert.equal(fetches, 1, `${label}: enabled catalog request did not use the network exactly once`);
   }
 });
@@ -22767,15 +23013,25 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
     const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
     const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const apocalypseCopy = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/apocalypse-copy.mjs'), 'utf8');
     assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
-    assert.match(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier selection is missing`);
-    for (const tier of ['all', 'starter', 'introductions', 'text', 'full']) {
-      assert.match(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: ${tier} archive tier is unavailable`);
+    assert.doesNotMatch(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier select should be hidden`);
+    for (const tier of ['all', 'starter', 'introductions']) {
+      assert.doesNotMatch(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: unsupported ${tier} archive tier is still selectable`);
     }
     assert.match(pageScript, /catalogItems = Array\.isArray\(result\.items\) \? result\.items : \[\]/,
       `${prefix}: catalog items are discarded before tier selection`);
-    assert.match(pageScript, /tier === 'all' \? catalogItems : catalogItems\.filter\(item => item\.tier === tier\)/,
-      `${prefix}: catalog tier selection does not preserve all tiers`);
+    assert.match(pageScript, /SUPPORTED_CATALOG_TIERS = new Set\(\['text', 'full'\]\)/,
+      `${prefix}: catalog results are not restricted to the two supported archive types`);
+    assert.match(pageScript, /catalogItems = catalogItems\.filter\(item => SUPPORTED_CATALOG_TIERS\.has\(item\.tier\)\)/,
+      `${prefix}: unsupported catalog entries are not removed before rendering`);
+    assert.match(pageScript, /const items = catalogItems;/, `${prefix}: full-text and full archives are not rendered together`);
+    assert.match(pageScript, /if \(installReviewInFlight\) return;[\s\S]*?installReviewInFlight = true;/,
+      `${prefix}: Review & install can start duplicate metadata requests`);
+    assert.match(pageScript, /sourceButton\.disabled = true;[\s\S]*?sourceButton\.textContent = t\('ap\.review_loading'\)/,
+      `${prefix}: Review & install does not show immediate busy feedback`);
+    assert.match(pageScript, /reviewInstall\(visible\[Number\(button\.dataset\.install\)\], button\)/,
+      `${prefix}: catalog install buttons are not bound to the single-flight review flow`);
     assert.doesNotMatch(pageScript, /await command\('process'\)/,
       `${prefix}: status polling blocks behind the long-running download loop`);
     assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?await refresh\(\)/,
@@ -22787,8 +23043,29 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     assert.match(pageScript, /chrome\?\.offscreen\?\.createDocument/, `${prefix}: Chromium vision capability is not detected safely`);
     if (prefix === 'src/chrome') {
       assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
+      assert.match(pageHtml, /id="webgpu-provider-card"[^>]*hidden/, 'chrome: the WebGPU provider block is missing from Apocalypse Mode');
+      const heroStart = pageHtml.indexOf('<section class="card hero">');
+      const textModel = pageHtml.indexOf('id="webgpu-provider-card"', heroStart);
+      const visionModel = pageHtml.indexOf('id="vision-model-card"', heroStart);
+      const heroEnd = pageHtml.indexOf('</section>', visionModel);
+      assert.ok(heroStart >= 0 && textModel > heroStart && visionModel > textModel && heroEnd > visionModel,
+        'chrome: local text and vision models must be stacked text-first inside the hero');
+      assert.match(pageHtml, /data-model-kind="text"[\s\S]*?<svg[\s\S]*?data-webgpu-download-panel/,
+        'chrome: the text model is missing its icon or download box');
+      assert.doesNotMatch(pageHtml, /id="webgpu-test"/,
+        'chrome: the local text model should not expose a Test action');
+      assert.match(pageHtml, /data-i18n="ap\.webgpu\.rag"/, 'chrome: local Wikipedia RAG is not explained beside the WebGPU model');
+      assert.match(pageHtml, /data-model-kind="vision"[\s\S]*?<svg[\s\S]*?id="vision-model-test"/,
+        'chrome: the vision model is missing its icon or Test action');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID/, 'chrome: Apocalypse Mode does not configure the fixed WebGPU download');
+      assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
+        'chrome: the removed local text Test action is still wired');
+      assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
+        'chrome: the local vision Test action does not exercise the fallback');
+      assert.doesNotMatch(pageScript, /set_active_provider/, 'chrome: Apocalypse Mode must not change the global chat provider');
     } else {
       assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
+      assert.doesNotMatch(pageHtml, /id="webgpu-provider-card"/, 'firefox: Chromium-only WebGPU provider block leaked into Apocalypse Mode');
     }
     for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
       assert.match(pageScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing`);
@@ -22800,12 +23077,38 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
       `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
     assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    assert.match(pageHtml, /<header><span class="apocalypse-icon" aria-hidden="true">☢<\/span>/,
+      `${prefix}: Apocalypse Mode page header does not match the radioactive settings gateway icon`);
+    assert.match(pageHtml, /class="header-copy"[\s\S]*?data-i18n="ap\.title"[\s\S]*?data-i18n="ap\.subtitle"/,
+      `${prefix}: Apocalypse Mode title and offline slogan are not grouped in the page header`);
+    assert.match(apocalypseCopy, /'ap\.subtitle': 'WebBrain, ready when the internet isn’t\.'/,
+      `${prefix}: Apocalypse Mode header does not advertise offline access`);
+    assert.match(apocalypseCopy, /'ap\.hero\.desc': '[^']*offline search and factual answers[^']*without an internet connection/,
+      `${prefix}: Apocalypse Mode does not explain how offline Wikipedia helps the user`);
+    assert.match(apocalypseCopy, /'ap\.catalog\.title': 'Download Wikipedia for offline use'/,
+      `${prefix}: the archive catalog is described with implementation terminology`);
+    assert.match(apocalypseCopy, /'ap\.import\.desc': '[^']*\.zim[^']*file format[^']*offline use\.'/,
+      `${prefix}: the optional .zim import format is not explained in plain language`);
+    assert.doesNotMatch(apocalypseCopy, /'ap\.import\.desc': '[^']*Kiwix/,
+      `${prefix}: the import introduction assumes the user already understands Kiwix`);
+    assert.match(pageHtml, /\.apocalypse-icon \{[^}]*font-size:48px/,
+      `${prefix}: Apocalypse Mode page icon is too small for the page header`);
     assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
     const advancedStart = settingsHtml.indexOf('<details class="advanced-settings">');
     const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
     assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
     assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
+    assert.match(pageScript, /data-action="read"/, `${prefix}: installed archives have no text reader action`);
+    assert.match(pageScript, /wikipedia-reader\.html\?id=/, `${prefix}: text reader action is not wired to its archive`);
+    assert.match(pageHtml, /id="catalog-status"[^>]*role="status"/, `${prefix}: catalog loading and errors are not visible beside the archive list`);
+    for (const icon of ['storage', 'catalog', 'import']) {
+      assert.match(pageHtml, new RegExp(`class="section-icon" data-kind="${icon}"[\\s\\S]*?<svg`), `${prefix}: ${icon} section icon is missing`);
+    }
+    assert.match(pageScript, /if \(snapshot\?\.enabled === true\) void loadCatalog\(\)/,
+      `${prefix}: enabled Apocalypse Mode does not load the catalog automatically`);
+    assert.match(pageScript, /elements\.language\.addEventListener\('change', loadCatalog\)/,
+      `${prefix}: changing Wikipedia language does not reload the catalog`);
     assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
     assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
     assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
@@ -22837,6 +23140,315 @@ test('Wikipedia tools use installed Apocalypse Mode archives only after online f
     assert.equal(result.provider, 'local Kiwix/ZIM archive', `${label}: local provider was not identified`);
     assert.equal(result.resultPolicy, 'untrusted', `${label}: local archive bytes must remain untrusted`);
     assert.equal(result.data.pages[0].archiveDate, '2026-07-17', `${label}: archive provenance was lost`);
+  }
+});
+
+test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passages', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Who was Alan Turing?'), true, `${label}: factual question did not trigger local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Alan Turing'), true, `${label}: short encyclopedia topic did not trigger local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Write an email to Alan'), false, `${label}: writing request triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('What is the weather today?'), false, `${label}: current-data question triggered a stale archive lookup`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('are you high?'), false, `${label}: assistant banter triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia("how can i patch my dog's yara"), false, `${label}: first-person practical advice triggered encyclopedia retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia("it's a cut"), false, `${label}: a conversational follow-up triggered a title search`);
+    assert.equal(runtime.localWikipediaSearchQuery('What is photosynthesis?'), 'photosynthesis', `${label}: factual question was not reduced to a searchable article topic`);
+    assert.equal(runtime.localWikipediaSearchQuery('what is a chocolate made of'), 'chocolate', `${label}: composition question was not reduced to its article topic`);
+    assert.equal(runtime.localWikipediaSearchQuery('who founded ottoman empire?'), 'ottoman empire', `${label}: founder question was not reduced to its entity topic`);
+    assert.equal(
+      runtime.localWikipediaSearchQuery('tell me more about sokullu mehmed pasha when was he born?'),
+      'sokullu mehmed pasha',
+      `${label}: compound biography question was not reduced to the article subject`,
+    );
+    let limit = 0;
+    let searchQuery = '';
+    const records = await runtime.retrieveLocalWikipediaForStandalone('Who was Alan Turing?', {
+      apocalypseSearch: async (_query, options) => {
+        searchQuery = _query;
+        limit = options.limit;
+        return [{
+          title: 'Alan Turing', excerpt: 'Alan Turing was an English mathematician and computer scientist.',
+          url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng', archiveDate: '2026-07-17',
+          archiveTitle: 'Wikipedia English full text', source: 'Kiwix / openZIM',
+        }];
+      },
+    });
+    assert.equal(searchQuery, 'Alan Turing', `${label}: standalone RAG searched the whole question instead of its topic`);
+    assert.equal(limit, 6, `${label}: local RAG did not inspect a bounded candidate set before relevance filtering`);
+    assert.deepEqual(runtime.formatLocalWikipediaRag(records), [{
+      title: 'Alan Turing', passage: 'Alan Turing was an English mathematician and computer scientist.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng', archiveDate: '2026-07-17',
+      archiveTitle: 'Wikipedia English full text', source: 'Kiwix / openZIM',
+    }], `${label}: local RAG lost archive attribution`);
+    const strictRecords = runtime.rankLocalWikipediaRagRecords([
+      { title: 'Ottoman Empire', excerpt: 'A general history of the empire.' },
+      { title: 'Sokollu Mehmed Pasha', excerpt: 'Sokollu Mehmed Pasha was born around 1505.' },
+    ], 'Sokollu Mehmed Pasha Ottoman Empire biography');
+    assert.deepEqual(strictRecords.map(record => record.title), ['Sokollu Mehmed Pasha'],
+      `${label}: generic contextual titles outranked the requested person`);
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords(
+        [{ title: 'Ottoman Empire', excerpt: 'A general history of the empire.' }],
+        'Sokollu Mehmed Pasha Ottoman Empire biography',
+      ),
+      [],
+      `${label}: a generic Ottoman Empire page passed strict entity relevance`,
+    );
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords([
+        { title: 'Chocolate (color)', excerpt: 'A color resembling chocolate.' },
+        { title: 'Chocolate', excerpt: 'A food made from cacao beans.' },
+      ], 'chocolate').map(record => record.title),
+      ['Chocolate'],
+      `${label}: an exact article title did not suppress weaker related titles`,
+    );
+  }
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.match(agentSource, /_isStandaloneWebgpuRun\(runOptions = \{\}\)[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?providerId \|\| ''\) === 'webgpu'/,
+    'chrome: local Wikipedia RAG is not guarded to standalone WebGPU runs');
+  assert.match(agentSource, /_wrapUntrusted\('local_wikipedia_archive'/,
+    'chrome: local Wikipedia RAG passages are not marked as untrusted data');
+  assert.equal((agentSource.match(/_applyStandaloneWikipediaRag\(enriched, userMessage, runOptions,/g) || []).length, 2,
+    'chrome: local Wikipedia RAG is not applied to both standalone message entry paths');
+});
+
+test('standalone WebGPU uses a compact tool-free chat profile with no browser context', async () => {
+  const agent = new AgentCh({
+    getActive() { throw new Error('standalone prompt must not consult the globally selected provider'); },
+  });
+  const tabId = 1701;
+  agent._standaloneWebgpuRunTabs.add(tabId);
+  const prompt = agent._buildSystemPrompt('ask', tabId);
+  assert.match(prompt, /private on-device chat assistant/);
+  assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
+  assert.match(prompt, /Offline Wikipedia/);
+  assert.ok(prompt.length < 1400, `standalone WebGPU system prompt is unexpectedly large (${prompt.length} chars)`);
+  assert.doesNotMatch(prompt, /cookie|paywall|click_ax|get_accessibility_tree|CAPTCHA|User profile/i);
+  assert.match(
+    agent._wrapUntrusted('local_wikipedia_archive', '{"reference":"quoted data"}'),
+    /^<untrusted_page_content id="[a-z0-9]+">[\s\S]*<\/untrusted_page_content id="[a-z0-9]+">$/,
+    'local Wikipedia passages must be enclosed in the real untrusted-content boundary',
+  );
+
+  agent.alwaysAllowApiMutations = true;
+  const question = 'tell me more about sokullu mehmed pasha when was he born?';
+  const enriched = await agent._enrichUserMessageWithCurrentPage(tabId, [], question, null, {
+    standaloneChat: true,
+    providerId: 'webgpu',
+  });
+  assert.deepEqual(enriched, { role: 'user', content: question },
+    'standalone WebGPU must not receive runtime, page, recording, API, adapter, or screenshot context');
+
+  const provenance = buildPromptTraceProvenanceCh([
+    { role: 'system', content: prompt },
+    { role: 'user', content: question },
+  ], [], 'ask');
+  assert.equal(provenance.systemPromptVariant, 'standalone_webgpu');
+  assert.equal(provenance.systemPromptMode, 'ask');
+  assert.equal(provenance.toolCount, 0);
+  assert.equal(provenance.systemPromptMatchesRuntime, true);
+
+  const standaloneRun = { standaloneChat: true, providerId: 'webgpu' };
+  const inventedGoogleCalls = "<|tool_call_start|>[google(query='Sokollu Mehmed Pasha birth date biography'), google(query='Sokollu Mehmed Pasha Ottoman Empire biography')]<|tool_call_end|>";
+  const inventedOfflineWikipediaCall = "<|tool_call_start|>[offline_wikipedia(query='Sokollu Mehmed Pasha', limit=5)]<|tool_call_end|>";
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedGoogleCalls, standaloneRun),
+    ['Sokollu Mehmed Pasha birth date biography', 'Sokollu Mehmed Pasha Ottoman Empire biography'],
+    'standalone WebGPU must reinterpret the native Google markup as bounded local search queries',
+  );
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedOfflineWikipediaCall, standaloneRun),
+    ['Sokollu Mehmed Pasha'],
+    'standalone WebGPU must reinterpret native offline_wikipedia markup as a local search query',
+  );
+  for (const alias of [
+    'local_wikipedia', 'local_wikipedia_search', 'offline_wikipedia_search',
+    'search_local_wikipedia', 'search_offline_wikipedia', 'search_wiki',
+    'search_wikipedia', 'wiki_search', 'wikipedia', 'wikipedia_search',
+  ]) {
+    const markup = `<|tool_call_start|>[${alias}(query='Sokollu Mehmed Pasha')]<|tool_call_end|>`;
+    assert.deepEqual(
+      agent._standaloneWikipediaSearchQueriesFromModelText(markup, standaloneRun),
+      ['Sokollu Mehmed Pasha'],
+      `standalone WebGPU did not reinterpret the ${alias} alias as local retrieval`,
+    );
+  }
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(
+      "<|tool_call_start|>[browse_web(query='Sokollu Mehmed Pasha')]<|tool_call_end|>",
+      standaloneRun,
+    ),
+    [],
+    'unknown invented tools must remain rejected instead of becoming local retrieval aliases',
+  );
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedGoogleCalls, { standaloneChat: false, providerId: 'webgpu' }),
+    [],
+    'Google markup translation must not escape the standalone WebGPU profile',
+  );
+  const fallbackEnriched = { role: 'user', content: question };
+  const fallbackRag = await agent._applyStandaloneWikipediaModelSearch(
+    fallbackEnriched,
+    inventedOfflineWikipediaCall,
+    standaloneRun,
+    {
+      apocalypseSearch: async query => query.includes('Sokollu') ? [{
+        title: 'Sokollu Mehmed Pasha',
+        excerpt: 'Sokollu Mehmed Pasha was born in 1505.',
+        url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+        language: 'eng',
+        archiveDate: '2026-07-17',
+        archiveTitle: 'Wikipedia English full text',
+        source: 'Kiwix / openZIM',
+      }] : [],
+    },
+  );
+  assert.deepEqual(
+    { status: fallbackRag.status, matchCount: fallbackRag.matchCount, modelSearchFallback: fallbackRag.modelSearchFallback },
+    { status: 'matched', matchCount: 1, modelSearchFallback: true },
+    'invented Google calls must produce local RAG metadata without becoming executable tools',
+  );
+  const fallbackModelContent = JSON.stringify(fallbackEnriched.content);
+  assert.match(fallbackModelContent, /Local Wikipedia archive references found for the requested local search:/);
+  assert.match(fallbackModelContent, /<untrusted_page_content id=/);
+  assert.match(fallbackModelContent, /Sokollu Mehmed Pasha was born in 1505/);
+  const persistedFallback = agent._standalonePersistedUserMessage(fallbackEnriched, standaloneRun);
+  assert.equal(persistedFallback.content, question,
+    'local Wikipedia passages must be removed from the durable conversation turn');
+  assert.doesNotMatch(JSON.stringify(persistedFallback), /Wikipedia|Sokollu Mehmed Pasha was born/,
+    'durable conversation history retained ephemeral RAG content');
+  const legacyHistory = [{
+    role: 'user',
+    content: `${question}\n\nLocal Wikipedia archive references found for the requested local search:\n<untrusted_page_content id="legacy1">{"references":[{"passage":"stale Ottoman context"}]}</untrusted_page_content id="legacy1">`,
+  }];
+  assert.equal(agent._stripPersistedStandaloneWikipediaContext(legacyHistory), true,
+    'legacy persisted RAG context was not detected');
+  assert.equal(legacyHistory[0].content, question,
+    'legacy persisted RAG context was not removed from conversation history');
+  const attributed = agent._withStandaloneWikipediaAttribution('He was born around 1505.', [{
+    title: 'Sokollu Mehmed Pasha',
+    archiveDate: '2026-07-17',
+    url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+  }], standaloneRun);
+  assert.match(attributed, /Offline Wikipedia — Sokollu Mehmed Pasha \(archive 2026-07-17\): https:\/\/en\.wikipedia\.org\/wiki\/Sokollu_Mehmed_Pasha/,
+    'standalone RAG answers must receive deterministic archive attribution');
+  assert.deepEqual(
+    agent._mergeStandaloneWikipediaReferences(
+      [{ title: 'Initial match', url: 'https://en.wikipedia.org/wiki/Initial', archiveDate: '2026-07-17' }],
+      [
+        { title: 'Initial duplicate', url: 'https://en.wikipedia.org/wiki/Initial', archiveDate: '2026-07-17' },
+        { title: 'Fallback match', url: 'https://en.wikipedia.org/wiki/Fallback', archiveDate: '2026-07-17' },
+      ],
+    ).map(reference => reference.title),
+    ['Initial match', 'Fallback match'],
+    'fallback retrieval must preserve initial attribution sources while deduplicating repeats',
+  );
+
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.equal(
+    (agentSource.match(/if \(selectionOnly \|\| standaloneChatRun\) tools = \[\];/g) || []).length,
+    4,
+    'both initial and repeated requests on both agent entry paths must suppress tools',
+  );
+  assert.equal(
+    (agentSource.match(/steps > 0 && !selectionOnly && !standaloneChatRun/g) || []).length,
+    2,
+    'standalone chat must not re-inject page adapters on a follow-up generation step',
+  );
+  assert.match(agentSource, /_beginReadCompleteness[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?createReadCompletenessState\(token, false, false, ''\)/,
+    'standalone chat must not inspect the current page for thread-read classification');
+  assert.equal(
+    (agentSource.match(/standaloneWikipediaModelSearchAttempted = true;/g) || []).length,
+    2,
+    'both standalone agent entry paths must bound model-requested local RAG to one retry',
+  );
+  assert.match(agentSource, /standalone_wikipedia_search_requested[\s\S]*?lfm_native_search_markup/,
+    'intercepted local search markup is not reclassified in traces');
+});
+
+test('standalone chat isolates browser context and inherited sidepanel history for every provider', async () => {
+  for (const [label, AgentClass, provenanceBuilder] of [
+    ['chrome', AgentCh, buildPromptTraceProvenanceCh],
+    ['firefox', AgentFx, buildPromptTraceProvenanceFx],
+  ]) {
+    const agent = new AgentClass({
+      getActive() { throw new Error('standalone prompt must not inspect the active provider'); },
+    });
+    const tabId = label === 'chrome' ? 1702 : 1703;
+    agent._standaloneChatRunTabs.add(tabId);
+    const prompt = agent._buildSystemPrompt('ask', tabId);
+    assert.match(prompt, /standalone chat assistant/);
+    assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
+    assert.doesNotMatch(prompt, /click_ax|get_accessibility_tree|User profile|cookie|paywall/i);
+
+    const question = 'What year was Ada Lovelace born?';
+    const enriched = await agent._enrichUserMessageWithCurrentPage(tabId, [], question, null, {
+      standaloneChat: true,
+      providerId: 'openai',
+    });
+    assert.deepEqual(enriched, { role: 'user', content: question },
+      `${label}: non-WebGPU standalone chat received browser/runtime context`);
+
+    const persisted = agent._standalonePersistedUserMessage(enriched, { standaloneChat: true });
+    const inherited = [
+      { role: 'system', content: prompt },
+      { role: 'user', content: '[Current page context — URL: https://example.test]\nRead this page' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'old-tool', function: { name: 'read_page', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'old-tool', content: 'secret page text' },
+      persisted,
+    ];
+    const modelMessages = agent._messagesForStandaloneChatRun(inherited, persisted, enriched);
+    assert.deepEqual(modelMessages, [
+      { role: 'system', content: prompt },
+      { role: 'user', content: question },
+    ], `${label}: inherited sidepanel page/tool history crossed into standalone chat`);
+    assert.doesNotMatch(JSON.stringify(modelMessages), /example\.test|read_page|secret page text/);
+
+    inherited.push({ role: 'assistant', content: '' });
+    inherited.push({ role: 'user', content: '[System nudge: answer directly.]' });
+    const retryMessages = agent._messagesForStandaloneChatRun(inherited, persisted, enriched);
+    assert.equal(retryMessages.at(-1)?.content, '[System nudge: answer directly.]',
+      `${label}: standalone recovery nudge was dropped from the isolated model view`);
+
+    const provenance = provenanceBuilder(modelMessages, [], 'ask');
+    assert.equal(provenance.systemPromptVariant, 'standalone_chat');
+    assert.equal(provenance.systemPromptMatchesRuntime, true);
+  }
+});
+
+test('trace export reports local Wikipedia RAG without passage text', () => {
+  const runs = [{
+    run: { runId: 'local-rag', userMessage: 'Who was Sokullu Mehmed Pasha?', model: 'LFM2.5', status: 'done' },
+    events: [{
+      runId: 'local-rag', seq: 1, kind: 'llm_request', data: {
+        messageCount: 2,
+        toolsCount: 0,
+        localWikipediaRag: {
+          attempted: true,
+          status: 'matched',
+          matchCount: 2,
+          archiveDates: ['2026-07-17'],
+          queryNormalized: true,
+        },
+      },
+    }, {
+      runId: 'local-rag', seq: 2, kind: 'note', data: {
+        step: 1,
+        note: 'standalone_wikipedia_search_requested',
+        extra: { queryCount: 2, source: 'lfm_native_search_markup' },
+      },
+    }],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /0 tools · local Wikipedia RAG matched · 2 matches · archive 2026-07-17/,
+      `${label}: RAG activation and archive date are missing from the trace export`);
+    assert.doesNotMatch(markdown, /passage|Sokullu was born/,
+      `${label}: trace metadata must not persist retrieved passage text`);
+    assert.match(markdown, /On-device model requested local Wikipedia retrieval · 2 queries/,
+      `${label}: intercepted search was not represented as local retrieval`);
+    assert.doesNotMatch(markdown, /tool_call_start|google\(/,
+      `${label}: intercepted native search markup leaked into the conversation export`);
   }
 });
 
@@ -23714,6 +24326,7 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
   const requiredTranslatedKeys = [
     'st.display.apocalypse_mode.desc',
     'st.display.apocalypse_mode.status.off',
+    'ap.subtitle',
     'ap.hero.desc',
     'ap.hero.consent',
     'ap.vision.auto',
@@ -23721,7 +24334,10 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
     'ap.catalog.desc',
     'ap.download_background',
     'ap.include_images',
+    'ap.import.title',
     'ap.import.desc',
+    'ap.import.button',
+    'ap.file_description',
     'ap.confirm_install',
     'ap.confirm_import',
     'ap.update_policy.automatic_notice',
@@ -28625,12 +29241,16 @@ test('sidepanel drops stale provider selection and connection checks', () => {
     const changeCaptureIdx = changeBody.indexOf('const providerId = providerSelect.value;');
     const changeRequestIdx = changeBody.indexOf('const requestId = ++providerSelectionRequestId;');
     const invalidateIdx = changeBody.indexOf('providerTestRequestId += 1;');
-    const activateIdx = changeBody.indexOf("await sendToBackground('set_active_provider', { providerId });");
+    const activateIdx = changeBody.indexOf(label === 'chrome'
+      ? 'await setActiveChatProvider(providerId);'
+      : "await sendToBackground('set_active_provider', { providerId });");
     const catchIdx = changeBody.indexOf('} catch (e) {');
     const failureGuardIdx = changeBody.indexOf('if (requestId === providerSelectionRequestId && providerSelect.value === providerId) {');
     const failureStatusIdx = changeBody.indexOf('markSelectedProviderFailed(e);');
     const changeStaleGuardIdx = changeBody.indexOf('if (requestId !== providerSelectionRequestId || providerSelect.value !== providerId) {');
-    const repairIdx = changeBody.indexOf("sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
+    const repairIdx = changeBody.indexOf(label === 'chrome'
+      ? 'setActiveChatProvider(latestProviderId).catch(() => {});'
+      : "sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
     const changeTestIdx = changeBody.indexOf('await testConnection({ providerId });');
     assert.notEqual(changeCaptureIdx, -1, `${label}: provider change should capture the intended provider`);
     assert.notEqual(changeRequestIdx, -1, `${label}: provider change should increment a request sequence`);
@@ -31134,6 +31754,88 @@ test('standalone chat runs omit active extension-page context and screenshots', 
   }
 });
 
+test('standalone WebGPU control uses a per-run provider without changing global selection', async () => {
+  const markup = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8');
+  const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src/chrome/styles/sidepanel.css'), 'utf8');
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+
+  assert.match(markup, /id="btn-webgpu-standalone"[\s\S]*?☢/, 'standalone header is missing the nuclear WebGPU control');
+  assert.match(css, /\.standalone-webgpu-toggle\.active\s*\{[\s\S]*?background: var\(--success\)/,
+    'active WebGPU control should turn green');
+  assert.match(panel, /standaloneWebgpuBtn\.hidden = !isStandaloneWindow/,
+    'the WebGPU control must stay out of the ordinary side panel');
+  assert.match(panel, /providerSelect\.disabled = standaloneWebgpuActive[\s\S]*?providerPickerBtn\.disabled = standaloneWebgpuActive/,
+    'the ordinary provider picker should lock while the WebGPU override is active');
+  assert.match(panel, /standaloneWebgpuBtn\.disabled = !standaloneWebgpuEnabled/,
+    'the nuclear control should be clickable whenever Apocalypse Mode is enabled');
+  assert.match(panel, /function standaloneWebgpuRunPayload\(\) \{\s*return isStandaloneWindow && standaloneWebgpuActive \? \{ providerId: 'webgpu' \} : \{\};/,
+    'standalone WebGPU state is not carried as a run-scoped override');
+  assert.match(background, /case 'get_providers': \{[\s\S]*?delete providers\.webgpu/,
+    'WebGPU must never appear in the ordinary provider picker');
+  assert.match(background, /case 'set_active_provider': \{[\s\S]*?msg\.providerId === 'webgpu'[\s\S]*?nuclear WebGPU control/,
+    'WebGPU must not become the globally active provider');
+  assert.match(background, /case 'get_standalone_webgpu_status': \{[\s\S]*?enabled: apocalypse\?\.enabled === true[\s\S]*?ready:/,
+    'the standalone control should distinguish Apocalypse enablement from model readiness');
+  assert.match(background, /type: 'apocalypse-mode-state'[\s\S]*?enabled: snapshot\.enabled === true/,
+    'open standalone windows should be notified when Apocalypse Mode changes');
+  assert.match(agentSource, /this\._runProviderOverrides = new Map\(\)/);
+  assert.match(agentSource, /getProvider\(overrideId\)/);
+
+  const globalProvider = { name: 'global' };
+  const webgpuProvider = { name: 'webgpu' };
+  const manager = {
+    getActive: () => globalProvider,
+    getProvider: id => id === 'webgpu' ? webgpuProvider : null,
+  };
+  const agent = new AgentCh(manager);
+  agent._runProviderOverrides.set(71, 'webgpu');
+  assert.equal(agent._activeProvider(71), webgpuProvider, 'the standalone tab should resolve WebGPU');
+  assert.equal(agent._activeProvider(72), globalProvider, 'another tab should keep the global provider');
+
+  const helperStart = background.indexOf('async function standaloneRunProviderId(msg) {');
+  const helperEnd = background.indexOf('\n}', helperStart) + 2;
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'standalone WebGPU background guard is missing');
+  const apocalypseState = { enabled: true };
+  const webgpuState = { ready: true };
+  const standaloneRunProviderId = vm.runInNewContext(
+    `(${background.slice(helperStart, helperEnd)})`,
+    {
+      WEBGPU_MODEL_ID: 'LiquidAI/LFM2.5-2.6B-ONNX',
+      apocalypseController: {
+        handle: async () => ({ enabled: apocalypseState.enabled }),
+      },
+      providerManager: {
+        getAll: () => ({
+          webgpu: { model: 'LiquidAI/LFM2.5-2.6B-ONNX' },
+        }),
+        getWebgpuDownloadStatus: async () => ({ ready: webgpuState.ready }),
+      },
+    },
+  );
+  assert.equal(await standaloneRunProviderId({}), null);
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: false }),
+    /standalone chat control/,
+  );
+  assert.equal(
+    await standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    'webgpu',
+  );
+  apocalypseState.enabled = false;
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    /Enable Apocalypse Mode/,
+  );
+  apocalypseState.enabled = true;
+  webgpuState.ready = false;
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    /Download LFM2\.5 2\.6B/,
+  );
+});
+
 test('standalone window transport, sizing, and translations are mirrored', async () => {
   const localeCodes = [
     'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
@@ -31940,7 +32642,7 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       agent,
-      /plannerTabInfo = selectionOnly \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
+      /plannerTabInfo = selectionOnly \|\| standaloneChatRun \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
       `${label}: Act planner should not receive page URL or title for a selection-only run`,
     );
     assert.match(
@@ -42291,8 +42993,8 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   const streamingStart = agentSource.indexOf('async _processMessageStreamInner(');
   const standardPath = agentSource.slice(standardStart, streamingStart);
   const streamingPath = agentSource.slice(streamingStart);
-  assert.match(standardPath, /if \(mode === 'dev'\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
-  assert.match(streamingPath, /if \(mode === 'dev'\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
+  assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
+  assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
@@ -42887,6 +43589,12 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       error => error.isAskStreamTerminalError === true && /OrtRun/.test(error.message),
       'fatal WebGPU execution failures should bypass the generic network retry',
     );
+    webgpuExecutionError = `${WEBGPU_MODEL_ID} used its generation budget before finishing reasoning. Retry with a shorter prompt.`;
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Exercise the deterministic token limit.' }]),
+      error => error.isAskStreamTerminalError === true && /generation budget/.test(error.message),
+      'a deterministic WebGPU generation-budget failure should not repeat the same expensive request',
+    );
 
     const preload = await new WebGPUVisionProvider().preload();
     assert.deepEqual(preload, { ok: true, started: true, ready: false });
@@ -42993,6 +43701,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
@@ -43036,7 +43746,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'Chrome startup must resume an enabled, incomplete local-vision preload');
   assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
     'local-vision recovery must run with the service-worker startup restoration');
-  assert.doesNotMatch(background, /apocalypseController\.handle\('status'\)/,
+  const startupRecovery = background.slice(
+    background.indexOf('Promise.all([', background.indexOf('async function resumeInterruptedVisionPreload')),
+    background.indexOf('const agent = new Agent', background.indexOf('async function resumeInterruptedVisionPreload')),
+  );
+  assert.doesNotMatch(startupRecovery, /apocalypseController\.handle\('status'\)/,
     'service-worker startup must not override a later local-vision opt-out');
   assert.match(worker, /let visionRuntime = null/);
   assert.match(worker, /let textRuntime = null/);
@@ -43083,29 +43797,32 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(settingsScript, /chrome\.storage\.local\.remove\(WEBGPU_VISION_AUTO_SELECTED_KEY\)/,
     'an explicit local-vision selection must clear automatic-selection provenance');
   assert.match(settingsScript, /dispose_webgpu_vision/);
-  assert.match(settingsScript, /data-webgpu-download-action="start"/);
-  assert.match(settingsScript, /data-webgpu-download-action="pause"/);
-  assert.match(settingsScript, /data-webgpu-download-action="resume"/);
-  assert.match(settingsScript, /data-webgpu-download-action="stop"/);
-  assert.match(settingsScript, /get_webgpu_download_status/);
-  assert.match(settingsScript, /webgpu-text-download-state/);
+  assert.match(apocalypseHtml, /id="webgpu-provider-card"[^>]*hidden/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="start"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="pause"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="resume"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="stop"/);
+  assert.match(apocalypseScript, /get_webgpu_download_status/);
+  assert.match(apocalypseScript, /webgpu-text-download-state/);
+  assert.doesNotMatch(settingsScript, /data-webgpu-download-action=/,
+    'the WebGPU provider download block must live on Apocalypse Mode, not Settings');
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
-  const webgpuSettingsBlock = settingsScript.slice(
-    settingsScript.indexOf('webgpu: {'),
-    settingsScript.indexOf('azure_openai: {'),
-  );
-  assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
-  assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
-  assert.match(webgpuSettingsBlock, /key: 'model'/);
-  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
-  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey)'/);
-  assert.match(settingsScript, /normalizeWebgpuModelId/);
-  assert.match(settingsScript, /<option value="__custom__"/);
-  assert.match(settingsScript, /data-webgpu-model-link/);
+  assert.match(settingsScript, /Object\.entries\(providersData\)\.filter\(\(\[id\]\) => id !== 'webgpu'\)/,
+    'Settings still renders the WebGPU provider card');
+  assert.match(apocalypseHtml, /LFM2\.5 2\.6B local chat/);
+  assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
+  assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
+  assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
+  assert.match(apocalypseHtml, /id="vision-model-test"[^>]*data-i18n="st\.vision\.test"[^>]*disabled/);
+  assert.doesNotMatch(apocalypseHtml, /(?:base-url|api-key|__custom__|data-webgpu-model-link)/);
+  assert.doesNotMatch(apocalypseScript, /WEBGPU_MODEL_PRESETS|normalizeWebgpuModelId|set_active_provider/);
+  assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
+  assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
-  assert.match(englishLocale, /LFM2\.5 2\.6B is the only tested model[\s\S]*Other models entered through Custom are untested and likely will not work/);
+  assert.match(englishLocale, /Download it in Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
