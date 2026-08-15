@@ -1,6 +1,8 @@
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Naputol ang pag-stream ng tugon; sinusubukang muli ang Ask turn na ito nang walang streaming.',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Maghanap sa General na mga setting',
   'st.display.search.empty': 'Walang tugmang General na mga setting.',
   'st.display.advanced': 'Advanced',
+  ...getApocalypseModeCopy('tl'),
   'st.display.cloud_bridge.label': 'Cloud bridge',
   'st.display.cloud_bridge.desc': 'Ikonekta ang isang lokal na controller sa Chromium profile na ito. Gamitin ang port 17373 para sa WebBrain Cloud, 17374 para sa mga MCP client, o 17375 para sa LM Studio. Isang bridge lang ang maaaring aktibo; nalalapat pa rin ang karaniwang mga prompt ng pahintulot.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

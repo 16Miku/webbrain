@@ -41,6 +41,7 @@ import {
   downloadResourceFromPage,
   downloadFiles,
 } from '../network/network-tools.js';
+import { executeWikipediaSkillTool } from './wikipedia-offline.js';
 import {
   isPdfUrl,
   extractPdfText,
@@ -19267,6 +19268,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (skillTool) {
       if (isTrustedChromeWebStoreSkillTool(skillTool)) {
         return await executeChromeWebStoreSkillTool(skillTool, args, { tabId });
+      }
+      if (skillTool.skillId === 'wikipedia') {
+        return await executeWikipediaSkillTool(skillTool, args, {
+          executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId }),
+        });
       }
       return await executeHttpSkillTool(skillTool, args, { tabId });
     }

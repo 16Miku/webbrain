@@ -10,7 +10,10 @@ import {
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
+  WEBGPU_VISION_MODEL_ID,
   webgpuModelDisplayName,
 } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
@@ -1096,6 +1099,41 @@ export class ProviderManager {
     } catch (error) {
       return { ok: false, error: error?.message || String(error) };
     }
+  }
+
+  /** Enable the Chrome-only local vision fallback and start its durable cache fill. */
+  async enableAndPreloadWebgpuVision() {
+    const provider = new WebGPUVisionProvider();
+    const stored = await chrome.storage.local.get([
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+    ]);
+    const wasEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true;
+    const probe = await provider.testConnection();
+    if (!probe.ok) return probe;
+
+    const automaticallySelected = !wasEnabled;
+    if (automaticallySelected) {
+      await chrome.storage.local.set({
+        [WEBGPU_VISION_ENABLED_KEY]: true,
+        [WEBGPU_VISION_AUTO_SELECTED_KEY]: true,
+      });
+    }
+
+    const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
+    if (state?.status === 'ready' && state?.modelId === WEBGPU_VISION_MODEL_ID) {
+      if (automaticallySelected) await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
+      return { ok: true, started: false, ready: true };
+    }
+
+    const result = await provider.preload();
+    if (!result.ok && automaticallySelected) {
+      await chrome.storage.local.remove([
+        WEBGPU_VISION_ENABLED_KEY,
+        WEBGPU_VISION_AUTO_SELECTED_KEY,
+      ]);
+    }
+    return result;
   }
 
   _webgpuProvider() {

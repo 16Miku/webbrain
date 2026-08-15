@@ -1,6 +1,8 @@
 // Russian (ru).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Поток ответа был прерван; этот запрос Ask повторяется без потоковой передачи.',
@@ -679,6 +681,7 @@ export default {
   'st.display.search.placeholder': 'Поиск в общих настройках',
   'st.display.search.empty': 'Нет совпадений в общих настройках.',
   'st.display.advanced': 'Расширенные',
+  ...getApocalypseModeCopy('ru'),
   'st.display.cloud_bridge.label': 'Облачный мост',
   'st.display.cloud_bridge.desc': 'Подключите один локальный контроллер к этому профилю Chromium. Используйте порт 17373 для WebBrain Cloud, 17374 для клиентов MCP или 17375 для LM Studio. Одновременно может быть активен только один мост; обычные запросы разрешений сохраняются.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

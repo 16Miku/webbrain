@@ -15,6 +15,12 @@ export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloade
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
 export const WEBGPU_VISION_ENABLED_KEY = 'webgpuVisionEnabled';
+// Present only while an Apocalypse-triggered selection is awaiting a model
+// preload result. The service worker may roll back that automatic choice on
+// failure, while a later explicit Settings choice clears this provenance.
+export const WEBGPU_VISION_AUTO_SELECTED_KEY = 'webgpuVisionAutoSelected';
+export const WEBGPU_VISION_DOWNLOAD_STATE_KEY = 'webgpuVisionDownloadState';
+export const WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE = 'webgpu-vision-download-state';
 export const WEBGPU_VISION_DTYPE = Object.freeze({
   embed_tokens: 'fp16',
   vision_encoder: 'fp16',
@@ -306,6 +312,23 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
   /** Probe WebGPU and the packaged runtime without downloading model weights. */
   async testConnection() {
     return this._testWebGPU();
+  }
+
+  /** Start caching the model in the offscreen worker without waiting for the transfer. */
+  async preload() {
+    try {
+      const response = await this._dispatch({
+        type: 'webgpu-vision-preload',
+        model: this.model,
+        device: this.device,
+        dtype: this.dtype,
+      });
+      return response?.error
+        ? { ok: false, error: response.error }
+        : { ok: true, started: response?.started !== false, ready: response?.ready === true };
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
   }
 
   async clearCache() {

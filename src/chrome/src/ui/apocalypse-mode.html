@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="ap.page_title"></title>
+  <style>
+    :root { --bg:#111322;--panel:#191d31;--panel2:#222740;--text:#f2f3fa;--muted:#a5abc4;--border:#343a58;--accent:#7c72ff;--good:#55c785;--warn:#ffb454;--bad:#ff6b78; }
+    * { box-sizing:border-box; }
+    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif; }
+    header { border-bottom:1px solid var(--border);padding:20px max(24px,calc((100vw - 1120px)/2));display:flex;align-items:center;gap:16px;position:sticky;top:0;background:rgba(17,19,34,.96);z-index:2; }
+    h1,h2,h3,p { margin:0; } h1 { font-size:21px; } h2 { font-size:17px;margin-bottom:12px; } h3 { font-size:14px; }
+    main { max-width:1120px;margin:24px auto;padding:0 24px 48px;display:grid;gap:18px; }
+    .card { background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px; }
+    .hero { display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center; }
+    .muted,.meta { color:var(--muted); } .warning { color:var(--warn);margin-top:8px; }
+    .toggle { display:flex;gap:10px;align-items:center;font-weight:700; }
+    .toggle input { width:42px;height:22px;accent-color:var(--accent); }
+    .vision-model { margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--panel2); }
+    .vision-model-head { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+    .vision-model .meta { margin-top:4px; }
+    .vision-status { margin-top:8px;color:var(--muted);font-weight:650; }
+    .vision-status[data-kind="ready"] { color:var(--good); }
+    .vision-status[data-kind="error"] { color:var(--bad); }
+    .check { display:flex;gap:8px;align-items:center;min-height:38px;color:var(--text); }
+    .check input { accent-color:var(--accent); }
+    .controls { display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:14px; }
+    label.field { display:grid;gap:5px;color:var(--muted);font-size:12px; }
+    button,select,input[type=file] { background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:8px 11px;font:inherit; }
+    button { cursor:pointer;font-weight:650; } button.primary { background:var(--accent);border-color:var(--accent); } button.danger { color:var(--bad); } button:disabled { opacity:.5;cursor:not-allowed; }
+    .status-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:14px; }
+    .metric { background:var(--panel2);border-radius:8px;padding:10px; } .metric strong { display:block;font-size:16px; }
+    .list { display:grid;gap:10px;margin-top:12px; }
+    .item { border:1px solid var(--border);border-radius:9px;padding:13px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .item .meta { font-size:12px;margin-top:3px;overflow-wrap:anywhere; } .actions { display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end; }
+    progress { width:100%;height:7px;margin-top:8px;accent-color:var(--accent); }
+    #notice { min-height:21px;color:var(--muted); } #notice[data-kind=error] { color:var(--bad); } #notice[data-kind=success] { color:var(--good); }
+    .empty { color:var(--muted);padding:12px 0; }
+    @media(max-width:700px){ .hero,.item{grid-template-columns:1fr}.actions{justify-content:flex-start} }
+  </style>
+</head>
+<body>
+  <header><span aria-hidden="true">🏕️</span><h1 data-i18n="ap.title"></h1><span class="muted" data-i18n="ap.subtitle"></span></header>
+  <main>
+    <section class="card hero">
+      <div>
+        <h2 data-i18n="ap.hero.title"></h2>
+        <p class="muted" data-i18n="ap.hero.desc"></p>
+        <p class="warning" data-i18n="ap.hero.consent"></p>
+        <div id="vision-model-card" class="vision-model" hidden>
+          <div class="vision-model-head"><strong data-i18n="st.vision.local.title"></strong><span class="meta">~770 MB</span></div>
+          <p class="meta" data-i18n="st.vision.local.desc"></p>
+          <p class="meta" data-i18n="ap.vision.auto"></p>
+          <div id="vision-model-status" class="vision-status" role="status" aria-live="polite"></div>
+          <progress id="vision-model-progress" max="100" value="0" hidden></progress>
+        </div>
+      </div>
+      <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="ap.lifecycle"></h2>
+      <div class="status-grid">
+        <div class="metric"><span class="muted" data-i18n="ap.metric.installed"></span><strong id="installed-count">0</strong></div>
+        <div class="metric"><span class="muted" data-i18n="ap.metric.archive_bytes"></span><strong id="archive-bytes">0 B</strong></div>
+        <div class="metric"><span class="muted" data-i18n="ap.metric.storage"></span><strong id="storage-usage"></strong></div>
+        <label class="metric field"><span class="muted" data-i18n="ap.metric.updates"></span><select id="update-policy"><option value="manual" data-i18n="ap.metric.manual"></option><option value="automatic" data-i18n="ap.metric.automatic"></option></select></label>
+      </div>
+      <div id="installed" class="list"></div>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="ap.catalog.title"></h2>
+      <p class="muted" data-i18n="ap.catalog.desc"></p>
+      <p class="warning" data-i18n="ap.download_background"></p>
+      <div class="controls">
+        <label class="field"><span data-i18n="ap.language"></span>
+          <select id="language"></select>
+        </label>
+        <label class="field"><span data-i18n="ap.tier"></span>
+          <select id="catalog-tier"><option value="all" data-i18n="ap.tier.all"></option><option value="starter" data-i18n="ap.tier.starter"></option><option value="introductions" data-i18n="ap.tier.introductions"></option><option value="text" data-i18n="ap.tier.text" selected></option><option value="full" data-i18n="ap.tier.full"></option></select>
+        </label>
+        <label class="field"><span data-i18n="ap.storage_location"></span>
+          <select id="storage-target"><option value="opfs" data-i18n="ap.storage.browser"></option><option id="external-storage-option" value="file" hidden data-i18n="ap.storage.file"></option></select>
+        </label>
+        <button id="load-catalog" class="primary" data-i18n="ap.catalog.load"></button>
+      </div>
+      <div id="catalog" class="list"><div class="empty" data-i18n="ap.catalog.empty"></div></div>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="ap.import.title"></h2>
+      <p class="muted" data-i18n="ap.import.desc"></p>
+      <div class="controls">
+        <input id="import-file" type="file" accept=".zim,application/x-zim">
+        <label class="field"><span data-i18n="ap.language"></span><select id="import-language"></select></label>
+        <button id="import-button" data-i18n="ap.import.button"></button>
+        <button id="cancel-import" class="danger" hidden data-i18n="ap.cancel"></button>
+      </div>
+    </section>
+    <div id="notice" role="status" aria-live="polite"></div>
+  </main>
+  <script type="module" src="apocalypse-mode.js"></script>
+</body>
+</html>

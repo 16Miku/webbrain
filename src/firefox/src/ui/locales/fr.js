@@ -1,6 +1,8 @@
 // French (fr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Le flux de réponse a été interrompu ; nouvelle tentative de ce tour Ask sans streaming.',
@@ -663,6 +665,7 @@ export default {
   'st.display.search.placeholder': 'Rechercher dans les paramètres généraux',
   'st.display.search.empty': 'Aucun paramètre général correspondant.',
   'st.display.advanced': 'Avancé',
+  ...getApocalypseModeCopy('fr'),
   'st.display.clarify_timeout.label': 'Délai des questions de clarification',
   'st.display.clarify_timeout.desc': 'Durée d’attente d’une réponse à une question de clarification avant de sélectionner automatiquement la première option (ou d’expirer s’il n’y a pas d’options). 0 = Immédiat (auto-sélection). Au-delà de 1200s = attendre indéfiniment (Désactivé). Par défaut 60s. Ne s’applique pas aux permissions ni aux confirmations d’envoi de formulaire.',
   'st.display.clarify_timeout.off': 'Désactivé',

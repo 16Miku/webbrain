@@ -336,6 +336,18 @@ const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDoma
 const { firefoxRestrictedDomainForUrl, firefoxRestrictedDomainFailure, firefoxHostPermissionFailure } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/firefox-restricted-domains.js').replace(/\\/g, '/')
 );
+const WikipediaOfflineCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
+);
+const WikipediaOfflineFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
+);
+const ApocalypseModeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
+const ApocalypseModeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
 );
@@ -784,6 +796,9 @@ const {
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_DTYPE,
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   normalizeWebgpuModelId,
@@ -20963,6 +20978,1859 @@ test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
   }
 });
 
+test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata before install', () => {
+  const catalogXml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
+    <entry><id>urn:uuid:test-mini</id><title>Wikipedia 100</title><updated>2026-07-17T00:00:00Z</updated>
+      <summary>Top hundred Wikipedia articles</summary><language>eng</language><name>wikipedia_en_100</name><flavour>mini</flavour>
+      <category>wikipedia</category><tags>wikipedia;_ftindex:yes;_pictures:no</tags><articleCount>5032</articleCount>
+      <author><name>Wikipedia</name></author><publisher><name>openZIM</name></publisher>
+      <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/example.zim.meta4" length="331961344" />
+      <dc:issued>2026-07-17T00:00:00Z</dc:issued>
+    </entry></feed>`;
+  const metalinkXml = `<?xml version="1.0"?><metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="example.zim">
+    <size>4621915</size><hash type="sha-256">b3d5db724e2ef884eaf43e3677ba2dc5c4d17619114b3de4602c119ca23dcfcd</hash>
+    <pieces length="4194304" type="sha-1"><hash>f6dc33924096656d9952a6ffe0de101d1b3aa5c6</hash><hash>33534cc215d7a94fba21cf264a64f2ef954dedce</hash></pieces>
+    <url priority="2">https://mirror.example.test/wikipedia/example.zim</url>
+    <url priority="1">https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim</url>
+  </file></metalink>`;
+
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const [item] = runtime.parseKiwixCatalog(catalogXml);
+    assert.equal(item.language, 'eng', `${label}: catalog language was not preserved`);
+    assert.equal(item.tier, 'starter', `${label}: small archive tier was not classified`);
+    assert.equal(item.source, 'Wikipedia / openZIM', `${label}: catalog publisher provenance was replaced by a generic label`);
+    assert.equal(item.licenseDeclared, false, `${label}: missing OPDS rights metadata was presented as a publisher-declared license`);
+    assert.match(item.license, /not declared/i, `${label}: missing OPDS rights metadata was not disclosed before confirmation`);
+    assert.equal(item.catalogSize, 331961344, `${label}: catalog-reported size was lost`);
+    const resolved = runtime.resolveKiwixDownload(item, metalinkXml);
+    assert.equal(resolved.size, 4621915, `${label}: install did not use the Metalink exact size`);
+    assert.equal(resolved.pieceLength, 4194304, `${label}: resumable piece size was not preserved`);
+    assert.deepEqual(resolved.pieceHashes, ['f6dc33924096656d9952a6ffe0de101d1b3aa5c6', '33534cc215d7a94fba21cf264a64f2ef954dedce'], `${label}: piece integrity hashes were lost`);
+    assert.equal(resolved.downloadUrl, 'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim', `${label}: mirror URL was not selected`);
+    assert.deepEqual(resolved.mirrors, [
+      'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim',
+      'https://mirror.example.test/wikipedia/example.zim',
+    ], `${label}: priority-ordered Metalink mirrors were not retained`);
+  }
+});
+
+function minimalWikipediaZimFixture(options = {}) {
+  const encoder = new TextEncoder();
+  const language = options.language || 'eng';
+  const sourceLanguage = ({ ben: 'bn', tgl: 'tl' })[language] || language.slice(0, 2);
+  const metadata = options.wikipedia === false ? {
+    Language: 'eng', Name: 'project_gutenberg_en', Source: 'www.gutenberg.org', Tags: '_category:books',
+  } : {
+    Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`, Tags: 'wikipedia;_category:wikipedia',
+  };
+  const entries = [
+    {
+      namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
+      contents: '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
+    },
+    ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
+  ];
+  if (options.redirectTrap) {
+    entries.push(
+      { namespace: 'C', url: 'Science', title: 'Science', redirectUrl: 'The_New_York_Times' },
+      { namespace: 'C', url: 'Science_article', title: 'Science article', mimeType: 0, contents: '<p>Science is the systematic study of the natural world.</p>' },
+      { namespace: 'C', url: 'The_New_York_Times', title: 'The New York Times', mimeType: 0, contents: '<p>A newspaper based in New York City.</p>' },
+    );
+  }
+  if (options.caseSensitiveTitle) {
+    for (let index = 0; index < 30; index += 1) {
+      entries.push({
+        namespace: 'C', url: `New_Example_${String(index).padStart(2, '0')}`, title: `New Example ${index}`, mimeType: 0,
+        contents: `<p>Prefix decoy ${index}.</p>`,
+      });
+    }
+    entries.push({
+      namespace: 'C', url: 'New_York_City', title: 'New York City', mimeType: 0,
+      contents: '<p>New York City is the most populous city in the United States.</p>',
+    });
+    entries.push({ namespace: 'C', url: 'NYC', title: 'NYC', redirectUrl: 'New_York_City' });
+    entries.push({
+      namespace: 'C', url: 'iPhone', title: 'iPhone', mimeType: 0,
+      contents: '<p>The iPhone is a line of smartphones designed by Apple.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'YouTube', title: 'YouTube', mimeType: 0,
+      contents: '<p>YouTube is an online video sharing platform.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'YouTube_TV', title: 'YouTube TV', mimeType: 0,
+      contents: '<p>YouTube TV is a streaming television service.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'OpenAI', title: 'OpenAI', mimeType: 0,
+      contents: '<p>OpenAI is an artificial intelligence research organization.</p>',
+    });
+    entries.push({
+      namespace: 'C', url: 'United_States', title: 'United States', mimeType: 0,
+      contents: '<p>The United States is a country in North America.</p>',
+    });
+    entries.push({ namespace: 'C', url: 'USA', title: 'USA', redirectUrl: 'United_States' });
+    entries.push({ namespace: 'C', url: 'Big_Apple', title: 'Big Apple', redirectUrl: 'New_York_City' });
+  }
+  entries.sort((left, right) => {
+    const leftKey = `${left.namespace}/${left.url}`;
+    const rightKey = `${right.namespace}/${right.url}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const blobs = entries.filter(entry => entry.contents != null);
+  blobs.forEach((entry, index) => { entry.blobIndex = index; });
+  const mime = encoder.encode('text/html\0text/plain\0\0');
+  const offsetsBytes = (blobs.length + 1) * 4;
+  const encodedBlobs = blobs.map(entry => encoder.encode(entry.contents));
+  const cluster = new Uint8Array(1 + offsetsBytes + encodedBlobs.reduce((sum, value) => sum + value.length, 0));
+  cluster[0] = 1;
+  const clusterView = new DataView(cluster.buffer);
+  let blobOffset = offsetsBytes;
+  encodedBlobs.forEach((value, index) => {
+    clusterView.setUint32(1 + index * 4, blobOffset, true);
+    cluster.set(value, 1 + blobOffset);
+    blobOffset += value.length;
+  });
+  clusterView.setUint32(1 + blobs.length * 4, blobOffset, true);
+  const directories = entries.map((entry) => {
+    const url = encoder.encode(entry.url);
+    const title = encoder.encode(entry.title);
+    const redirect = Boolean(entry.redirectUrl);
+    const directory = new Uint8Array((redirect ? 12 : 16) + url.length + 1 + title.length + 1);
+    const directoryView = new DataView(directory.buffer);
+    directoryView.setUint16(0, redirect ? 0xffff : entry.mimeType, true);
+    directory[3] = entry.namespace.charCodeAt(0);
+    directoryView.setUint32(8, redirect ? entries.findIndex(candidate => candidate.url === entry.redirectUrl && candidate.namespace === 'C') : 0, true);
+    if (!redirect) directoryView.setUint32(12, entry.blobIndex, true);
+    directory.set(url, redirect ? 12 : 16);
+    directory.set(title, (redirect ? 13 : 17) + url.length);
+    return directory;
+  });
+  // Use the common ZIM layout where directory entries precede cluster data.
+  // The final cluster therefore ends at checksumPos, not at the first URL
+  // pointer's directory-entry offset.
+  const urlPointerPosition = 128;
+  const clusterPointerPosition = urlPointerPosition + entries.length * 8;
+  const directoryStart = clusterPointerPosition + 8;
+  const directoryPositions = [];
+  let directoryOffset = directoryStart;
+  for (const directory of directories) {
+    directoryPositions.push(directoryOffset);
+    directoryOffset += directory.length;
+  }
+  const clusterStart = directoryOffset;
+  const checksumPosition = clusterStart + cluster.length;
+  const bytes = new Uint8Array(checksumPosition + 16);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x044d495a, true);
+  view.setUint16(4, 6, true);
+  view.setUint16(6, 3, true);
+  view.setUint32(24, entries.length, true);
+  view.setUint32(28, 1, true);
+  view.setBigUint64(32, BigInt(urlPointerPosition), true);
+  view.setBigUint64(40, 0xffffffffffffffffn, true);
+  view.setBigUint64(48, BigInt(clusterPointerPosition), true);
+  view.setBigUint64(56, 80n, true);
+  view.setUint32(64, 0, true);
+  view.setUint32(68, 0xffffffff, true);
+  view.setBigUint64(72, BigInt(checksumPosition), true);
+  bytes.set(mime, 80);
+  bytes.set(cluster, clusterStart);
+  directories.forEach((directory, index) => {
+    bytes.set(directory, directoryPositions[index]);
+    view.setBigUint64(urlPointerPosition + index * 8, BigInt(directoryPositions[index]), true);
+  });
+  view.setBigUint64(clusterPointerPosition, BigInt(clusterStart), true);
+  return new Blob([bytes], { type: 'application/x-zim' });
+}
+
+test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture(), {
+      language: 'eng',
+      archiveDate: '2026-07-17',
+      license: 'CC BY-SA 4.0',
+    });
+    assert.deepEqual(archive.metadata, {
+      language: 'eng', archiveDate: '2026-07-17', source: 'https://en.wikipedia.org/', license: 'CC BY-SA 4.0', licenseDeclared: true,
+    }, `${label}: validated import metadata was unavailable before confirmation`);
+    const [passage] = await archive.search('Alan Turing', { limit: 3 });
+    assert.equal(passage.title, 'Alan Turing', `${label}: local ZIM title was not read`);
+    assert.match(passage.excerpt, /computer scientist/, `${label}: local ZIM article text was not extracted`);
+    assert.equal(passage.url, 'https://en.wikipedia.org/wiki/Alan_Turing', `${label}: canonical Wikipedia attribution was lost`);
+    assert.equal(passage.language, 'eng', `${label}: archive language was lost`);
+    assert.equal(passage.archiveDate, '2026-07-17', `${label}: archive date was lost`);
+    assert.equal(passage.license, 'CC BY-SA 4.0', `${label}: archive license was lost`);
+    assert.equal(archive.embeddedMetadata.Name, 'wikipedia_en_test', `${label}: embedded archive identity was not exposed for import validation`);
+  }
+  const corrupt = new Blob([new Uint8Array(96)]);
+  await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
+});
+
+test('Apocalypse Mode short-circuits exact ZIM casing probes and bounds directory reads', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const padded = new Blob([minimalWikipediaZimFixture(), new Uint8Array(128 * 1024)]);
+    const reads = [];
+    const source = {
+      size: padded.size,
+      slice(start, end) {
+        reads.push([start, end]);
+        return padded.slice(start, end);
+      },
+    };
+    const archive = await runtime.openKiwixZim(source, {});
+    reads.length = 0;
+
+    const [result] = await archive.search('alan turing', { limit: 1 });
+
+    assert.equal(result?.title, 'Alan Turing', `${label}: exact common-case search lost its result`);
+    assert.ok(reads.length < 20, `${label}: exact common-case search expanded through every casing variant`);
+    assert.ok(reads.every(([start, end]) => end - start <= 4 * 1024),
+      `${label}: ordinary directory lookup still issued a 64 KiB read`);
+  }
+});
+
+test('Apocalypse Mode maps Bengali and Tagalog ZIM languages to canonical Wikipedia hosts', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const [language, host] of [['ben', 'bn'], ['tgl', 'tl']]) {
+      const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ language }));
+      const [passage] = await archive.search('Alan Turing');
+      assert.equal(passage?.url, `https://${host}.wikipedia.org/wiki/Alan_Turing`, `${label}: ${language} used the wrong Wikipedia host`);
+    }
+  }
+});
+
+test('Apocalypse Mode reranks resolved redirect destinations before returning ZIM search results', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ redirectTrap: true }));
+    const [passage] = await archive.search('Science', { limit: 1 });
+    assert.equal(passage?.title, 'Science article', `${label}: an exact-looking redirect alias displaced the relevant destination`);
+    assert.doesNotMatch(passage?.url || '', /The_New_York_Times/, `${label}: an unrelated redirect destination escaped relevance scoring`);
+  }
+});
+
+test('Apocalypse Mode resolves lowercase multiword queries to case-sensitive ZIM titles', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ caseSensitiveTitle: true }));
+    const [passage] = await archive.search('new york city', { limit: 1 });
+    assert.equal(passage?.title, 'New York City', `${label}: lowercase proper-name query missed the case-sensitive ZIM path`);
+    assert.match(passage?.excerpt || '', /most populous city/i, `${label}: case-correct lookup returned the wrong prefix match`);
+    const [redirect] = await archive.search('nyc', { limit: 1 });
+    assert.equal(redirect?.title, 'New York City', `${label}: exact redirect alias lost its destination title`);
+    assert.equal(redirect?.url, 'https://en.wikipedia.org/wiki/New_York_City', `${label}: exact redirect alias lost its destination URL`);
+    assert.match(redirect?.excerpt || '', /most populous city/i, `${label}: exact redirect alias lost its destination content`);
+    const [mixedCase] = await archive.search('iphone', { limit: 1 });
+    assert.equal(mixedCase?.title, 'iPhone', `${label}: lowercase query missed a mixed-case ZIM title`);
+    assert.match(mixedCase?.excerpt || '', /smartphones designed by Apple/i, `${label}: mixed-case lookup returned the wrong article`);
+    const [combinedCase] = await archive.search('youtube', { limit: 1 });
+    assert.equal(combinedCase?.title, 'YouTube', `${label}: lowercase query missed combined leading and internal capitals`);
+    assert.match(combinedCase?.excerpt || '', /video sharing platform/i, `${label}: combined-case lookup returned the wrong article`);
+    const [crossTokenCase] = await archive.search('youtube tv', { limit: 1 });
+    assert.equal(crossTokenCase?.title, 'YouTube TV', `${label}: lowercase query missed mixed capitalization across tokens`);
+    assert.match(crossTokenCase?.excerpt || '', /streaming television service/i, `${label}: cross-token mixed-case lookup returned the wrong article`);
+    const [multipleCapitals] = await archive.search('openai', { limit: 1 });
+    assert.equal(multipleCapitals?.title, 'OpenAI', `${label}: lowercase query missed multiple internal capitals`);
+    assert.match(multipleCapitals?.excerpt || '', /research organization/i, `${label}: multi-capital lookup returned the wrong article`);
+    const [broaderAlias] = await archive.search('usa', { limit: 1 });
+    assert.equal(broaderAlias?.title, 'United States', `${label}: exact extended initialism alias lost its destination title`);
+    assert.match(broaderAlias?.excerpt || '', /country in North America/i, `${label}: exact extended initialism alias lost its content`);
+    const [semanticAlias] = await archive.search('big apple', { limit: 1 });
+    assert.equal(semanticAlias?.title, 'New York City', `${label}: exact semantic alias lost its destination title`);
+    assert.match(semanticAlias?.excerpt || '', /most populous city/i, `${label}: exact semantic alias lost its destination content`);
+  }
+});
+
+test('Apocalypse Mode accepts only self-identified Wikipedia ZIM imports', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: 'https://fr.wikipedia.org/', Name: 'other', Tags: '' }), true, `${label}: Wikipedia Source metadata was rejected`);
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: '', Name: 'wikipedia_en_all', Tags: '' }), true, `${label}: Wikipedia Name metadata was rejected`);
+    assert.equal(runtime.assertWikipediaZimArchive({ Source: '', Name: 'other', Tags: '_category:wikipedia' }), true, `${label}: Wikipedia Tags metadata was rejected`);
+    assert.throws(() => runtime.assertWikipediaZimArchive({ Source: 'https://www.gutenberg.org/', Name: 'books_en', Tags: '_category:books' }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: a non-Wikipedia archive was accepted`);
+    assert.throws(() => runtime.assertWikipediaZimArchive({ Source: 'https://wikipedia.org.evil.test/', Name: 'books_en', Tags: '' }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: a lookalike Wikipedia hostname was accepted`);
+    const file = minimalWikipediaZimFixture({ wikipedia: false });
+    Object.defineProperty(file, 'name', { value: 'pretend-wikipedia.zim' });
+    await assert.rejects(runtime.importKiwixArchive(file, { source: 'User supplied', filename: file.name }, {
+      store: { async getConfig() { return { enabled: true }; } },
+      storage: { async estimate() { return {}; } },
+      id: 'not-wikipedia',
+    }), /Wikipedia archive|Wikipedia ZIM/i, `${label}: caller-supplied provenance bypassed embedded archive identity`);
+  }
+});
+
+test('Apocalypse Mode ranks multi-word ZIM titles and preserves embedded provenance', () => {
+  const candidates = [
+    { index: 1, url: 'World_Heritage_Site', title: 'World Heritage Site' },
+    { index: 2, url: 'World_War_II', title: 'World War II' },
+    { index: 3, url: 'War', title: 'War' },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const ranked = runtime.rankZimTitleCandidates(candidates, 'World War II', 3);
+    assert.deepEqual(ranked.map(item => item.url), ['World_War_II'], `${label}: one-token title matches displaced the relevant article`);
+    assert.deepEqual(runtime.mergeZimProvenance({
+      language: 'eng', archiveDate: '2024-01-01', source: 'Catalog source', license: 'Catalog license',
+    }, {
+      Language: 'deu', Date: '2026-07-17', Source: 'Embedded source', License: 'Embedded license',
+    }), {
+      language: 'deu', archiveDate: '2026-07-17', source: 'Embedded source', license: 'Embedded license', licenseDeclared: true,
+    }, `${label}: generic catalog provenance overrode archive-embedded metadata`);
+  }
+});
+
+test('Apocalypse Mode ZIM ranking is independent of the browser locale', () => {
+  const originalLocaleLowerCase = String.prototype.toLocaleLowerCase;
+  String.prototype.toLocaleLowerCase = function localeLowerCase() {
+    return originalLocaleLowerCase.call(this, 'tr');
+  };
+  try {
+    for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+      const ranked = runtime.rankZimTitleCandidates([
+        { index: 1, url: 'Istanbul', title: 'Istanbul' },
+      ], 'istanbul', 1);
+      assert.equal(ranked[0]?.url, 'Istanbul', `${label}: Turkish browser locale changed ZIM title matching`);
+    }
+  } finally {
+    String.prototype.toLocaleLowerCase = originalLocaleLowerCase;
+  }
+});
+
+test('Apocalypse Mode selects only a newer matching catalog archive', () => {
+  const installed = { name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-01-01' };
+  const items = [
+    { id: 'wrong-flavour', name: installed.name, flavour: 'mini', archiveDate: '2026-08-01' },
+    { id: 'older', name: installed.name, flavour: installed.flavour, archiveDate: '2025-12-01' },
+    { id: 'newest', name: installed.name, flavour: installed.flavour, archiveDate: '2026-07-01' },
+    { id: 'newer', name: installed.name, flavour: installed.flavour, archiveDate: '2026-05-01' },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.selectKiwixUpdate(installed, items)?.id, 'newest', `${label}: manual update selected the wrong archive`);
+    assert.equal(runtime.selectKiwixUpdate({ ...installed, archiveDate: '2027-01-01' }, items), null, `${label}: older archives were offered as updates`);
+    assert.deepEqual(runtime.normalizeStorageEstimate({ quota: null, usage: 10 }), {
+      known: false, usage: 10, quota: null, free: null,
+    }, `${label}: null quota was misclassified as exhausted storage`);
+    assert.deepEqual(runtime.normalizeStorageEstimate({ quota: 10, usage: 10 }), {
+      known: true, usage: 10, quota: 10, free: 0,
+    }, `${label}: zero free space was misclassified as an unknown estimate`);
+  }
+});
+
+test('Apocalypse Mode requires opt-in and removal wins an in-flight download race', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: false, updatePolicy: 'manual' };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return { ...record }; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const removals = [];
+    const storage = {
+      async write(ref, offset, bytes) { writes.push([ref, offset, bytes.byteLength]); },
+      async remove(ref) { removals.push(ref); },
+    };
+    let releaseFetch;
+    const fetchImpl = async () => await new Promise(resolve => { releaseFetch = resolve; });
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl,
+      digestHex: async () => 'aa',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'archive-1',
+      now: () => 1000,
+    });
+    const download = {
+      id: 'catalog-1', filename: 'example.zim', title: 'Wikipedia', language: 'eng', tier: 'starter', archiveDate: '2026-07-17',
+      size: 2, pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'], downloadUrl: 'https://example.test/example.zim',
+      source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0',
+    };
+
+    await assert.rejects(manager.install(download, { kind: 'opfs', key: 'example.zim' }), /disabled/i, `${label}: download started before explicit opt-in`);
+    await manager.setEnabled(true);
+    await manager.install(download, { kind: 'opfs', key: 'example.zim' });
+    const schedulesBeforeRace = scheduled.length;
+    const running = manager.processNext();
+    while (!releaseFetch) await new Promise(resolve => setTimeout(resolve, 0));
+    await manager.remove('archive-1');
+    releaseFetch({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1, 2).buffer; } });
+    await running;
+
+    assert.equal(records.has('archive-1'), false, `${label}: removed archive record was repopulated by an in-flight fetch`);
+    assert.equal(writes.length, 0, `${label}: removed archive bytes were written after cancellation`);
+    assert.deepEqual(removals, [{ kind: 'opfs', key: 'archive-1-example.zim' }], `${label}: archive removal did not delete its record-scoped managed storage`);
+    assert.equal(scheduled.length, schedulesBeforeRace, `${label}: cancelled work rescheduled itself after removal`);
+  }
+});
+
+test('Apocalypse Mode disabling loses atomically to concurrent archive deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const record = { id: 'disable-race', status: 'queued', generation: 3, updatedAt: 123 };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    let expectedState;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(_next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        records.delete(record.id);
+        return false;
+      },
+    };
+    const manager = runtime.createApocalypseArchiveManager({ store, storage: {}, now: () => 456 });
+
+    await manager.setEnabled(false);
+
+    assert.equal(config.enabled, false, `${label}: disabling did not persist the configuration`);
+    assert.equal(compareAttempts, 1, `${label}: disabling did not compare-and-swap incomplete metadata`);
+    assert.deepEqual(expectedState, { status: 'queued', generation: 3, updatedAt: 123 },
+      `${label}: disabling did not guard the original record state`);
+    assert.equal(records.has(record.id), false, `${label}: disabling recreated concurrently deleted metadata`);
+  }
+});
+
+test('Apocalypse Mode pause and resume lose atomically to concurrent archive deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const [action, status] of [['pause', 'queued'], ['resume', 'paused']]) {
+      const record = { id: `${action}-race`, status, generation: 7, updatedAt: 321 };
+      const records = new Map([[record.id, record]]);
+      let compareAttempts = 0;
+      let expectedState;
+      const scheduled = [];
+      const store = {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()]; },
+        async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+        async putArchive(next) { records.set(next.id, { ...next }); return next; },
+        async putArchiveIfCurrent(_next, expected) {
+          compareAttempts += 1;
+          expectedState = { ...expected };
+          records.delete(record.id);
+          return false;
+        },
+      };
+      const manager = runtime.createApocalypseArchiveManager({
+        store, storage: {}, schedule: delay => scheduled.push(delay), now: () => 654,
+      });
+
+      const result = await manager[action](record.id);
+
+      assert.equal(result, null, `${label}: ${action} returned stale metadata after deletion won`);
+      assert.equal(compareAttempts, 1, `${label}: ${action} did not compare-and-swap metadata`);
+      assert.deepEqual(expectedState, { status, generation: 7, updatedAt: 321 },
+        `${label}: ${action} did not guard the original record state`);
+      assert.equal(records.has(record.id), false, `${label}: ${action} recreated concurrently deleted metadata`);
+      assert.deepEqual(scheduled, [], `${label}: cancelled ${action} scheduled stale work`);
+    }
+  }
+});
+
+test('Apocalypse Mode lifecycle actions cannot revive a deleting archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    for (const action of ['pause', 'resume', 'disable']) {
+      const record = { id: `${action}-deleting`, status: 'deleting', generation: 9, updatedAt: 321 };
+      const records = new Map([[record.id, record]]);
+      let writes = 0;
+      const config = { enabled: true };
+      const store = {
+        async getConfig() { return { ...config }; },
+        async setConfig(next) { Object.assign(config, next); return { ...config }; },
+        async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+        async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+        async putArchive(next) { writes += 1; records.set(next.id, { ...next }); return next; },
+        async putArchiveIfCurrent() { writes += 1; throw new Error('deleting record was rewritten'); },
+      };
+      const manager = runtime.createApocalypseArchiveManager({ store, storage: {}, schedule() {} });
+
+      const result = action === 'disable' ? await manager.setEnabled(false) : await manager[action](record.id);
+
+      assert.equal(records.get(record.id)?.status, 'deleting', `${label}: ${action} revived a deleting archive`);
+      assert.equal(records.get(record.id)?.generation, 9, `${label}: ${action} changed deletion ownership`);
+      assert.equal(writes, 0, `${label}: ${action} wrote stale metadata over deletion`);
+      if (action === 'disable') assert.equal(result.enabled, false, `${label}: disabling did not persist the global setting`);
+      else assert.equal(result?.status, 'deleting', `${label}: ${action} did not return the current deleting state`);
+    }
+  }
+});
+
+test('Apocalypse Mode schedules the next archive after completing another download', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const ids = ['first-archive', 'second-archive', 'download-lease'];
+    const store = {
+      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => ids.shift(),
+      now: () => 1000,
+    });
+    const download = {
+      filename: 'archive.zim', size: 1, pieceLength: 1,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/archive.zim',
+    };
+    await manager.install(download, { kind: 'opfs', key: 'first.zim' });
+    await manager.install(download, { kind: 'opfs', key: 'second.zim' });
+    scheduled.length = 0;
+
+    await manager.processNext();
+
+    assert.equal(records.get('first-archive')?.status, 'ready', `${label}: first archive did not complete`);
+    assert.equal(records.get('second-archive')?.status, 'queued', `${label}: second archive did not remain eligible`);
+    assert.deepEqual(scheduled, [0], `${label}: finishing one archive stranded the next queued archive`);
+  }
+});
+
+test('Apocalypse Mode rearms a pending retry after another archive completes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const retrying = {
+      id: 'retry-later', status: 'retrying', generation: 1, updatedAt: 100,
+      nextRetryAt: 1500, pieceIndex: 0, retryCount: 1,
+      filename: 'retry.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'],
+      downloadUrl: 'https://example.test/retry.zim', target: { kind: 'opfs', key: 'retry.zim' },
+    };
+    const queued = {
+      ...retrying, id: 'finish-now', status: 'queued', nextRetryAt: 0, retryCount: 0,
+      filename: 'finish.zim', downloadUrl: 'https://example.test/finish.zim', target: { kind: 'opfs', key: 'finish.zim' },
+    };
+    const records = new Map([[retrying.id, retrying], [queued.id, queued]]);
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async write() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid',
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'finish-lease',
+      now: () => 1000,
+    });
+
+    await manager.processNext();
+
+    assert.equal(records.get(queued.id)?.status, 'ready', `${label}: eligible archive did not complete before the pending retry`);
+    assert.equal(records.get(retrying.id)?.status, 'retrying', `${label}: future retry state was lost`);
+    assert.deepEqual(scheduled, [500], `${label}: completing another archive lost the pending retry alarm`);
+  }
+});
+
+test('Apocalypse Mode removal wins while a completed download is being validated', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const records = new Map();
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return { ...record }; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && current.leaseToken === expected.leaseToken
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const fixture = minimalWikipediaZimFixture();
+    let releaseValidation;
+    let markValidationStarted;
+    const validationStarted = new Promise(resolve => { markValidationStarted = resolve; });
+    const validatingBlob = {
+      size: fixture.size,
+      slice(start, end) {
+        const bytes = fixture.slice(start, end);
+        return {
+          async arrayBuffer() {
+            if (start === 0 && end === 80) {
+              markValidationStarted();
+              await new Promise(resolve => { releaseValidation = resolve; });
+            }
+            return await bytes.arrayBuffer();
+          },
+        };
+      },
+    };
+    const storage = {
+      async write() {}, async truncate() {}, async open() { return validatingBlob; }, async remove() {},
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return fixture.arrayBuffer(); } }),
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'validation-race',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: fixture.size, pieceLength: fixture.size,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+
+    const running = manager.processNext();
+    await validationStarted;
+    await manager.remove('validation-race');
+    releaseValidation();
+    const result = await running;
+
+    assert.equal(result.reason, 'cancelled', `${label}: deleted final-piece validation was reported as complete`);
+    assert.equal(compareAttempts, 1, `${label}: final download state did not use compare-and-swap storage`);
+    assert.equal(records.has('validation-race'), false, `${label}: completed validation recreated a deleted archive`);
+  }
+});
+
+test('Apocalypse Mode gives repeated catalog installs independent OPFS targets', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const removed = [];
+    const ids = ['install-one', 'install-two'];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: { async remove(target) { removed.push(target); }, async exists() { return false; } },
+      randomId: () => ids.shift(),
+      schedule() {},
+    });
+    const download = {
+      id: 'catalog-entry', filename: 'wikipedia.zim', size: 2, pieceLength: 2,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'], downloadUrl: 'https://example.test/wikipedia.zim',
+    };
+    const first = await manager.install(download, { kind: 'opfs', key: 'catalog-entry-wikipedia.zim' });
+    const second = await manager.install(download, { kind: 'opfs', key: 'catalog-entry-wikipedia.zim' });
+    assert.notEqual(first.id, second.id, `${label}: duplicate installs reused one archive record`);
+    assert.notEqual(first.target.key, second.target.key, `${label}: duplicate installs still share one OPFS file`);
+    assert.match(first.target.key, /^install-one-/, `${label}: first OPFS target is not record-scoped`);
+    assert.match(second.target.key, /^install-two-/, `${label}: second OPFS target is not record-scoped`);
+    await manager.remove(first.id);
+    assert.equal(records.has(first.id), false, `${label}: removed duplicate record was retained`);
+    assert.equal(records.has(second.id), true, `${label}: removing one duplicate deleted the other record`);
+    assert.deepEqual(removed, [first.target], `${label}: removal targeted bytes owned by another record`);
+  }
+});
+
+test('Apocalypse Mode catalog and Metalink network access require opt-in', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: false };
+    let fetches = 0;
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return []; }, async getArchive() { return null; }, async putArchive(record) { return record; },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; } },
+      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return '<feed></feed>'; } }; },
+      clearUpdateChecks() {},
+    });
+    await assert.rejects(controller.handle('catalog', { language: 'eng' }), /disabled/i, `${label}: catalog fetch was allowed before opt-in`);
+    await assert.rejects(controller.handle('resolve', { item: { name: 'wikipedia_en_all', metaUrl: 'https://example.test/archive.meta4' } }), /disabled/i, `${label}: Metalink fetch was allowed before opt-in`);
+    assert.equal(fetches, 0, `${label}: archive network activity occurred before opt-in`);
+    config.enabled = true;
+    assert.deepEqual(await controller.handle('catalog', { language: 'eng' }), { items: [] }, `${label}: enabled catalog request failed`);
+    assert.equal(fetches, 1, `${label}: enabled catalog request did not use the network exactly once`);
+  }
+});
+
+test('Apocalypse Mode retains actionable metadata when managed-byte deletion fails', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'delete-me', status: 'ready', generation: 2, target: { kind: 'opfs', key: 'delete-me.zim' }, size: 4096 };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    let failRemoval = true;
+    const storage = {
+      async remove() { if (failRemoval) throw new Error('OPFS file is locked'); },
+      async exists() { return failRemoval; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({ store, storage, now: () => 1234 });
+    await assert.rejects(manager.remove(record.id), /deletion failed.*locked/i, `${label}: storage deletion failure was reported as success`);
+    assert.equal(records.get(record.id)?.status, 'error', `${label}: failed deletion discarded its archive record`);
+    assert.equal(records.get(record.id)?.errorKind, 'delete-failed', `${label}: failed deletion was not actionable`);
+    assert.match(records.get(record.id)?.error || '', /Retry deletion/i, `${label}: failed deletion omitted recovery guidance`);
+    failRemoval = false;
+    assert.equal(await manager.remove(record.id), true, `${label}: a recoverable deletion could not be retried`);
+    assert.equal(records.has(record.id), false, `${label}: successful retry retained archive metadata`);
+  }
+});
+
+test('Apocalypse Mode OPFS deletion verifies removal and treats an absent file as deleted', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const entries = new Set(['archive.zim']);
+    const directory = {
+      async getFileHandle(key) {
+        if (!entries.has(key)) throw new DOMException('missing', 'NotFoundError');
+        return { kind: 'file', name: key };
+      },
+      async removeEntry(key) {
+        if (!entries.delete(key)) throw new DOMException('missing', 'NotFoundError');
+      },
+    };
+    const storage = runtime.createOpfsArchiveStorage({
+      async getDirectory() { return { async getDirectoryHandle() { return directory; } }; },
+    });
+    const target = { kind: 'opfs', key: 'archive.zim' };
+    assert.equal(await storage.exists(target), true, `${label}: existing OPFS archive was not detected`);
+    await storage.remove(target);
+    assert.equal(await storage.exists(target), false, `${label}: OPFS archive remained after removal`);
+    await storage.remove(target);
+    assert.equal(await storage.exists(target), false, `${label}: retrying deletion of absent bytes was not idempotent`);
+  }
+});
+
+test('Apocalypse Mode OPFS storage reuses one writable for a multi-piece batch', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const operations = [];
+    let writableCount = 0;
+    const handle = {
+      async createWritable(options) {
+        writableCount += 1;
+        operations.push(['open', options]);
+        return {
+          async seek(offset) { operations.push(['seek', offset]); },
+          async write(bytes) { operations.push(['write', ...bytes]); },
+          async truncate(size) { operations.push(['truncate', size]); },
+          async close() { operations.push(['close']); },
+          async abort() { operations.push(['abort']); },
+        };
+      },
+    };
+    const storage = runtime.createOpfsArchiveStorage({
+      async getDirectory() {
+        return { async getDirectoryHandle() { return { async getFileHandle() { return handle; } }; } };
+      },
+    });
+    const writer = await storage.createWriter({ kind: 'opfs', key: 'archive.zim' });
+    await writer.write(0, Uint8Array.of(1, 2));
+    await writer.write(2, Uint8Array.of(3, 4));
+    await writer.truncate(4);
+    await writer.close();
+
+    assert.equal(writableCount, 1, `${label}: OPFS reopened its temporary writable between pieces`);
+    assert.deepEqual(operations, [
+      ['open', { keepExistingData: true }],
+      ['seek', 0], ['write', 1, 2],
+      ['seek', 2], ['write', 3, 4],
+      ['truncate', 4], ['close'],
+    ], `${label}: OPFS batch writes were not committed through one random-access stream`);
+  }
+});
+
+test('Apocalypse Mode automatic policy checks daily but still requires confirmation before download', async () => {
+  const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
+    <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/new.zim.meta4" length="100" /></entry></feed>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const record = { id: 'installed', status: 'ready', name: 'wikipedia_en_all', flavour: 'nopic', language: 'eng', archiveDate: '2026-07-01', target: { kind: 'opfs', key: 'old.zim' } };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const scheduled = [];
+    let cleared = 0;
+    let fetches = 0;
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; }, async remove() {} },
+      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return catalogXml; } }; },
+      scheduleUpdateChecks: () => scheduled.push('daily'),
+      clearUpdateChecks: () => { cleared += 1; },
+    });
+    let snapshot = await controller.setUpdatePolicy('automatic');
+    assert.equal(snapshot.updatePolicy, 'automatic', `${label}: automatic update policy was not persisted`);
+    assert.deepEqual(scheduled, ['daily'], `${label}: automatic policy did not schedule periodic checks`);
+    snapshot = await controller.checkForUpdates();
+    assert.equal(fetches, 1, `${label}: automatic update check did not consult the catalog`);
+    assert.equal(snapshot.archives[0].updateAvailable?.id, 'new', `${label}: newer matching archive was not surfaced`);
+    assert.equal(snapshot.archives.length, 1, `${label}: update check downloaded or installed before confirmation`);
+    await controller.setUpdatePolicy('manual');
+    assert.equal(cleared, 1, `${label}: manual policy did not clear automatic checks`);
+  }
+});
+
+test('Apocalypse Mode startup preserves update alarms and rearms persisted downloads', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'automatic' };
+    let records = [{ id: 'queued', status: 'queued' }];
+    let existingUpdateAlarm = { name: runtime.APOCALYPSE_UPDATE_ALARM, scheduledTime: 50_000 };
+    const updateSchedules = [];
+    const downloadSchedules = [];
+    const store = {
+      async getConfig() { return { ...config }; },
+      async listArchives() { return records.map(record => ({ ...record })); },
+    };
+    const controller = runtime.createApocalypseController({
+      alarms: {
+        async get(name) {
+          assert.equal(name, runtime.APOCALYPSE_UPDATE_ALARM, `${label}: startup queried the wrong update alarm`);
+          return existingUpdateAlarm;
+        },
+        create(name, details) { updateSchedules.push([name, details]); },
+        async clear() {},
+      },
+    }, {
+      store,
+      storage: {},
+      schedule: delay => downloadSchedules.push(delay),
+      now: () => 10_000,
+    });
+
+    await controller.syncUpdateSchedule();
+    assert.deepEqual(updateSchedules, [], `${label}: startup replaced an existing daily update alarm`);
+    existingUpdateAlarm = null;
+    await controller.syncUpdateSchedule();
+    assert.equal(updateSchedules.length, 1, `${label}: a missing daily update alarm was not restored`);
+
+    assert.equal(await controller.syncDownloadSchedule(), 0, `${label}: queued startup work was not due immediately`);
+    assert.deepEqual(downloadSchedules, [0], `${label}: queued startup work was not rearmed`);
+    records = [
+      { id: 'leased', status: 'downloading', leaseUntil: 12_000 },
+      { id: 'retry', status: 'retrying', nextRetryAt: 16_000 },
+      { id: 'ready', status: 'ready' },
+    ];
+    assert.equal(await controller.syncDownloadSchedule(), 2_000, `${label}: startup did not schedule the earliest persisted attempt`);
+    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: an unexpired lease was not rearmed for its expiry`);
+    config.enabled = false;
+    assert.equal(await controller.syncDownloadSchedule(), null, `${label}: disabled Apocalypse Mode rearmed downloads`);
+    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: disabled startup created a download alarm`);
+  }
+});
+
+test('Apocalypse Mode status snapshots omit private download metadata', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'large-archive', status: 'ready', filename: 'wikipedia.zim', size: 100, bytesDownloaded: 100,
+      downloadUrl: 'https://primary.example.test/wikipedia.zim',
+      pieceHashes: Array.from({ length: 10_000 }, (_, index) => `hash-${index}`),
+      pieceLength: 4_194_304, pieceHashAlgorithm: 'sha-1', sha256: 'private-integrity-value',
+      mirrors: ['https://primary.example.test/wikipedia.zim', 'https://backup.example.test/wikipedia.zim'],
+      mirrorIndex: 1, leaseToken: 'private-lease', leaseUntil: 50_000,
+      target: { kind: 'opfs', key: 'large-archive.zim' },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store: {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return [{ ...record }]; },
+      },
+      storage: { async estimate() { return {}; } },
+    });
+    const [visible] = (await controller.snapshot()).archives;
+
+    for (const field of ['pieceHashes', 'pieceLength', 'pieceHashAlgorithm', 'sha256', 'mirrors', 'mirrorIndex', 'leaseToken', 'leaseUntil']) {
+      assert.equal(Object.hasOwn(visible, field), false, `${label}: status snapshot exposed ${field}`);
+    }
+    assert.equal(visible.downloadUrl, record.downloadUrl, `${label}: lifecycle UI lost its managed-download marker`);
+    assert.equal(visible.bytesDownloaded, record.bytesDownloaded, `${label}: status snapshot lost visible progress`);
+  }
+});
+
+test('Apocalypse Mode update checks cannot recreate a concurrently deleted archive', async () => {
+  const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
+    <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/new.zim.meta4" length="100" /></entry></feed>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'automatic' };
+    const record = {
+      id: 'deleted-during-check',
+      status: 'ready',
+      generation: 7,
+      updatedAt: 100,
+      name: 'wikipedia_en_all',
+      flavour: 'nopic',
+      language: 'eng',
+      archiveDate: '2026-07-01',
+      target: { kind: 'opfs', key: 'old.zim' },
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    let markCatalogStarted;
+    let releaseCatalog;
+    const catalogStarted = new Promise(resolve => { markCatalogStarted = resolve; });
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; } },
+      fetchImpl: async () => {
+        const response = new Promise(resolve => { releaseCatalog = resolve; });
+        markCatalogStarted();
+        return await response;
+      },
+      now: () => 200,
+    });
+
+    const checking = controller.checkForUpdates();
+    await catalogStarted;
+    records.delete(record.id);
+    releaseCatalog({ ok: true, async text() { return catalogXml; } });
+    const snapshot = await checking;
+
+    assert.equal(compareAttempts, 1, `${label}: update metadata did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: update check recreated a deleted archive record`);
+    assert.equal(snapshot.archives.length, 0, `${label}: deleted archive reappeared in the update snapshot`);
+  }
+});
+
+test('Apocalypse Mode resumes verified pieces after a background restart', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'manual' };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return Array.from(records.values(), value => ({ ...value })); },
+      async getArchive(id) { return records.has(id) ? { ...records.get(id) } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const storage = { async write(target, offset, value) { writes.push([offset, ...value]); }, async remove() {} };
+    const ranges = [];
+    const fetchImpl = async (_url, request) => {
+      ranges.push(request.headers.Range);
+      const second = request.headers.Range === 'bytes=2-3';
+      return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.from(second ? [3, 4] : [1, 2]).buffer; } };
+    };
+    const managerOptions = {
+      store, storage, fetchImpl, digestHex: async bytesValue => bytesValue[0] < 3 ? 'first' : 'second',
+      schedule() {}, randomId: () => 'archive-restart', now: () => 5000, maxPiecesPerWake: 1,
+    };
+    const firstWorker = runtime.createApocalypseArchiveManager(managerOptions);
+    await firstWorker.install({
+      id: 'catalog-entry', title: 'Wikipedia', filename: 'wikipedia.zim', language: 'eng', size: 4,
+      pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['first', 'second'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+    await firstWorker.processNext();
+    assert.equal(records.get('archive-restart').pieceIndex, 1, `${label}: first verified cursor was not persisted`);
+
+    const restartedWorker = runtime.createApocalypseArchiveManager(managerOptions);
+    await restartedWorker.processNext();
+    assert.equal(records.get('archive-restart').status, 'ready', `${label}: restarted worker did not finish the archive`);
+    assert.deepEqual(ranges, ['bytes=0-1', 'bytes=2-3'], `${label}: restart repeated or skipped a byte range`);
+    assert.deepEqual(writes, [[0, 1, 2], [2, 3, 4]], `${label}: verified pieces were written at the wrong offsets`);
+  }
+});
+
+test('Apocalypse Mode processes every verified piece in one background wake', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const ranges = [];
+    const writes = [];
+    const scheduled = [];
+    let writersOpened = 0;
+    let writersClosed = 0;
+    let writersAborted = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {
+        async createWriter() {
+          writersOpened += 1;
+          return {
+            async write(offset, bytes) { writes.push([offset, ...bytes]); },
+            async truncate() {},
+            async close() { writersClosed += 1; },
+            async abort() { writersAborted += 1; },
+          };
+        },
+      },
+      fetchImpl: async (_url, request) => {
+        ranges.push(request.headers.Range);
+        const offset = Number(request.headers.Range.match(/bytes=(\d+)-/)[1]);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(offset + 1).buffer; } };
+      },
+      digestHex: async bytes => `hash-${bytes[0]}`,
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'continuous-download',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['hash-1', 'hash-2', 'hash-3'], downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+    scheduled.length = 0;
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.status, 'ready', `${label}: one wake did not finish all available pieces`);
+    assert.deepEqual(ranges, ['bytes=0-0', 'bytes=1-1', 'bytes=2-2'], `${label}: one wake skipped or repeated a piece`);
+    assert.deepEqual(writes, [[0, 1], [1, 2], [2, 3]], `${label}: continuous pieces were written at the wrong offsets`);
+    assert.equal(writersOpened, 1, `${label}: one writable was not reused for the complete piece batch`);
+    assert.equal(writersClosed, 1, `${label}: the successful write batch was not committed exactly once`);
+    assert.equal(writersAborted, 0, `${label}: the successful write batch was unexpectedly aborted`);
+    assert.deepEqual(scheduled, [], `${label}: continuous download paid an alarm delay between pieces`);
+  }
+});
+
+test('Apocalypse Mode rolls back an interrupted OPFS write session before resuming', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'interrupted-write', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['hash-1', 'hash-2', 'hash-3'], downloadUrl: 'https://example.test/archive.zim',
+      target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 2, bytesDownloaded: 2,
+      writeSessionStartPiece: 0, writeSessionStartBytes: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    const ranges = [];
+    const writes = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {
+        async createWriter() {
+          return {
+            async write(offset, bytes) { writes.push([offset, ...bytes]); },
+            async close() {},
+            async abort() {},
+          };
+        },
+      },
+      fetchImpl: async (_url, request) => {
+        ranges.push(request.headers.Range);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+      },
+      digestHex: async () => 'hash-1',
+      schedule() {},
+      randomId: () => 'recovery-lease',
+      now: () => 1000,
+      maxPiecesPerWake: 1,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.pieceIndex, 1, `${label}: interrupted cursor was not rolled back before resuming`);
+    assert.deepEqual(ranges, ['bytes=0-0'], `${label}: resume trusted bytes from an uncommitted write session`);
+    assert.deepEqual(writes, [[0, 1]], `${label}: resumed write used the wrong durable offset`);
+    assert.equal(records.get(record.id).writeSessionStartPiece, null, `${label}: committed batch left a recovery marker behind`);
+  }
+});
+
+test('Apocalypse Mode rejects a corrupt piece before storage and backs off', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    let writes = 0;
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store, storage: { async write() { writes += 1; }, async remove() {} },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(9, 9).buffer; } }),
+      digestHex: async () => 'wrong', schedule: delay => scheduled.push(delay), randomId: () => 'corrupt', now: () => 10_000,
+    });
+    await manager.install({ filename: 'bad.zim', size: 2, pieceLength: 2, pieceHashAlgorithm: 'sha-1', pieceHashes: ['expected'], downloadUrl: 'https://example.test/bad.zim' }, { kind: 'opfs', key: 'bad.zim' });
+    await manager.processNext();
+    assert.equal(writes, 0, `${label}: corrupt bytes reached durable storage`);
+    assert.equal(records.get('corrupt').status, 'retrying', `${label}: corruption did not enter bounded retry state`);
+    assert.equal(records.get('corrupt').nextRetryAt, 70_000, `${label}: first retry did not use exponential backoff`);
+    assert.deepEqual(scheduled.slice(-1), [60_000], `${label}: retry alarm delay was not bounded`);
+  }
+});
+
+test('Apocalypse Mode rotates Metalink mirrors across automatic and manual retries', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    let timestamp = 1_000;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const urls = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async (url) => { urls.push(url); return { ok: false, status: 503 }; },
+      schedule() {},
+      randomId: () => 'mirror-rotation',
+      now: () => timestamp,
+    });
+    const primary = 'https://primary.example.test/archive.zim';
+    const backup = 'https://backup.example.test/archive.zim';
+    await manager.install({
+      filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      mirrors: [primary, backup], downloadUrl: primary,
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await manager.processNext();
+      const current = records.get('mirror-rotation');
+      if (current.status === 'retrying') timestamp = current.nextRetryAt;
+    }
+    assert.equal(records.get('mirror-rotation').status, 'error', `${label}: retry exhaustion did not become actionable`);
+    await manager.retry('mirror-rotation');
+    await manager.processNext();
+
+    assert.deepEqual(urls, [primary, backup, primary, backup, primary, backup, primary],
+      `${label}: automatic or manual retry reused a failed mirror`);
+  }
+});
+
+test('Apocalypse Mode failed-piece state loses atomically to concurrent deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'failed-piece-race', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/archive.zim', target: { kind: 'opfs', key: 'archive.zim' },
+      pieceIndex: 0, retryCount: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const schedules = [];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent() {
+        compareAttempts += 1;
+        records.delete(record.id);
+        return false;
+      },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async () => ({ ok: false, status: 503 }),
+      schedule: delay => schedules.push(delay),
+      randomId: () => 'failure-lease',
+      now: () => 100,
+    });
+    const result = await manager.processNext();
+
+    assert.equal(result.reason, 'cancelled', `${label}: stale failed-piece state was reported as current`);
+    assert.equal(compareAttempts, 1, `${label}: failed-piece state did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: failed-piece state recreated deleted metadata`);
+    assert.deepEqual(schedules, [], `${label}: cancelled failure scheduled a retry`);
+  }
+});
+
+test('Apocalypse Mode schedules another archive after a terminal download failure', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const failed = {
+      id: 'terminal-failure', status: 'queued', generation: 1, updatedAt: 100,
+      filename: 'failed.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/failed.zim', target: { kind: 'opfs', key: 'failed.zim' },
+      pieceIndex: 0, retryCount: 5,
+    };
+    const queued = {
+      ...failed, id: 'queued-next', filename: 'next.zim', downloadUrl: 'https://example.test/next.zim',
+      target: { kind: 'opfs', key: 'next.zim' }, retryCount: 0,
+    };
+    const records = new Map([[failed.id, failed], [queued.id, queued]]);
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const scheduled = [];
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage: {},
+      fetchImpl: async () => ({ ok: false, status: 503 }),
+      schedule: delay => scheduled.push(delay),
+      randomId: () => 'terminal-lease',
+      now: () => 100,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.reason, 'error', `${label}: exhausted download did not reach a terminal failure`);
+    assert.equal(records.get(failed.id)?.status, 'error', `${label}: exhausted archive did not persist its error`);
+    assert.equal(records.get(queued.id)?.status, 'queued', `${label}: next archive lost eligibility`);
+    assert.deepEqual(scheduled, [0], `${label}: terminal failure stranded the next queued archive`);
+  }
+});
+
+test('Apocalypse Mode cancellation removes a partial imported archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true };
+    const records = new Map();
+    const store = {
+      async getConfig() { return config; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const writes = [];
+    const removals = [];
+    const storage = {
+      async write(target, offset, bytesValue) { writes.push([target, offset, bytesValue.byteLength]); },
+      async remove(target) { removals.push(target); },
+    };
+    const controller = new AbortController();
+    const padded = new Blob([minimalWikipediaZimFixture(), new Uint8Array(2 * 1024 * 1024)]);
+    await assert.rejects(runtime.importKiwixArchive(padded, { filename: 'import.zim' }, {
+      store, storage, id: 'import-1', chunkSize: 1024 * 1024, signal: controller.signal,
+      onProgress: () => controller.abort(),
+    }), /cancel/i, `${label}: cancelled import should reject`);
+    assert.equal(records.has('import-1'), false, `${label}: cancelled import metadata was retained`);
+    assert.equal(writes.length, 1, `${label}: import continued writing after cancellation`);
+    assert.equal(removals.length, 1, `${label}: partial imported bytes were not removed`);
+  }
+});
+
+test('Apocalypse Mode imports every chunk through one OPFS writable', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const writes = [];
+    let writersOpened = 0;
+    let writersClosed = 0;
+    let writersAborted = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      async estimate() { return {}; },
+      async createWriter() {
+        writersOpened += 1;
+        return {
+          async write(offset, bytes) { writes.push([offset, bytes.byteLength]); },
+          async truncate() {},
+          async close() { writersClosed += 1; },
+          async abort() { writersAborted += 1; },
+        };
+      },
+      async remove() {},
+    };
+    const source = new Blob([minimalWikipediaZimFixture(), new Uint8Array(2 * 1024 * 1024)]);
+
+    const result = await runtime.importKiwixArchive(source, { filename: 'batched-import.zim' }, {
+      store, storage, id: 'batched-import', chunkSize: 1024 * 1024,
+    });
+
+    assert.equal(result.status, 'ready', `${label}: batched import did not complete`);
+    assert.ok(writes.length > 1, `${label}: fixture did not exercise multiple import chunks`);
+    assert.equal(writersOpened, 1, `${label}: import reopened its OPFS writable between chunks`);
+    assert.equal(writersClosed, 1, `${label}: import did not commit its OPFS writable exactly once`);
+    assert.equal(writersAborted, 0, `${label}: successful import aborted its OPFS writable`);
+  }
+});
+
+test('Apocalypse Mode preflights import capacity and removes partial bytes after write failure', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const archive = minimalWikipediaZimFixture();
+    let writes = 0;
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: { async estimate() { return { quota: archive.size - 1, usage: 0 }; }, async write() { writes += 1; }, async remove() {} },
+      id: 'no-space',
+    }), /space|storage/i, `${label}: insufficient extension storage was not rejected`);
+    assert.equal(writes, 0, `${label}: capacity preflight happened after writing bytes`);
+    assert.equal(records.has('no-space'), false, `${label}: rejected capacity preflight created an archive record`);
+
+    const removals = [];
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: {
+        async estimate() { return {}; },
+        async write() { throw new Error('quota exhausted during write'); },
+        async remove(target) { removals.push(target); },
+      },
+      id: 'write-failure',
+    }), /quota exhausted/i, `${label}: write failure was hidden`);
+    assert.equal(records.get('write-failure')?.status, 'error', `${label}: failed import did not remain actionable`);
+    assert.equal(records.get('write-failure')?.bytesDownloaded, 0, `${label}: failed import retained partial progress`);
+    assert.equal(removals.length, 1, `${label}: failed import retained partial extension-owned bytes`);
+  }
+});
+
+test('Apocalypse Mode keeps partial-import metadata when cleanup itself fails', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const store = {
+      async getConfig() { return { enabled: true }; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    await assert.rejects(runtime.importKiwixArchive(minimalWikipediaZimFixture(), {}, {
+      store,
+      storage: {
+        async estimate() { return {}; }, async write() { throw new Error('write failed'); },
+        async remove() { throw new Error('OPFS cleanup denied'); },
+      },
+      id: 'cleanup-failure',
+    }), /cleanup failed.*denied/i, `${label}: cleanup failure was swallowed`);
+    assert.equal(records.get('cleanup-failure')?.status, 'error', `${label}: cleanup failure discarded the recovery record`);
+    assert.equal(records.get('cleanup-failure')?.errorKind, 'delete-failed', `${label}: cleanup failure was not classified for retry`);
+  }
+});
+
+test('Apocalypse Mode import failure loses atomically to concurrent deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    let importingSnapshot;
+    let expectedState;
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) {
+        records.set(record.id, { ...record });
+        if (record.status === 'importing' && !importingSnapshot) importingSnapshot = { ...record };
+        return record;
+      },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && current.generation === expected.generation
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    const archive = minimalWikipediaZimFixture();
+    await assert.rejects(runtime.importKiwixArchive(archive, {}, {
+      store,
+      storage: {
+        async estimate() { return {}; },
+        async write() {
+          const current = records.get('import-delete-race');
+          records.set(current.id, {
+            ...current, status: 'deleting', generation: current.generation + 1, updatedAt: current.updatedAt + 1,
+          });
+          throw new Error('write failed while deletion started');
+        },
+        async remove() {},
+      },
+      id: 'import-delete-race',
+    }), /write failed while deletion started/i, `${label}: concurrent import failure was hidden`);
+
+    assert.equal(compareAttempts, 1, `${label}: import failure did not compare-and-swap its state`);
+    assert.deepEqual(expectedState, {
+      status: 'importing', generation: importingSnapshot.generation, updatedAt: importingSnapshot.updatedAt,
+    }, `${label}: import failure did not guard the original importing state`);
+    assert.equal(records.get('import-delete-race')?.status, 'deleting', `${label}: import failure overwrote concurrent deletion`);
+    assert.equal(records.get('import-delete-race')?.generation, importingSnapshot.generation + 1,
+      `${label}: import failure restored a stale generation`);
+  }
+});
+
+test('Apocalypse Mode rejects a managed download when reported free space is zero', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let installs = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
+      async listArchives() { return []; }, async putArchive() { installs += 1; }, async getArchive() { return null; }, async deleteArchive() {},
+    };
+    const controller = runtime.createApocalypseController({ alarms: { create() {} } }, {
+      store,
+      storage: { async estimate() { return { quota: 1024, usage: 1024 }; }, async remove() {} },
+    });
+    await assert.rejects(controller.handle('install', { download: {
+      id: 'no-room', filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashes: ['aa'], downloadUrl: 'https://example.test/archive.zim',
+    } }), /not enough|storage/i, `${label}: exhausted quota still admitted a managed download`);
+    assert.equal(installs, 0, `${label}: rejected managed download persisted metadata`);
+  }
+});
+
+test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'archive-1', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'future-provider' } };
+    let searched = 0;
+    const results = await runtime.searchApocalypseArchives('Alan Turing', {
+      store: { async getConfig() { return { enabled: true }; }, async listArchives() { return [record]; } },
+      storage: {},
+      providers: [{
+        id: 'test-provider',
+        supports(candidate) { return candidate.target.kind === 'future-provider'; },
+        async search(candidate, query) { searched += 1; return [{ title: query, archiveId: candidate.id }]; },
+      }],
+    });
+    assert.equal(searched, 1, `${label}: selected provider did not receive the archive query`);
+    assert.deepEqual(results, [{ title: 'Alan Turing', archiveId: 'archive-1' }], `${label}: provider result was not preserved`);
+  }
+});
+
+test('Apocalypse Mode marks unreadable ready archives as actionable errors', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = { id: 'corrupt-ready', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'corrupt.zim' } };
+    const records = new Map([[record.id, record]]);
+    const store = {
+      async getConfig() { return { enabled: true }; }, async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, next); return next; },
+    };
+    await assert.rejects(runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      storage: {},
+      providers: [{ supports() { return true; }, async search() { throw new Error('ZIM checksum is corrupt'); } }],
+    }), /could not be read|corrupt/i, `${label}: unreadable ready archive was silently treated as no match`);
+    assert.equal(records.get(record.id)?.status, 'error', `${label}: corrupt ready archive remained ready`);
+    assert.equal(records.get(record.id)?.errorKind, 'archive-unreadable', `${label}: corruption did not receive an actionable lifecycle classification`);
+  }
+});
+
+test('Apocalypse Mode failed searches cannot recreate a concurrently deleted archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'deleted-during-search', status: 'ready', generation: 3, updatedAt: 100,
+      archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'deleted.zim' },
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    let releaseSearch;
+    let markSearchStarted;
+    const searchStarted = new Promise(resolve => { markSearchStarted = resolve; });
+    const searching = runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      storage: {},
+      providers: [{
+        supports() { return true; },
+        async search() {
+          markSearchStarted();
+          await new Promise(resolve => { releaseSearch = resolve; });
+          throw new Error('ZIM read failed after deletion');
+        },
+      }],
+    });
+
+    await searchStarted;
+    records.delete(record.id);
+    releaseSearch();
+    await assert.rejects(searching, /could not be read|deletion/i, `${label}: failed archive search was hidden`);
+
+    assert.equal(compareAttempts, 1, `${label}: failed search metadata did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: failed search recreated a deleted archive record`);
+  }
+});
+
+test('Apocalypse Mode can register a user-selected ZIM handle without copying bytes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const file = minimalWikipediaZimFixture();
+    Object.defineProperty(file, 'name', { value: 'wikipedia_en_test.zim' });
+    const handle = { name: file.name, async getFile() { return file; } };
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async putArchive(record) { records.set(record.id, record); return record; },
+    };
+    const record = await runtime.registerKiwixArchiveHandle(handle, { language: 'eng' }, { store, id: 'external-1' });
+    assert.equal(record.status, 'ready', `${label}: validated file handle was not ready`);
+    assert.equal(record.target.kind, 'file-handle', `${label}: external storage target was not preserved`);
+    assert.equal(record.target.handle, handle, `${label}: persistent handle was replaced or copied`);
+    assert.equal(record.bytesDownloaded, file.size, `${label}: external archive size was not recorded`);
+  }
+});
+
+test('Apocalypse Mode marks a stale interrupted import without racing its bytes', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map([['stale-import', {
+      id: 'stale-import', status: 'importing', updatedAt: 0, bytesDownloaded: 1024,
+      target: { kind: 'opfs', key: 'stale.zim' }, size: 2048,
+    }]]);
+    const removals = [];
+    const store = {
+      async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      async remove(target) { removals.push(target); }, async estimate() { return {}; },
+      async write() { throw new Error('unexpected write'); },
+    };
+    const controller = runtime.createApocalypseController({ alarms: { create() {} } }, { store, storage, importStaleMs: 30_000 });
+    const snapshot = await controller.snapshot();
+    const recovered = snapshot.archives.find(record => record.id === 'stale-import');
+    assert.equal(recovered.status, 'error', `${label}: stale import did not become an actionable error`);
+    assert.equal(recovered.bytesDownloaded, 1024, `${label}: stale import hid the retained partial bytes`);
+    assert.equal(recovered.generation, 1, `${label}: stale import recovery did not invalidate the old writer`);
+    assert.equal(recovered.errorKind, 'import-interrupted', `${label}: stale import did not receive an actionable classification`);
+    assert.match(recovered.error, /interrupted/i, `${label}: stale import recovery omitted its reason`);
+    assert.match(recovered.error, /partial archive bytes were retained/i, `${label}: stale import did not disclose retained bytes`);
+    assert.deepEqual(removals, [], `${label}: background recovery deleted bytes that may still have an active writer`);
+  }
+});
+
+test('Apocalypse Mode stale-import recovery loses safely to a concurrent completion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'active-import', status: 'importing', generation: 4, updatedAt: 0, bytesDownloaded: 1024,
+      target: { kind: 'opfs', key: 'active.zim' }, size: 2048,
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent() {
+        compareAttempts += 1;
+        records.set(record.id, { ...record, status: 'ready', bytesDownloaded: record.size, updatedAt: 90_000 });
+        return false;
+      },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; }, async remove() { throw new Error('recovery must not remove bytes'); } },
+      importStaleMs: 30_000,
+      now: () => 90_000,
+    });
+    assert.equal(await controller.recoverInterruptedImports(), 0, `${label}: a completed import was claimed as interrupted`);
+    assert.equal(compareAttempts, 1, `${label}: stale recovery did not use compare-and-swap state`);
+    assert.equal(records.get(record.id).status, 'ready', `${label}: stale recovery overwrote a concurrent completion`);
+    assert.equal(records.get(record.id).bytesDownloaded, record.size, `${label}: stale recovery corrupted completed progress`);
+  }
+});
+
+test('Apocalypse Mode file-handle permission expiry stops retries until reauthorization', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let permission = 'prompt';
+    let writableCalls = 0;
+    let fetches = 0;
+    const queriedModes = [];
+    const handle = {
+      name: 'wikipedia.zim',
+      async queryPermission({ mode }) {
+        queriedModes.push(mode);
+        return permission;
+      },
+      async createWritable() { writableCalls += 1; throw new Error('permission preflight was skipped'); },
+    };
+    const storage = runtime.createOpfsArchiveStorage();
+    const target = { kind: 'file-handle', handle, access: 'readwrite' };
+    await assert.rejects(storage.write(target, 0, Uint8Array.of(1)), (error) => {
+      assert.equal(error.code, runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, `${label}: expired handle lacked a stable error classification`);
+      return true;
+    });
+    assert.equal(writableCalls, 0, `${label}: browser write was attempted before permission was granted`);
+
+    const config = { enabled: true };
+    const records = new Map();
+    const scheduled = [];
+    const store = {
+      async getConfig() { return { ...config }; }, async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; }, async getArchive(id) { return records.get(id) || null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; }, async deleteArchive(id) { records.delete(id); },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async () => { fetches += 1; return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }; },
+      digestHex: async () => 'aa',
+      randomId: () => 'external-download',
+      schedule: delay => scheduled.push(delay),
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: 1, pieceLength: 1, pieceHashAlgorithm: 'sha-1', pieceHashes: ['aa'],
+      downloadUrl: 'https://example.test/wikipedia.zim',
+    }, target);
+    const result = await manager.processNext();
+    assert.equal(result.reason, 'error', `${label}: expired handle entered an automatic retry state`);
+    assert.equal(fetches, 0, `${label}: expired file permission was detected only after downloading another piece`);
+    assert.equal(records.get('external-download').errorKind, runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, `${label}: expired handle was not marked for reauthorization`);
+    assert.deepEqual(scheduled, [0], `${label}: expired handle scheduled an automatic retry`);
+    assert.deepEqual(queriedModes, ['readwrite', 'readwrite'], `${label}: external download did not consistently preflight write permission`);
+
+    permission = 'granted';
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store, storage, schedule: delay => scheduled.push(delay), now: () => 2000,
+    });
+    await controller.reauthorizeFile('external-download');
+    assert.equal(records.get('external-download').status, 'queued', `${label}: granted file permission did not resume the download`);
+    assert.equal(records.get('external-download').errorKind, '', `${label}: successful reauthorization retained the permission error`);
+    assert.deepEqual(scheduled, [0, 0], `${label}: successful reauthorization did not schedule one resumed attempt`);
+
+    records.set('external-download', {
+      ...records.get('external-download'), status: 'error', errorKind: runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED,
+      bytesDownloaded: 1, size: 1,
+    });
+    await controller.reauthorizeFile('external-download');
+    assert.equal(records.get('external-download').status, 'ready', `${label}: completed external archive was incorrectly queued for redownload`);
+    assert.deepEqual(scheduled, [0, 0], `${label}: completed external archive scheduled a redownload after reauthorization`);
+    assert.equal(queriedModes.at(-1), 'read', `${label}: completed external archive requested unnecessary write permission`);
+  }
+});
+
+test('Apocalypse Mode completed-file reauthorization loses atomically to deletion', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'reauthorize-race', status: 'error', generation: 4, updatedAt: 500,
+      errorKind: runtime.APOCALYPSE_FILE_PERMISSION_REQUIRED, error: 'permission required',
+      downloadUrl: 'https://example.test/archive.zim', size: 10, bytesDownloaded: 10,
+    };
+    const records = new Map();
+    const handle = {
+      async queryPermission() {
+        records.delete(record.id);
+        return 'granted';
+      },
+    };
+    records.set(record.id, { ...record, target: { kind: 'file-handle', handle } });
+    let compareAttempts = 0;
+    let expectedState;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(_next, expected) {
+        compareAttempts += 1;
+        expectedState = { ...expected };
+        return false;
+      },
+    };
+    const controller = runtime.createApocalypseController({ alarms: {} }, { store, storage: {}, now: () => 600 });
+
+    const result = await controller.reauthorizeFile(record.id);
+
+    assert.equal(result, null, `${label}: reauthorization returned stale metadata after deletion`);
+    assert.equal(compareAttempts, 1, `${label}: reauthorization did not compare-and-swap completed metadata`);
+    assert.deepEqual(expectedState, { status: 'error', generation: 4, updatedAt: 500 },
+      `${label}: reauthorization did not guard the original record state`);
+    assert.equal(records.has(record.id), false, `${label}: reauthorization recreated concurrently deleted metadata`);
+  }
+});
+
+test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const start = source.indexOf("if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM)");
+    const end = source.indexOf('} else if (alarm?.name === APOCALYPSE_UPDATE_ALARM)', start);
+    assert.notEqual(start, -1, `${label}: Apocalypse download alarm listener is missing`);
+    assert.notEqual(end, -1, `${label}: Apocalypse update alarm boundary is missing`);
+    const downloadAlarm = source.slice(start, end);
+    assert.match(downloadAlarm, /processNext\(\)\.catch/, `${label}: unexpected download failures are not logged`);
+    assert.doesNotMatch(downloadAlarm, /alarms\.create/, `${label}: unexpected download failures still recreate an unbounded alarm`);
+    if (label === 'chrome') {
+      assert.match(downloadAlarm, /const releaseKeepalive = acquireRunKeepalive\(\)/,
+        'chrome: archive download alarm does not acquire the MV3 keepalive');
+      assert.match(downloadAlarm, /processNext\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
+        'chrome: archive download alarm does not hold the keepalive until processing settles');
+    }
+  }
+});
+
+test('Apocalypse Mode has a dedicated header gateway and management page in both builds', () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
+    const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
+    const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
+    assert.match(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier selection is missing`);
+    for (const tier of ['all', 'starter', 'introductions', 'text', 'full']) {
+      assert.match(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: ${tier} archive tier is unavailable`);
+    }
+    assert.match(pageScript, /catalogItems = Array\.isArray\(result\.items\) \? result\.items : \[\]/,
+      `${prefix}: catalog items are discarded before tier selection`);
+    assert.match(pageScript, /tier === 'all' \? catalogItems : catalogItems\.filter\(item => item\.tier === tier\)/,
+      `${prefix}: catalog tier selection does not preserve all tiers`);
+    assert.doesNotMatch(pageScript, /await command\('process'\)/,
+      `${prefix}: status polling blocks behind the long-running download loop`);
+    assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?await refresh\(\)/,
+      `${prefix}: status polling does not refresh independently of download processing`);
+    assert.match(pageScript, /t\(`ap\.tier\.\$\{item\.tier\}`\)/, `${prefix}: archive tier is not rendered`);
+    assert.match(pageHtml, /id="vision-model-card"[^>]*hidden/, `${prefix}: local vision status must start hidden on unsupported browsers`);
+    assert.match(pageHtml, /data-i18n="ap\.vision\.auto"/, `${prefix}: automatic local vision download is not disclosed`);
+    assert.match(pageScript, /webgpuVisionDownloadState/, `${prefix}: local vision download status is not rendered`);
+    assert.match(pageScript, /chrome\?\.offscreen\?\.createDocument/, `${prefix}: Chromium vision capability is not detected safely`);
+    if (prefix === 'src/chrome') {
+      assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
+    } else {
+      assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
+    }
+    for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
+      assert.match(pageScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing`);
+    }
+    const headerStart = settingsHtml.indexOf('<div class="header-row">');
+    const apocalypseLink = settingsHtml.indexOf('id="apocalypse-mode-link"', headerStart);
+    const supportLink = settingsHtml.indexOf('href="https://webbrain.one/docs"', headerStart);
+    const tabsStart = settingsHtml.indexOf('<nav class="tabs"', headerStart);
+    assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
+      `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
+    assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
+    const advancedStart = settingsHtml.indexOf('<details class="advanced-settings">');
+    const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
+    assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
+    assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
+    assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
+    assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
+    assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /data-action="update"/, `${prefix}: manual update action is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /requestPermission[\s\S]*?reauthorize_file/, `${prefix}: file-handle reauthorization flow is missing`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /installedCount[\s\S]*?totalBytes[\s\S]*?updatePolicy/, `${prefix}: Advanced settings does not summarize live archive state`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8'), /APOCALYPSE_UPDATE_ALARM[\s\S]*?checkForUpdates/, `${prefix}: automatic update checks are not wired to a background alarm`);
+    assert.match(backgroundScript, /syncUpdateSchedule\(\)[\s\S]*?syncDownloadSchedule\(\)/,
+      `${prefix}: startup does not restore both Apocalypse schedules`);
+    assert.match(pageHtml, /data-i18n="ap\.hero\.consent"/, `${prefix}: localized opt-in boundary is not visible`);
+  }
+});
+
+test('Wikipedia tools use installed Apocalypse Mode archives only after online failure', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const tool = {
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia',
+      sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    };
+    const result = await runtime.executeWikipediaSkillTool(tool, { q: 'Alan Turing', limit: 3 }, {
+      executeOnline: async () => ({ success: false, error: 'network unavailable' }),
+      apocalypseSearch: async () => [{
+        title: 'Alan Turing', excerpt: 'Alan Turing was an English computer scientist and cryptanalyst.',
+        url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng',
+        archiveDate: '2026-07-17', source: 'Kiwix / openZIM', license: 'CC BY-SA 4.0',
+      }],
+    });
+    assert.equal(result.success, true, `${label}: installed ZIM should recover an offline search`);
+    assert.equal(result.provider, 'local Kiwix/ZIM archive', `${label}: local provider was not identified`);
+    assert.equal(result.resultPolicy, 'untrusted', `${label}: local archive bytes must remain untrusted`);
+    assert.equal(result.data.pages[0].archiveDate, '2026-07-17', `${label}: archive provenance was lost`);
+  }
+});
+
+test('Wikipedia online success neither populates nor consults offline storage', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const online = { success: true, status: 200, data: { pages: [{ title: 'Alan Turing' }] } };
+    let offlineCalls = 0;
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia',
+      sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => online,
+      apocalypseSearch: async () => { offlineCalls += 1; return []; },
+    });
+    assert.equal(result, online, `${label}: online response shape should remain unchanged`);
+    assert.equal(offlineCalls, 0, `${label}: online success should not touch offline archives`);
+  }
+});
+
+test('Wikipedia offline routing surfaces an unreadable archive instead of a false no-match', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', skillName: 'Wikipedia', sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => ({ success: false, error: 'network unavailable' }),
+      apocalypseSearch: async () => { throw new Error('Installed archive could not be read; re-import it.'); },
+    });
+    assert.equal(result.success, false, `${label}: unreadable archive produced a successful result`);
+    assert.match(result.error, /could not be read/i, `${label}: archive corruption reason was hidden`);
+    assert.doesNotMatch(result.error, /No matching/i, `${label}: archive corruption was misreported as no match`);
+  }
+});
+
+test('Wikipedia offline routing requires exact built-in provenance', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    let onlineCalls = 0;
+    let offlineCalls = 0;
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'search_wikipedia', skillId: 'wikipedia', sourceType: 'url', sourceUrl: 'https://example.test/skill.md',
+    }, { q: 'Alan Turing' }, {
+      executeOnline: async () => { onlineCalls += 1; return { success: false, error: 'spoof rejected' }; },
+      apocalypseSearch: async () => { offlineCalls += 1; return []; },
+    });
+    assert.equal(result.error, 'spoof rejected', `${label}: spoofed skill should remain on its declared online path`);
+    assert.equal(onlineCalls, 1, `${label}: spoofed skill was not delegated exactly once`);
+    assert.equal(offlineCalls, 0, `${label}: spoofed skill reached privileged local archives`);
+  }
+});
 test('packaged Open-Meteo and Open Library skills are opt-in with read-only HTTP tools', () => {
   for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
     ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
@@ -21783,6 +23651,36 @@ test('all locales cover English keys and preserve interpolation placeholders', a
           placeholders(fallback),
           `${label}/${filename}: ${key} must preserve interpolation placeholders`,
         );
+      }
+    }
+  }
+});
+
+test('Apocalypse Mode copy is translated instead of inherited from English in every locale', async () => {
+  const requiredTranslatedKeys = [
+    'st.display.apocalypse_mode.desc',
+    'st.display.apocalypse_mode.status.off',
+    'ap.hero.desc',
+    'ap.hero.consent',
+    'ap.vision.auto',
+    'ap.vision.waiting',
+    'ap.catalog.desc',
+    'ap.download_background',
+    'ap.include_images',
+    'ap.import.desc',
+    'ap.confirm_install',
+    'ap.confirm_import',
+    'ap.update_policy.automatic_notice',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
+    const englishCopy = (await import(pathToFileURL(path.join(localeDir, 'apocalypse-copy.mjs')).href)).default;
+    for (const filename of fs.readdirSync(localeDir).filter(name => name.endsWith('.js') && name !== 'en.js').sort()) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      const changed = Object.keys(englishCopy).filter(key => locale[key] !== englishCopy[key]);
+      assert.ok(changed.length >= Object.keys(englishCopy).length * 0.8, `${browser}/${filename}: Apocalypse Mode still relies on English fallback copy`);
+      for (const key of requiredTranslatedKeys) {
+        assert.notEqual(locale[key], englishCopy[key], `${browser}/${filename}: ${key} is still English fallback copy`);
       }
     }
   }
@@ -40936,6 +42834,16 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       'fatal WebGPU execution failures should bypass the generic network retry',
     );
 
+    const preload = await new WebGPUVisionProvider().preload();
+    assert.deepEqual(preload, { ok: true, started: true, ready: false });
+    assert.deepEqual(sentMessages.at(-1), {
+      type: 'webgpu-vision-preload',
+      model: WEBGPU_VISION_MODEL_ID,
+      device: 'webgpu',
+      dtype: WEBGPU_VISION_DTYPE,
+    });
+    assert.equal(WEBGPU_VISION_DOWNLOAD_STATE_KEY, 'webgpuVisionDownloadState');
+
     localEnabled = false;
     const preservedRemote = await manager.getVisionProvider();
     assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
@@ -40947,9 +42855,88 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   }
 });
 
+test('Apocalypse vision probes before automatic selection and rolls back failed starts', async () => {
+  const previousChrome = globalThis.chrome;
+  const storageState = {
+    visionModel: {
+      type: 'openai',
+      baseUrl: 'https://vision.example/v1',
+      apiKey: 'preserved-secret',
+      model: 'remote-vision',
+    },
+  };
+  const sentMessages = [];
+  let hasWebGPU = true;
+  let preloadResponse = { ok: true, started: true };
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-probe') {
+            callback({ ok: true, hasWebGPU, isFallbackAdapter: false, libraryVersion: 'test' });
+            return;
+          }
+          callback(preloadResponse);
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({ ...storageState }),
+          set: async patch => Object.assign(storageState, patch),
+          remove: async keys => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete storageState[key];
+          },
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    const started = await manager.enableAndPreloadWebgpuVision();
+    assert.deepEqual(started, { ok: true, started: true, ready: false });
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-probe',
+      'webgpu-vision-preload',
+    ]);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], true);
+
+    delete storageState[WEBGPU_VISION_ENABLED_KEY];
+    delete storageState[WEBGPU_VISION_AUTO_SELECTED_KEY];
+    sentMessages.length = 0;
+    hasWebGPU = false;
+    const unsupported = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(unsupported.ok, false);
+    assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe']);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+
+    sentMessages.length = 0;
+    hasWebGPU = true;
+    preloadResponse = { ok: false, error: 'download dispatch failed' };
+    const failedAutomaticStart = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedAutomaticStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+
+    storageState[WEBGPU_VISION_ENABLED_KEY] = true;
+    sentMessages.length = 0;
+    const failedExplicitStart = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedExplicitStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true,
+      'an existing explicit local selection must not be rolled back as an automatic choice');
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
@@ -40962,6 +42949,41 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
   assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
+  assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeAllRuntimes\)/);
+  assert.match(worker, /type === 'preload'[\s\S]*?preloadRuntime\(payload\)/);
+  assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime[\s\S]*?await disposeVisionRuntime/);
+  assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(host, /'webgpu-vision-preload'/);
+  assert.match(host, /webgpu-vision-download-state/);
+  assert.doesNotMatch(host, /chrome\.storage/, 'offscreen documents only expose chrome.runtime from extension APIs');
+  assert.match(host, /chrome\.runtime\.sendMessage\(\{[\s\S]*?VISION_DOWNLOAD_STATE_MESSAGE/);
+  assert.match(host, /data\?\.type === 'progress'[\s\S]*?updateVisionDownloadProgress/);
+  assert.match(host, /data\?\.type === 'progress'[\s\S]{0,240}!progressMatchesActiveVisionModel[\s\S]{0,240}updateVisionDownloadProgress/,
+    'shared-worker progress must be filtered before it mutates vision download state');
+  const progressFilterStart = host.indexOf('function progressMatchesActiveVisionModel');
+  const progressFilterEnd = host.indexOf('\n}', progressFilterStart) + 2;
+  assert.ok(progressFilterStart >= 0 && progressFilterEnd > progressFilterStart,
+    'vision progress model filter is missing');
+  const progressMatchesActiveVisionModel = vm.runInNewContext(
+    `(${host.slice(progressFilterStart, progressFilterEnd)})`,
+  );
+  const activePreload = Promise.resolve();
+  const visionModel = 'LiquidAI/LFM2.5-VL-450M';
+  assert.equal(progressMatchesActiveVisionModel({ modelId: visionModel }, visionModel, activePreload), true,
+    'active vision-model progress should be retained');
+  assert.equal(progressMatchesActiveVisionModel({ modelId: 'webbrain-one/Ling-3.0-tiny-ONNX' }, visionModel, activePreload), false,
+    'Ling text-model progress must not overwrite vision preload state');
+  assert.equal(progressMatchesActiveVisionModel({ modelId: visionModel }, visionModel, null), false,
+    'late progress must not update state after vision preload settles');
+  assert.match(background, /message\?\.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE/);
+  assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
+  assert.match(background, /normalized\.status === 'error'[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY[\s\S]*?WEBGPU_VISION_ENABLED_KEY/);
+  assert.match(background, /async function resumeInterruptedVisionPreload\(\)[\s\S]*?WEBGPU_VISION_ENABLED_KEY[\s\S]*?state\.status === 'starting'[\s\S]*?state\.status === 'downloading'[\s\S]*?enableApocalypseVisionModel\(\)/,
+    'Chrome startup must resume an enabled, incomplete local-vision preload');
+  assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
+    'local-vision recovery must run with the service-worker startup restoration');
+  assert.doesNotMatch(background, /apocalypseController\.handle\('status'\)/,
+    'service-worker startup must not override a later local-vision opt-out');
   assert.match(worker, /let visionRuntime = null/);
   assert.match(worker, /let textRuntime = null/);
   const visionLoader = worker.slice(worker.indexOf('async function getVisionRuntime'), worker.indexOf('async function getTextRuntime'));
@@ -41002,6 +43024,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /function assertToolCapableTextRuntime/);
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
+  assert.match(settingsScript, /addEventListener\('focus'[\s\S]{0,180}loadVisionConfig/);
+  assert.match(settingsScript, /changes\[WEBGPU_VISION_ENABLED_KEY\][\s\S]{0,100}loadVisionConfig/);
+  assert.match(settingsScript, /chrome\.storage\.local\.remove\(WEBGPU_VISION_AUTO_SELECTED_KEY\)/,
+    'an explicit local-vision selection must clear automatic-selection provenance');
   assert.match(settingsScript, /dispose_webgpu_vision/);
   assert.match(settingsScript, /data-webgpu-download-action="start"/);
   assert.match(settingsScript, /data-webgpu-download-action="pause"/);
@@ -41023,6 +43049,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(settingsScript, /<option value="__custom__"/);
   assert.match(settingsScript, /data-webgpu-model-link/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
+  assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
   assert.match(englishLocale, /LFM2\.5 2\.6B is the only tested model[\s\S]*Other models entered through Custom are untested and likely will not work/);
 

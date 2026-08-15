@@ -383,6 +383,20 @@ async function getVisionRuntime(modelId, dtype, device) {
   }
 }
 
+async function preloadRuntime(payload = {}) {
+  const modelId = String(payload.modelId || '').trim();
+  if (!modelId) throw new Error('No vision model was specified.');
+  const device = payload.device || 'webgpu';
+  const dtype = payload.dtype || {
+    embed_tokens: 'fp16',
+    vision_encoder: 'fp16',
+    decoder_model_merged: 'q4',
+  };
+  await getVisionRuntime(modelId, dtype, device);
+  await disposeVisionRuntime();
+  return modelId;
+}
+
 async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
   const key = `text|${modelId}|${device}|${JSON.stringify(dtype)}`;
   if (textRuntime && textRuntimeKey === key) return textRuntime;
@@ -994,6 +1008,11 @@ self.addEventListener('message', async event => {
     if (type === 'dispose-text') {
       await enqueueModelOperation(disposeTextRuntime);
       self.postMessage({ id, ok: true, disposed: true });
+      return;
+    }
+    if (type === 'preload') {
+      const modelId = await enqueueModelOperation(() => preloadRuntime(payload));
+      self.postMessage({ id, ok: true, modelId });
       return;
     }
     if (type === 'chat') {

@@ -4,6 +4,26 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.0.0] - 2026-08-14
+
+### Added
+- Added opt-in Apocalypse Mode for downloading or importing Wikipedia Kiwix/ZIM archives and searching them locally when the built-in Wikipedia skill cannot reach its online source.
+- Added an on-device archive manager, available from the ☢ Apocalypse Mode link beside Support in the Settings header, with expanded language choices, full-text archives with an optional images toggle, background download progress, storage estimates, update checks, removal controls, and reauthorization for external archive files.
+- Added browser-native ZIM parsing and search, including Zstandard-compressed clusters, without uploading archive contents.
+- On supported Chromium browsers, enabling Apocalypse Mode now enables and downloads the local LFM2.5-VL vision fallback automatically, with persistent progress shown on the management page.
+- Localized the Apocalypse Mode interface across all supported Chrome and Firefox locales.
+
+### Fixed
+- Isolated browser-managed archive storage per download so reinstalling the same archive cannot corrupt another record.
+- Required explicit Apocalypse Mode opt-in before catalog or Metalink network access.
+- Made stale-import recovery generation-safe and preserved partial data while a live importer may still be writing.
+- Added explicit permission recovery for external ZIM files after browser restarts and prevented automatic retries while authorization is required.
+- Removed unbounded alarm retries after unexpected archive-download failures.
+- Routed local vision progress through the service worker, probed WebGPU before automatic selection, restored the prior vision provider after automatic preload failures, preserved later local-vision opt-outs, and refreshed the Settings controls after cross-tab changes.
+
+### Tests
+- Added mirrored Chrome and Firefox regression coverage for ZIM validation and search, archive downloads and imports, opt-in network gates, recovery races, external-file permissions, and retry behavior.
+
 ## [31.0.1] - 2026-08-14
 
 ### Changed

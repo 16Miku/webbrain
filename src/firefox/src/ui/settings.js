@@ -58,13 +58,15 @@ const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '31.0.1';
+const EXT_VERSION = '32.0.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
 const generalSearchInput = document.getElementById('input-general-search');
 const generalSearchEmpty = document.getElementById('general-search-empty');
 const advancedSettings = document.querySelector('.advanced-settings');
+const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
+const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
@@ -298,8 +300,10 @@ if (languageSelect) {
     renderSkills();
     renderPermissions();
     refreshProfileSyncState();
+    refreshApocalypseModeStatus();
   });
 }
+globalThis.addEventListener('focus', () => refreshApocalypseModeStatus());
 
 let providersData = {};
 // Unsaved custom-body text must survive provider-card/filter/search renders,
@@ -419,6 +423,43 @@ let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
 
+function formatArchiveBytes(value) {
+  const number = Math.max(0, Number(value) || 0);
+  if (number < 1024) return `${number} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let amount = number;
+  let unit = -1;
+  do { amount /= 1024; unit += 1; } while (amount >= 1024 && unit < units.length - 1);
+  return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+async function refreshApocalypseModeStatus() {
+  if (!apocalypseModeStatus) return;
+  try {
+    const status = await sendToBackground('apocalypse_mode', { command: 'status' });
+    const enabled = status?.enabled === true;
+    const summary = enabled
+      ? t('st.display.apocalypse_mode.status.summary', {
+        count: Number(status.installedCount) || 0,
+        size: formatArchiveBytes(status.totalBytes),
+        policy: t(status.updatePolicy === 'automatic' ? 'ap.metric.automatic' : 'ap.metric.manual'),
+      })
+      : t('st.display.apocalypse_mode.status.off');
+    apocalypseModeStatus.textContent = summary;
+    if (apocalypseModeLink) {
+      apocalypseModeLink.dataset.enabled = String(enabled);
+      apocalypseModeLink.title = summary;
+    }
+  } catch {
+    const unavailable = t('st.display.apocalypse_mode.status.unavailable');
+    apocalypseModeStatus.textContent = unavailable;
+    if (apocalypseModeLink) {
+      delete apocalypseModeLink.dataset.enabled;
+      apocalypseModeLink.title = unavailable;
+    }
+  }
+}
+
 // --- Init ---
 
 async function init() {
@@ -537,6 +578,7 @@ async function init() {
   await initPermissionGateToggle();
   await renderPermissions();
   await initScreenshotRedactionToggle();
+  await refreshApocalypseModeStatus();
 
   // Load providers
   const res = await sendToBackground('get_providers');

@@ -13,6 +13,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -93,6 +94,13 @@ import {
  */
 
 const providerManager = new ProviderManager();
+const apocalypseController = createApocalypseController(browser);
+Promise.all([
+  apocalypseController.syncUpdateSchedule(),
+  apocalypseController.syncDownloadSchedule(),
+]).catch((error) => {
+  console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
+});
 const agent = new Agent(providerManager);
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
@@ -1011,6 +1019,18 @@ browser.storage.onChanged.addListener((changes) => {
     });
   }
   if (refreshPrompts) agent._refreshSystemPrompts();
+});
+
+browser.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
+    apocalypseController.manager.processNext().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
+    });
+  } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
+    apocalypseController.checkForUpdates().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode update check failed:', error);
+    });
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1943,6 +1963,8 @@ async function handleMessage(msg, sender) {
   }
 
   switch (msg.action) {
+    case 'apocalypse_mode':
+      return await apocalypseController.handle(msg.command, msg);
     case 'profile_sync_state': return { ok: true, ...(await profileSync.state()) };
     case 'profile_sync_auth_start': return { ok: true, ...(await profileSync.authStart(String(msg.email || '').trim())) };
     case 'profile_sync_auth_status': return { ok: true, ...(await profileSync.authStatus(msg.challengeId, msg.verifier)) };

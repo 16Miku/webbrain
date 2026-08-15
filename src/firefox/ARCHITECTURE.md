@@ -1,6 +1,6 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 31.0.1 · Manifest V2 · Background Page
+> Version 32.0.0 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
@@ -228,6 +228,13 @@ Download-job tools still run in action modes and use the normal Downloads
 permission gate before saving files. Third-party results should use
 `resultPolicy: "untrusted"` so the agent wraps and digests them like page
 content instead of trusted instructions.
+
+The exact packaged Wikipedia skill uses `agent/wikipedia-offline.js` to fall
+back to user-installed Kiwix/ZIM archives after a live request fails.
+`agent/apocalypse-mode.js` owns the opt-in archive manager, resumable verified
+downloads, durable IndexedDB state, OPFS bytes, and local openZIM title lookup.
+No archive is downloaded by enabling the skill. Local passages retain their
+canonical URL, language, archive date, and license metadata and stay untrusted.
 
 ---
 

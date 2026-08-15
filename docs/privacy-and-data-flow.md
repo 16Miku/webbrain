@@ -369,6 +369,26 @@ responses as untrusted unless the manifest says otherwise. Removing or
 disabling a skill stops that data flow. See [Skills](skills.md#bundled-skills)
 for the full packaged catalog.
 
+The packaged Wikipedia skill does not silently create an offline corpus.
+Apocalypse Mode is disabled by default and requires a separate opt-in under
+Settings → Advanced. Catalog browsing sends the selected archive language to
+Kiwix; resolving an archive fetches its Metalink. Archive bytes are downloaded
+only after a second confirmation that displays the exact size, date, source,
+license notice, integrity pieces, and reported storage availability.
+
+Downloaded or imported `.zim` bytes live in extension-owned OPFS storage by
+default. Chromium users can instead select an external file through the File
+System Access API; Firefox uses OPFS. IndexedDB stores only settings, archive
+metadata, progress, retry state, and storage references (including a persisted
+file handle where supported). Each downloaded piece is checked before writing.
+Pause, cancellation, deletion, corruption, restart, and bounded retry states
+are durable. A ready archive that becomes unreadable is marked as an error and
+requires reinstall or re-import. Live Wikipedia results are not copied into this store. When an
+installed archive answers a later request, only the relevant extracted passage
+and its canonical Wikipedia attribution enter the normal untrusted tool-result
+path and are sent to the user's configured LLM. See
+[Apocalypse Mode](apocalypse-mode.md) for browser-specific limits.
+
 ---
 
 ## Data Flow Diagrams

@@ -1,6 +1,8 @@
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
+import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+
 export default {
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'הזרמת התשובה נקטעה; מתבצע ניסיון חוזר לתור Ask הזה ללא הזרמה.',
@@ -493,6 +495,7 @@ export default {
   "st.display.search.placeholder": "חפש בהגדרות כלליות",
   "st.display.search.empty": "אין הגדרות כלליות תואמות.",
   "st.display.advanced": "מִתקַדֵם",
+  ...getApocalypseModeCopy('he'),
   'st.display.cloud_bridge.label': 'גשר ענן',
   'st.display.cloud_bridge.desc': 'חבר בקר מקומי אחד לפרופיל Chromium הזה. השתמש ביציאה 17373 עבור WebBrain Cloud, ב-17374 עבור לקוחות MCP או ב-17375 עבור LM Studio. רק גשר אחד יכול להיות פעיל; בקשות ההרשאה הרגילות עדיין חלות.',
   'st.display.cloud_bridge.url_label': 'כתובת WebSocket',
