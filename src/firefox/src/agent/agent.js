@@ -6162,7 +6162,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
     let contentArgs = axScope?.documentToken
       ? {
           ...args,
@@ -6172,6 +6172,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : args;
     if (dispatchBinding?.token) {
       contentArgs = { ...contentArgs, dispatchBinding };
+    }
+    if (messageRecipientContext.messageRecipientGuardRequired === true) {
+      contentArgs = {
+        ...contentArgs,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: messageRecipientContext.messageRecipientDispatchBinding || null,
+      };
     }
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
@@ -6211,7 +6218,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
     const target = resolution?.semanticTarget;
     const semanticEligible = resolution?.success === true
@@ -6224,6 +6231,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
+        null,
+        messageRecipientContext,
       );
       return {
         result: {
@@ -10681,6 +10690,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  async _consumeMessageRecipientDispatchBinding(tabId, binding, params = {}) {
+    if (!binding?.token) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_unavailable',
+        error: 'Message send blocked because recipient dispatch binding was unavailable.',
+      };
+    }
+    try {
+      return await browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'consume_message_recipient_dispatch_binding',
+        params: {
+          messageRecipientDispatchBinding: binding,
+          ...params,
+        },
+      });
+    } catch (error) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_revalidation_failed',
+        error: `Message send blocked because recipient revalidation failed before dispatch: ${error?.message || String(error)}`,
+      };
+    }
+  }
+
   async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
     const target = normalizeMessageTarget(messaging);
     if (target?.target_kind !== 'active_conversation') return { ok: true, target };
@@ -10765,7 +10806,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: name,
       args,
       adapterName: policy.adapterName,
-      bindDispatch: name === 'set_field' && args?.submit === true,
+      bindDispatch: true,
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
 
@@ -10775,23 +10816,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && probe.messageSend === true
       && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
     if (verified) {
-      if (name === 'set_field') {
-        const binding = probe?.messageRecipientDispatchBinding;
-        if (!binding?.token) {
-          return {
-            success: false,
-            blocked: true,
-            noDispatch: true,
-            dispatched: false,
-            messageRecipientGuard: true,
-            reasonCode: 'recipient_dispatch_binding_unavailable',
-            error: 'Message send blocked because WebBrain could not bind recipient verification to the final Enter dispatch. Re-read the active conversation and retry once.',
-          };
-        }
-        if (executionContext && typeof executionContext === 'object') {
-          executionContext.messageRecipientGuardRequired = true;
-          executionContext.messageRecipientDispatchBinding = binding;
-        }
+      const binding = probe?.messageRecipientDispatchBinding;
+      if (!binding?.token) {
+        return {
+          success: false,
+          blocked: true,
+          noDispatch: true,
+          dispatched: false,
+          messageRecipientGuard: true,
+          reasonCode: 'recipient_dispatch_binding_unavailable',
+          error: 'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once.',
+        };
+      }
+      if (executionContext && typeof executionContext === 'object') {
+        executionContext.messageRecipientGuardRequired = true;
+        executionContext.messageRecipientDispatchBinding = binding;
       }
       return null;
     }
@@ -18678,7 +18717,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch { /* tab lookup failures are non-fatal — fall through */ }
 
     if (name === 'click_ax') {
-      return this._dispatchClickAx(tabId, args, this._lastAxScopes.get(tabId), dispatchBinding);
+      return this._dispatchClickAx(
+        tabId,
+        args,
+        this._lastAxScopes.get(tabId),
+        dispatchBinding,
+        { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+      );
     }
 
     if (name === 'click') {
@@ -18693,7 +18738,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (duplicateSubmit) return duplicateSubmit;
       if (coordinatePoint && !dispatchBinding?.token) {
-        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint);
+        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint, {
+          messageRecipientGuardRequired,
+          messageRecipientDispatchBinding,
+        });
         if (reconciled.result) return reconciled.result;
         coordinateDiagnostic = reconciled.diagnostic;
       }
@@ -18726,7 +18774,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         dispatchBinding,
       };
     }
-    if (name === 'set_field' && messageRecipientGuardRequired) {
+    if (messageRecipientGuardRequired
+      && ['click', 'press_keys', 'set_field'].includes(name)) {
       contentArgs = {
         ...contentArgs,
         messageRecipientGuardRequired: true,

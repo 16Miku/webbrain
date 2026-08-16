@@ -1995,6 +1995,10 @@
       if (_isFocusableElement(el)) _focusElement(el);
     }
 
+    if (params?.messageRecipientGuardRequired === true) {
+      const recipientValidation = _consumeMessageRecipientDispatchBinding(params, el);
+      if (recipientValidation.success !== true) return recipientValidation;
+    }
     const clickedRect = rememberInteractionPoint(el, 'click');
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
@@ -2374,6 +2378,10 @@
     if (params?.dispatchBinding?.token) {
       const validation = _consumeFocusedDispatchBinding(params);
       if (validation.success !== true) return validation;
+    }
+    if (params?.messageRecipientGuardRequired === true) {
+      const recipientValidation = _consumeMessageRecipientDispatchBinding(params, focusedTarget);
+      if (recipientValidation.success !== true) return recipientValidation;
     }
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
       ? focusedTarget
@@ -3338,14 +3346,36 @@
       .filter(Boolean))).sort());
   }
 
-  function _rememberMessageRecipientDispatchBinding(composer, identities) {
-    if (!composer?.isConnected) return '';
+  function _messageRecipientDispatchControl(element) {
+    return element?.closest?.(
+      'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
+    ) || element || null;
+  }
+
+  function _messageRecipientDispatchTargetsMatch(expected, actual) {
+    if (!expected || !actual) return false;
+    if (expected === actual) return true;
+    return _messageRecipientDispatchControl(expected) === _messageRecipientDispatchControl(actual);
+  }
+
+  function _rememberMessageRecipientDispatchBinding(composer, identities, dispatch = {}) {
+    const tool = String(dispatch.tool || '');
+    const actionTarget = dispatch.actionTarget || null;
+    if (!composer?.isConnected || !tool || !actionTarget?.isConnected) return '';
     const identityKey = _messageRecipientIdentityKey(identities);
     if (!identityKey || identityKey === '[]') return '';
     const entropy = new Uint32Array(3);
     globalThis.crypto.getRandomValues(entropy);
     const token = `wbmr_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
-    const record = { composer, identityKey, pageUrl: location.href, timer: null };
+    const record = {
+      composer,
+      actionTarget,
+      tool,
+      args: dispatch.args && typeof dispatch.args === 'object' ? { ...dispatch.args } : {},
+      identityKey,
+      pageUrl: location.href,
+      timer: null,
+    };
     _messageRecipientDispatchBindings.set(token, record);
     record.timer = setTimeout(() => {
       if (_messageRecipientDispatchBindings.get(token) === record) {
@@ -3355,17 +3385,21 @@
     return token;
   }
 
-  function _consumeMessageRecipientDispatchBinding(params = {}) {
+  function _consumeMessageRecipientDispatchBinding(params = {}, actualTarget = null) {
     const token = String(params.messageRecipientDispatchBinding?.token || '');
     const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
     if (token) _messageRecipientDispatchBindings.delete(token);
     if (expected?.timer) clearTimeout(expected.timer);
-    const refId = String(params.ref_id || '');
-    const composer = refId && typeof window.__wb_ax_lookup === 'function'
-      ? window.__wb_ax_lookup(refId)
-      : null;
-    if (!expected || !composer || expected.composer !== composer
-      || !composer.isConnected || expected.pageUrl !== location.href) {
+    let pointTarget = null;
+    const pointX = Number(params.dispatchPoint?.x);
+    const pointY = Number(params.dispatchPoint?.y);
+    if (Number.isFinite(pointX) && Number.isFinite(pointY)) {
+      try { pointTarget = document.elementFromPoint(pointX, pointY); } catch {}
+    }
+    const dispatchedTarget = actualTarget || pointTarget;
+    if (!expected || !expected.composer?.isConnected || !expected.actionTarget?.isConnected
+      || expected.pageUrl !== location.href
+      || (dispatchedTarget && !_messageRecipientDispatchTargetsMatch(expected.actionTarget, dispatchedTarget))) {
       return {
         success: false,
         dispatched: false,
@@ -3376,10 +3410,22 @@
       };
     }
     const live = _probeMessageRecipientGuard({
-      tool: 'set_field',
-      args: { ref_id: refId, submit: true },
+      tool: expected.tool,
+      args: expected.args,
       bindDispatch: false,
+      expectedDispatchTarget: expected.actionTarget,
+      expectedComposer: expected.composer,
     });
+    if (live?.dispatchTargetChanged === true) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_stale',
+        error: 'Message send blocked because the verified action target or composer changed before dispatch. Re-read the active conversation and retry the send once.',
+      };
+    }
     const liveIdentityKey = _messageRecipientIdentityKey(live?.strongIdentityCandidates);
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
       || liveIdentityKey !== expected.identityKey) {
@@ -3649,6 +3695,7 @@
       const active = typeof _deepActiveElement === 'function' ? _deepActiveElement() : document.activeElement;
 
       let target = null;
+      let dispatchTarget = null;
       let targetResolved = observationOnly || tool === 'press_keys';
       if (tool === 'click_ax' || tool === 'set_field') {
         const refId = String(args.ref_id || '');
@@ -3778,6 +3825,7 @@
           return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
         }
         composer = layoutComposer;
+        dispatchTarget = active;
         messageSend = String(args.key || '') === 'Enter';
       } else if (tool === 'set_field') {
         if (!targetResolved || !editable(target) || !visible(target)) {
@@ -3790,6 +3838,7 @@
           return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
         }
         composer = layoutComposer;
+        dispatchTarget = target;
         messageSend = args.submit === true;
       } else if (tool === 'click' || tool === 'click_ax') {
         if (!targetResolved || !target) {
@@ -3815,6 +3864,7 @@
             identityCandidates: [],
           };
         }
+        dispatchTarget = target;
         const composerRect = composer.getBoundingClientRect();
         const controlRect = control.getBoundingClientRect();
         const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
@@ -3831,6 +3881,18 @@
 
       if (!composer) {
         return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: 'Active conversation composer could not be resolved.' };
+      }
+      if (params.expectedDispatchTarget
+        && (dispatchTarget !== params.expectedDispatchTarget || composer !== params.expectedComposer)) {
+        return {
+          success: false,
+          messageSend: null,
+          conclusive: false,
+          dispatchTargetChanged: true,
+          identityCandidates: [],
+          strongIdentityCandidates: [],
+          error: 'The verified message action target or composer changed before dispatch.',
+        };
       }
 
       const composerRect = composer.getBoundingClientRect();
@@ -3882,11 +3944,13 @@
       }
 
       const messageRecipientDispatchToken = params.bindDispatch === true
-        && tool === 'set_field'
-        && args.submit === true
         && messageSend === true
         && strongIdentities.length === 1
-        ? _rememberMessageRecipientDispatchBinding(composer, strongIdentities)
+        ? _rememberMessageRecipientDispatchBinding(composer, strongIdentities, {
+            tool,
+            args,
+            actionTarget: dispatchTarget,
+          })
         : '';
       return {
         success: true,
@@ -4252,6 +4316,16 @@
                 }
               }
             } catch {}
+          }
+          if (msg.params?.messageRecipientGuardRequired === true) {
+            const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+            if (recipientValidation.success !== true) {
+              return failure(recipientValidation.error, {
+                messageDispatched: false,
+                messageRecipientGuard: true,
+                reasonCode: recipientValidation.reasonCode,
+              });
+            }
           }
           rememberInteractionPoint(el, 'click_ax');
           dispatched = true;
@@ -4767,7 +4841,7 @@
                 await new Promise(r => setTimeout(r, 30));
               }
               if (msg.params?.messageRecipientGuardRequired === true) {
-                const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params);
+                const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
                   return failure(recipientValidation.error, {
                     verified: true,

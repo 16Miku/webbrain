@@ -2589,7 +2589,8 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
       return {};
     };
 
-    const result = await new AgentCh({}).executeTool(42, 'press_keys', { key: ';' });
+    const agent = new AgentCh({});
+    const result = await agent.executeTool(42, 'press_keys', { key: ';' });
     assert.deepEqual(result, {
       success: true,
       dispatched: true,
@@ -2609,6 +2610,29 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
         params: { type: 'keyUp', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
       },
     ]);
+
+    calls.length = 0;
+    agent._consumeMessageRecipientDispatchBinding = async () => ({
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      messageRecipientGuard: true,
+      reasonCode: 'active_recipient_changed_before_dispatch',
+      error: 'active recipient changed',
+    });
+    const blockedEnter = await agent.executeTool(
+      42,
+      'press_keys',
+      { key: 'Enter' },
+      null,
+      {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'recipient-enter' },
+      },
+    );
+    assert.equal(blockedEnter.reasonCode, 'active_recipient_changed_before_dispatch');
+    assert.equal(blockedEnter.noDispatch, true);
+    assert.equal(calls.length, 0, 'recipient revalidation must block before CDP Enter dispatch');
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
@@ -3434,20 +3458,45 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageSend: true,
       identityCandidates: ['迷你世界皓宸'],
       strongIdentityCandidates: ['迷你世界皓宸'],
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
     };
+    const enterExecutionContext = {};
     assert.equal(
-      await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'press_keys',
+        { key: 'Enter' },
+        'https://www.douyin.com/chat',
+        enterExecutionContext,
+      ),
       null,
       `${label}: matching active recipient was blocked`,
     );
-    probe = {
-      success: true,
-      conclusive: true,
-      messageSend: true,
-      identityCandidates: ['迷你世界皓宸'],
-      strongIdentityCandidates: ['迷你世界皓宸'],
+    assert.deepEqual(enterExecutionContext, {
+      messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
-    };
+    });
+    for (const [tool, args] of [
+      ['click', { selector: '#send' }],
+      ['click_ax', { ref_id: 'ref_send' }],
+    ]) {
+      const clickExecutionContext = {};
+      assert.equal(
+        await agent._messageRecipientGuardBlock(
+          tabId,
+          tool,
+          args,
+          'https://www.douyin.com/chat',
+          clickExecutionContext,
+        ),
+        null,
+        `${label}: matching ${tool} was blocked before binding`,
+      );
+      assert.deepEqual(clickExecutionContext, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+      });
+    }
     const recipientExecutionContext = {};
     assert.equal(
       await agent._messageRecipientGuardBlock(
@@ -3467,12 +3516,12 @@ test('direct-message recipient guard uses structured intent and exact active ide
     delete probe.messageRecipientDispatchBinding;
     const unboundSubmit = await agent._messageRecipientGuardBlock(
       tabId,
-      'set_field',
-      { ref_id: 'ref_composer', text: 'hello', submit: true },
+      'click_ax',
+      { ref_id: 'ref_send' },
       'https://www.douyin.com/chat',
       {},
     );
-    assert.equal(unboundSubmit?.reasonCode, 'recipient_dispatch_binding_unavailable', `${label}: unbound set_field submit failed open`);
+    assert.equal(unboundSubmit?.reasonCode, 'recipient_dispatch_binding_unavailable', `${label}: unbound click_ax failed open`);
     const repeatedEnter = await agent._messageRecipientGuardBlock(
       tabId,
       'press_keys',
@@ -3712,9 +3761,12 @@ test('message recipient dispatch binding detects composer and active-thread race
       ? '\n\n  // Above this length'
       : '\n\n  function _releaseDispatchBinding', start);
     assert.ok(start >= 0 && end > start, `${label}: dispatch binding helpers should remain independently testable`);
-    const composer = { isConnected: true };
+    const composer = { isConnected: true, closest() { return this; } };
     const replacementComposer = { isConnected: true };
-    let resolvedComposer = composer;
+    const sendButton = { isConnected: true, closest() { return this; } };
+    const replacementButton = { isConnected: true, closest() { return this; } };
+    let liveComposer = composer;
+    let liveTarget = sendButton;
     let liveIdentities = ['Alice'];
     const helpers = vm.runInNewContext(`(() => {
       ${source.slice(start, end)}
@@ -3723,50 +3775,95 @@ test('message recipient dispatch binding detects composer and active-thread race
         consume: _consumeMessageRecipientDispatchBinding,
       };
     })()`, {
-      window: { __wb_ax_lookup: () => resolvedComposer },
+      window: {},
       location: { href: 'https://www.douyin.com/chat' },
       crypto: { getRandomValues: array => { array.fill(7); return array; } },
       setTimeout: () => 1,
       clearTimeout: () => {},
-      _probeMessageRecipientGuard: () => ({
-        success: true,
-        conclusive: true,
-        messageSend: true,
-        strongIdentityCandidates: liveIdentities,
-      }),
+      _probeMessageRecipientGuard: params => (
+        params.expectedDispatchTarget !== liveTarget || params.expectedComposer !== liveComposer
+          ? { success: false, dispatchTargetChanged: true }
+          : {
+              success: true,
+              conclusive: true,
+              messageSend: true,
+              strongIdentityCandidates: liveIdentities,
+            }
+      ),
     });
 
-    const matchingToken = helpers.remember(composer, ['Alice']);
+    const dispatch = { tool: 'click_ax', args: { ref_id: 'ref_send' }, actionTarget: sendButton };
+    const matchingToken = helpers.remember(composer, ['Alice'], dispatch);
     assert.equal(helpers.consume({
-      ref_id: 'ref_composer',
       messageRecipientDispatchBinding: { token: matchingToken },
-    }).success, true, `${label}: stable recipient binding was rejected`);
+    }, sendButton).success, true, `${label}: stable recipient binding was rejected`);
+    const replayedToken = helpers.consume({
+      messageRecipientDispatchBinding: { token: matchingToken },
+    }, sendButton);
+    assert.equal(replayedToken.success, false, `${label}: recipient binding was not one-use`);
+    assert.equal(replayedToken.reasonCode, 'recipient_dispatch_binding_stale');
 
-    const changedRecipientToken = helpers.remember(composer, ['Alice']);
+    const changedRecipientToken = helpers.remember(composer, ['Alice'], dispatch);
     liveIdentities = ['Bob'];
     const changedRecipient = helpers.consume({
-      ref_id: 'ref_composer',
       messageRecipientDispatchBinding: { token: changedRecipientToken },
-    });
+    }, sendButton);
     assert.equal(changedRecipient.success, false);
     assert.equal(changedRecipient.reasonCode, 'active_recipient_changed_before_dispatch');
 
     liveIdentities = ['Alice'];
-    const changedComposerToken = helpers.remember(composer, ['Alice']);
-    resolvedComposer = replacementComposer;
+    const changedComposerToken = helpers.remember(composer, ['Alice'], dispatch);
+    liveComposer = replacementComposer;
     const changedComposer = helpers.consume({
-      ref_id: 'ref_composer',
       messageRecipientDispatchBinding: { token: changedComposerToken },
-    });
+    }, sendButton);
     assert.equal(changedComposer.success, false);
     assert.equal(changedComposer.reasonCode, 'recipient_dispatch_binding_stale');
+
+    liveComposer = composer;
+    const changedTargetToken = helpers.remember(composer, ['Alice'], dispatch);
+    const changedTarget = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedTargetToken },
+    }, replacementButton);
+    assert.equal(changedTarget.success, false);
+    assert.equal(changedTarget.reasonCode, 'recipient_dispatch_binding_stale');
 
     const branchStart = source.indexOf("'set_field': async () => {");
     const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
     const branch = source.slice(branchStart, branchEnd);
-    const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params)');
+    const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
     const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
     assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
+
+    const pressStart = source.indexOf('function pressKeys(params)');
+    const pressEnd = source.indexOf('\n\n  /**', pressStart + 20);
+    const pressBranch = source.slice(pressStart, pressEnd);
+    const pressRecipientCheck = pressBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, focusedTarget)');
+    const pressDispatch = pressBranch.indexOf('for (let i = 0; i < repeat; i++)');
+    assert.ok(
+      pressRecipientCheck >= 0 && pressDispatch > pressRecipientCheck,
+      `${label}: press_keys recipient binding must be consumed before key dispatch`,
+    );
+
+    const clickStart = source.indexOf('function clickElement(params)');
+    const clickEnd = source.indexOf('\n\n  function typeText', clickStart);
+    const clickBranch = source.slice(clickStart, clickEnd);
+    const clickRecipientCheck = clickBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, el)');
+    const clickDispatch = clickBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
+    assert.ok(
+      clickRecipientCheck >= 0 && clickDispatch > clickRecipientCheck,
+      `${label}: click recipient binding must be consumed before click dispatch`,
+    );
+
+    const clickAxStart = source.indexOf("'click_ax': () => {");
+    const clickAxEnd = source.indexOf("'type_ax': async () => {", clickAxStart);
+    const clickAxBranch = source.slice(clickAxStart, clickAxEnd);
+    const clickAxRecipientCheck = clickAxBranch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
+    const clickAxDispatch = clickAxBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
+    assert.ok(
+      clickAxRecipientCheck >= 0 && clickAxDispatch > clickAxRecipientCheck,
+      `${label}: click_ax recipient binding must be consumed before click dispatch`,
+    );
   }
 });
 
@@ -11946,7 +12043,7 @@ test('coordinate semantic reconciliation: stale semantic dispatch never retries 
   }
 });
 
-test('click_ax preserves rich-text toolbar dispatch bindings after helper extraction', async () => {
+test('click_ax preserves toolbar and recipient bindings without a second protected dispatch', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
   for (const [label, AgentClass, globalKey] of [
@@ -11974,14 +12071,27 @@ test('click_ax preserves rich-text toolbar dispatch bindings after helper extrac
         agent._clickProgressSnapshot = async () => '';
         agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
         agent._captureClickAxObservation = async () => ({});
-        agent._maybeFallbackClickAxWithCdp = async (_tabId, _args, response) => response;
+        agent._maybeFallbackClickAxWithCdp = async () => {
+          throw new Error('protected click_ax must not issue a second CDP dispatch');
+        };
         agent._annotateClickProgress = async () => {};
         agent._recordInteractionRect = () => {};
       }
       const dispatchBinding = { token: 'toolbar-binding', frameId: 7, ref_id: 'ref_906' };
-      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, { dispatchBinding });
+      const recipientBinding = { token: 'recipient-binding' };
+      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, {
+        dispatchBinding,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: recipientBinding,
+      });
       const clickMessage = messages.find(entry => entry.message.action === 'click_ax');
       assert.deepEqual(clickMessage?.message.params.dispatchBinding, dispatchBinding, `${label}: click_ax binding was dropped`);
+      assert.equal(clickMessage?.message.params.messageRecipientGuardRequired, true, `${label}: recipient guard marker was dropped`);
+      assert.deepEqual(
+        clickMessage?.message.params.messageRecipientDispatchBinding,
+        recipientBinding,
+        `${label}: click_ax recipient binding was dropped`,
+      );
       assert.deepEqual(clickMessage?.options, { frameId: 7 }, `${label}: click_ax frame binding was dropped`);
     } finally {
       if (globalKey === 'chrome') {
@@ -38780,6 +38890,28 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(ordinaryButton.success, true);
   assert.equal(ordinaryButton.type, 'button', 'selector clicks should preserve the resolved button type');
   assert.equal(ordinaryButton.isSubmitControl, false, 'selector clicks should preserve non-submit metadata');
+
+  const blockedCommands = [];
+  client.sendCommand = async (_tabId, method, params) => {
+    blockedCommands.push({ method, params });
+    return {};
+  };
+  const recipientBlocked = await client.clickElement(42, '#send', {
+    trustedOnly: true,
+    beforeDispatch: async () => ({
+      success: false,
+      reasonCode: 'active_recipient_changed_before_dispatch',
+      error: 'active recipient changed',
+    }),
+  });
+  assert.equal(recipientBlocked.success, false);
+  assert.equal(recipientBlocked.noDispatch, true);
+  assert.equal(recipientBlocked.reasonCode, 'active_recipient_changed_before_dispatch');
+  assert.equal(
+    blockedCommands.some(call => call.params?.type === 'mousePressed'),
+    false,
+    'recipient revalidation must block before selector mousePressed dispatch',
+  );
 
   client.sendCommand = async (_tabId, _method, params) => {
     if (params.type === 'mousePressed') throw new Error('dispatch response lost');

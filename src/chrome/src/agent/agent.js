@@ -8745,7 +8745,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
     const interactionUrl = await this._currentUrl(tabId);
     const clickProgressBefore = await this._clickProgressSnapshot(tabId);
     const sideEffectWatch = this._beginClickAxSideEffectWatch(tabId);
@@ -8767,6 +8767,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : args;
     if (dispatchBinding?.token) {
       contentArgs = { ...contentArgs, dispatchBinding };
+    }
+    if (messageRecipientContext.messageRecipientGuardRequired === true) {
+      contentArgs = {
+        ...contentArgs,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: messageRecipientContext.messageRecipientDispatchBinding || null,
+      };
     }
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
@@ -8799,7 +8806,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       )) {
         this._rememberAxScope(tabId, response.documentToken, response.refScopeUrl || '');
       }
-      response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, baseline);
+      // A recipient-bound click is authorized for exactly one dispatch. The
+      // content path consumes that binding immediately before el.click(); a
+      // no-progress CDP fallback would be a second, unbound send attempt.
+      if (messageRecipientContext.messageRecipientGuardRequired !== true) {
+        response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, baseline);
+      }
       const observedAfterSnapshot = response?._clickAxAfterSnapshot || '';
       if (response) delete response._clickAxAfterSnapshot;
       await this._annotateClickProgress(
@@ -8819,7 +8831,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
     const target = resolution?.semanticTarget;
     const semanticEligible = resolution?.success === true
@@ -8832,6 +8844,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
+        null,
+        messageRecipientContext,
       );
       return {
         result: {
@@ -12394,6 +12408,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  async _consumeMessageRecipientDispatchBinding(tabId, binding, params = {}) {
+    if (!binding?.token) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_unavailable',
+        error: 'Message send blocked because recipient dispatch binding was unavailable.',
+      };
+    }
+    try {
+      return await this._sendDevContentAction(tabId, 'consume_message_recipient_dispatch_binding', {
+        messageRecipientDispatchBinding: binding,
+        ...params,
+      });
+    } catch (error) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_revalidation_failed',
+        error: `Message send blocked because recipient revalidation failed before dispatch: ${error?.message || String(error)}`,
+      };
+    }
+  }
+
   async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
     const target = normalizeMessageTarget(messaging);
     if (target?.target_kind !== 'active_conversation') return { ok: true, target };
@@ -12478,7 +12520,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: name,
       args,
       adapterName: policy.adapterName,
-      bindDispatch: name === 'set_field' && args?.submit === true,
+      bindDispatch: true,
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
 
@@ -12488,23 +12530,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && probe.messageSend === true
       && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
     if (verified) {
-      if (name === 'set_field') {
-        const binding = probe?.messageRecipientDispatchBinding;
-        if (!binding?.token) {
-          return {
-            success: false,
-            blocked: true,
-            noDispatch: true,
-            dispatched: false,
-            messageRecipientGuard: true,
-            reasonCode: 'recipient_dispatch_binding_unavailable',
-            error: 'Message send blocked because WebBrain could not bind recipient verification to the final Enter dispatch. Re-read the active conversation and retry once.',
-          };
-        }
-        if (executionContext && typeof executionContext === 'object') {
-          executionContext.messageRecipientGuardRequired = true;
-          executionContext.messageRecipientDispatchBinding = binding;
-        }
+      const binding = probe?.messageRecipientDispatchBinding;
+      if (!binding?.token) {
+        return {
+          success: false,
+          blocked: true,
+          noDispatch: true,
+          dispatched: false,
+          messageRecipientGuard: true,
+          reasonCode: 'recipient_dispatch_binding_unavailable',
+          error: 'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once.',
+        };
+      }
+      if (executionContext && typeof executionContext === 'object') {
+        executionContext.messageRecipientGuardRequired = true;
+        executionContext.messageRecipientDispatchBinding = binding;
       }
       return null;
     }
@@ -21464,7 +21504,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (duplicateSubmit) return duplicateSubmit;
 
         if (coordinatePoint) {
-          const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint);
+          const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint, {
+            messageRecipientGuardRequired,
+            messageRecipientDispatchBinding,
+          });
           if (reconciled.result) return reconciled.result;
           coordinateDiagnostic = reconciled.diagnostic;
         }
@@ -22267,6 +22310,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }, 'click_text');
           await cdpClient.armFileInputClickGuard(tabId);
           await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', info.x, info.y);
+          if (messageRecipientGuardRequired) {
+            const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
+              tabId,
+              messageRecipientDispatchBinding,
+              { dispatchPoint: { x: info.x, y: info.y } },
+            );
+            if (recipientValidation?.success !== true) return recipientValidation;
+          }
           await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y);
           await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', info.x, info.y);
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -22387,7 +22438,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           const progressBeforeSel = await this._clickProgressSnapshot(tabId);
           const beforeTabIdsSel = new Set((await chrome.tabs.query({})).map(t => t.id));
-          const selResult = await cdpClient.clickElement(tabId, args.selector);
+          const selResult = await cdpClient.clickElement(tabId, args.selector, messageRecipientGuardRequired
+            ? {
+                trustedOnly: true,
+                beforeDispatch: ({ x, y }) => this._consumeMessageRecipientDispatchBinding(
+                  tabId,
+                  messageRecipientDispatchBinding,
+                  { dispatchPoint: { x, y } },
+                ),
+              }
+            : {});
           if (selResult?.success) this._showAgentTarget(tabId, selResult.rect || selResult, 'click_selector');
           const redirectedSel = await this._redirectTargetBlankClick(tabId, beforeTabIdsSel);
           if (redirectedSel?.redirected) {
@@ -22539,6 +22599,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._showAgentTarget(tabId, { x: Math.round(clickX), y: Math.round(clickY), w: 1, h: 1 }, 'click_coordinates');
           await cdpClient.armFileInputClickGuard(tabId);
           await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', clickX, clickY);
+          if (messageRecipientGuardRequired) {
+            const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
+              tabId,
+              messageRecipientDispatchBinding,
+              { dispatchPoint: { x: clickX, y: clickY } },
+            );
+            if (recipientValidation?.success !== true) return recipientValidation;
+          }
           await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY);
           await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', clickX, clickY);
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -23032,6 +23100,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       let guardedTargetConsumed = false;
+      let messageRecipientConsumed = false;
       let keyDispatchAttempted = false;
       try {
         await cdpClient.attach(tabId);
@@ -23053,6 +23122,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
           guardedTargetConsumed = true;
+        }
+        if (messageRecipientGuardRequired) {
+          const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
+            tabId,
+            messageRecipientDispatchBinding,
+          );
+          if (recipientValidation?.success !== true) return recipientValidation;
+          messageRecipientConsumed = true;
         }
         // windowsVirtualKeyCode values below match the same ArrowUp/ArrowDown
         // dispatch already used by the <select> fast-path above — trusted
@@ -23087,7 +23164,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         return { success: true, dispatched: true, method: 'cdp-key', key, repeat };
       } catch (e) {
-        if (guardedTargetConsumed) {
+        if (guardedTargetConsumed || messageRecipientConsumed) {
           return {
             success: false,
             dispatched: keyDispatchAttempted,
@@ -23315,7 +23392,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch { /* tab lookup failures are non-fatal — fall through */ }
 
     if (name === 'click_ax') {
-      return this._dispatchClickAx(tabId, args, this._lastAxScopes.get(tabId), dispatchBinding);
+      return this._dispatchClickAx(
+        tabId,
+        args,
+        this._lastAxScopes.get(tabId),
+        dispatchBinding,
+        { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+      );
     }
 
     const interactionUrl = (
@@ -23347,7 +23430,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         dispatchBinding,
       };
     }
-    if (name === 'set_field' && messageRecipientGuardRequired) {
+    if (messageRecipientGuardRequired
+      && ['click', 'press_keys', 'set_field'].includes(name)) {
       contentArgs = {
         ...contentArgs,
         messageRecipientGuardRequired: true,
