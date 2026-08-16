@@ -45740,7 +45740,7 @@ test('Chat Completions streaming rejects premature EOF and accepts terminal comp
       }
       assert.deepEqual(complete, [
         { type: 'text', content: 'done' },
-        { type: 'done', content: '' },
+        { type: 'done', content: '', finishReason: 'stop' },
       ], `${label}: terminal finish_reason should complete the stream`);
     }
   } finally {
@@ -47332,6 +47332,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
         globalThis.fetch = async () => new Response([
           `data: ${JSON.stringify({ choices: [{ delta: { content: `${id} answer` } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read_page', arguments: '{}' } }] } }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } })}\n\n`,
           'data: [DONE]\n\n',
         ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
@@ -47354,7 +47355,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
             }],
           },
           { type: 'usage', usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } },
-          { type: 'done', content: '' },
+          { type: 'done', content: '', finishReason: 'tool_calls' },
         ], `${label}/${id}: compatible stream fixture mismatch`);
       }
     }
@@ -47376,6 +47377,7 @@ test('llama.cpp Ask streams consume OpenAI-compatible fixtures and require DONE'
         `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'Think.' } }] })}\n\n`,
         `data: ${JSON.stringify({ choices: [{ delta: { content: 'Local answer.' } }] })}\n\n`,
         `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read_page', arguments: '{}' } }] } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
         `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } })}\n\n`,
         'data: [DONE]\n\n',
       ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
@@ -47394,7 +47396,7 @@ test('llama.cpp Ask streams consume OpenAI-compatible fixtures and require DONE'
           }],
         },
         { type: 'usage', usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } },
-        { type: 'done', content: '' },
+        { type: 'done', content: '', finishReason: 'tool_calls' },
       ]);
 
       globalThis.fetch = async () => new Response(
@@ -47441,7 +47443,7 @@ test('Anthropic Ask streams require message_stop and propagate in-stream error e
       const completeSse = [
         `data: ${JSON.stringify({ type: 'message_start', message: { usage: { input_tokens: 4, output_tokens: 1 } } })}\n\n`,
         `data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'Claude answer.' } })}\n\n`,
-        `data: ${JSON.stringify({ type: 'message_delta', usage: { output_tokens: 3 } })}\n\n`,
+        `data: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } })}\n\n`,
         `data: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
       ].join('');
       globalThis.fetch = async () => new Response(completeSse, {
@@ -47453,6 +47455,7 @@ test('Anthropic Ask streams require message_stop and propagate in-stream error e
       assert.equal(chunks[0]?.content, 'Claude answer.');
       assert.equal(chunks[1]?.type, 'usage');
       assert.equal(chunks[2]?.type, 'done');
+      assert.equal(chunks[2]?.finishReason, 'end_turn');
 
       globalThis.fetch = async () => new Response(
         `data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'Partial' } })}\n\n`,
@@ -47499,6 +47502,7 @@ test('Azure OpenAI Ask streams require DONE and distinguish terminal API errors'
       });
       const completeSse = [
         `data: ${JSON.stringify({ choices: [{ delta: { content: 'Azure answer.' } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`,
         `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } })}\n\n`,
         'data: [DONE]\n\n',
       ].join('');
@@ -47511,6 +47515,7 @@ test('Azure OpenAI Ask streams require DONE and distinguish terminal API errors'
       assert.equal(chunks[0]?.content, 'Azure answer.');
       assert.equal(chunks[1]?.type, 'usage');
       assert.equal(chunks[2]?.type, 'done');
+      assert.equal(chunks[2]?.finishReason, 'stop');
 
       globalThis.fetch = async () => new Response(
         `data: ${JSON.stringify({ choices: [{ delta: { content: 'Partial' } }] })}\n\n`,
@@ -47581,7 +47586,7 @@ test('Ask stream aggregation exposes text live but withholds tool calls until re
         };
         await completedGate;
         yield { type: 'usage', usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 } };
-        yield { type: 'done', responseItems };
+        yield { type: 'done', responseItems, stop_reason: 'tool_calls' };
       },
     };
     const agent = new AgentClass({});
@@ -47608,6 +47613,7 @@ test('Ask stream aggregation exposes text live but withholds tool calls until re
     assert.equal(result.content, 'Checking', `${label}: final text aggregation mismatch`);
     assert.equal(result.toolCalls?.[0]?.function?.name, 'read_page', `${label}: completed tool call missing`);
     assert.deepEqual(result.responseItems, responseItems, `${label}: completed replay items missing`);
+    assert.equal(result.finishReason, 'tool_calls', `${label}: terminal stream reasons should reach aggregation`);
   }
 });
 
@@ -48945,6 +48951,7 @@ test('official GPT-5.6 streaming uses Responses events for text, tools, and usag
           {
             type: 'response.completed',
             response: {
+              stop_reason: 'stop',
               usage: { input_tokens: 8, output_tokens: 3, total_tokens: 11 },
               output: [
                 { type: 'message', content: [{ type: 'output_text', text: 'Hello' }] },
@@ -48977,6 +48984,7 @@ test('official GPT-5.6 streaming uses Responses events for text, tools, and usag
       assert.equal(chunks[2].type, 'usage');
       assert.equal(chunks[2].usage.prompt_tokens, 8);
       assert.equal(chunks.at(-1).type, 'done');
+      assert.equal(chunks.at(-1).finishReason, 'stop');
       assert.equal(chunks.at(-1).responseItems.length, 2);
     }
   } finally {
@@ -81029,6 +81037,9 @@ test('message info aggregates model calls into verbose completion pills', async 
     assert.equal(aggregateMessageCompletion(null, {
       raw: { status: 'completed' },
     }, 1000).finishReason, '', `${label}: request lifecycle status is not a generation stop reason`);
+    assert.equal(aggregateMessageCompletion(first, {
+      finishReason: '',
+    }, 1000).finishReason, '', `${label}: an explicit empty terminal reason should clear an earlier call's stale reason`);
     assert.deepEqual(buildMessageInfoPills({
       createdAt: Date.parse('2024-12-12T12:44:00Z'),
       completion,
@@ -81066,19 +81077,22 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     assert.match(panel, /import \{ buildMessageInfoPills \} from '\.\.\/message-info\.js';/, `${label}: sidepanel should adapt message info to the DOM`);
     assert.match(
       panel,
-      /function bindMessageInfoToggle\([\s\S]*?addEventListener\('click'[\s\S]*?toggleMessageInfo\(/,
-      `${label}: clicking a chat message should toggle its info row`,
+      /function ensureMessageInfoElements\([\s\S]*?createElement\('button'\)[\s\S]*?aria-controls[\s\S]*?aria-expanded/,
+      `${label}: message info should expose a semantic button associated with its row`,
     );
+    assert.match(panel, /function bindMessageInfoToggle\([\s\S]*?toggle\.addEventListener\('click',[\s\S]*?msgEl\.addEventListener\('click'/, `${label}: the semantic button and bubble click should share the info toggle`);
+    const bindMessageInfoToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.doesNotMatch(bindMessageInfoToggle, /msgEl\.tabIndex|msgEl\.addEventListener\('keydown'/, `${label}: the generic message container must not masquerade as a keyboard control`);
     assert.match(panel, /case 'message_info':[\s\S]*?applyMessageCompletion\(/, `${label}: live completion metadata should reach the active message`);
     assert.match(panel, /case 'run_complete':[\s\S]*?setMessageCreatedAt\([\s\S]*?data\?\.endedAt/, `${label}: assistant sent time should use the terminal timestamp`);
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindMessageInfoToggles\(\)/, `${label}: restored messages should regain click behavior`);
     assert.match(panel, /createdAt: messageCreatedAt\(msgEl\)/, `${label}: durable history should preserve each message timestamp`);
     const createdAtReader = panel.match(/function messageCreatedAt\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
     assert.doesNotMatch(createdAtReader, /Date\.now\(\)/, `${label}: unknown legacy timestamps must remain unknown`);
-    const bindToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
-    assert.doesNotMatch(bindToggle, /setMessageCreatedAt\(/, `${label}: legacy restored messages must not invent a sent time while rebinding`);
+    assert.doesNotMatch(bindMessageInfoToggle, /setMessageCreatedAt\(/, `${label}: legacy restored messages must not invent a sent time while rebinding`);
     assert.match(panel, /setMessageCreatedAt\(msgEl, options\.createdAt \?\? Date\.now\(\)\)/, `${label}: newly-created messages should receive a real sent time`);
     assert.match(css, /\.message-info \{[\s\S]*?\.message-info-pill \{/, `${label}: info rows and verbose pills should be styled`);
+    assert.match(css, /\.message-info-toggle \{[\s\S]*?\.message-info-toggle:focus-visible/, `${label}: the semantic toggle should have a visible keyboard focus treatment`);
     for (const key of ['sent', 'speed', 'tokens', 'duration', 'finish', 'hint']) {
       assert.match(locale, new RegExp(`'sp\\.message_info\\.${key}'`), `${label}: ${key} message-info copy missing`);
     }

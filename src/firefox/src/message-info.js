@@ -49,6 +49,7 @@ function formatNumber(value, locale, maximumFractionDigits = 0) {
 export function aggregateMessageCompletion(current, result, durationMs) {
   const previous = current || {};
   const usage = result?.usage || {};
+  const reportedFinishReason = finishReason(result);
   const inputTokens = firstPositiveInteger(
     usage.prompt_tokens,
     usage.input_tokens,
@@ -68,7 +69,9 @@ export function aggregateMessageCompletion(current, result, durationMs) {
     outputTokens: firstPositiveInteger(previous.outputTokens) + outputTokens,
     totalTokens: firstPositiveInteger(previous.totalTokens) + (reportedTotal || inputTokens + outputTokens),
     durationMs: firstPositiveInteger(previous.durationMs) + (Number.isFinite(elapsed) && elapsed > 0 ? Math.round(elapsed) : 0),
-    finishReason: finishReason(result) || String(previous.finishReason || '').slice(0, 80),
+    finishReason: reportedFinishReason || (Object.hasOwn(result || {}, 'finishReason')
+      ? ''
+      : String(previous.finishReason || '').slice(0, 80)),
   };
 }
 

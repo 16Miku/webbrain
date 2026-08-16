@@ -10460,8 +10460,9 @@ function messageCompletionFromElement(msgEl) {
   };
 }
 
-function renderMessageInfo(msgEl) {
-  if (!msgEl) return;
+let messageInfoRowId = 0;
+
+function ensureMessageInfoElements(msgEl) {
   let row = msgEl.querySelector(':scope > .message-info');
   if (!row) {
     row = document.createElement('div');
@@ -10469,6 +10470,31 @@ function renderMessageInfo(msgEl) {
     row.setAttribute('role', 'status');
     msgEl.appendChild(row);
   }
+  if (!row.id) {
+    let id;
+    do {
+      id = `message-info-${++messageInfoRowId}`;
+    } while (document.getElementById(id));
+    row.id = id;
+  }
+  let toggle = msgEl.querySelector(':scope > .message-info-toggle');
+  if (!toggle) {
+    toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'message-info-toggle';
+    toggle.textContent = 'ⓘ';
+    msgEl.insertBefore(toggle, row);
+  }
+  toggle.setAttribute('aria-controls', row.id);
+  toggle.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
+  toggle.setAttribute('aria-label', t('sp.message_info.hint'));
+  toggle.title = t('sp.message_info.hint');
+  return { row, toggle };
+}
+
+function renderMessageInfo(msgEl) {
+  if (!msgEl) return;
+  const { row } = ensureMessageInfoElements(msgEl);
   const pills = buildMessageInfoPills({
     createdAt: messageCreatedAt(msgEl),
     completion: messageCompletionFromElement(msgEl),
@@ -10494,7 +10520,7 @@ function messageInfoClickIsInteractive(target) {
 
 function toggleMessageInfo(msgEl) {
   const open = msgEl.classList.toggle('message-info-open');
-  msgEl.setAttribute('aria-expanded', String(open));
+  ensureMessageInfoElements(msgEl).toggle.setAttribute('aria-expanded', String(open));
   renderMessageInfo(msgEl);
   schedulePersist();
 }
@@ -10502,19 +10528,16 @@ function toggleMessageInfo(msgEl) {
 function bindMessageInfoToggle(msgEl) {
   if (!msgEl?.matches?.('.message.user, .message.assistant')) return;
   if (!messageCreatedAt(msgEl)) return;
-  msgEl.tabIndex = 0;
-  msgEl.title = t('sp.message_info.hint');
-  msgEl.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
+  msgEl.removeAttribute('tabindex');
+  msgEl.removeAttribute('aria-expanded');
+  msgEl.removeAttribute('title');
+  const { toggle } = ensureMessageInfoElements(msgEl);
   if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
   if (msgEl.__wbMessageInfoBound) return;
   msgEl.__wbMessageInfoBound = true;
+  toggle.addEventListener('click', () => toggleMessageInfo(msgEl));
   msgEl.addEventListener('click', (event) => {
     if (messageInfoClickIsInteractive(event.target)) return;
-    toggleMessageInfo(msgEl);
-  });
-  msgEl.addEventListener('keydown', (event) => {
-    if (event.target !== msgEl || (event.key !== 'Enter' && event.key !== ' ')) return;
-    event.preventDefault();
     toggleMessageInfo(msgEl);
   });
 }
@@ -10547,7 +10570,7 @@ function applyMessageCompletion(msgEl, completion = {}) {
 function refreshOpenMessageInfoRows() {
   messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant').forEach((msgEl) => {
     if (!messageCreatedAt(msgEl)) return;
-    msgEl.title = t('sp.message_info.hint');
+    ensureMessageInfoElements(msgEl);
     if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
   });
 }

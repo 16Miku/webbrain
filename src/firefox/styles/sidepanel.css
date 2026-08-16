@@ -1261,12 +1261,6 @@ body {
   cursor: pointer;
 }
 
-.message.user:focus-visible,
-.message.assistant:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
 .message.assistant.assistant-awaiting-content {
   display: none;
 }
@@ -1336,6 +1330,38 @@ body {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
+}
+
+.message-info-toggle {
+  align-self: flex-start;
+  width: 22px;
+  height: 22px;
+  margin: 3px 3px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 22px;
+  opacity: 0.72;
+}
+
+.message.user .message-info-toggle {
+  align-self: flex-end;
+}
+
+.message-info-toggle:hover,
+.message-info-toggle:focus-visible {
+  background: var(--overlay-bg);
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.message-info-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .message-info {
