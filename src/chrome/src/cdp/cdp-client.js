@@ -3697,6 +3697,9 @@ export class CDPClient {
    */
   async clickElement(tabId, selector, options = {}) {
     const trustedOnly = options?.trustedOnly === true;
+    const beforeDispatch = typeof options?.beforeDispatch === 'function'
+      ? options.beforeDispatch
+      : null;
     const info = await this.resolveSelector(tabId, selector, options);
     if (!info) return { success: false, dispatched: false, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, error: info.error };
@@ -3740,6 +3743,22 @@ export class CDPClient {
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
         });
+        if (beforeDispatch) {
+          const validation = await beforeDispatch({
+            x: info.x,
+            y: info.y,
+            tag: info.tag,
+            rect,
+          });
+          if (validation?.success !== true) {
+            return {
+              ...(validation || {}),
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+            };
+          }
+        }
         dispatchAttempted = true;
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,

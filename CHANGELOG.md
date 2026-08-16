@@ -14,6 +14,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Localized the Apocalypse Mode interface across all supported Chrome and Firefox locales.
 
 ### Fixed
+- Prevented direct-message sends on protected messaging routes unless the planner carries the user-authorized recipient and a read-only pre-dispatch probe verifies one unique, exact active-conversation header identity. Pronoun follow-ups resolve to a named recipient only from unique authentic prior-user context, otherwise they clarify; generic pronouns never silently mean the open thread. Active-conversation requests are pinned to that identity before any page tool runs; ordinary conversation text never counts as recipient evidence, structurally verified search/navigation fields stay distinct from composer submission, and alternate or ambiguous editable composers plus unresolved or distant controls and dispatch paths that cannot bind to the verified recipient—including attachment injection that may auto-send—fail closed. Structurally verified conversation rows in the separate left rail remain selectable so the agent can recover from an initially wrong thread, while nested row actions and their span/SVG descendants remain blocked; verified Enter sends are limited to one keypress. Send-capable field edits, clicks, accessibility clicks, and Enter presses carry a one-use action/composer/identity binding that is revalidated at the actual click or key dispatch point; protected accessibility clicks never issue a second no-progress fallback click. Saved workflows that could dispatch on a protected messaging route stop before replay and direct the user to a normal Act task, where fresh structured recipient authorization is available. The first enforced adapter is Douyin chat, with Chrome/Firefox parity.
 - Isolated browser-managed archive storage per download so reinstalling the same archive cannot corrupt another record.
 - Required explicit Apocalypse Mode opt-in before catalog or Metalink network access.
 - Made stale-import recovery generation-safe and preserved partial data while a live importer may still be writing.
@@ -22,6 +23,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Routed local vision progress through the service worker, probed WebGPU before automatic selection, restored the prior vision provider after automatic preload failures, preserved later local-vision opt-outs, and refreshed the Settings controls after cross-tab changes.
 
 ### Tests
+- Added planner, adapter-routing, active-conversation pinning, recipient-normalization, exact-match, mismatch, missing-authorization, inconclusive-probe, alternate-dispatch, and non-message regressions for the direct-message recipient guard in both browser builds.
 - Added mirrored Chrome and Firefox regression coverage for ZIM validation and search, archive downloads and imports, opt-in network gates, recovery races, external-file permissions, and retry behavior.
 
 ## [31.0.1] - 2026-08-14
