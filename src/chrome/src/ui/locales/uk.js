@@ -604,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Чернетник очищено.',
   'sp.scratchpad.error': 'Чернетник недоступний: {msg}',
   'sp.perm.verb.schedule': 'запланувати майбутню роботу для',
+  'sp.perm.verb.window': 'змінити розмір вікна браузера на',
   'tool.schedule_resume': 'Планування відновлення',
   'tool.schedule_task': 'Планування завдання',
   'st.display.scheduled_tasks.label': 'Заплановані завдання',

@@ -604,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Pad nota dikosongkan.',
   'sp.scratchpad.error': 'Pad nota tidak tersedia: {msg}',
   'sp.perm.verb.schedule': 'menjadualkan kerja masa hadapan untuk',
+  'sp.perm.verb.window': 'menukar saiz tetingkap pelayar pada',
   'tool.schedule_resume': 'Menjadualkan sambungan semula',
   'tool.schedule_task': 'Menjadualkan tugas',
   'st.display.scheduled_tasks.label': 'Tugas berjadual',

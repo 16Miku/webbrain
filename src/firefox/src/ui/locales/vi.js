@@ -336,6 +336,7 @@ export default {
   'sp.perm.verb.upload': "tải một tập tin lên",
   'sp.perm.verb.record': "ghi lại tab (và micrô) trên",
   'sp.perm.verb.schedule': "sắp xếp công việc trong tương lai cho",
+  'sp.perm.verb.window': 'thay đổi kích thước cửa sổ trình duyệt trên',
 
   'sp.step.details': "chi tiết",
   'sp.step.input_label': "đầu vào",

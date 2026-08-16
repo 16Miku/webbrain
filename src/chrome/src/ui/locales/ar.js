@@ -604,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'تم مسح المسودة.',
   'sp.scratchpad.error': 'منطقة المسودة غير متاحة: {msg}',
   'sp.perm.verb.schedule': 'جدولة عمل مستقبلي لـ',
+  'sp.perm.verb.window': 'تغيير حجم نافذة المتصفح على',
   'tool.schedule_resume': 'جدولة استئناف',
   'tool.schedule_task': 'جدولة مهمة',
   'st.display.scheduled_tasks.label': 'المهام المجدوَلة',

@@ -338,6 +338,7 @@ export default {
   'sp.perm.verb.upload': "carregar um arquivo para",
   'sp.perm.verb.record': "grave a guia (e o microfone) em",
   'sp.perm.verb.schedule': "agendar trabalhos futuros para",
+  'sp.perm.verb.window': 'redimensionar a janela do navegador em',
 
   'sp.step.details': "detalhes",
   'sp.step.input_label': "Entrada",

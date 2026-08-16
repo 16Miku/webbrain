@@ -588,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': '스크래치패드가 지워졌습니다.',
   'sp.scratchpad.error': '스크래치패드를 사용할 수 없습니다: {msg}',
   'sp.perm.verb.schedule': '미래 작업 예약',
+  'sp.perm.verb.window': '브라우저 창 크기 조절',
   'tool.schedule_resume': '재개 예약 중',
   'tool.schedule_task': '작업 예약 중',
   'st.display.scheduled_tasks.label': '예약된 작업',

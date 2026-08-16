@@ -336,6 +336,7 @@ export default {
   'sp.perm.verb.upload': 'upload a file to',
   'sp.perm.verb.record': 'record the tab (and microphone) on',
   'sp.perm.verb.schedule': 'schedule future work for',
+  'sp.perm.verb.window': 'resize the browser window for',
 
   'sp.step.details': 'details',
   'sp.step.input_label': 'Input',

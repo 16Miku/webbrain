@@ -643,6 +643,7 @@ export default {
   'sp.scratchpad.cleared': 'Not defteri temizlendi.',
   'sp.scratchpad.error': 'Not defterine erişilemiyor: {msg}',
   'sp.perm.verb.schedule': 'gelecekteki çalışmayı zamanlamak için',
+  'sp.perm.verb.window': 'tarayıcı penceresinin boyutunu değiştirmek',
   'tool.schedule_resume': 'Devam zamanlama',
   'tool.schedule_task': 'Görev zamanlama',
   'st.display.scheduled_tasks.label': 'Zamanlanmış görevler',

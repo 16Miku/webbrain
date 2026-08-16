@@ -588,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': 'Блокнот очищен.',
   'sp.scratchpad.error': 'Блокнот недоступен: {msg}',
   'sp.perm.verb.schedule': 'запланировать будущие действия для',
+  'sp.perm.verb.window': 'изменить размер окна браузера на',
   'tool.schedule_resume': 'Планирование возобновления',
   'tool.schedule_task': 'Планирование задачи',
   'st.display.scheduled_tasks.label': 'Запланированные задачи',

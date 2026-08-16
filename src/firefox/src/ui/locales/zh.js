@@ -588,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': '草稿板已清除。',
   'sp.scratchpad.error': '草稿板不可用：{msg}',
   'sp.perm.verb.schedule': '为以下对象安排后续任务',
+  'sp.perm.verb.window': '调整浏览器窗口大小于',
   'tool.schedule_resume': '正在安排恢复',
   'tool.schedule_task': '正在安排任务',
   'st.display.scheduled_tasks.label': '定时任务',

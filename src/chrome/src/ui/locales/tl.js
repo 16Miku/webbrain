@@ -604,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Na-clear ang scratchpad.',
   'sp.scratchpad.error': 'Hindi available ang scratchpad: {msg}',
   'sp.perm.verb.schedule': 'mag-iskedyul ng gawaing hinaharap para sa',
+  'sp.perm.verb.window': 'baguhin ang laki ng window ng browser sa',
   'tool.schedule_resume': 'Nag-iiskedyul ng pagpapatuloy',
   'tool.schedule_task': 'Nag-iiskedyul ng gawain',
   'st.display.scheduled_tasks.label': 'Mga naka-iskedyul na gawain',

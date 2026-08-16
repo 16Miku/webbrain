@@ -588,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': 'スクラッチパッドをクリアしました。',
   'sp.scratchpad.error': 'スクラッチパッドを取得できませんでした: {msg}',
   'sp.perm.verb.schedule': 'での将来の作業のスケジュールを',
+  'sp.perm.verb.window': 'でのブラウザウィンドウのサイズ変更を',
   'tool.schedule_resume': '再開をスケジュール中',
   'tool.schedule_task': 'タスクをスケジュール中',
   'st.display.scheduled_tasks.label': 'スケジュールタスク',
