@@ -49153,9 +49153,12 @@ test('Azure OpenAI Ask streams require DONE and distinguish terminal API errors'
   }
 });
 
-test('Azure OpenAI reasoning deployments use max_completion_tokens and omit temperature', () => {
+test('Azure OpenAI does not guess the wire contract from the deployment name', () => {
   for (const Provider of [AzureOpenAIProviderCh, AzureOpenAIProviderFx]) {
-    for (const deployment of ['o1', 'o1-mini', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-4.1']) {
+    // Deployment names don't reveal the model behind them: o1-named
+    // deployments stay legacy, and a name that merely starts with o3/o4
+    // must not flip a gpt-35-turbo deployment to the new contract.
+    for (const deployment of ['o1', 'o1-mini', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-4.1', 'o365-assistant', 'prod-chat']) {
       const provider = new Provider({
         providerName: 'azure-openai',
         baseUrl: 'https://example.openai.azure.com',
@@ -49167,35 +49170,30 @@ test('Azure OpenAI reasoning deployments use max_completion_tokens and omit temp
         [{ role: 'user', content: 'hello' }],
         { maxTokens: 2048 },
       );
-      assert.equal(
-        body.max_completion_tokens,
-        2048,
-        `${Provider.name}/${deployment}: reasoning deployments must use max_completion_tokens`,
-      );
-      assert.equal(body.max_tokens, undefined, `${Provider.name}/${deployment}: legacy max_tokens must be absent`);
-      assert.equal(body.temperature, undefined, `${Provider.name}/${deployment}: temperature must be omitted`);
+      assert.equal(body.max_tokens, 2048, `${Provider.name}/${deployment}: default contract keeps max_tokens`);
+      assert.equal(body.max_completion_tokens, undefined, `${Provider.name}/${deployment}: no name-guessing into the new contract`);
+      assert.equal(body.temperature, 0.7, `${Provider.name}/${deployment}: default contract keeps temperature`);
     }
   }
 });
 
-test('Azure OpenAI legacy deployments keep max_tokens and temperature', () => {
+test('Azure OpenAI switches to max_completion_tokens and omits temperature via the explicit compat field', () => {
   for (const Provider of [AzureOpenAIProviderCh, AzureOpenAIProviderFx]) {
-    for (const deployment of ['gpt-4o', 'gpt-35-turbo', 'custom-deployment']) {
-      const provider = new Provider({
-        providerName: 'azure-openai',
-        baseUrl: 'https://example.openai.azure.com',
-        model: deployment,
-        apiVersion: '2024-10-21',
-        apiKey: 'test-key',
-      });
-      const body = provider._buildRequestBody(
-        [{ role: 'user', content: 'hello' }],
-        { maxTokens: 4096 },
-      );
-      assert.equal(body.max_tokens, 4096, `${Provider.name}/${deployment}: legacy contract keeps max_tokens`);
-      assert.equal(body.max_completion_tokens, undefined, `${Provider.name}/${deployment}: new-contract field must be absent`);
-      assert.equal(body.temperature, 0.7, `${Provider.name}/${deployment}: legacy contract keeps temperature`);
-    }
+    const provider = new Provider({
+      providerName: 'azure-openai',
+      baseUrl: 'https://example.openai.azure.com',
+      model: 'prod-chat',
+      apiVersion: '2025-09-01',
+      apiKey: 'test-key',
+      compat: { maxTokensField: 'max_completion_tokens' },
+    });
+    const body = provider._buildRequestBody(
+      [{ role: 'user', content: 'hello' }],
+      { maxTokens: 2048 },
+    );
+    assert.equal(body.max_completion_tokens, 2048, `${Provider.name}: explicit field must use max_completion_tokens`);
+    assert.equal(body.max_tokens, undefined, `${Provider.name}: legacy field must be absent`);
+    assert.equal(body.temperature, undefined, `${Provider.name}: reasoning contract omits temperature`);
   }
 });
 
