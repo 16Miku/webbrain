@@ -494,6 +494,7 @@ All identical to Chrome:
 - **Context management** — auto-trim at >50 messages or >80,000 chars, LLM-powered summarization, emergency trim on context overflow, image pruning (last 4 only), tool-result cap at 8,000 chars
 - **Verbose mode** — three levels: Normal / Verbose ON / Deep verbose (Shift+click dumps the LLM-payload ring buffer to DevTools console). Deep verbose works identically; there's just no persisted trace UI to browse it from
 - **Site adapters** — same adapter set as Chrome (58 sites across code/dev, productivity, social, messaging, e-commerce, travel, finance, news paywalls, job portals, etc.); same `getActiveAdapter(url)` matching, same mid-conversation re-injection on navigation. Only ONE adapter fires at a time so prompt cost is fixed regardless of total count.
+- **Recipient guard** — same structured planner target and URL-scoped runtime policy as Chrome. On Douyin `/chat`, Firefox pins an `active_conversation` request to exactly one strong visible header before any page tool runs, then uses a read-only content-script probe immediately before send-like dispatch. Exact identity mismatches, unresolved controls/composers, ambiguity, and dispatch paths that cannot bind their effects to the verified recipient all fail closed.
 
 ---
 
@@ -558,7 +559,9 @@ Same end-to-end shape as Chrome, minus the CDP-trusted-event path and the offscr
 
 Planner prompts follow Chrome's token-minimal gating: the base planner prompt
 includes general repeated-task pacing, while API replay guidance is appended only
-when the tab conversation already has `/allow-api`.
+when the tab conversation already has `/allow-api`. Both compact and full
+planner schemas carry a language-neutral messaging target only when the trusted
+request authorizes an external message.
 
 ---
 

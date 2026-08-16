@@ -14,6 +14,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Localized the Apocalypse Mode interface across all supported Chrome and Firefox locales.
 
 ### Fixed
+- Prevented direct-message sends on protected messaging routes unless the planner carries the user-authorized recipient and a read-only pre-dispatch probe verifies one exact active-conversation identity. Active-conversation requests are pinned to that identity before any page tool runs; unresolved controls/composers and dispatch paths that cannot bind to the verified recipient fail closed. The first enforced adapter is Douyin chat, with Chrome/Firefox parity.
 - Isolated browser-managed archive storage per download so reinstalling the same archive cannot corrupt another record.
 - Required explicit Apocalypse Mode opt-in before catalog or Metalink network access.
 - Made stale-import recovery generation-safe and preserved partial data while a live importer may still be writing.
@@ -22,6 +23,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Routed local vision progress through the service worker, probed WebGPU before automatic selection, restored the prior vision provider after automatic preload failures, preserved later local-vision opt-outs, and refreshed the Settings controls after cross-tab changes.
 
 ### Tests
+- Added planner, adapter-routing, active-conversation pinning, recipient-normalization, exact-match, mismatch, missing-authorization, inconclusive-probe, alternate-dispatch, and non-message regressions for the direct-message recipient guard in both browser builds.
 - Added mirrored Chrome and Firefox regression coverage for ZIM validation and search, archive downloads and imports, opt-in network gates, recovery races, external-file permissions, and retry behavior.
 
 ## [31.0.1] - 2026-08-14

@@ -4351,6 +4351,213 @@
     }
   }
 
+  // Read-only pre-dispatch probe for adapters that require a verified active
+  // conversation before a message can be sent. It deliberately ignores input
+  // values and ordinary page text: a searched recipient name is not proof that
+  // the corresponding conversation is active.
+  function _probeMessageRecipientGuard(params = {}) {
+    try {
+      const tool = String(params.tool || '');
+      const observationOnly = tool === 'observe_active_conversation';
+      const args = params.args && typeof params.args === 'object' ? params.args : {};
+      const compact = (value, max = 240) => String(value ?? '')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, max);
+      const visible = (el) => {
+        if (!el || el.nodeType !== 1 || !el.isConnected) return false;
+        try {
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0;
+        } catch {
+          return false;
+        }
+      };
+      const editable = (el) => {
+        if (!el || el.nodeType !== 1) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        const role = String(el.getAttribute?.('role') || '').toLowerCase();
+        return !!el.isContentEditable || tag === 'textarea' || role === 'textbox';
+      };
+      const active = typeof _deepActiveElement === 'function' ? _deepActiveElement() : document.activeElement;
+
+      let target = null;
+      let targetResolved = observationOnly || tool === 'press_keys';
+      if (tool === 'click_ax' || tool === 'set_field') {
+        const refId = String(args.ref_id || '');
+        if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
+        targetResolved = !!target;
+      } else if (tool === 'click') {
+        if (typeof args.selector === 'string' && args.selector) {
+          try { target = document.querySelector(args.selector); } catch {}
+        } else if (Number.isInteger(args.index) && args.index >= 0) {
+          target = queryInteractiveForToolIndex()[args.index] || null;
+        } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
+          target = document.elementFromPoint(args.x, args.y);
+        } else if (typeof args.text === 'string' && args.text.trim()) {
+          const needle = compact(args.text).toLocaleLowerCase();
+          const matches = Array.from(document.querySelectorAll(
+            'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
+          )).filter((el) => compact(
+            el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title')
+          ).toLocaleLowerCase() === needle);
+          if (matches.length === 1) target = matches[0];
+        }
+        targetResolved = !!target;
+      }
+
+      const composerCandidates = [];
+      const addComposer = (el) => {
+        if (editable(el) && visible(el) && !composerCandidates.includes(el)) composerCandidates.push(el);
+      };
+      addComposer(active);
+      addComposer(target);
+      try {
+        for (const el of document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')) {
+          addComposer(el);
+        }
+      } catch {}
+      composerCandidates.sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return (br.bottom - ar.bottom)
+          || (br.left - ar.left)
+          || ((br.width * br.height) - (ar.width * ar.height));
+      });
+      const layoutComposer = composerCandidates[0] || null;
+
+      let composer = null;
+      let messageSend = null;
+      if (observationOnly) {
+        composer = layoutComposer;
+      } else if (tool === 'press_keys') {
+        composer = editable(active) && visible(active) ? active : null;
+        if (!composer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        messageSend = String(args.key || '') === 'Enter';
+      } else if (tool === 'set_field') {
+        if (!targetResolved || !editable(target) || !visible(target)) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = target;
+        messageSend = args.submit === true;
+      } else if (tool === 'click' || tool === 'click_ax') {
+        if (!targetResolved || !target) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        const control = target.closest?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') || target;
+        if (!visible(control)) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = layoutComposer;
+        if (!composer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        const composerRect = composer.getBoundingClientRect();
+        const controlRect = control.getBoundingClientRect();
+        const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
+        const verticalGap = Math.max(0, composerRect.top - controlRect.bottom, controlRect.top - composerRect.bottom);
+        const sameForm = !!composer.closest?.('form') && composer.closest('form') === control.closest?.('form');
+        // Framework chat controls are often clickable divs rather than native
+        // buttons, and a nearby control can send an attachment even when the
+        // text composer is empty. Geometry must therefore win over tag shape.
+        messageSend = sameForm || (horizontalGap <= 240 && verticalGap <= 120);
+        if (!messageSend) {
+          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+        }
+      }
+
+      if (!composer) {
+        return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: 'Active conversation composer could not be resolved.' };
+      }
+
+      const composerRect = composer.getBoundingClientRect();
+      const topBandBottom = Math.min(composerRect.top - 12, window.innerHeight * 0.5);
+      const identities = [];
+      const strongIdentities = [];
+      const seen = new Set();
+      const strongSeen = new Set();
+      const inConversationBand = (el) => {
+        if (topBandBottom <= 0) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.top >= 0
+          && rect.bottom <= topBandBottom
+          && rect.right >= composerRect.left
+          && rect.left <= composerRect.right;
+      };
+      const addIdentity = (el, requireConversationBand = false, strong = false) => {
+        if (!visible(el) || editable(el) || el.closest?.('input,textarea,[contenteditable="true"]')) return;
+        if (requireConversationBand && !inConversationBand(el)) return;
+        const text = compact(
+          el.getAttribute?.('aria-label')
+          || el.getAttribute?.('title')
+          || el.innerText
+          || el.textContent
+        );
+        if (!text || text.length > 120 || seen.has(text)) return;
+        seen.add(text);
+        identities.push(text);
+        if (strong && !strongSeen.has(text)) {
+          strongSeen.add(text);
+          strongIdentities.push(text);
+        }
+      };
+
+      for (const el of document.querySelectorAll(
+        '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
+      )) {
+        // Search results and navigation rows can also be selected/current.
+        // They count only when they occupy the active conversation's header
+        // band above the composer, never merely because they contain a name.
+        addIdentity(el, true, true);
+        if (identities.length >= 16) break;
+      }
+
+      if (identities.length < 16) {
+        for (const el of document.querySelectorAll(
+          'h1,h2,h3,h4,[role="heading"]'
+        )) {
+          addIdentity(el, true, true);
+          if (identities.length >= 16) break;
+        }
+      }
+
+      if (identities.length < 16) {
+        for (const el of document.querySelectorAll(
+          '[data-testid*="chat" i],[data-e2e*="chat" i]'
+        )) {
+          addIdentity(el, true);
+          if (identities.length >= 16) break;
+        }
+      }
+
+      if (identities.length < 16 && topBandBottom > 0) {
+        const all = document.body?.querySelectorAll?.('*') || [];
+        for (let i = 0; i < all.length && i < 5000 && identities.length < 16; i++) {
+          const el = all[i];
+          if (!visible(el) || editable(el) || el.children?.length > 4) continue;
+          addIdentity(el, true);
+        }
+      }
+
+      return {
+        success: true,
+        messageSend: observationOnly ? false : messageSend === true,
+        conclusive: true,
+        identityCandidates: identities.slice(0, 16),
+        strongIdentityCandidates: strongIdentities.slice(0, 8),
+      };
+    } catch (error) {
+      return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: error?.message || String(error) };
+    }
+  }
+
   // --- Message handler ---
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
@@ -4372,6 +4579,7 @@
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
+      'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}),
       'scroll': () => scrollPage(msg.params || {}),
       'extract_data': () => extractData(msg.params || {}),

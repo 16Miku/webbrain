@@ -29,7 +29,8 @@ import { buildGithubStargazerProgressItems } from './observers/github-stargazers
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
-import { getActiveAdapter, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { getActiveAdapter, getMessageRecipientGuardPolicy, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import {
   fetchUrl,
   executeHttpSkillTool,
@@ -5129,6 +5130,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         afterUrl = beforeUrl;
       }
 
+      // Reuse the navigation snapshot so this last-moment recipient check does
+      // not add another URL read or perturb navigation detection. Keep it as
+      // close to dispatch as possible: permission and confirmation can happen
+      // first, but a mismatched conversation never reaches executeTool().
+      const messageRecipientBlock = await this._messageRecipientGuardBlock(
+        tabId, fnName, fnArgs, beforeUrl,
+      );
+      if (messageRecipientBlock) {
+        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+        onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(messageRecipientBlock),
+        });
+        const runId = this.currentRunId.get(tabId);
+        if (runId) trace.recordToolCall(runId, step, {
+          name: fnName, args: fnArgs, result: messageRecipientBlock, latencyMs: 0,
+        });
+        onUpdate('warning', { message: 'Message send blocked until the active recipient is verified.' });
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
+
       onUpdate('tool_call', {
         name: fnName,
         args: fnArgs,
@@ -8435,6 +8460,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? gate.requiresStateChange
         : null,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
+      messaging: normalizeMessageTarget(gate.messaging),
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence: gate.allowsAppStateToolEvidence === true,
       requiredSchedulingTool: gate.requiredSchedulingTool || null,
@@ -9210,6 +9236,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
         };
       }
+      const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
+      if (!messagingPin.ok) {
+        onUpdate('warning', { message: messagingPin.error });
+        return {
+          proceed: false,
+          message: messagingPin.error,
+          reason: 'active_recipient_unverified',
+          requestKind: 'clarify',
+          requiresStateChange: false,
+          requiresSubmission: true,
+        };
+      }
+      plan.messaging = messagingPin.target;
       if (!recheckOnly) this._armReadCompletenessFromPlan(tabId, plan);
       return {
         proceed: true,
@@ -9217,6 +9256,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         responseLanguagePolicy: plan.response_language,
         requiresStateChange: plan.requires_state_change === true,
         requiresSubmission: plan.requires_submission,
+        messaging: plan.messaging,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: plan.scheduling?.tool || null,
@@ -9435,6 +9475,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
 
+      const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
+      if (!messagingPin.ok) {
+        onUpdate('warning', { message: messagingPin.error });
+        return {
+          proceed: false,
+          message: messagingPin.error,
+          reason: 'active_recipient_unverified',
+          requestKind: 'clarify',
+          requiresStateChange: false,
+          requiresSubmission: true,
+        };
+      }
+      plan.messaging = messagingPin.target;
+
       const eligibleSkillIds = new Set(skillCatalog.map((skill) => skill.id));
       plan.skill_ids = (plan.skill_ids || []).filter((skillId) => eligibleSkillIds.has(skillId));
 
@@ -9461,6 +9515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: plan.requires_state_change === true,
           requiresSubmission: plan.requires_submission,
+          messaging: plan.messaging,
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
           allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
           requiredSchedulingTool: plan.scheduling?.tool || null,
@@ -9544,6 +9599,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(approvedPlanEdited ? { responseLanguageApprovedPlanOverride: true } : {}),
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
+        messaging: approvedPlanEdited ? null : plan.messaging,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
@@ -10610,6 +10666,113 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       controlFingerprint: (hash >>> 0).toString(16),
     };
   };
+
+  async _messageRecipientContentProbe(tabId, params) {
+    try {
+      return await browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'probe_message_recipient_guard',
+        params,
+      });
+    } catch (error) {
+      return { success: false, messageSend: null, conclusive: false, error: error?.message || String(error) };
+    }
+  }
+
+  async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
+    const target = normalizeMessageTarget(messaging);
+    if (target?.target_kind !== 'active_conversation') return { ok: true, target };
+
+    let policy = null;
+    try {
+      policy = getMessageRecipientGuardPolicy(pageUrl || await this._currentUrl(tabId));
+    } catch {}
+    if (!policy?.verifyActiveRecipient) return { ok: true, target };
+
+    const probe = await this._messageRecipientContentProbe(tabId, {
+      tool: 'observe_active_conversation',
+      args: {},
+      adapterName: policy.adapterName,
+    });
+    const identities = new Map();
+    for (const value of Array.isArray(probe?.strongIdentityCandidates)
+      ? probe.strongIdentityCandidates
+      : []) {
+      const identity = String(value || '').trim();
+      const normalized = normalizeRecipientIdentity(identity);
+      if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
+    }
+    if (probe?.success === true && probe?.conclusive === true && identities.size === 1) {
+      return {
+        ok: true,
+        target: { target_kind: 'named', recipient: [...identities.values()][0] },
+        pinnedActiveConversation: true,
+      };
+    }
+    return {
+      ok: false,
+      target: null,
+      error: 'WebBrain could not pin the currently open conversation to one verified recipient identity. Name the recipient explicitly, or open a conversation with one clear visible header and retry. No page tools ran.',
+    };
+  }
+
+  async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '') {
+    const name = String(toolName || '');
+    const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys']);
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
+    if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
+    if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
+    if (name === 'set_field' && args?.submit !== true) return null;
+
+    let policy = null;
+    try {
+      policy = getMessageRecipientGuardPolicy(pageUrl || await this._currentUrl(tabId));
+    } catch {}
+    if (!policy?.verifyActiveRecipient) return null;
+
+    if (unbindableDispatchTools.has(name)) {
+      return {
+        success: false,
+        blocked: true,
+        noDispatch: true,
+        dispatched: false,
+        messageRecipientGuard: true,
+        unsafeMessageDispatchPath: true,
+        reasonCode: 'recipient_unverifiable_dispatch_path',
+        error: `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+      };
+    }
+
+    const probe = await this._messageRecipientContentProbe(tabId, {
+      tool: name,
+      args,
+      adapterName: policy.adapterName,
+    });
+    if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
+
+    const guard = this._planExecutionGuards.get(tabId);
+    const target = normalizeMessageTarget(guard?.messaging);
+    const verified = probe?.success === true
+      && probe.messageSend === true
+      && messageTargetMatchesObservedIdentities(target, probe.identityCandidates);
+    if (verified) return null;
+
+    return {
+      success: false,
+      blocked: true,
+      noDispatch: true,
+      dispatched: false,
+      messageRecipientGuard: true,
+      reasonCode: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+        ? 'message_send_classification_inconclusive'
+        : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
+      error: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+        ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
+        : target
+          ? 'Message send blocked: the active conversation does not exactly match the recipient authorized by the user. Select the intended conversation, re-read its visible header, then retry the send action.'
+          : 'Message send blocked: the current task has no structured recipient authorization. Ask the user to name the recipient or explicitly authorize the currently open conversation before retrying.',
+    };
+  }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
     const normalizedHost = normalizeHost(host || '') || String(host || '').trim() || 'this site';
@@ -13257,6 +13420,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const requiresSubmission = typeof gateOutcome?.requiresSubmission === 'boolean'
       ? gateOutcome.requiresSubmission
       : null;
+    const messaging = normalizeMessageTarget(gateOutcome?.messaging);
     const allowsAppStateToolEvidence = gateOutcome?.allowsAppStateToolEvidence === true;
     const requiredSchedulingTool = gateOutcome?.requiredSchedulingTool === 'schedule_task'
       || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
@@ -13270,6 +13434,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried?.requestKind === 'execute'
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
+      && JSON.stringify(carried.messaging || null) === JSON.stringify(messaging)
       && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
@@ -13279,6 +13444,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestKind,
       requiresStateChange,
       requiresSubmission,
+      messaging,
       requiresDownload,
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence,
@@ -13485,6 +13651,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requestKind: guard.requestKind,
         requiresStateChange: guard.requiresStateChange,
         requiresSubmission: guard.requiresSubmission,
+        messaging: guard.messaging,
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,

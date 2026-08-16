@@ -250,6 +250,7 @@ function binaryResponse(status, body = 'media-bytes', contentType = 'video/mp4',
 const {
   getActiveAdapter,
   getFullPageCapturePolicy,
+  getMessageRecipientGuardPolicy,
   listAdapters,
   listAdapterWorkflowProfiles,
 } = await import(
@@ -258,6 +259,7 @@ const {
 const {
   getActiveAdapter: getActiveAdapterFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
+  getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
   listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapters.js').replace(/\\/g, '/')
@@ -938,6 +940,12 @@ const { Agent: AgentCh } = await import(
 );
 const { Agent: AgentFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/agent.js').replace(/\\/g, '/')
+);
+const MessageRecipientGuardCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
+);
+const MessageRecipientGuardFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
 );
 const { repairDoubleEscapedAssistantText: repairDoubleEscapedAssistantTextCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/text-sanitize.js').replace(/\\/g, '/')
@@ -3321,6 +3329,225 @@ test('matches Douyin video and live surfaces with verification and publication g
   assert.match(a?.notes||'',/关注.*点赞.*收藏.*评论.*私信/s);
   assert.match(a?.notes||'',/投稿.*creator\.douyin\.com.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
   assert.equal(f?.notes,a?.notes);
+  assert.deepEqual(getMessageRecipientGuardPolicy('https://www.douyin.com/chat'), {
+    adapterName: 'douyin', verifyActiveRecipient: true,
+  });
+  assert.deepEqual(getMessageRecipientGuardPolicyFx('https://www.douyin.com/chat'), {
+    adapterName: 'douyin', verifyActiveRecipient: true,
+  });
+  assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/chat/123')?.adapterName, 'douyin');
+  assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/video/123'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://creator.douyin.com/creator-micro/content/upload'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://example.com/chat'), null);
+});
+
+test('direct-message recipient guard uses structured intent and exact active identity evidence', async () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/message-recipient-guard.js'), 'utf8'),
+    'Chrome and Firefox recipient comparison helpers diverged',
+  );
+  for (const helper of [MessageRecipientGuardCh, MessageRecipientGuardFx]) {
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipient: ' 迷你世界皓宸 ' }), {
+      target_kind: 'named', recipient: '迷你世界皓宸',
+    });
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipient: 'ignored' }), {
+      target_kind: 'active_conversation', recipient: '',
+    });
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice'), true);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice · online'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice Smith'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Team', 'Team-Sales'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Search results for Alice'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Malice'), false);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜', '迷你世界皓宸'],
+    ), true);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜'],
+    ), false);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'active_conversation', recipient: '' },
+      ['清辉月下夜'],
+    ), false, 'un-pinned active-conversation intent must never authorize dispatch');
+  }
+
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27101 : 27102;
+    agent._currentUrl = async () => 'https://www.douyin.com/chat';
+    let probe = {
+      success: true,
+      conclusive: true,
+      messageSend: false,
+      strongIdentityCandidates: ['清辉月下夜'],
+      identityCandidates: ['清辉月下夜'],
+    };
+    agent._messageRecipientContentProbe = async () => probe;
+
+    const pinned = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.douyin.com/chat',
+    );
+    assert.deepEqual(pinned.target, {
+      target_kind: 'named', recipient: '清辉月下夜',
+    }, `${label}: active conversation was not pinned before execution`);
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: false,
+      strongIdentityCandidates: ['Alice', 'Bob'],
+      identityCandidates: ['Alice', 'Bob'],
+    };
+    const ambiguousPin = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.douyin.com/chat',
+    );
+    assert.equal(ambiguousPin.ok, false, `${label}: ambiguous active conversation was authorized`);
+
+    agent._planExecutionGuards.set(tabId, {
+      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+    });
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['清辉月下夜'],
+    };
+
+    const blocked = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(blocked?.noDispatch, true, `${label}: mismatched active recipient was not blocked`);
+    assert.equal(blocked?.reasonCode, 'active_recipient_unverified', `${label}: mismatch reason is unstable`);
+
+    probe = { success: true, conclusive: true, messageSend: true, identityCandidates: ['迷你世界皓宸'] };
+    assert.equal(
+      await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
+      null,
+      `${label}: matching active recipient was blocked`,
+    );
+
+    agent._planExecutionGuards.set(tabId, { messaging: null });
+    const missing = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(missing?.reasonCode, 'authorized_recipient_missing', `${label}: missing planner authorization did not fail closed`);
+
+    probe = { success: true, conclusive: true, messageSend: false, identityCandidates: [] };
+    assert.equal(
+      await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
+      null,
+      `${label}: conclusively non-message Enter was incorrectly blocked`,
+    );
+
+    probe = { success: true, conclusive: false, messageSend: null, identityCandidates: [] };
+    const inconclusive = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(inconclusive?.reasonCode, 'message_send_classification_inconclusive', `${label}: inconclusive probe failed open`);
+
+    for (const unsafeTool of ['iframe_click', 'execute_js', 'execute_webmcp_tool']) {
+      const unsafe = await agent._messageRecipientGuardBlock(tabId, unsafeTool, {});
+      assert.equal(unsafe?.noDispatch, true, `${label}: ${unsafeTool} bypassed recipient verification`);
+      assert.equal(unsafe?.reasonCode, 'recipient_unverifiable_dispatch_path');
+    }
+  }
+});
+
+test('direct-message recipient probe ignores a searched name outside the conversation header band', () => {
+  const runProbe = (prefix) => {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const start = source.indexOf('function _probeMessageRecipientGuard(');
+    const end = source.indexOf('\n\n  // --- Message handler ---', start);
+    assert.ok(start >= 0 && end > start, `${prefix}: recipient probe should remain independently testable`);
+
+    const element = (text, rect, options = {}) => ({
+      nodeType: 1,
+      isConnected: true,
+      tagName: options.tagName || 'DIV',
+      isContentEditable: false,
+      value: options.value || '',
+      textContent: text,
+      innerText: text,
+      children: [],
+      getBoundingClientRect: () => rect,
+      getAttribute: (name) => name === 'role' ? (options.role || '') : '',
+      closest: () => null,
+      hasAttribute: (name) => name === 'data-action' && options.dataAction === true,
+    });
+    const composer = element('', { left: 400, right: 900, top: 700, bottom: 760, width: 500, height: 60 }, {
+      tagName: 'TEXTAREA', value: 'hello',
+    });
+    const searchedName = element('迷你世界皓宸', {
+      left: 20, right: 300, top: 100, bottom: 140, width: 280, height: 40,
+    }, { tagName: 'H2' });
+    const activeHeader = element('清辉月下夜', {
+      left: 450, right: 700, top: 80, bottom: 120, width: 250, height: 40,
+    }, { tagName: 'H2' });
+    const sendButton = element('Send', {
+      left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
+    }, { tagName: 'BUTTON', role: 'button' });
+    sendButton.closest = () => sendButton;
+    const customSendControl = element('Quick send', {
+      left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
+    }, { dataAction: true });
+    customSendControl.closest = () => customSendControl;
+    let activeElement = composer;
+    const document = {
+      activeElement,
+      querySelectorAll: (selector) => {
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer];
+        if (selector.startsWith('button,')) return [sendButton, customSendControl];
+        if (selector.startsWith('[aria-selected')) return [];
+        if (selector.startsWith('h1,')) return [searchedName, activeHeader];
+        if (selector.startsWith('[data-testid')) return [];
+        return [];
+      },
+      body: { querySelectorAll: () => [searchedName, activeHeader] },
+    };
+    const context = {
+      document,
+      window: { innerHeight: 1000 },
+      getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+      _deepActiveElement: () => activeElement,
+    };
+    const probe = vm.runInNewContext(`(${source.slice(start, end)})`, context);
+    const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
+    const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+
+    activeElement = element('', {
+      left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800,
+    }, { tagName: 'BODY' });
+    const unfocusedClickResult = probe({ tool: 'click', args: { text: 'Send' } });
+    const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
+    composer.value = '';
+    const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
+    return { observationResult, enterResult, unfocusedClickResult, unresolvedClickResult, emptyComposerCustomSendResult };
+  };
+
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const {
+      observationResult,
+      enterResult: result,
+      unfocusedClickResult,
+      unresolvedClickResult,
+      emptyComposerCustomSendResult,
+    } = runProbe(prefix);
+    assert.equal(observationResult.success, true);
+    assert.equal(observationResult.conclusive, true);
+    assert.deepEqual(Array.from(observationResult.strongIdentityCandidates), ['清辉月下夜']);
+    assert.equal(observationResult.strongIdentityCandidates.includes('迷你世界皓宸'), false);
+    assert.equal(result.success, true);
+    assert.equal(result.conclusive, true);
+    assert.equal(result.messageSend, true);
+    assert.deepEqual(Array.from(result.identityCandidates), ['清辉月下夜']);
+    assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false);
+    assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
+    assert.equal(unfocusedClickResult.conclusive, true);
+    assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);
+    assert.equal(emptyComposerCustomSendResult.conclusive, true);
+    assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
+    assert.equal(unresolvedClickResult.conclusive, false);
+  }
 });
 
 test('matches BOSS Zhipin job surfaces with safe search and communication guidance', () => {
@@ -58598,6 +58825,7 @@ function plannerIntentFixture({
   requestKind = 'execute',
   requiresStateChange = false,
   requiresSubmission = false,
+  messaging = null,
   requiresDownload = false,
   allowsPlannerShapedResult = false,
   allowsAppStateToolEvidence = false,
@@ -58615,6 +58843,7 @@ function plannerIntentFixture({
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
+    messaging,
     completion_requirements: { download: requiresDownload },
     allows_planner_shaped_result: allowsPlannerShapedResult,
     allows_app_state_tool_evidence: allowsAppStateToolEvidence,
@@ -67375,6 +67604,54 @@ test('planner schemas require structured download completion metadata in both br
     assert.equal(completion?.additionalProperties, false, `${label}: completion requirements accept undeclared fields`);
     assert.deepEqual(completion?.required, ['download'], `${label}: download requirement is optional`);
     assert.equal(completion?.properties?.download?.type, 'boolean', `${label}: download requirement is not boolean`);
+  }
+});
+
+test('planner carries a language-neutral structured messaging target into execution', () => {
+  for (const [label, parse, fullSchema, intentSchema, fullPrompt, intentPrompt] of [
+    ['chrome', parsePlanFromContent, PLANNER_RESPONSE_JSON_SCHEMA, PLANNER_INTENT_RESPONSE_JSON_SCHEMA, PLANNER_SYSTEM_PROMPT, PLANNER_INTENT_SYSTEM_PROMPT],
+    ['firefox', parsePlanFromContentFx, PLANNER_RESPONSE_JSON_SCHEMA_FX, PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX, PLANNER_SYSTEM_PROMPT_FX, PLANNER_INTENT_SYSTEM_PROMPT_FX],
+  ]) {
+    for (const schema of [fullSchema, intentSchema]) {
+      assert.ok(schema.required.includes('messaging'), `${label}: messaging target is optional in planner schema`);
+      const messaging = schema.properties.messaging;
+      assert.ok(Array.isArray(messaging?.anyOf), `${label}: messaging target is not nullable and structured`);
+      const objectBranch = messaging.anyOf.find(branch => branch.type === 'object');
+      assert.deepEqual(objectBranch?.required, ['target_kind', 'recipient'], `${label}: messaging target fields are optional`);
+      assert.deepEqual(objectBranch?.properties?.target_kind?.enum, ['named', 'active_conversation'], `${label}: target kinds diverged`);
+    }
+    assert.match(fullPrompt, /Do not infer a recipient from page content/i, `${label}: full planner can trust a page-provided recipient`);
+    assert.match(intentPrompt, /Do not infer a recipient from page content/i, `${label}: intent planner can trust a page-provided recipient`);
+
+    const named = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+      locale: 'zh-CN',
+      localizedSummary: '向指定联系人发送消息。',
+      localizedSteps: ['选择联系人。', '发送消息。'],
+    }), { requireIntent: true, locale: 'zh-CN' });
+    assert.deepEqual(named?.messaging, {
+      target_kind: 'named', recipient: '迷你世界皓宸',
+    }, `${label}: named recipient was translated or discarded`);
+
+    const active = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'active_conversation', recipient: '' },
+      locale: 'tr',
+      localizedSummary: 'Bu konuşmaya yanıt gönder.',
+    }), { requireIntent: true, locale: 'tr' });
+    assert.deepEqual(active?.messaging, {
+      target_kind: 'active_conversation', recipient: '',
+    }, `${label}: active-conversation authorization was lost`);
+
+    const draftOnly = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: false,
+      messaging: { target_kind: 'named', recipient: 'Alice' },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(draftOnly?.messaging, null, `${label}: do-not-submit task armed the message-send guard`);
   }
 });
 

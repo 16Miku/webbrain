@@ -515,7 +515,7 @@ Background relays these via `chrome.runtime.sendMessage` to the side panel, whic
 
 ### Plan before Act (`planner.js`)
 
-The action-mode intent gate runs before the first browser tool call. Off uses the compact schema; Try and Strict use the full planning schema, with unset storage defaulting to Try. The full planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
+The action-mode intent gate runs before the first browser tool call. Off uses the compact schema; Try and Strict use the full planning schema, with unset storage defaulting to Try. The full planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Both schemas also carry a language-neutral `messaging` target when the trusted user request authorizes an external message: either the exact named recipient or an explicitly referenced active conversation. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
 
 The browser-owned per-turn runtime context includes the effective
 `runtime_mode` and whether mutation tools are enabled. This envelope is added
@@ -708,6 +708,8 @@ Jobs are stored in `chrome.storage.local` under the key `wb_scheduled_jobs` as a
 ### Site Adapters (`adapters.js`)
 
 58+ adapters inject site-specific guidance into the first user message (and re-inject on navigation to a different matched site). Only ONE adapter fires at a time (`getActiveAdapter(url)` returns the first match). See `docs/site-adapters.md` for how to write one.
+
+Adapters may also expose narrowly scoped runtime policy. Douyin `/chat` is the first `messaging.verifyActiveRecipient` route. An `active_conversation` planner target must first be pinned to exactly one strong visible header identity before any page tool runs; ambiguous or missing evidence stops for clarification. Immediately before a send-like click, submitted field, or Enter press, the content script resolves the exact target and composer and collects only active-conversation header evidence aligned above it. The agent requires exact normalized identity equality and returns a no-dispatch blocker on missing, inconclusive, or mismatched evidence. Search-result text, input values, generic page text, failed probes, and edited plans with stale hidden metadata cannot authorize a send. Dispatch-capable tools whose effects cannot be bound to the probed recipient (`iframe_click`, `execute_js`, and WebMCP execution) are unavailable on this protected route.
 
 ### Accessibility Tree (`accessibility-tree.js`)
 
