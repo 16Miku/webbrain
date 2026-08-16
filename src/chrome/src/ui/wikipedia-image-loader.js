@@ -113,6 +113,10 @@ export function createWikipediaImageLoader(options = {}) {
         image.src = url;
       });
       if (session.cancelled || !slot.isConnected) return;
+      // Width/height from the archived HTML only reserves space while the
+      // image is pending. Keeping that ratio on a full-width slot can turn a
+      // tiny icon into a page-wide empty square after the real asset loads.
+      slot.style.removeProperty('aspect-ratio');
       image.hidden = false;
       slot.querySelector('.wiki-image-placeholder')?.remove();
       slot.dataset.state = 'loaded';

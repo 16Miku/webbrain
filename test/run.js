@@ -21662,9 +21662,10 @@ test('Wikipedia article links stay local when possible and reject active URLs', 
   }
 });
 
-test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', async () => {
+test('Wikipedia image loader clears temporary ratios, cancels stale reads, and revokes local Blob URLs', async () => {
   function fakeSlot(path) {
     const listeners = new Map();
+    const removedStyleProperties = [];
     const placeholder = { removed: false, remove() { this.removed = true; } };
     const image = {
       hidden: true,
@@ -21679,10 +21680,17 @@ test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', a
       hidden: false,
       isConnected: true,
       attributes: new Map(),
+      style: {
+        aspectRatio: '1 / 1',
+        removeProperty(name) {
+          removedStyleProperties.push(name);
+          if (name === 'aspect-ratio') this.aspectRatio = '';
+        },
+      },
       querySelector(selector) { return selector === 'img' ? image : selector === '.wiki-image-placeholder' ? placeholder : null; },
       setAttribute(name, value) { this.attributes.set(name, value); },
     };
-    return { image, placeholder, slot };
+    return { image, placeholder, removedStyleProperties, slot };
   }
 
   for (const [label, runtime] of [['chrome', WikipediaImageLoaderCh], ['firefox', WikipediaImageLoaderFx]]) {
@@ -21724,6 +21732,8 @@ test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', a
     assert.equal(current.image.value, 'blob:test-1', `${label}: the current local image was not displayed`);
     assert.equal(current.image.hidden, false, `${label}: a loaded image remained hidden`);
     assert.equal(current.slot.dataset.state, 'loaded', `${label}: the loaded slot state was not exposed`);
+    assert.equal(current.slot.style.aspectRatio, '', `${label}: archived dimensions kept a loaded icon inside an oversized ratio box`);
+    assert.deepEqual(current.removedStyleProperties, ['aspect-ratio'], `${label}: the temporary image ratio was not cleared exactly once`);
 
     const vector = fakeSlot('I/vector.svg');
     loader.start({ querySelectorAll() { return [vector.slot]; } });
@@ -21804,6 +21814,8 @@ test('Wikipedia formatted reader reconstructs a bounded semantic DOM without ins
       `${browser}: block equations are not bounded by the reading column`);
     assert.match(css, /svg\.wiki-inline-svg[\s\S]*?max-width:100%/,
       `${browser}: inline SVG is not responsive inside the reading column`);
+    assert.match(css, /\.wiki-image-slot\[data-state="loaded"\][^}]*width:fit-content;[^}]*max-width:100%;[^}]*margin-inline:auto/,
+      `${browser}: loaded icons still expand into full-width media slots`);
   }
 });
 
