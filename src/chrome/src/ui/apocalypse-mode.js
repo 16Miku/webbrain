@@ -1,41 +1,52 @@
-import { assertWikipediaZimArchive, createApocalypseArchiveManager, createApocalypseStore, createOpfsArchiveStorage, importKiwixArchive, normalizeStorageEstimate, openKiwixZim, registerKiwixArchiveHandle, selectKiwixUpdate } from '../agent/apocalypse-mode.js';
+import {
+  isBasicWikipediaArchive,
+  selectBasicWikipediaArchive,
+  wikipediaArchiveIncludesImages,
+} from '../agent/apocalypse-mode.js';
 import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
 } from '../providers/webgpu.js';
 import { t } from './i18n.js';
-
-const WIKIPEDIA_LANGUAGES = Object.freeze([
-  ['eng', 'English'], ['zho', '中文'], ['ara', 'العربية'], ['ben', 'বাংলা'], ['nld', 'Nederlands'],
-  ['tgl', 'Filipino'], ['fra', 'Français'], ['deu', 'Deutsch'], ['heb', 'עברית'], ['hin', 'हिन्दी'],
-  ['ind', 'Bahasa Indonesia'], ['jpn', '日本語'], ['kor', '한국어'], ['msa', 'Bahasa Melayu'], ['fas', 'فارسی'],
-  ['pol', 'Polski'], ['por', 'Português'], ['rus', 'Русский'], ['spa', 'Español'], ['tha', 'ไทย'],
-  ['tur', 'Türkçe'], ['ukr', 'Українська'], ['vie', 'Tiếng Việt'],
-]);
+import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
+let currentThemeMode = 'system';
+loadMode().then((mode) => {
+  currentThemeMode = mode;
+  applyMode(mode, { syncStorage: false });
+});
+watch(() => currentThemeMode);
+runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area !== 'local' || !changes.themeMode) return;
+  const next = changes.themeMode.newValue;
+  if (THEME_MODES.includes(next)) currentThemeMode = next;
+});
+
 const WEBGPU_VISION_DOWNLOAD_STATE_KEY = 'webgpuVisionDownloadState';
+const BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY = 'apocalypseBasicWikipediaAutoStartSuppressed';
 const SUPPORTED_CATALOG_TIERS = new Set(['text', 'full']);
 const supportsWebgpuVision = typeof globalThis.chrome?.offscreen?.createDocument === 'function';
-const store = createApocalypseStore();
-const storage = createOpfsArchiveStorage();
 const elements = Object.fromEntries([
-  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language',
-  'storage-target', 'external-storage-option', 'load-catalog', 'catalog-status', 'catalog', 'import-file', 'import-language', 'import-button', 'cancel-import', 'notice',
-  'update-policy', 'vision-model-card', 'vision-model-status', 'vision-model-progress',
+  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'notice',
+  'vision-model-card', 'vision-model-status', 'vision-model-progress',
   'webgpu-provider-card', 'vision-model-test', 'vision-model-test-result',
+  'models-readiness', 'models-readiness-label',
+  'basic-wikipedia-card', 'basic-wikipedia-title', 'basic-wikipedia-description', 'basic-wikipedia-meta',
+  'basic-wikipedia-status', 'basic-wikipedia-progress', 'basic-wikipedia-start',
+  'emergency-box-callout', 'emergency-gate-reason', 'emergency-box-link',
 ].map(id => [id, document.getElementById(id)]));
-for (const select of [elements.language, elements['import-language']]) {
-  for (const [value, label] of WIKIPEDIA_LANGUAGES) select.add(new Option(label, value));
-}
 elements['vision-model-card'].hidden = !supportsWebgpuVision;
 elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
+elements['basic-wikipedia-card'].hidden = !supportsWebgpuVision;
 let snapshot = null;
-let catalogItems = [];
-let catalogLoading = false;
-let catalogRequest = 0;
-let installReviewInFlight = false;
-let importController = null;
+let basicWikipediaCatalogItem = null;
+let basicWikipediaCatalogError = '';
+let basicWikipediaCatalogLoading = false;
+let basicWikipediaStartInFlight = false;
+let basicWikipediaStartError = '';
+let basicWikipediaAutoStartAttempted = false;
+let basicWikipediaAutoStartSuppressed = false;
 let polling = false;
 let processingDownload = false;
 let visionDownloadState = null;
@@ -54,13 +65,6 @@ let webgpuDownloadState = {
   progress: 0,
   error: '',
 };
-const fileHandles = new Map();
-const pageManager = createApocalypseArchiveManager({
-  store,
-  storage,
-  schedule: () => command('process').catch(() => {}),
-});
-if (typeof globalThis.showSaveFilePicker === 'function') elements['external-storage-option'].hidden = false;
 
 function bytes(value) {
   const number = Number(value) || 0;
@@ -72,49 +76,9 @@ function bytes(value) {
   return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unit]}`;
 }
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
-}
-
 function notice(message, kind = '') {
   elements.notice.textContent = message || '';
   elements.notice.dataset.kind = kind;
-}
-
-function setCatalogStatus(message, kind = '') {
-  elements['catalog-status'].textContent = message || '';
-  elements['catalog-status'].dataset.kind = kind;
-}
-
-function setCatalogEmpty(message) {
-  elements.catalog.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
-}
-
-function syncCatalogAvailability() {
-  const enabled = snapshot?.enabled === true;
-  elements['load-catalog'].disabled = !enabled || catalogLoading;
-  if (enabled) return;
-  catalogRequest += 1;
-  catalogLoading = false;
-  catalogItems = [];
-  elements.catalog.setAttribute('aria-busy', 'false');
-  setCatalogStatus(t('ap.catalog.enable'));
-  setCatalogEmpty(t('ap.catalog.enable'));
-}
-
-async function authorizeFileHandle(handle, mode) {
-  if (!handle) throw new Error(t('ap.file_permission_required'));
-  if (typeof handle.queryPermission !== 'function') return;
-  let permission;
-  try {
-    permission = await handle.queryPermission({ mode });
-    if (permission !== 'granted' && typeof handle.requestPermission === 'function') {
-      permission = await handle.requestPermission({ mode });
-    }
-  } catch {
-    throw new Error(t('ap.file_permission_required'));
-  }
-  if (permission !== 'granted') throw new Error(t('ap.file_permission_required'));
 }
 
 async function command(command, payload = {}) {
@@ -190,6 +154,65 @@ function webgpuDownloadDetailText(state = webgpuDownloadState) {
   return t('st.providers.webgpu_download.required');
 }
 
+function basicWikipediaRecord() {
+  const wikipedia = (snapshot?.archives || []).filter(record => record.archiveKind === 'wikipedia');
+  const ready = wikipedia
+    .filter(record => record.status === 'ready')
+    .sort((left, right) => Number(right.completedAt || right.updatedAt || 0) - Number(left.completedAt || left.updatedAt || 0));
+  if (ready.length) return ready[0];
+  return wikipedia
+    .filter(isBasicWikipediaArchive)
+    .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0]
+    || null;
+}
+
+function updateEmergencyBoxGate(readinessKind) {
+  const locked = readinessKind !== 'ready';
+  const callout = elements['emergency-box-callout'];
+  const link = elements['emergency-box-link'];
+  if (!callout || !link) return;
+  callout.dataset.locked = String(locked);
+  callout.setAttribute('aria-disabled', String(locked));
+  elements['emergency-gate-reason'].hidden = !locked;
+  link.setAttribute('aria-disabled', String(locked));
+  if (locked) {
+    link.removeAttribute('href');
+    link.setAttribute('tabindex', '-1');
+  } else {
+    link.href = link.dataset.href;
+    link.removeAttribute('tabindex');
+  }
+}
+
+function updateOverallModelsReadiness() {
+  if (!supportsWebgpuVision || !elements['models-readiness']) return;
+  const textStatus = webgpuDownloadState.status;
+  const visionStatus = visionDownloadState?.status || 'not-downloaded';
+  const wikipediaStatus = basicWikipediaRecord()?.status
+    || (basicWikipediaStartInFlight ? 'starting' : (basicWikipediaStartError || basicWikipediaCatalogError) ? 'error' : 'not-downloaded');
+  let kind = 'pending';
+  let key = 'ap.models.status.incomplete';
+  if (snapshot?.enabled !== true) {
+    kind = 'disabled';
+    key = 'ap.models.status.disabled';
+  } else if (textStatus === 'error' || visionStatus === 'error' || wikipediaStatus === 'error') {
+    kind = 'error';
+    key = 'ap.models.status.error';
+  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready') {
+    kind = 'ready';
+    key = 'ap.models.status.ready';
+  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused') {
+    key = 'ap.models.status.paused';
+  } else if (['checking', 'downloading', 'stopping'].includes(textStatus)
+    || ['starting', 'downloading', 'stopping'].includes(visionStatus)
+    || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)) {
+    key = 'ap.models.status.downloading';
+  }
+  elements['models-readiness'].dataset.kind = kind;
+  elements['models-readiness-label'].textContent = t(key);
+  updateEmergencyBoxGate(kind);
+}
+
 function updateWebgpuDownloadPanel() {
   const panel = document.querySelector('[data-webgpu-download-panel]');
   if (!panel) return;
@@ -201,6 +224,7 @@ function updateWebgpuDownloadPanel() {
   panel.querySelector('[data-webgpu-download-detail]').textContent = webgpuDownloadDetailText(state);
   panel.querySelector('[data-webgpu-download-fill]').style.width = `${progress}%`;
   const track = panel.querySelector('[data-webgpu-download-track]');
+  track.hidden = state.status === 'ready';
   track.setAttribute('aria-label', t('st.providers.webgpu_download.progress_label'));
   track.setAttribute('aria-valuenow', String(progress));
   track.setAttribute('aria-valuetext', webgpuDownloadStatusText(state));
@@ -212,9 +236,16 @@ function updateWebgpuDownloadPanel() {
   actions.pause.hidden = state.status !== 'downloading';
   actions.resume.hidden = state.status !== 'paused';
   actions.stop.hidden = !['downloading', 'paused', 'stopping', 'ready', 'error'].includes(state.status);
+  actions.stop.textContent = t(state.status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
   for (const button of Object.values(actions)) {
     button.disabled = ['checking', 'stopping'].includes(state.status);
   }
+  updateOverallModelsReadiness();
+}
+
+function confirmCompletedModelRemoval(action, status, modelTitleKey) {
+  if (action !== 'stop' || status !== 'ready') return true;
+  return globalThis.confirm(t('ap.models.confirm_remove', { model: t(modelTitleKey) }));
 }
 
 function setWebgpuDownloadState(state) {
@@ -222,6 +253,46 @@ function setWebgpuDownloadState(state) {
   if (normalized.modelId && normalized.modelId !== WEBGPU_MODEL_ID) return;
   webgpuDownloadState = normalized;
   updateWebgpuDownloadPanel();
+}
+
+async function runVisionDownloadAction(action) {
+  const actionMap = {
+    start: 'start_webgpu_vision_download',
+    resume: 'start_webgpu_vision_download',
+    pause: 'pause_webgpu_vision_download',
+    stop: 'stop_webgpu_vision_download',
+  };
+  const backgroundAction = actionMap[action];
+  if (!backgroundAction) return;
+  if (!confirmCompletedModelRemoval(action, visionDownloadState?.status, 'ap.models.vision.title')) return;
+  const previous = visionDownloadState || { modelId: '' };
+  visionDownloadState = {
+    ...previous,
+    status: action === 'pause' ? 'paused' : action === 'stop' ? 'stopping' : 'starting',
+    error: '',
+  };
+  renderVisionDownload();
+  try {
+    const result = await providerCommand(backgroundAction);
+    if (result?.ok === false) throw new Error(result.error || 'Vision Model download action failed.');
+    if (action === 'start' || action === 'resume') {
+      visionDownloadState = {
+        ...visionDownloadState,
+        status: result?.ready === true ? 'ready' : 'starting',
+        progress: result?.ready === true ? 100 : visionDownloadState?.progress || 0,
+      };
+    } else {
+      visionDownloadState = { ...visionDownloadState, ...result };
+    }
+    renderVisionDownload();
+  } catch (error) {
+    visionDownloadState = {
+      ...visionDownloadState,
+      status: 'error',
+      error: error.message,
+    };
+    renderVisionDownload();
+  }
 }
 
 async function ensureFixedWebgpuProvider({ markConfigured = false } = {}) {
@@ -263,6 +334,7 @@ async function runWebgpuDownloadAction(action) {
   };
   const backgroundAction = actionMap[action];
   if (!backgroundAction) return;
+  if (!confirmCompletedModelRemoval(action, webgpuDownloadState.status, 'ap.models.text.title')) return;
   try {
     if (action === 'start' || action === 'resume') {
       await ensureFixedWebgpuProvider({ markConfigured: true });
@@ -313,61 +385,69 @@ async function testWebgpuVisionModel() {
   }
 }
 
-function archiveButtons(record) {
-  if (record.errorKind === 'file-permission-required') {
-    return `<button data-action="reauthorize" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.reauthorize'))}</button>`;
-  }
-  if (record.status === 'downloading' || record.status === 'queued' || record.status === 'retrying') {
-    return `<button data-action="pause" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.pause'))}</button>`;
-  }
-  if (record.status === 'paused') return `<button data-action="resume" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.resume'))}</button>`;
-  if (record.status === 'error' && record.downloadUrl && record.errorKind !== 'archive-unreadable') return `<button data-action="retry" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.retry'))}</button>`;
-  if (record.status === 'ready') {
-    const update = record.downloadUrl
-      ? `<button data-action="update" data-id="${escapeHtml(record.id)}">${escapeHtml(t(record.updateAvailable ? 'ap.review_update' : 'ap.check_update'))}</button>`
-      : '';
-    return `<button class="primary" data-action="read" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.reader.open'))}</button>${update}`;
-  }
-  return '';
-}
-
 function renderInstalled() {
-  const records = snapshot?.archives || [];
   elements['installed-count'].textContent = String(snapshot?.installedCount || 0);
   elements['archive-bytes'].textContent = bytes(snapshot?.totalBytes);
   const usage = snapshot?.storage?.usage;
-  const quota = snapshot?.storage?.quota;
-  elements['storage-usage'].textContent = quota == null ? t('ap.unavailable') : `${bytes(usage)} / ${bytes(quota)}`;
-  if (!records.length) {
-    elements.installed.innerHTML = `<div class="empty">${escapeHtml(t('ap.no_archives'))}</div>`;
-    return;
-  }
-  elements.installed.innerHTML = records.map(record => {
-    const progress = record.size ? Math.min(100, Math.round((Number(record.bytesDownloaded) || 0) / Number(record.size) * 100)) : 0;
-    const error = record.errorKind === 'file-permission-required' ? t('ap.file_permission_required') : record.error;
-    return `<article class="item"><div><h3>${escapeHtml(record.title || record.filename)}</h3>
-      <div class="meta">${escapeHtml(record.language)} · ${escapeHtml(record.archiveDate || t('ap.date_unknown'))} · ${bytes(record.size)} · ${escapeHtml(t(`ap.status.${record.status}`))}</div>
-      ${error ? `<div class="meta" style="color:var(--bad)">${escapeHtml(error)}</div>` : ''}
-      ${record.status === 'ready' ? '' : `<progress max="100" value="${progress}"></progress>`}</div>
-      <div class="actions">${archiveButtons(record)}<button class="danger" data-action="delete" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.delete'))}</button></div></article>`;
-  }).join('');
+  elements['storage-usage'].textContent = usage == null ? t('ap.unavailable') : bytes(usage);
+  elements['storage-usage'].parentElement.title = `${t('ap.metric.storage')}: ${elements['storage-usage'].textContent}`;
+  renderBasicWikipediaDownload();
 }
 
-function renderCatalog() {
-  const items = catalogItems;
-  if (!items.length) {
-    setCatalogEmpty(t(catalogLoading ? 'ap.loading_catalog' : 'ap.no_match'));
-    return;
+function renderBasicWikipediaDownload() {
+  if (!supportsWebgpuVision) return;
+  const record = basicWikipediaRecord();
+  const displayItem = record || basicWikipediaCatalogItem;
+  const status = record?.status || 'not-downloaded';
+  const progress = record?.size
+    ? Math.min(100, Math.round((Number(record.bytesDownloaded) || 0) / Number(record.size) * 100))
+    : 0;
+  const statusElement = elements['basic-wikipedia-status'];
+  const customEdition = Boolean(record && !isBasicWikipediaArchive(record));
+  elements['basic-wikipedia-title'].textContent = t(customEdition ? 'ap.models.wikipedia.active_title' : 'ap.models.wikipedia.title');
+  elements['basic-wikipedia-description'].textContent = t(customEdition ? 'ap.models.wikipedia.active_desc' : 'ap.models.wikipedia.desc');
+  const tier = wikipediaArchiveIncludesImages(displayItem) ? 'full' : 'text';
+  elements['basic-wikipedia-meta'].textContent = `${displayItem?.language || 'eng'} · ${String(displayItem?.archiveDate || t('ap.date_unknown')).slice(0, 10)} · ${t(`ap.tier.${tier}`)}`;
+  elements['basic-wikipedia-progress'].hidden = !record || ['ready', 'deleting'].includes(status);
+  elements['basic-wikipedia-progress'].value = progress;
+  statusElement.dataset.kind = status === 'ready' || status === 'error' ? status : '';
+
+  if (status === 'ready') {
+    statusElement.textContent = t('ap.status.ready');
+  } else if (status === 'error') {
+    statusElement.textContent = `${t('ap.status.error')}${record.error ? ` · ${record.error}` : ''}`;
+  } else if (record) {
+    statusElement.textContent = `${t(`ap.status.${status}`)}${record.size ? ` · ${progress}%` : ''}`;
+  } else if (snapshot?.enabled !== true) {
+    statusElement.textContent = t('ap.models.wikipedia.waiting');
+  } else if (basicWikipediaStartInFlight) {
+    statusElement.textContent = t('ap.models.wikipedia.starting');
+  } else if (basicWikipediaStartError || basicWikipediaCatalogError) {
+    statusElement.dataset.kind = 'error';
+    statusElement.textContent = basicWikipediaStartError || basicWikipediaCatalogError || t('ap.models.wikipedia.unavailable');
+  } else if (basicWikipediaCatalogLoading || !basicWikipediaCatalogItem) {
+    statusElement.textContent = t('ap.models.wikipedia.finding');
+  } else if (basicWikipediaAutoStartSuppressed) {
+    statusElement.textContent = t('ap.models.wikipedia.stopped');
+  } else {
+    statusElement.textContent = t('ap.models.wikipedia.required');
   }
-  elements.catalog.innerHTML = items.map((item, index) => `<article class="item"><div><h3>${escapeHtml(item.title)}</h3>
-    <div class="meta">${escapeHtml(item.language)} · ${escapeHtml(item.archiveDate)} · ${escapeHtml(t(`ap.tier.${item.tier}`))} · ${Number(item.articleCount || 0).toLocaleString()}</div>
-    <div class="meta">${escapeHtml(t('ap.catalog.size_pending'))}</div></div>
-    <div class="actions"><button class="primary" data-install="${index}">${escapeHtml(t('ap.review_install'))}</button></div></article>`).join('');
-  const visible = items;
-  elements.catalog.querySelectorAll('[data-install]').forEach((button) => {
-    button.disabled = installReviewInFlight;
-    button.addEventListener('click', () => reviewInstall(visible[Number(button.dataset.install)], button));
-  });
+
+  const actions = Object.fromEntries(['pause', 'resume', 'retry', 'read', 'stop'].map(action => [
+    action,
+    elements['basic-wikipedia-card'].querySelector(`[data-basic-wikipedia-action="${action}"]`),
+  ]));
+  elements['basic-wikipedia-start'].hidden = snapshot?.enabled !== true || Boolean(record) || !basicWikipediaCatalogItem || basicWikipediaStartInFlight;
+  actions.pause.hidden = !['queued', 'downloading', 'retrying'].includes(status);
+  actions.resume.hidden = status !== 'paused';
+  actions.retry.hidden = status !== 'error' || !record?.downloadUrl || record.errorKind === 'archive-unreadable';
+  actions.read.hidden = status !== 'ready';
+  actions.stop.hidden = !record || status === 'deleting';
+  actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
+  for (const button of [elements['basic-wikipedia-start'], ...Object.values(actions)]) {
+    button.disabled = basicWikipediaStartInFlight || status === 'deleting';
+  }
+  updateOverallModelsReadiness();
 }
 
 function openWikipediaReader(id) {
@@ -388,33 +468,47 @@ function openWikipediaReader(id) {
 function renderVisionDownload() {
   if (!supportsWebgpuVision) return;
   const state = visionDownloadState || {};
+  const status = state.status || 'not-downloaded';
   const progress = Math.max(0, Math.min(100, Number(state.progress) || 0));
-  const active = state.status === 'starting' || state.status === 'downloading';
-  elements['vision-model-status'].dataset.kind = state.status === 'ready' || state.status === 'error'
-    ? state.status
+  const active = status === 'starting' || status === 'downloading';
+  elements['vision-model-status'].dataset.kind = status === 'ready' || status === 'error'
+    ? status
     : '';
   elements['vision-model-progress'].hidden = !active;
   elements['vision-model-progress'].value = progress;
-  elements['vision-model-test'].disabled = state.status !== 'ready' || visionTestRunning;
-  if (state.status !== 'ready' && !visionTestRunning) setModelTestResult(elements['vision-model-test-result']);
-  if (state.status === 'ready') {
+  elements['vision-model-test'].disabled = status !== 'ready' || visionTestRunning;
+  if (status !== 'ready' && !visionTestRunning) setModelTestResult(elements['vision-model-test-result']);
+
+  const actions = Object.fromEntries(['start', 'pause', 'resume', 'stop'].map(action => [
+    action,
+    document.querySelector(`[data-vision-download-action="${action}"]`),
+  ]));
+  actions.start.hidden = snapshot?.enabled !== true || !['idle', 'not-downloaded', 'error'].includes(status);
+  actions.pause.hidden = !['starting', 'downloading'].includes(status);
+  actions.resume.hidden = status !== 'paused';
+  actions.stop.hidden = !['starting', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
+  actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
+  for (const button of Object.values(actions)) button.disabled = status === 'stopping';
+
+  if (status === 'ready') {
     elements['vision-model-status'].textContent = t('ap.status.ready');
-    return;
-  }
-  if (state.status === 'error') {
+  } else if (status === 'error') {
     const message = String(state.error || '').trim();
     elements['vision-model-status'].textContent = `${t('ap.status.error')}${message ? ` · ${message}` : ''}`;
-    return;
-  }
-  if (state.status === 'downloading') {
+  } else if (status === 'downloading') {
     elements['vision-model-status'].textContent = `${t('ap.status.downloading')} · ${Math.round(progress)}%`;
-    return;
-  }
-  if (state.status === 'starting' || snapshot?.enabled) {
+  } else if (status === 'paused') {
+    elements['vision-model-status'].textContent = `${t('ap.status.paused')} · ${Math.round(progress)}%`;
+  } else if (status === 'stopping') {
+    elements['vision-model-status'].textContent = t('st.providers.webgpu_download.stopping');
+  } else if (status === 'starting') {
     elements['vision-model-status'].textContent = t('ap.status.queued');
-    return;
+  } else if (snapshot?.enabled) {
+    elements['vision-model-status'].textContent = t('st.providers.webgpu_download.not_downloaded');
+  } else {
+    elements['vision-model-status'].textContent = t('ap.vision.waiting');
   }
-  elements['vision-model-status'].textContent = t('ap.vision.waiting');
+  updateOverallModelsReadiness();
 }
 
 async function refreshVisionDownload() {
@@ -426,257 +520,144 @@ async function refreshVisionDownload() {
 
 async function refresh() {
   snapshot = await command('status');
-  const storedRecords = await store.listArchives().catch(() => []);
-  fileHandles.clear();
-  for (const record of storedRecords) {
-    if (record.target?.kind === 'file-handle' && record.target.handle) fileHandles.set(record.id, record.target.handle);
-  }
   elements.enabled.checked = snapshot.enabled === true;
-  elements['update-policy'].value = snapshot.updatePolicy === 'automatic' ? 'automatic' : 'manual';
-  syncCatalogAvailability();
   renderInstalled();
   await refreshVisionDownload().catch(() => {});
 }
 
-async function loadCatalog() {
-  if (snapshot?.enabled !== true) {
-    syncCatalogAvailability();
+async function loadBasicWikipediaAutoStartPreference() {
+  try {
+    const stored = await runtimeApi.storage.local.get(BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY);
+    basicWikipediaAutoStartSuppressed = stored[BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY] === true;
+  } catch {
+    basicWikipediaAutoStartSuppressed = false;
+  }
+}
+
+async function setBasicWikipediaAutoStartSuppressed(suppressed) {
+  basicWikipediaAutoStartSuppressed = suppressed === true;
+  if (basicWikipediaAutoStartSuppressed) {
+    await runtimeApi.storage.local.set({ [BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY]: true });
+  } else {
+    await runtimeApi.storage.local.remove(BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY);
+  }
+}
+
+async function startBasicWikipediaDownload({ automatic = false } = {}) {
+  if (snapshot?.enabled !== true || basicWikipediaStartInFlight || basicWikipediaRecord() || !basicWikipediaCatalogItem) return;
+  if (!automatic) await setBasicWikipediaAutoStartSuppressed(false);
+  basicWikipediaStartInFlight = true;
+  basicWikipediaStartError = '';
+  renderBasicWikipediaDownload();
+  try {
+    const { download } = await command('resolve', { item: basicWikipediaCatalogItem });
+    snapshot = await command('install', { download });
+    renderInstalled();
+    notice(t(automatic ? 'ap.models.wikipedia.started' : 'ap.queued'), 'success');
+  } catch (error) {
+    basicWikipediaStartError = error.message;
+    notice(error.message, 'error');
+  } finally {
+    basicWikipediaStartInFlight = false;
+    renderBasicWikipediaDownload();
+  }
+}
+
+function maybeAutoStartBasicWikipediaDownload() {
+  if (snapshot?.enabled !== true || basicWikipediaAutoStartSuppressed || basicWikipediaAutoStartAttempted
+    || basicWikipediaStartInFlight || basicWikipediaRecord() || !basicWikipediaCatalogItem) return;
+  basicWikipediaAutoStartAttempted = true;
+  void startBasicWikipediaDownload({ automatic: true });
+}
+
+async function loadBasicWikipediaCatalog() {
+  if (snapshot?.enabled !== true || basicWikipediaCatalogItem || basicWikipediaCatalogLoading) return;
+  basicWikipediaCatalogLoading = true;
+  basicWikipediaCatalogError = '';
+  renderBasicWikipediaDownload();
+  try {
+    const result = await command('catalog', { language: 'eng' });
+    const supported = (Array.isArray(result.items) ? result.items : [])
+      .filter(item => SUPPORTED_CATALOG_TIERS.has(item.tier));
+    basicWikipediaCatalogItem = selectBasicWikipediaArchive(supported);
+    basicWikipediaCatalogError = basicWikipediaCatalogItem ? '' : t('ap.models.wikipedia.unavailable');
+    maybeAutoStartBasicWikipediaDownload();
+  } catch (error) {
+    basicWikipediaCatalogError = error.message;
+  } finally {
+    basicWikipediaCatalogLoading = false;
+    renderBasicWikipediaDownload();
+  }
+}
+
+async function runBasicWikipediaAction(action, sourceButton) {
+  const record = basicWikipediaRecord();
+  if (!record) return;
+  if (action === 'read') {
+    openWikipediaReader(record.id);
     return;
   }
-  const request = ++catalogRequest;
-  catalogLoading = true;
-  catalogItems = [];
-  elements['load-catalog'].disabled = true;
-  elements.catalog.setAttribute('aria-busy', 'true');
-  setCatalogStatus(t('ap.loading_catalog'), 'loading');
-  setCatalogEmpty(t('ap.loading_catalog'));
-  try {
-    const result = await command('catalog', { language: elements.language.value });
-    if (request !== catalogRequest) return;
-    catalogItems = Array.isArray(result.items) ? result.items : [];
-    catalogItems = catalogItems.filter(item => SUPPORTED_CATALOG_TIERS.has(item.tier));
-    renderCatalog();
-    setCatalogStatus(t('ap.loaded_catalog', { count: catalogItems.length }), 'success');
-  } catch (error) {
-    if (request !== catalogRequest) return;
-    elements.catalog.innerHTML = '';
-    setCatalogStatus(error.message, 'error');
-  } finally {
-    if (request === catalogRequest) {
-      catalogLoading = false;
-      elements.catalog.setAttribute('aria-busy', 'false');
-      elements['load-catalog'].disabled = snapshot?.enabled !== true;
-    }
+  if (action === 'stop') {
+    const message = record.target?.kind === 'file-handle' ? t('ap.delete_external') : t('ap.delete_internal');
+    if (!globalThis.confirm(message)) return;
+    await setBasicWikipediaAutoStartSuppressed(true);
   }
-}
-
-async function reviewInstall(item, sourceButton = null) {
-  if (installReviewInFlight) return;
-  installReviewInFlight = true;
-  const originalButtonText = sourceButton?.textContent || '';
-  elements.catalog.querySelectorAll('[data-install]').forEach((button) => { button.disabled = true; });
-  if (sourceButton) {
-    sourceButton.disabled = true;
-    sourceButton.setAttribute('aria-busy', 'true');
-    sourceButton.textContent = t('ap.review_loading');
-  }
-  notice(t('ap.resolving'));
+  sourceButton.disabled = true;
   try {
-    let target = null;
-    if (elements['storage-target'].value === 'file') {
-      const suggestedName = `${item.name || 'wikipedia'}_${item.flavour || 'archive'}_${String(item.archiveDate || '').slice(0, 10)}.zim`;
-      const handle = await globalThis.showSaveFilePicker({
-        suggestedName,
-        types: [{ description: t('ap.file_description'), accept: { 'application/x-zim': ['.zim'] } }],
-      });
-      await authorizeFileHandle(handle, 'readwrite');
-      target = { kind: 'file-handle', handle, access: 'readwrite' };
-    }
-    const { download } = await command('resolve', { item });
-    const capacity = normalizeStorageEstimate(snapshot?.storage);
-    const implication = target
-      ? t('ap.space.external_unknown')
-      : capacity.known ? t('ap.space.available', { size: bytes(capacity.free) }) : t('ap.space.unknown');
-    const confirmed = globalThis.confirm(t('ap.confirm_install', {
-      title: download.title,
-      size: bytes(download.size),
-      date: download.archiveDate || t('ap.date_unknown'),
-      language: download.language,
-      source: download.source,
-      license: download.license,
-      pieces: download.pieceHashes.length,
-      algorithm: download.pieceHashAlgorithm,
-      storage: implication,
-    }));
-    if (!confirmed) { notice(t('ap.install_cancelled')); return; }
-    if (target) {
-      const record = await pageManager.install(download, target);
-      fileHandles.set(record.id, target.handle);
-      snapshot = await command('status');
-    } else {
-      snapshot = await command('install', { download });
-    }
+    const archiveAction = action === 'stop' ? 'delete' : action;
+    snapshot = await command(archiveAction, { id: record.id });
     renderInstalled();
-    notice(t('ap.queued'), 'success');
-  } catch (error) { notice(error.message, 'error'); }
-  finally {
-    installReviewInFlight = false;
-    elements.catalog.querySelectorAll('[data-install]').forEach((button) => {
-      button.disabled = false;
-      button.removeAttribute('aria-busy');
-      button.textContent = t('ap.review_install');
-    });
-    if (sourceButton && !sourceButton.matches('[data-install]')) {
-      sourceButton.disabled = false;
-      sourceButton.removeAttribute('aria-busy');
-      sourceButton.textContent = originalButtonText;
-    }
+    const actionLabel = action === 'stop'
+      ? t(record.status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop')
+      : t(`ap.${archiveAction}`);
+    notice(t('ap.action_done', { action: actionLabel }), 'success');
+  } catch (error) {
+    notice(error.message, 'error');
+  } finally {
+    sourceButton.disabled = false;
+    renderBasicWikipediaDownload();
   }
-}
-
-async function reviewImport(file, external) {
-  const inspected = await openKiwixZim(file, {
-    language: elements['import-language'].value,
-    source: t('ap.import.source'),
-    license: t('ap.import.license'),
-    licenseDeclared: false,
-  });
-  assertWikipediaZimArchive(inspected.embeddedMetadata);
-  const provenance = inspected.metadata;
-  const capacity = normalizeStorageEstimate(external || typeof storage.estimate !== 'function' ? {} : await storage.estimate());
-  if (!external && capacity.known && file.size > capacity.free) {
-    throw new Error(t('ap.space.insufficient', { required: bytes(file.size), available: bytes(capacity.free) }));
-  }
-  const implication = external
-    ? t('ap.space.external_retained')
-    : capacity.known ? t('ap.space.available', { size: bytes(capacity.free) }) : t('ap.space.unknown');
-  return globalThis.confirm(t('ap.confirm_import', {
-    title: file.name,
-    size: bytes(file.size),
-    date: provenance.archiveDate || t('ap.date_unknown'),
-    language: provenance.language,
-    source: provenance.source,
-    license: provenance.license,
-    storage: implication,
-  })) ? provenance : null;
 }
 
 document.querySelectorAll('[data-webgpu-download-action]').forEach((button) => {
   button.addEventListener('click', () => runWebgpuDownloadAction(button.dataset.webgpuDownloadAction));
 });
+document.querySelectorAll('[data-vision-download-action]').forEach((button) => {
+  button.addEventListener('click', () => runVisionDownloadAction(button.dataset.visionDownloadAction));
+});
 elements['vision-model-test'].addEventListener('click', testWebgpuVisionModel);
+elements['basic-wikipedia-start'].addEventListener('click', () => startBasicWikipediaDownload());
+document.querySelectorAll('[data-basic-wikipedia-action]').forEach((button) => {
+  button.addEventListener('click', event => runBasicWikipediaAction(button.dataset.basicWikipediaAction, event.currentTarget));
+});
+elements['emergency-box-link'].addEventListener('click', (event) => {
+  if (elements['emergency-box-link'].getAttribute('aria-disabled') !== 'true') return;
+  event.preventDefault();
+  notice(t('ap.emergency.gate'), 'error');
+});
 
 elements.enabled.addEventListener('change', async () => {
   try {
     snapshot = await command('enable', { enabled: elements.enabled.checked });
-    syncCatalogAvailability();
+    if (snapshot.enabled === true) {
+      basicWikipediaAutoStartAttempted = false;
+      basicWikipediaStartError = '';
+      await setBasicWikipediaAutoStartSuppressed(false);
+    }
+    if (snapshot.textModel?.modelId) setWebgpuDownloadState(snapshot.textModel);
+    await refreshVisionDownload().catch(() => {});
     renderInstalled();
+    updateOverallModelsReadiness();
     notice(t(elements.enabled.checked ? 'ap.enabled_notice' : 'ap.disabled_notice'), 'success');
-    if (snapshot.enabled === true) await loadCatalog();
+    if (snapshot.enabled === true) void loadBasicWikipediaCatalog();
   } catch (error) { elements.enabled.checked = !elements.enabled.checked; notice(error.message, 'error'); }
 });
-
-elements['update-policy'].addEventListener('change', async () => {
-  const previous = snapshot?.updatePolicy || 'manual';
-  try {
-    snapshot = await command('set_update_policy', { policy: elements['update-policy'].value });
-    renderInstalled();
-    notice(t(snapshot.updatePolicy === 'automatic' ? 'ap.update_policy.automatic_notice' : 'ap.update_policy.manual_notice'), 'success');
-  } catch (error) {
-    elements['update-policy'].value = previous;
-    notice(error.message, 'error');
-  }
-});
-
-elements['load-catalog'].addEventListener('click', loadCatalog);
-elements.language.addEventListener('change', loadCatalog);
-
-elements.installed.addEventListener('click', async (event) => {
-  const button = event.target.closest('button[data-action]');
-  if (!button) return;
-  const action = button.dataset.action;
-  if (action === 'read') {
-    openWikipediaReader(button.dataset.id);
-    return;
-  }
-  if (action === 'delete') {
-    const record = snapshot.archives.find(item => item.id === button.dataset.id);
-    const message = record?.target?.kind === 'file-handle'
-      ? t('ap.delete_external')
-      : t('ap.delete_internal');
-    if (!globalThis.confirm(message)) return;
-  }
-  try {
-    if (action === 'reauthorize') {
-      const record = snapshot.archives.find(item => item.id === button.dataset.id);
-      const handle = fileHandles.get(record?.id);
-      const incompleteDownload = Boolean(record?.downloadUrl) && Number(record?.bytesDownloaded) < Number(record?.size);
-      await authorizeFileHandle(handle, incompleteDownload ? 'readwrite' : 'read');
-      snapshot = await command('reauthorize_file', { id: record.id });
-      renderInstalled();
-      notice(t('ap.action_done', { action: t('ap.reauthorize') }), 'success');
-      return;
-    }
-    if (action === 'update') {
-      const record = snapshot.archives.find(item => item.id === button.dataset.id);
-      let replacement = record.updateAvailable;
-      if (!replacement) {
-        notice(t('ap.checking_update'));
-        const result = await command('catalog', { language: record.language });
-        replacement = selectKiwixUpdate(record, result.items);
-      }
-      if (!replacement) { notice(t('ap.current'), 'success'); return; }
-      await reviewInstall(replacement, button);
-      return;
-    }
-    snapshot = await command(action, { id: button.dataset.id });
-    renderInstalled();
-    notice(t('ap.action_done', { action: t(`ap.${action}`) }), 'success');
-  } catch (error) { notice(error.message, 'error'); }
-});
-
-elements['import-button'].addEventListener('click', async () => {
-  if (!snapshot?.enabled) { notice(t('ap.enable_import'), 'error'); return; }
-  importController = new AbortController();
-  elements['cancel-import'].hidden = false;
-  elements['import-button'].disabled = true;
-  try {
-    if (elements['storage-target'].value === 'file' && typeof globalThis.showOpenFilePicker === 'function') {
-      const [handle] = await globalThis.showOpenFilePicker({
-        multiple: false,
-        types: [{ description: t('ap.file_description'), accept: { 'application/x-zim': ['.zim'] } }],
-      });
-      await authorizeFileHandle(handle, 'read');
-      const file = await handle.getFile();
-      const provenance = await reviewImport(file, true);
-      if (!provenance) { notice(t('ap.import_cancelled')); return; }
-      await registerKiwixArchiveHandle(handle, {
-        filename: handle.name,
-        title: handle.name.replace(/\.zim$/i, ''),
-        ...provenance,
-      }, { store });
-    } else {
-      const file = elements['import-file'].files?.[0];
-      if (!file) throw new Error(t('ap.choose_file'));
-      const provenance = await reviewImport(file, false);
-      if (!provenance) { notice(t('ap.import_cancelled')); return; }
-      await importKiwixArchive(file, {
-        filename: file.name,
-        title: file.name.replace(/\.zim$/i, ''),
-        ...provenance,
-      }, { store, storage, signal: importController.signal, onProgress: () => refresh().catch(() => {}) });
-    }
-    await refresh();
-    notice(t('ap.imported'), 'success');
-  } catch (error) { notice(error.name === 'AbortError' ? t('ap.import_cancelled') : error.message, error.name === 'AbortError' ? '' : 'error'); }
-  finally { importController = null; elements['cancel-import'].hidden = true; elements['import-button'].disabled = false; }
-});
-elements['cancel-import'].addEventListener('click', () => importController?.abort());
 document.addEventListener('wb-locale-changed', () => {
   renderInstalled();
-  renderCatalog();
   renderVisionDownload();
   updateWebgpuDownloadPanel();
+  renderBasicWikipediaDownload();
+  updateOverallModelsReadiness();
 });
 runtimeApi.storage?.onChanged?.addListener?.((changes, area) => {
   if (!supportsWebgpuVision || area !== 'local' || !changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) return;
@@ -705,6 +686,7 @@ async function poll() {
 await Promise.all([
   refresh().catch(error => notice(error.message, 'error')),
   refreshWebgpuDownloadStatus(),
+  loadBasicWikipediaAutoStartPreference(),
 ]);
-if (snapshot?.enabled === true) void loadCatalog();
+if (snapshot?.enabled === true) void loadBasicWikipediaCatalog();
 setInterval(poll, 2000);

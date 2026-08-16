@@ -7,6 +7,17 @@ const EMERGENCY_BOX_DB_VERSION = 1;
 const RESOURCE_STORE = 'resources';
 const RESOURCE_DIRECTORY = 'webbrain-emergency-box';
 const OPENSTAX_API = 'https://openstax.org/apps/cms/api/v2';
+const ALL_RESOURCE_CATEGORY_PRIORITY = Object.freeze({ health: 0, field: 1, education: 2 });
+
+export function compareEmergencyBoxResources(left = {}, right = {}, options = {}) {
+  if (options.groupCategories === true) {
+    const categoryDifference = (ALL_RESOURCE_CATEGORY_PRIORITY[left.category] ?? 99)
+      - (ALL_RESOURCE_CATEGORY_PRIORITY[right.category] ?? 99);
+    if (categoryDifference) return categoryDifference;
+  }
+  const readyDifference = Number(right.status === 'ready') - Number(left.status === 'ready');
+  return readyDifference || String(left.title || '').localeCompare(String(right.title || ''));
+}
 
 export const EMERGENCY_BOX_HEALTH_RESOURCES = Object.freeze([
   {

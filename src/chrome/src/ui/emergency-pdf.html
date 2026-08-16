@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title data-i18n="ep.page_title"></title>
+  <script src="theme-bootstrap.js"></script>
   <link rel="stylesheet" href="emergency-pdf.css">
 </head>
 <body>
@@ -17,7 +18,7 @@
     <button type="button" id="save-copy" class="header-button" disabled data-i18n="ep.save_copy"></button>
   </header>
 
-  <div class="reader-toolbar" role="toolbar" aria-label="PDF controls">
+  <div class="reader-toolbar" role="toolbar" data-i18n-aria-label="ep.toolbar">
     <div class="tool-group">
       <button type="button" id="previous-page" data-i18n-aria-label="ep.previous" disabled>←</button>
       <label class="page-control">
@@ -45,7 +46,7 @@
       <span class="loading-ring" aria-hidden="true"></span>
       <span data-i18n="ep.preparing"></span>
     </div>
-    <canvas id="pdf-canvas" aria-label="PDF page" hidden></canvas>
+    <canvas id="pdf-canvas" data-i18n-aria-label="ep.canvas_label" hidden></canvas>
   </main>
   <footer id="reader-status" class="reader-status" role="status" aria-live="polite"></footer>
   <script type="module" src="emergency-pdf.js"></script>

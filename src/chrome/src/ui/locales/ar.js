@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -695,6 +696,7 @@ export default {
   'st.display.search.empty': 'لا توجد إعدادات عامة مطابقة.',
   'st.display.advanced': 'متقدم',
   ...getApocalypseModeCopy('ar'),
+  ...getEmergencyBoxCopy('ar'),
   'st.display.cloud_bridge.label': 'جسر السحابة',
   'st.display.cloud_bridge.desc': 'صِل وحدة تحكم محلية واحدة بملف Chromium هذا. استخدم المنفذ 17373 لـ WebBrain Cloud أو 17374 لعملاء MCP أو 17375 لـ LM Studio. يمكن تفعيل جسر واحد فقط؛ وتظل مطالبات الأذونات العادية سارية.',
   'st.display.cloud_bridge.url_label': 'عنوان WebSocket',

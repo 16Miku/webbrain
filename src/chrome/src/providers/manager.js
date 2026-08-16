@@ -1151,7 +1151,7 @@ export class ProviderManager {
   }
 
   /** Enable the Chrome-only local vision fallback and start its durable cache fill. */
-  async enableAndPreloadWebgpuVision() {
+  async enableAndPreloadWebgpuVision({ automatic = true } = {}) {
     const provider = new WebGPUVisionProvider();
     const stored = await chrome.storage.local.get([
       WEBGPU_VISION_ENABLED_KEY,
@@ -1161,12 +1161,17 @@ export class ProviderManager {
     const probe = await provider.testConnection();
     if (!probe.ok) return probe;
 
-    const automaticallySelected = !wasEnabled;
+    const automaticallySelected = automatic && !wasEnabled;
     if (automaticallySelected) {
       await chrome.storage.local.set({
         [WEBGPU_VISION_ENABLED_KEY]: true,
         [WEBGPU_VISION_AUTO_SELECTED_KEY]: true,
       });
+    } else {
+      if (!wasEnabled) await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
+      // Any user-triggered Start or Resume adopts the selection explicitly,
+      // even when an earlier automatic preload had already enabled it.
+      if (!automatic) await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
     }
 
     const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
@@ -1185,6 +1190,24 @@ export class ProviderManager {
     return result;
   }
 
+  async startWebgpuVisionDownload() {
+    return this.enableAndPreloadWebgpuVision({ automatic: false });
+  }
+
+  async pauseWebgpuVisionDownload() {
+    return new WebGPUVisionProvider().pauseDownload();
+  }
+
+  async stopWebgpuVisionDownload() {
+    const stored = await chrome.storage.local.get('visionModel');
+    const keys = [WEBGPU_VISION_ENABLED_KEY, WEBGPU_VISION_AUTO_SELECTED_KEY];
+    if (stored.visionModel?.type === 'webgpu') keys.push('visionModel');
+    // Disable selection before waiting for the serialized cache cleanup so a
+    // concurrent screenshot cannot silently recreate the removed download.
+    await chrome.storage.local.remove(keys);
+    return new WebGPUVisionProvider().stopDownload();
+  }
+
   _webgpuProvider() {
     const provider = this.providers.get('webgpu');
     if (!(provider instanceof WebGPUProvider)) throw new Error('WebGPU provider is unavailable.');
@@ -1193,6 +1216,35 @@ export class ProviderManager {
 
   async getWebgpuDownloadStatus() {
     return this._webgpuProvider().downloadStatus();
+  }
+
+  /** Configure the fixed Apocalypse text model and start or resume its cache fill. */
+  async enableAndStartWebgpuTextDownload() {
+    try {
+      await this.updateProvider('webgpu', {
+        model: WEBGPU_MODEL_ID,
+        dtype: WEBGPU_DTYPE,
+        contextWindow: 16384,
+        promptTier: 'compact',
+      });
+      const provider = this._webgpuProvider();
+      const probe = await provider.testConnection();
+      if (!probe.ok) return probe;
+
+      const status = await provider.downloadStatus();
+      if (status.ready === true || ['downloading', 'stopping'].includes(status.status)) {
+        return { ...status, ok: true, started: false };
+      }
+
+      const result = await provider.startDownload();
+      return {
+        ...result,
+        ok: true,
+        started: result?.status === 'downloading',
+      };
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
   }
 
   async startWebgpuDownload() {

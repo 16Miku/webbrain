@@ -1,5 +1,6 @@
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -529,6 +530,7 @@ export default {
   'st.display.search.empty': "تنظیمات عمومی مطابقت ندارد.",
   'st.display.advanced': "پیشرفته",
   ...getApocalypseModeCopy('fa'),
+  ...getEmergencyBoxCopy('fa'),
   'st.display.help_improve.label': "به بهبود WebBrain کمک کنید",
   'st.display.help_improve.desc_html': "اجازه دهید تا تعاملات متن و ابزار Cloud واجد شرایط WebBrain حفظ شود و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شود. به طور پیش فرض روشن است. با خاموش کردن این حالت به طور دائم از مکالمه فعلی انصراف داده می شود. روشن کردن مجدد آن برای مکالمه جدید بعدی اعمال می شود. عکس های صفحه و بایت های تصویر در پایگاه داده بهبود WebBrain حفظ نمی شوند. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سیاست حفظ حریم خصوصی →</a>",
   'st.display.clarify_timeout.label': "روشن کردن مهلت زمانی",

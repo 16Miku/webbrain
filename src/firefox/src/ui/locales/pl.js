@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -670,6 +671,7 @@ export default {
   'st.display.search.empty': 'Brak pasujących ustawień ogólnych.',
   'st.display.advanced': 'Zaawansowane',
   ...getApocalypseModeCopy('pl'),
+  ...getEmergencyBoxCopy('pl'),
   'st.display.clarify_timeout.label': 'Limit czasu dopytania',
   'st.display.clarify_timeout.desc': 'Jak długo czekać na odpowiedź na dopytanie, zanim automatycznie wybrana zostanie pierwsza opcja (lub upłynie limit, gdy brak opcji). 0 = Natychmiast (zawsze auto-wybór). Powyżej 1200s czekaj bez limitu (Wył.). Domyślnie 60s. Nie dotyczy uprawnień ani potwierdzeń wysyłki formularza.',
   'st.display.clarify_timeout.off': 'Wył.',

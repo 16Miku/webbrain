@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -679,6 +680,7 @@ export default {
   'st.display.search.empty': 'Нет совпадений в общих настройках.',
   'st.display.advanced': 'Расширенные',
   ...getApocalypseModeCopy('ru'),
+  ...getEmergencyBoxCopy('ru'),
   'st.display.clarify_timeout.label': 'Таймаут уточнения',
   'st.display.clarify_timeout.desc': 'Сколько ждать ответа на уточняющий вопрос, прежде чем автоматически выбрать первый вариант (или зафиксировать таймаут без вариантов). 0 — сразу (всегда автовыбор). Больше 1200 с — ждать бесконечно (Выкл.). По умолчанию 60 с. Не применяется к разрешениям и подтверждениям отправки форм.',
   'st.display.clarify_timeout.off': 'Выкл.',

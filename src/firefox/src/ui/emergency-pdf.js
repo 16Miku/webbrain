@@ -1,7 +1,20 @@
 import { createEmergencyBoxStorage, createEmergencyBoxStore } from '../agent/emergency-box.js';
 import { t } from './i18n.js';
+import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
+let currentThemeMode = 'system';
+loadMode().then((mode) => {
+  currentThemeMode = mode;
+  applyMode(mode, { syncStorage: false });
+});
+watch(() => currentThemeMode);
+runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area !== 'local' || !changes.themeMode) return;
+  const next = changes.themeMode.newValue;
+  if (THEME_MODES.includes(next)) currentThemeMode = next;
+});
+
 const store = createEmergencyBoxStore();
 const storage = createEmergencyBoxStorage();
 const elements = Object.fromEntries([

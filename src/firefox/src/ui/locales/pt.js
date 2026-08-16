@@ -1,5 +1,6 @@
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -529,6 +530,7 @@ export default {
   'st.display.search.empty': "Nenhuma configuração geral corresponde.",
   'st.display.advanced': "Avançado",
   ...getApocalypseModeCopy('pt'),
+  ...getEmergencyBoxCopy('pt'),
   'st.display.help_improve.label': "Ajude a melhorar WebBrain",
   'st.display.help_improve.desc_html': "Permitir que textos qualificados da nuvem WebBrain e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
   'st.display.clarify_timeout.label': "Esclarecer o tempo limite",
