@@ -294,7 +294,12 @@ export class AwsBedrockProvider extends BaseLLMProvider {
     if (res.content) yield { type: 'text', content: res.content };
     if (res.toolCalls) yield { type: 'tool_call', content: res.toolCalls };
     if (res.usage) yield { type: 'usage', usage: res.usage };
-    yield { type: 'done', content: '' };
+    yield {
+      type: 'done',
+      content: '',
+      ...(res.raw?.stopReason ? { finishReason: res.raw.stopReason } : {}),
+      ...(res.raw ? { raw: res.raw } : {}),
+    };
   }
 }
 

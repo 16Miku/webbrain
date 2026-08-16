@@ -79,6 +79,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   get model() {
     if (this.config.model) return this.config.model;
     if (this.config.requiresModel) throw new Error(`${this.config.label || this.name} model is required.`);
+    // Local servers (Ollama, LM Studio, vLLM, …) must never receive a model
+    // id the user never configured: most 404 on unknown ids and none serves
+    // a model named after OpenAI's default. Omit the field entirely so the
+    // server applies its own default. Mirrors LlamaCppProvider.
+    if (this.config.category === 'local') return null;
     return String(this.config.providerName || '').toLowerCase() === 'openai'
       && this._isOfficialOpenAIBaseUrl()
       ? 'gpt-5.6-terra'
@@ -376,10 +381,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    */
   _buildChatCompletionsBody(messages, options = {}, stream = false) {
     let body = {
-      model: this.model,
       messages: this._chatMessages(messages, options),
       stream,
     };
+    if (this.model) body.model = this.model;
     this._addTemperature(body, options);
     this._addMaxTokens(body, options);
     if (this._shouldSendTools(messages, options)) {
@@ -499,7 +504,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   _responsesBody(messages, options, stream) {
     let body = {
-      model: this.model,
       input: this._responsesInput(messages),
       stream,
       store: false,
@@ -514,6 +518,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (body.reasoning.effort === 'auto' || body.reasoning.effort === 'off') {
       body.reasoning.effort = body.reasoning.effort === 'off' ? 'none' : 'medium';
     }
+    if (this.model) body.model = this.model;
 
     if (this._shouldSendTools(messages, options)) {
       body.tools = this._responsesTools(options.tools);
@@ -838,7 +843,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             if (response.usage) {
               yield { type: 'usage', usage: this._normalizeResponsesUsage(response.usage) };
             }
-            yield { type: 'done', content: '', responseItems: response.output || [] };
+            const finishReason = response.finish_reason ?? response.stop_reason;
+            yield {
+              type: 'done',
+              content: '',
+              responseItems: response.output || [],
+              ...(finishReason != null ? { finishReason: String(finishReason) } : {}),
+            };
             return;
           } else if (event.type === 'response.incomplete') {
             // Incomplete is terminal (token limit / filter / etc.). Surface it
@@ -949,6 +960,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     let buffer = '';
     let finalUsage = null;
     let sawTerminalFinish = false;
+    let terminalFinishReason = '';
 
     while (true) {
       let chunk;
@@ -973,7 +985,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         const payload = trimmed.slice(6);
         if (payload === '[DONE]') {
           if (finalUsage) yield { type: 'usage', usage: finalUsage };
-          yield { type: 'done', content: '' };
+          yield {
+            type: 'done',
+            content: '',
+            ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}),
+          };
           return;
         }
         let json;
@@ -1012,6 +1028,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         }
         if (finishReason != null) {
           sawTerminalFinish = true;
+          terminalFinishReason = String(finishReason);
         }
         const delta = choice?.delta;
         const reasoningDelta = delta?.reasoning_content || delta?.reasoning;
@@ -1028,7 +1045,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
     if (finalUsage) yield { type: 'usage', usage: finalUsage };
     if (sawTerminalFinish) {
-      yield { type: 'done', content: '' };
+      yield { type: 'done', content: '', finishReason: terminalFinishReason };
       return;
     }
     if (this._supportsInteractiveAskStreaming()) {

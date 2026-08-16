@@ -2,6 +2,7 @@ import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMo
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
+import { aggregateMessageCompletion } from '../message-info.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
 import { STANDARD_TOOL_RESULT_CHARS, createReadCompletenessState, isCommunicationThreadContext, normalizeReadScope, readCompletenessBlock, readCompletenessLimitation, readCompletenessMadeProgress, readWindowLimits, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
@@ -1920,6 +1921,8 @@ export class Agent extends LoopDetector {
     let reasoningContent = '';
     let usage = null;
     let responseItems = null;
+    let finishReason = '';
+    let terminalRaw = null;
     let sawCompleted = false;
     let usageRecorded = false;
     const toolCalls = new Map();
@@ -1987,6 +1990,14 @@ export class Agent extends LoopDetector {
         } else if (chunk?.type === 'done') {
           if (Array.isArray(chunk.responseItems)) responseItems = chunk.responseItems;
           if (chunk.usage) usage = chunk.usage;
+          finishReason = String(
+            chunk.finishReason
+              ?? chunk.finish_reason
+              ?? chunk.stopReason
+              ?? chunk.stop_reason
+              ?? '',
+          );
+          if (chunk.raw) terminalRaw = chunk.raw;
           sawCompleted = true;
           break;
         }
@@ -2013,6 +2024,8 @@ export class Agent extends LoopDetector {
       toolCalls: toolCalls.size ? [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call) : null,
       usage,
       responseItems,
+      finishReason,
+      ...(terminalRaw ? { raw: terminalRaw } : {}),
     };
     const after = await recordUsage();
     if (after) result.costAllowanceMessage = after;
@@ -19340,6 +19353,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     let runId = null;
     let finalResponse = '';
+    let messageCompletion = null;
     let _traceStatus = 'done';
     let askStreamingTraceWrite = Promise.resolve();
     let shouldOrderInteractiveAskTrace = false;
@@ -19513,7 +19527,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     };
 
-    const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
+    const chatMainTurnRaw = async (chatMessages, chatOptions, requestContext) => {
       const decision = this._interactiveAskStreamingDecision(
         provider,
         mode,
@@ -19606,6 +19620,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requestContext,
         );
       }
+    };
+
+    const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
+      const startedAt = Date.now();
+      const result = await chatMainTurnRaw(chatMessages, chatOptions, requestContext);
+      messageCompletion = aggregateMessageCompletion(
+        messageCompletion,
+        result,
+        Date.now() - startedAt,
+      );
+      onUpdate('message_info', messageCompletion);
+      return result;
     };
 
     if (!runId) {

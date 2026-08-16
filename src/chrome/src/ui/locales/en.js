@@ -2,6 +2,12 @@
 import apocalypseModeCopy from './apocalypse-copy.mjs';
 
 export default {
+  'sp.message_info.sent': '(sent {time})',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Open the current page’s native print dialog',
   'sp.print.error': 'Could not open the print dialog: {msg}',
   'sp.streaming.fallback': 'Response streaming was interrupted; retrying this Ask turn without streaming.',

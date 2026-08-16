@@ -124,6 +124,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
     const decoder = new TextDecoder();
     let buffer = '';
     let finalUsage = null;
+    let terminalFinishReason = '';
 
     while (true) {
       let chunk;
@@ -148,7 +149,11 @@ export class LlamaCppProvider extends BaseLLMProvider {
         const payload = trimmed.slice(6);
         if (payload === '[DONE]') {
           if (finalUsage) yield { type: 'usage', usage: finalUsage };
-          yield { type: 'done', content: '' };
+          yield {
+            type: 'done',
+            content: '',
+            ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}),
+          };
           return;
         }
         let json;
@@ -175,6 +180,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
         if (choice?.finish_reason === 'content_filter') {
           throw this._askStreamTerminalError('llama.cpp stream was blocked by the provider content filter.');
         }
+        if (choice?.finish_reason != null) terminalFinishReason = String(choice.finish_reason);
         const delta = choice?.delta;
         const reasoningDelta = delta?.reasoning_content || delta?.reasoning;
         if (typeof reasoningDelta === 'string' && reasoningDelta) {
@@ -192,6 +198,6 @@ export class LlamaCppProvider extends BaseLLMProvider {
     if (this._supportsInteractiveAskStreaming()) {
       throw this._askStreamTransportError('llama.cpp stream ended before the [DONE] sentinel.');
     }
-    yield { type: 'done', content: '' };
+    yield { type: 'done', content: '', ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}) };
   }
 }
