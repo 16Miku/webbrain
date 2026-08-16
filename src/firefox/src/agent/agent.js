@@ -10719,7 +10719,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '') {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys']);
-    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']);
     if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
     if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
     if (name === 'set_field' && args?.submit !== true) return null;

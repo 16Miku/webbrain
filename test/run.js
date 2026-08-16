@@ -3466,7 +3466,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
     const inconclusive = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
     assert.equal(inconclusive?.reasonCode, 'message_send_classification_inconclusive', `${label}: inconclusive probe failed open`);
 
-    for (const unsafeTool of ['iframe_click', 'execute_js', 'execute_webmcp_tool']) {
+    for (const unsafeTool of ['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']) {
       const unsafe = await agent._messageRecipientGuardBlock(tabId, unsafeTool, {});
       assert.equal(unsafe?.noDispatch, true, `${label}: ${unsafeTool} bypassed recipient verification`);
       assert.equal(unsafe?.reasonCode, 'recipient_unverifiable_dispatch_path');
