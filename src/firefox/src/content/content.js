@@ -3080,6 +3080,16 @@
     return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
   }
 
+  // Synthetic (isTrusted:false) Enter events never trigger native submission —
+  // they only reach the page's own keydown listeners. A non-combobox field
+  // inside a form that has requestSubmit therefore needs a native submit as
+  // its only reliable commit path; comboboxes are committed by page JS
+  // listeners instead, because submitting the enclosing form while a picker
+  // popup is open is usually wrong.
+  function _setFieldUsesNativeSubmit(isCombobox, form) {
+    return !isCombobox && !!form && typeof form.requestSubmit === 'function';
+  }
+
   // Above this length the per-candidate rescan below stops being worth its
   // cost. The edit still succeeds; it is reported unproven, which the callers
   // treat as "no positive proof", not as a failure.
@@ -4840,6 +4850,7 @@
           let actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           let verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
           let fallbackAttempted = false;
+          let nativeSubmitAttempted = false;
           if (!verified) {
             fallbackAttempted = true;
             await _retryFieldWithExecCommand(el, (clear ? '' : prevValue) + text);
@@ -4867,7 +4878,10 @@
                 } catch {}
               }
               const dispatchKey = (type, key, keyCode) => {
-                el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
+                // Return the dispatch result: `false` means the page cancelled
+                // the event (preventDefault), which is how we detect that a
+                // keydown listener already handled Enter.
+                return el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
               };
               if (isCombobox) {
                 await new Promise(r => setTimeout(r, 80));
@@ -4875,6 +4889,7 @@
                 dispatchKey('keyup', 'ArrowDown', 40);
                 await new Promise(r => setTimeout(r, 30));
               }
+              const form = el.form || (el.closest && el.closest('form'));
               if (msg.params?.messageRecipientGuardRequired === true) {
                 const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
@@ -4887,12 +4902,26 @@
                   });
                 }
               }
-              dispatchKey('keydown', 'Enter', 13);
+              // Always dispatch the Enter trio: bare forms, tag-chip / email
+              // inputs that transform the value on Enter, and contenteditable
+              // composers only commit through their own keydown listener. If
+              // the page cancelled the keydown it already handled Enter, so a
+              // second submit would double-send.
+              const enterHandled = !dispatchKey('keydown', 'Enter', 13);
               dispatchKey('keypress', 'Enter', 13);
               dispatchKey('keyup', 'Enter', 13);
-              if (!isCombobox) {
-                const form = el.form || (el.closest && el.closest('form'));
-                if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+              if (!enterHandled && _setFieldUsesNativeSubmit(isCombobox, form)) {
+                // requestSubmit performs interactive constraint validation and
+                // silently aborts on an invalid form; surface that instead of
+                // reporting a successful submission.
+                if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+                  return failure(
+                    'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
+                    { verified: true, submitted: false, invalid: true, ref_id, rect },
+                  );
+                }
+                form.requestSubmit();
+                nativeSubmitAttempted = true;
               }
             } catch {}
           }
@@ -4921,6 +4950,7 @@
             verified: true,
             fieldMeta,
             fallbackAttempted,
+            submitted: nativeSubmitAttempted || undefined,
           };
         } catch (e) {
           return failure(e && e.message || String(e));

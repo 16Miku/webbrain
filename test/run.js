@@ -55033,6 +55033,79 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
   }
 });
 
+test('set_field submit dispatches Enter once and submits natively only when unhandled', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+    // Pure boolean helper.
+    const helperStart = source.indexOf('function _setFieldUsesNativeSubmit(');
+    const helperEnd = source.indexOf('\n  }\n', helperStart) + 4;
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: submit helper should remain independently testable`);
+    const usesNativeSubmit = vm.runInNewContext(`(${source.slice(helperStart, helperEnd)})`);
+    const formWithSubmit = { requestSubmit() {} };
+    assert.equal(usesNativeSubmit(true, formWithSubmit), false, `${label}: combobox never uses native submit`);
+    assert.equal(usesNativeSubmit(false, formWithSubmit), true, `${label}: plain field in a form uses native submit`);
+    assert.equal(usesNativeSubmit(false, null), false, `${label}: form-less field does not use native submit`);
+    assert.equal(usesNativeSubmit(false, {}), false, `${label}: form without requestSubmit does not use native submit`);
+
+    // Behavioral slice of the submit block, run against stubs.
+    const blockStart = source.indexOf("const form = el.form || (el.closest && el.closest('form'));");
+    const blockEnd = source.indexOf('} catch {}', blockStart);
+    assert.ok(blockStart >= 0 && blockEnd > blockStart, `${label}: submit block not found`);
+    const block = source.slice(blockStart, blockEnd);
+    const runner = vm.runInNewContext(`(stubs) => {
+      const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, ref_id, rect } = stubs;
+      let nativeSubmitAttempted = false;
+      ${block}
+      return nativeSubmitAttempted;
+    }`);
+
+    const exercise = ({ keydownCancelled, checkValidity = () => true, isCombobox = false }) => {
+      const calls = [];
+      const form = { requestSubmit: () => calls.push('requestSubmit'), checkValidity };
+      const el = { dispatchEvent: (ev) => (keydownCancelled && ev.type === 'keydown' ? false : true), form, closest: () => null };
+      const dispatchKey = (type) => { calls.push(type); return el.dispatchEvent({ type }); };
+      let failureResult = null;
+      const failure = (msg, data) => { failureResult = data; return { success: false, ...data }; };
+      const submitted = runner({
+        dispatchKey, el,
+        msg: { params: {} },
+        failure,
+        isCombobox,
+        _setFieldUsesNativeSubmit: usesNativeSubmit,
+        _consumeMessageRecipientDispatchBinding: () => ({ success: true }),
+        ref_id: 'ref_1',
+        rect: { x: 0, y: 0, w: 1, h: 1 },
+      });
+      return { calls, submitted, failureResult };
+    };
+
+    // Plain field + valid form + unhandled keydown: Enter trio + one submit.
+    const plain = exercise({});
+    assert.deepEqual(plain.calls, ['keydown', 'keypress', 'keyup', 'requestSubmit'], `${label}: plain field must dispatch Enter then submit natively once`);
+    assert.equal(plain.submitted, true, `${label}: native submit must be reported`);
+
+    // Page already handled Enter (keydown cancelled): no second submit.
+    const handled = exercise({ keydownCancelled: true });
+    assert.deepEqual(handled.calls, ['keydown', 'keypress', 'keyup'], `${label}: handled Enter must not double-submit`);
+    assert.equal(handled.submitted, false, `${label}: handled Enter reports no native submit`);
+
+    // Combobox: never native-submits (the Enter trio reaches page JS).
+    const combobox = exercise({ isCombobox: true });
+    assert.deepEqual(combobox.calls, ['keydown', 'keypress', 'keyup'], `${label}: combobox must commit via synthetic keys only`);
+    assert.equal(combobox.submitted, false, `${label}: combobox reports no native submit`);
+
+    // Invalid form: surface the silent requestSubmit abort.
+    const invalid = exercise({ checkValidity: () => false });
+    assert.deepEqual(invalid.calls, ['keydown', 'keypress', 'keyup'], `${label}: invalid form must not call requestSubmit`);
+    assert.equal(invalid.failureResult?.submitted, false, `${label}: invalid form must fail with submitted:false`);
+    assert.equal(invalid.failureResult?.invalid, true, `${label}: invalid form must flag invalid:true`);
+  }
+});
+
 test('type_ax shares settled exact verification and explicit recovery contract', () => {
   for (const [label, rel] of [
     ['chrome', 'src/chrome/src/content/content.js'],
