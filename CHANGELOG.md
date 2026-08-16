@@ -4,6 +4,25 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.1.0] - 2026-08-16
+
+### Added
+- Added a `/print` slash command that prints either the current page or the user's active selection without losing the selected scope.
+- Added independently configurable duplicate provider cards in Settings, with one additional instance per eligible provider and preserved provider-specific behavior across Chrome and Firefox.
+- Added click-to-reveal message metadata, including system-timezone sent times and verbose model completion details.
+
+### Changed
+- Refined the homepage story and Apocalypse Mode showcase, including offline equation rendering and more compact handling of small Wikipedia images.
+
+### Fixed
+- Duplicate provider cards now open completely blank instead of copying credentials, endpoints, models, costs, compatibility overrides, or other settings from the source provider; suggestion-backed model controls also remain visibly blank until configured.
+- Kept duplicate-provider creation, removal, draft preservation, active-provider fallback, reload validation, and local model/vision behavior independent and reliable.
+- Improved message metadata accuracy, streaming/restoration behavior, keyboard accessibility, compact one-line presentation, and local-timezone formatting without a separate info icon.
+- Kept the offline Wikipedia library reachable from Apocalypse Mode and hardened archive history navigation and offline answer generation.
+
+### Tests
+- Added mirrored Chrome and Firefox regressions for blank provider duplication, duplicate lifecycle behavior, message metadata rendering and keyboard operation, `/print` selection handling, and Apocalypse Mode reliability.
+
 ## [32.0.0] - 2026-08-14
 
 ### Added

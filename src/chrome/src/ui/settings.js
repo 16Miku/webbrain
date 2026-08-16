@@ -62,7 +62,7 @@ const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '32.0.0';
+const EXT_VERSION = '32.1.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -2887,9 +2887,10 @@ function renderProviders() {
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
-        const effectiveVal = rawVal || field.suggestions[0];
-        const selectVal = isCustom ? '__custom__' : effectiveVal;
-        const optionsHTML = field.suggestions
+        const isBlankDuplicate = config.isDuplicate && !rawVal;
+        const effectiveVal = rawVal || (isBlankDuplicate ? '' : field.suggestions[0]);
+        const selectVal = isBlankDuplicate ? '' : (isCustom ? '__custom__' : effectiveVal);
+        const optionsHTML = (isBlankDuplicate ? '<option value="" selected></option>' : '') + field.suggestions
           .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(field.suggestionLabels?.[s] || s)}</option>`)
           .join('') +
           `<option value="__custom__"${isCustom ? ' selected' : ''}>${escapeHtml(t('st.provider.field.model_custom'))}</option>`;

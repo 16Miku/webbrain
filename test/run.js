@@ -48127,7 +48127,7 @@ function makeProviderManagerWriteRuntime(writes) {
   };
 }
 
-test('ProviderManager creates one independent duplicate per provider', async () => {
+test('ProviderManager creates one blank independent duplicate per provider', async () => {
   const originalChrome = globalThis.chrome;
   const originalBrowser = globalThis.browser;
 
@@ -48143,6 +48143,7 @@ test('ProviderManager creates one independent duplicate per provider', async () 
       const sourceConfig = {
         ...defaults.openai,
         apiKey: `${label}-work-key`,
+        baseUrl: `https://${label}.work.example/v1`,
         model: `${label}-work-model`,
         configured: true,
         compat: { reasoningEffort: 'medium' },
@@ -48166,10 +48167,20 @@ test('ProviderManager creates one independent duplicate per provider', async () 
       const duplicate = manager.providers.get(created.providerId);
       assert.equal(duplicate?.config.duplicateOf, 'openai', `${label}: duplicate origin should persist with the config`);
       assert.equal(duplicate?.config.label, 'OpenAI 2', `${label}: duplicate should be distinguishable in provider pickers`);
-      assert.equal(duplicate?.config.apiKey, sourceConfig.apiKey, `${label}: duplicate should start with the source credentials`);
-      assert.equal(duplicate?.config.model, sourceConfig.model, `${label}: duplicate should start with the source model`);
-      assert.equal(duplicate?.config.configured, true, `${label}: a configured provider should create a selectable duplicate`);
-      assert.notEqual(duplicate?.config.compat, manager.providers.get('openai')?.config.compat, `${label}: nested config must not be shared`);
+      assert.equal(duplicate?.config.apiKey, undefined, `${label}: duplicate credentials should be blank`);
+      assert.equal(duplicate?.config.baseUrl, undefined, `${label}: duplicate endpoint should be blank`);
+      assert.equal(duplicate?.config.model, undefined, `${label}: duplicate model should be blank`);
+      assert.equal(duplicate?.config.contextWindow, undefined, `${label}: duplicate context window should be blank`);
+      assert.equal(duplicate?.config.inputCostPerMillionUsd, undefined, `${label}: duplicate cost settings should be blank`);
+      assert.equal(duplicate?.config.compat, undefined, `${label}: duplicate compatibility overrides should be blank`);
+      assert.equal(duplicate?.config.providerName, defaults.openai.providerName, `${label}: duplicate should retain its provider implementation metadata`);
+      assert.equal(duplicate?.config.apiKeyUrl, defaults.openai.apiKeyUrl, `${label}: duplicate should retain non-editable setup guidance`);
+      assert.equal(duplicate?.config.configured, false, `${label}: a new duplicate should remain unavailable until explicitly saved`);
+      assert.notEqual(duplicate?.config.apiKey, sourceConfig.apiKey, `${label}: duplicate leaked source credentials`);
+      assert.notEqual(duplicate?.config.baseUrl, sourceConfig.baseUrl, `${label}: duplicate copied the source endpoint`);
+      assert.notEqual(duplicate?.config.model, sourceConfig.model, `${label}: duplicate copied the source model`);
+      assert.equal(writes[0]?.providers?.[created.providerId]?.apiKey, undefined, `${label}: persisted duplicate leaked source credentials`);
+      assert.equal(writes[0]?.providers?.[created.providerId]?.configured, false, `${label}: persisted duplicate should remain unconfigured`);
 
       await manager.updateProvider(created.providerId, {
         apiKey: `${label}-personal-key`,
@@ -48318,8 +48329,15 @@ test('duplicated local providers retain their source-native model and vision beh
       manager.activeProviderId = 'ollama';
       const { providerId } = await manager.duplicateProvider('ollama');
 
-      await manager.updateProvider(providerId, { model: 'personal-model' });
-      assert.equal(manager.providers.get(providerId)?.config.visionDetection, null, `${label}: changing the duplicate model should invalidate copied Ollama detection`);
+      assert.equal(manager.providers.get(providerId)?.config.baseUrl, undefined, `${label}: duplicate local endpoint should start blank`);
+      assert.equal(manager.providers.get(providerId)?.config.model, undefined, `${label}: duplicate local model should start blank`);
+      assert.equal(manager.providers.get(providerId)?.config.visionDetection, undefined, `${label}: duplicate should not copy Ollama detection state`);
+
+      await manager.updateProvider(providerId, {
+        baseUrl: defaults.ollama.baseUrl,
+        model: 'personal-model',
+      });
+      assert.equal(manager.providers.get(providerId)?.config.visionDetection, null, `${label}: configuring the duplicate should initialize independent Ollama detection`);
       const listed = await manager.listProviderModels(providerId);
       assert.deepEqual(listed.models, ['personal-model', 'work-model'], `${label}: duplicate should parse Ollama's native model list`);
       assert.equal(requests.some(request => request.url.endsWith('/api/tags')), true, `${label}: duplicate should use Ollama /api/tags`);
@@ -48452,9 +48470,10 @@ test('duplicate provider controls are wired through background and settings in b
     assert.match(settings, /input\[data-provider\], select\[data-provider\], textarea\[data-provider\][\s\S]*?markProviderDirty\(input\.dataset\.provider\)/, `${label}: editing a saved provider should disable Duplicate until Save`);
     assert.match(settings, /const duplicateButton = card\.querySelector\('\.btn-duplicate'\);[\s\S]*?const requiresSave = !isConfigured \|\| dirtyProviderIds\.has\(id\);[\s\S]*?duplicateButton\.disabled = requiresSave;[\s\S]*?duplicateButton\.removeAttribute\('title'\)[\s\S]*?st\.providers\.duplicate_inactive/, `${label}: Save should enable Duplicate without rebuilding provider cards`);
     assert.match(settings, /async function duplicateProvider\(id\) \{\s*if \(!providerIsActive\(id, providersData\[id\]\) \|\| dirtyProviderIds\.has\(id\)\) return;/, `${label}: inactive and edited providers should also be guarded at the Duplicate handler`);
+    assert.match(settings, /const isBlankDuplicate = config\.isDuplicate && !rawVal;[\s\S]*?const effectiveVal = rawVal \|\| \(isBlankDuplicate \? '' : field\.suggestions\[0\]\);[\s\S]*?'<option value="" selected><\/option>'/, `${label}: suggestion-backed model fields should stay visibly blank on a new duplicate`);
     const duplicateAction = settings.match(/async function duplicateProvider\(id\)[\s\S]*?async function removeDuplicateProvider\(id\)/)?.[0] || '';
     assert.doesNotMatch(duplicateAction, /saveProvider\(/, `${label}: Duplicate must not implicitly save the source provider`);
-    assert.match(duplicateAction, /syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: duplicate action should preserve other provider drafts while cloning the last saved source`);
+    assert.match(duplicateAction, /syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: duplicate action should preserve other provider drafts while creating a blank provider`);
     assert.match(settings, /async function removeDuplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('remove_duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: remove duplicate action should preserve drafts for remaining providers`);
     assert.match(sidepanel, /appendProviderPickerOption\(id, name, t\('sp\.providers\.active'\), config\.sourceProviderId \|\| id\)/, `${label}: duplicate picker entries should reuse their source icon`);
   }
