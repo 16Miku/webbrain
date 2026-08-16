@@ -27,8 +27,10 @@
     .hero { display:grid;grid-template-columns:1fr;gap:12px; }
     .hero-overview { display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;align-items:start; }
     .hero-copy { max-width:780px; }
-    .emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
-    .emergency-callout h2 { margin-bottom:2px; }
+    .library-callout,.emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .library-callout h2,.emergency-callout h2 { margin-bottom:2px; }
+    .library-callout .button-link { border-color:rgba(96,211,178,.45);color:var(--teal);background:rgba(96,211,178,.1); }
+    .library-callout .button-link:hover { border-color:var(--teal);background:rgba(96,211,178,.16); }
     .emergency-callout[data-locked="true"] .section-icon,.emergency-callout[data-locked="true"] h2,.emergency-callout[data-locked="true"] .muted,.emergency-callout[data-locked="true"] .button-link { opacity:.46;filter:saturate(.2); }
     .emergency-callout[data-locked="true"] .button-link { pointer-events:none;cursor:not-allowed; }
     .emergency-gate-reason { margin-top:5px;color:var(--warn);font-size:12px;font-weight:650; }
@@ -106,7 +108,7 @@
     .empty { color:var(--muted);padding:12px 0; }
     @media(prefers-reduced-motion:reduce){.webgpu-transfer-fill{transition:none}.webgpu-transfer[data-state=downloading] .webgpu-transfer-dot,.webgpu-transfer[data-state=downloading][data-indeterminate=true] .webgpu-transfer-fill,.section-status[data-kind="loading"]::before{animation:none}}
     @media(max-width:920px){.header-stats .header-stat:last-child{display:none}}
-    @media(max-width:700px){ header{align-items:flex-start}.header-right{width:100%;margin-inline-start:64px;justify-content:space-between}.header-stat{min-width:74px}.hero-overview,.item,.emergency-callout{grid-template-columns:1fr}.local-models{grid-column:1}.actions{justify-content:flex-start}.local-model-head{align-items:flex-start;flex-direction:column;gap:2px}.emergency-callout .section-icon{display:none}.button-link{justify-self:start} }
+    @media(max-width:700px){ header{align-items:flex-start}.header-right{width:100%;margin-inline-start:64px;justify-content:space-between}.header-stat{min-width:74px}.hero-overview,.item,.library-callout,.emergency-callout{grid-template-columns:1fr}.local-models{grid-column:1}.actions{justify-content:flex-start}.local-model-head{align-items:flex-start;flex-direction:column;gap:2px}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start} }
   </style>
 </head>
 <body>
@@ -195,6 +197,12 @@
             </div>
           </section>
       </div>
+    </section>
+
+    <section id="wikipedia-library-callout" class="card library-callout">
+      <span class="section-icon" data-kind="catalog" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
+      <div><h2 data-i18n="wl.title"></h2><p class="muted" data-i18n="wl.choose_desc"></p></div>
+      <a id="wikipedia-library-link" class="button-link" href="wikipedia-library.html" data-i18n="st.display.apocalypse_mode.manage"></a>
     </section>
 
     <section id="emergency-box-callout" class="card emergency-callout" data-locked="true" aria-disabled="true">

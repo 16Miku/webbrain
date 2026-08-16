@@ -23618,6 +23618,20 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
       `${prefix}: optional Wikipedia management is still duplicated on Apocalypse Mode`);
     assert.doesNotMatch(pageScript, /loadCatalog|reviewInstall|reviewImport|elements\.installed/,
       `${prefix}: removed Wikipedia catalog or import machinery is still active on Apocalypse Mode`);
+    const wikipediaLibraryCalloutStart = pageHtml.indexOf('id="wikipedia-library-callout"');
+    const wikipediaLibraryCallout = pageHtml.slice(
+      wikipediaLibraryCalloutStart,
+      pageHtml.indexOf('</section>', wikipediaLibraryCalloutStart) + 10,
+    );
+    assert.match(wikipediaLibraryCallout, /id="wikipedia-library-link"[^>]*href="wikipedia-library\.html"/,
+      `${prefix}: Offline Wikipedia library is not directly reachable during basic setup`);
+    assert.doesNotMatch(wikipediaLibraryCallout, /(?:\shidden(?:\s|>)|aria-disabled="true"|data-locked="true")/,
+      `${prefix}: Offline Wikipedia library is incorrectly gated by basic setup readiness`);
+    const emergencyBoxCalloutStart = pageHtml.indexOf('id="emergency-box-callout"');
+    if (emergencyBoxCalloutStart >= 0) {
+      assert.ok(wikipediaLibraryCalloutStart < emergencyBoxCalloutStart,
+        `${prefix}: independent Wikipedia library route must appear before the gated Emergency Box`);
+    }
     assert.doesNotMatch(pageScript, /await command\('process'\)/,
       `${prefix}: status polling blocks behind the long-running download loop`);
     assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?(?:await refresh\(\)|Promise\.all\(\[refresh\(\))/,

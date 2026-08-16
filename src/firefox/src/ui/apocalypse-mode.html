@@ -24,17 +24,20 @@
     main { max-width:1120px;margin:24px auto;padding:0 24px 48px;display:grid;gap:18px; }
     .card { background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px; }
     .hero { display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center; }
-    .emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .library-callout,.emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
     .section-icon { width:36px;height:36px;display:grid;place-items:center;color:var(--good);border:1px solid rgba(85,199,133,.38);border-radius:9px;background:rgba(85,199,133,.09); }
     .section-icon svg { width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
     .button-link { display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 13px;border:1px solid rgba(85,199,133,.45);border-radius:8px;color:var(--good-link);background:rgba(85,199,133,.1);font-weight:700;text-decoration:none;white-space:nowrap; }
     .button-link:hover { border-color:var(--good);background:rgba(85,199,133,.16); }
+    .library-callout .section-icon { border-color:rgba(96,211,178,.35);background:rgba(96,211,178,.09);color:#60d3b2; }
+    .library-callout .button-link { border-color:rgba(96,211,178,.45);color:#60d3b2;background:rgba(96,211,178,.1); }
+    .library-callout .button-link:hover { border-color:#60d3b2;background:rgba(96,211,178,.16); }
     .muted { color:var(--muted); } .warning { color:var(--warn);margin-top:8px; }
     .toggle { display:flex;gap:10px;align-items:center;font-weight:700; }
     .toggle input { width:42px;height:22px;accent-color:var(--accent); }
     #notice { min-height:21px;color:var(--muted); } #notice[data-kind=error] { color:var(--bad); } #notice[data-kind=success] { color:var(--good); }
     @media(max-width:860px){.header-stats .header-stat:last-child{display:none}}
-    @media(max-width:700px){header{align-items:flex-start;flex-wrap:wrap}.header-stats{width:100%;margin-inline-start:64px}.header-stat{flex:1}.hero,.emergency-callout{grid-template-columns:1fr}.emergency-callout .section-icon{display:none}.button-link{justify-self:start}}
+    @media(max-width:700px){header{align-items:flex-start;flex-wrap:wrap}.header-stats{width:100%;margin-inline-start:64px}.header-stat{flex:1}.hero,.library-callout,.emergency-callout{grid-template-columns:1fr}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start}}
   </style>
 </head>
 <body>
@@ -43,6 +46,11 @@
     <section class="hero">
       <div><h2 data-i18n="ap.hero.title"></h2><p class="muted" data-i18n="ap.hero.desc"></p><p class="warning" data-i18n="ap.hero.consent"></p></div>
       <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
+    </section>
+    <section id="wikipedia-library-callout" class="card library-callout">
+      <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
+      <div><h2 data-i18n="wl.title"></h2><p class="muted" data-i18n="wl.choose_desc"></p></div>
+      <a id="wikipedia-library-link" class="button-link" href="wikipedia-library.html" data-i18n="st.display.apocalypse_mode.manage"></a>
     </section>
     <section class="card emergency-callout">
       <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
