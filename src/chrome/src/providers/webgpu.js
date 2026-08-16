@@ -287,6 +287,10 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
   }
 
   async chat(messages, options = {}) {
+    const stored = await chrome.storage.local.get(WEBGPU_VISION_ENABLED_KEY);
+    if (stored[WEBGPU_VISION_ENABLED_KEY] !== true) {
+      throw new Error('The local Vision Model is disabled. Enable or download it in Apocalypse Mode before using screenshots.');
+    }
     const response = await this._dispatch({
       type: 'webgpu-vision-chat',
       model: this.model,
@@ -331,15 +335,37 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
     }
   }
 
-  async clearCache() {
+  async pauseDownload() {
     try {
-      const response = await this._dispatch({ type: 'webgpu-vision-clear-cache' });
+      const response = await this._dispatch({
+        type: 'webgpu-vision-pause',
+        model: this.model,
+      });
       return response?.error
         ? { ok: false, error: response.error }
-        : { ok: true, deletedCaches: response?.deletedCaches || [] };
+        : { ok: true, ...response };
     } catch (error) {
       return { ok: false, error: error?.message || String(error) };
     }
+  }
+
+  async stopDownload() {
+    try {
+      const response = await this._dispatch({
+        type: 'webgpu-vision-stop',
+        model: this.model,
+        dtype: this.dtype,
+      });
+      return response?.error
+        ? { ok: false, error: response.error }
+        : { ok: true, ...response };
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+
+  async clearCache() {
+    return this.stopDownload();
   }
 
   /** Release GPU/model allocations while preserving downloaded model files. */

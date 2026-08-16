@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -679,6 +680,7 @@ export default {
   'st.display.search.empty': 'لا توجد إعدادات عامة مطابقة.',
   'st.display.advanced': 'متقدم',
   ...getApocalypseModeCopy('ar'),
+  ...getEmergencyBoxCopy('ar'),
   'st.display.clarify_timeout.label': 'مهلة التوضيح',
   'st.display.clarify_timeout.desc': 'مدة انتظار الرد على سؤال التوضيح قبل اختيار الخيار الأول تلقائيًا (أو انتهاء المهلة إن لم توجد خيارات). 0 = فوري (اختيار تلقائي دائمًا). أعلى من 1200 ثانية = انتظار بلا حدود (إيقاف). الافتراضي 60 ثانية. لا ينطبق على أذونات أو تأكيدات إرسال النماذج.',
   'st.display.clarify_timeout.off': 'إيقاف',

@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -686,6 +687,7 @@ export default {
   'st.display.search.empty': 'Brak pasujących ustawień ogólnych.',
   'st.display.advanced': 'Zaawansowane',
   ...getApocalypseModeCopy('pl'),
+  ...getEmergencyBoxCopy('pl'),
   'st.display.cloud_bridge.label': 'Most chmurowy',
   'st.display.cloud_bridge.desc': 'Połącz jeden lokalny kontroler z tym profilem Chromium. Użyj portu 17373 dla WebBrain Cloud, 17374 dla klientów MCP lub 17375 dla LM Studio. Aktywny może być tylko jeden most; zwykłe monity o uprawnienia nadal obowiązują.',
   'st.display.cloud_bridge.url_label': 'Adres URL WebSocket',

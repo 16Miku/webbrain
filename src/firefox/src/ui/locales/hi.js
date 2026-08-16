@@ -1,5 +1,6 @@
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -529,6 +530,7 @@ export default {
   'st.display.search.empty': "कोई सामान्य सेटिंग मेल नहीं खाती.",
   'st.display.advanced': "उन्नत",
   ...getApocalypseModeCopy('hi'),
+  ...getEmergencyBoxCopy('hi'),
   'st.display.help_improve.label': "WebBrain को बेहतर बनाने में सहायता करें",
   'st.display.help_improve.desc_html': "योग्य WebBrain क्लाउड टेक्स्ट और टूल इंटरैक्शन को बनाए रखने और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग करने की अनुमति दें। डिफ़ॉल्ट रूप से चालू. इसे बंद करने से वर्तमान वार्तालाप स्थायी रूप से बंद हो जाता है; इसे वापस चालू करना अगली नई बातचीत पर लागू होता है। स्क्रीनशॉट और छवि बाइट्स को WebBrain सुधार डेटाबेस में बरकरार नहीं रखा गया है। <u>स्थानीय-मॉडल और अपनी खुद की एपीआई अनुरोध WebBrain द्वारा कभी एकत्र नहीं किए जाते हैं।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">गोपनीयता नीति →</a>",
   'st.display.clarify_timeout.label': "टाइमआउट स्पष्ट करें",

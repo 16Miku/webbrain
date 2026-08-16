@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -700,6 +701,7 @@ export default {
   'st.display.search.empty': 'Eşleşen Genel ayar yok.',
   'st.display.advanced': 'Gelişmiş',
   ...getApocalypseModeCopy('tr'),
+  ...getEmergencyBoxCopy('tr'),
   'st.display.cloud_bridge.label': 'Cloud köprüsü',
   'st.display.cloud_bridge.desc': 'Bu Chromium profiline tek bir yerel denetleyici bağlayın. WebBrain Cloud için 17373, MCP istemcileri için 17374 veya LM Studio için 17375 portunu kullanın. Aynı anda yalnızca bir köprü etkin olabilir; normal izin istemleri geçerliliğini korur.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL’si',

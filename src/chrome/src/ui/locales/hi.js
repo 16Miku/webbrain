@@ -1,5 +1,6 @@
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -532,6 +533,7 @@ export default {
   'st.display.search.empty': "कोई सामान्य सेटिंग मेल नहीं खाती.",
   'st.display.advanced': "उन्नत",
   ...getApocalypseModeCopy('hi'),
+  ...getEmergencyBoxCopy('hi'),
   'st.display.cloud_bridge.label': 'क्लाउड ब्रिज',
   'st.display.cloud_bridge.desc': 'एक स्थानीय कंट्रोलर को इस Chromium प्रोफ़ाइल से कनेक्ट करें। WebBrain Cloud के लिए पोर्ट 17373, MCP क्लाइंट के लिए 17374 या LM Studio के लिए 17375 इस्तेमाल करें। एक समय में केवल एक ब्रिज सक्रिय हो सकता है; सामान्य अनुमति संकेत लागू रहेंगे।',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -679,6 +680,7 @@ export default {
   'st.display.search.empty': '일치하는 일반 설정이 없습니다.',
   'st.display.advanced': '고급',
   ...getApocalypseModeCopy('ko'),
+  ...getEmergencyBoxCopy('ko'),
   'st.display.clarify_timeout.label': '명확화 제한 시간',
   'st.display.clarify_timeout.desc': '명확화 질문에 대한 답변 대기 시간입니다. 시간이 지나면 첫 번째 옵션을 자동 선택합니다(옵션이 없으면 시간 초과). 0은 즉시(항상 자동 선택). 1200초 초과는 무제한(끔). 기본 60초. 권한 또는 양식 제출 확인에는 적용되지 않습니다.',
   'st.display.clarify_timeout.off': '끔',

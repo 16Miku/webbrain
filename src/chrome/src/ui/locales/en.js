@@ -1,5 +1,6 @@
 // English — canonical locale. Other locales inherit key names from this file.
 import apocalypseModeCopy from './apocalypse-copy.mjs';
+import emergencyCopy from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -532,6 +533,7 @@ export default {
   'st.display.search.empty': 'No General settings match.',
   'st.display.advanced': 'Advanced',
   ...apocalypseModeCopy,
+  ...emergencyCopy,
   'st.display.cloud_bridge.label': 'Cloud bridge',
   'st.display.cloud_bridge.desc': 'Connect one local controller to this Chromium profile. Use port 17373 for WebBrain Cloud, 17374 for MCP clients, or 17375 for LM Studio. Only one bridge can be active; normal permission prompts still apply.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

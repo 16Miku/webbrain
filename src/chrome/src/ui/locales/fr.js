@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -695,6 +696,7 @@ export default {
   'st.display.search.empty': 'Aucun paramètre général correspondant.',
   'st.display.advanced': 'Avancé',
   ...getApocalypseModeCopy('fr'),
+  ...getEmergencyBoxCopy('fr'),
   'st.display.cloud_bridge.label': 'Pont cloud',
   'st.display.cloud_bridge.desc': 'Connectez un contrôleur local à ce profil Chromium. Utilisez le port 17373 pour WebBrain Cloud, 17374 pour les clients MCP ou 17375 pour LM Studio. Un seul pont peut être actif ; les demandes d’autorisation restent applicables.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

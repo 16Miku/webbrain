@@ -1,5 +1,6 @@
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   'sp.message_info.sent': '(sent {time})',
@@ -532,6 +533,7 @@ export default {
   'st.display.search.empty': "Không có cài đặt chung nào khớp.",
   'st.display.advanced': "Nâng cao",
   ...getApocalypseModeCopy('vi'),
+  ...getEmergencyBoxCopy('vi'),
   'st.display.cloud_bridge.label': 'Cầu nối đám mây',
   'st.display.cloud_bridge.desc': 'Kết nối một bộ điều khiển cục bộ với hồ sơ Chromium này. Dùng cổng 17373 cho WebBrain Cloud, 17374 cho ứng dụng MCP hoặc 17375 cho LM Studio. Chỉ một cầu nối có thể hoạt động; các lời nhắc cấp quyền thông thường vẫn được áp dụng.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',
