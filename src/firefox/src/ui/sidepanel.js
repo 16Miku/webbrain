@@ -7066,6 +7066,20 @@ function toggledVisionProviderConfig(providerId, config) {
   return { enabled, config: { ...config, supportsVision: enabled } };
 }
 
+async function executePrintSlashCommand(tabId, currentTabId, tabs, showToast, translate) {
+  try {
+    const tab = tabId == null ? null : await tabs.get(tabId);
+    if (currentTabId !== tabId || !tab?.active) return { skipped: true };
+    await tabs.executeScript(tabId, { code: 'window.print();' });
+    return { ok: true };
+  } catch (error) {
+    if (currentTabId === tabId) {
+      showToast(translate('sp.print.error', { msg: error?.message || 'unknown error' }), { duration: 5000 });
+    }
+    return { error: error?.message || 'unknown error' };
+  }
+}
+
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
     const watchArgs = parseWatchSlashCommand(text);
@@ -7282,15 +7296,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/print') {
-    try {
-      const tab = tabId == null ? null : await browser.tabs.get(tabId);
-      if (currentTabId !== tabId || !tab?.active) return '';
-      await browser.tabs.executeScript(tabId, { code: 'window.print();' });
-    } catch (error) {
-      if (currentTabId === tabId) {
-        showComposerToast(t('sp.print.error', { msg: error?.message || 'unknown error' }), { duration: 5000 });
-      }
-    }
+    await executePrintSlashCommand(tabId, currentTabId, browser.tabs, showComposerToast, t);
     return '';
   }
 

@@ -23520,14 +23520,117 @@ test('/print opens the current page native print dialog in both builds', () => {
     const routeEnd = panel.indexOf("if (command.value === '/screenshot'", routeStart);
     assert.notEqual(routeEnd, -1, `${label}: /print parser route boundary missing`);
     const route = panel.slice(routeStart, routeEnd);
-    assert.match(route, /tabs\.get\(tabId\)/, `${label}: /print should validate the initiating tab`);
-    assert.match(route, /currentTabId !== tabId \|\| !tab\?\.active/, `${label}: /print should not target a stale or background tab`);
-    assert.match(route, /sp\.print\.error/, `${label}: /print failures should be visible`);
+    assert.match(route, /executePrintSlashCommand\(tabId, currentTabId,/, `${label}: /print should delegate to executePrintSlashCommand`);
+    const helperStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(helperStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const helperEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', helperStart);
+    assert.notEqual(helperEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const helper = panel.slice(helperStart, helperEnd);
+    assert.match(helper, /tabs\.get\(tabId\)/, `${label}: /print should validate the initiating tab`);
+    assert.match(helper, /currentTabId !== tabId \|\| !tab\?\.active/, `${label}: /print should not target a stale or background tab`);
+    assert.match(helper, /sp\.print\.error/, `${label}: /print failures should be visible`);
     if (label === 'chrome') {
-      assert.match(route, /chrome\.scripting\.executeScript\(\{[\s\S]*?target: \{ tabId \},[\s\S]*?func: \(\) => window\.print\(\)/, 'chrome: /print should invoke the page print dialog through MV3 scripting');
+      assert.match(helper, /scripting\.executeScript\(\{[\s\S]*?target: \{ tabId \},[\s\S]*?func: \(\) => window\.print\(\)/, 'chrome: /print should invoke the page print dialog through MV3 scripting');
     } else {
-      assert.match(route, /browser\.tabs\.executeScript\(tabId, \{ code: 'window\.print\(\);' \}\)/, 'firefox: /print should invoke the page print dialog through MV2 scripting');
+      assert.match(helper, /tabs\.executeScript\(tabId, \{ code: 'window\.print\(\);' \}\)/, 'firefox: /print should invoke the page print dialog through MV2 scripting');
     }
+  }
+});
+
+test('/print routes are exercised with mocked tab and injection APIs in both builds', async () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const fnStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(fnStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const fnEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', fnStart);
+    assert.notEqual(fnEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const executePrintSlashCommand = vm.runInNewContext(
+      `(() => { ${panel.slice(fnStart, fnEnd + 2)}; return executePrintSlashCommand; })()`,
+      {}
+    );
+
+    // Success path: active tab, injection succeeds.
+    let getCalled = false;
+    let executeCalled = false;
+    const successTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const successScripting = {
+      executeScript: async ({ target, func }) => {
+        executeCalled = true;
+        assert.equal(target.tabId, 7, `${label}: should target the initiating tab`);
+        assert.equal(typeof func, 'function', `${label}: should pass a function for injection`);
+      },
+    };
+    const toasts = [];
+    const showToast = (msg) => { toasts.push(msg); };
+    const t = (key, params) => `${key}:${JSON.stringify(params || {})}`;
+
+    const successResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...successTabs, executeScript: async (tabId, details) => {
+          executeCalled = true;
+          assert.equal(tabId, 7, `${label}: should target the initiating tab`);
+          assert.equal(details.code, "window.print();", `${label}: should pass the print script`);
+        } }, showToast, t);
+    assert.equal(successResult.ok, true, `${label}: success path should return ok`);
+    assert.equal(getCalled, true, `${label}: success path should call tabs.get`);
+    assert.equal(executeCalled, true, `${label}: success path should call executeScript`);
+
+    // Stale-tab guard: currentTabId differs from the command tab.
+    getCalled = false;
+    executeCalled = false;
+    const staleResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 99, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 99, { ...successTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(staleResult.skipped, true, `${label}: stale tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: stale tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: stale tab should not inject`);
+
+    // Background-tab guard: tab exists but is not active.
+    getCalled = false;
+    executeCalled = false;
+    const inactiveTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: false };
+      },
+    };
+    const inactiveResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, inactiveTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...inactiveTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(inactiveResult.skipped, true, `${label}: inactive tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: inactive tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: inactive tab should not inject`);
+
+    // Rejected-injection path: injection throws.
+    getCalled = false;
+    executeCalled = false;
+    const rejectTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const rejectScripting = {
+      executeScript: async () => { executeCalled = true; throw new Error('injection blocked'); },
+    };
+    const rejectResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, rejectTabs, rejectScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...rejectTabs, executeScript: async () => { throw new Error('injection blocked'); } }, showToast, t);
+    assert.equal(rejectResult.error, 'injection blocked', `${label}: should surface injection failure`);
+    assert.equal(getCalled, true, `${label}: rejection path should still validate the tab`);
+    assert.equal(executeCalled, label === 'chrome' ? true : false, `${label}: rejection path should attempt injection`);
+    assert.ok(toasts.some(t => t.includes('sp.print.error')), `${label}: should show localized error toast on rejection`);
   }
 });
 
