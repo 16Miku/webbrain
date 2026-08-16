@@ -48392,6 +48392,67 @@ test('Azure OpenAI Ask streams require DONE and distinguish terminal API errors'
   }
 });
 
+test('Azure OpenAI reasoning deployments use max_completion_tokens and omit temperature', () => {
+  for (const Provider of [AzureOpenAIProviderCh, AzureOpenAIProviderFx]) {
+    for (const deployment of ['o1', 'o1-mini', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-4.1']) {
+      const provider = new Provider({
+        providerName: 'azure-openai',
+        baseUrl: 'https://example.openai.azure.com',
+        model: deployment,
+        apiVersion: '2025-09-01',
+        apiKey: 'test-key',
+      });
+      const body = provider._buildRequestBody(
+        [{ role: 'user', content: 'hello' }],
+        { maxTokens: 2048 },
+      );
+      assert.equal(
+        body.max_completion_tokens,
+        2048,
+        `${Provider.name}/${deployment}: reasoning deployments must use max_completion_tokens`,
+      );
+      assert.equal(body.max_tokens, undefined, `${Provider.name}/${deployment}: legacy max_tokens must be absent`);
+      assert.equal(body.temperature, undefined, `${Provider.name}/${deployment}: temperature must be omitted`);
+    }
+  }
+});
+
+test('Azure OpenAI legacy deployments keep max_tokens and temperature', () => {
+  for (const Provider of [AzureOpenAIProviderCh, AzureOpenAIProviderFx]) {
+    for (const deployment of ['gpt-4o', 'gpt-35-turbo', 'custom-deployment']) {
+      const provider = new Provider({
+        providerName: 'azure-openai',
+        baseUrl: 'https://example.openai.azure.com',
+        model: deployment,
+        apiVersion: '2024-10-21',
+        apiKey: 'test-key',
+      });
+      const body = provider._buildRequestBody(
+        [{ role: 'user', content: 'hello' }],
+        { maxTokens: 4096 },
+      );
+      assert.equal(body.max_tokens, 4096, `${Provider.name}/${deployment}: legacy contract keeps max_tokens`);
+      assert.equal(body.max_completion_tokens, undefined, `${Provider.name}/${deployment}: new-contract field must be absent`);
+      assert.equal(body.temperature, 0.7, `${Provider.name}/${deployment}: legacy contract keeps temperature`);
+    }
+  }
+});
+
+test('Azure OpenAI omitTemperature config suppresses temperature on any deployment', () => {
+  for (const Provider of [AzureOpenAIProviderCh, AzureOpenAIProviderFx]) {
+    const provider = new Provider({
+      providerName: 'azure-openai',
+      baseUrl: 'https://example.openai.azure.com',
+      model: 'custom-reasoning-deployment',
+      apiVersion: '2025-09-01',
+      apiKey: 'test-key',
+      omitTemperature: true,
+    });
+    const body = provider._buildRequestBody([{ role: 'user', content: 'hello' }]);
+    assert.equal(body.temperature, undefined, `${Provider.name}: omitTemperature must be respected`);
+  }
+});
+
 test('Ask stream aggregation exposes text live but withholds tool calls until response.completed', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     let releaseCompleted;

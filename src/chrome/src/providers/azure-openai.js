@@ -61,12 +61,28 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
     return url.toString();
   }
 
+  _isNewOpenAIContract() {
+    // Newer OpenAI models (gpt-5, gpt-4.1+, o1, o3, o4) deployed on Azure
+    // reject `max_tokens` and any `temperature`; they require
+    // `max_completion_tokens` and the API's default temperature. Deployment
+    // names commonly mirror the model id, so detect the same way the
+    // OpenAI-compatible provider does (openai.js `_isNewOpenAIContract`).
+    // Custom deployment names that don't match can still opt out via
+    // `config.omitTemperature` and a `maxTokensField` compat override.
+    const m = (this.config.model || '').toLowerCase();
+    return /^(gpt-5|gpt-4\.1|o1|o3|o4)/.test(m);
+  }
+
   _addMaxTokens(body, options) {
-    // Azure OpenAI follows the legacy OpenAI contract here.
-    this._addConfiguredMaxTokens(body, options, 'max_tokens');
+    const field = this._isNewOpenAIContract() ? 'max_completion_tokens' : 'max_tokens';
+    this._addConfiguredMaxTokens(body, options, field);
   }
 
   _addTemperature(body, options) {
+    // Reasoning deployments only accept the API's default temperature;
+    // provider configs can impose the same omission for fixed-temperature
+    // models. In both cases, let the API apply its required default.
+    if (this._isNewOpenAIContract() || this.config.omitTemperature) return;
     body.temperature = options.temperature ?? 0.7;
   }
 
