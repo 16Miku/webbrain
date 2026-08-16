@@ -1873,6 +1873,7 @@ export class Agent extends LoopDetector {
     let usage = null;
     let responseItems = null;
     let finishReason = '';
+    let terminalRaw = null;
     let sawCompleted = false;
     let usageRecorded = false;
     const toolCalls = new Map();
@@ -1947,6 +1948,7 @@ export class Agent extends LoopDetector {
               ?? chunk.stop_reason
               ?? '',
           );
+          if (chunk.raw) terminalRaw = chunk.raw;
           sawCompleted = true;
           break;
         }
@@ -1974,6 +1976,7 @@ export class Agent extends LoopDetector {
       usage,
       responseItems,
       finishReason,
+      ...(terminalRaw ? { raw: terminalRaw } : {}),
     };
     const after = await recordUsage();
     if (after) result.costAllowanceMessage = after;

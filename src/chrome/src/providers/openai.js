@@ -79,6 +79,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   get model() {
     if (this.config.model) return this.config.model;
     if (this.config.requiresModel) throw new Error(`${this.config.label || this.name} model is required.`);
+    // Local servers (Ollama, LM Studio, vLLM, …) must never receive a model
+    // id the user never configured: most 404 on unknown ids and none serves
+    // a model named after OpenAI's default. Omit the field entirely so the
+    // server applies its own default. Mirrors LlamaCppProvider.
+    if (this.config.category === 'local') return null;
     return String(this.config.providerName || '').toLowerCase() === 'openai'
       && this._isOfficialOpenAIBaseUrl()
       ? 'gpt-5.6-terra'
@@ -376,10 +381,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    */
   _buildChatCompletionsBody(messages, options = {}, stream = false) {
     let body = {
-      model: this.model,
       messages: this._chatMessages(messages, options),
       stream,
     };
+    if (this.model) body.model = this.model;
     this._addTemperature(body, options);
     this._addMaxTokens(body, options);
     if (this._shouldSendTools(messages, options)) {
@@ -499,7 +504,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   _responsesBody(messages, options, stream) {
     let body = {
-      model: this.model,
       input: this._responsesInput(messages),
       stream,
       store: false,
@@ -514,6 +518,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (body.reasoning.effort === 'auto' || body.reasoning.effort === 'off') {
       body.reasoning.effort = body.reasoning.effort === 'off' ? 'none' : 'medium';
     }
+    if (this.model) body.model = this.model;
 
     if (this._shouldSendTools(messages, options)) {
       body.tools = this._responsesTools(options.tools);

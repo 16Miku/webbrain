@@ -198,6 +198,6 @@ export class LlamaCppProvider extends BaseLLMProvider {
     if (this._supportsInteractiveAskStreaming()) {
       throw this._askStreamTransportError('llama.cpp stream ended before the [DONE] sentinel.');
     }
-    yield { type: 'done', content: '' };
+    yield { type: 'done', content: '', ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}) };
   }
 }
