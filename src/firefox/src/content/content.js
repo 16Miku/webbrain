@@ -3765,8 +3765,7 @@
       };
       const verifiedConversationSelection = (clicked, composer) => {
         if (!clicked || !composer || editable(clicked)) return false;
-        const rowSelector = [
-          'a[href]',
+        const semanticRowSelector = [
           '[role="option"]',
           '[role="listitem"]',
           '[role="treeitem"]',
@@ -3777,16 +3776,29 @@
           '[data-thread-id]',
           '[data-chat-id]',
         ].join(',');
-        const row = clicked.closest?.(rowSelector) || null;
+        // Prefer the semantic conversation row over a nested action link. A
+        // plain navigation link can itself be the row only when no stronger
+        // row container exists.
+        const row = clicked.closest?.(semanticRowSelector)
+          || clicked.closest?.('a[href]')
+          || null;
         if (!row || !visible(row) || editable(row)) return false;
 
-        // A nested menu/delete/etc. button inside a conversation row is not
-        // the row selection itself and must keep failing closed.
+        // Reject the entire descendant chain of a nested menu/delete/forward
+        // control. Selector and AX resolution often return a span or SVG
+        // inside the actual button, so checking only the leaf tag/role lets
+        // the click bubble into a consequential row action.
         if (row !== clicked) {
-          const clickedTag = String(clicked.tagName || '').toLowerCase();
-          const clickedRole = String(clicked.getAttribute?.('role') || '').toLowerCase();
-          if (/^(button|input|select)$/.test(clickedTag)
-            || /^(button|menuitem|checkbox|radio|switch)$/.test(clickedRole)) return false;
+          const nestedActionSelector = [
+            'a[href]', 'button', 'input', 'select', 'textarea', 'summary',
+            '[contenteditable="true"]', '[contenteditable=""]',
+            '[role="button"]', '[role="link"]', '[role="menuitem"]',
+            '[role="checkbox"]', '[role="radio"]', '[role="switch"]',
+            '[role="combobox"]', '[role="textbox"]', '[aria-haspopup]',
+            '[onclick]', '[data-action]',
+          ].join(',');
+          const nestedAction = clicked.closest?.(nestedActionSelector) || null;
+          if (nestedAction && nestedAction !== row && row.contains?.(nestedAction)) return false;
         }
 
         const role = String(row.getAttribute?.('role') || '').toLowerCase();

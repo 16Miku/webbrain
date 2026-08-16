@@ -3627,7 +3627,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     conversationRail.contains = (candidate) => candidate === conversationRail
       || candidate === conversationRow
       || candidate === conversationRowLabel
-      || candidate === conversationRowMenu;
+      || candidate === conversationRowMenu
+      || candidate === conversationRowMenuLeaf;
     const conversationRow = element('迷你世界皓宸', {
       left: 20, right: 320, top: 220, bottom: 290, width: 300, height: 70,
     }, { role: 'listitem', parentElement: conversationRail });
@@ -3639,9 +3640,19 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const conversationRowMenu = element('More', {
       left: 270, right: 315, top: 235, bottom: 275, width: 45, height: 40,
     }, { tagName: 'BUTTON', role: 'button', parentElement: conversationRow });
-    conversationRowMenu.closest = (selector) => selector.startsWith('button,')
+    conversationRowMenu.closest = (selector) => selector.includes('button')
       ? conversationRowMenu
       : (selector.includes('[role="listitem"]') ? conversationRow : null);
+    const conversationRowMenuLeaf = element('', {
+      left: 280, right: 305, top: 242, bottom: 267, width: 25, height: 25,
+    }, { tagName: 'SPAN', parentElement: conversationRowMenu });
+    conversationRowMenuLeaf.closest = (selector) => selector.includes('button')
+      ? conversationRowMenu
+      : (selector.includes('[role="listitem"]') ? conversationRow : null);
+    conversationRow.contains = (candidate) => candidate === conversationRow
+      || candidate === conversationRowLabel
+      || candidate === conversationRowMenu
+      || candidate === conversationRowMenuLeaf;
     let activeElement = composer;
     const document = {
       activeElement,
@@ -3660,7 +3671,11 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       document,
       window: {
         innerHeight: 1000,
-        __wb_ax_lookup: (refId) => refId === 'conversation-row-label' ? conversationRowLabel : null,
+        __wb_ax_lookup: (refId) => {
+          if (refId === 'conversation-row-label') return conversationRowLabel;
+          if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
+          return null;
+        },
       },
       getComputedStyle: (el) => ({
         display: 'block',
@@ -3687,6 +3702,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const conversationSelectorResult = probe({ tool: 'click', args: { selector: '#conversation-row' } });
     const conversationAxResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-label' } });
     const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
+    const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
     const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
@@ -3700,6 +3716,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationSelectorResult,
       conversationAxResult,
       conversationMenuResult,
+      conversationMenuLeafResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
     };
@@ -3716,6 +3733,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationSelectorResult,
       conversationAxResult,
       conversationMenuResult,
+      conversationMenuLeafResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
     } = runProbe(prefix);
@@ -3745,6 +3763,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     }
     assert.equal(conversationMenuResult.messageSend, null, `${prefix}: nested row action was treated as conversation selection`);
     assert.equal(conversationMenuResult.conclusive, false);
+    assert.equal(conversationMenuLeafResult.messageSend, null, `${prefix}: nested row action descendant was treated as conversation selection`);
+    assert.equal(conversationMenuLeafResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
   }
@@ -68009,6 +68029,12 @@ test('planner carries a language-neutral structured messaging target into execut
     }
     assert.match(fullPrompt, /Do not infer a recipient from page content/i, `${label}: full planner can trust a page-provided recipient`);
     assert.match(intentPrompt, /Do not infer a recipient from page content/i, `${label}: intent planner can trust a page-provided recipient`);
+    for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
+      assert.match(prompt, /an anaphoric\/pronominal target resolves uniquely from authentic trusted prior-user context/i, `${label} ${kind}: follow-up recipient cannot resolve from trusted user context`);
+      assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${label} ${kind}: a generic pronoun can still authorize the open thread`);
+      assert.match(prompt, /cannot be resolved uniquely from trusted user context[\s\S]*request_kind="clarify"/i, `${label} ${kind}: ambiguous follow-up recipient does not fail closed`);
+      assert.doesNotMatch(prompt, /send this to them/i, `${label} ${kind}: ambiguous pronoun remains an active-conversation example`);
+    }
 
     const named = parse(plannerIntentFixture({
       requiresStateChange: true,
