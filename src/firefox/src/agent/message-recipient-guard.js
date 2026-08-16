@@ -42,14 +42,16 @@ export function recipientMatchesObservedIdentity(recipient, observedIdentity) {
 
 export function messageTargetMatchesObservedIdentities(target, candidates) {
   const normalizedTarget = normalizeMessageTarget(target);
-  const identities = (Array.isArray(candidates) ? candidates : [])
-    .map(value => compact(value, 240))
-    .filter(Boolean)
-    .slice(0, 16);
-  if (!normalizedTarget || identities.length === 0) return false;
+  const identities = new Map();
+  for (const value of (Array.isArray(candidates) ? candidates : []).slice(0, 16)) {
+    const identity = compact(value, 240);
+    const normalized = normalizeRecipientIdentity(identity);
+    if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
+  }
+  if (!normalizedTarget || identities.size !== 1) return false;
   // active_conversation is planner intent, not a dispatch-time identity. A
   // protected adapter must pin it to a concrete named identity before tools
   // run; accepting any later conversation would authorize retargeting.
   if (normalizedTarget.target_kind === 'active_conversation') return false;
-  return identities.some(identity => recipientMatchesObservedIdentity(normalizedTarget.recipient, identity));
+  return recipientMatchesObservedIdentity(normalizedTarget.recipient, [...identities.values()][0]);
 }

@@ -3362,8 +3362,12 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Malice'), false);
     assert.equal(helper.messageTargetMatchesObservedIdentities(
       { target_kind: 'named', recipient: '迷你世界皓宸' },
-      ['清辉月下夜', '迷你世界皓宸'],
+      ['迷你世界皓宸'],
     ), true);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜', '迷你世界皓宸'],
+    ), false, 'ambiguous identity evidence must never authorize dispatch');
     assert.equal(helper.messageTargetMatchesObservedIdentities(
       { target_kind: 'named', recipient: '迷你世界皓宸' },
       ['清辉月下夜'],
@@ -3417,18 +3421,35 @@ test('direct-message recipient guard uses structured intent and exact active ide
       conclusive: true,
       messageSend: true,
       identityCandidates: ['清辉月下夜'],
+      strongIdentityCandidates: ['清辉月下夜'],
     };
 
     const blocked = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
     assert.equal(blocked?.noDispatch, true, `${label}: mismatched active recipient was not blocked`);
     assert.equal(blocked?.reasonCode, 'active_recipient_unverified', `${label}: mismatch reason is unstable`);
 
-    probe = { success: true, conclusive: true, messageSend: true, identityCandidates: ['迷你世界皓宸'] };
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸'],
+      strongIdentityCandidates: ['迷你世界皓宸'],
+    };
     assert.equal(
       await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
       null,
       `${label}: matching active recipient was blocked`,
     );
+
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸', 'Other conversation'],
+      strongIdentityCandidates: ['迷你世界皓宸', 'Other conversation'],
+    };
+    const ambiguousDispatch = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(ambiguousDispatch?.noDispatch, true, `${label}: ambiguous header identities authorized dispatch`);
 
     agent._planExecutionGuards.set(tabId, { messaging: null });
     const missing = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
@@ -3453,7 +3474,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
   }
 });
 
-test('direct-message recipient probe ignores a searched name outside the conversation header band', () => {
+test('direct-message recipient probe accepts only a unique active-thread header as identity evidence', () => {
   const runProbe = (prefix) => {
     const source = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
     const start = source.indexOf('function _probeMessageRecipientGuard(');
@@ -3483,6 +3504,9 @@ test('direct-message recipient probe ignores a searched name outside the convers
     const activeHeader = element('清辉月下夜', {
       left: 450, right: 700, top: 80, bottom: 120, width: 250, height: 40,
     }, { tagName: 'H2' });
+    const conversationMessageHeading = element('迷你世界皓宸', {
+      left: 450, right: 700, top: 250, bottom: 290, width: 250, height: 40,
+    }, { tagName: 'H2' });
     const sendButton = element('Send', {
       left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
     }, { tagName: 'BUTTON', role: 'button' });
@@ -3498,11 +3522,11 @@ test('direct-message recipient probe ignores a searched name outside the convers
         if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer];
         if (selector.startsWith('button,')) return [sendButton, customSendControl];
         if (selector.startsWith('[aria-selected')) return [];
-        if (selector.startsWith('h1,')) return [searchedName, activeHeader];
+        if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
         return [];
       },
-      body: { querySelectorAll: () => [searchedName, activeHeader] },
+      body: { querySelectorAll: () => [searchedName, activeHeader, conversationMessageHeading] },
     };
     const context = {
       document,
@@ -3540,7 +3564,7 @@ test('direct-message recipient probe ignores a searched name outside the convers
     assert.equal(result.conclusive, true);
     assert.equal(result.messageSend, true);
     assert.deepEqual(Array.from(result.identityCandidates), ['清辉月下夜']);
-    assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false);
+    assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false, `${prefix}: message heading became recipient evidence`);
     assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
     assert.equal(unfocusedClickResult.conclusive, true);
     assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);

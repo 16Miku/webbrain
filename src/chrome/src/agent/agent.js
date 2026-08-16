@@ -12465,7 +12465,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const target = normalizeMessageTarget(guard?.messaging);
     const verified = probe?.success === true
       && probe.messageSend === true
-      && messageTargetMatchesObservedIdentities(target, probe.identityCandidates);
+      && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
     if (verified) return null;
 
     return {

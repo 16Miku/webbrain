@@ -4478,71 +4478,65 @@
       }
 
       const composerRect = composer.getBoundingClientRect();
-      const topBandBottom = Math.min(composerRect.top - 12, window.innerHeight * 0.5);
-      const identities = [];
+      const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
+      const headerBandBottom = Math.min(
+        composerRect.top - 12,
+        Math.min(220, Math.max(140, viewportHeight * 0.2)),
+      );
       const strongIdentities = [];
-      const seen = new Set();
       const strongSeen = new Set();
-      const inConversationBand = (el) => {
-        if (topBandBottom <= 0) return false;
+      const inConversationHeaderBand = (el) => {
+        if (headerBandBottom <= 0) return false;
         const rect = el.getBoundingClientRect();
         return rect.top >= 0
-          && rect.bottom <= topBandBottom
+          && rect.bottom <= headerBandBottom
           && rect.right >= composerRect.left
           && rect.left <= composerRect.right;
       };
-      const addIdentity = (el, requireConversationBand = false, strong = false) => {
+      const inIndependentScrollableRegion = (el) => {
+        let node = el?.parentElement || null;
+        while (node && node !== document.body) {
+          try {
+            const style = getComputedStyle(node);
+            const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
+            const scrollable = /^(auto|scroll|overlay)$/.test(overflowY)
+              && Number(node.scrollHeight) > Number(node.clientHeight) + 1;
+            if (scrollable && !(typeof node.contains === 'function' && node.contains(composer))) return true;
+          } catch {}
+          node = node.parentElement;
+        }
+        return false;
+      };
+      const addStrongIdentity = (el) => {
         if (!visible(el) || editable(el) || el.closest?.('input,textarea,[contenteditable="true"]')) return;
-        if (requireConversationBand && !inConversationBand(el)) return;
+        if (!inConversationHeaderBand(el) || inIndependentScrollableRegion(el)) return;
         const text = compact(
           el.getAttribute?.('aria-label')
           || el.getAttribute?.('title')
           || el.innerText
           || el.textContent
         );
-        if (!text || text.length > 120 || seen.has(text)) return;
-        seen.add(text);
-        identities.push(text);
-        if (strong && !strongSeen.has(text)) {
-          strongSeen.add(text);
-          strongIdentities.push(text);
-        }
+        if (!text || text.length > 120 || strongSeen.has(text)) return;
+        strongSeen.add(text);
+        strongIdentities.push(text);
       };
 
       for (const el of document.querySelectorAll(
         '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
       )) {
-        // Search results and navigation rows can also be selected/current.
-        // They count only when they occupy the active conversation's header
-        // band above the composer, never merely because they contain a name.
-        addIdentity(el, true, true);
-        if (identities.length >= 16) break;
+        // Search results and navigation rows can also be selected/current, so
+        // they count only inside the narrow, non-scrollable conversation
+        // header above the composer.
+        addStrongIdentity(el);
+        if (strongIdentities.length >= 8) break;
       }
 
-      if (identities.length < 16) {
+      if (strongIdentities.length < 8) {
         for (const el of document.querySelectorAll(
           'h1,h2,h3,h4,[role="heading"]'
         )) {
-          addIdentity(el, true, true);
-          if (identities.length >= 16) break;
-        }
-      }
-
-      if (identities.length < 16) {
-        for (const el of document.querySelectorAll(
-          '[data-testid*="chat" i],[data-e2e*="chat" i]'
-        )) {
-          addIdentity(el, true);
-          if (identities.length >= 16) break;
-        }
-      }
-
-      if (identities.length < 16 && topBandBottom > 0) {
-        const all = document.body?.querySelectorAll?.('*') || [];
-        for (let i = 0; i < all.length && i < 5000 && identities.length < 16; i++) {
-          const el = all[i];
-          if (!visible(el) || editable(el) || el.children?.length > 4) continue;
-          addIdentity(el, true);
+          addStrongIdentity(el);
+          if (strongIdentities.length >= 8) break;
         }
       }
 
@@ -4550,7 +4544,10 @@
         success: true,
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
-        identityCandidates: identities.slice(0, 16),
+        // Only recipient-specific header evidence is authoritative. Ordinary
+        // message text, test-id containers, and other leaf content are never
+        // returned as dispatch identities.
+        identityCandidates: strongIdentities.slice(0, 8),
         strongIdentityCandidates: strongIdentities.slice(0, 8),
       };
     } catch (error) {
