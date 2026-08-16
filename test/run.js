@@ -30277,7 +30277,7 @@ test('settings warns on missing or short API keys and shows the Ollama localhost
     );
     assert.match(
       settings,
-      /id === 'ollama'[\s\S]*?provider-ollama-warning[\s\S]*?OLLAMA_ORIGINS="\$\{escapeHtml\(extensionOrigin\)\}" ollama serve[\s\S]*?https:\/\/www\.webbrain\.one\/blog\/ollama-launch-handoff[\s\S]*?target="_blank" rel="noopener noreferrer"/,
+      /definitionId === 'ollama'[\s\S]*?provider-ollama-warning[\s\S]*?OLLAMA_ORIGINS="\$\{escapeHtml\(extensionOrigin\)\}" ollama serve[\s\S]*?https:\/\/www\.webbrain\.one\/blog\/ollama-launch-handoff[\s\S]*?target="_blank" rel="noopener noreferrer"/,
       `${label}: Ollama card should include the current WebBrain origin command and external handoff link`,
     );
     assert.ok(
@@ -30337,10 +30337,10 @@ test('Ollama settings use tri-state vision capability with mirrored preflight wi
     assert.match(settings, /data-ollama-vision-status/, `${label}: the status should remain addressable when Auto is not initially selected`);
     assert.match(settings, /select\[data-provider="ollama"\]\[data-key="visionMode"\][\s\S]*?addEventListener\('change', refreshOllamaVisionStatus\)/,
       `${label}: changing the override should update status visibility immediately`);
-    assert.match(settings, /input\[data-key="model"\][\s\S]*refreshOllamaVisionStatus\(\)/,
+    assert.match(settings, /input\[data-key="model"\][\s\S]*providerDefinitionId\(input\.dataset\.provider\) === 'ollama'[\s\S]*refreshVisionStatus\(input\.dataset\.provider\)/,
       `${label}: editing the model or endpoint should invalidate the displayed detection`);
-    assert.match(settings, /changes\.providers\?\.newValue\?\.ollama[\s\S]*visionDetection[\s\S]*refreshOllamaVisionStatus\(\)/,
-      `${label}: background detection storage updates should refresh an open Settings page`);
+    assert.match(settings, /Object\.entries\(changes\.providers\.newValue\)[\s\S]*?providerDefinitionId\(id\)[\s\S]*?VISION_UI_PROVIDER_IDS\.has\(definitionId\)[\s\S]*?refreshVisionStatus\(id\)/,
+      `${label}: background detection storage updates should refresh source and duplicate cards on an open Settings page`);
     assert.match(manager, /visionMode: 'auto'[\s\S]*visionDetection: null/, `${label}: Ollama defaults should be auto and unresolved`);
     assert.doesNotMatch(handoff, /supportsVision:\s*true/, `${label}: launch handoff must not force vision`);
     assert.match(handoff, /visionMode:\s*'auto'/, `${label}: launch handoff should request metadata detection`);
@@ -31767,7 +31767,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const regularProvider = toggleVision('openai', { supportsVision: false });
     assert.equal(regularProvider.enabled, true, `${label}: /vision should preserve boolean toggles for non-Ollama providers`);
     assert.equal(regularProvider.config.supportsVision, true);
-    assert.match(visionBody, /toggledVisionProviderConfig\(active, config\)[\s\S]*?config: toggled\.config[\s\S]*?toggled\.enabled/, `${label}: /vision should persist and report the provider-aware toggle result`);
+    assert.match(visionBody, /toggledVisionProviderConfig\(config\.sourceProviderId \|\| active, config\)[\s\S]*?config: toggled\.config[\s\S]*?toggled\.enabled/, `${label}: /vision should classify duplicates by their source while updating the active runtime provider`);
   }
 });
 
@@ -45330,7 +45330,7 @@ test('tri-state local vision controls and pre-enrichment preparation stay mirror
       assert.match(block, /VISION_MODE_FIELD/, `${prefix}/${id}: tri-state selector missing`);
     }
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
-    assert.match(panel, /toggledVisionProviderConfig\(active, config\)/);
+    assert.match(panel, /toggledVisionProviderConfig\(config\.sourceProviderId \|\| active, config\)/);
   }
 });
 
@@ -47031,6 +47031,323 @@ test('ProviderManager update rejects unknown providers and pins existing provide
   }
 });
 
+function makeProviderManagerWriteRuntime(writes) {
+  return {
+    storage: {
+      local: {
+        async set(patch) {
+          writes.push(structuredClone(patch));
+        },
+      },
+    },
+  };
+}
+
+test('ProviderManager creates one independent duplicate per provider', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const writes = [];
+      globalThis[runtimeKey] = makeProviderManagerWriteRuntime(writes);
+      const manager = new PM();
+      const sourceConfig = {
+        ...manager._defaultConfigs().openai,
+        apiKey: `${label}-work-key`,
+        model: `${label}-work-model`,
+        configured: true,
+        compat: { reasoningEffort: 'medium' },
+      };
+      manager.providers.set('openai', manager._createProvider('openai', sourceConfig));
+      manager.activeProviderId = 'openai';
+      assert.equal(manager.getAll().openai.canDuplicate, true, `${label}: eligible sources should advertise duplicate availability`);
+
+      const created = await manager.duplicateProvider('openai');
+      assert.equal(created.providerId, 'openai__duplicate', `${label}: duplicate ID should be stable and safe`);
+      assert.equal(created.sourceProviderId, 'openai', `${label}: duplicate should retain its provider definition`);
+      const duplicate = manager.providers.get(created.providerId);
+      assert.equal(duplicate?.config.duplicateOf, 'openai', `${label}: duplicate origin should persist with the config`);
+      assert.equal(duplicate?.config.label, 'OpenAI 2', `${label}: duplicate should be distinguishable in provider pickers`);
+      assert.equal(duplicate?.config.apiKey, sourceConfig.apiKey, `${label}: duplicate should start with the source credentials`);
+      assert.equal(duplicate?.config.model, sourceConfig.model, `${label}: duplicate should start with the source model`);
+      assert.equal(duplicate?.config.configured, true, `${label}: a configured provider should create a selectable duplicate`);
+      assert.notEqual(duplicate?.config.compat, manager.providers.get('openai')?.config.compat, `${label}: nested config must not be shared`);
+
+      await manager.updateProvider(created.providerId, {
+        apiKey: `${label}-personal-key`,
+        model: `${label}-personal-model`,
+        duplicateOf: 'kimi',
+      });
+      assert.equal(manager.providers.get(created.providerId)?.config.duplicateOf, 'openai', `${label}: updates must not reparent a duplicate`);
+      assert.equal(manager.providers.get('openai')?.config.apiKey, `${label}-work-key`, `${label}: editing the duplicate changed the source key`);
+      assert.equal(manager.providers.get('openai')?.config.model, `${label}-work-model`, `${label}: editing the duplicate changed the source model`);
+      assert.equal(manager.providers.get(created.providerId)?.config.apiKey, `${label}-personal-key`);
+      assert.equal(manager.providers.get(created.providerId)?.config.model, `${label}-personal-model`);
+      const surfaced = manager.getAll();
+      assert.equal(surfaced.openai.hasDuplicate, true, `${label}: source should advertise its existing duplicate`);
+      assert.equal(surfaced.openai.canDuplicate, false, `${label}: source should enforce the one-duplicate limit in UI metadata`);
+      assert.equal(surfaced[created.providerId].isDuplicate, true, `${label}: duplicate metadata missing`);
+      assert.equal(surfaced[created.providerId].sourceProviderId, 'openai', `${label}: duplicate source metadata missing`);
+      assert.equal(surfaced[created.providerId].canDuplicate, false, `${label}: duplicates must not be duplicable`);
+
+      await assert.rejects(
+        () => manager.duplicateProvider('openai'),
+        /already has a duplicate/i,
+        `${label}: a second duplicate should be rejected`,
+      );
+      await assert.rejects(
+        () => manager.duplicateProvider(created.providerId),
+        /cannot be duplicated/i,
+        `${label}: duplicating a duplicate should be rejected`,
+      );
+      assert.equal(writes.length, 2, `${label}: create and independent update should each persist once`);
+      assert.equal(writes.at(-1)?.providers?.openai?.apiKey, `${label}-work-key`);
+      assert.equal(writes.at(-1)?.providers?.[created.providerId]?.apiKey, `${label}-personal-key`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('ProviderManager removes only duplicates and safely reselects their source', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const writes = [];
+      globalThis[runtimeKey] = makeProviderManagerWriteRuntime(writes);
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('webbrain_cloud', manager._createProvider('webbrain_cloud', defaults.webbrain_cloud));
+      manager.providers.set('openai', manager._createProvider('openai', {
+        ...defaults.openai,
+        apiKey: `${label}-key`,
+        configured: true,
+      }));
+      manager.activeProviderId = 'openai';
+
+      const { providerId } = await manager.duplicateProvider('openai');
+      await manager.setActive(providerId);
+      assert.equal(manager.activeProviderId, providerId, `${label}: duplicate should be selectable before removal`);
+
+      await assert.rejects(
+        () => manager.removeDuplicateProvider('openai'),
+        /only duplicate providers can be removed/i,
+        `${label}: a built-in provider must not be removable`,
+      );
+      const removed = await manager.removeDuplicateProvider(providerId);
+      assert.deepEqual(removed, { removedProviderId: providerId, activeProviderId: 'openai' });
+      assert.equal(manager.providers.has(providerId), false, `${label}: duplicate should be removed from the runtime map`);
+      assert.equal(manager.activeProviderId, 'openai', `${label}: removing the selected duplicate should select its configured source`);
+      assert.equal(writes.at(-1)?.providers?.[providerId], undefined, `${label}: removed duplicate remained in storage`);
+      assert.equal(writes.at(-1)?.activeProvider, 'openai', `${label}: fallback selection was not persisted atomically`);
+
+      const recreated = await manager.duplicateProvider('openai');
+      assert.equal(recreated.providerId, providerId, `${label}: removing a duplicate should release the one-duplicate limit`);
+
+      await assert.rejects(
+        () => manager.duplicateProvider('webbrain_cloud'),
+        /cannot be duplicated/i,
+        `${label}: the managed no-setup provider should not produce meaningless copies`,
+      );
+      if (defaults.webgpu) {
+        manager.providers.set('webgpu', manager._createProvider('webgpu', defaults.webgpu));
+        await assert.rejects(
+          () => manager.duplicateProvider('webgpu'),
+          /cannot be duplicated/i,
+          `${label}: a shared in-browser WebGPU runtime should not be duplicated`,
+        );
+      }
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('duplicated local providers retain their source-native model and vision behavior', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const requests = [];
+      globalThis[runtimeKey] = {
+        storage: { local: { async set() {} } },
+        runtime: { id: `${label}-runtime` },
+      };
+      globalThis.fetch = async (url, init = {}) => {
+        requests.push({ url: String(url), method: init.method || 'GET' });
+        if (String(url).endsWith('/api/tags')) {
+          return new Response(JSON.stringify({ models: [{ name: 'work-model' }, { name: 'personal-model' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (String(url).endsWith('/api/show')) {
+          return new Response(JSON.stringify({ capabilities: ['completion', 'vision'] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('missing', { status: 404 });
+      };
+
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('ollama', manager._createProvider('ollama', {
+        ...defaults.ollama,
+        model: 'work-model',
+        configured: true,
+        visionDetection: {
+          model: 'work-model',
+          baseUrl: defaults.ollama.baseUrl,
+          supportsVision: false,
+          source: 'ollama_show',
+        },
+      }));
+      manager.activeProviderId = 'ollama';
+      const { providerId } = await manager.duplicateProvider('ollama');
+
+      await manager.updateProvider(providerId, { model: 'personal-model' });
+      assert.equal(manager.providers.get(providerId)?.config.visionDetection, null, `${label}: changing the duplicate model should invalidate copied Ollama detection`);
+      const listed = await manager.listProviderModels(providerId);
+      assert.deepEqual(listed.models, ['personal-model', 'work-model'], `${label}: duplicate should parse Ollama's native model list`);
+      assert.equal(requests.some(request => request.url.endsWith('/api/tags')), true, `${label}: duplicate should use Ollama /api/tags`);
+
+      await manager.setActive(providerId);
+      const detected = await manager.prepareActiveProviderCapabilities();
+      assert.equal(detected.ok, true, `${label}: duplicate Ollama vision detection should succeed`);
+      assert.equal(detected.supportsVision, true, `${label}: duplicate should preserve Ollama native vision detection`);
+      assert.equal(requests.some(request => request.url.endsWith('/api/show') && request.method === 'POST'), true, `${label}: duplicate should use Ollama /api/show`);
+      assert.equal(manager.getActive().supportsVision, true, `${label}: duplicate runtime should receive the detected vision capability`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('ProviderManager reloads one valid duplicate and purges forged duplicate entries', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const validGuid = '11111111-1111-4111-8111-111111111111';
+
+  function makeRuntime(storageData) {
+    return {
+      storage: {
+        local: {
+          async get(keys) {
+            return Object.fromEntries(keys.map(key => [key, structuredClone(storageData[key])]));
+          },
+          async set(patch) {
+            Object.assign(storageData, structuredClone(patch));
+          },
+        },
+      },
+      runtime: {
+        id: 'test-runtime',
+        getPlatformInfo() {
+          return Promise.resolve({ os: 'test', arch: 'x64', nacl_arch: 'x64' });
+        },
+      },
+    };
+  }
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const defaults = new PM()._defaultConfigs();
+      const source = {
+        ...defaults.openai,
+        apiKey: `${label}-work-key`,
+        configured: true,
+      };
+      const validDuplicate = {
+        ...structuredClone(source),
+        duplicateOf: 'openai',
+        label: 'OpenAI 2',
+        apiKey: `${label}-personal-key`,
+      };
+      const storageData = {
+        webbrainDeviceGuid: validGuid,
+        activeProvider: 'openai__duplicate',
+        providers: {
+          openai: source,
+          openai__duplicate: validDuplicate,
+          openai__duplicate_2: { ...validDuplicate },
+          missing__duplicate: { ...validDuplicate, duplicateOf: 'missing' },
+          webbrain_cloud__duplicate: {
+            ...structuredClone(defaults.webbrain_cloud),
+            duplicateOf: 'webbrain_cloud',
+            label: 'WebBrain Cloud 2',
+          },
+          groq: {
+            ...structuredClone(defaults.groq),
+            duplicateOf: 'openai',
+            configured: true,
+          },
+        },
+      };
+      globalThis[runtimeKey] = makeRuntime(storageData);
+
+      const manager = new PM();
+      await manager.load();
+      assert.equal(manager.activeProviderId, 'openai__duplicate', `${label}: a valid selected duplicate should survive reload`);
+      assert.equal(manager.providers.get('openai__duplicate')?.config.apiKey, `${label}-personal-key`);
+      assert.equal(manager.providers.has('openai__duplicate_2'), false, `${label}: forged second duplicate should be rejected`);
+      assert.equal(manager.providers.has('missing__duplicate'), false, `${label}: orphan duplicate should be rejected`);
+      assert.equal(manager.providers.has('webbrain_cloud__duplicate'), false, `${label}: managed cloud duplicate should be rejected`);
+      assert.equal(manager.providers.has('groq'), true, `${label}: forged metadata must not delete a built-in provider`);
+      assert.equal(manager.providers.get('groq')?.config.duplicateOf, undefined, `${label}: forged duplicate metadata should be stripped from built-ins`);
+      assert.equal(storageData.providers.openai__duplicate?.apiKey, `${label}-personal-key`, `${label}: valid duplicate was not persisted`);
+      assert.equal(storageData.providers.openai__duplicate_2, undefined, `${label}: forged duplicate was not purged from storage`);
+      assert.equal(storageData.providers.missing__duplicate, undefined, `${label}: orphan duplicate was not purged from storage`);
+      assert.equal(storageData.providers.webbrain_cloud__duplicate, undefined, `${label}: managed duplicate was not purged from storage`);
+      assert.equal(storageData.providers.groq?.duplicateOf, undefined, `${label}: forged built-in duplicate metadata was not purged`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('duplicate provider controls are wired through background and settings in both browsers', () => {
+  for (const [label, backgroundRel, settingsRel, sidepanelRel] of [
+    ['chrome', 'src/chrome/src/background.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/background.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const sidepanel = fs.readFileSync(path.join(ROOT, sidepanelRel), 'utf8');
+    assert.match(background, /case 'duplicate_provider':[\s\S]*?providerManager\.duplicateProvider\(msg\.providerId\)/, `${label}: duplicate background action missing`);
+    assert.match(background, /case 'remove_duplicate_provider':[\s\S]*?providerManager\.removeDuplicateProvider\(msg\.providerId\)/, `${label}: remove-duplicate background action missing`);
+    assert.match(settings, /const definitionId = providerDefinitionId\(id, config\);[\s\S]*?providerConfigs\[definitionId\]/, `${label}: duplicate cards should reuse source fields`);
+    assert.match(settings, /class="btn-secondary btn-duplicate"[\s\S]*?st\.providers\.duplicate/, `${label}: duplicate button missing`);
+    assert.match(settings, /class="btn-secondary btn-remove-duplicate"[\s\S]*?st\.providers\.remove_duplicate/, `${label}: remove duplicate button missing`);
+    assert.match(settings, /config\.hasDuplicate[\s\S]*?st\.providers\.duplicate_limit[\s\S]*?st\.providers\.duplicate_unavailable/, `${label}: disabled duplicate buttons should explain limits and unsupported providers`);
+    assert.match(settings, /async function duplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?saveProvider\(id, \{ showFlash: false, markConfigured: false \}\)[\s\S]*?sendToBackground\('duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: duplicate action should preserve all current drafts while cloning`);
+    assert.match(settings, /async function removeDuplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('remove_duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: remove duplicate action should preserve drafts for remaining providers`);
+    assert.match(sidepanel, /appendProviderPickerOption\(id, name, t\('sp\.providers\.active'\), config\.sourceProviderId \|\| id\)/, `${label}: duplicate picker entries should reuse their source icon`);
+  }
+});
+
 test('_defaultConfigs: every entry carries an explicit category', () => {
   // Walk the actual default config table on each platform and assert
   // each entry has a category field. Catches "I added a provider but
@@ -47812,7 +48129,7 @@ test('Kimi Chat Completions exposes reasoning content for non-streaming and stre
   }
 });
 
-test('transcribeAudio excludes Kimi from Whisper auto-pick', async () => {
+test('transcribeAudio excludes Kimi and its duplicate from Whisper auto-pick', async () => {
   const originalFetch = globalThis.fetch;
   let requestedUrl = null;
   globalThis.fetch = async (url) => {
@@ -47822,9 +48139,10 @@ test('transcribeAudio excludes Kimi from Whisper auto-pick', async () => {
 
   try {
     const providers = new Map([
-      ['kimi', {
+      ['kimi__duplicate', {
         config: {
           type: 'openai',
+          duplicateOf: 'kimi',
           enabled: true,
           baseUrl: 'https://api.moonshot.ai/v1',
           apiKey: 'test-key',

@@ -3311,6 +3311,12 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
 
+    case 'duplicate_provider':
+      return await providerManager.duplicateProvider(msg.providerId);
+
+    case 'remove_duplicate_provider':
+      return await providerManager.removeDuplicateProvider(msg.providerId);
+
     case 'ollama_launch_handoff': {
       const handoff = normalizeOllamaLaunchHandoff(msg.handoff || {});
       await providerManager.updateProvider(handoff.providerId, handoff.config);

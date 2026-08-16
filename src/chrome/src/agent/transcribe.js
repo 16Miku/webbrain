@@ -70,13 +70,14 @@ function pickProvider(providers) {
   // …then any other OpenAI-compatible provider not on the blocklist.
   const iter = providers.entries ? providers.entries() : Object.entries(providers);
   for (const [id, p] of iter) {
-    if (NO_WHISPER.has(id)) continue;
     const cfg = p.config || p;
+    const sourceProviderId = cfg.duplicateOf || id;
+    if (NO_WHISPER.has(sourceProviderId)) continue;
     if (cfg.type !== 'openai') continue;
     if (cfg.enabled === false) continue;
     if (!cfg.baseUrl) continue;
     if (!cfg.apiKey) continue;
-    return { id, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey };
+    return { id, sourceProviderId, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey };
   }
   return null;
 }
@@ -139,7 +140,8 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
     };
   }
 
-  const model = opts.modelOverride || picked.explicitModel || WHISPER_MODEL_BY_PROVIDER[picked.id] || 'whisper-1';
+  const sourceProviderId = picked.sourceProviderId || picked.id;
+  const model = opts.modelOverride || picked.explicitModel || WHISPER_MODEL_BY_PROVIDER[sourceProviderId] || 'whisper-1';
   const filename = opts.filename || 'recording.webm';
 
   // Explicit overrides may be imported from an older version as a bare local
@@ -196,7 +198,7 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
       res.status === 415 &&
       /application\/json|must.*use.*json/i.test(detail);
     if (isChatOnlyEndpoint) {
-      const isLocal = picked.id === 'lmstudio' || picked.id === 'llamacpp';
+      const isLocal = sourceProviderId === 'lmstudio' || sourceProviderId === 'llamacpp';
       return {
         ok: false,
         error:
