@@ -21285,6 +21285,12 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: an expired external-file permission is presented as a generic retry`);
     assert.match(wikipediaLibraryScript, /requestPermission\(\{ mode \}\)[\s\S]*?command\('reauthorize_file'/,
       `${browser}: the Wikipedia library cannot request and persist renewed file access`);
+    assert.match(wikipediaReaderScript, /const requestSequence = \+\+articleRequestSequence;[\s\S]*?await readApocalypseArticle[\s\S]*?if \(requestSequence !== articleRequestSequence\) return;/,
+      `${browser}: stale Wikipedia article reads can still render after navigation`);
+    assert.match(wikipediaReaderScript, /catch \(error\) \{\s*if \(requestSequence !== articleRequestSequence\) return;[\s\S]*?finally \{\s*if \(requestSequence === articleRequestSequence\) articleBusy = false;/,
+      `${browser}: stale Wikipedia article reads can still overwrite status or active-read state`);
+    assert.match(wikipediaReaderScript, /addEventListener\('popstate', \(\) => \{\s*cancelPendingArticleRead\(\);[\s\S]*?historyNavigation: true/,
+      `${browser}: Wikipedia history navigation does not invalidate and supersede an in-flight article read`);
     assert.match(boxScript, /t\('eb\.enable_downloads_tooltip'\)/,
       `${browser}: disabled download tooltip is not localized`);
     assert.doesNotMatch(boxScript, /title="Enable Apocalypse Mode to download resources"/,

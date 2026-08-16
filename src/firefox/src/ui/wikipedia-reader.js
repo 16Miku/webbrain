@@ -43,7 +43,10 @@ const imageLoader = createWikipediaImageLoader({
 let archive = null;
 let results = [];
 let selectedPath = '';
-let busy = false;
+let displayedPath = '';
+let searchBusy = false;
+let articleBusy = false;
+let articleRequestSequence = 0;
 let imagesIncluded = false;
 
 function articleTitle(path) {
@@ -101,8 +104,8 @@ function renderResults() {
 
 async function search() {
   const query = elements['article-query'].value.trim();
-  if (!archive || !query || busy) return;
-  busy = true;
+  if (!archive || !query || searchBusy || articleBusy) return;
+  searchBusy = true;
   elements['search-form'].querySelector('button').disabled = true;
   setStatus(t('ar.searching', { query }));
   try {
@@ -118,14 +121,20 @@ async function search() {
     renderResults();
     setStatus(error.message, 'error');
   } finally {
-    busy = false;
+    searchBusy = false;
     elements['search-form'].querySelector('button').disabled = false;
   }
 }
 
+function cancelPendingArticleRead() {
+  articleRequestSequence += 1;
+  articleBusy = false;
+}
+
 async function openArticle(result, options = {}) {
-  if (!result?.path || busy) return;
-  busy = true;
+  if (!result?.path || articleBusy || (searchBusy && options.historyNavigation !== true)) return;
+  const requestSequence = ++articleRequestSequence;
+  articleBusy = true;
   selectedPath = result.path;
   renderResults();
   const requestedTitle = result.title || articleTitle(result.path);
@@ -135,6 +144,7 @@ async function openArticle(result, options = {}) {
       maxChars: 250_000,
       maxHtmlChars: 1_000_000,
     });
+    if (requestSequence !== articleRequestSequence) return;
     elements['article-title'].textContent = article.title;
     elements['article-provenance'].textContent = [
       article.language,
@@ -162,15 +172,17 @@ async function openArticle(result, options = {}) {
     elements['article-empty'].hidden = true;
     elements['article-view'].hidden = false;
     selectedPath = article.path;
+    displayedPath = article.path;
     if (options.history !== false) {
       globalThis.history.pushState({ articlePath: article.path }, '', articleHref(article.path, options.fragment));
     }
     if (options.fragment) scrollToFragment(options.fragment);
     setStatus(t('ar.opened', { title: article.title }));
   } catch (error) {
+    if (requestSequence !== articleRequestSequence) return;
     setStatus(error.message, 'error');
   } finally {
-    busy = false;
+    if (requestSequence === articleRequestSequence) articleBusy = false;
   }
 }
 
@@ -192,25 +204,40 @@ elements['article-text'].addEventListener('click', event => {
   }, { fragment: link.dataset.wikipediaFragment || '' });
 });
 globalThis.addEventListener('popstate', () => {
+  cancelPendingArticleRead();
   const path = new URLSearchParams(globalThis.location.search).get('article') || '';
   if (!path) {
     imageLoader.clear();
     selectedPath = '';
+    displayedPath = '';
     renderResults();
     elements['article-view'].hidden = true;
     elements['article-empty'].hidden = false;
+    setStatus();
     elements['article-query'].focus();
     return;
   }
-  if (path && path !== selectedPath) {
-    void openArticle({ path, title: articleTitle(path) }, { history: false, fragment: locationFragment() });
+  if (path !== displayedPath) {
+    void openArticle({ path, title: articleTitle(path) }, {
+      history: false,
+      historyNavigation: true,
+      fragment: locationFragment(),
+    });
+    return;
   }
+  selectedPath = path;
+  renderResults();
+  setStatus();
+  scrollToFragment(locationFragment());
 });
 document.addEventListener('wb-locale-changed', () => {
   if (results.length) renderResults();
   updateReaderBadge();
 });
-globalThis.addEventListener('pagehide', () => imageLoader.clear());
+globalThis.addEventListener('pagehide', () => {
+  cancelPendingArticleRead();
+  imageLoader.clear();
+});
 
 try {
   archive = (await store.listArchives()).find(record => record.id === archiveId && record.status === 'ready') || null;
