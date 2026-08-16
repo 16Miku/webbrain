@@ -55,6 +55,30 @@ const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
+const DUPLICATE_BLANK_CONFIG_KEYS = [
+  ...PROVIDER_CREDENTIAL_KEYS,
+  'baseUrl',
+  'model',
+  'contextWindow',
+  'apiVersion',
+  'region',
+  'accountId',
+  'gatewayId',
+  'resource',
+  'project',
+  'location',
+  'inputCostPerMillionUsd',
+  'cacheReadCostPerMillionUsd',
+  'cacheWriteCostPerMillionUsd',
+  'cacheWrite1hCostPerMillionUsd',
+  'outputCostPerMillionUsd',
+  'promptTier',
+  'visionMode',
+  'visionDetection',
+  'supportsVision',
+  'compat',
+  'extraBody',
+];
 const OLLAMA_VISION_MODES = new Set(['auto', 'on', 'off']);
 const OLLAMA_VISION_METADATA_TIMEOUT_MS = 3000;
 const VISION_METADATA_TIMEOUT_MS = 3000;
@@ -1127,10 +1151,10 @@ export class ProviderManager {
   }
 
   /**
-   * Clone one configurable provider into a second independently persisted
-   * instance. The duplicate keeps its source definition ID so UIs can reuse
-   * the source card fields and branding without introducing another config
-   * schema.
+   * Create a fresh independently persisted instance of a configurable
+   * provider. The duplicate keeps its source definition ID so UIs can reuse
+   * the source card fields and branding, but it never inherits saved source
+   * settings or credentials.
    */
   async duplicateProvider(id) {
     const source = this.providers.get(id);
@@ -1146,9 +1170,15 @@ export class ProviderManager {
       throw new Error(`${source.config.label || id} already has a duplicate.`);
     }
 
-    const duplicateConfig = structuredClone(source.config);
+    const baseline = this._defaultConfigs()[id];
+    if (!baseline || baseline.type !== source.config.type) {
+      throw new Error(`Provider definition not found: ${id}`);
+    }
+    const duplicateConfig = structuredClone(baseline);
+    for (const key of DUPLICATE_BLANK_CONFIG_KEYS) delete duplicateConfig[key];
     duplicateConfig.duplicateOf = id;
-    duplicateConfig.label = `${source.config.label || id} 2`;
+    duplicateConfig.label = `${baseline.label || id} 2`;
+    duplicateConfig.configured = false;
     this.providers.set(duplicateId, this._createProvider(duplicateId, duplicateConfig));
     try {
       await this.save();
