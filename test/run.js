@@ -21271,20 +21271,30 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     assert.match(wikipediaLibrary, /name="edition" value="text"/, `${browser}: text-only Wikipedia choice is missing`);
     assert.match(wikipediaLibrary, /name="edition" value="images"/, `${browser}: Wikipedia image choice is missing`);
     assert.match(wikipediaLibrary, /id="download"/, `${browser}: selected Wikipedia edition cannot be downloaded`);
-    assert.doesNotMatch(wikipediaLibrary, /type="file"|audio|\.svg/i,
-      `${browser}: focused Wikipedia edition screen exposes an unsupported format or import control`);
+    assert.match(wikipediaLibrary, /id="import-file"[^>]*type="file"[^>]*accept="\.zim,application\/x-zim"/,
+      `${browser}: the Wikipedia library cannot select an existing local ZIM archive`);
+    assert.doesNotMatch(wikipediaLibrary, /audio|\.svg/i,
+      `${browser}: focused Wikipedia edition screen exposes an unsupported archive format`);
     assert.match(wikipediaLibraryScript, /selectWikipediaArchiveVariant\(result\.items, \{ includeImages \}\)/,
       `${browser}: language and image choices do not select a catalog edition`);
     assert.match(wikipediaLibraryScript, /replacementArchiveIds/,
       `${browser}: downloading a new Wikipedia edition does not schedule replacement cleanup`);
-    assert.match(wikipediaLibraryScript, /function currentRecord\(\)[\s\S]*?customWikipediaRecords\(\)\[0\][\s\S]*?\.filter\(isBasicWikipediaArchive\)/,
-      `${browser}: a legacy Simple English archive is hidden when no custom edition exists`);
+    assert.match(wikipediaLibraryScript, /function managedWikipediaRecords\(\)[\s\S]*?return \[\.\.\.wikipediaRecords\(\)\]\.sort/,
+      `${browser}: the Wikipedia library does not retain every installed archive in its management list`);
+    assert.match(wikipediaLibraryScript, /elements\['archive-list'\]\.innerHTML = records\.map\(renderArchiveRecord\)\.join\(''\)/,
+      `${browser}: installed Wikipedia archives are still collapsed to one visible record`);
+    assert.match(wikipediaLibraryScript, /data-id="\$\{escapeHtml\(id\)\}"[\s\S]*?runArchiveAction\(button\.dataset\.action, button\.dataset\.id, button\)/,
+      `${browser}: per-archive controls are not bound to the selected archive`);
     assert.match(wikipediaLibraryScript, /status === 'ready'[\s\S]*?actionButton\('read'[\s\S]*?actionButton\('delete'/,
-      `${browser}: a completed Wikipedia archive cannot be read and removed from the library`);
+      `${browser}: completed Wikipedia archives cannot be read and removed from the library`);
     assert.match(wikipediaLibraryScript, /errorKind === 'file-permission-required'[\s\S]*?actionButton\('reauthorize'/,
       `${browser}: an expired external-file permission is presented as a generic retry`);
     assert.match(wikipediaLibraryScript, /requestPermission\(\{ mode \}\)[\s\S]*?command\('reauthorize_file'/,
       `${browser}: the Wikipedia library cannot request and persist renewed file access`);
+    assert.match(wikipediaLibraryScript, /showOpenFilePicker[\s\S]*?registerKiwixArchiveHandle[\s\S]*?importKiwixArchive/,
+      `${browser}: the Wikipedia library does not preserve local-handle and copied-file import paths`);
+    assert.match(wikipediaLibraryScript, /assertWikipediaZimArchive\(inspected\.embeddedMetadata\)[\s\S]*?confirm_import/,
+      `${browser}: local ZIM imports are not identity-checked and reviewed before registration`);
     assert.match(wikipediaReaderScript, /const requestSequence = \+\+articleRequestSequence;[\s\S]*?await readApocalypseArticle[\s\S]*?if \(requestSequence !== articleRequestSequence\) return;/,
       `${browser}: stale Wikipedia article reads can still render after navigation`);
     assert.match(wikipediaReaderScript, /catch \(error\) \{\s*if \(requestSequence !== articleRequestSequence\) return;[\s\S]*?finally \{\s*if \(requestSequence === articleRequestSequence\) articleBusy = false;/,

@@ -55,21 +55,31 @@
         <button id="download" class="download-button" type="submit" data-i18n="wl.download"></button>
       </form>
 
+      <section class="import-source" aria-labelledby="import-title">
+        <div class="import-heading">
+          <div>
+            <h3 id="import-title" data-i18n="ap.import.title"></h3>
+            <p data-i18n="ap.import.desc"></p>
+          </div>
+          <span class="import-mark" aria-hidden="true">ZIM</span>
+        </div>
+        <div class="import-controls">
+          <label class="import-language-field">
+            <span data-i18n="ap.language"></span>
+            <select id="import-language"></select>
+          </label>
+          <input id="import-file" type="file" accept=".zim,application/x-zim" hidden>
+          <button id="import-button" type="button" data-i18n="ap.import.button"></button>
+          <button id="cancel-import" class="danger" type="button" data-i18n="ap.cancel" hidden></button>
+        </div>
+      </section>
+
       <p id="replacement-note" class="replacement-note" data-i18n="wl.replacement_note"></p>
       <div id="notice" class="notice" role="status" aria-live="polite"></div>
 
-      <section id="current-source" class="current-source" aria-labelledby="current-title" hidden>
-        <div class="current-heading">
-          <div>
-            <p class="eyebrow" data-i18n="wl.current"></p>
-            <h3 id="current-title"></h3>
-          </div>
-          <span id="current-status" class="current-status"></span>
-        </div>
-        <p id="current-meta" class="current-meta"></p>
-        <progress id="current-progress" max="100" value="0" hidden></progress>
-        <p id="current-detail" class="current-detail"></p>
-        <div id="current-actions" class="current-actions"></div>
+      <section id="current-source" class="current-source" data-i18n-aria-label="wl.current" hidden>
+        <p class="eyebrow" data-i18n="wl.current"></p>
+        <div id="archive-list" class="archive-list"></div>
       </section>
     </section>
   </main>
