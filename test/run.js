@@ -84169,81 +84169,112 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
   }
 });
 
-test('message info keeps normal mode limited to the sent timestamp', async () => {
-  for (const [label, rel] of [
-    ['chrome', 'src/chrome/src/message-info.js'],
-    ['firefox', 'src/firefox/src/message-info.js'],
-  ]) {
-    const { buildMessageInfoPills } = await import(pathToFileURL(path.join(ROOT, rel)).href);
-    const pills = buildMessageInfoPills({
-      createdAt: Date.parse('2024-12-12T12:44:00Z'),
-      completion: {
-        outputTokens: 1295,
-        durationMs: 7560,
-        finishReason: 'stop',
-      },
-      verbose: false,
-      locale: 'en-GB',
-    });
+const MESSAGE_INFO_TEST_DATE = Date.parse('2024-12-12T12:44:00Z');
+const MESSAGE_INFO_TEST_TIME_ZONE = 'America/Los_Angeles';
 
-    assert.deepEqual(pills, [{
-      kind: 'sent',
-      key: 'sp.message_info.sent',
-      params: { time: '12/12/2024, 12:44 UTC' },
-    }], `${label}: normal mode must not expose token or provider details`);
+async function withProcessTimeZone(timeZone, callback) {
+  const previous = process.env.TZ;
+  process.env.TZ = timeZone;
+  try {
+    return await callback();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
   }
+}
+
+function expectedMessageInfoTestTime() {
+  return new Intl.DateTimeFormat('en-GB', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: MESSAGE_INFO_TEST_TIME_ZONE,
+    timeZoneName: 'short',
+  }).format(new Date(MESSAGE_INFO_TEST_DATE));
+}
+
+test('message info keeps normal mode limited to the system-timezone sent timestamp', async () => {
+  await withProcessTimeZone(MESSAGE_INFO_TEST_TIME_ZONE, async () => {
+    for (const [label, rel] of [
+      ['chrome', 'src/chrome/src/message-info.js'],
+      ['firefox', 'src/firefox/src/message-info.js'],
+    ]) {
+      const { buildMessageInfoPills } = await import(pathToFileURL(path.join(ROOT, rel)).href);
+      const pills = buildMessageInfoPills({
+        createdAt: MESSAGE_INFO_TEST_DATE,
+        completion: {
+          outputTokens: 1295,
+          durationMs: 7560,
+          finishReason: 'stop',
+        },
+        verbose: false,
+        locale: 'en-GB',
+      });
+
+      assert.deepEqual(pills, [{
+        kind: 'sent',
+        key: 'sp.message_info.sent',
+        params: { time: expectedMessageInfoTestTime() },
+      }], `${label}: normal mode must use the system timezone without exposing token or provider details`);
+    }
+  });
 });
 
 test('message info aggregates model calls into verbose completion pills', async () => {
-  for (const [label, rel] of [
-    ['chrome', 'src/chrome/src/message-info.js'],
-    ['firefox', 'src/firefox/src/message-info.js'],
-  ]) {
-    const { aggregateMessageCompletion, buildMessageInfoPills } = await import(
-      pathToFileURL(path.join(ROOT, rel)).href
-    );
-    const first = aggregateMessageCompletion(null, {
-      usage: { prompt_tokens: 1000, completion_tokens: 600, total_tokens: 1600 },
-      raw: { choices: [{ finish_reason: 'tool_calls' }] },
-    }, 5000);
-    const completion = aggregateMessageCompletion(first, {
-      usage: {
-        prompt_tokens: null,
-        input_tokens: 2000,
-        completion_tokens: null,
-        output_tokens: 695,
-        total_tokens: null,
-        totalTokens: 2695,
-      },
-      raw: { choices: [{ finish_reason: 'stop' }] },
-    }, 2560);
+  await withProcessTimeZone(MESSAGE_INFO_TEST_TIME_ZONE, async () => {
+    for (const [label, rel] of [
+      ['chrome', 'src/chrome/src/message-info.js'],
+      ['firefox', 'src/firefox/src/message-info.js'],
+    ]) {
+      const { aggregateMessageCompletion, buildMessageInfoPills } = await import(
+        pathToFileURL(path.join(ROOT, rel)).href
+      );
+      const first = aggregateMessageCompletion(null, {
+        usage: { prompt_tokens: 1000, completion_tokens: 600, total_tokens: 1600 },
+        raw: { choices: [{ finish_reason: 'tool_calls' }] },
+      }, 5000);
+      const completion = aggregateMessageCompletion(first, {
+        usage: {
+          prompt_tokens: null,
+          input_tokens: 2000,
+          completion_tokens: null,
+          output_tokens: 695,
+          total_tokens: null,
+          totalTokens: 2695,
+        },
+        raw: { choices: [{ finish_reason: 'stop' }] },
+      }, 2560);
 
-    assert.deepEqual(completion, {
-      inputTokens: 3000,
-      outputTokens: 1295,
-      totalTokens: 4295,
-      durationMs: 7560,
-      finishReason: 'stop',
-    }, `${label}: completion metrics should cover every model call in the message`);
-    assert.equal(aggregateMessageCompletion(null, {
-      raw: { status: 'completed' },
-    }, 1000).finishReason, '', `${label}: request lifecycle status is not a generation stop reason`);
-    assert.equal(aggregateMessageCompletion(first, {
-      finishReason: '',
-    }, 1000).finishReason, '', `${label}: an explicit empty terminal reason should clear an earlier call's stale reason`);
-    assert.deepEqual(buildMessageInfoPills({
-      createdAt: Date.parse('2024-12-12T12:44:00Z'),
-      completion,
-      verbose: true,
-      locale: 'en-GB',
-    }), [
-      { kind: 'sent', key: 'sp.message_info.sent', params: { time: '12/12/2024, 12:44 UTC' } },
-      { kind: 'speed', key: 'sp.message_info.speed', params: { rate: '171.3' } },
-      { kind: 'tokens', key: 'sp.message_info.tokens', params: { count: '1,295' } },
-      { kind: 'duration', key: 'sp.message_info.duration', params: { seconds: '7.56' } },
-      { kind: 'finish', key: 'sp.message_info.finish', params: { reason: 'stop' } },
-    ], `${label}: verbose mode should add only available generation details`);
-  }
+      assert.deepEqual(completion, {
+        inputTokens: 3000,
+        outputTokens: 1295,
+        totalTokens: 4295,
+        durationMs: 7560,
+        finishReason: 'stop',
+      }, `${label}: completion metrics should cover every model call in the message`);
+      assert.equal(aggregateMessageCompletion(null, {
+        raw: { status: 'completed' },
+      }, 1000).finishReason, '', `${label}: request lifecycle status is not a generation stop reason`);
+      assert.equal(aggregateMessageCompletion(first, {
+        finishReason: '',
+      }, 1000).finishReason, '', `${label}: an explicit empty terminal reason should clear an earlier call's stale reason`);
+      assert.deepEqual(buildMessageInfoPills({
+        createdAt: MESSAGE_INFO_TEST_DATE,
+        completion,
+        verbose: true,
+        locale: 'en-GB',
+      }), [
+        { kind: 'sent', key: 'sp.message_info.sent', params: { time: expectedMessageInfoTestTime() } },
+        { kind: 'speed', key: 'sp.message_info.speed', params: { rate: '171.3' } },
+        { kind: 'tokens', key: 'sp.message_info.tokens', params: { count: '1,295' } },
+        { kind: 'duration', key: 'sp.message_info.duration', params: { seconds: '7.56' } },
+        { kind: 'finish', key: 'sp.message_info.finish', params: { reason: 'stop' } },
+      ], `${label}: verbose mode should add only available generation details`);
+    }
+  });
 });
 
 test('sidepanels reveal persisted message info while verbose gates completion details', () => {
@@ -84268,8 +84299,8 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     assert.match(panel, /import \{ buildMessageInfoPills \} from '\.\.\/message-info\.js';/, `${label}: sidepanel should adapt message info to the DOM`);
     assert.match(
       panel,
-      /function ensureMessageInfoElements\([\s\S]*?createElement\('button'\)[\s\S]*?aria-controls[\s\S]*?aria-expanded/,
-      `${label}: message info should expose a semantic button associated with its row`,
+      /function ensureMessageInfoElements\([\s\S]*?message-info-bar[\s\S]*?createElement\('button'\)[\s\S]*?aria-controls[\s\S]*?aria-expanded/,
+      `${label}: message info should expose one inline bar with a semantic button associated with its row`,
     );
     assert.match(panel, /function bindMessageInfoToggle\([\s\S]*?toggle\.addEventListener\('click',[\s\S]*?msgEl\.addEventListener\('click'/, `${label}: the semantic button and bubble click should share the info toggle`);
     const bindMessageInfoToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -84282,8 +84313,22 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     assert.doesNotMatch(createdAtReader, /Date\.now\(\)/, `${label}: unknown legacy timestamps must remain unknown`);
     assert.doesNotMatch(bindMessageInfoToggle, /setMessageCreatedAt\(/, `${label}: legacy restored messages must not invent a sent time while rebinding`);
     assert.match(panel, /setMessageCreatedAt\(msgEl, options\.createdAt \?\? Date\.now\(\)\)/, `${label}: newly-created messages should receive a real sent time`);
-    assert.match(css, /\.message-info \{[\s\S]*?\.message-info-pill \{/, `${label}: info rows and verbose pills should be styled`);
-    assert.match(css, /\.message-info-toggle \{[\s\S]*?\.message-info-toggle:focus-visible/, `${label}: the semantic toggle should have a visible keyboard focus treatment`);
+    assert.match(
+      css,
+      /\.message-info-bar \{[^}]*position: absolute;[^}]*inset-block-start: 100%;[^}]*display: none;[^}]*\}[\s\S]*?\.message\.message-info-open \{[^}]*margin-bottom: 25px;[^}]*\}[\s\S]*?\.message\.message-info-open > \.message-info-bar \{[^}]*display: flex;/,
+      `${label}: message details should appear outside the bubble only after it opens`,
+    );
+    assert.match(
+      css,
+      /\.message-info \{[^}]*flex-wrap: nowrap;[^}]*overflow: hidden;[^}]*white-space: nowrap;/,
+      `${label}: normal and verbose message info should stay on one clipped line`,
+    );
+    assert.match(
+      css,
+      /\.message-info-toggle \{[^}]*position: absolute;[^}]*inset: 0;[^}]*pointer-events: none;[^}]*\}[\s\S]*?\.message-info-toggle:focus-visible \{[^}]*outline:/,
+      `${label}: the icon-free semantic toggle should cover the bubble and retain visible keyboard focus`,
+    );
+    assert.match(locale, /'sp\.message_info\.sent': 'sent \{time\}'/, `${label}: sent-time copy should not use parentheses`);
     for (const key of ['sent', 'speed', 'tokens', 'duration', 'finish', 'hint']) {
       assert.match(locale, new RegExp(`'sp\\.message_info\\.${key}'`), `${label}: ${key} message-info copy missing`);
     }
@@ -84334,26 +84379,36 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     assert.equal(messageCreatedAt(msgEl), 1734000000000, `${label}: sent time should persist on the message`);
     bindMessageInfoToggle(msgEl);
 
-    // A real toggle button with aria-controls, not a focusable bubble.
+    // A real, icon-free toggle button remains outside the hidden details bar,
+    // so closed messages stay reachable through native keyboard navigation.
+    const bar = msgEl.children.find((child) => child.className === 'message-info-bar');
+    assert.ok(bar, `${label}: message details should have a separate inline bar`);
     const toggle = msgEl.children.find((child) => child.className === 'message-info-toggle');
     assert.ok(toggle, `${label}: binding should create a semantic toggle button`);
+    assert.equal(toggle.parentNode, msgEl, `${label}: the closed toggle must remain outside the hidden details bar`);
     assert.equal(toggle.type, 'button', `${label}: the toggle should be a real button control`);
+    assert.equal(toggle.textContent, '', `${label}: the toggle should not render an info icon`);
     assert.match(String(toggle.attributes['aria-controls'] || ''), /^message-info-\d+$/, `${label}: the toggle should target the info row by id`);
     assert.equal(toggle.attributes['aria-expanded'], 'false', `${label}: the toggle should start collapsed`);
     assert.equal(toggle.attributes['aria-label'], 'sp.message_info.hint', `${label}: the toggle should expose its localized label`);
     assert.equal(msgEl.tabIndex, undefined, `${label}: the bubble itself must not become a focus target`);
     assert.equal(msgEl.attributes['aria-expanded'], undefined, `${label}: the bubble must not carry aria-expanded`);
 
-    // Bubble-click delegation still toggles (mouse convenience path).
-    msgEl.dispatch('click', { target: msgEl });
-    assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: bubble click should open the info row`);
+    // Native Enter/Space activation on a focused button emits click; exercise
+    // that closed-state path directly before checking the mouse delegation.
+    toggle.dispatch('click', { target: toggle });
+    assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: keyboard button activation should open the info row`);
     assert.equal(toggle.attributes['aria-expanded'], 'true', `${label}: the toggle should mirror the open state`);
-    const openRow = msgEl.children.find((child) => child.className === 'message-info');
+    const openRow = bar.children.find((child) => child.className === 'message-info');
     assert.ok(openRow, `${label}: opening should render the info row`);
     assert.equal(openRow.hidden, false, `${label}: the info row should be visible when open`);
     assert.equal(openRow.id, toggle.attributes['aria-controls'], `${label}: the row id should match the toggle target`);
     const sentPill = openRow.children.find((child) => child.className.includes('message-info-sent'));
     assert.ok(sentPill, `${label}: the sent-time pill should render`);
+    msgEl.dispatch('click', { target: msgEl });
+    assert.equal(msgEl.classList.contains('message-info-open'), false, `${label}: a bubble click should close keyboard-opened info`);
+    msgEl.dispatch('click', { target: msgEl });
+    assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: a second bubble click should reopen info`);
 
     // Live completion metadata reaches the datasets and renders in verbose mode.
     applyMessageCompletion(msgEl, {
@@ -84383,11 +84438,13 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     restored.dataset.messageFinishReason = 'stop';
     restored.classList.add('message-info-open');
     bindMessageInfoToggle(restored);
+    const restoredBar = restored.children.find((child) => child.className === 'message-info-bar');
+    assert.ok(restoredBar, `${label}: restored details should retain their inline bar`);
     const restoredToggle = restored.children.find((child) => child.className === 'message-info-toggle');
     assert.ok(restoredToggle, `${label}: restored messages should regain a toggle button`);
     assert.equal(restoredToggle.attributes['aria-expanded'], 'true', `${label}: restored open state should be preserved`);
     assert.equal(messageCreatedAt(restored), 1734000123456, `${label}: restored sent time should be retained`);
-    const restoredRow = restored.children.find((child) => child.className === 'message-info');
+    const restoredRow = restoredBar.children.find((child) => child.className === 'message-info');
     assert.ok(restoredRow, `${label}: restored open rows should render`);
     assert.equal(restoredRow.hidden, false, `${label}: restored open rows should stay visible`);
     assert.ok(
@@ -84401,11 +84458,29 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     assert.equal(restoredToggle.attributes['aria-expanded'], 'false', `${label}: the toggle should mirror the closed state`);
     assert.equal(restoredRow.hidden, true, `${label}: the row should hide when closed`);
 
+    // Histories serialized before the icon was removed should keep their
+    // toggle direct and move only the details into the hidden bar.
+    const preInline = fakeDomElement('message assistant');
+    preInline.dataset.messageCreatedAt = String(1734000123456);
+    const preInlineToggle = fakeDomElement('message-info-toggle', 'button');
+    const preInlineRow = fakeDomElement('message-info');
+    preInline.appendChild(preInlineToggle);
+    preInline.appendChild(preInlineRow);
+    bindMessageInfoToggle(preInline);
+    const migratedBar = preInline.children.find((child) => child.className === 'message-info-bar');
+    assert.ok(migratedBar, `${label}: pre-inline history should gain the shared info bar`);
+    assert.equal(preInlineToggle.parentNode, preInline, `${label}: the existing toggle should stay outside the hidden info bar`);
+    assert.equal(preInlineToggle.textContent, '', `${label}: a restored legacy toggle should lose its info icon`);
+    assert.equal(preInlineRow.parentNode, migratedBar, `${label}: the existing info row should move into the info bar`);
+    assert.equal(preInline.children.filter((child) => child.className === 'message-info-toggle').length, 1, `${label}: one direct keyboard toggle should remain`);
+    assert.equal(preInline.children.filter((child) => child.className === 'message-info').length, 0, `${label}: no direct legacy info row should remain`);
+
     // Unknown legacy timestamps must stay unknown through rebinding.
     const legacy = fakeDomElement('message assistant');
     legacy.dataset.messageFinishReason = 'stop';
     bindMessageInfoToggle(legacy);
     assert.equal(messageCreatedAt(legacy), undefined, `${label}: legacy messages without a timestamp stay unknown`);
+    assert.equal(legacy.children.some((child) => child.className === 'message-info-bar'), false, `${label}: legacy messages without timestamps should not expose an info bar`);
     assert.equal(legacy.children.some((child) => child.className === 'message-info-toggle'), false, `${label}: legacy messages should not expose a toggle`);
   }
 
@@ -84441,11 +84516,19 @@ test('message info toggles behaviorally through a semantic button, terminal repl
         if (name === 'title') this.title = '';
       },
       appendChild(child) {
+        if (child.parentNode) {
+          const oldIndex = child.parentNode.children.indexOf(child);
+          if (oldIndex >= 0) child.parentNode.children.splice(oldIndex, 1);
+        }
         child.parentNode = this;
         this.children.push(child);
         return child;
       },
       insertBefore(child, reference) {
+        if (child.parentNode) {
+          const oldIndex = child.parentNode.children.indexOf(child);
+          if (oldIndex >= 0) child.parentNode.children.splice(oldIndex, 1);
+        }
         child.parentNode = this;
         const index = this.children.indexOf(reference);
         if (index < 0) this.children.push(child);
@@ -84457,12 +84540,10 @@ test('message info toggles behaviorally through a semantic button, terminal repl
         items.forEach((child) => { child.parentNode = this; });
       },
       querySelector(selector) {
-        if (selector === ':scope > .message-info') {
-          return this.children.find((child) => child.className === 'message-info') || null;
-        }
-        if (selector === ':scope > .message-info-toggle') {
-          return this.children.find((child) => child.className === 'message-info-toggle') || null;
-        }
+        const directClass = selector.match(/^:scope > \.([\w-]+)$/)?.[1];
+        if (directClass) return this.children.find((child) => (
+          String(child.className || '').split(/\s+/).includes(directClass)
+        )) || null;
         return null;
       },
       matches(selector) {
