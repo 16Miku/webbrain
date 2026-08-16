@@ -126,6 +126,45 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
+const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
+  'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
+]);
+
+function savedWorkflowStepMayDispatchMessage(step) {
+  const tool = String(step?.tool || '');
+  if (SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS.has(tool)) return true;
+  if (tool === 'set_field') return step?.args?.submit === true;
+  return tool === 'press_keys' && String(step?.args?.key || '') === 'Enter';
+}
+
+function savedWorkflowScopeUrl(scope, fallback = '') {
+  if (!scope?.origin) return String(fallback || '');
+  try {
+    return new URL(String(scope.pathFamily || '/'), String(scope.origin)).href;
+  } catch {
+    return String(fallback || '');
+  }
+}
+
+function savedWorkflowProtectedMessagingStepIndex(workflow, startUrl = '') {
+  let inferredUrl = String(startUrl || '') || savedWorkflowScopeUrl(workflow?.start);
+  const steps = Array.isArray(workflow?.steps) ? workflow.steps : [];
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index];
+    const scopedUrl = savedWorkflowScopeUrl(step?.scope, inferredUrl);
+    let protectedMessaging = false;
+    try {
+      protectedMessaging = getMessageRecipientGuardPolicy(scopedUrl)?.verifyActiveRecipient === true;
+    } catch {}
+    if (protectedMessaging && savedWorkflowStepMayDispatchMessage(step)) return index;
+    if (step?.tool === 'navigate' && typeof step?.args?.url === 'string') {
+      inferredUrl = step.args.url;
+    } else if (step?.scope?.origin) {
+      inferredUrl = scopedUrl;
+    }
+  }
+  return -1;
+}
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -15842,11 +15881,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           prompt: workflowFallbackPrompt(workflow, 0, reason),
         };
       }
+      const protectedMessagingStep = savedWorkflowProtectedMessagingStepIndex(workflow, startUrl);
+      if (protectedMessagingStep >= 0) {
+        trace.recordNote(traceRunId, 0, 'workflow_replay_recipient_authorization_missing', {
+          workflowId: workflow.id,
+          stepId: workflow.steps[protectedMessagingStep]?.id || '',
+          tool: workflow.steps[protectedMessagingStep]?.tool || '',
+        });
+        return finishStopped(
+          'protected messaging replay requires fresh structured recipient authorization; start a normal Act task and name the recipient',
+          protectedMessagingStep,
+        );
+      }
 
       for (let index = 0; index < workflow.steps.length; index++) {
         if (this._checkAbort(tabId)) return finishStopped('stopped by the user', index);
         const step = workflow.steps[index];
         const stepUrl = await this._currentUrl(tabId);
+        let protectedMessaging = false;
+        try {
+          protectedMessaging = getMessageRecipientGuardPolicy(stepUrl)?.verifyActiveRecipient === true;
+        } catch {}
+        if (protectedMessaging && savedWorkflowStepMayDispatchMessage(step)) {
+          return finishStopped(
+            'protected messaging replay requires fresh structured recipient authorization; start a normal Act task and name the recipient',
+            index,
+          );
+        }
         if (step.scope && !workflowUrlMatches(step.scope, stepUrl)) {
           const reason = 'page scope mismatch';
           trace.recordNote(traceRunId, index + 1, 'workflow_replay_scope_miss', {

@@ -77833,6 +77833,80 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     }
   });
 
+  test(`${browser} saved workflow rejects recipient-less protected dispatch before any replay action`, async () => {
+    const cases = [
+      {
+        startUrl: 'https://www.douyin.com/chat',
+        blockedStep: 1,
+        workflow: {
+          id: 'workflow_protected_chat',
+          name: 'Draft then send',
+          start: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+          steps: [
+            {
+              id: 'step_1',
+              tool: 'set_field',
+              args: { text: 'draft only', submit: false },
+              scope: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+            },
+            {
+              id: 'step_2',
+              tool: 'click_ax',
+              args: {},
+              scope: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+            },
+          ],
+        },
+      },
+      {
+        startUrl: 'https://example.com/start',
+        blockedStep: 1,
+        workflow: {
+          id: 'workflow_navigate_to_protected_chat',
+          name: 'Navigate then send',
+          start: { origin: 'https://example.com', pathFamily: '/start' },
+          steps: [
+            {
+              id: 'step_1',
+              tool: 'navigate',
+              args: { url: 'https://www.douyin.com/chat' },
+            },
+            {
+              id: 'step_2',
+              tool: 'click',
+              args: { selector: '#send' },
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const fixture of cases) {
+      const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+      let pageActions = 0;
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      agent.ensureConversationId = async () => `conversation_${fixture.workflow.id}`;
+      agent._currentUrl = async () => fixture.startUrl;
+      agent.executeTool = async () => {
+        pageActions += 1;
+        return { success: true };
+      };
+      agent._executeToolBatch = async () => {
+        pageActions += 1;
+        return { action: 'continue' };
+      };
+
+      const result = await agent.replaySavedWorkflow(778, fixture.workflow);
+      assert.equal(result.status, 'stopped');
+      assert.equal(result.stepIndex, fixture.blockedStep);
+      assert.equal(result.matchedSteps, 0);
+      assert.match(result.reason, /fresh structured recipient authorization/);
+      assert.equal(pageActions, 0, `${browser}: protected replay acted before recipient preflight`);
+      assert.equal(agent.isRunning(778), false);
+    }
+  });
+
   test(`${browser} saved workflow replay resolves fresh targets without exposing runtime parameters`, async () => {
     const workflow = {
       schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
