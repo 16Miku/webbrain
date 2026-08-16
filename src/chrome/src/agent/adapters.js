@@ -15,6 +15,7 @@ import {
  *   - category: 'general' | 'finance' — finance gets an extra safety warning
  *   - notes: short bulleted guidance, injected into the first user message
  *   - fullPageCapture?.infiniteScroll(url): optional machine-readable capture policy
+ *   - messaging?.verifyActiveRecipient: optional URL-aware pre-dispatch recipient guard
  *   - regions?: stable region identifiers for structured adapter discovery
  *   - jobs?: stable job identifiers covered by the optional workflow profile
  *   - workflow?: versioned state, evidence, confirmation, and terminal metadata
@@ -16969,6 +16970,11 @@ const ADAPTERS = [
   {
     name: 'douyin', category: 'general',
     matches: (url) => /^https?:\/\/(?:(?:www|live|v|creator)\.)?douyin\.com\//.test(url),
+    messaging: {
+      verifyActiveRecipient: (url) => {
+        try { return /^\/chat(?:\/|$)/.test(new URL(url).pathname); } catch { return false; }
+      },
+    },
     notes: `
 - Observed 2026-08: www.douyin.com and /search/video can return HTTP 200 with title "验证码中间页" and no readable body, while live.douyin.com remains readable. Treat that as verification, not empty search results; do not retry or bypass it.
 - Use the visible "搜索你感兴趣的内容" field. Search tabs include 综合, 视频, 用户, and 直播; select the requested type and preserve the query rather than substituting the personalized 推荐 feed.
@@ -17234,6 +17240,23 @@ export function getFullPageCapturePolicy(url) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Return the machine-readable recipient-safety policy for a messaging page.
+ * Unlike adapter notes, this is enforced by the runtime before dispatch.
+ */
+export function getMessageRecipientGuardPolicy(url) {
+  const adapter = getActiveAdapter(url);
+  const verifier = adapter?.messaging?.verifyActiveRecipient;
+  let enabled = false;
+  try {
+    enabled = typeof verifier === 'function' ? verifier(url) : verifier === true;
+  } catch {
+    enabled = false;
+  }
+  if (!enabled) return null;
+  return { adapterName: adapter.name, verifyActiveRecipient: true };
 }
 
 /**
