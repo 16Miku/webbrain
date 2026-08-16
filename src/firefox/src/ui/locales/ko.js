@@ -267,6 +267,7 @@ export default {
   'st.providers.duplicate': '복제',
   'st.providers.duplicate_limit': '복제본은 하나만 만들 수 있습니다',
   'st.providers.duplicate_unavailable': '이 공급자는 복제할 수 없습니다',
+  'st.providers.duplicate_inactive': '이 공급자를 복제하기 전에 저장하세요',
   'st.providers.remove_duplicate': '복제본 삭제',
   'st.providers.remove_duplicate_confirm': '이 복제 공급자와 저장된 설정을 삭제할까요?',
   'st.providers.set_active': '활성으로 설정',

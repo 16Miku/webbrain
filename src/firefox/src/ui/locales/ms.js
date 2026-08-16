@@ -267,6 +267,7 @@ export default {
   'st.providers.duplicate': 'Duplikasi',
   'st.providers.duplicate_limit': 'Hanya satu duplikasi dibenarkan',
   'st.providers.duplicate_unavailable': 'Penyedia ini tidak boleh diduplikasi',
+  'st.providers.duplicate_inactive': 'Simpan penyedia ini sebelum menduplikasikannya',
   'st.providers.remove_duplicate': 'Alih keluar duplikasi',
   'st.providers.remove_duplicate_confirm': 'Alih keluar penyedia duplikasi ini dan konfigurasi tersimpannya?',
   'st.providers.set_active': 'Jadikan aktif',

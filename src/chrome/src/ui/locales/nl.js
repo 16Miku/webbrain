@@ -606,6 +606,7 @@ export default {
   'st.providers.duplicate': 'Dupliceren',
   'st.providers.duplicate_limit': 'Er is slechts één duplicaat toegestaan',
   'st.providers.duplicate_unavailable': 'Deze provider kan niet worden gedupliceerd',
+  'st.providers.duplicate_inactive': 'Sla deze provider op voordat u deze dupliceert',
   'st.providers.remove_duplicate': 'Duplicaat verwijderen',
   'st.providers.remove_duplicate_confirm': 'Deze gedupliceerde provider en de opgeslagen configuratie verwijderen?',
   'st.providers.set_active': 'Actief instellen',

@@ -267,6 +267,7 @@ export default {
   'st.providers.duplicate': 'Дублировать',
   'st.providers.duplicate_limit': 'Разрешён только один дубликат',
   'st.providers.duplicate_unavailable': 'Этого провайдера нельзя дублировать',
+  'st.providers.duplicate_inactive': 'Сохраните этого провайдера перед дублированием',
   'st.providers.remove_duplicate': 'Удалить дубликат',
   'st.providers.remove_duplicate_confirm': 'Удалить этого дублированного провайдера и его сохранённые настройки?',
   'st.providers.set_active': 'Сделать активным',

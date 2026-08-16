@@ -275,6 +275,7 @@ export default {
   'st.providers.duplicate': 'Дублювати',
   'st.providers.duplicate_limit': 'Дозволено лише один дублікат',
   'st.providers.duplicate_unavailable': 'Цього постачальника не можна дублювати',
+  'st.providers.duplicate_inactive': 'Збережіть цього постачальника перед дублюванням',
   'st.providers.remove_duplicate': 'Видалити дублікат',
   'st.providers.remove_duplicate_confirm': 'Видалити цього дубльованого постачальника та його збережені налаштування?',
   'st.providers.set_active': 'Зробити активним',

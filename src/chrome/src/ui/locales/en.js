@@ -631,6 +631,7 @@ export default {
   'st.providers.duplicate': 'Duplicate',
   'st.providers.duplicate_limit': 'Only one duplicate is allowed',
   'st.providers.duplicate_unavailable': 'This provider cannot be duplicated',
+  'st.providers.duplicate_inactive': 'Save this provider before duplicating it',
   'st.providers.remove_duplicate': 'Remove duplicate',
   'st.providers.remove_duplicate_confirm': 'Remove this duplicate provider and its saved configuration?',
   'st.providers.set_active': 'Set Active',

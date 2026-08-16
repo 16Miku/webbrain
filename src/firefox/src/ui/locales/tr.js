@@ -306,6 +306,7 @@ export default {
   'st.providers.duplicate': 'Çoğalt',
   'st.providers.duplicate_limit': 'Yalnızca bir kopyaya izin verilir',
   'st.providers.duplicate_unavailable': 'Bu sağlayıcı çoğaltılamaz',
+  'st.providers.duplicate_inactive': 'Çoğaltmadan önce bu sağlayıcıyı kaydedin',
   'st.providers.remove_duplicate': 'Kopyayı kaldır',
   'st.providers.remove_duplicate_confirm': 'Bu çoğaltılmış sağlayıcı ve kayıtlı yapılandırması kaldırılsın mı?',
   'st.providers.set_active': 'Etkinleştir',

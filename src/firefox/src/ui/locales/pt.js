@@ -614,6 +614,7 @@ export default {
   'st.providers.duplicate': 'Duplicar',
   'st.providers.duplicate_limit': 'Só é permitida uma duplicata',
   'st.providers.duplicate_unavailable': 'Este provedor não pode ser duplicado',
+  'st.providers.duplicate_inactive': 'Salve este provedor antes de duplicá-lo',
   'st.providers.remove_duplicate': 'Remover duplicata',
   'st.providers.remove_duplicate_confirm': 'Remover este provedor duplicado e a configuração salva?',
   'st.providers.set_active': "Definir ativo",

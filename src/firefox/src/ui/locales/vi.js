@@ -614,6 +614,7 @@ export default {
   'st.providers.duplicate': 'Nhân bản',
   'st.providers.duplicate_limit': 'Chỉ được phép có một bản sao',
   'st.providers.duplicate_unavailable': 'Không thể nhân bản nhà cung cấp này',
+  'st.providers.duplicate_inactive': 'Lưu nhà cung cấp này trước khi nhân bản',
   'st.providers.remove_duplicate': 'Xóa bản sao',
   'st.providers.remove_duplicate_confirm': 'Xóa nhà cung cấp nhân bản này và cấu hình đã lưu?',
   'st.providers.set_active': "Đặt hoạt động",

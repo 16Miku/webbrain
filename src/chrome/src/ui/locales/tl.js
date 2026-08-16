@@ -275,6 +275,7 @@ export default {
   'st.providers.duplicate': 'I-duplicate',
   'st.providers.duplicate_limit': 'Isang duplicate lang ang pinapayagan',
   'st.providers.duplicate_unavailable': 'Hindi maaaring i-duplicate ang provider na ito',
+  'st.providers.duplicate_inactive': 'I-save ang provider na ito bago ito i-duplicate',
   'st.providers.remove_duplicate': 'Alisin ang duplicate',
   'st.providers.remove_duplicate_confirm': 'Alisin ang duplicate na provider na ito at ang naka-save nitong configuration?',
   'st.providers.set_active': 'Itakda Bilang Aktibo',

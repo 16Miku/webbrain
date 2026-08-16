@@ -275,6 +275,7 @@ export default {
   'st.providers.duplicate': '複製',
   'st.providers.duplicate_limit': '複製は1つだけ作成できます',
   'st.providers.duplicate_unavailable': 'このプロバイダーは複製できません',
+  'st.providers.duplicate_inactive': '複製する前にこのプロバイダーを保存してください',
   'st.providers.remove_duplicate': '複製を削除',
   'st.providers.remove_duplicate_confirm': 'この複製プロバイダーと保存済み設定を削除しますか？',
   'st.providers.set_active': '有効化',

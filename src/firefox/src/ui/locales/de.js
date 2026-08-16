@@ -609,6 +609,7 @@ export default {
   'st.providers.duplicate': 'Duplizieren',
   'st.providers.duplicate_limit': 'Es ist nur ein Duplikat zulässig',
   'st.providers.duplicate_unavailable': 'Dieser Anbieter kann nicht dupliziert werden',
+  'st.providers.duplicate_inactive': 'Speichern Sie diesen Anbieter, bevor Sie ihn duplizieren',
   'st.providers.remove_duplicate': 'Duplikat entfernen',
   'st.providers.remove_duplicate_confirm': 'Diesen duplizierten Anbieter und seine gespeicherte Konfiguration entfernen?',
   'st.providers.set_active': 'Als aktiv setzen',

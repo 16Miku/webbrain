@@ -614,6 +614,7 @@ export default {
   'st.providers.duplicate': 'تکثیر',
   'st.providers.duplicate_limit': 'فقط یک نسخهٔ تکراری مجاز است',
   'st.providers.duplicate_unavailable': 'امکان تکثیر این ارائه‌دهنده وجود ندارد',
+  'st.providers.duplicate_inactive': 'پیش از تکثیر، این ارائه‌دهنده را ذخیره کنید',
   'st.providers.remove_duplicate': 'حذف نسخهٔ تکراری',
   'st.providers.remove_duplicate_confirm': 'این ارائه‌دهندهٔ تکراری و تنظیمات ذخیره‌شدهٔ آن حذف شود؟',
   'st.providers.set_active': "فعال را تنظیم کنید",
