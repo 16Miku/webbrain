@@ -331,6 +331,7 @@ export default {
   'sp.perm.verb.upload': "একটি ফাইল আপলোড করুন",
   'sp.perm.verb.record': "ট্যাব (এবং মাইক্রোফোন) চালু করুন",
   'sp.perm.verb.schedule': "ভবিষ্যত কাজের সময়সূচী",
+  'sp.perm.verb.window': 'ব্রাউজার উইন্ডোর আকার পরিবর্তন করুন',
 
   'sp.step.details': "বিস্তারিত",
   'sp.step.input_label': "ইনপুট",

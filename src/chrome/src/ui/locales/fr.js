@@ -591,6 +591,7 @@ export default {
   'sp.scratchpad.cleared': 'Bloc-notes effacé.',
   'sp.scratchpad.error': 'Bloc-notes indisponible : {msg}',
   'sp.perm.verb.schedule': 'planifier des tâches futures pour',
+  'sp.perm.verb.window': 'redimensionner la fenêtre du navigateur sur',
   'tool.schedule_resume': 'Planification de la reprise',
   'tool.schedule_task': 'Planification de la tâche',
   'st.display.scheduled_tasks.label': 'Tâches planifiées',

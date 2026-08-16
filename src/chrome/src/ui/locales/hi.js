@@ -331,6 +331,7 @@ export default {
   'sp.perm.verb.upload': "पर एक फ़ाइल अपलोड करें",
   'sp.perm.verb.record': "टैब (और माइक्रोफ़ोन) को चालू रखें",
   'sp.perm.verb.schedule': "भविष्य के लिए कार्य शेड्यूल करें",
+  'sp.perm.verb.window': 'ब्राउज़र विंडो का आकार बदलें',
 
   'sp.step.details': "विवरण",
   'sp.step.input_label': "इनपुट",

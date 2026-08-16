@@ -319,6 +319,7 @@ export default {
   'sp.perm.verb.upload': 'een bestand uploaden naar',
   'sp.perm.verb.record': 'het tabblad (en microfoon) opnemen op',
   'sp.perm.verb.schedule': 'geplande taken instellen voor',
+  'sp.perm.verb.window': 'het browservenster aanpassen op',
   'sp.step.details': 'details',
   'sp.step.input_label': 'Invoer',
   'sp.step.result_label': 'Resultaat',

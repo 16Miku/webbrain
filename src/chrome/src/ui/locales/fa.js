@@ -331,6 +331,7 @@ export default {
   'sp.perm.verb.upload': "آپلود فایل به",
   'sp.perm.verb.record': "زبانه (و میکروفون) را روی آن ضبط کنید",
   'sp.perm.verb.schedule': "برای کارهای آینده برنامه ریزی کنید",
+  'sp.perm.verb.window': 'اندازه پنجره مرورگر را تغییر دهید در',
 
   'sp.step.details': "جزئیات",
   'sp.step.input_label': "ورودی",

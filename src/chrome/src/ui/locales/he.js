@@ -305,6 +305,7 @@ export default {
   "sp.perm.verb.download": "להוריד קבצים מ",
   "sp.perm.verb.upload": "להעלות קובץ ל",
   "sp.perm.verb.schedule": "לתזמן עבודה עתידית עבור",
+  "sp.perm.verb.window": "לשנות את גודל חלון הדפדפן באתר",
   "sp.step.details": "פרטים",
   "sp.step.input_label": "קלט",
   "sp.step.result_label": "תוצאה",

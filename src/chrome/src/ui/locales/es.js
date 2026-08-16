@@ -591,6 +591,7 @@ export default {
   'sp.scratchpad.cleared': 'Bloc de notas borrado.',
   'sp.scratchpad.error': 'Bloc de notas no disponible: {msg}',
   'sp.perm.verb.schedule': 'programar trabajo futuro en',
+  'sp.perm.verb.window': 'cambiar el tamaño de la ventana del navegador en',
   'tool.schedule_resume': 'Programando reanudación',
   'tool.schedule_task': 'Programando tarea',
   'st.display.scheduled_tasks.label': 'Tareas programadas',

@@ -239,6 +239,7 @@ export default {
   'sp.perm.verb.upload': 'przesłać plik do',
   'sp.perm.verb.record': 'nagrać kartę (i mikrofon) na',
   'sp.perm.verb.schedule': 'zaplanować przyszłe działania dla',
+  'sp.perm.verb.window': 'zmienić rozmiar okna przeglądarki na',
   'sp.step.details': 'szczegóły',
   'sp.step.input_label': 'Wejście',
   'sp.step.result_label': 'Wynik',

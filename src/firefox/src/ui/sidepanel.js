@@ -4,6 +4,7 @@
  */
 
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
+import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
 import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
@@ -8801,8 +8802,13 @@ function renderClarifyCard(data) {
     card.dataset.permission = '1';
     const host = String(data.permission.host || '');
     const cap = String(data.permission.capability || '');
-    const verb = t('sp.perm.verb.' + cap);
-    qEl.textContent = t('sp.perm.question', { verb, host });
+    const verbKey = 'sp.perm.verb.' + cap;
+    const verb = t(verbKey);
+    // English falls back to the single CAPABILITY_LABEL source of truth so the
+    // consent wording cannot drift between two English copies; other locales
+    // carry their own translation under the key.
+    const resolvedVerb = verb === verbKey ? (CAPABILITY_LABEL[cap] || cap) : verb;
+    qEl.textContent = t('sp.perm.question', { verb: resolvedVerb, host });
 
     const reasonEl = document.createElement('div');
     reasonEl.className = 'clarify-reason';

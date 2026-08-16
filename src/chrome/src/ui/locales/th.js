@@ -591,6 +591,7 @@ export default {
   'sp.scratchpad.cleared': 'ล้างกระดานร่างแล้ว',
   'sp.scratchpad.error': 'ไม่สามารถใช้กระดานร่างได้: {msg}',
   'sp.perm.verb.schedule': 'ตั้งเวลางานในอนาคตสำหรับ',
+  'sp.perm.verb.window': 'ปรับขนาดหน้าต่างเบราว์เซอร์บน',
   'tool.schedule_resume': 'กำลังตั้งเวลาต่องาน',
   'tool.schedule_task': 'กำลังตั้งเวลางาน',
   'st.display.scheduled_tasks.label': 'งานที่ตั้งเวลาไว้',

@@ -575,6 +575,7 @@ export default {
   'sp.scratchpad.cleared': 'Bak pasir dikosongkan.',
   'sp.scratchpad.error': 'Bak pasir tidak tersedia: {msg}',
   'sp.perm.verb.schedule': 'menjadwalkan pekerjaan mendatang untuk',
+  'sp.perm.verb.window': 'mengubah ukuran jendela browser di',
   'tool.schedule_resume': 'Menjadwalkan lanjutan',
   'tool.schedule_task': 'Menjadwalkan tugas',
   'st.display.scheduled_tasks.label': 'Tugas terjadwal',

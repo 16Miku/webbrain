@@ -567,11 +567,12 @@ const { createContextMenuPromptHandler: createContextMenuPromptHandlerFx } = awa
 );
 
 // permission-gate.js is pure JS (deterministic capability × origin gate).
-const { Capability, capabilityFor, capabilitiesFor, normalizeHost, hostForCapability, requiredHosts, frameHostMatches, isNetworkMutation, PermissionManager, UNTRUSTED_CONTENT_TOOLS } = await import(
+const { Capability, CAPABILITY_LABEL, capabilityFor, capabilitiesFor, normalizeHost, hostForCapability, requiredHosts, frameHostMatches, isNetworkMutation, PermissionManager, UNTRUSTED_CONTENT_TOOLS } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/permission-gate.js').replace(/\\/g, '/')
 );
 const {
   Capability: CapabilityCh,
+  CAPABILITY_LABEL: CAPABILITY_LABEL_CH,
   capabilityFor: capabilityForCh,
   PermissionManager: PermissionManagerCh,
   normalizeHost: normalizeHostCh,
@@ -25139,6 +25140,24 @@ test('all locales cover English keys and preserve interpolation placeholders', a
         );
       }
     }
+  }
+});
+
+test('every permission-gate capability has an English verb and a sidepanel fallback', () => {
+  for (const [label, Cap, LABEL, prefix] of [
+    ['chrome', CapabilityCh, CAPABILITY_LABEL_CH, 'src/chrome'],
+    ['firefox', Capability, CAPABILITY_LABEL, 'src/firefox'],
+  ]) {
+    for (const cap of Object.values(Cap)) {
+      const labelText = LABEL[cap];
+      assert.equal(typeof labelText, 'string', `${label}: ${cap} missing from CAPABILITY_LABEL`);
+      assert.ok(labelText.length > 0, `${label}: ${cap} English verb must not be empty`);
+    }
+    // The permission prompt must fall back to CAPABILITY_LABEL (not the raw
+    // key) when a locale lacks sp.perm.verb.<cap>, so a newly added capability
+    // can never render its raw key on the consent prompt.
+    const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(sidepanel, /CAPABILITY_LABEL\[cap\] \|\| cap/, `${label}: sidepanel permission prompt must fall back to CAPABILITY_LABEL`);
   }
 });
 
