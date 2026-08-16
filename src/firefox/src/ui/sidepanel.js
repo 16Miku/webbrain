@@ -10167,12 +10167,25 @@ function messageCompletionFromElement(msgEl) {
 let messageInfoRowId = 0;
 
 function ensureMessageInfoElements(msgEl) {
-  let row = msgEl.querySelector(':scope > .message-info');
+  let bar = msgEl.querySelector(':scope > .message-info-bar');
+  let row = bar?.querySelector(':scope > .message-info')
+    || msgEl.querySelector(':scope > .message-info');
+  let toggle = msgEl.querySelector(':scope > .message-info-toggle')
+    || bar?.querySelector(':scope > .message-info-toggle');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'message-info-bar';
+    const legacyControl = toggle || row;
+    if (legacyControl) msgEl.insertBefore(bar, legacyControl);
+    else msgEl.appendChild(bar);
+  }
   if (!row) {
     row = document.createElement('div');
     row.className = 'message-info';
     row.setAttribute('role', 'status');
-    msgEl.appendChild(row);
+  }
+  if (row.parentNode !== bar) {
+    bar.appendChild(row);
   }
   if (!row.id) {
     let id;
@@ -10181,13 +10194,14 @@ function ensureMessageInfoElements(msgEl) {
     } while (document.getElementById(id));
     row.id = id;
   }
-  let toggle = msgEl.querySelector(':scope > .message-info-toggle');
   if (!toggle) {
     toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'message-info-toggle';
-    toggle.textContent = 'ⓘ';
-    msgEl.insertBefore(toggle, row);
+  }
+  toggle.textContent = '';
+  if (toggle.parentNode !== msgEl) {
+    msgEl.insertBefore(toggle, msgEl.children[0] || null);
   }
   toggle.setAttribute('aria-controls', row.id);
   toggle.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));

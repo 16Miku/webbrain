@@ -1,6 +1,7 @@
 function formatSentTime(createdAt, locale) {
   const value = Number(createdAt);
   if (!Number.isFinite(value) || value <= 0) return '';
+  const date = new Date(value);
   try {
     return new Intl.DateTimeFormat(locale || undefined, {
       year: 'numeric',
@@ -9,11 +10,15 @@ function formatSentTime(createdAt, locale) {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
-      timeZone: 'UTC',
       timeZoneName: 'short',
-    }).format(new Date(value));
+    }).format(date);
   } catch {
-    return new Date(value).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    const pad = (part) => String(part).padStart(2, '0');
+    const offsetMinutes = -date.getTimezoneOffset();
+    const offset = offsetMinutes === 0
+      ? 'UTC'
+      : `UTC${offsetMinutes > 0 ? '+' : '-'}${pad(Math.floor(Math.abs(offsetMinutes) / 60))}:${pad(Math.abs(offsetMinutes) % 60)}`;
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}, ${pad(date.getHours())}:${pad(date.getMinutes())} ${offset}`;
   }
 }
 

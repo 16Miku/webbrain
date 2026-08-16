@@ -1396,6 +1396,7 @@ body {
 
 /* Messages */
 .message {
+  position: relative;
   display: flex;
   flex-direction: column;
   max-width: 95%;
@@ -1495,31 +1496,44 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+.message-info-bar {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-start: 0;
+  display: none;
+  align-items: center;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  min-width: 0;
+  margin-top: 3px;
+}
+
+.message.message-info-open {
+  margin-bottom: 25px;
+}
+
+.message.message-info-open > .message-info-bar {
+  display: flex;
+}
+
+.message.user .message-info-bar {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
 .message-info-toggle {
-  align-self: flex-start;
-  width: 22px;
-  height: 22px;
-  margin: 3px 3px 0;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius);
+  appearance: none;
   background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 22px;
-  opacity: 0.72;
-}
-
-.message.user .message-info-toggle {
-  align-self: flex-end;
-}
-
-.message-info-toggle:hover,
-.message-info-toggle:focus-visible {
-  background: var(--overlay-bg);
-  color: var(--text-primary);
-  opacity: 1;
+  pointer-events: none;
 }
 
 .message-info-toggle:focus-visible {
@@ -1529,11 +1543,15 @@ body {
 
 .message-info {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
-  margin-top: 5px;
+  min-width: 0;
+  margin: 0;
   padding: 0 4px;
+  overflow: hidden;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -1541,7 +1559,6 @@ body {
 }
 
 .message.user .message-info {
-  align-self: flex-end;
   justify-content: flex-end;
 }
 
