@@ -208,6 +208,7 @@ const SUPPORTED_WIKIPEDIA_IMAGE_MIME_TYPES = new Set([
   'image/gif',
   'image/jpeg',
   'image/png',
+  'image/svg+xml',
   'image/webp',
 ]);
 const ISO_639_3_TO_1 = Object.freeze({
@@ -650,7 +651,7 @@ export async function openKiwixZim(source, metadata = {}) {
     const entry = await resolvedEntry(located);
     const mimeType = String(mimeTypes[entry?.mimeType] || '').split(';', 1)[0].trim().toLowerCase();
     if (!entry || entry.namespace !== 'C' || !isSupportedWikipediaImageMimeType(mimeType)) {
-      throw new Error('This archive entry is not a supported raster image.');
+      throw new Error('This archive entry is not a supported image.');
     }
     const bytes = await clusterBlob(entry.clusterIndex, entry.blobIndex);
     const maxBytes = Math.max(1, Math.min(32 * 1024 * 1024, Number(options.maxBytes) || 12 * 1024 * 1024));

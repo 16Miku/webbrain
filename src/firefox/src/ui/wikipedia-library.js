@@ -16,6 +16,7 @@ const WIKIPEDIA_LANGUAGES = Object.freeze([
 ]);
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
+const BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY = 'apocalypseBasicWikipediaAutoStartSuppressed';
 const archiveStore = createApocalypseStore();
 const fileHandles = new Map();
 let currentThemeMode = 'system';
@@ -85,6 +86,10 @@ async function authorizeFileHandle(handle, mode) {
     throw new Error(t('ap.file_permission_required'));
   }
   if (permission !== 'granted') throw new Error(t('ap.file_permission_required'));
+}
+
+async function suppressBasicWikipediaAutoStart() {
+  await runtimeApi.storage.local.set({ [BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY]: true });
 }
 
 function wikipediaRecords() {
@@ -250,6 +255,7 @@ async function runCurrentAction(action, button) {
       return;
     }
     const removesArchive = action === 'stop' || action === 'delete';
+    if (removesArchive && isBasicWikipediaArchive(record)) await suppressBasicWikipediaAutoStart();
     snapshot = await command(removesArchive ? 'delete' : action, { id: record.id });
     setNotice(t('ap.action_done', {
       action: action === 'stop' ? t('st.providers.webgpu_download.stop') : t(`ap.${action}`),

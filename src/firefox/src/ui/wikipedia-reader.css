@@ -173,6 +173,9 @@ button:focus-visible,a:focus-visible,input:focus-visible { outline:3px solid var
 .article-text tr:nth-child(even) td { background:var(--stripe); }
 .article-text figure { margin:1.5em 0;padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--figure-bg); }
 .article-text figcaption { color:var(--muted);font:12px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.article-text math.wiki-math { color:var(--text);font-size:1em; }
+.article-text math.wiki-math[display="block"] { display:block;max-width:100%;margin:1.25em 0;padding:.4em 0;overflow-x:auto;overflow-y:hidden; }
+.article-text svg.wiki-inline-svg { display:block;max-width:100%;height:auto;margin:1.25em auto;color:var(--text); }
 .wiki-image-slot { position:relative;display:grid;width:100%;min-height:160px;margin:1.45em 0;overflow:hidden;place-items:center;border:1px solid var(--border);border-radius:9px;background:linear-gradient(145deg,var(--image-gradient-a),var(--image-gradient-b)); }
 .wiki-image-slot[data-state="loaded"] { min-height:0;background:var(--image-loaded-bg); }
 .wiki-image-slot img { display:block;width:auto;max-width:100%;height:auto;max-height:72vh;margin:auto;object-fit:contain; }

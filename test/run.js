@@ -21580,14 +21580,15 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
   await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
 });
 
-test('Apocalypse Mode exposes only bounded raster images from image-bearing Wikipedia archives', async () => {
+test('Apocalypse Mode exposes only bounded display images from image-bearing Wikipedia archives', async () => {
   const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+  const svgBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><script>alert(1)</script><path d="M2 2L18 18"/></svg>');
   const fixture = minimalWikipediaZimFixture({
     tags: 'wikipedia;_category:wikipedia;_pictures:yes',
     articleHtml: '<p>Portrait</p><img src="./I/alan.png" alt="Alan Turing"><img src="./I/diagram.svg"><audio src="./I/voice.mp3"></audio>',
     imageAssets: [
       { url: 'I/alan.png', mimeType: 'image/png', contents: pngBytes },
-      { url: 'I/diagram.svg', mimeType: 'image/svg+xml', contents: '<svg><script>alert(1)</script></svg>' },
+      { url: 'I/diagram.svg', mimeType: 'image/svg+xml', contents: svgBytes },
       { url: 'I/voice.mp3', mimeType: 'audio/mpeg', contents: new Uint8Array([73, 68, 51]) },
     ],
   });
@@ -21596,11 +21597,11 @@ test('Apocalypse Mode exposes only bounded raster images from image-bearing Wiki
     assert.equal(runtime.wikipediaArchiveIncludesImages({ flavour: 'maxi' }), true, `${label}: maxi archives were not recognized as image-bearing`);
     assert.equal(runtime.wikipediaArchiveIncludesImages({ flavour: 'nopic', tags: ['_pictures:yes'] }), false, `${label}: nopic archives were mislabeled as image-bearing`);
     assert.equal(runtime.wikipediaArchiveIncludesImages({ tags: ['_pictures:no'] }, { Tags: '_pictures:yes' }), false, `${label}: explicit no-picture metadata did not win`);
-    for (const mimeType of ['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']) {
+    for (const mimeType of ['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/svg+xml', 'image/webp']) {
       assert.equal(runtime.isSupportedWikipediaImageMimeType(mimeType), true, `${label}: ${mimeType} was not accepted`);
     }
-    for (const mimeType of ['image/svg+xml', 'audio/mpeg', 'video/mp4', 'text/html']) {
-      assert.equal(runtime.isSupportedWikipediaImageMimeType(mimeType), false, `${label}: ${mimeType} escaped the raster-only boundary`);
+    for (const mimeType of ['audio/mpeg', 'video/mp4', 'text/html']) {
+      assert.equal(runtime.isSupportedWikipediaImageMimeType(mimeType), false, `${label}: ${mimeType} escaped the image boundary`);
     }
 
     const archive = await runtime.openKiwixZim(fixture);
@@ -21609,8 +21610,10 @@ test('Apocalypse Mode exposes only bounded raster images from image-bearing Wiki
     const image = await archive.readImage('I/alan.png');
     assert.equal(image.mimeType, 'image/png', `${label}: raster MIME type was lost`);
     assert.deepEqual(image.bytes, pngBytes, `${label}: raster bytes changed during the local read`);
-    await assert.rejects(archive.readImage('I/diagram.svg'), /supported raster image/i, `${label}: SVG content was exposed to the reader`);
-    await assert.rejects(archive.readImage('I/voice.mp3'), /supported raster image/i, `${label}: audio content was exposed to the reader`);
+    const vector = await archive.readImage('I/diagram.svg');
+    assert.equal(vector.mimeType, 'image/svg+xml', `${label}: the SVG MIME type was lost before UI sanitization`);
+    assert.deepEqual(vector.bytes, svgBytes, `${label}: SVG bytes changed before UI sanitization`);
+    await assert.rejects(archive.readImage('I/voice.mp3'), /supported image/i, `${label}: audio content was exposed to the reader`);
     await assert.rejects(archive.readImage('I/alan.png', { maxBytes: 8 }), /too large/i, `${label}: per-image memory bounds were ignored`);
     const readyRecord = { id: 'image-archive', archiveKind: 'wikipedia', status: 'ready' };
     const bridged = await runtime.readApocalypseImage(readyRecord.id, 'I/alan.png', {
@@ -21650,9 +21653,11 @@ test('Wikipedia article links stay local when possible and reject active URLs', 
       `${label}: a local raster asset did not resolve against the article path`);
     assert.equal(renderer.classifyWikipediaImageSource('./portrait.jpg?width=640', 'A/Alan_Turing'), 'A/portrait.jpg',
       `${label}: a local image query was not reduced to its archive path`);
-    for (const source of ['https://example.test/portrait.png', '//example.test/portrait.png', 'data:image/png;base64,AA==', 'blob:test', '../I/vector.svg', '../I/voice.mp3']) {
+    assert.equal(renderer.classifyWikipediaImageSource('../I/vector.svg', 'A/Alan_Turing'), 'I/vector.svg',
+      `${label}: a local SVG asset did not resolve against the article path`);
+    for (const source of ['https://example.test/portrait.png', '//example.test/portrait.png', 'data:image/png;base64,AA==', 'blob:test', '../I/vector.svgz', '../I/voice.mp3']) {
       assert.equal(renderer.classifyWikipediaImageSource(source, 'A/Alan_Turing'), '',
-        `${label}: active or non-raster source ${source} escaped image classification`);
+        `${label}: active or unsupported image source ${source} escaped classification`);
     }
   }
 });
@@ -21683,6 +21688,7 @@ test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', a
   for (const [label, runtime] of [['chrome', WikipediaImageLoaderCh], ['firefox', WikipediaImageLoaderFx]]) {
     const created = [];
     const revoked = [];
+    const sanitizedVectors = [];
     const URLApi = {
       createObjectURL(blob) { const url = `blob:test-${created.length + 1}`; created.push({ blob, url }); return url; },
       revokeObjectURL(url) { revoked.push(url); },
@@ -21691,10 +21697,22 @@ test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', a
     const oldRead = new Promise(resolve => { releaseOld = resolve; });
     const readImage = async (path) => {
       if (path === 'I/old.png') return await oldRead;
-      if (path === 'I/vector.svg') return { mimeType: 'image/svg+xml', byteLength: 4, bytes: new Uint8Array(4) };
+      if (path === 'I/vector.svg') {
+        const bytes = new TextEncoder().encode('<svg><script>alert(1)</script><path d="M0 0L4 4"/></svg>');
+        return { mimeType: 'image/svg+xml', byteLength: bytes.byteLength, bytes };
+      }
       return { mimeType: 'image/png', byteLength: 4, bytes: new Uint8Array([1, 2, 3, 4]) };
     };
-    const loader = runtime.createWikipediaImageLoader({ readImage, URLApi, BlobClass: Blob, IntersectionObserverClass: null });
+    const loader = runtime.createWikipediaImageLoader({
+      readImage,
+      URLApi,
+      BlobClass: Blob,
+      IntersectionObserverClass: null,
+      sanitizeSvg(unsafeSvg) {
+        sanitizedVectors.push(unsafeSvg);
+        return '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L4 4"/></svg>';
+      },
+    });
     const old = fakeSlot('I/old.png');
     loader.start({ querySelectorAll() { return [old.slot]; } });
     const current = fakeSlot('I/current.png');
@@ -21710,10 +21728,16 @@ test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', a
     const vector = fakeSlot('I/vector.svg');
     loader.start({ querySelectorAll() { return [vector.slot]; } });
     await new Promise(resolve => setTimeout(resolve, 0));
-    assert.equal(vector.slot.hidden, true, `${label}: SVG response was not rejected by the live loader`);
-    assert.equal(created.length, 1, `${label}: rejected or cancelled content created an object URL`);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(vector.image.hidden, false, `${label}: sanitized SVG response was not displayed`);
+    assert.equal(vector.slot.dataset.state, 'loaded', `${label}: sanitized SVG slot was not marked loaded`);
+    assert.equal(sanitizedVectors.length, 1, `${label}: SVG bytes bypassed the sanitizer`);
+    assert.match(sanitizedVectors[0], /<script>alert\(1\)<\/script>/, `${label}: the sanitizer did not receive the untrusted SVG source`);
+    assert.equal(created.length, 2, `${label}: sanitized SVG did not receive its own object URL`);
+    assert.equal(created[1].blob.type, 'image/svg+xml;charset=utf-8', `${label}: sanitized SVG Blob lost its MIME type`);
+    assert.doesNotMatch(await created[1].blob.text(), /script|alert/i, `${label}: active SVG content entered the rendered Blob`);
     loader.clear();
-    assert.deepEqual(revoked, ['blob:test-1'], `${label}: local image object URLs were not released`);
+    assert.deepEqual(revoked, ['blob:test-1', 'blob:test-2'], `${label}: local image object URLs were not released`);
   }
 });
 
@@ -21743,8 +21767,12 @@ test('Wikipedia formatted reader reconstructs a bounded semantic DOM without ins
       `${browser}: formatted output is not reconstructed into the article container`);
     assert.doesNotMatch(renderer, /(?:container|document\.body)\.innerHTML\s*=/,
       `${browser}: untrusted archive HTML is assigned directly to a live DOM container`);
-    assert.match(renderer, /DROP_WITH_CONTENT[\s\S]*?'SCRIPT'[\s\S]*?'SVG'/,
-      `${browser}: active document elements are not discarded with their contents`);
+    assert.match(renderer, /MATHML_ELEMENTS[\s\S]*?'MATH'[\s\S]*?createElementNS\(MATHML_NAMESPACE/,
+      `${browser}: MathML equations are not reconstructed in their namespace`);
+    assert.match(renderer, /SVG_ELEMENTS[\s\S]*?'SVG'[\s\S]*?SVG_DROP_WITH_CONTENT[\s\S]*?'SCRIPT'[\s\S]*?createElementNS\(SVG_NAMESPACE/,
+      `${browser}: SVG is not allowlisted while active vector elements stay blocked`);
+    assert.match(renderer, /export function sanitizeWikipediaSvg[\s\S]*?parseFromString\(source, 'image\/svg\+xml'\)[\s\S]*?new Serializer\(\)\.serializeToString\(output\)/,
+      `${browser}: archive SVG assets are not rebuilt through the SVG sanitizer`);
     assert.match(renderer, /dataset\.wikipediaImagePath\s*=\s*path/,
       `${browser}: archive images are not reconstructed as inert local placeholders`);
     assert.doesNotMatch(renderer, /image\.src\s*=/,
@@ -21760,8 +21788,10 @@ test('Wikipedia formatted reader reconstructs a bounded semantic DOM without ins
       `${browser}: archive image reads are no longer lazy at the loader boundary`);
     assert.match(imageLoader, /Local archive image did not decode/,
       `${browser}: corrupt raster assets can hold a loader slot forever`);
-    assert.doesNotMatch(imageLoader, /image\/svg|audio\//i,
-      `${browser}: SVG or audio content entered the live image allowlist`);
+    assert.match(imageLoader, /mimeType === 'image\/svg\+xml'[\s\S]*?sanitizeSvg\([\s\S]*?blobParts = \[safeSvg\]/,
+      `${browser}: SVG bytes are not sanitized before entering the live image Blob`);
+    assert.doesNotMatch(imageLoader, /audio\//i,
+      `${browser}: audio content entered the live image allowlist`);
     assert.match(reader, /renderWikipediaArticle\(article\.unsafeHtml/,
       `${browser}: the reader does not use the semantic renderer`);
     assert.doesNotMatch(reader, /elements\['article-text'\]\.innerHTML\s*=/,
@@ -21770,6 +21800,10 @@ test('Wikipedia formatted reader reconstructs a bounded semantic DOM without ins
       `${browser}: formatted sections are missing the offline archive index marker`);
     assert.match(css, /\.wiki-table-scroll[\s\S]*?overflow-x:auto/,
       `${browser}: wide Wikipedia tables are not bounded by the reading column`);
+    assert.match(css, /math\.wiki-math\[display="block"\][\s\S]*?overflow-x:auto/,
+      `${browser}: block equations are not bounded by the reading column`);
+    assert.match(css, /svg\.wiki-inline-svg[\s\S]*?max-width:100%/,
+      `${browser}: inline SVG is not responsive inside the reading column`);
   }
 });
 
@@ -23636,6 +23670,10 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
       assert.match(libraryScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing from Emergency Box`);
     }
+    assert.match(libraryScript, /BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY[\s\S]*?suppressBasicWikipediaAutoStart[\s\S]*?storage\.local\.set/,
+      `${prefix}: the Wikipedia library cannot persist basic auto-start suppression`);
+    assert.match(libraryScript, /const removesArchive = action === 'stop' \|\| action === 'delete';[\s\S]*?isBasicWikipediaArchive\(record\)[\s\S]*?await suppressBasicWikipediaAutoStart\(\)[\s\S]*?command\(removesArchive \? 'delete' : action/,
+      `${prefix}: deleting the basic Wikipedia archive can silently auto-download it again`);
     const headerStart = settingsHtml.indexOf('<div class="header-row">');
     const apocalypseLink = settingsHtml.indexOf('id="apocalypse-mode-link"', headerStart);
     const supportLink = settingsHtml.indexOf('href="https://webbrain.one/docs"', headerStart);
@@ -25297,6 +25335,44 @@ test('web landing language picker mirrors the extension flag listbox', () => {
       `web assets: ${flagCode}.svg should be bundled`,
     );
   }
+});
+
+test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stack', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const featuresIndex = template.indexOf('<!-- FEATURES -->');
+  const apocalypseIndex = template.indexOf('<!-- APOCALYPSE MODE -->');
+  const providersIndex = template.indexOf('<!-- PROVIDERS -->');
+
+  assert.ok(featuresIndex >= 0 && apocalypseIndex > featuresIndex && providersIndex > apocalypseIndex,
+    'web: Apocalypse Mode should sit between the feature overview and provider constellation');
+  assert.match(template, /<section class="section apocalypse-section" id="apocalypse" aria-labelledby="apocalypse-title">/,
+    'web: Apocalypse Mode should be a named homepage section');
+  assert.match(template, /\{\{t:apocalypse\.label\}\}[\s\S]*?id="apocalypse-title">\{\{t:apocalypse\.title\}\}[\s\S]*?\{\{t:apocalypse\.heading\}\}[\s\S]*?\{\{t:apocalypse\.description\}\}/,
+    'web: Apocalypse Mode marketing copy should come from locale sources');
+  assert.match(template, /LFM2\.5 2\.6B[\s\S]*?Vision Model[\s\S]*?Wikipedia/,
+    'web: the offline readiness stack should show text, vision, and knowledge layers');
+  assert.match(template, /\.apocalypse-shell \{[\s\S]*?grid-template-columns:[\s\S]*?\.apocalypse-module\.is-vision[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-knowledge[\s\S]*?margin-inline-start:/,
+    'web: the readiness stack should keep its asymmetric stepped composition');
+  assert.match(template, /\[dir="rtl"\] \.apocalypse-copy[\s\S]*?\[dir="rtl"\] \.apocalypse-module::before/,
+    'web: Apocalypse Mode spacing and accents should adapt to RTL locales');
+  assert.match(template, /@media \(max-width: 600px\) \{[\s\S]*?\.apocalypse-module-status \{ display: none; \}/,
+    'web: the Apocalypse stack should simplify on small screens');
+  assert.match(template, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.apocalypse-kicker-mark \{ animation: none; \}/,
+    'web: the Apocalypse status signal should honor reduced motion');
+  assert.doesNotMatch(template.match(/\/\* ={64}\n       APOCALYPSE MODE[\s\S]*?\/\* ={64}\n       PROVIDERS/)?.[0] || '', /(?:linear|radial)-gradient\(/,
+    'web: the Apocalypse showcase should use solid surfaces rather than decorative gradients');
+
+  const localeFiles = fs.readdirSync(path.join(ROOT, 'web/build/locales')).filter(file => file.endsWith('.json'));
+  for (const file of localeFiles) {
+    const locale = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales', file), 'utf8'));
+    for (const key of ['apocalypse.label', 'apocalypse.title', 'apocalypse.heading', 'apocalypse.description']) {
+      assert.equal(typeof locale[key], 'string', `web/${file}: missing ${key}`);
+      assert.ok(locale[key].trim(), `web/${file}: empty ${key}`);
+    }
+  }
+  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?LFM2\.5 2\.6B/,
+    'web build: generated English homepage should contain the complete Apocalypse Mode showcase');
 });
 
 test('homepage does not promote the unmerged Ollama launch handoff', () => {

@@ -6,13 +6,31 @@ const ALLOWED_ELEMENTS = new Set([
   'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH', 'THEAD', 'TIME', 'TR', 'U', 'UL', 'VAR',
 ]);
 
+const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML';
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const MATHML_ELEMENTS = new Set([
+  'ANNOTATION', 'MATH', 'MENCLOSE', 'MERROR', 'MFENCED', 'MFRAC', 'MI', 'MMULTISCRIPTS',
+  'MN', 'MO', 'MOVER', 'MPADDED', 'MPHANTOM', 'MPRESCRIPTS', 'MROOT', 'MROW', 'MS',
+  'MSPACE', 'MSQRT', 'MSTYLE', 'MSUB', 'MSUBSUP', 'MSUP', 'MTABLE', 'MTD', 'MTEXT',
+  'MTR', 'MUNDER', 'MUNDEROVER', 'NONE', 'SEMANTICS',
+]);
+const SVG_ELEMENTS = new Set([
+  'CIRCLE', 'CLIPPATH', 'DEFS', 'DESC', 'ELLIPSE', 'G', 'LINE', 'LINEARGRADIENT',
+  'MASK', 'PATH', 'POLYGON', 'POLYLINE', 'RADIALGRADIENT', 'RECT', 'STOP', 'SVG',
+  'SYMBOL', 'TEXT', 'TITLE', 'TSPAN', 'USE',
+]);
+const SVG_DROP_WITH_CONTENT = new Set([
+  'ANIMATE', 'ANIMATEMOTION', 'ANIMATETRANSFORM', 'DISCARD', 'FOREIGNOBJECT', 'IMAGE',
+  'SCRIPT', 'SET', 'STYLE',
+]);
+
 // These elements are discarded with their descendants. Unknown presentation
 // elements are otherwise unwrapped so their readable text is retained.
 const DROP_WITH_CONTENT = new Set([
   'APPLET', 'AREA', 'ASIDE', 'AUDIO', 'BASE', 'BUTTON', 'CANVAS', 'EMBED', 'FOOTER',
   'FORM', 'FRAME', 'FRAMESET', 'HEAD', 'HEADER', 'IFRAME', 'INPUT', 'LINK', 'MAP',
-  'MATH', 'MENU', 'META', 'NAV', 'NOSCRIPT', 'OBJECT', 'OPTION', 'SCRIPT',
-  'SELECT', 'SOURCE', 'STYLE', 'SVG', 'TEMPLATE', 'TEXTAREA', 'TRACK', 'VIDEO',
+  'MENU', 'META', 'NAV', 'NOSCRIPT', 'OBJECT', 'OPTION', 'SCRIPT', 'SELECT', 'SOURCE',
+  'STYLE', 'TEMPLATE', 'TEXTAREA', 'TRACK', 'VIDEO',
 ]);
 
 const ARTICLE_ROOT_SELECTORS = [
@@ -26,7 +44,7 @@ const ARTICLE_ROOT_SELECTORS = [
 ];
 
 const NON_ARTICLE_PATH = /(?:^|\/)_assets_\/|\.(?:avif|bmp|css|gif|ico|jpe?g|js|mjs|mp3|mp4|ogg|otf|pdf|png|svg|ttf|webm|webp|woff2?)$/i;
-const BLOCKED_IMAGE_PATH = /\.(?:aac|avi|css|flac|html?|js|m4a|m4v|mjs|mov|mp3|mp4|oga|ogg|ogv|opus|pdf|svgz?|wav|webm|woff2?)$/i;
+const BLOCKED_IMAGE_PATH = /\.(?:aac|avi|css|flac|html?|js|m4a|m4v|mjs|mov|mp3|mp4|oga|ogg|ogv|opus|pdf|svgz|wav|webm|woff2?)$/i;
 
 function decodeUrlPart(value) {
   try { return decodeURIComponent(value); } catch { return value; }
@@ -124,6 +142,156 @@ function copySharedAttributes(source, target) {
   if (id) target.id = id;
 }
 
+function safeLength(value, { allowPercent = true, maximum = 16_384 } = {}) {
+  const match = String(value || '').trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(px|em|ex|rem|%)?$/i);
+  if (!match) return '';
+  const number = Number(match[1]);
+  if (!Number.isFinite(number) || Math.abs(number) > maximum || (!allowPercent && match[2] === '%')) return '';
+  return `${number}${match[2] || ''}`;
+}
+
+function safeSvgId(value) {
+  const safe = String(value || '').normalize('NFKC').replace(/[^a-z\d_.:-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100);
+  return safe ? `wb-svg-${safe}` : '';
+}
+
+function safeSvgFragmentReference(value) {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('#')) return '';
+  const id = safeSvgId(raw.slice(1));
+  return id ? `#${id}` : '';
+}
+
+function safeSvgPaint(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 128) return '';
+  const fragment = raw.match(/^url\(\s*(['"]?)(#[^)\s'"]+)\1\s*\)$/i);
+  if (fragment) {
+    const reference = safeSvgFragmentReference(fragment[2]);
+    return reference ? `url(${reference})` : '';
+  }
+  return /^(?:none|currentcolor|transparent|#[0-9a-f]{3,8}|[a-z]{3,24}|(?:rgb|hsl)a?\([0-9.,%+\-\s]+\))$/i.test(raw)
+    ? raw
+    : '';
+}
+
+function safeSvgNumberList(value, maximumLength = 2_000) {
+  const raw = String(value || '').trim();
+  return raw.length <= maximumLength && /^[0-9eE.,+\-\s]+$/.test(raw) ? raw : '';
+}
+
+function copyMathmlAttributes(source, target) {
+  copySharedAttributes(source, target);
+  const altText = String(source.getAttribute('alttext') || source.getAttribute('aria-label') || '').trim().slice(0, 1_000);
+  if (altText) target.setAttribute('aria-label', altText);
+  if (source.tagName.toUpperCase() === 'MATH') {
+    const display = String(source.getAttribute('display') || '').toLowerCase();
+    if (['block', 'inline'].includes(display)) target.setAttribute('display', display);
+    target.classList.add('wiki-math');
+  }
+  const variant = String(source.getAttribute('mathvariant') || '').toLowerCase();
+  if (/^(?:normal|bold|italic|bold-italic|double-struck|bold-fraktur|script|bold-script|fraktur|sans-serif|bold-sans-serif|sans-serif-italic|sans-serif-bold-italic|monospace|initial|tailed|looped|stretched)$/.test(variant)) {
+    target.setAttribute('mathvariant', variant);
+  }
+  const mathSize = safeLength(source.getAttribute('mathsize'), { maximum: 512 });
+  if (mathSize) target.setAttribute('mathsize', mathSize);
+  for (const name of ['accent', 'accentunder', 'displaystyle', 'fence', 'largeop', 'movablelimits', 'separator', 'stretchy', 'symmetric']) {
+    const value = String(source.getAttribute(name) || '').toLowerCase();
+    if (['true', 'false'].includes(value)) target.setAttribute(name, value);
+  }
+  const form = String(source.getAttribute('form') || '').toLowerCase();
+  if (['infix', 'prefix', 'postfix'].includes(form)) target.setAttribute('form', form);
+}
+
+function sanitizedMathmlElement(source, context) {
+  const tag = source.tagName.toUpperCase();
+  if (!MATHML_ELEMENTS.has(tag)) {
+    const fragment = context.document.createDocumentFragment();
+    appendSanitizedChildren(source, fragment, context);
+    return fragment;
+  }
+  const target = context.document.createElementNS(MATHML_NAMESPACE, source.localName.toLowerCase());
+  copyMathmlAttributes(source, target);
+  appendSanitizedChildren(source, target, context);
+  if (tag === 'MATH') context.graphics += 1;
+  return target;
+}
+
+function copySvgAttributes(source, target) {
+  const id = safeSvgId(source.getAttribute('id'));
+  if (id) target.id = id;
+  const ariaLabel = String(source.getAttribute('aria-label') || '').trim().slice(0, 1_000);
+  if (ariaLabel) target.setAttribute('aria-label', ariaLabel);
+  const role = String(source.getAttribute('role') || '').toLowerCase();
+  if (role === 'img') target.setAttribute('role', 'img');
+
+  for (const name of ['x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'dx', 'dy', 'font-size', 'stroke-width', 'stroke-dashoffset']) {
+    const value = safeLength(source.getAttribute(name), { maximum: 100_000 });
+    if (value) target.setAttribute(name, value);
+  }
+  for (const name of ['opacity', 'fill-opacity', 'stroke-opacity', 'offset']) {
+    const raw = String(source.getAttribute(name) || '').trim();
+    if (!raw) continue;
+    const number = Number(raw.replace(/%$/, ''));
+    if (Number.isFinite(number) && number >= 0 && number <= (raw.endsWith('%') ? 100 : 1)) target.setAttribute(name, raw);
+  }
+  for (const name of ['fill', 'stroke', 'stop-color']) {
+    const value = safeSvgPaint(source.getAttribute(name));
+    if (value) target.setAttribute(name, value);
+  }
+  const points = safeSvgNumberList(source.getAttribute('points'));
+  if (points) target.setAttribute('points', points);
+  const pathData = String(source.getAttribute('d') || '').trim();
+  if (pathData.length <= 32_000 && /^[a-z\d.,+\-\s]+$/i.test(pathData)) target.setAttribute('d', pathData);
+  const transform = String(source.getAttribute('transform') || '').trim();
+  if (transform.length <= 1_000 && /^(?:(?:matrix|translate|scale|rotate|skewX|skewY)\([0-9eE.,+\-\s]+\)\s*)+$/.test(transform)) {
+    target.setAttribute('transform', transform);
+  }
+  const dashArray = safeSvgNumberList(source.getAttribute('stroke-dasharray'), 1_000);
+  if (dashArray) target.setAttribute('stroke-dasharray', dashArray);
+  const linecap = String(source.getAttribute('stroke-linecap') || '').toLowerCase();
+  if (['butt', 'round', 'square'].includes(linecap)) target.setAttribute('stroke-linecap', linecap);
+  const linejoin = String(source.getAttribute('stroke-linejoin') || '').toLowerCase();
+  if (['arcs', 'bevel', 'miter', 'miter-clip', 'round'].includes(linejoin)) target.setAttribute('stroke-linejoin', linejoin);
+  const textAnchor = String(source.getAttribute('text-anchor') || '').toLowerCase();
+  if (['start', 'middle', 'end'].includes(textAnchor)) target.setAttribute('text-anchor', textAnchor);
+  const baseline = String(source.getAttribute('dominant-baseline') || '').toLowerCase();
+  if (/^(?:auto|alphabetic|central|hanging|ideographic|mathematical|middle|text-after-edge|text-before-edge)$/.test(baseline)) {
+    target.setAttribute('dominant-baseline', baseline);
+  }
+
+  for (const name of ['clip-path', 'mask']) {
+    const raw = String(source.getAttribute(name) || '').trim();
+    const match = raw.match(/^url\(\s*(['"]?)(#[^)\s'"]+)\1\s*\)$/i);
+    const reference = match && safeSvgFragmentReference(match[2]);
+    if (reference) target.setAttribute(name, `url(${reference})`);
+  }
+  const href = safeSvgFragmentReference(source.getAttribute('href') || source.getAttribute('xlink:href'));
+  if (source.tagName.toUpperCase() === 'USE' && href) target.setAttribute('href', href);
+}
+
+function sanitizedSvgElement(source, context) {
+  const tag = source.tagName.toUpperCase();
+  if (SVG_DROP_WITH_CONTENT.has(tag)) return null;
+  if (!SVG_ELEMENTS.has(tag)) {
+    const fragment = context.document.createDocumentFragment();
+    appendSanitizedChildren(source, fragment, context);
+    return fragment;
+  }
+  const target = context.document.createElementNS(SVG_NAMESPACE, source.localName.toLowerCase());
+  copySvgAttributes(source, target);
+  if (tag === 'SVG') {
+    const viewBox = safeSvgNumberList(source.getAttribute('viewBox'), 200);
+    if (viewBox && viewBox.trim().split(/[\s,]+/).length === 4) target.setAttribute('viewBox', viewBox);
+    const aspect = String(source.getAttribute('preserveAspectRatio') || '').trim();
+    if (/^(?:none|x(?:Min|Mid|Max)Y(?:Min|Mid|Max)(?:\s+(?:meet|slice))?)$/.test(aspect)) target.setAttribute('preserveAspectRatio', aspect);
+    target.classList.add('wiki-inline-svg');
+  }
+  appendSanitizedChildren(source, target, context);
+  if (tag === 'SVG') context.graphics += 1;
+  return target;
+}
+
 function sanitizedLink(source, context) {
   const link = classifyWikipediaHref(source.getAttribute('href'), context.articlePath);
   const target = context.document.createElement(link ? 'a' : 'span');
@@ -200,6 +368,8 @@ function sanitizedImage(source, context) {
 
 function sanitizeElement(source, context) {
   const tag = source.tagName.toUpperCase();
+  if (source.namespaceURI === MATHML_NAMESPACE || tag === 'MATH') return sanitizedMathmlElement(source, context);
+  if (source.namespaceURI === SVG_NAMESPACE || tag === 'SVG') return sanitizedSvgElement(source, context);
   if (tag === 'IMG') return sanitizedImage(source, context);
   if (DROP_WITH_CONTENT.has(tag)) return null;
   if (!ALLOWED_ELEMENTS.has(tag)) {
@@ -292,6 +462,7 @@ export function renderWikipediaArticle(unsafeHtml, container, options = {}) {
     articlePath: String(options.articlePath || ''),
     document,
     exhausted: false,
+    graphics: 0,
     images: 0,
     maxImages: Math.max(1, Math.min(48, Number(options.maxImages) || 24)),
     maxNodes: Math.max(500, Math.min(50_000, Number(options.maxNodes) || 20_000)),
@@ -305,7 +476,41 @@ export function renderWikipediaArticle(unsafeHtml, container, options = {}) {
   appendSanitizedChildren(semanticRoot(parsed), output, context);
   container.replaceChildren(output);
   container.dataset.format = 'rich';
-  return { empty: !container.textContent.trim() && context.images === 0, images: context.images, truncated: context.truncated, nodes: context.nodes, textChars: context.textChars };
+  return { empty: !container.textContent.trim() && context.images === 0 && context.graphics === 0, graphics: context.graphics, images: context.images, truncated: context.truncated, nodes: context.nodes, textChars: context.textChars };
+}
+
+export function sanitizeWikipediaSvg(unsafeSvg, document, options = {}) {
+  const Parser = document?.defaultView?.DOMParser || globalThis.DOMParser;
+  const Serializer = document?.defaultView?.XMLSerializer || globalThis.XMLSerializer;
+  if (!document || typeof Parser !== 'function' || typeof Serializer !== 'function') {
+    throw new Error('This browser cannot sanitize the Wikipedia vector image.');
+  }
+  const maxSourceChars = Math.max(1_000, Math.min(1_000_000, Number(options.maxSourceChars) || 512_000));
+  const source = String(unsafeSvg || '').slice(0, maxSourceChars);
+  const parsed = new Parser().parseFromString(source, 'image/svg+xml');
+  if (parsed.documentElement?.localName?.toLowerCase() !== 'svg' || parsed.querySelector('parsererror')) {
+    throw new Error('The Wikipedia vector image is malformed.');
+  }
+  const context = {
+    articleHref: null,
+    articlePath: '',
+    document,
+    exhausted: false,
+    graphics: 0,
+    images: 0,
+    maxImages: 1,
+    maxNodes: Math.max(100, Math.min(10_000, Number(options.maxNodes) || 5_000)),
+    maxTextChars: Math.max(100, Math.min(50_000, Number(options.maxTextChars) || 10_000)),
+    nodes: 0,
+    textChars: 0,
+    title: '',
+    truncated: source.length < String(unsafeSvg || '').length,
+  };
+  const output = sanitizeNode(parsed.documentElement, context);
+  if (!output || output.nodeType !== 1 || output.namespaceURI !== SVG_NAMESPACE || context.graphics !== 1) {
+    throw new Error('The Wikipedia vector image has no safe SVG root.');
+  }
+  return new Serializer().serializeToString(output);
 }
 
 export function renderPlainWikipediaArticle(text, container) {

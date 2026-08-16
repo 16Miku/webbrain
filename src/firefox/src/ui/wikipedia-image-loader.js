@@ -1,8 +1,11 @@
-const RASTER_IMAGE_MIME_TYPES = new Set([
+import { sanitizeWikipediaSvg } from './wikipedia-article-renderer.js';
+
+const IMAGE_MIME_TYPES = new Set([
   'image/avif',
   'image/gif',
   'image/jpeg',
   'image/png',
+  'image/svg+xml',
   'image/webp',
 ]);
 
@@ -39,6 +42,7 @@ export function createWikipediaImageLoader(options = {}) {
   const maxBytes = Math.floor(boundedNumber(options.maxBytes, 12 * 1024 * 1024, 1, 32 * 1024 * 1024));
   const maxTotalBytes = Math.floor(boundedNumber(options.maxTotalBytes, 48 * 1024 * 1024, maxBytes, 128 * 1024 * 1024));
   const loadTimeoutMs = Math.floor(boundedNumber(options.loadTimeoutMs, 15_000, 1_000, 30_000));
+  const sanitizeSvg = options.sanitizeSvg || sanitizeWikipediaSvg;
   let current = emptySession();
 
   function failSlot(slot) {
@@ -47,7 +51,7 @@ export function createWikipediaImageLoader(options = {}) {
     slot.hidden = true;
   }
 
-  function assetUrl(path, session) {
+  function assetUrl(path, session, document) {
     if (session.urlPromises.has(path)) return session.urlPromises.get(path);
     const pending = (async () => {
       const asset = await options.readImage(path, { maxBytes });
@@ -55,12 +59,22 @@ export function createWikipediaImageLoader(options = {}) {
       const mimeType = String(asset?.mimeType || '').split(';', 1)[0].trim().toLowerCase();
       const bytes = asset?.bytes;
       const byteLength = Number(asset?.byteLength ?? bytes?.byteLength);
-      if (!RASTER_IMAGE_MIME_TYPES.has(mimeType) || !bytes || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > maxBytes) {
+      if (!IMAGE_MIME_TYPES.has(mimeType) || !bytes || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > maxBytes) {
         throw new Error('Unsupported local archive image.');
+      }
+      let blobParts = [bytes];
+      let blobType = mimeType;
+      if (mimeType === 'image/svg+xml') {
+        const Decoder = options.TextDecoderClass || runtime.TextDecoder || globalThis.TextDecoder;
+        if (typeof Decoder !== 'function') throw new Error('This browser cannot decode the Wikipedia vector image.');
+        const safeSvg = sanitizeSvg(new Decoder().decode(bytes), document, { maxSourceChars: maxBytes });
+        if (!safeSvg) throw new Error('The Wikipedia vector image has no safe content.');
+        blobParts = [safeSvg];
+        blobType = 'image/svg+xml;charset=utf-8';
       }
       if (session.totalBytes + byteLength > maxTotalBytes) throw new Error('Article image memory limit reached.');
       session.totalBytes += byteLength;
-      const url = URLApi.createObjectURL(new BlobClass([bytes], { type: mimeType }));
+      const url = URLApi.createObjectURL(new BlobClass(blobParts, { type: blobType }));
       if (session.cancelled) {
         URLApi.revokeObjectURL(url);
         return '';
@@ -79,7 +93,7 @@ export function createWikipediaImageLoader(options = {}) {
     if (!image || !path) return failSlot(slot);
     slot.dataset.state = 'loading';
     try {
-      const url = await assetUrl(path, session);
+      const url = await assetUrl(path, session, image.ownerDocument);
       if (!url || session.cancelled || !slot.isConnected) return;
       await new Promise((resolve, reject) => {
         let settled = false;
