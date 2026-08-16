@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -666,6 +667,7 @@ export default {
   'st.display.search.empty': 'Немає збігів у загальних налаштуваннях.',
   'st.display.advanced': 'Розширені',
   ...getApocalypseModeCopy('uk'),
+  ...getEmergencyBoxCopy('uk'),
   'st.display.clarify_timeout.label': 'Таймаут уточнення',
   'st.display.clarify_timeout.desc': 'Скільки чекати відповіді на уточнювальне запитання, перш ніж автоматично обрати перший варіант (або зафіксувати таймаут без варіантів). 0 — миттєво (завжди автовибір). Понад 1200 с — чекати необмежено (Вимк.). За замовчуванням 60 с. Не застосовується до дозволів і підтверджень надсилання форм.',
   'st.display.clarify_timeout.off': 'Вимк.',

@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -671,6 +672,7 @@ export default {
   'st.display.search.empty': 'Eşleşen Genel ayar yok.',
   'st.display.advanced': 'Gelişmiş',
   ...getApocalypseModeCopy('tr'),
+  ...getEmergencyBoxCopy('tr'),
   'st.display.clarify_timeout.label': 'Açıklama zaman aşımı',
   'st.display.clarify_timeout.desc': 'Açıklama sorusuna yanıt için ne kadar bekleneceği; süre dolunca ilk seçenek otomatik seçilir (seçenek yoksa zaman aşımı). 0 = Anında (her zaman otomatik seç). 1200 sn üzeri = süresiz bekle (Kapalı). Varsayılan 60 sn. İzin ve form gönderim onaylarına uygulanmaz.',
   'st.display.clarify_timeout.off': 'Kapalı',

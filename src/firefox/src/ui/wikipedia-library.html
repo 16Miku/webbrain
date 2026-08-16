@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="wl.page_title"></title>
+  <script src="theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="wikipedia-library.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="back-button" href="emergency-box.html" data-i18n-aria-label="wl.back">←</a>
+    <span class="archive-mark" aria-hidden="true">W</span>
+    <div class="title-block">
+      <h1 data-i18n="wl.title"></h1>
+      <p data-i18n="wl.subtitle"></p>
+    </div>
+    <span id="mode-status" class="mode-status" data-kind="disabled" role="status" aria-live="polite"></span>
+  </header>
+
+  <main class="source-shell">
+    <section class="source-card" aria-labelledby="source-title">
+      <div class="source-heading">
+        <p class="eyebrow" data-i18n="wl.eyebrow"></p>
+        <h2 id="source-title" data-i18n="wl.choose_title"></h2>
+        <p class="source-description" data-i18n="wl.choose_desc"></p>
+      </div>
+
+      <form id="source-form">
+        <label class="language-field">
+          <span data-i18n="wl.language"></span>
+          <select id="language"></select>
+        </label>
+
+        <fieldset class="edition-fieldset">
+          <legend data-i18n="wl.edition"></legend>
+          <label class="edition-choice">
+            <input type="radio" name="edition" value="text" checked>
+            <span class="edition-copy">
+              <strong data-i18n="wl.text_title"></strong>
+              <small data-i18n="wl.text_desc"></small>
+            </span>
+            <span class="edition-symbol" aria-hidden="true">Aa</span>
+          </label>
+          <label class="edition-choice">
+            <input type="radio" name="edition" value="images">
+            <span class="edition-copy">
+              <strong data-i18n="wl.images_title"></strong>
+              <small data-i18n="wl.images_desc"></small>
+            </span>
+            <span class="edition-symbol image-symbol" aria-hidden="true"></span>
+          </label>
+        </fieldset>
+
+        <button id="download" class="download-button" type="submit" data-i18n="wl.download"></button>
+      </form>
+
+      <p id="replacement-note" class="replacement-note" data-i18n="wl.replacement_note"></p>
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+      <section id="current-source" class="current-source" aria-labelledby="current-title" hidden>
+        <div class="current-heading">
+          <div>
+            <p class="eyebrow" data-i18n="wl.current"></p>
+            <h3 id="current-title"></h3>
+          </div>
+          <span id="current-status" class="current-status"></span>
+        </div>
+        <p id="current-meta" class="current-meta"></p>
+        <progress id="current-progress" max="100" value="0" hidden></progress>
+        <p id="current-detail" class="current-detail"></p>
+        <div id="current-actions" class="current-actions"></div>
+      </section>
+    </section>
+  </main>
+
+  <script type="module" src="wikipedia-library.js"></script>
+</body>
+</html>

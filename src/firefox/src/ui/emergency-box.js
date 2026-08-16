@@ -1,6 +1,7 @@
 import { createApocalypseStore } from '../agent/apocalypse-mode.js';
 import {
   EMERGENCY_BOX_HEALTH_RESOURCES,
+  compareEmergencyBoxResources,
   createEmergencyBoxStorage,
   createEmergencyBoxStore,
   deleteEmergencyResource,
@@ -10,8 +11,21 @@ import {
   PREFETCHED_OPENSTAX_CATALOG,
 } from '../agent/emergency-box.js';
 import { t } from './i18n.js';
+import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
+let currentThemeMode = 'system';
+loadMode().then((mode) => {
+  currentThemeMode = mode;
+  applyMode(mode, { syncStorage: false });
+});
+watch(() => currentThemeMode);
+runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area !== 'local' || !changes.themeMode) return;
+  const next = changes.themeMode.newValue;
+  if (THEME_MODES.includes(next)) currentThemeMode = next;
+});
+
 const apocalypseStore = createApocalypseStore();
 const resourceStore = createEmergencyBoxStore();
 const resourceStorage = createEmergencyBoxStorage();
@@ -84,10 +98,9 @@ function filteredResources() {
     })
     .filter(resource => !query || [resource.title, resource.description, resource.publisher, resource.collection]
       .some(value => String(value || '').toLocaleLowerCase().includes(query)))
-    .sort((a, b) => {
-      const readyDifference = Number(b.status === 'ready') - Number(a.status === 'ready');
-      return readyDifference || String(a.title).localeCompare(String(b.title));
-    });
+    .sort((left, right) => compareEmergencyBoxResources(left, right, {
+      groupCategories: activeFilter === 'all',
+    }));
 }
 
 function statusLabel(status) {
@@ -98,7 +111,7 @@ function statusLabel(status) {
 
 function resourceActions(resource) {
   const status = resource.status || '';
-  const disabled = apocalypseEnabled ? '' : ' disabled title="Enable Apocalypse Mode to download resources"';
+  const disabled = apocalypseEnabled ? '' : ` disabled title="${escapeHtml(t('eb.enable_downloads_tooltip'))}"`;
   if (status === 'ready') {
     return `
       <button type="button" class="resource-action read" data-action="read" data-id="${escapeHtml(resource.id)}">${escapeHtml(t('eb.read'))}</button>

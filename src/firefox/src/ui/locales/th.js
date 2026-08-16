@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -666,6 +667,7 @@ export default {
   'st.display.search.empty': 'ไม่พบการตั้งค่าทั่วไปที่ตรงกัน',
   'st.display.advanced': 'ขั้นสูง',
   ...getApocalypseModeCopy('th'),
+  ...getEmergencyBoxCopy('th'),
   'st.display.clarify_timeout.label': 'หมดเวลา clarify',
   'st.display.clarify_timeout.desc': 'ระยะเวลารอคำตอบ clarify ก่อนเลือกตัวเลือกแรกอัตโนมัติ (หรือหมดเวลาหากไม่มีตัวเลือก) 0 = ทันที (เลือกอัตโนมัติเสมอ) เกิน 1200 วินาที = รอไม่จำกัด (ปิด) ค่าเริ่มต้น 60 วินาที ไม่ใช้กับสิทธิ์หรือการยืนยันส่งฟอร์ม',
   'st.display.clarify_timeout.off': 'ปิด',

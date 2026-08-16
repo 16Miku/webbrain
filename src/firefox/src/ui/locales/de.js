@@ -2,6 +2,7 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...chromeWebStoreLocale,
@@ -516,6 +517,7 @@ export default {
   'st.display.search.empty': 'Keine passenden allgemeinen Einstellungen.',
   'st.display.advanced': 'Erweitert',
   ...getApocalypseModeCopy('de'),
+  ...getEmergencyBoxCopy('de'),
   'st.display.help_improve.label': 'Bei der Verbesserung von WebBrain helfen',
   'st.display.help_improve.desc_html': 'Ermöglichen Sie, dass geeignete WebBrain Cloud-Text- und Tool-Interaktionen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Standardmäßig aktiviert. Wenn Sie dies deaktivieren, wird die aktuelle Unterhaltung dauerhaft ausgeschlossen; eine erneute Aktivierung gilt ab der nächsten neuen Unterhaltung. Screenshots und Bilddaten werden nicht in der WebBrain-Verbesserungsdatenbank gespeichert. <u>Anfragen an lokale Modelle und mit eigenen APIs werden niemals von WebBrain erfasst.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Datenschutzrichtlinie →</a>',
   'st.display.clarify_timeout.label': 'Zeitlimit für Klärungsfragen',

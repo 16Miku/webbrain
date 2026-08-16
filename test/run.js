@@ -348,6 +348,18 @@ const ApocalypseModeCh = await import(
 const ApocalypseModeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
 );
+const WikipediaArticleRendererCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/wikipedia-article-renderer.js').replace(/\\/g, '/')
+);
+const WikipediaArticleRendererFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/wikipedia-article-renderer.js').replace(/\\/g, '/')
+);
+const WikipediaImageLoaderCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/wikipedia-image-loader.js').replace(/\\/g, '/')
+);
+const WikipediaImageLoaderFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/wikipedia-image-loader.js').replace(/\\/g, '/')
+);
 const EmergencyBoxCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/emergency-box.js').replace(/\\/g, '/')
 );
@@ -21046,6 +21058,27 @@ test('Emergency Box maps the OpenStax catalog and resolves compact PDFs on deman
   }
 });
 
+test('Emergency Box All Resources groups health, field manuals, then OpenStax', () => {
+  const resources = [
+    { id: 'education', category: 'education', title: 'OpenStax Biology', status: 'ready' },
+    { id: 'field-b', category: 'field', title: 'Zulu Field Manual' },
+    { id: 'health-b', category: 'health', title: 'Zulu Emergency Health' },
+    { id: 'field-a', category: 'field', title: 'Alpha Field Manual', status: 'ready' },
+    { id: 'health-a', category: 'health', title: 'Alpha Emergency Health', status: 'ready' },
+  ];
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const allResources = [...resources].sort((left, right) => runtime.compareEmergencyBoxResources(left, right, {
+      groupCategories: true,
+    }));
+    assert.deepEqual(allResources.map(resource => resource.id), [
+      'health-a', 'health-b', 'field-a', 'field-b', 'education',
+    ], `${label}: All Resources is not grouped as Emergency Health, Field Manuals, then OpenStax`);
+
+    const categoryView = [...resources].sort(runtime.compareEmergencyBoxResources);
+    assert.equal(categoryView[0].status, 'ready', `${label}: category filters no longer keep installed resources first`);
+  }
+});
+
 test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF responses', async () => {
   function memoryAdapters(initial = new Uint8Array()) {
     const records = new Map();
@@ -21174,9 +21207,15 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/ui/emergency-pdf.css',
     'src/ui/emergency-pdf.js',
     'src/ui/locales/emergency-copy.mjs',
+    'src/ui/locales/emergency-translations.mjs',
     'src/ui/wikipedia-reader.html',
     'src/ui/wikipedia-reader.css',
     'src/ui/wikipedia-reader.js',
+    'src/ui/wikipedia-article-renderer.js',
+    'src/ui/wikipedia-image-loader.js',
+    'src/ui/wikipedia-library.html',
+    'src/ui/wikipedia-library.css',
+    'src/ui/wikipedia-library.js',
   ];
   for (const relative of files) {
     const chrome = fs.readFileSync(path.join(ROOT, 'src/chrome', relative), 'utf8');
@@ -21187,16 +21226,99 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
     const apocalypse = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.html'), 'utf8');
     const box = fs.readFileSync(path.join(uiDir, 'emergency-box.html'), 'utf8');
+    const boxCss = fs.readFileSync(path.join(uiDir, 'emergency-box.css'), 'utf8');
+    const boxScript = fs.readFileSync(path.join(uiDir, 'emergency-box.js'), 'utf8');
     const reader = fs.readFileSync(path.join(uiDir, 'emergency-pdf.html'), 'utf8');
     const readerCss = fs.readFileSync(path.join(uiDir, 'emergency-pdf.css'), 'utf8');
-    assert.match(apocalypse, /href="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
+    const readerScript = fs.readFileSync(path.join(uiDir, 'emergency-pdf.js'), 'utf8');
+    assert.match(apocalypse, /(?:href|data-href)="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
     assert.match(box, /id="load-openstax"/, `${browser}: OpenStax catalog control missing`);
     assert.match(box, /id="download-all"/, `${browser}: bulk emergency download control missing`);
     assert.match(box, /id="resource-list"/, `${browser}: resource browser missing`);
+    assert.match(box, /data-i18n-aria-label="eb\.nav_label"/, `${browser}: Emergency Box collection navigation is not localized`);
+    assert.match(box, /data-i18n-title="ap\.title"/, `${browser}: Emergency Box back-button title is not localized`);
     assert.match(reader, /id="pdf-canvas"/, `${browser}: internal PDF renderer missing`);
     assert.match(reader, /id="save-copy"/, `${browser}: PDF export control missing`);
+    assert.match(reader, /data-i18n-aria-label="ep\.toolbar"/, `${browser}: PDF toolbar is not localized`);
+    assert.match(reader, /data-i18n-aria-label="ep\.canvas_label"/, `${browser}: PDF canvas is not localized`);
     assert.match(readerCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/, `${browser}: reader hidden states can expose a stale canvas`);
-    assert.match(fs.readFileSync(path.join(uiDir, 'wikipedia-reader.html'), 'utf8'), /id="article-text"/, `${browser}: text-only Wikipedia reader is missing`);
+    const wikipediaReader = fs.readFileSync(path.join(uiDir, 'wikipedia-reader.html'), 'utf8');
+    const wikipediaReaderCss = fs.readFileSync(path.join(uiDir, 'wikipedia-reader.css'), 'utf8');
+    const wikipediaReaderScript = fs.readFileSync(path.join(uiDir, 'wikipedia-reader.js'), 'utf8');
+    assert.match(wikipediaReader, /id="article-text"/, `${browser}: Wikipedia reader is missing`);
+    const wikipediaLibrary = fs.readFileSync(path.join(uiDir, 'wikipedia-library.html'), 'utf8');
+    const wikipediaLibraryCss = fs.readFileSync(path.join(uiDir, 'wikipedia-library.css'), 'utf8');
+    const wikipediaLibraryScript = fs.readFileSync(path.join(uiDir, 'wikipedia-library.js'), 'utf8');
+    for (const [pageName, pageHtml, pageCss, pageScript, stylesheet] of [
+      ['Emergency Box', box, boxCss, boxScript, 'emergency-box.css'],
+      ['PDF Reader', reader, readerCss, readerScript, 'emergency-pdf.css'],
+      ['Wikipedia Reader', wikipediaReader, wikipediaReaderCss, wikipediaReaderScript, 'wikipedia-reader.css'],
+      ['Wikipedia Library', wikipediaLibrary, wikipediaLibraryCss, wikipediaLibraryScript, 'wikipedia-library.css'],
+    ]) {
+      assert.match(pageHtml, new RegExp(`<script src="theme-bootstrap\\.js"><\\/script>[\\s\\S]*?<link rel="stylesheet" href="${stylesheet.replace('.', '\\.')}"`),
+        `${browser}: ${pageName} does not apply the saved theme before first paint`);
+      assert.match(pageCss, /:root\[data-theme="light"\]\s*\{[\s\S]*?color-scheme:\s*light/,
+        `${browser}: ${pageName} does not define the Settings light palette`);
+      assert.match(pageCss, /:root\s*\{[\s\S]*?color-scheme:\s*dark/,
+        `${browser}: ${pageName} does not define the Settings dark palette`);
+      assert.match(pageScript, /from '\.\/theme\.js';[\s\S]*?loadMode\(\)\.then[\s\S]*?applyMode\(mode, \{ syncStorage: false \}\)[\s\S]*?watch\(\(\) => currentThemeMode\)/,
+        `${browser}: ${pageName} does not hydrate and watch the shared Appearance preference`);
+      assert.match(pageScript, /storage\?\.onChanged\?\.addListener\?[\s\S]*?changes\.themeMode[\s\S]*?currentThemeMode = next/,
+        `${browser}: ${pageName} does not track live Appearance changes`);
+    }
+    assert.match(box, /href="wikipedia-library\.html"/, `${browser}: Emergency Box has no Wikipedia edition entry point`);
+    assert.match(wikipediaLibrary, /id="language"/, `${browser}: Wikipedia edition screen has no language choice`);
+    assert.match(wikipediaLibrary, /name="edition" value="text"/, `${browser}: text-only Wikipedia choice is missing`);
+    assert.match(wikipediaLibrary, /name="edition" value="images"/, `${browser}: Wikipedia image choice is missing`);
+    assert.match(wikipediaLibrary, /id="download"/, `${browser}: selected Wikipedia edition cannot be downloaded`);
+    assert.doesNotMatch(wikipediaLibrary, /type="file"|audio|\.svg/i,
+      `${browser}: focused Wikipedia edition screen exposes an unsupported format or import control`);
+    assert.match(wikipediaLibraryScript, /selectWikipediaArchiveVariant\(result\.items, \{ includeImages \}\)/,
+      `${browser}: language and image choices do not select a catalog edition`);
+    assert.match(wikipediaLibraryScript, /replacementArchiveIds/,
+      `${browser}: downloading a new Wikipedia edition does not schedule replacement cleanup`);
+    assert.match(wikipediaLibraryScript, /function currentRecord\(\)[\s\S]*?customWikipediaRecords\(\)\[0\][\s\S]*?\.filter\(isBasicWikipediaArchive\)/,
+      `${browser}: a legacy Simple English archive is hidden when no custom edition exists`);
+    assert.match(wikipediaLibraryScript, /status === 'ready'[\s\S]*?actionButton\('read'[\s\S]*?actionButton\('delete'/,
+      `${browser}: a completed Wikipedia archive cannot be read and removed from the library`);
+    assert.match(wikipediaLibraryScript, /errorKind === 'file-permission-required'[\s\S]*?actionButton\('reauthorize'/,
+      `${browser}: an expired external-file permission is presented as a generic retry`);
+    assert.match(wikipediaLibraryScript, /requestPermission\(\{ mode \}\)[\s\S]*?command\('reauthorize_file'/,
+      `${browser}: the Wikipedia library cannot request and persist renewed file access`);
+    assert.match(boxScript, /t\('eb\.enable_downloads_tooltip'\)/,
+      `${browser}: disabled download tooltip is not localized`);
+    assert.doesNotMatch(boxScript, /title="Enable Apocalypse Mode to download resources"/,
+      `${browser}: disabled download tooltip remains hard-coded English`);
+  }
+});
+
+test('Emergency Box localization keeps every canonical key translated with matching placeholders in all 22 locales', async () => {
+  const emergencyCopy = (await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/emergency-copy.mjs')).href
+  )).default;
+  const emergencyTranslations = (await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/emergency-translations.mjs')).href
+  )).default;
+  const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
+  const canonicalKeys = Object.keys(emergencyCopy);
+  assert.equal(canonicalKeys.length, 135, 'English emergency copy drifted from the 135-key canonical surface');
+  const placeholdersIn = (value) => [...new Set(String(value).match(/\{[a-z]+\}/g) || [])].sort();
+
+  for (const locale of localeCodes) {
+    const block = emergencyTranslations[locale];
+    assert.ok(block, `${locale}: emergency translation block is missing`);
+    const blockKeys = Object.keys(block);
+    assert.deepEqual(blockKeys.sort(), [...canonicalKeys].sort(),
+      `${locale}: emergency key set diverged (${canonicalKeys.length} canonical, ${blockKeys.length} present)`);
+    for (const key of canonicalKeys) {
+      const translated = block[key];
+      assert.equal(typeof translated, 'string', `${locale}: ${key} is not a string`);
+      assert.ok(translated.trim(), `${locale}: ${key} is empty`);
+      const dropped = placeholdersIn(emergencyCopy[key]).filter(
+        (placeholder) => !placeholdersIn(translated).includes(placeholder),
+      );
+      assert.deepEqual(dropped, [], `${locale}: ${key} dropped placeholder(s): ${dropped.join(', ')}`);
+    }
   }
 });
 
@@ -21282,17 +21404,31 @@ function minimalWikipediaZimFixture(options = {}) {
   const encoder = new TextEncoder();
   const language = options.language || 'eng';
   const sourceLanguage = ({ ben: 'bn', tgl: 'tl' })[language] || language.slice(0, 2);
+  const imageAssets = Array.isArray(options.imageAssets) ? options.imageAssets : [];
+  const mimeTypes = ['text/html', 'text/plain'];
+  for (const asset of imageAssets) {
+    const mimeType = String(asset.mimeType || '').trim().toLowerCase();
+    if (mimeType && !mimeTypes.includes(mimeType)) mimeTypes.push(mimeType);
+  }
   const metadata = options.wikipedia === false ? {
     Language: 'eng', Name: 'project_gutenberg_en', Source: 'www.gutenberg.org', Tags: '_category:books',
   } : {
-    Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`, Tags: 'wikipedia;_category:wikipedia',
+    Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`,
+    Tags: options.tags ?? 'wikipedia;_category:wikipedia',
   };
   const entries = [
     {
       namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
-      contents: '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
+      contents: options.articleHtml || '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
     },
     ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
+    ...imageAssets.map(asset => ({
+      namespace: 'C',
+      url: String(asset.url || ''),
+      title: String(asset.title || asset.url || ''),
+      mimeType: mimeTypes.indexOf(String(asset.mimeType || '').trim().toLowerCase()),
+      contents: asset.contents,
+    })),
   ];
   if (options.redirectTrap) {
     entries.push(
@@ -21343,9 +21479,16 @@ function minimalWikipediaZimFixture(options = {}) {
   });
   const blobs = entries.filter(entry => entry.contents != null);
   blobs.forEach((entry, index) => { entry.blobIndex = index; });
-  const mime = encoder.encode('text/html\0text/plain\0\0');
+  const mime = encoder.encode(`${mimeTypes.join('\0')}\0\0`);
   const offsetsBytes = (blobs.length + 1) * 4;
-  const encodedBlobs = blobs.map(entry => encoder.encode(entry.contents));
+  const encodedBlobs = blobs.map((entry) => {
+    if (entry.contents instanceof Uint8Array) return entry.contents;
+    if (ArrayBuffer.isView(entry.contents)) {
+      return new Uint8Array(entry.contents.buffer, entry.contents.byteOffset, entry.contents.byteLength);
+    }
+    if (entry.contents instanceof ArrayBuffer) return new Uint8Array(entry.contents);
+    return encoder.encode(String(entry.contents));
+  });
   const cluster = new Uint8Array(1 + offsetsBytes + encodedBlobs.reduce((sum, value) => sum + value.length, 0));
   cluster[0] = 1;
   const clusterView = new DataView(cluster.buffer);
@@ -21373,7 +21516,7 @@ function minimalWikipediaZimFixture(options = {}) {
   // Use the common ZIM layout where directory entries precede cluster data.
   // The final cluster therefore ends at checksumPos, not at the first URL
   // pointer's directory-entry offset.
-  const urlPointerPosition = 128;
+  const urlPointerPosition = Math.max(128, Math.ceil((80 + mime.length) / 8) * 8);
   const clusterPointerPosition = urlPointerPosition + entries.length * 8;
   const directoryStart = clusterPointerPosition + 8;
   const directoryPositions = [];
@@ -21429,11 +21572,205 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
     const article = await archive.readArticle(passage.path);
     assert.equal(article.title, 'Alan Turing', `${label}: text reader opened the wrong article`);
     assert.match(article.text, /computer scientist/, `${label}: text reader did not extract the complete local article`);
+    assert.match(article.unsafeHtml, /<p>Alan Turing/, `${label}: formatted reader did not receive the original article markup`);
     assert.equal(article.truncated, false, `${label}: short local article was incorrectly marked truncated`);
     assert.equal(archive.embeddedMetadata.Name, 'wikipedia_en_test', `${label}: embedded archive identity was not exposed for import validation`);
   }
   const corrupt = new Blob([new Uint8Array(96)]);
   await assert.rejects(ApocalypseModeCh.openKiwixZim(corrupt), /ZIM/i, 'corrupt archives must fail validation');
+});
+
+test('Apocalypse Mode exposes only bounded raster images from image-bearing Wikipedia archives', async () => {
+  const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+  const fixture = minimalWikipediaZimFixture({
+    tags: 'wikipedia;_category:wikipedia;_pictures:yes',
+    articleHtml: '<p>Portrait</p><img src="./I/alan.png" alt="Alan Turing"><img src="./I/diagram.svg"><audio src="./I/voice.mp3"></audio>',
+    imageAssets: [
+      { url: 'I/alan.png', mimeType: 'image/png', contents: pngBytes },
+      { url: 'I/diagram.svg', mimeType: 'image/svg+xml', contents: '<svg><script>alert(1)</script></svg>' },
+      { url: 'I/voice.mp3', mimeType: 'audio/mpeg', contents: new Uint8Array([73, 68, 51]) },
+    ],
+  });
+
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.wikipediaArchiveIncludesImages({ flavour: 'maxi' }), true, `${label}: maxi archives were not recognized as image-bearing`);
+    assert.equal(runtime.wikipediaArchiveIncludesImages({ flavour: 'nopic', tags: ['_pictures:yes'] }), false, `${label}: nopic archives were mislabeled as image-bearing`);
+    assert.equal(runtime.wikipediaArchiveIncludesImages({ tags: ['_pictures:no'] }, { Tags: '_pictures:yes' }), false, `${label}: explicit no-picture metadata did not win`);
+    for (const mimeType of ['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']) {
+      assert.equal(runtime.isSupportedWikipediaImageMimeType(mimeType), true, `${label}: ${mimeType} was not accepted`);
+    }
+    for (const mimeType of ['image/svg+xml', 'audio/mpeg', 'video/mp4', 'text/html']) {
+      assert.equal(runtime.isSupportedWikipediaImageMimeType(mimeType), false, `${label}: ${mimeType} escaped the raster-only boundary`);
+    }
+
+    const archive = await runtime.openKiwixZim(fixture);
+    assert.equal(archive.imagesIncluded, true, `${label}: embedded picture metadata was lost`);
+    assert.equal((await archive.readArticle('Alan_Turing')).imagesIncluded, true, `${label}: the reader did not receive archive image capability`);
+    const image = await archive.readImage('I/alan.png');
+    assert.equal(image.mimeType, 'image/png', `${label}: raster MIME type was lost`);
+    assert.deepEqual(image.bytes, pngBytes, `${label}: raster bytes changed during the local read`);
+    await assert.rejects(archive.readImage('I/diagram.svg'), /supported raster image/i, `${label}: SVG content was exposed to the reader`);
+    await assert.rejects(archive.readImage('I/voice.mp3'), /supported raster image/i, `${label}: audio content was exposed to the reader`);
+    await assert.rejects(archive.readImage('I/alan.png', { maxBytes: 8 }), /too large/i, `${label}: per-image memory bounds were ignored`);
+    const readyRecord = { id: 'image-archive', archiveKind: 'wikipedia', status: 'ready' };
+    const bridged = await runtime.readApocalypseImage(readyRecord.id, 'I/alan.png', {
+      record: readyRecord,
+      store: { async listArchives() { throw new Error('ready record should avoid repeated archive listings'); } },
+      providers: [{
+        supports(record) { return record === readyRecord; },
+        async readImage(_record, path, options) { return await archive.readImage(path, options); },
+      }],
+    });
+    assert.deepEqual(bridged.bytes, pngBytes, `${label}: the reader image bridge changed local bytes`);
+  }
+});
+
+test('Wikipedia article links stay local when possible and reject active URLs', () => {
+  for (const [label, renderer] of [['chrome', WikipediaArticleRendererCh], ['firefox', WikipediaArticleRendererFx]]) {
+    assert.deepEqual(renderer.classifyWikipediaHref('#Early_life', 'Alan_Turing'), {
+      kind: 'fragment', fragmentId: 'wb-wiki-Early_life',
+    }, `${label}: same-article citations did not remain local`);
+    assert.deepEqual(renderer.classifyWikipediaHref('./Computer_science#History', 'Alan_Turing'), {
+      kind: 'article', path: 'Computer_science', fragment: 'History', fragmentId: 'wb-wiki-History',
+    }, `${label}: a relative article link did not resolve inside the archive`);
+    assert.equal(renderer.classifyWikipediaHref('/wiki/Computer_science', 'Alan_Turing')?.path, 'Computer_science',
+      `${label}: canonical Wikipedia paths did not map to the local article index`);
+    assert.equal(renderer.classifyWikipediaHref('../I/portrait.png', 'A/Alan_Turing'), null,
+      `${label}: an image asset was misclassified as an article`);
+    assert.equal(renderer.classifyWikipediaHref('javascript:alert(1)', 'Alan_Turing'), null,
+      `${label}: a script URL survived article link sanitization`);
+    assert.equal(renderer.classifyWikipediaHref('data:text/html,<script>alert(1)</script>', 'Alan_Turing'), null,
+      `${label}: an active data URL survived article link sanitization`);
+    assert.equal(renderer.classifyWikipediaHref('http://example.test/', 'Alan_Turing'), null,
+      `${label}: an insecure external article URL survived sanitization`);
+    assert.deepEqual(renderer.classifyWikipediaHref('https://example.test/reference', 'Alan_Turing'), {
+      kind: 'external', href: 'https://example.test/reference',
+    }, `${label}: a safe external citation was removed`);
+    assert.equal(renderer.classifyWikipediaImageSource('../I/portrait.webp', 'A/Alan_Turing'), 'I/portrait.webp',
+      `${label}: a local raster asset did not resolve against the article path`);
+    assert.equal(renderer.classifyWikipediaImageSource('./portrait.jpg?width=640', 'A/Alan_Turing'), 'A/portrait.jpg',
+      `${label}: a local image query was not reduced to its archive path`);
+    for (const source of ['https://example.test/portrait.png', '//example.test/portrait.png', 'data:image/png;base64,AA==', 'blob:test', '../I/vector.svg', '../I/voice.mp3']) {
+      assert.equal(renderer.classifyWikipediaImageSource(source, 'A/Alan_Turing'), '',
+        `${label}: active or non-raster source ${source} escaped image classification`);
+    }
+  }
+});
+
+test('Wikipedia image loader cancels stale reads and revokes local Blob URLs', async () => {
+  function fakeSlot(path) {
+    const listeners = new Map();
+    const placeholder = { removed: false, remove() { this.removed = true; } };
+    const image = {
+      hidden: true,
+      addEventListener(type, listener) { listeners.set(type, listener); },
+      set src(value) {
+        this.value = value;
+        queueMicrotask(() => listeners.get('load')?.());
+      },
+    };
+    const slot = {
+      dataset: { wikipediaImagePath: path, state: 'pending' },
+      hidden: false,
+      isConnected: true,
+      attributes: new Map(),
+      querySelector(selector) { return selector === 'img' ? image : selector === '.wiki-image-placeholder' ? placeholder : null; },
+      setAttribute(name, value) { this.attributes.set(name, value); },
+    };
+    return { image, placeholder, slot };
+  }
+
+  for (const [label, runtime] of [['chrome', WikipediaImageLoaderCh], ['firefox', WikipediaImageLoaderFx]]) {
+    const created = [];
+    const revoked = [];
+    const URLApi = {
+      createObjectURL(blob) { const url = `blob:test-${created.length + 1}`; created.push({ blob, url }); return url; },
+      revokeObjectURL(url) { revoked.push(url); },
+    };
+    let releaseOld;
+    const oldRead = new Promise(resolve => { releaseOld = resolve; });
+    const readImage = async (path) => {
+      if (path === 'I/old.png') return await oldRead;
+      if (path === 'I/vector.svg') return { mimeType: 'image/svg+xml', byteLength: 4, bytes: new Uint8Array(4) };
+      return { mimeType: 'image/png', byteLength: 4, bytes: new Uint8Array([1, 2, 3, 4]) };
+    };
+    const loader = runtime.createWikipediaImageLoader({ readImage, URLApi, BlobClass: Blob, IntersectionObserverClass: null });
+    const old = fakeSlot('I/old.png');
+    loader.start({ querySelectorAll() { return [old.slot]; } });
+    const current = fakeSlot('I/current.png');
+    loader.start({ querySelectorAll() { return [current.slot]; } });
+    releaseOld({ mimeType: 'image/png', byteLength: 4, bytes: new Uint8Array([5, 6, 7, 8]) });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(old.image.value, undefined, `${label}: a cancelled article attached a stale image`);
+    assert.equal(current.image.value, 'blob:test-1', `${label}: the current local image was not displayed`);
+    assert.equal(current.image.hidden, false, `${label}: a loaded image remained hidden`);
+    assert.equal(current.slot.dataset.state, 'loaded', `${label}: the loaded slot state was not exposed`);
+
+    const vector = fakeSlot('I/vector.svg');
+    loader.start({ querySelectorAll() { return [vector.slot]; } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(vector.slot.hidden, true, `${label}: SVG response was not rejected by the live loader`);
+    assert.equal(created.length, 1, `${label}: rejected or cancelled content created an object URL`);
+    loader.clear();
+    assert.deepEqual(revoked, ['blob:test-1'], `${label}: local image object URLs were not released`);
+  }
+});
+
+test('Wikipedia formatted reader reconstructs a bounded semantic DOM without inserting archive HTML', async () => {
+  const articleHtml = `<!doctype html><html><body><main><div class="mw-parser-output">
+    <h1>Alan Turing</h1><p id="Lead">A <strong>formatted</strong> introduction.</p>
+    <h2 id="Early_life">Early life</h2><ul><li>School</li><li>Research</li></ul>
+    <table><caption>Timeline</caption><tr><th scope="col">Year</th><td>1936</td></tr></table>
+    <a href="./Computer_science">Computer science</a><script>stolen()</script>
+  </div></main></body></html>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const archive = await runtime.openKiwixZim(minimalWikipediaZimFixture({ articleHtml }));
+    const article = await archive.readArticle('Alan_Turing');
+    assert.match(article.unsafeHtml, /<h2 id="Early_life">/, `${label}: semantic article markup was flattened before the reader`);
+    assert.match(article.text, /Early life/, `${label}: the plain-text AI/search representation was lost`);
+    assert.doesNotMatch(article.text, /stolen\(\)/, `${label}: script contents leaked into the plain-text representation`);
+  }
+
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+    const renderer = fs.readFileSync(path.join(uiDir, 'wikipedia-article-renderer.js'), 'utf8');
+    const reader = fs.readFileSync(path.join(uiDir, 'wikipedia-reader.js'), 'utf8');
+    const css = fs.readFileSync(path.join(uiDir, 'wikipedia-reader.css'), 'utf8');
+    assert.match(renderer, /new Parser\(\)\.parseFromString\([\s\S]*?default-src 'none'/,
+      `${browser}: archive markup is parsed without a deny-all resource policy`);
+    assert.match(renderer, /container\.replaceChildren\(output\)/,
+      `${browser}: formatted output is not reconstructed into the article container`);
+    assert.doesNotMatch(renderer, /(?:container|document\.body)\.innerHTML\s*=/,
+      `${browser}: untrusted archive HTML is assigned directly to a live DOM container`);
+    assert.match(renderer, /DROP_WITH_CONTENT[\s\S]*?'SCRIPT'[\s\S]*?'SVG'/,
+      `${browser}: active document elements are not discarded with their contents`);
+    assert.match(renderer, /dataset\.wikipediaImagePath\s*=\s*path/,
+      `${browser}: archive images are not reconstructed as inert local placeholders`);
+    assert.doesNotMatch(renderer, /image\.src\s*=/,
+      `${browser}: the sanitizer can trigger image loads while parsing archive markup`);
+    assert.match(renderer, /image\.loading\s*=\s*'eager'/,
+      `${browser}: hidden Blob images can deadlock behind native lazy loading`);
+    const imageLoader = fs.readFileSync(path.join(uiDir, 'wikipedia-image-loader.js'), 'utf8');
+    assert.match(imageLoader, /URLApi\.createObjectURL\(new BlobClass/,
+      `${browser}: verified archive bytes are not isolated behind local Blob URLs`);
+    assert.match(imageLoader, /URLApi\.revokeObjectURL/,
+      `${browser}: article image Blob URLs are not released on navigation`);
+    assert.match(imageLoader, /new Observer[\s\S]*?rootMargin: '600px 0px'/,
+      `${browser}: archive image reads are no longer lazy at the loader boundary`);
+    assert.match(imageLoader, /Local archive image did not decode/,
+      `${browser}: corrupt raster assets can hold a loader slot forever`);
+    assert.doesNotMatch(imageLoader, /image\/svg|audio\//i,
+      `${browser}: SVG or audio content entered the live image allowlist`);
+    assert.match(reader, /renderWikipediaArticle\(article\.unsafeHtml/,
+      `${browser}: the reader does not use the semantic renderer`);
+    assert.doesNotMatch(reader, /elements\['article-text'\]\.innerHTML\s*=/,
+      `${browser}: the reader directly inserts an archive article`);
+    assert.match(css, /\.article-text h2::before[\s\S]*?var\(--warn\)/,
+      `${browser}: formatted sections are missing the offline archive index marker`);
+    assert.match(css, /\.wiki-table-scroll[\s\S]*?overflow-x:auto/,
+      `${browser}: wide Wikipedia tables are not bounded by the reading column`);
+  }
 });
 
 test('Apocalypse Mode short-circuits exact ZIM casing probes and bounds directory reads', async () => {
@@ -21463,9 +21800,12 @@ test('Apocalypse Mode reuses one random-access ZIM handle for search and text re
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     let opens = 0;
     const archiveCache = new Map();
+    const fixture = minimalWikipediaZimFixture({
+      imageAssets: [{ url: 'I/alan.png', mimeType: 'image/png', contents: new Uint8Array([1, 2, 3, 4]) }],
+    });
     const provider = runtime.createKiwixZimProvider({
       archiveCache,
-      storage: { async open() { opens += 1; return minimalWikipediaZimFixture(); } },
+      storage: { async open() { opens += 1; return fixture; } },
     });
     const record = {
       id: 'cached-wikipedia', archiveKind: 'wikipedia', status: 'ready', generation: 1,
@@ -21475,9 +21815,11 @@ test('Apocalypse Mode reuses one random-access ZIM handle for search and text re
     const [first] = await provider.search(record, 'Alan Turing');
     await provider.search(record, 'Alan Turing');
     const article = await provider.read(record, first.path);
+    const image = await provider.readImage(record, 'I/alan.png');
     assert.equal(opens, 1, `${label}: repeated reads reopened the large ZIM archive`);
     assert.match(article.text, /computer scientist/, `${label}: cached reader returned the wrong article text`);
     assert.equal(article.archiveId, record.id, `${label}: cached reader lost archive identity`);
+    assert.equal(image.mimeType, 'image/png', `${label}: cached archive handle did not serve its raster asset`);
   }
 });
 
@@ -21601,6 +21943,94 @@ test('Apocalypse Mode selects only a newer matching catalog archive', () => {
     assert.deepEqual(runtime.normalizeStorageEstimate({ quota: 10, usage: 10 }), {
       known: true, usage: 10, quota: 10, free: 0,
     }, `${label}: zero free space was misclassified as an unknown estimate`);
+  }
+});
+
+test('Apocalypse Mode basic setup requires the newest Simple English text-only Wikipedia archive', () => {
+  const items = [
+    { id: 'full-english', language: 'eng', name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-08-01' },
+    { id: 'simple-images', language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'maxi', archiveDate: '2026-08-01' },
+    { id: 'wrong-language', language: 'fra', name: 'wikipedia_en-simple_all', flavour: 'nopic', archiveDate: '2026-08-01' },
+    { id: 'simple-older', language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'nopic', archiveDate: '2026-02-10' },
+    { id: 'simple-current', language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'nopic', archiveDate: '2026-06-29' },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.selectBasicWikipediaArchive(items)?.id, 'simple-current',
+      `${label}: basic setup selected the wrong Wikipedia archive`);
+    assert.equal(runtime.isBasicWikipediaArchive(items[0]), false,
+      `${label}: full English Wikipedia incorrectly satisfied the Simple English prerequisite`);
+    assert.equal(runtime.isBasicWikipediaArchive(items[1]), false,
+      `${label}: an image archive incorrectly satisfied the text-only prerequisite`);
+    assert.equal(runtime.isBasicWikipediaArchive(items[4]), true,
+      `${label}: the Simple English text-only archive did not satisfy basic setup`);
+    assert.equal(runtime.isBasicWikipediaArchive({ ...items[4], name: 'wikipedia_en_simple_all' }), true,
+      `${label}: a legacy Simple English archive identity did not satisfy basic setup`);
+  }
+});
+
+test('Emergency Box selects the newest full Wikipedia edition with or without images', () => {
+  const items = [
+    { id: 'simple', language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'nopic', archiveDate: '2026-08-01', articleCount: 500_000 },
+    { id: 'text-older', language: 'eng', name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-06-01', articleCount: 6_000_000 },
+    { id: 'text-current', language: 'eng', name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-08-01', articleCount: 6_100_000 },
+    { id: 'images', language: 'eng', name: 'wikipedia_en_all', flavour: 'maxi', archiveDate: '2026-07-01', articleCount: 6_000_000 },
+    { id: 'introductions-newer', language: 'eng', name: 'wikipedia_en_all', flavour: 'mini', archiveDate: '2026-09-01', articleCount: 6_200_000 },
+    { id: 'mini', language: 'eng', name: 'wikipedia_en_100', flavour: 'mini', archiveDate: '2026-09-01', articleCount: 100 },
+  ];
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.selectWikipediaArchiveVariant(items, { includeImages: false })?.id, 'text-current',
+      `${label}: text-only choice did not select the newest complete edition`);
+    assert.equal(runtime.selectWikipediaArchiveVariant(items, { includeImages: true })?.id, 'images',
+      `${label}: image choice did not select the complete edition with images`);
+  }
+});
+
+test('A replacement Wikipedia archive deletes the old edition only after it is ready', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    async function exercise(replacementStatus) {
+      const records = new Map([
+        ['simple', {
+          id: 'simple', archiveKind: 'wikipedia', status: 'ready', generation: 1, updatedAt: 10,
+          language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'nopic', size: 100,
+          target: { kind: 'opfs', key: 'simple.zim' },
+        }],
+        ['replacement', {
+          id: 'replacement', archiveKind: 'wikipedia', status: replacementStatus, generation: 1, updatedAt: 20,
+          language: 'tur', name: 'wikipedia_tr_all', flavour: 'nopic', size: 200,
+          target: { kind: 'opfs', key: 'replacement.zim' }, replacementArchiveIds: ['simple'],
+        }],
+      ]);
+      const removed = [];
+      const store = {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return [...records.values()].map(record => ({ ...record })); },
+        async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+        async putArchive(record) { records.set(record.id, { ...record }); return record; },
+        async deleteArchive(id) { records.delete(id); },
+      };
+      const storage = {
+        async estimate() { return { usage: 300, quota: 1_000 }; },
+        async remove(target) { removed.push(target.key); },
+        async exists() { return false; },
+      };
+      const controller = runtime.createApocalypseController({ alarms: {} }, { store, storage, now: () => 1_000 });
+      const status = await controller.handle('status');
+      return { records, removed, status };
+    }
+
+    const downloading = await exercise('downloading');
+    assert.equal(downloading.records.has('simple'), true,
+      `${label}: existing Simple English archive was deleted before its replacement became ready`);
+    assert.deepEqual(downloading.removed, [], `${label}: replacement cleanup touched storage before readiness`);
+
+    const ready = await exercise('ready');
+    assert.equal(ready.records.has('simple'), false,
+      `${label}: verified replacement did not remove the old Simple English archive`);
+    assert.deepEqual(ready.removed, ['simple.zim'], `${label}: old archive bytes were not deleted through managed storage`);
+    assert.deepEqual(ready.records.get('replacement').replacementArchiveIds, [],
+      `${label}: completed replacement cleanup remained pending`);
+    assert.deepEqual(ready.status.archives.map(record => record.id), ['replacement'],
+      `${label}: status still exposed the replaced Simple English archive`);
   }
 });
 
@@ -22775,8 +23205,10 @@ test('Apocalypse Mode import failure loses atomically to concurrent deletion', a
   }
 });
 
-test('Apocalypse Mode rejects a managed download when reported free space is zero', async () => {
+test('Apocalypse Mode respects quota-limited adapters without imposing navigator estimates on extension OPFS', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.createOpfsArchiveStorage({}).quotaLimited, false,
+      `${label}: extension OPFS did not inherit the manifest unlimitedStorage contract`);
     let installs = 0;
     const store = {
       async getConfig() { return { enabled: true }; }, async setConfig(value) { return value; },
@@ -22790,6 +23222,16 @@ test('Apocalypse Mode rejects a managed download when reported free space is zer
       id: 'no-room', filename: 'archive.zim', size: 1, pieceLength: 1, pieceHashes: ['aa'], downloadUrl: 'https://example.test/archive.zim',
     } }), /not enough|storage/i, `${label}: exhausted quota still admitted a managed download`);
     assert.equal(installs, 0, `${label}: rejected managed download persisted metadata`);
+
+    const unlimitedController = runtime.createApocalypseController({ alarms: { create() {} } }, {
+      store,
+      storage: { quotaLimited: false, async estimate() { return { quota: 1024, usage: 1024 }; }, async remove() {} },
+    });
+    await unlimitedController.handle('install', { download: {
+      id: 'extension-opfs', filename: 'archive.zim', name: 'wikipedia_en-simple_all', flavour: 'nopic',
+      size: 1, pieceLength: 1, pieceHashes: ['aa'], downloadUrl: 'https://example.test/archive.zim',
+    } });
+    assert.equal(installs, 1, `${label}: unlimited extension OPFS was blocked by an informational storage estimate`);
   }
 });
 
@@ -23088,56 +23530,98 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
   }
 });
 
-test('Apocalypse Mode has a dedicated header gateway and management page in both builds', () => {
+test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia in Emergency Box', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
     const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
     const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const apocalypseCopy = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/apocalypse-copy.mjs'), 'utf8');
-    assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
-    assert.doesNotMatch(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier select should be hidden`);
-    for (const tier of ['all', 'starter', 'introductions']) {
-      assert.doesNotMatch(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: unsupported ${tier} archive tier is still selectable`);
+    const pageHeader = pageHtml.slice(pageHtml.indexOf('<header>'), pageHtml.indexOf('</header>') + 9);
+    assert.match(pageHtml, /<script src="theme-bootstrap\.js"><\/script>[\s\S]*?<style>/,
+      `${prefix}: Apocalypse Mode does not apply the saved theme before first paint`);
+    assert.match(pageHtml, /:root\[data-theme="light"\]\s*\{[\s\S]*?color-scheme:light/,
+      `${prefix}: Apocalypse Mode does not define the Settings light palette`);
+    assert.match(pageHtml, /:root\s*\{[\s\S]*?color-scheme:dark/,
+      `${prefix}: Apocalypse Mode does not define the Settings dark palette`);
+    assert.match(pageScript, /from '\.\/theme\.js';[\s\S]*?loadMode\(\)\.then[\s\S]*?applyMode\(mode, \{ syncStorage: false \}\)[\s\S]*?watch\(\(\) => currentThemeMode\)/,
+      `${prefix}: Apocalypse Mode does not hydrate and watch the shared Appearance preference`);
+    assert.match(pageScript, /storage\?\.onChanged\?\.addListener\?[\s\S]*?changes\.themeMode[\s\S]*?currentThemeMode = next/,
+      `${prefix}: Apocalypse Mode does not track live Appearance changes`);
+    for (const id of ['installed-count', 'archive-bytes', 'storage-usage']) {
+      assert.match(pageHeader, new RegExp(`id="${id}"`), `${prefix}: ${id} is not in the Apocalypse header`);
     }
-    assert.match(pageScript, /catalogItems = Array\.isArray\(result\.items\) \? result\.items : \[\]/,
-      `${prefix}: catalog items are discarded before tier selection`);
-    assert.match(pageScript, /SUPPORTED_CATALOG_TIERS = new Set\(\['text', 'full'\]\)/,
-      `${prefix}: catalog results are not restricted to the two supported archive types`);
-    assert.match(pageScript, /catalogItems = catalogItems\.filter\(item => SUPPORTED_CATALOG_TIERS\.has\(item\.tier\)\)/,
-      `${prefix}: unsupported catalog entries are not removed before rendering`);
-    assert.match(pageScript, /const items = catalogItems;/, `${prefix}: full-text and full archives are not rendered together`);
-    assert.match(pageScript, /if \(installReviewInFlight\) return;[\s\S]*?installReviewInFlight = true;/,
-      `${prefix}: Review & install can start duplicate metadata requests`);
-    assert.match(pageScript, /sourceButton\.disabled = true;[\s\S]*?sourceButton\.textContent = t\('ap\.review_loading'\)/,
-      `${prefix}: Review & install does not show immediate busy feedback`);
-    assert.match(pageScript, /reviewInstall\(visible\[Number\(button\.dataset\.install\)\], button\)/,
-      `${prefix}: catalog install buttons are not bound to the single-flight review flow`);
+    assert.match(pageHeader, /class="header-stats"/, `${prefix}: archive stats are not grouped in the header`);
+    assert.doesNotMatch(pageHtml, /id="(?:installed|catalog|catalog-status|load-catalog|import-file|import-button|update-policy|storage-target)"/,
+      `${prefix}: optional Wikipedia management is still duplicated on Apocalypse Mode`);
+    assert.doesNotMatch(pageScript, /loadCatalog|reviewInstall|reviewImport|elements\.installed/,
+      `${prefix}: removed Wikipedia catalog or import machinery is still active on Apocalypse Mode`);
     assert.doesNotMatch(pageScript, /await command\('process'\)/,
       `${prefix}: status polling blocks behind the long-running download loop`);
-    assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?await refresh\(\)/,
+    assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?(?:await refresh\(\)|Promise\.all\(\[refresh\(\))/,
       `${prefix}: status polling does not refresh independently of download processing`);
-    assert.match(pageScript, /t\(`ap\.tier\.\$\{item\.tier\}`\)/, `${prefix}: archive tier is not rendered`);
-    assert.match(pageHtml, /id="vision-model-card"[^>]*hidden/, `${prefix}: local vision status must start hidden on unsupported browsers`);
-    assert.match(pageHtml, /data-i18n="ap\.vision\.auto"/, `${prefix}: automatic local vision download is not disclosed`);
-    assert.match(pageScript, /webgpuVisionDownloadState/, `${prefix}: local vision download status is not rendered`);
-    assert.match(pageScript, /chrome\?\.offscreen\?\.createDocument/, `${prefix}: Chromium vision capability is not detected safely`);
     if (prefix === 'src/chrome') {
       assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
+      const enableStart = backgroundScript.indexOf('if (msg.enabled === true)');
+      const textDownloadStart = backgroundScript.indexOf('enableAndStartWebgpuTextDownload()', enableStart);
+      const visionDownloadStart = backgroundScript.indexOf('enableApocalypseVisionModel()', textDownloadStart);
+      assert.ok(enableStart >= 0 && textDownloadStart > enableStart && visionDownloadStart > textDownloadStart,
+        'chrome: enabling Apocalypse Mode must start local chat before queueing local vision');
       assert.match(pageHtml, /id="webgpu-provider-card"[^>]*hidden/, 'chrome: the WebGPU provider block is missing from Apocalypse Mode');
       const heroStart = pageHtml.indexOf('<section class="card hero">');
       const textModel = pageHtml.indexOf('id="webgpu-provider-card"', heroStart);
       const visionModel = pageHtml.indexOf('id="vision-model-card"', heroStart);
-      const heroEnd = pageHtml.indexOf('</section>', visionModel);
-      assert.ok(heroStart >= 0 && textModel > heroStart && visionModel > textModel && heroEnd > visionModel,
-        'chrome: local text and vision models must be stacked text-first inside the hero');
+      const basicWikipedia = pageHtml.indexOf('id="basic-wikipedia-card"', heroStart);
+      const heroEnd = pageHtml.indexOf('</section>', basicWikipedia);
+      assert.ok(heroStart >= 0 && textModel > heroStart && visionModel > textModel && basicWikipedia > visionModel && heroEnd > basicWikipedia,
+        'chrome: the three basic downloads must be stacked text, vision, then Simple English Wikipedia inside the hero');
       assert.match(pageHtml, /data-model-kind="text"[\s\S]*?<svg[\s\S]*?data-webgpu-download-panel/,
         'chrome: the text model is missing its icon or download box');
+      assert.match(pageHtml, /\.local-models\s*\{[^}]*grid-column:1\s*\/\s*-1[^}]*width:100%/,
+        'chrome: the three basic download cards do not use the full setup row');
+      assert.match(pageHtml, /<section class="card hero">[\s\S]*?<div class="hero-overview">[\s\S]*?<div class="hero-copy">[\s\S]*?<\/div>\s*<label class="toggle"[\s\S]*?<\/div>\s*<div class="local-models">[\s\S]*?id="basic-wikipedia-card"/,
+        'chrome: the setup overview and three basic download cards do not share one enclosing box');
+      assert.match(pageScript, /const track = panel\.querySelector\('\[data-webgpu-download-track\]'\);\s*track\.hidden = state\.status === 'ready';/,
+        'chrome: the completed Text Model still shows its download progress track');
       assert.doesNotMatch(pageHtml, /id="webgpu-test"/,
         'chrome: the local text model should not expose a Test action');
       assert.match(pageHtml, /data-i18n="ap\.webgpu\.rag"/, 'chrome: local Wikipedia RAG is not explained beside the WebGPU model');
       assert.match(pageHtml, /data-model-kind="vision"[\s\S]*?<svg[\s\S]*?id="vision-model-test"/,
         'chrome: the vision model is missing its icon or Test action');
+      assert.match(pageScript, /function confirmCompletedModelRemoval\(action, status, modelTitleKey\)[\s\S]*?action !== 'stop' \|\| status !== 'ready'[\s\S]*?globalThis\.confirm\(t\('ap\.models\.confirm_remove'/,
+        'chrome: completed model removal is missing its confirmation guard');
+      assert.match(pageScript, /confirmCompletedModelRemoval\(action, webgpuDownloadState\.status, 'ap\.models\.text\.title'\)/,
+        'chrome: completed Text Model removal is not confirmed');
+      assert.match(pageScript, /confirmCompletedModelRemoval\(action, visionDownloadState\?\.status, 'ap\.models\.vision\.title'\)/,
+        'chrome: completed Vision Model removal is not confirmed');
+      assert.match(pageScript, /actions\.stop\.textContent = t\(state\.status === 'ready' \? 'ap\.models\.remove' : 'st\.providers\.webgpu_download\.stop'\)/,
+        'chrome: the completed Text Model action is not labeled Remove');
+      assert.match(pageScript, /actions\.stop\.textContent = t\(status === 'ready' \? 'ap\.models\.remove' : 'st\.providers\.webgpu_download\.stop'\)/,
+        'chrome: completed Vision Model and Wikipedia actions are not labeled Remove');
+      assert.match(apocalypseCopy, /'ap\.models\.remove': 'Remove'/,
+        'chrome: the completed-download Remove label is missing');
+      assert.match(apocalypseCopy, /'ap\.models\.confirm_remove': 'Remove the \{model\} and its cached files\?/,
+        'chrome: the completed model removal confirmation is missing');
+      assert.match(pageHtml, /data-model-kind="knowledge"[\s\S]*?data-i18n="ap\.models\.wikipedia\.title"[\s\S]*?id="basic-wikipedia-start"[\s\S]*?data-basic-wikipedia-action="pause"[\s\S]*?data-basic-wikipedia-action="resume"[\s\S]*?data-basic-wikipedia-action="stop"/,
+        'chrome: the required Simple English Wikipedia download is missing from basic setup');
+      assert.match(pageScript, /function maybeAutoStartBasicWikipediaDownload\(\)[\s\S]*?startBasicWikipediaDownload\(\{ automatic: true \}\)/,
+        'chrome: enabling basic setup does not automatically start Simple English Wikipedia');
+      assert.match(pageScript, /startBasicWikipediaDownload[\s\S]*?command\('resolve'[\s\S]*?command\('install'/,
+        'chrome: the basic Wikipedia Start action does not resolve and queue the managed archive');
+      const basicWikipediaStart = pageScript.slice(
+        pageScript.indexOf('async function startBasicWikipediaDownload'),
+        pageScript.indexOf('function maybeAutoStartBasicWikipediaDownload'),
+      );
+      assert.doesNotMatch(basicWikipediaStart, /normalizeStorageEstimate|ap\.space\.insufficient/,
+        'chrome: automatic Wikipedia incorrectly treats navigator.storage.estimate() as a hard cap despite unlimitedStorage');
+      assert.match(fs.readFileSync(path.join(ROOT, 'src/chrome/manifest.json'), 'utf8'), /"unlimitedStorage"/,
+        'chrome: managed model and archive storage is missing its unlimitedStorage permission');
+      assert.match(pageScript, /BASIC_WIKIPEDIA_AUTO_START_SUPPRESSED_KEY[\s\S]*?action === 'stop'[\s\S]*?setBasicWikipediaAutoStartSuppressed\(true\)/,
+        'chrome: Stop & remove does not prevent a silent automatic redownload');
+      assert.match(pageHtml, /id="emergency-box-callout"[^>]*data-locked="true"[^>]*aria-disabled="true"/,
+        'chrome: Emergency Box must render locked until basic setup is ready');
+      assert.match(pageScript, /function updateEmergencyBoxGate\(readinessKind\)[\s\S]*?const locked = readinessKind !== 'ready'/,
+        'chrome: Emergency Box is not gated by aggregate readiness');
       assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID/, 'chrome: Apocalypse Mode does not configure the fixed WebGPU download');
       assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
         'chrome: the removed local text Test action is still wired');
@@ -23148,8 +23632,9 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
       assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
       assert.doesNotMatch(pageHtml, /id="webgpu-provider-card"/, 'firefox: Chromium-only WebGPU provider block leaked into Apocalypse Mode');
     }
+    const libraryScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/wikipedia-library.js'), 'utf8');
     for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
-      assert.match(pageScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing`);
+      assert.match(libraryScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing from Emergency Box`);
     }
     const headerStart = settingsHtml.indexOf('<div class="header-row">');
     const apocalypseLink = settingsHtml.indexOf('id="apocalypse-mode-link"', headerStart);
@@ -23164,14 +23649,12 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
       `${prefix}: Apocalypse Mode title and offline slogan are not grouped in the page header`);
     assert.match(apocalypseCopy, /'ap\.subtitle': 'WebBrain, ready when the internet isn’t\.'/,
       `${prefix}: Apocalypse Mode header does not advertise offline access`);
-    assert.match(apocalypseCopy, /'ap\.hero\.desc': '[^']*offline search and factual answers[^']*without an internet connection/,
-      `${prefix}: Apocalypse Mode does not explain how offline Wikipedia helps the user`);
-    assert.match(apocalypseCopy, /'ap\.catalog\.title': 'Download Wikipedia for offline use'/,
-      `${prefix}: the archive catalog is described with implementation terminology`);
-    assert.match(apocalypseCopy, /'ap\.import\.desc': '[^']*\.zim[^']*file format[^']*offline use\.'/,
-      `${prefix}: the optional .zim import format is not explained in plain language`);
-    assert.doesNotMatch(apocalypseCopy, /'ap\.import\.desc': '[^']*Kiwix/,
-      `${prefix}: the import introduction assumes the user already understands Kiwix`);
+    assert.match(apocalypseCopy, /'ap\.metric\.summary': 'Wikipedia archive statistics'/,
+      `${prefix}: header archive stats have no accessible label`);
+    assert.match(apocalypseCopy, /'ap\.metric\.storage': 'Extension storage used'/,
+      `${prefix}: the storage metric does not identify its number as used space`);
+    assert.doesNotMatch(pageScript, /\$\{bytes\(usage\)\}\s*\/\s*\$\{bytes\(quota\)\}/,
+      `${prefix}: storage usage is still presented as an ambiguous used/quota fraction`);
     assert.match(pageHtml, /\.apocalypse-icon \{[^}]*font-size:48px/,
       `${prefix}: Apocalypse Mode page icon is too small for the page header`);
     assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
@@ -23179,22 +23662,8 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
     assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
-    assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
-    assert.match(pageScript, /data-action="read"/, `${prefix}: installed archives have no text reader action`);
-    assert.match(pageScript, /wikipedia-reader\.html\?id=/, `${prefix}: text reader action is not wired to its archive`);
-    assert.match(pageHtml, /id="catalog-status"[^>]*role="status"/, `${prefix}: catalog loading and errors are not visible beside the archive list`);
-    for (const icon of ['storage', 'catalog', 'import']) {
-      assert.match(pageHtml, new RegExp(`class="section-icon" data-kind="${icon}"[\\s\\S]*?<svg`), `${prefix}: ${icon} section icon is missing`);
-    }
-    assert.match(pageScript, /if \(snapshot\?\.enabled === true\) void loadCatalog\(\)/,
-      `${prefix}: enabled Apocalypse Mode does not load the catalog automatically`);
-    assert.match(pageScript, /elements\.language\.addEventListener\('change', loadCatalog\)/,
-      `${prefix}: changing Wikipedia language does not reload the catalog`);
-    assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
-    assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
-    assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
-    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /data-action="update"/, `${prefix}: manual update action is missing`);
-    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8'), /requestPermission[\s\S]*?reauthorize_file/, `${prefix}: file-handle reauthorization flow is missing`);
+    assert.match(pageScript, /elements\['installed-count'\]\.textContent[\s\S]*?elements\['archive-bytes'\]\.textContent[\s\S]*?elements\['storage-usage'\]\.textContent/,
+      `${prefix}: header stats are not populated from the current archive snapshot`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /installedCount[\s\S]*?totalBytes[\s\S]*?updatePolicy/, `${prefix}: Advanced settings does not summarize live archive state`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8'), /APOCALYPSE_UPDATE_ALARM[\s\S]*?checkForUpdates/, `${prefix}: automatic update checks are not wired to a background alarm`);
     assert.match(backgroundScript, /syncUpdateSchedule\(\)[\s\S]*?syncDownloadSchedule\(\)/,
@@ -24403,6 +24872,35 @@ test('all locales cover English keys and preserve interpolation placeholders', a
   }
 });
 
+test('Apocalypse Mode translation blocks cover every canonical key with matching placeholders in all 22 locales', async () => {
+  const apocalypseCopy = (await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs')).href
+  )).default;
+  const apocalypseTranslations = (await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-translations.mjs')).href
+  )).default;
+  const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
+  const canonicalKeys = Object.keys(apocalypseCopy);
+  const placeholdersIn = (value) => [...new Set(String(value).match(/\{[a-z]+\}/g) || [])].sort();
+
+  for (const locale of localeCodes) {
+    const block = apocalypseTranslations[locale];
+    assert.ok(block, `${locale}: Apocalypse Mode translation block is missing`);
+    const blockKeys = Object.keys(block);
+    assert.deepEqual(blockKeys.sort(), [...canonicalKeys].sort(),
+      `${locale}: Apocalypse Mode key set diverged (${canonicalKeys.length} canonical, ${blockKeys.length} present)`);
+    for (const key of canonicalKeys) {
+      const translated = block[key];
+      assert.equal(typeof translated, 'string', `${locale}: ${key} is not a string`);
+      assert.ok(translated.trim(), `${locale}: ${key} is empty`);
+      const dropped = placeholdersIn(apocalypseCopy[key]).filter(
+        (placeholder) => !placeholdersIn(translated).includes(placeholder),
+      );
+      assert.deepEqual(dropped, [], `${locale}: ${key} dropped placeholder(s): ${dropped.join(', ')}`);
+    }
+  }
+});
+
 test('Apocalypse Mode copy is translated instead of inherited from English in every locale', async () => {
   const requiredTranslatedKeys = [
     'st.display.apocalypse_mode.desc',
@@ -24412,6 +24910,26 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
     'ap.hero.consent',
     'ap.vision.auto',
     'ap.vision.waiting',
+    'ap.models.text.title',
+    'ap.models.vision.title',
+    'ap.models.wikipedia.title',
+    'ap.models.wikipedia.desc',
+    'ap.models.wikipedia.active_desc',
+    'ap.models.wikipedia.finding',
+    'ap.models.wikipedia.starting',
+    'ap.models.wikipedia.required',
+    'ap.models.wikipedia.stopped',
+    'ap.models.wikipedia.unavailable',
+    'ap.models.wikipedia.waiting',
+    'ap.models.wikipedia.started',
+    'ap.models.status.ready',
+    'ap.models.status.downloading',
+    'ap.models.status.paused',
+    'ap.models.status.incomplete',
+    'ap.models.status.disabled',
+    'ap.metric.summary',
+    'ap.catalog.enable',
+    'ap.review_loading',
     'ap.catalog.desc',
     'ap.download_background',
     'ap.include_images',
@@ -24429,7 +24947,7 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
     for (const filename of fs.readdirSync(localeDir).filter(name => name.endsWith('.js') && name !== 'en.js').sort()) {
       const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
       const changed = Object.keys(englishCopy).filter(key => locale[key] !== englishCopy[key]);
-      assert.ok(changed.length >= Object.keys(englishCopy).length * 0.8, `${browser}/${filename}: Apocalypse Mode still relies on English fallback copy`);
+      assert.ok(changed.length >= Object.keys(englishCopy).length * 0.95, `${browser}/${filename}: Apocalypse Mode still relies on English fallback copy`);
       for (const key of requiredTranslatedKeys) {
         assert.notEqual(locale[key], englishCopy[key], `${browser}/${filename}: ${key} is still English fallback copy`);
       }
@@ -43722,6 +44240,14 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
             callback({ ok: true, hasWebGPU, isFallbackAdapter: false, libraryVersion: 'test' });
             return;
           }
+          if (message.type === 'webgpu-vision-pause') {
+            callback({ ok: true, status: 'paused', ready: false });
+            return;
+          }
+          if (message.type === 'webgpu-vision-stop') {
+            callback({ ok: true, status: 'not-downloaded', ready: false, deletedEntries: 7 });
+            return;
+          }
           callback(preloadResponse);
         },
       },
@@ -43745,6 +44271,12 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
     ]);
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
     assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], true);
+
+    const explicitResume = await manager.startWebgpuVisionDownload();
+    assert.equal(explicitResume.ok, true);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined,
+      'an explicit Vision Model resume must adopt and preserve the enabled selection');
 
     delete storageState[WEBGPU_VISION_ENABLED_KEY];
     delete storageState[WEBGPU_VISION_AUTO_SELECTED_KEY];
@@ -43770,6 +44302,142 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true,
       'an existing explicit local selection must not be rolled back as an automatic choice');
     assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+
+    preloadResponse = { ok: true, started: true };
+    delete storageState[WEBGPU_VISION_ENABLED_KEY];
+    const explicitStart = await manager.startWebgpuVisionDownload();
+    assert.equal(explicitStart.ok, true);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined,
+      'a user-started Vision Model download must not be marked as an automatic selection');
+    const selectedLocalProvider = await manager.getVisionProvider();
+    assert.ok(selectedLocalProvider instanceof WebGPUVisionProvider);
+    const paused = await manager.pauseWebgpuVisionDownload();
+    assert.equal(paused.ok, true);
+    assert.equal(paused.status, 'paused');
+    const stopped = await manager.stopWebgpuVisionDownload();
+    assert.equal(stopped.ok, true);
+    assert.equal(stopped.status, 'not-downloaded');
+    assert.equal(stopped.deletedEntries, 7);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined,
+      'Stop & remove must disable local vision before deleting its cache');
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+    assert.equal(storageState.visionModel.model, 'remote-vision',
+      'Stop & remove must preserve the configured remote vision fallback');
+    const stoppedProvider = await manager.getVisionProvider();
+    assert.ok(!(stoppedProvider instanceof WebGPUVisionProvider),
+      'screenshots must not silently recreate a stopped local vision download');
+    await assert.rejects(
+      selectedLocalProvider.chat([{ role: 'user', content: 'Do not redownload.' }]),
+      /Vision Model is disabled/,
+      'a previously acquired local provider must not redownload after Stop & remove',
+    );
+    assert.deepEqual(sentMessages.slice(-2).map(message => message.type), [
+      'webgpu-vision-pause',
+      'webgpu-vision-stop',
+    ]);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('Apocalypse text download fixes the LFM preset and avoids duplicate starts', async () => {
+  const previousChrome = globalThis.chrome;
+  const sentMessages = [];
+  const storageWrites = [];
+  let hasWebGPU = true;
+  let downloadState = {
+    status: 'not-downloaded',
+    ready: false,
+    modelId: WEBGPU_MODEL_ID,
+    dtype: WEBGPU_DTYPE,
+  };
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-probe') {
+            callback({ ok: true, hasWebGPU, isFallbackAdapter: false, libraryVersion: 'test' });
+            return;
+          }
+          if (message.type === 'webgpu-download-status') {
+            callback({ ok: true, ...downloadState });
+            return;
+          }
+          if (message.type === 'webgpu-download-start') {
+            downloadState = {
+              status: 'downloading',
+              ready: false,
+              modelId: message.model,
+              dtype: message.dtype,
+            };
+            callback({ ok: true, ...downloadState });
+            return;
+          }
+          callback({ ok: false, error: `Unexpected message: ${message.type}` });
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async patch => storageWrites.push(structuredClone(patch)),
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    manager.providers.set('webgpu', manager._createProvider('webgpu', {
+      ...manager._defaultConfigs().webgpu,
+      model: 'custom-owner/custom-model',
+      dtype: 'q8',
+      configured: false,
+    }));
+    manager.activeProviderId = 'webbrain_cloud';
+
+    const started = await manager.enableAndStartWebgpuTextDownload();
+    assert.equal(started.ok, true);
+    assert.equal(started.started, true);
+    assert.equal(started.status, 'downloading');
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-probe',
+      'webgpu-download-status',
+      'webgpu-download-start',
+    ]);
+    const config = manager.getAll().webgpu;
+    assert.equal(config.model, WEBGPU_MODEL_ID);
+    assert.equal(config.dtype, WEBGPU_DTYPE);
+    assert.equal(config.contextWindow, 16384);
+    assert.equal(config.promptTier, 'compact');
+    assert.equal(config.configured, true);
+    assert.equal(manager.activeProviderId, 'webbrain_cloud', 'automatic download must not select WebGPU for normal chat');
+    assert.equal(storageWrites.at(-1).activeProvider, 'webbrain_cloud');
+
+    sentMessages.length = 0;
+    const alreadyDownloading = await manager.enableAndStartWebgpuTextDownload();
+    assert.equal(alreadyDownloading.ok, true);
+    assert.equal(alreadyDownloading.started, false);
+    assert.equal(alreadyDownloading.status, 'downloading');
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-probe',
+      'webgpu-download-status',
+    ], 'an in-progress LFM download must not be queued twice');
+
+    sentMessages.length = 0;
+    hasWebGPU = false;
+    downloadState = {
+      status: 'not-downloaded',
+      ready: false,
+      modelId: WEBGPU_MODEL_ID,
+      dtype: WEBGPU_DTYPE,
+    };
+    const unsupported = await manager.enableAndStartWebgpuTextDownload();
+    assert.equal(unsupported.ok, false);
+    assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe'],
+      'unsupported hardware must fail before starting the LFM download');
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
@@ -43784,6 +44452,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
+  const apocalypseCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
@@ -43795,10 +44464,21 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeAllRuntimes\)/);
-  assert.match(worker, /type === 'preload'[\s\S]*?preloadRuntime\(payload\)/);
+  assert.match(worker, /type === 'preload'[\s\S]*?preloadVisionModel\(payload, request\)/);
   assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime[\s\S]*?await disposeVisionRuntime/);
+  assert.match(worker, /type === 'pause-vision-download'[\s\S]*?pauseVisionDownload/);
+  assert.match(worker, /type === 'stop-vision-download'[\s\S]*?stopVisionDownload[\s\S]*?clearVisionModelCache/);
+  assert.match(worker, /clearVisionModelCache[\s\S]*?cache\.delete\(request\)/);
+  assert.doesNotMatch(worker, /clearVisionModelCache[\s\S]*?caches\.delete\(name\)/,
+    'Vision Model removal must not delete the shared Transformers cache');
+  assert.match(worker, /queuedVisionDownload !== request/,
+    'a paused or stopped queued Vision Model preload must be invalidated before execution');
+  assert.match(worker, /visionDownloadAbortController[\s\S]*?\.abort\(\)/,
+    'an active Vision Model transfer must be abortable without waiting for the model queue');
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /'webgpu-vision-preload'/);
+  assert.match(host, /'webgpu-vision-pause'/);
+  assert.match(host, /'webgpu-vision-stop'/);
   assert.match(host, /webgpu-vision-download-state/);
   assert.doesNotMatch(host, /chrome\.storage/, 'offscreen documents only expose chrome.runtime from extension APIs');
   assert.match(host, /chrome\.runtime\.sendMessage\(\{[\s\S]*?VISION_DOWNLOAD_STATE_MESSAGE/);
@@ -43866,6 +44546,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /'webgpu-download-status'/);
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
+  assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?sendVisionWorkerMessage\('stop-vision-download'/);
   assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
   assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
   assert.match(worker, /type === 'start-download-text'/);
@@ -43883,6 +44564,33 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-webgpu-download-action="pause"/);
   assert.match(apocalypseHtml, /data-webgpu-download-action="resume"/);
   assert.match(apocalypseHtml, /data-webgpu-download-action="stop"/);
+  assert.match(apocalypseHtml, /data-vision-download-action="pause"/);
+  assert.match(apocalypseHtml, /data-vision-download-action="resume"/);
+  assert.match(apocalypseHtml, /data-vision-download-action="stop"/);
+  assert.match(apocalypseHtml, /id="models-readiness"[^>]*data-kind="disabled"[^>]*role="status"/);
+  const apocalypseHeader = apocalypseHtml.slice(
+    apocalypseHtml.indexOf('<header>'),
+    apocalypseHtml.indexOf('</header>') + '</header>'.length,
+  );
+  assert.match(apocalypseHeader, /id="models-readiness"/,
+    'aggregate model readiness must use the empty right side of the sticky Apocalypse Mode header');
+  for (const id of ['installed-count', 'archive-bytes', 'storage-usage']) {
+    assert.match(apocalypseHeader, new RegExp(`id="${id}"`),
+      `${id} must be shown beside aggregate readiness in the Apocalypse Mode header`);
+  }
+  assert.match(apocalypseScript, /function updateOverallModelsReadiness\(\)/);
+  assert.match(apocalypseScript, /webgpuDownloadState\.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready'/,
+    'aggregate readiness must require text, vision, and Simple English Wikipedia');
+  assert.match(apocalypseScript, /basicWikipediaCatalogItem = selectBasicWikipediaArchive\(supported\)/,
+    'the basic Wikipedia card must select its exact catalog archive');
+  assert.match(apocalypseScript, /const ready = wikipedia[\s\S]*?if \(ready\.length\) return ready\[0\]/,
+    'a verified replacement Wikipedia edition must continue to satisfy aggregate readiness');
+  assert.match(apocalypseScript, /updateEmergencyBoxGate\(kind\)/,
+    'aggregate readiness must update the Emergency Box gate');
+  for (const state of ['ready', 'downloading', 'paused', 'incomplete', 'disabled', 'error']) {
+    assert.match(apocalypseScript, new RegExp(`ap\\.models\\.status\\.${state}`),
+      `aggregate model readiness is missing its ${state} state`);
+  }
   assert.match(apocalypseScript, /get_webgpu_download_status/);
   assert.match(apocalypseScript, /webgpu-text-download-state/);
   assert.doesNotMatch(settingsScript, /data-webgpu-download-action=/,
@@ -43890,7 +44598,12 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
   assert.match(settingsScript, /Object\.entries\(providersData\)\.filter\(\(\[id\]\) => id !== 'webgpu'\)/,
     'Settings still renders the WebGPU provider card');
-  assert.match(apocalypseHtml, /LFM2\.5 2\.6B local chat/);
+  assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.title"/);
+  assert.match(apocalypseHtml, /data-i18n="ap\.models\.vision\.title"/);
+  assert.match(apocalypseHtml, /data-i18n="ap\.models\.wikipedia\.title"/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.title': 'Text Model'/);
+  assert.match(apocalypseCopy, /'ap\.models\.vision\.title': 'Vision Model'/);
+  assert.match(apocalypseCopy, /'ap\.models\.wikipedia\.title': 'Wikipedia in Simple English'/);
   assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
@@ -43922,6 +44635,49 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
+});
+
+test('Vision Model removal deletes only its cache entries', async () => {
+  const previousSelf = globalThis.self;
+  const previousCaches = globalThis.caches;
+  const visionBase = `https://huggingface.co/${WEBGPU_VISION_MODEL_ID}/resolve/main/`;
+  const textBase = `https://huggingface.co/${WEBGPU_MODEL_ID}/resolve/main/`;
+  const cacheEntries = new Map([
+    [`${visionBase}config.json`, true],
+    [`${visionBase}onnx/model_q4.onnx`, true],
+    [`${textBase}config.json`, true],
+    ['https://huggingface.co/another/model/resolve/main/config.json', true],
+  ]);
+  const deletedCacheNames = [];
+  try {
+    globalThis.self = { addEventListener() {}, postMessage() {} };
+    globalThis.caches = {
+      keys: async () => ['transformers-cache', 'unrelated-cache'],
+      open: async () => ({
+        keys: async () => [...cacheEntries.keys()].map(url => ({ url })),
+        delete: async request => cacheEntries.delete(request.url || request),
+      }),
+      delete: async name => {
+        deletedCacheNames.push(name);
+        return true;
+      },
+    };
+    const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?vision-cache-scope-test`;
+    const { clearVisionModelCache } = await import(workerUrl);
+    const result = await clearVisionModelCache(WEBGPU_VISION_MODEL_ID);
+    assert.equal(result.deletedEntries, 2);
+    assert.equal(cacheEntries.has(`${visionBase}config.json`), false);
+    assert.equal(cacheEntries.has(`${visionBase}onnx/model_q4.onnx`), false);
+    assert.equal(cacheEntries.has(`${textBase}config.json`), true,
+      'removing the Vision Model must preserve the Text Model cache');
+    assert.equal(cacheEntries.has('https://huggingface.co/another/model/resolve/main/config.json'), true);
+    assert.deepEqual(deletedCacheNames, [], 'model removal must not delete a shared cache namespace');
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+    if (previousCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = previousCaches;
+  }
 });
 
 test('WebGPU worker replays text tool history and applies model-specific generation contracts', async () => {
@@ -44201,6 +44957,79 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     await Promise.all([generationPromise, queuedPromise, stopQueuedPromise]);
     assert.equal(posted.find(message => message.id === queuedId)?.status, 'not-downloaded', 'stopped queued download still started');
     assert.equal(posted.find(message => message.id === stopQueuedId)?.status, 'not-downloaded', 'queued Stop did not clear the target model');
+    globalThis.__holdWebgpuTextGeneration = false;
+    globalThis.__releaseWebgpuTextGeneration = null;
+
+    const pausedVisionPayload = {
+      modelId: 'vision-model-paused',
+      device: 'webgpu',
+      dtype: { decoder_model_merged: 'q4' },
+    };
+    const visionLoadsBeforePause = globalThis.__webgpuRuntimeCounts.visionModelLoads;
+    globalThis.__holdWebgpuTextGeneration = true;
+    const pauseBlockerId = requestId++;
+    const pauseBlockerPromise = workerListener({
+      data: { id: pauseBlockerId, type: 'text-chat', payload: activePayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextGeneration; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const pausedVisionId = requestId++;
+    const pausedVisionPromise = workerListener({
+      data: { id: pausedVisionId, type: 'preload', payload: pausedVisionPayload },
+    });
+    const pausedVision = await dispatch('pause-vision-download', { modelId: pausedVisionPayload.modelId });
+    assert.equal(pausedVision.status, 'paused');
+    globalThis.__releaseWebgpuTextGeneration();
+    await Promise.all([pauseBlockerPromise, pausedVisionPromise]);
+    assert.equal(posted.find(message => message.id === pausedVisionId)?.status, 'paused',
+      'a queued Vision Model preload must remain cancelled after the queue unblocks');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelLoads, visionLoadsBeforePause,
+      'pausing a queued Vision Model preload must prevent it from starting');
+    globalThis.__holdWebgpuTextGeneration = false;
+    globalThis.__releaseWebgpuTextGeneration = null;
+
+    const resumedVision = await dispatch('preload', pausedVisionPayload);
+    assert.equal(resumedVision.status, 'ready');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelLoads, visionLoadsBeforePause + 1);
+    await dispatch('dispose-vision');
+
+    const stoppedVisionPayload = {
+      ...pausedVisionPayload,
+      modelId: 'vision-model-stopped',
+    };
+    const visionLoadsBeforeStop = globalThis.__webgpuRuntimeCounts.visionModelLoads;
+    globalThis.__holdWebgpuTextGeneration = true;
+    const stopBlockerId = requestId++;
+    const stopBlockerPromise = workerListener({
+      data: { id: stopBlockerId, type: 'text-chat', payload: activePayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextGeneration; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const stoppedVisionId = requestId++;
+    const stoppedVisionPromise = workerListener({
+      data: { id: stoppedVisionId, type: 'preload', payload: stoppedVisionPayload },
+    });
+    const stopVisionId = requestId++;
+    const stopVisionPromise = workerListener({
+      data: { id: stopVisionId, type: 'stop-vision-download', payload: stoppedVisionPayload },
+    });
+    await Promise.race([
+      stopVisionPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(
+        'stopping a queued Vision Model waited for the unrelated text operation',
+      )), 250)),
+    ]);
+    assert.equal(posted.find(message => message.id === stopVisionId)?.status, 'not-downloaded',
+      'queued Vision Stop was not acknowledged before the text queue unblocked');
+    globalThis.__releaseWebgpuTextGeneration();
+    await Promise.all([stopBlockerPromise, stoppedVisionPromise, stopVisionPromise]);
+    assert.equal(posted.find(message => message.id === stoppedVisionId)?.status, 'not-downloaded',
+      'a stopped queued Vision Model preload still started');
+    assert.equal(posted.find(message => message.id === stopVisionId)?.status, 'not-downloaded');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelLoads, visionLoadsBeforeStop,
+      'stopping a queued Vision Model preload must prevent it from starting');
     globalThis.__holdWebgpuTextGeneration = false;
     globalThis.__releaseWebgpuTextGeneration = null;
 

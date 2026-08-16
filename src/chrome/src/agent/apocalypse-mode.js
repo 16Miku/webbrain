@@ -55,6 +55,32 @@ function classifyArchiveTier(name, flavour) {
   return 'full';
 }
 
+export function isBasicWikipediaArchive(item = {}) {
+  const name = String(item.name || '').toLowerCase();
+  return String(item.language || '').toLowerCase() === 'eng'
+    && (name === 'wikipedia_en-simple_all' || name === 'wikipedia_en_simple_all')
+    && String(item.flavour || '').toLowerCase() === 'nopic';
+}
+
+export function selectBasicWikipediaArchive(items = []) {
+  return items
+    .filter(isBasicWikipediaArchive)
+    .sort((left, right) => String(right.archiveDate || '').localeCompare(String(left.archiveDate || '')))[0] || null;
+}
+
+export function selectWikipediaArchiveVariant(items = [], options = {}) {
+  const includeImages = options.includeImages === true;
+  return items
+    .filter(item => {
+      const name = String(item?.name || '').toLowerCase();
+      if (!/(?:^|_)all(?:_|$)/.test(name) || isBasicWikipediaArchive(item)) return false;
+      if (!includeImages) return String(item?.flavour || '').toLowerCase() === 'nopic';
+      return wikipediaArchiveIncludesImages(item);
+    })
+    .sort((left, right) => String(right.archiveDate || '').localeCompare(String(left.archiveDate || ''))
+      || Number(right.articleCount || 0) - Number(left.articleCount || 0))[0] || null;
+}
+
 export function parseKiwixCatalog(xml) {
   const entries = String(xml || '').match(/<entry(?:\s[^>]*)?>[\s\S]*?<\/entry>/gi) || [];
   return entries.map((entry) => {
@@ -177,6 +203,13 @@ const ZIM_MAGIC = 0x044d495a;
 const MAX_DIRECTORY_ENTRY_BYTES = 64 * 1024;
 const INITIAL_DIRECTORY_ENTRY_BYTES = 4 * 1024;
 const MAX_DIRECTORY_ENTRY_CACHE = 4096;
+const SUPPORTED_WIKIPEDIA_IMAGE_MIME_TYPES = new Set([
+  'image/avif',
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
 const ISO_639_3_TO_1 = Object.freeze({
   ara: 'ar', ben: 'bn', deu: 'de', eng: 'en', spa: 'es', fas: 'fa', fra: 'fr', hin: 'hi',
   ind: 'id', ita: 'it', jpn: 'ja', kor: 'ko', nld: 'nl', pol: 'pl', por: 'pt',
@@ -346,6 +379,20 @@ export function mergeZimProvenance(metadata = {}, embedded = {}) {
   };
 }
 
+export function wikipediaArchiveIncludesImages(metadata = {}, embedded = {}) {
+  const flavour = String(metadata.flavour || '').toLowerCase();
+  const tags = [
+    ...(Array.isArray(metadata.tags) ? metadata.tags : String(metadata.tags || '').split(/[;,]/)),
+    ...String(embedded.Tags || '').split(/[;,]/),
+  ].map(tag => String(tag || '').trim().toLowerCase()).filter(Boolean);
+  if (flavour === 'nopic' || tags.includes('_pictures:no')) return false;
+  return flavour === 'maxi' || tags.includes('_pictures:yes');
+}
+
+export function isSupportedWikipediaImageMimeType(value) {
+  return SUPPORTED_WIKIPEDIA_IMAGE_MIME_TYPES.has(String(value || '').split(';', 1)[0].trim().toLowerCase());
+}
+
 export function assertWikipediaZimArchive(embedded = {}) {
   const source = String(embedded.Source || '').toLowerCase();
   const name = String(embedded.Name || '').toLowerCase();
@@ -450,7 +497,7 @@ export async function openKiwixZim(source, metadata = {}) {
     }
   }
 
-  async function findPaths(path, limit, namespace = 'C') {
+  async function findPaths(path, limit, namespace = 'C', options = {}) {
     let low = 0;
     let high = articleCount;
     const target = `${namespace}/${path}`;
@@ -465,7 +512,7 @@ export async function openKiwixZim(source, metadata = {}) {
     for (let index = low; index < articleCount && entries.length < limit; index += 1) {
       const entry = await directoryEntry(index);
       if (entry.namespace !== namespace || !entry.url.startsWith(path)) break;
-      if (!entry.url.startsWith('_assets_/')) entries.push(entry);
+      if (options.includeAssets === true || !entry.url.startsWith('_assets_/')) entries.push(entry);
     }
     return entries;
   }
@@ -526,6 +573,7 @@ export async function openKiwixZim(source, metadata = {}) {
 
   const embedded = await embeddedMetadata();
   const provenance = mergeZimProvenance(metadata, embedded);
+  const imagesIncluded = wikipediaArchiveIncludesImages(metadata, embedded);
 
   async function search(query, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit) || 3));
@@ -574,19 +622,43 @@ export async function openKiwixZim(source, metadata = {}) {
       throw new Error('The selected archive entry is not a readable text article.');
     }
     const maxChars = Math.max(2_000, Math.min(500_000, Number(options.maxChars) || 250_000));
-    const text = decodeHtmlArticleText(new TextDecoder().decode(await clusterBlob(entry.clusterIndex, entry.blobIndex)));
+    const maxHtmlChars = Math.max(8_000, Math.min(2_000_000, Number(options.maxHtmlChars) || 1_000_000));
+    const unsafeHtml = new TextDecoder().decode(await clusterBlob(entry.clusterIndex, entry.blobIndex));
+    const text = decodeHtmlArticleText(unsafeHtml);
     const wikipediaLanguage = ISO_639_3_TO_1[provenance.language] || provenance.language.slice(0, 2);
     return {
       title: located.title || entry.title,
       path: located.url,
       text: text.slice(0, maxChars),
-      truncated: text.length > maxChars,
+      // This remains untrusted archive content. The reader reconstructs a
+      // strict semantic DOM and never inserts this string into the live page.
+      unsafeHtml: unsafeHtml.slice(0, maxHtmlChars),
+      imagesIncluded,
+      truncated: text.length > maxChars || unsafeHtml.length > maxHtmlChars,
       url: wikipediaArticleUrl(wikipediaLanguage, located.url),
       ...provenance,
     };
   }
 
-  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, search, readArticle };
+  async function readImage(path, options = {}) {
+    const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
+    if (!normalizedPath || normalizedPath.length > 2_048 || /[\u0000-\u001f\u007f]/.test(normalizedPath)) {
+      throw new Error('Choose an image from this Wikipedia archive.');
+    }
+    const located = (await findPaths(normalizedPath, 1, 'C', { includeAssets: true }))[0];
+    if (!located || located.url !== normalizedPath) throw new Error('This image is not present in the archive.');
+    const entry = await resolvedEntry(located);
+    const mimeType = String(mimeTypes[entry?.mimeType] || '').split(';', 1)[0].trim().toLowerCase();
+    if (!entry || entry.namespace !== 'C' || !isSupportedWikipediaImageMimeType(mimeType)) {
+      throw new Error('This archive entry is not a supported raster image.');
+    }
+    const bytes = await clusterBlob(entry.clusterIndex, entry.blobIndex);
+    const maxBytes = Math.max(1, Math.min(32 * 1024 * 1024, Number(options.maxBytes) || 12 * 1024 * 1024));
+    if (bytes.byteLength > maxBytes) throw new Error('This archive image is too large to display safely.');
+    return { path: located.url, mimeType, byteLength: bytes.byteLength, bytes: bytes.slice() };
+  }
+
+  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, search, readArticle, readImage };
 }
 
 const APOCALYPSE_DB_NAME = 'webbrain_apocalypse_mode';
@@ -742,6 +814,9 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     return await (await directory(create)).getFileHandle(safeArchiveKey(target.key), { create });
   }
   return {
+    // The extension manifest declares unlimitedStorage, so estimate() is
+    // informational rather than a hard OPFS quota.
+    quotaLimited: false,
     async ensurePermission(target, mode = 'read') {
       await fileHandle(target, false, mode);
       return true;
@@ -896,6 +971,7 @@ export function createApocalypseArchiveManager(options = {}) {
   const schedule = options.schedule || (() => {});
   const randomId = options.randomId || (() => globalThis.crypto.randomUUID());
   const now = options.now || (() => Date.now());
+  const onArchiveReady = typeof options.onArchiveReady === 'function' ? options.onArchiveReady : async () => ({});
   const configuredMaxPieces = Number(options.maxPiecesPerWake);
   const maxPiecesPerWake = Number.isFinite(configuredMaxPieces)
     ? Math.max(1, Math.floor(configuredMaxPieces))
@@ -1179,6 +1255,14 @@ export function createApocalypseArchiveManager(options = {}) {
         }
         return await cancelledResult();
       }
+      let readyResult = {};
+      if (finished) {
+        try {
+          readyResult = await onArchiveReady(next) || {};
+        } catch (error) {
+          readyResult = { replacementCleanupError: error?.message || String(error) };
+        }
+      }
       piecesProcessed += 1;
       if (continueInWake) {
         record = next;
@@ -1186,7 +1270,7 @@ export function createApocalypseArchiveManager(options = {}) {
       }
       const nextDelay = nextArchiveScheduleDelay(await store.listArchives(), now());
       if (nextDelay != null) schedule(nextDelay);
-      return { processed: true, archive: next };
+      return { processed: true, archive: next, ...readyResult };
       }
     } catch (error) {
       await abortWriteSession(error).catch(() => {});
@@ -1323,6 +1407,10 @@ export function createKiwixZimProvider(options = {}) {
         archiveTitle: record.title || record.filename,
       };
     },
+    async readImage(record, path, readOptions = {}) {
+      const archive = await cachedKiwixArchive(record, storage, archiveCache);
+      return await archive.readImage(path, readOptions);
+    },
   };
 }
 
@@ -1333,7 +1421,23 @@ export async function readApocalypseArticle(archiveId, path, options = {}) {
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
   const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
   if (!provider?.read) throw new Error('This archive cannot be opened by the text reader.');
-  return await provider.read(record, path, { maxChars: options.maxChars });
+  return await provider.read(record, path, {
+    maxChars: options.maxChars,
+    maxHtmlChars: options.maxHtmlChars,
+  });
+}
+
+export async function readApocalypseImage(archiveId, path, options = {}) {
+  const storage = options.storage || createOpfsArchiveStorage();
+  const suppliedRecord = options.record;
+  const record = suppliedRecord?.id === archiveId && suppliedRecord.status === 'ready'
+    ? suppliedRecord
+    : (await (options.store || createApocalypseStore()).listArchives())
+      .find(item => item.id === archiveId && item.status === 'ready');
+  if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
+  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  if (!provider?.readImage) throw new Error('This archive cannot provide reader images.');
+  return await provider.readImage(record, path, { maxBytes: options.maxBytes });
 }
 
 function importedArchiveRecord(metadata, file, inspected, id, target, status) {
@@ -1352,6 +1456,7 @@ function importedArchiveRecord(metadata, file, inspected, id, target, status) {
     license: provenance.license,
     licenseDeclared: provenance.licenseDeclared,
     articleCount: inspected.articleCount,
+    imagesIncluded: inspected.imagesIncluded === true,
     size: file.size,
     bytesDownloaded: status === 'ready' ? file.size : 0,
     generation: 1,
@@ -1372,7 +1477,7 @@ export async function importKiwixArchive(source, metadata = {}, options = {}) {
   const inspected = await openKiwixZim(blob, metadata);
   assertWikipediaZimArchive(inspected.embeddedMetadata);
   const capacity = normalizeStorageEstimate(typeof storage.estimate === 'function' ? await storage.estimate() : {});
-  if (capacity.known && blob.size > capacity.free) {
+  if (storage.quotaLimited !== false && capacity.known && blob.size > capacity.free) {
     throw new Error('Insufficient browser-managed storage space for this ZIM archive.');
   }
   const id = options.id || globalThis.crypto.randomUUID();
@@ -1475,7 +1580,55 @@ export function createApocalypseController(api, options = {}) {
   const schedule = options.schedule || ((delayMs) => api?.alarms?.create?.(APOCALYPSE_DOWNLOAD_ALARM, {
     delayInMinutes: Math.max(0.05, Number(delayMs) / 60_000),
   }));
-  const manager = createApocalypseArchiveManager({ store, storage, fetchImpl, schedule });
+  const replacementCleanupInFlight = new Map();
+  async function cleanupArchiveReplacements(record) {
+    if (!record?.id || record.status !== 'ready' || isBasicWikipediaArchive(record)) return {};
+    if (replacementCleanupInFlight.has(record.id)) return await replacementCleanupInFlight.get(record.id);
+    const cleanup = (async () => {
+      const pending = [...new Set((Array.isArray(record.replacementArchiveIds) ? record.replacementArchiveIds : [])
+        .map(value => String(value || '')).filter(Boolean))];
+      if (!pending.length) return {};
+      const retained = [];
+      const removed = [];
+      const errors = [];
+      for (const id of pending) {
+        if (id === record.id) continue;
+        const replacement = await store.getArchive(id);
+        if (!replacement) continue;
+        if (replacement.archiveKind !== 'wikipedia' || !['ready', 'error'].includes(replacement.status)) {
+          retained.push(id);
+          continue;
+        }
+        try {
+          await manager.remove(id);
+          removed.push(id);
+        } catch (error) {
+          retained.push(id);
+          errors.push(error?.message || String(error));
+        }
+      }
+      const current = await store.getArchive(record.id);
+      if (current?.status === 'ready') {
+        await putArchiveIfCurrent(store, {
+          ...current,
+          replacementArchiveIds: retained,
+          replacementCleanupError: errors.join(' '),
+          replacementsCompletedAt: retained.length ? null : Date.now(),
+          updatedAt: Date.now(),
+        }, { status: current.status, generation: current.generation, updatedAt: current.updatedAt });
+      }
+      return { replacementRemoved: removed, replacementRetained: retained, replacementCleanupError: errors.join(' ') };
+    })().finally(() => replacementCleanupInFlight.delete(record.id));
+    replacementCleanupInFlight.set(record.id, cleanup);
+    return await cleanup;
+  }
+  const manager = createApocalypseArchiveManager({
+    store,
+    storage,
+    fetchImpl,
+    schedule,
+    onArchiveReady: cleanupArchiveReplacements,
+  });
   const importStaleMs = Math.max(30_000, Number(options.importStaleMs) || 60_000);
   const recoveryIntervalMs = Math.max(5_000, Number(options.recoveryIntervalMs) || Math.min(importStaleMs, 60_000));
   const now = options.now || (() => Date.now());
@@ -1517,6 +1670,9 @@ export function createApocalypseController(api, options = {}) {
 
   async function snapshot() {
     await maybeRecoverInterruptedImports();
+    const pendingReplacements = (await store.listArchives())
+      .filter(record => record.status === 'ready' && Array.isArray(record.replacementArchiveIds) && record.replacementArchiveIds.length);
+    for (const record of pendingReplacements) await cleanupArchiveReplacements(record);
     const [state, estimate] = await Promise.all([manager.getSnapshot(), storage.estimate().catch(() => ({}))]);
     const archives = state.archives.map(publicArchiveRecord);
     const capacity = normalizeStorageEstimate(estimate);
@@ -1669,14 +1825,24 @@ export function createApocalypseController(api, options = {}) {
       case 'install': {
         const estimate = await storage.estimate().catch(() => ({}));
         const capacity = normalizeStorageEstimate(estimate);
-        if (capacity.known && Number(payload.download?.size) > capacity.free) {
+        if (storage.quotaLimited !== false && capacity.known && Number(payload.download?.size) > capacity.free) {
           throw new Error(`Not enough extension storage (${capacity.free} bytes available).`);
         }
         if (!/^wikipedia(?:_|$)/i.test(String(payload.download?.name || ''))) {
           throw new Error('Apocalypse Mode currently supports Wikipedia catalog archives only.');
         }
+        const requestedReplacementIds = new Set((Array.isArray(payload.replacementArchiveIds)
+          ? payload.replacementArchiveIds : []).slice(0, 16).map(value => String(value || '')));
+        const replacementArchiveIds = (await store.listArchives())
+          .filter(record => requestedReplacementIds.has(record.id)
+            && record.archiveKind === 'wikipedia' && record.status === 'ready')
+          .map(record => record.id);
         const key = `${payload.download?.id || 'wikipedia'}-${payload.download?.filename || 'archive.zim'}`;
-        await manager.install({ ...payload.download, archiveKind: 'wikipedia' }, { kind: 'opfs', key: safeArchiveKey(key) });
+        await manager.install({
+          ...payload.download,
+          archiveKind: 'wikipedia',
+          replacementArchiveIds,
+        }, { kind: 'opfs', key: safeArchiveKey(key) });
         return await snapshot();
       }
       case 'pause': await manager.pause(payload.id); return await snapshot();

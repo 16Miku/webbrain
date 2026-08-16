@@ -41,6 +41,9 @@ let activeTextDownloadModelId = '';
 let queuedTextDownload = null;
 let textDownloadAbortController = null;
 let textDownloadCancelMode = '';
+let activeVisionDownloadRequest = null;
+let queuedVisionDownload = null;
+let visionDownloadAbortController = null;
 let lastTextProgressPostAt = 0;
 let webGpuAdapterProbePromise = null;
 let webGpuAdapterSummary = '';
@@ -105,10 +108,19 @@ function fetchTargetsActiveTextModel(input) {
   return safeDecodedUrl(url).includes(`/${activeTextDownloadModelId}/`);
 }
 
+function fetchTargetsActiveVisionModel(input) {
+  if (!activeVisionDownloadRequest?.modelId) return false;
+  const url = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+  return safeDecodedUrl(url).includes(`/${activeVisionDownloadRequest.modelId}/`);
+}
+
 async function controlledFetch(input, init = {}) {
   if (!nativeFetch) throw new Error('Fetch is unavailable in the WebGPU worker.');
   if (textDownloadAbortController && fetchTargetsActiveTextModel(input)) {
     return nativeFetch(input, { ...init, signal: textDownloadAbortController.signal });
+  }
+  if (visionDownloadAbortController && fetchTargetsActiveVisionModel(input)) {
+    return nativeFetch(input, { ...init, signal: visionDownloadAbortController.signal });
   }
   return nativeFetch(input, init);
 }
@@ -395,6 +407,74 @@ async function preloadRuntime(payload = {}) {
   await getVisionRuntime(modelId, dtype, device);
   await disposeVisionRuntime();
   return modelId;
+}
+
+function visionDownloadState(request, status) {
+  return {
+    status,
+    ready: status === 'ready',
+    modelId: request?.modelId || '',
+    dtype: request?.dtype || '',
+  };
+}
+
+async function preloadVisionModel(payload, request) {
+  if (queuedVisionDownload !== request || request.cancelMode) {
+    return visionDownloadState(request, request.cancelMode === 'stop' ? 'not-downloaded' : 'paused');
+  }
+  queuedVisionDownload = null;
+  activeVisionDownloadRequest = request;
+  const controller = new AbortController();
+  visionDownloadAbortController = controller;
+  try {
+    await preloadRuntime(payload);
+    return visionDownloadState(request, request.cancelMode === 'stop'
+      ? 'not-downloaded'
+      : request.cancelMode === 'pause' ? 'paused' : 'ready');
+  } catch (error) {
+    if (request.cancelMode || controller.signal.aborted) {
+      return visionDownloadState(request, request.cancelMode === 'stop' ? 'not-downloaded' : 'paused');
+    }
+    throw error;
+  } finally {
+    if (visionDownloadAbortController === controller) visionDownloadAbortController = null;
+    if (activeVisionDownloadRequest === request) activeVisionDownloadRequest = null;
+  }
+}
+
+function pauseVisionDownload(modelId) {
+  const normalizedModelId = String(modelId || '').trim();
+  const queued = queuedVisionDownload;
+  const active = activeVisionDownloadRequest;
+  const targetQueued = queued && (!normalizedModelId || queued.modelId === normalizedModelId);
+  const targetActive = active && (!normalizedModelId || active.modelId === normalizedModelId);
+  if (targetQueued) {
+    queued.cancelMode = 'pause';
+    if (queuedVisionDownload === queued) queuedVisionDownload = null;
+  }
+  if (targetActive) {
+    active.cancelMode = 'pause';
+    visionDownloadAbortController?.abort();
+  }
+  const target = targetActive ? active : targetQueued ? queued : { modelId: normalizedModelId };
+  return visionDownloadState(target, 'paused');
+}
+
+function stopVisionDownload(modelId) {
+  const normalizedModelId = String(modelId || '').trim();
+  const queued = queuedVisionDownload;
+  const active = activeVisionDownloadRequest;
+  const targetsQueued = Boolean(queued && (!normalizedModelId || queued.modelId === normalizedModelId));
+  const targetsActive = Boolean(active && (!normalizedModelId || active.modelId === normalizedModelId));
+  if (targetsQueued) {
+    queued.cancelMode = 'stop';
+    if (queuedVisionDownload === queued) queuedVisionDownload = null;
+  }
+  if (targetsActive) {
+    active.cancelMode = 'stop';
+    visionDownloadAbortController?.abort();
+  }
+  return { targetsQueued, targetsActive, hasActiveVision: Boolean(active) };
 }
 
 async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
@@ -905,29 +985,23 @@ async function probeRuntime() {
   };
 }
 
-async function clearModelCache() {
-  await disposeAllRuntimes();
-  const deletedCaches = [];
+export async function clearVisionModelCache(modelId) {
+  const normalizedModelId = String(modelId || '').trim();
+  if (!normalizedModelId) throw new Error('No vision model was specified.');
+  await disposeVisionRuntime();
+  const modelPath = `/${normalizedModelId}/`;
+  let deletedEntries = 0;
   if (typeof caches !== 'undefined') {
     for (const name of await caches.keys()) {
       if (!/transformers/i.test(name)) continue;
-      if (await caches.delete(name)) deletedCaches.push(name);
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        if (!safeDecodedUrl(request.url).includes(modelPath)) continue;
+        if (await cache.delete(request)) deletedEntries++;
+      }
     }
   }
-  readyTextModelKeys.clear();
-  textDownloadFiles.clear();
-  textDownloadState = {
-    ...textDownloadState,
-    status: 'not-downloaded',
-    ready: false,
-    file: '',
-    loaded: 0,
-    total: 0,
-    progress: 0,
-    error: '',
-  };
-  postTextDownloadState({ force: true });
-  return deletedCaches;
+  return { modelId: normalizedModelId, deletedEntries };
 }
 
 self.addEventListener('message', async event => {
@@ -996,9 +1070,33 @@ self.addEventListener('message', async event => {
       self.postMessage({ id, ok: true, ...state });
       return;
     }
+    if (type === 'pause-vision-download') {
+      self.postMessage({ id, ok: true, ...pauseVisionDownload(payload?.modelId) });
+      return;
+    }
+    if (type === 'stop-vision-download') {
+      const modelId = String(payload?.modelId || '').trim();
+      if (!modelId) throw new Error('No vision model was specified.');
+      const stopped = stopVisionDownload(modelId);
+      // A queued preload owns no live vision operation. Clear its model-specific
+      // cache immediately so Stop is not trapped behind an unrelated text-model
+      // transfer in the shared WebGPU operation queue.
+      const result = stopped.targetsQueued && !stopped.hasActiveVision
+        ? await clearVisionModelCache(modelId)
+        : await enqueueModelOperation(() => clearVisionModelCache(modelId));
+      self.postMessage({
+        id,
+        ok: true,
+        status: 'not-downloaded',
+        ready: false,
+        ...result,
+      });
+      return;
+    }
     if (type === 'clear-cache') {
-      const deletedCaches = await enqueueModelOperation(clearModelCache);
-      self.postMessage({ id, ok: true, deletedCaches });
+      const modelId = String(payload?.modelId || '').trim();
+      const result = await enqueueModelOperation(() => clearVisionModelCache(modelId));
+      self.postMessage({ id, ok: true, ...result });
       return;
     }
     if (type === 'dispose' || type === 'dispose-all') {
@@ -1017,8 +1115,17 @@ self.addEventListener('message', async event => {
       return;
     }
     if (type === 'preload') {
-      const modelId = await enqueueModelOperation(() => preloadRuntime(payload));
-      self.postMessage({ id, ok: true, modelId });
+      const modelId = String(payload?.modelId || '').trim();
+      if (!modelId) throw new Error('No vision model was specified.');
+      const request = {
+        modelId,
+        dtype: payload?.dtype || '',
+        cancelMode: '',
+      };
+      queuedVisionDownload = request;
+      const state = await enqueueModelOperation(() => preloadVisionModel(payload, request));
+      if (queuedVisionDownload === request) queuedVisionDownload = null;
+      self.postMessage({ id, ok: true, ...state });
       return;
     }
     if (type === 'chat') {

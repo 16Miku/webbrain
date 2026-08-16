@@ -2269,7 +2269,12 @@ async function handleMessage(msg, sender) {
           enabled: snapshot.enabled === true,
         }).catch(() => {});
         if (msg.enabled === true) {
-          return { ...snapshot, visionModel: await enableApocalypseVisionModel() };
+          // The shared worker serializes model operations. Start the text
+          // transfer first so it is acknowledged immediately, then queue the
+          // vision preload behind it without blocking this enable response.
+          const textModel = await providerManager.enableAndStartWebgpuTextDownload();
+          const visionModel = await enableApocalypseVisionModel();
+          return { ...snapshot, textModel, visionModel };
         }
       }
       return snapshot;
@@ -3339,6 +3344,31 @@ async function handleMessage(msg, sender) {
 
     case 'test_vision_provider': {
       return await providerManager.testVisionProvider();
+    }
+    case 'start_webgpu_vision_download': {
+      return await providerManager.startWebgpuVisionDownload();
+    }
+    case 'pause_webgpu_vision_download': {
+      const result = await providerManager.pauseWebgpuVisionDownload();
+      if (result?.ok) await persistVisionDownloadState({
+        ...result,
+        modelId: WEBGPU_VISION_MODEL_ID,
+        status: 'paused',
+      });
+      return result;
+    }
+    case 'stop_webgpu_vision_download': {
+      const result = await providerManager.stopWebgpuVisionDownload();
+      await persistVisionDownloadState({
+        ...result,
+        modelId: WEBGPU_VISION_MODEL_ID,
+        status: result?.ok ? 'not-downloaded' : 'error',
+        progress: 0,
+        loaded: 0,
+        total: 0,
+        error: result?.ok ? '' : result?.error,
+      });
+      return result;
     }
     case 'dispose_webgpu_vision':
       return await providerManager.disposeWebgpuVisionRuntime();
