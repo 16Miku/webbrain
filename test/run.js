@@ -24786,6 +24786,146 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
   }
 });
 
+test('/print opens the current page native print dialog in both builds', () => {
+  const docs = fs.readFileSync(path.join(ROOT, 'docs/slash-commands.md'), 'utf8');
+  assert.match(docs, /\| `\/print` \| Open the current page's native print dialog \|/);
+
+  for (const [label, panelRel, localeRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales/en.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
+    const slash = loadSlashCommandRuntime(panelRel);
+    const invocation = slash.parseSlashInvocation('/print');
+
+    assert.equal(invocation.command.value, '/print', `${label}: /print should be discoverable`);
+    assert.equal(invocation.command.usage, '/print', `${label}: /print should not advertise format or selection arguments`);
+    assert.equal(invocation.action, 'print', `${label}: /print action missing`);
+    assert.equal(slash.slashInvocationIsOutOfBand(invocation), false, `${label}: /print should wait until an active run finishes`);
+    assert.equal(slash.parseSlashInvocation('/print selected')?.error, 'invalid-usage', `${label}: /print should reject unsupported selection or format arguments`);
+    assert.match(locale, /'sp\.slash\.print': 'Open the current page’s native print dialog'/, `${label}: /print description missing`);
+    assert.match(locale, /'sp\.print\.error': 'Could not open the print dialog: \{msg\}'/, `${label}: /print failure message missing`);
+
+    const routeStart = panel.indexOf("if (command.value === '/print') {");
+    assert.notEqual(routeStart, -1, `${label}: /print parser route missing`);
+    const routeEnd = panel.indexOf("if (command.value === '/screenshot'", routeStart);
+    assert.notEqual(routeEnd, -1, `${label}: /print parser route boundary missing`);
+    const route = panel.slice(routeStart, routeEnd);
+    assert.match(route, /executePrintSlashCommand\(tabId, currentTabId,/, `${label}: /print should delegate to executePrintSlashCommand`);
+    const helperStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(helperStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const helperEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', helperStart);
+    assert.notEqual(helperEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const helper = panel.slice(helperStart, helperEnd);
+    assert.match(helper, /tabs\.get\(tabId\)/, `${label}: /print should validate the initiating tab`);
+    assert.match(helper, /currentTabId !== tabId \|\| !tab\?\.active/, `${label}: /print should not target a stale or background tab`);
+    assert.match(helper, /sp\.print\.error/, `${label}: /print failures should be visible`);
+    if (label === 'chrome') {
+      assert.match(helper, /scripting\.executeScript\(\{[\s\S]*?target: \{ tabId \},[\s\S]*?func: \(\) => window\.print\(\)/, 'chrome: /print should invoke the page print dialog through MV3 scripting');
+    } else {
+      assert.match(helper, /tabs\.executeScript\(tabId, \{ code: 'window\.print\(\);' \}\)/, 'firefox: /print should invoke the page print dialog through MV2 scripting');
+    }
+  }
+});
+
+test('/print routes are exercised with mocked tab and injection APIs in both builds', async () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const fnStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(fnStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const fnEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', fnStart);
+    assert.notEqual(fnEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const executePrintSlashCommand = vm.runInNewContext(
+      `(() => { ${panel.slice(fnStart, fnEnd + 2)}; return executePrintSlashCommand; })()`,
+      {}
+    );
+
+    // Success path: active tab, injection succeeds.
+    let getCalled = false;
+    let executeCalled = false;
+    const successTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const successScripting = {
+      executeScript: async ({ target, func }) => {
+        executeCalled = true;
+        assert.equal(target.tabId, 7, `${label}: should target the initiating tab`);
+        assert.equal(typeof func, 'function', `${label}: should pass a function for injection`);
+      },
+    };
+    const toasts = [];
+    const showToast = (msg) => { toasts.push(msg); };
+    const t = (key, params) => `${key}:${JSON.stringify(params || {})}`;
+
+    const successResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...successTabs, executeScript: async (tabId, details) => {
+          executeCalled = true;
+          assert.equal(tabId, 7, `${label}: should target the initiating tab`);
+          assert.equal(details.code, "window.print();", `${label}: should pass the print script`);
+        } }, showToast, t);
+    assert.equal(successResult.ok, true, `${label}: success path should return ok`);
+    assert.equal(getCalled, true, `${label}: success path should call tabs.get`);
+    assert.equal(executeCalled, true, `${label}: success path should call executeScript`);
+
+    // Stale-tab guard: currentTabId differs from the command tab.
+    getCalled = false;
+    executeCalled = false;
+    const staleResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 99, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 99, { ...successTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(staleResult.skipped, true, `${label}: stale tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: stale tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: stale tab should not inject`);
+
+    // Background-tab guard: tab exists but is not active.
+    getCalled = false;
+    executeCalled = false;
+    const inactiveTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: false };
+      },
+    };
+    const inactiveResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, inactiveTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...inactiveTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(inactiveResult.skipped, true, `${label}: inactive tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: inactive tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: inactive tab should not inject`);
+
+    // Rejected-injection path: injection throws.
+    getCalled = false;
+    executeCalled = false;
+    const rejectTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const rejectScripting = {
+      executeScript: async () => { executeCalled = true; throw new Error('injection blocked'); },
+    };
+    const rejectResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, rejectTabs, rejectScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...rejectTabs, executeScript: async () => { throw new Error('injection blocked'); } }, showToast, t);
+    assert.equal(rejectResult.error, 'injection blocked', `${label}: should surface injection failure`);
+    assert.equal(getCalled, true, `${label}: rejection path should still validate the tab`);
+    assert.equal(executeCalled, label === 'chrome' ? true : false, `${label}: rejection path should attempt injection`);
+    assert.ok(toasts.some(t => t.includes('sp.print.error')), `${label}: should show localized error toast on rejection`);
+  }
+});
+
 test('/watch slash parser keeps Chrome and Firefox validation aligned', async () => {
   const chromeWatch = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/watch-command.js')).href);
   const firefoxWatch = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/watch-command.js')).href);
@@ -25717,8 +25857,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
-    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page-capture slash commands should stop before dispatch in selected-text conversations`);
-    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page-capture commands before slash dispatch`);
+    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record' \|\| command\.value === '\/print'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page and screen slash commands should stop before dispatch in selected-text conversations`);
+    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\|print\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page and screen commands before slash dispatch`);
     assert.match(panel, /runCaptureDirective = parseTrailingRunCaptureDirective\(text\);[\s\S]*?if \(runCaptureDirective[\s\S]*?sourceGrounding \|\| isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?text = runCaptureDirective\.prompt;/, `${label}: trailing page-capture directives should stop before prompt dispatch in selected-text conversations`);
     assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile while preserving local scope until the authoritative probe succeeds`);
     assert.doesNotMatch(panel.slice(

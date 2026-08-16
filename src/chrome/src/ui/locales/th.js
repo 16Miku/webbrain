@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'เปิดกล่องโต้ตอบการพิมพ์ดั้งเดิมของหน้าปัจจุบัน',
+  'sp.print.error': 'ไม่สามารถเปิดกล่องโต้ตอบการพิมพ์ได้: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'การสตรีมคำตอบถูกขัดจังหวะ กำลังลอง Ask รอบนี้อีกครั้งโดยไม่ใช้สตรีม',
   'sp.providers.no_setup_group': 'ไม่ต้องตั้งค่า',

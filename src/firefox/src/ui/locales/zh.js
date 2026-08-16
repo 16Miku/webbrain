@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': '打开当前页面的原生打印对话框',
+  'sp.print.error': '无法打开打印对话框：{msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '响应流已中断；正在以非流式方式重试本次 Ask。',
   'sp.providers.no_setup_group': '无需配置',

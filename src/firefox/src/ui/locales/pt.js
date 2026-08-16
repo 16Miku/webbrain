@@ -2,6 +2,8 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Abrir a caixa de diálogo de impressão nativa da página atual',
+  'sp.print.error': 'Não foi possível abrir a caixa de diálogo de impressão: {msg}',
   'sp.streaming.fallback': 'A transmissão da resposta foi interrompida; tentando novamente esta interação Ask sem transmissão.',
   'sp.providers.no_setup_group': "Nenhuma configuração necessária",
   'sp.providers.no_setup': "Sem configuração",

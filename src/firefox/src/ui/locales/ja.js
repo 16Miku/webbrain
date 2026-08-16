@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': '現在のページのネイティブ印刷ダイアログを開く',
+  'sp.print.error': '印刷ダイアログを開けませんでした: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': '応答ストリームが中断されました。この Ask ターンをストリーミングなしで再試行します。',
   'sp.providers.no_setup_group': '設定不要',

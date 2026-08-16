@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'فتح مربع حوار الطباعة الأصلي للصفحة الحالية',
+  'sp.print.error': 'تعذر فتح مربع حوار الطباعة: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'انقطع بث الاستجابة؛ تتم إعادة محاولة دور Ask هذا بدون بث.',
   'sp.providers.no_setup_group': 'لا يتطلب إعدادًا',

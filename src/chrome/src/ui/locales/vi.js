@@ -2,6 +2,8 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Mở hộp thoại in gốc của trang hiện tại',
+  'sp.print.error': 'Không thể mở hộp thoại in: {msg}',
   'sp.streaming.fallback': 'Luồng phản hồi bị gián đoạn; đang thử lại lượt Ask này mà không phát trực tuyến.',
   'sp.providers.no_setup_group': "Không cần thiết lập",
   'sp.providers.no_setup': "Không cần thiết lập",

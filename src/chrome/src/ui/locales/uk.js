@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Відкрити системне діалогове вікно друку поточної сторінки',
+  'sp.print.error': 'Не вдалося відкрити діалогове вікно друку: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Потік відповіді перервано; цей запит Ask повторюється без потокової передачі.',
   'sp.providers.no_setup_group': 'Без налаштування',
