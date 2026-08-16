@@ -4588,6 +4588,7 @@ async function applyActiveRunState(numericTabId, state) {
           finalContent: runUi.finalContent,
           submittedTurnDurable: state?.submittedTurnDurable === true,
           attachmentDeliveryState: runUi.attachmentDeliveryState || '',
+          endedAt: runUi.endedAt,
         },
       });
     }
