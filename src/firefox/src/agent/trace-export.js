@@ -147,7 +147,9 @@ function renderPromptProvenance(value) {
     Number.isFinite(value.systemPromptChars) ? `${value.systemPromptChars} system chars` : '',
     Number.isFinite(value.messageChars) ? `${value.messageChars} total message chars` : '',
     Number.isInteger(value.toolPolicyRevision) ? `tool policy r${value.toolPolicyRevision}` : '',
-    value.runtimeEnvelopeMode ? `runtime envelope ${oneLine(value.runtimeEnvelopeMode)}` : 'runtime envelope missing',
+    value.runtimeEnvelopeMode
+      ? `runtime envelope ${oneLine(value.runtimeEnvelopeMode)}`
+      : (value.runtimeEnvelopeRequired === false ? 'runtime envelope not required' : 'runtime envelope missing'),
   ].filter(Boolean);
   if (value.runtimeEnvelopeMatches === true) parts.push('envelope aligned');
   else if (value.runtimeEnvelopeMatches === false) parts.push('envelope mismatch');
@@ -236,6 +238,8 @@ export function tracesToMarkdown(runsWithEvents, {
       } else if (ev.kind === 'note' && d.note === 'standalone_wikipedia_search_requested') {
         const queries = Math.max(1, Number(d.extra?.queryCount) || 1);
         md += `- 📚 On-device model requested local Wikipedia retrieval · ${queries} quer${queries === 1 ? 'y' : 'ies'}\n`;
+      } else if (ev.kind === 'note' && d.note === 'standalone_wikipedia_rag') {
+        md += `- 📚 ${renderLocalWikipediaRag(d.extra).replace(/^ · /, '')}\n`;
       } else if (ev.kind === 'note' && /screenshot|vision|attachment|visual/i.test(String(d.note || ''))) {
         md += `- ℹ️ ${oneLine(d.note)}\n`;
       }

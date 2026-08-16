@@ -23702,6 +23702,13 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     assert.equal(runtime.shouldRetrieveLocalWikipedia('are you high?'), false, `${label}: assistant banter triggered local retrieval`);
     assert.equal(runtime.shouldRetrieveLocalWikipedia("how can i patch my dog's yara"), false, `${label}: first-person practical advice triggered encyclopedia retrieval`);
     assert.equal(runtime.shouldRetrieveLocalWikipedia("it's a cut"), false, `${label}: a conversational follow-up triggered a title search`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('and?'), false, `${label}: a context-only continuation triggered an archive search`);
+    assert.equal(runtime.localWikipediaSearchQuery("who's sokollu"), 'sokollu', `${label}: contracted identity question was not reduced to its subject`);
+    assert.equal(
+      runtime.localWikipediaSearchQuery("what's his zodiac sign?", { fallbackTopic: 'sokollu' }),
+      'sokollu',
+      `${label}: pronoun follow-up did not reuse the prior factual subject`,
+    );
     assert.equal(runtime.localWikipediaSearchQuery('What is photosynthesis?'), 'photosynthesis', `${label}: factual question was not reduced to a searchable article topic`);
     assert.equal(runtime.localWikipediaSearchQuery('what is a chocolate made of'), 'chocolate', `${label}: composition question was not reduced to its article topic`);
     assert.equal(runtime.localWikipediaSearchQuery('who founded ottoman empire?'), 'ottoman empire', `${label}: founder question was not reduced to its entity topic`);
@@ -23752,6 +23759,21 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
       ['Chocolate'],
       `${label}: an exact article title did not suppress weaker related titles`,
     );
+    const notInstalled = await runtime.retrieveLocalWikipediaResultForStandalone('Who was Ada Lovelace?', {
+      apocalypseSearch: async (_query, options) => {
+        options.onSearchStatus({ status: 'not_installed' });
+        return [];
+      },
+    });
+    assert.equal(notInstalled.status, 'not_installed', `${label}: missing archives collapsed into no_match`);
+    const readError = await runtime.retrieveLocalWikipediaResultForStandalone('Who was Ada Lovelace?', {
+      apocalypseSearch: async () => { throw new Error('archive unreadable'); },
+    });
+    assert.equal(readError.status, 'read_error', `${label}: archive read failure collapsed into no_match`);
+    const noMatch = await runtime.retrieveLocalWikipediaResultForStandalone('Who was Ada Lovelace?', {
+      apocalypseSearch: async () => [],
+    });
+    assert.equal(noMatch.status, 'no_match', `${label}: genuine zero-result search was mislabeled`);
   }
   const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   assert.match(agentSource, /_isStandaloneWebgpuRun\(runOptions = \{\}\)[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?providerId \|\| ''\) === 'webgpu'/,
@@ -23760,6 +23782,30 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: local Wikipedia RAG passages are not marked as untrusted data');
   assert.equal((agentSource.match(/_applyStandaloneWikipediaRag\(enriched, userMessage, runOptions,/g) || []).length, 2,
     'chrome: local Wikipedia RAG is not applied to both standalone message entry paths');
+  assert.equal((agentSource.match(/const standaloneWikipediaFailure = this\._standaloneWikipediaFailureMessage\(localWikipediaRag, runOptions\)/g) || []).length, 2,
+    'chrome: a factual Wikipedia failure does not fail closed on both agent entry paths');
+  assert.equal((agentSource.match(/standaloneIncompleteAnswerRecoveryAttempted = true;/g) || []).length, 2,
+    'chrome: incomplete local answers do not receive one bounded recovery on both agent entry paths');
+});
+
+test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const statusFor = async (enabled, archives) => {
+      let status = '';
+      const records = await runtime.searchApocalypseArchives('Ada Lovelace', {
+        store: {
+          async getConfig() { return { enabled }; },
+          async listArchives() { return archives; },
+        },
+        onSearchStatus(value) { status = value.status; },
+      });
+      assert.deepEqual(records, [], `${label}: unavailable archive state returned records`);
+      return status;
+    };
+    assert.equal(await statusFor(false, []), 'disabled', `${label}: disabled Apocalypse Mode was mislabeled`);
+    assert.equal(await statusFor(true, []), 'not_installed', `${label}: missing Wikipedia archive was mislabeled`);
+    assert.equal(await statusFor(true, [{ id: 'wiki', status: 'downloading' }]), 'not_ready', `${label}: downloading archive was mislabeled`);
+  }
 });
 
 test('standalone WebGPU uses a compact tool-free chat profile with no browser context', async () => {
@@ -23797,6 +23843,74 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   assert.equal(provenance.systemPromptMode, 'ask');
   assert.equal(provenance.toolCount, 0);
   assert.equal(provenance.systemPromptMatchesRuntime, true);
+  assert.equal(provenance.runtimeEnvelopeRequired, false);
+  assert.equal(provenance.runtimeEnvelopeMatches, null);
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize([{
+      run: { runId: `standalone-envelope-${label}`, userMessage: question, model: 'LFM2.5', status: 'done' },
+      events: [{
+        runId: `standalone-envelope-${label}`, seq: 1, kind: 'llm_request',
+        data: { messageCount: 2, toolsCount: 0, promptProvenance: provenance },
+      }],
+    }]);
+    assert.match(markdown, /runtime envelope not required.*system mode aligned/,
+      `${label}: standalone trace did not explain the intentionally absent runtime envelope`);
+    assert.doesNotMatch(markdown, /envelope mismatch/,
+      `${label}: standalone trace reported a false-positive envelope mismatch`);
+  }
+
+  const apocalypseHistory = [
+    { role: 'system', content: prompt },
+    { role: 'user', content: "who's sokollu", webbrainStandaloneChat: true },
+    { role: 'assistant', content: 'Sokollu Mehmed Pasha was an Ottoman statesman.' },
+    { role: 'user', content: 'and?', webbrainStandaloneChat: true },
+    { role: 'assistant', content: 'He served as grand vizier.' },
+  ];
+  assert.equal(agent._standaloneWikipediaPriorTopic(apocalypseHistory), 'sokollu',
+    'context-only continuation displaced the last factual subject');
+  let followUpSearchQuery = '';
+  const followUpEnriched = { role: 'user', content: "what's his zodiac sign?" };
+  const followUpRag = await agent._applyStandaloneWikipediaRag(
+    followUpEnriched,
+    "what's his zodiac sign?",
+    { standaloneChat: true, providerId: 'webgpu' },
+    {
+      messages: apocalypseHistory,
+      apocalypseSearch: async query => {
+        followUpSearchQuery = query;
+        return [{
+          title: 'Sokollu Mehmed Pasha',
+          excerpt: 'Sokollu Mehmed Pasha was born around 1505; an exact birth date is not known.',
+          url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+          language: 'eng',
+          archiveDate: '2026-07-17',
+          archiveTitle: 'Wikipedia English full text',
+          source: 'Kiwix / openZIM',
+        }];
+      },
+    },
+  );
+  assert.equal(followUpSearchQuery, 'sokollu', 'pronoun follow-up did not search the prior factual subject');
+  assert.deepEqual(
+    { status: followUpRag.status, matchCount: followUpRag.matchCount, resolvedFromHistory: followUpRag.resolvedFromHistory },
+    { status: 'matched', matchCount: 1, resolvedFromHistory: true },
+    'pronoun follow-up was not grounded in the prior subject',
+  );
+  assert.match(
+    agent._standaloneWikipediaFailureMessage({ attempted: true, status: 'no_match' }, { standaloneChat: true, providerId: 'webgpu' }),
+    /will not guess/,
+    'a factual no-match did not fail closed',
+  );
+  assert.equal(
+    agent._isClearlyIncompleteStandaloneAnswer('Based on Offline Wikipedia, Sokollu Mehmed Pasha was a', { standaloneChat: true, providerId: 'webgpu' }),
+    true,
+    'mid-sentence WebGPU answer was accepted as complete',
+  );
+  assert.equal(
+    agent._isClearlyIncompleteStandaloneAnswer('Sokollu Mehmed Pasha was an Ottoman statesman.', { standaloneChat: true, providerId: 'webgpu' }),
+    false,
+    'complete WebGPU answer was rejected',
+  );
 
   const standaloneRun = { standaloneChat: true, providerId: 'webgpu' };
   const inventedGoogleCalls = "<|tool_call_start|>[google(query='Sokollu Mehmed Pasha birth date biography'), google(query='Sokollu Mehmed Pasha Ottoman Empire biography')]<|tool_call_end|>";
@@ -23988,6 +24102,15 @@ test('trace export reports local Wikipedia RAG without passage text', () => {
         extra: { queryCount: 2, source: 'lfm_native_search_markup' },
       },
     }],
+  }, {
+    run: { runId: 'local-rag-error', userMessage: 'Who was Sokullu Mehmed Pasha?', model: 'LFM2.5', status: 'grounding_unavailable' },
+    events: [{
+      runId: 'local-rag-error', seq: 1, kind: 'note', data: {
+        step: null,
+        note: 'standalone_wikipedia_rag',
+        extra: { attempted: true, status: 'read_error', matchCount: 0, archiveDates: [] },
+      },
+    }],
   }];
   for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
     const { markdown } = serialize(runs);
@@ -23997,6 +24120,8 @@ test('trace export reports local Wikipedia RAG without passage text', () => {
       `${label}: trace metadata must not persist retrieved passage text`);
     assert.match(markdown, /On-device model requested local Wikipedia retrieval · 2 queries/,
       `${label}: intercepted search was not represented as local retrieval`);
+    assert.match(markdown, /local Wikipedia RAG read_error · 0 matches/,
+      `${label}: archive read failure disappeared from the trace export`);
     assert.doesNotMatch(markdown, /tool_call_start|google\(/,
       `${label}: intercepted native search markup leaked into the conversation export`);
   }

@@ -1327,10 +1327,25 @@ export async function searchApocalypseArchives(query, options = {}) {
   const store = options.store || createApocalypseStore();
   const storage = options.storage || createOpfsArchiveStorage();
   const config = await store.getConfig();
-  if (config.enabled !== true && options.requireEnabled !== false) return [];
-  const archives = (await store.listArchives())
+  const reportStatus = status => {
+    try { options.onSearchStatus?.({ status }); } catch {}
+  };
+  if (config.enabled !== true && options.requireEnabled !== false) {
+    reportStatus('disabled');
+    return [];
+  }
+  const installedArchives = await store.listArchives();
+  if (!installedArchives.length) {
+    reportStatus('not_installed');
+    return [];
+  }
+  const archives = installedArchives
     .filter(record => record.status === 'ready' && (!options.archiveId || record.id === options.archiveId))
     .sort((left, right) => String(right.archiveDate || '').localeCompare(String(left.archiveDate || '')));
+  if (!archives.length) {
+    reportStatus('not_ready');
+    return [];
+  }
   const providers = options.providers || [createKiwixZimProvider({ storage })];
   const results = [];
   const archiveErrors = [];
@@ -1359,6 +1374,7 @@ export async function searchApocalypseArchives(query, options = {}) {
     }
   }
   if (!results.length && archiveErrors.length) throw new Error(archiveErrors[0]);
+  reportStatus(results.length ? 'matched' : 'no_match');
   return results.slice(0, Math.max(1, Math.min(10, Number(options.limit) || 3)));
 }
 
