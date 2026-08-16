@@ -3440,6 +3440,13 @@ test('direct-message recipient guard uses structured intent and exact active ide
       null,
       `${label}: matching active recipient was blocked`,
     );
+    const repeatedEnter = await agent._messageRecipientGuardBlock(
+      tabId,
+      'press_keys',
+      { key: 'Enter', repeat: 2 },
+    );
+    assert.equal(repeatedEnter?.noDispatch, true, `${label}: repeated Enter bypassed one-send verification`);
+    assert.equal(repeatedEnter?.reasonCode, 'recipient_guard_repeated_enter');
 
     probe = {
       success: true,
@@ -3481,20 +3488,30 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const end = source.indexOf('\n\n  // --- Message handler ---', start);
     assert.ok(start >= 0 && end > start, `${prefix}: recipient probe should remain independently testable`);
 
-    const element = (text, rect, options = {}) => ({
-      nodeType: 1,
-      isConnected: true,
-      tagName: options.tagName || 'DIV',
-      isContentEditable: false,
-      value: options.value || '',
-      textContent: text,
-      innerText: text,
-      children: [],
-      getBoundingClientRect: () => rect,
-      getAttribute: (name) => name === 'role' ? (options.role || '') : '',
-      closest: () => null,
-      hasAttribute: (name) => name === 'data-action' && options.dataAction === true,
-    });
+    const element = (text, rect, options = {}) => {
+      const attributes = { ...(options.attributes || {}) };
+      if (options.role) attributes.role = options.role;
+      if (options.dataAction === true) attributes['data-action'] = 'true';
+      const el = {
+        nodeType: 1,
+        isConnected: true,
+        tagName: options.tagName || 'DIV',
+        isContentEditable: false,
+        value: options.value || '',
+        textContent: text,
+        innerText: text,
+        children: [],
+        parentElement: options.parentElement || null,
+        clientHeight: options.clientHeight || rect.height || 0,
+        scrollHeight: options.scrollHeight || rect.height || 0,
+        getBoundingClientRect: () => rect,
+        getAttribute: (name) => attributes[name] || '',
+        closest: () => null,
+        hasAttribute: (name) => Object.prototype.hasOwnProperty.call(attributes, name),
+      };
+      el.contains = (candidate) => candidate === el;
+      return el;
+    };
     const composer = element('', { left: 400, right: 900, top: 700, bottom: 760, width: 500, height: 60 }, {
       tagName: 'TEXTAREA', value: 'hello',
     });
@@ -3522,12 +3539,34 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       left: 20, right: 140, top: 300, bottom: 350, width: 120, height: 50,
     }, { tagName: 'BUTTON', role: 'button' });
     distantControl.closest = () => distantControl;
+    const conversationRail = element('', {
+      left: 0, right: 340, top: 80, bottom: 900, width: 340, height: 820,
+    }, { role: 'list', clientHeight: 820, scrollHeight: 820 });
+    conversationRail.contains = (candidate) => candidate === conversationRail
+      || candidate === conversationRow
+      || candidate === conversationRowLabel
+      || candidate === conversationRowMenu;
+    const conversationRow = element('迷你世界皓宸', {
+      left: 20, right: 320, top: 220, bottom: 290, width: 300, height: 70,
+    }, { role: 'listitem', parentElement: conversationRail });
+    conversationRow.closest = (selector) => selector.includes('[role="listitem"]') ? conversationRow : null;
+    const conversationRowLabel = element('迷你世界皓宸', {
+      left: 60, right: 250, top: 235, bottom: 275, width: 190, height: 40,
+    }, { parentElement: conversationRow });
+    conversationRowLabel.closest = (selector) => selector.includes('[role="listitem"]') ? conversationRow : null;
+    const conversationRowMenu = element('More', {
+      left: 270, right: 315, top: 235, bottom: 275, width: 45, height: 40,
+    }, { tagName: 'BUTTON', role: 'button', parentElement: conversationRow });
+    conversationRowMenu.closest = (selector) => selector.startsWith('button,')
+      ? conversationRowMenu
+      : (selector.includes('[role="listitem"]') ? conversationRow : null);
     let activeElement = composer;
     const document = {
       activeElement,
+      querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
       querySelectorAll: (selector) => {
         if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox];
-        if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl];
+        if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
@@ -3537,8 +3576,15 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     };
     const context = {
       document,
-      window: { innerHeight: 1000 },
-      getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+      window: {
+        innerHeight: 1000,
+        __wb_ax_lookup: (refId) => refId === 'conversation-row-label' ? conversationRowLabel : null,
+      },
+      getComputedStyle: (el) => ({
+        display: 'block',
+        visibility: 'visible',
+        overflowY: el === conversationRail ? 'auto' : 'visible',
+      }),
       _deepActiveElement: () => activeElement,
     };
     const probe = vm.runInNewContext(`(${source.slice(start, end)})`, context);
@@ -3556,6 +3602,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     }, { tagName: 'BODY' });
     const unfocusedClickResult = probe({ tool: 'click', args: { text: 'Send' } });
     const distantClickResult = probe({ tool: 'click', args: { text: 'Forward' } });
+    const conversationSelectorResult = probe({ tool: 'click', args: { selector: '#conversation-row' } });
+    const conversationAxResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-label' } });
+    const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
     const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
@@ -3566,6 +3615,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       searchWithoutComposerResult,
       unfocusedClickResult,
       distantClickResult,
+      conversationSelectorResult,
+      conversationAxResult,
+      conversationMenuResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
     };
@@ -3579,6 +3631,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       searchWithoutComposerResult,
       unfocusedClickResult,
       distantClickResult,
+      conversationSelectorResult,
+      conversationAxResult,
+      conversationMenuResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
     } = runProbe(prefix);
@@ -3601,6 +3656,13 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(emptyComposerCustomSendResult.conclusive, true);
     assert.equal(distantClickResult.messageSend, null, `${prefix}: distant control was declared non-sending`);
     assert.equal(distantClickResult.conclusive, false);
+    for (const selectionResult of [conversationSelectorResult, conversationAxResult]) {
+      assert.equal(selectionResult.messageSend, false, `${prefix}: verified conversation row could not be selected`);
+      assert.equal(selectionResult.conclusive, true);
+      assert.equal(selectionResult.conversationSelection, true);
+    }
+    assert.equal(conversationMenuResult.messageSend, null, `${prefix}: nested row action was treated as conversation selection`);
+    assert.equal(conversationMenuResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
   }

@@ -10730,6 +10730,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch {}
     if (!policy?.verifyActiveRecipient) return null;
 
+    if (name === 'press_keys') {
+      const repeatRaw = Number(args?.repeat ?? 1);
+      const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
+      if (repeat > 1) {
+        return {
+          success: false,
+          blocked: true,
+          noDispatch: true,
+          dispatched: false,
+          messageRecipientGuard: true,
+          reasonCode: 'recipient_guard_repeated_enter',
+          error: 'Message send blocked: protected conversations allow exactly one Enter per verified dispatch. Retry with repeat: 1, then verify the result before another send.',
+        };
+      }
+    }
+
     if (unbindableDispatchTools.has(name)) {
       return {
         success: false,

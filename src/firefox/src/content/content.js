@@ -3634,6 +3634,70 @@
         ? layoutCandidate
         : null;
 
+      const independentScrollableRegion = (el, excluded) => {
+        let node = el || null;
+        while (node && node !== document.body) {
+          try {
+            const style = getComputedStyle(node);
+            const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
+            const scrollable = /^(auto|scroll|overlay)$/.test(overflowY)
+              && Number(node.scrollHeight) > Number(node.clientHeight) + 1;
+            if (scrollable && !(typeof node.contains === 'function' && node.contains(excluded))) return node;
+          } catch {}
+          node = node.parentElement;
+        }
+        return null;
+      };
+      const verifiedConversationSelection = (clicked, composer) => {
+        if (!clicked || !composer || editable(clicked)) return false;
+        const rowSelector = [
+          'a[href]',
+          '[role="option"]',
+          '[role="listitem"]',
+          '[role="treeitem"]',
+          '[role="tab"]',
+          '[aria-selected]',
+          '[aria-current]',
+          '[data-conversation-id]',
+          '[data-thread-id]',
+          '[data-chat-id]',
+        ].join(',');
+        const row = clicked.closest?.(rowSelector) || null;
+        if (!row || !visible(row) || editable(row)) return false;
+
+        // A nested menu/delete/etc. button inside a conversation row is not
+        // the row selection itself and must keep failing closed.
+        if (row !== clicked) {
+          const clickedTag = String(clicked.tagName || '').toLowerCase();
+          const clickedRole = String(clicked.getAttribute?.('role') || '').toLowerCase();
+          if (/^(button|input|select)$/.test(clickedTag)
+            || /^(button|menuitem|checkbox|radio|switch)$/.test(clickedRole)) return false;
+        }
+
+        const role = String(row.getAttribute?.('role') || '').toLowerCase();
+        const tag = String(row.tagName || '').toLowerCase();
+        const hasRowSemantics = /^(option|listitem|treeitem|tab)$/.test(role)
+          || row.hasAttribute?.('aria-selected')
+          || row.hasAttribute?.('aria-current')
+          || ['data-conversation-id', 'data-thread-id', 'data-chat-id']
+            .some(name => compact(row.getAttribute?.(name), 120));
+        const hasNavigationHref = tag === 'a' && compact(row.getAttribute?.('href'), 500);
+        if (!hasRowSemantics && !hasNavigationHref) return false;
+
+        // Overflow is strong evidence when the rail has enough rows to scroll;
+        // semantic row identity plus full separation from the composer also
+        // covers short conversation lists that do not currently overflow.
+        const rail = independentScrollableRegion(row, composer) || row;
+        const composerRect = composer.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const railRect = rail.getBoundingClientRect();
+        // Protected chat adapters currently expose the conversation list as a
+        // separate left rail. Message-history controls overlap the composer
+        // column and deliberately remain inconclusive.
+        return rowRect.right <= composerRect.left + 24
+          && railRect.right <= composerRect.left + 64;
+      };
+
       let composer = null;
       let messageSend = null;
       if (observationOnly) {
@@ -3674,6 +3738,15 @@
         if (editable(target) && target !== composer) {
           return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
         }
+        if (verifiedConversationSelection(target, composer)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            conversationSelection: true,
+            identityCandidates: [],
+          };
+        }
         const composerRect = composer.getBoundingClientRect();
         const controlRect = control.getBoundingClientRect();
         const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
@@ -3707,23 +3780,9 @@
           && rect.right >= composerRect.left
           && rect.left <= composerRect.right;
       };
-      const inIndependentScrollableRegion = (el) => {
-        let node = el?.parentElement || null;
-        while (node && node !== document.body) {
-          try {
-            const style = getComputedStyle(node);
-            const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
-            const scrollable = /^(auto|scroll|overlay)$/.test(overflowY)
-              && Number(node.scrollHeight) > Number(node.clientHeight) + 1;
-            if (scrollable && !(typeof node.contains === 'function' && node.contains(composer))) return true;
-          } catch {}
-          node = node.parentElement;
-        }
-        return false;
-      };
       const addStrongIdentity = (el) => {
         if (!visible(el) || editable(el) || el.closest?.('input,textarea,[contenteditable="true"]')) return;
-        if (!inConversationHeaderBand(el) || inIndependentScrollableRegion(el)) return;
+        if (!inConversationHeaderBand(el) || independentScrollableRegion(el, composer)) return;
         const text = compact(
           el.getAttribute?.('aria-label')
           || el.getAttribute?.('title')
