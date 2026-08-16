@@ -25353,17 +25353,29 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
   const featuresIndex = template.indexOf('<!-- FEATURES -->');
-  const apocalypseIndex = template.indexOf('<!-- APOCALYPSE MODE -->');
   const providersIndex = template.indexOf('<!-- PROVIDERS -->');
+  const apocalypseIndex = template.indexOf('<!-- APOCALYPSE MODE -->');
+  const mcpIndex = template.indexOf('<!-- MCP SERVER -->');
+  const compareIndex = template.indexOf('<!-- COMPARISON TABLE -->');
+  const downloadIndex = template.indexOf('<!-- DOWNLOAD -->');
+  const shareIndex = template.indexOf('<!-- SPREAD THE WORD / OPEN SOURCE -->');
 
-  assert.ok(featuresIndex >= 0 && apocalypseIndex > featuresIndex && providersIndex > apocalypseIndex,
-    'web: Apocalypse Mode should sit between the feature overview and provider constellation');
+  assert.ok(featuresIndex >= 0
+    && providersIndex > featuresIndex
+    && apocalypseIndex > providersIndex
+    && mcpIndex > apocalypseIndex
+    && compareIndex > mcpIndex
+    && downloadIndex > compareIndex
+    && shareIndex > downloadIndex,
+  'web: homepage should flow from provider choice through offline, WebMCP, comparison, download, and sharing');
   assert.match(template, /<section class="section apocalypse-section" id="apocalypse" aria-labelledby="apocalypse-title">/,
     'web: Apocalypse Mode should be a named homepage section');
   assert.match(template, /\{\{t:apocalypse\.label\}\}[\s\S]*?id="apocalypse-title">\{\{t:apocalypse\.title\}\}[\s\S]*?\{\{t:apocalypse\.heading\}\}[\s\S]*?\{\{t:apocalypse\.description\}\}/,
     'web: Apocalypse Mode marketing copy should come from locale sources');
-  assert.match(template, /LFM2\.5 2\.6B[\s\S]*?Vision Model[\s\S]*?Wikipedia/,
+  assert.match(template, /WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Vision Model[\s\S]*?Wikipedia/,
     'web: the offline readiness stack should show text, vision, and knowledge layers');
+  assert.doesNotMatch(template, /LFM2\.5 2\.6B|TEXT · WEBGPU · Q4F16/,
+    'web: homepage readiness copy should describe the capability without model-build jargon');
   assert.match(template, /\.apocalypse-shell \{[\s\S]*?grid-template-columns:[\s\S]*?\.apocalypse-module\.is-vision[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-knowledge[\s\S]*?margin-inline-start:/,
     'web: the readiness stack should keep its asymmetric stepped composition');
   assert.match(template, /\[dir="rtl"\] \.apocalypse-copy[\s\S]*?\[dir="rtl"\] \.apocalypse-module::before/,
@@ -25383,7 +25395,7 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
       assert.ok(locale[key].trim(), `web/${file}: empty ${key}`);
     }
   }
-  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?LFM2\.5 2\.6B/,
+  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE/,
     'web build: generated English homepage should contain the complete Apocalypse Mode showcase');
 });
 
