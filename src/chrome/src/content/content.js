@@ -4429,23 +4429,41 @@
           || (br.left - ar.left)
           || ((br.width * br.height) - (ar.width * ar.height));
       });
-      const layoutComposer = composerCandidates[0] || null;
+      const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
+      const layoutCandidate = composerCandidates[0] || null;
+      const layoutCandidateRect = layoutCandidate?.getBoundingClientRect?.();
+      // A recipient/search field can be the only focused editable while the
+      // real composer is temporarily hidden. Never promote an upper-page
+      // editable into the message composer merely because it is focused.
+      const layoutComposer = layoutCandidate
+        && (!viewportHeight || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
+        ? layoutCandidate
+        : null;
 
       let composer = null;
       let messageSend = null;
       if (observationOnly) {
         composer = layoutComposer;
       } else if (tool === 'press_keys') {
-        composer = editable(active) && visible(active) ? active : null;
-        if (!composer) {
+        if (!editable(active) || !visible(active) || !layoutComposer) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
+        if (active !== layoutComposer) {
+          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+        }
+        composer = layoutComposer;
         messageSend = String(args.key || '') === 'Enter';
       } else if (tool === 'set_field') {
         if (!targetResolved || !editable(target) || !visible(target)) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
-        composer = target;
+        if (!layoutComposer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (target !== layoutComposer) {
+          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+        }
+        composer = layoutComposer;
         messageSend = args.submit === true;
       } else if (tool === 'click' || tool === 'click_ax') {
         if (!targetResolved || !target) {
@@ -4459,6 +4477,9 @@
         if (!composer) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
+        if (editable(target) && target !== composer) {
+          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+        }
         const composerRect = composer.getBoundingClientRect();
         const controlRect = control.getBoundingClientRect();
         const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
@@ -4469,7 +4490,7 @@
         // text composer is empty. Geometry must therefore win over tag shape.
         messageSend = sameForm || (horizontalGap <= 240 && verticalGap <= 120);
         if (!messageSend) {
-          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
       }
 
@@ -4478,7 +4499,6 @@
       }
 
       const composerRect = composer.getBoundingClientRect();
-      const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
       const headerBandBottom = Math.min(
         composerRect.top - 12,
         Math.min(220, Math.max(140, viewportHeight * 0.2)),

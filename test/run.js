@@ -3498,6 +3498,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const composer = element('', { left: 400, right: 900, top: 700, bottom: 760, width: 500, height: 60 }, {
       tagName: 'TEXTAREA', value: 'hello',
     });
+    const searchBox = element('', { left: 20, right: 300, top: 130, bottom: 180, width: 280, height: 50 }, {
+      tagName: 'TEXTAREA', value: 'Bob',
+    });
     const searchedName = element('迷你世界皓宸', {
       left: 20, right: 300, top: 100, bottom: 140, width: 280, height: 40,
     }, { tagName: 'H2' });
@@ -3515,12 +3518,16 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
     }, { dataAction: true });
     customSendControl.closest = () => customSendControl;
+    const distantControl = element('Forward', {
+      left: 20, right: 140, top: 300, bottom: 350, width: 120, height: 50,
+    }, { tagName: 'BUTTON', role: 'button' });
+    distantControl.closest = () => distantControl;
     let activeElement = composer;
     const document = {
       activeElement,
       querySelectorAll: (selector) => {
-        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer];
-        if (selector.startsWith('button,')) return [sendButton, customSendControl];
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox];
+        if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl];
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
@@ -3538,21 +3545,40 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
 
+    activeElement = searchBox;
+    const searchEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    composer.isConnected = false;
+    const searchWithoutComposerResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    composer.isConnected = true;
+
     activeElement = element('', {
       left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800,
     }, { tagName: 'BODY' });
     const unfocusedClickResult = probe({ tool: 'click', args: { text: 'Send' } });
+    const distantClickResult = probe({ tool: 'click', args: { text: 'Forward' } });
     const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
-    return { observationResult, enterResult, unfocusedClickResult, unresolvedClickResult, emptyComposerCustomSendResult };
+    return {
+      observationResult,
+      enterResult,
+      searchEnterResult,
+      searchWithoutComposerResult,
+      unfocusedClickResult,
+      distantClickResult,
+      unresolvedClickResult,
+      emptyComposerCustomSendResult,
+    };
   };
 
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const {
       observationResult,
       enterResult: result,
+      searchEnterResult,
+      searchWithoutComposerResult,
       unfocusedClickResult,
+      distantClickResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
     } = runProbe(prefix);
@@ -3565,10 +3591,16 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(result.messageSend, true);
     assert.deepEqual(Array.from(result.identityCandidates), ['清辉月下夜']);
     assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false, `${prefix}: message heading became recipient evidence`);
+    assert.equal(searchEnterResult.messageSend, false, `${prefix}: search Enter was classified as a message send`);
+    assert.equal(searchEnterResult.conclusive, true);
+    assert.equal(searchWithoutComposerResult.messageSend, null, `${prefix}: upper search field was promoted to composer`);
+    assert.equal(searchWithoutComposerResult.conclusive, false);
     assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
     assert.equal(unfocusedClickResult.conclusive, true);
     assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);
     assert.equal(emptyComposerCustomSendResult.conclusive, true);
+    assert.equal(distantClickResult.messageSend, null, `${prefix}: distant control was declared non-sending`);
+    assert.equal(distantClickResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
   }
