@@ -374,6 +374,7 @@
     .webgpu-transfer button[hidden] { display: none; }
     .webgpu-transfer button:disabled,
     .provider-card .btn-activate:disabled { cursor: not-allowed; opacity: 0.48; transform: none; }
+    .provider-card .btn-duplicate[aria-disabled="true"] { cursor: not-allowed; opacity: 0.48; transform: none; }
     @keyframes webgpu-transfer-pulse { 50% { opacity: 0.45; transform: scale(0.75); } }
     @keyframes webgpu-transfer-scan { from { transform: translateX(-100%); } to { transform: translateX(280%); } }
     @media (prefers-reduced-motion: reduce) {

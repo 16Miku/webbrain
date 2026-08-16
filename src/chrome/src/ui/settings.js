@@ -549,18 +549,15 @@ if (globalThis.chrome?.storage?.onChanged) {
     if (area !== 'local') return;
     if (changes[WEBGPU_VISION_ENABLED_KEY]) loadVisionConfig().catch(() => {});
     if (!changes.providers?.newValue) return;
-    const nextOllama = changes.providers?.newValue?.ollama;
-    if (nextOllama && providersData.ollama) {
-      providersData.ollama.visionDetection = nextOllama.visionDetection || null;
-      refreshOllamaVisionStatus();
-    }
-    for (const id of AUTO_VISION_PROVIDER_IDS) {
-      const next = changes.providers.newValue[id];
-      if (!next || !providersData[id]) continue;
+    for (const [id, next] of Object.entries(changes.providers.newValue)) {
+      if (!providersData[id] || next.visionDetection === undefined) continue;
       // Background detection may finish while the settings page contains
       // unsaved drafts. Refresh only the detected result.
       providersData[id].visionDetection = next.visionDetection || null;
-      refreshVisionStatus(id);
+      const definitionId = providerDefinitionId(id);
+      if (VISION_UI_PROVIDER_IDS.has(definitionId)) {
+        refreshVisionStatus(id);
+      }
     }
   });
 }
@@ -3228,11 +3225,12 @@ function renderProviders() {
          </section>`;
     }
     const extensionOrigin = chrome.runtime.getURL('').replace(/\/$/, '');
+    const ollamaWarningTitleId = `ollama-warning-title-${id}`;
     const ollamaWarning = definitionId === 'ollama'
       ? `<aside class="provider-warning provider-ollama-warning" role="note"
-                aria-labelledby="ollama-warning-title">
+                aria-labelledby="${ollamaWarningTitleId}">
            <div class="provider-warning-label">${escapeHtml(t('st.providers.ollama_warning.label'))}</div>
-           <strong class="provider-warning-title" id="ollama-warning-title">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
+           <strong class="provider-warning-title" id="${ollamaWarningTitleId}">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
            <p>${escapeHtml(t('st.providers.ollama_warning.body'))}</p>
            <p>${escapeHtml(t('st.providers.ollama_warning.restart'))}</p>
            <pre><code>OLLAMA_ORIGINS="${escapeHtml(extensionOrigin)}" ollama serve</code></pre>
@@ -3258,8 +3256,8 @@ function renderProviders() {
           : (config.canDuplicate
             ? `<button class="btn-secondary btn-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.duplicate'))}</button>`
             : (config.hasDuplicate
-              ? `<button class="btn-secondary btn-duplicate" data-provider="${id}" disabled title="${escapeHtml(t('st.providers.duplicate_limit'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`
-              : `<button class="btn-secondary btn-duplicate" data-provider="${id}" disabled title="${escapeHtml(t('st.providers.duplicate_unavailable'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`))}
+              ? `<button class="btn-secondary btn-duplicate" data-provider="${id}" aria-disabled="true" title="${escapeHtml(t('st.providers.duplicate_limit'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`
+              : `<button class="btn-secondary btn-duplicate" data-provider="${id}" aria-disabled="true" title="${escapeHtml(t('st.providers.duplicate_unavailable'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`))}
       </div>
       <div class="test-result" id="test-${id}"></div>
     `;
@@ -3290,7 +3288,7 @@ function renderProviders() {
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
   });
-  document.querySelectorAll('.btn-duplicate').forEach(btn => {
+  document.querySelectorAll('.btn-duplicate:not([aria-disabled="true"])').forEach(btn => {
     btn.addEventListener('click', () => duplicateProvider(btn.dataset.provider));
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {

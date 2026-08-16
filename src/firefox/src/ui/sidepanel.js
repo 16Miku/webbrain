@@ -7450,7 +7450,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       const { providers, active } = await sendToBackground('get_providers');
       const config = providers[active];
       if (config) {
-        const toggled = toggledVisionProviderConfig(active, config);
+        const toggled = toggledVisionProviderConfig(config.sourceProviderId || active, config);
         await sendToBackground('update_provider', {
           providerId: active,
           config: toggled.config,
