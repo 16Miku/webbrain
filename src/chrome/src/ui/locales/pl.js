@@ -444,6 +444,7 @@ export default {
   'st.providers.duplicate': 'Duplikuj',
   'st.providers.duplicate_limit': 'Dozwolony jest tylko jeden duplikat',
   'st.providers.duplicate_unavailable': 'Tego dostawcy nie można zduplikować',
+  'st.providers.duplicate_inactive': 'Zapisz tego dostawcę przed jego zduplikowaniem',
   'st.providers.remove_duplicate': 'Usuń duplikat',
   'st.providers.remove_duplicate_confirm': 'Usunąć tego zduplikowanego dostawcę i jego zapisaną konfigurację?',
   'st.providers.set_active': 'Ustaw jako aktywny',

@@ -785,6 +785,7 @@ export class ProviderManager {
       id === this._duplicateProviderId(sourceId) &&
       !!sourceConfig &&
       this._canDuplicateProvider(sourceId, sourceConfig) &&
+      sourceConfig.configured === true &&
       sourceConfig.type === config.type;
   }
 
@@ -1356,6 +1357,9 @@ export class ProviderManager {
     if (!this._canDuplicateProvider(id, source.config)) {
       throw new Error(`Provider cannot be duplicated: ${id}`);
     }
+    if (source.config.configured !== true) {
+      throw new Error(`Save provider before duplicating it: ${id}`);
+    }
     const duplicateId = this._duplicateProviderId(id);
     if (this.providers.has(duplicateId) || [...this.providers.values()].some(provider => provider.config?.duplicateOf === id)) {
       throw new Error(`${source.config.label || id} already has a duplicate.`);
@@ -1413,7 +1417,23 @@ export class ProviderManager {
     const duplicatedSourceIds = new Set(
       [...this.providers.values()].map(provider => provider.config?.duplicateOf).filter(Boolean),
     );
-    for (const [id, provider] of this.providers) {
+    const duplicateEntriesBySourceId = new Map();
+    for (const entry of this.providers) {
+      const sourceId = entry[1].config?.duplicateOf;
+      if (sourceId) duplicateEntriesBySourceId.set(sourceId, entry);
+    }
+    const orderedEntries = [];
+    for (const entry of this.providers) {
+      const [id, provider] = entry;
+      if (provider.config?.duplicateOf) continue;
+      orderedEntries.push(entry);
+      const duplicateEntry = duplicateEntriesBySourceId.get(id);
+      if (duplicateEntry) orderedEntries.push(duplicateEntry);
+    }
+    for (const entry of duplicateEntriesBySourceId.values()) {
+      if (!this.providers.has(entry[1].config?.duplicateOf)) orderedEntries.push(entry);
+    }
+    for (const [id, provider] of orderedEntries) {
       const config = provider.config;
       const isDuplicate = !!config.duplicateOf;
       const hasDuplicate = !isDuplicate && duplicatedSourceIds.has(id);

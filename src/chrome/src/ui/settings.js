@@ -325,6 +325,7 @@ let providersData = {};
 // including temporarily invalid JSON while the user is still editing it.
 // Keep the raw UI draft separate from the last valid provider config.
 const providerCompatibilityJsonDrafts = new Map();
+const dirtyProviderIds = new Set();
 let activeProviderId = '';
 let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
@@ -2981,6 +2982,11 @@ function renderProviders() {
          </aside>`
       : '';
     const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
+    const duplicateDisabledKey = config.hasDuplicate
+      ? 'st.providers.duplicate_limit'
+      : (!config.canDuplicate
+        ? 'st.providers.duplicate_unavailable'
+        : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : ''));
 
     const body = `
       ${fieldsHTML}
@@ -2994,11 +3000,7 @@ function renderProviders() {
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
         ${config.isDuplicate
           ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
-          : (config.canDuplicate
-            ? `<button class="btn-secondary btn-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.duplicate'))}</button>`
-            : (config.hasDuplicate
-              ? `<button class="btn-secondary btn-duplicate" data-provider="${id}" aria-disabled="true" title="${escapeHtml(t('st.providers.duplicate_limit'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`
-              : `<button class="btn-secondary btn-duplicate" data-provider="${id}" aria-disabled="true" title="${escapeHtml(t('st.providers.duplicate_unavailable'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`))}
+          : `<button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>`}
       </div>
       <div class="test-result" id="test-${id}"></div>
     `;
@@ -3029,8 +3031,12 @@ function renderProviders() {
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
   });
-  document.querySelectorAll('.btn-duplicate:not([aria-disabled="true"])').forEach(btn => {
+  document.querySelectorAll('.btn-duplicate').forEach(btn => {
     btn.addEventListener('click', () => duplicateProvider(btn.dataset.provider));
+  });
+  document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
+    const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
+    input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
     btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
@@ -3058,6 +3064,7 @@ function renderProviders() {
         input.style.display = 'none';
         input.value = sel.value;
       }
+      markProviderDirty(providerId);
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
     });
@@ -3092,6 +3099,7 @@ function renderProviders() {
         textarea.value = '';
         providerCompatibilityJsonDrafts.set(id, '');
       }
+      markProviderDirty(id);
       refreshProviderCompatibilitySummary(id);
     });
   });
@@ -3274,6 +3282,12 @@ function providerIsActive(id, config) {
   return id !== 'webbrain_cloud' && config?.configured === true;
 }
 
+function markProviderDirty(id) {
+  if (!id || !providersData[id]) return;
+  dirtyProviderIds.add(id);
+  refreshProviderCardStatus(id);
+}
+
 function refreshActiveProviderFilterCount() {
   const count = Object.entries(providersData)
     .filter(([id, config]) => id !== 'webgpu' && providerIsActive(id, config))
@@ -3435,6 +3449,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
     }
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
+  if (markConfigured) dirtyProviderIds.delete(id);
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);
 
@@ -3458,6 +3473,13 @@ function refreshProviderCardStatus(id) {
   const isSelected = id === activeProviderId;
   card.classList.toggle('configured', isConfigured);
   card.classList.toggle('selected', isSelected);
+  const duplicateButton = card.querySelector('.btn-duplicate');
+  if (duplicateButton && providersData[id]?.canDuplicate && !providersData[id]?.hasDuplicate) {
+    const requiresSave = !isConfigured || dirtyProviderIds.has(id);
+    duplicateButton.disabled = requiresSave;
+    if (!requiresSave) duplicateButton.removeAttribute('title');
+    else duplicateButton.title = t('st.providers.duplicate_inactive');
+  }
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
@@ -3543,10 +3565,10 @@ function restoreProviderDrafts(drafts) {
 }
 
 async function duplicateProvider(id) {
+  if (!providerIsActive(id, providersData[id]) || dirtyProviderIds.has(id)) return;
   try {
     syncInputsIntoProvidersData();
     const providerDrafts = providersData;
-    await saveProvider(id, { showFlash: false, markConfigured: false });
     const created = await sendToBackground('duplicate_provider', { providerId: id });
     const refreshed = await sendToBackground('get_providers');
     providersData = refreshed.providers;
@@ -3571,6 +3593,7 @@ async function removeDuplicateProvider(id) {
     restoreProviderDrafts(providerDrafts);
     expandedProviders.delete(id);
     providerCompatibilityJsonDrafts.delete(id);
+    dirtyProviderIds.delete(id);
     renderProviders();
   } catch (error) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));

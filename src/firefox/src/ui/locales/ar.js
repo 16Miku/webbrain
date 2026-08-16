@@ -268,6 +268,7 @@ export default {
   'st.providers.duplicate': 'نسخ',
   'st.providers.duplicate_limit': 'يُسمح بنسخة واحدة فقط',
   'st.providers.duplicate_unavailable': 'لا يمكن نسخ مزود الخدمة هذا',
+  'st.providers.duplicate_inactive': 'احفظ مزود الخدمة هذا قبل نسخه',
   'st.providers.remove_duplicate': 'حذف النسخة',
   'st.providers.remove_duplicate_confirm': 'هل تريد حذف نسخة مزود الخدمة هذه وإعداداتها المحفوظة؟',
   'st.providers.set_active': 'تعيينه نشطًا',

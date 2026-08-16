@@ -601,6 +601,7 @@ export default {
   'st.providers.duplicate': 'שכפול',
   'st.providers.duplicate_limit': 'מותר שכפול אחד בלבד',
   'st.providers.duplicate_unavailable': 'לא ניתן לשכפל ספק זה',
+  'st.providers.duplicate_inactive': 'יש לשמור את הספק הזה לפני שכפולו',
   'st.providers.remove_duplicate': 'הסרת השכפול',
   'st.providers.remove_duplicate_confirm': 'להסיר את הספק המשוכפל ואת ההגדרות השמורות שלו?',
   "st.providers.set_active": "הגדר פעיל",

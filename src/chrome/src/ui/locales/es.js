@@ -276,6 +276,7 @@ export default {
   'st.providers.duplicate': 'Duplicar',
   'st.providers.duplicate_limit': 'Solo se permite un duplicado',
   'st.providers.duplicate_unavailable': 'Este proveedor no se puede duplicar',
+  'st.providers.duplicate_inactive': 'Guarda este proveedor antes de duplicarlo',
   'st.providers.remove_duplicate': 'Eliminar duplicado',
   'st.providers.remove_duplicate_confirm': '¿Eliminar este proveedor duplicado y su configuración guardada?',
   'st.providers.set_active': 'Establecer activo',

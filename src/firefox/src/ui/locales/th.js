@@ -268,6 +268,7 @@ export default {
   'st.providers.duplicate': 'ทำสำเนา',
   'st.providers.duplicate_limit': 'อนุญาตให้มีสำเนาได้เพียงหนึ่งรายการ',
   'st.providers.duplicate_unavailable': 'ไม่สามารถทำสำเนาผู้ให้บริการนี้ได้',
+  'st.providers.duplicate_inactive': 'บันทึกผู้ให้บริการนี้ก่อนทำสำเนา',
   'st.providers.remove_duplicate': 'ลบสำเนา',
   'st.providers.remove_duplicate_confirm': 'ลบผู้ให้บริการสำเนานี้และการตั้งค่าที่บันทึกไว้หรือไม่',
   'st.providers.set_active': 'ตั้งเป็นใช้งาน',

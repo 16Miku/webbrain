@@ -268,6 +268,7 @@ export default {
   'st.providers.duplicate': 'Dupliquer',
   'st.providers.duplicate_limit': 'Un seul doublon est autorisé',
   'st.providers.duplicate_unavailable': 'Ce fournisseur ne peut pas être dupliqué',
+  'st.providers.duplicate_inactive': 'Enregistrez ce fournisseur avant de le dupliquer',
   'st.providers.remove_duplicate': 'Supprimer le doublon',
   'st.providers.remove_duplicate_confirm': 'Supprimer ce fournisseur dupliqué et sa configuration enregistrée ?',
   'st.providers.set_active': 'Définir comme actif',

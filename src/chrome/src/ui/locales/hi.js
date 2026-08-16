@@ -632,6 +632,7 @@ export default {
   'st.providers.duplicate': 'डुप्लिकेट करें',
   'st.providers.duplicate_limit': 'केवल एक डुप्लिकेट की अनुमति है',
   'st.providers.duplicate_unavailable': 'इस प्रदाता को डुप्लिकेट नहीं किया जा सकता',
+  'st.providers.duplicate_inactive': 'इस प्रदाता को डुप्लिकेट करने से पहले सहेजें',
   'st.providers.remove_duplicate': 'डुप्लिकेट हटाएँ',
   'st.providers.remove_duplicate_confirm': 'क्या इस डुप्लिकेट प्रदाता और इसकी सहेजी गई सेटिंग हटानी हैं?',
   'st.providers.set_active': "सक्रिय सेट करें",

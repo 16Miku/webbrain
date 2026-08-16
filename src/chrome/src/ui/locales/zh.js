@@ -276,6 +276,7 @@ export default {
   'st.providers.duplicate': '复制',
   'st.providers.duplicate_limit': '最多只能创建一个副本',
   'st.providers.duplicate_unavailable': '此服务商不可复制',
+  'st.providers.duplicate_inactive': '请先保存此服务商，然后再复制',
   'st.providers.remove_duplicate': '删除副本',
   'st.providers.remove_duplicate_confirm': '要删除此服务商副本及其已保存的配置吗？',
   'st.providers.set_active': '设为启用',

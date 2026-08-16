@@ -616,6 +616,7 @@ export default {
   'st.providers.duplicate': 'ডুপ্লিকেট',
   'st.providers.duplicate_limit': 'শুধু একটি ডুপ্লিকেট অনুমোদিত',
   'st.providers.duplicate_unavailable': 'এই প্রদানকারীকে ডুপ্লিকেট করা যাবে না',
+  'st.providers.duplicate_inactive': 'ডুপ্লিকেট করার আগে এই প্রদানকারীটি সংরক্ষণ করুন',
   'st.providers.remove_duplicate': 'ডুপ্লিকেট মুছুন',
   'st.providers.remove_duplicate_confirm': 'এই ডুপ্লিকেট প্রদানকারী ও এর সংরক্ষিত সেটিংস মুছবেন?',
   'st.providers.set_active': "সক্রিয় সেট করুন",

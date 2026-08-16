@@ -48139,16 +48139,26 @@ test('ProviderManager creates one independent duplicate per provider', async () 
       const writes = [];
       globalThis[runtimeKey] = makeProviderManagerWriteRuntime(writes);
       const manager = new PM();
+      const defaults = manager._defaultConfigs();
       const sourceConfig = {
-        ...manager._defaultConfigs().openai,
+        ...defaults.openai,
         apiKey: `${label}-work-key`,
         model: `${label}-work-model`,
         configured: true,
         compat: { reasoningEffort: 'medium' },
       };
       manager.providers.set('openai', manager._createProvider('openai', sourceConfig));
+      manager.providers.set('kimi', manager._createProvider('kimi', {
+        ...defaults.kimi,
+        configured: false,
+      }));
       manager.activeProviderId = 'openai';
       assert.equal(manager.getAll().openai.canDuplicate, true, `${label}: eligible sources should advertise duplicate availability`);
+      await assert.rejects(
+        () => manager.duplicateProvider('kimi'),
+        /save provider before duplicating/i,
+        `${label}: an unconfigured source should not be duplicated before Save`,
+      );
 
       const created = await manager.duplicateProvider('openai');
       assert.equal(created.providerId, 'openai__duplicate', `${label}: duplicate ID should be stable and safe`);
@@ -48172,6 +48182,8 @@ test('ProviderManager creates one independent duplicate per provider', async () 
       assert.equal(manager.providers.get(created.providerId)?.config.apiKey, `${label}-personal-key`);
       assert.equal(manager.providers.get(created.providerId)?.config.model, `${label}-personal-model`);
       const surfaced = manager.getAll();
+      const surfacedIds = Object.keys(surfaced);
+      assert.equal(surfacedIds.indexOf(created.providerId), surfacedIds.indexOf('openai') + 1, `${label}: duplicate should appear immediately after its source`);
       assert.equal(surfaced.openai.hasDuplicate, true, `${label}: source should advertise its existing duplicate`);
       assert.equal(surfaced.openai.canDuplicate, false, `${label}: source should enforce the one-duplicate limit in UI metadata`);
       assert.equal(surfaced[created.providerId].isDuplicate, true, `${label}: duplicate metadata missing`);
@@ -48382,6 +48394,12 @@ test('ProviderManager reloads one valid duplicate and purges forged duplicate en
             duplicateOf: 'webbrain_cloud',
             label: 'WebBrain Cloud 2',
           },
+          kimi__duplicate: {
+            ...structuredClone(defaults.kimi),
+            duplicateOf: 'kimi',
+            label: 'Kimi 2',
+            configured: false,
+          },
           groq: {
             ...structuredClone(defaults.groq),
             duplicateOf: 'openai',
@@ -48398,12 +48416,14 @@ test('ProviderManager reloads one valid duplicate and purges forged duplicate en
       assert.equal(manager.providers.has('openai__duplicate_2'), false, `${label}: forged second duplicate should be rejected`);
       assert.equal(manager.providers.has('missing__duplicate'), false, `${label}: orphan duplicate should be rejected`);
       assert.equal(manager.providers.has('webbrain_cloud__duplicate'), false, `${label}: managed cloud duplicate should be rejected`);
+      assert.equal(manager.providers.has('kimi__duplicate'), false, `${label}: duplicate created before its source was saved should be rejected`);
       assert.equal(manager.providers.has('groq'), true, `${label}: forged metadata must not delete a built-in provider`);
       assert.equal(manager.providers.get('groq')?.config.duplicateOf, undefined, `${label}: forged duplicate metadata should be stripped from built-ins`);
       assert.equal(storageData.providers.openai__duplicate?.apiKey, `${label}-personal-key`, `${label}: valid duplicate was not persisted`);
       assert.equal(storageData.providers.openai__duplicate_2, undefined, `${label}: forged duplicate was not purged from storage`);
       assert.equal(storageData.providers.missing__duplicate, undefined, `${label}: orphan duplicate was not purged from storage`);
       assert.equal(storageData.providers.webbrain_cloud__duplicate, undefined, `${label}: managed duplicate was not purged from storage`);
+      assert.equal(storageData.providers.kimi__duplicate, undefined, `${label}: pre-Save duplicate was not purged from storage`);
       assert.equal(storageData.providers.groq?.duplicateOf, undefined, `${label}: forged built-in duplicate metadata was not purged`);
     }
   } finally {
@@ -48426,9 +48446,27 @@ test('duplicate provider controls are wired through background and settings in b
     assert.match(settings, /class="btn-secondary btn-duplicate"[\s\S]*?st\.providers\.duplicate/, `${label}: duplicate button missing`);
     assert.match(settings, /class="btn-secondary btn-remove-duplicate"[\s\S]*?st\.providers\.remove_duplicate/, `${label}: remove duplicate button missing`);
     assert.match(settings, /config\.hasDuplicate[\s\S]*?st\.providers\.duplicate_limit[\s\S]*?st\.providers\.duplicate_unavailable/, `${label}: disabled duplicate buttons should explain limits and unsupported providers`);
-    assert.match(settings, /async function duplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?saveProvider\(id, \{ showFlash: false, markConfigured: false \}\)[\s\S]*?sendToBackground\('duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: duplicate action should preserve all current drafts while cloning`);
+    assert.match(settings, /const duplicateDisabledKey = config\.hasDuplicate[\s\S]*?!config\.canDuplicate[\s\S]*?!isConfigured \|\| dirtyProviderIds\.has\(id\)[\s\S]*?'st\.providers\.duplicate_inactive'/, `${label}: an inactive or edited source provider should disable Duplicate`);
+    assert.ok(settings.includes('${duplicateDisabledKey ? ` disabled title="'), `${label}: unavailable Duplicate actions should use native disabled buttons`);
+    assert.match(settings, /document\.querySelectorAll\('\.btn-duplicate'\)[\s\S]*?duplicateProvider\(btn\.dataset\.provider\)/, `${label}: initially disabled Duplicate buttons should be ready after Save enables them`);
+    assert.match(settings, /input\[data-provider\], select\[data-provider\], textarea\[data-provider\][\s\S]*?markProviderDirty\(input\.dataset\.provider\)/, `${label}: editing a saved provider should disable Duplicate until Save`);
+    assert.match(settings, /const duplicateButton = card\.querySelector\('\.btn-duplicate'\);[\s\S]*?const requiresSave = !isConfigured \|\| dirtyProviderIds\.has\(id\);[\s\S]*?duplicateButton\.disabled = requiresSave;[\s\S]*?duplicateButton\.removeAttribute\('title'\)[\s\S]*?st\.providers\.duplicate_inactive/, `${label}: Save should enable Duplicate without rebuilding provider cards`);
+    assert.match(settings, /async function duplicateProvider\(id\) \{\s*if \(!providerIsActive\(id, providersData\[id\]\) \|\| dirtyProviderIds\.has\(id\)\) return;/, `${label}: inactive and edited providers should also be guarded at the Duplicate handler`);
+    const duplicateAction = settings.match(/async function duplicateProvider\(id\)[\s\S]*?async function removeDuplicateProvider\(id\)/)?.[0] || '';
+    assert.doesNotMatch(duplicateAction, /saveProvider\(/, `${label}: Duplicate must not implicitly save the source provider`);
+    assert.match(duplicateAction, /syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: duplicate action should preserve other provider drafts while cloning the last saved source`);
     assert.match(settings, /async function removeDuplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('remove_duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: remove duplicate action should preserve drafts for remaining providers`);
     assert.match(sidepanel, /appendProviderPickerOption\(id, name, t\('sp\.providers\.active'\), config\.sourceProviderId \|\| id\)/, `${label}: duplicate picker entries should reuse their source icon`);
+  }
+
+  const localeKeyPattern = /'st\.providers\.duplicate_inactive':\s*'([^']+)'/;
+  const chromeLocaleDir = path.join(ROOT, 'src/chrome/src/ui/locales');
+  const firefoxLocaleDir = path.join(ROOT, 'src/firefox/src/ui/locales');
+  for (const localeFile of fs.readdirSync(chromeLocaleDir).filter(file => file.endsWith('.js'))) {
+    const chromeMatch = fs.readFileSync(path.join(chromeLocaleDir, localeFile), 'utf8').match(localeKeyPattern);
+    const firefoxMatch = fs.readFileSync(path.join(firefoxLocaleDir, localeFile), 'utf8').match(localeKeyPattern);
+    assert.ok(chromeMatch?.[1], `chrome: ${localeFile} missing inactive Duplicate guidance`);
+    assert.equal(firefoxMatch?.[1], chromeMatch[1], `${localeFile}: inactive Duplicate guidance should match across browsers`);
   }
 });
 
