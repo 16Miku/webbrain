@@ -538,9 +538,11 @@ const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
+const providerPicker = document.getElementById('provider-picker');
 const providerPickerBtn = document.getElementById('provider-picker-btn');
 const providerPickerMenu = document.getElementById('provider-picker-menu');
 const providerPickerLabel = document.getElementById('provider-picker-label');
+const standaloneWebgpuBtn = document.getElementById('btn-webgpu-standalone');
 const languageSelect = document.getElementById('language-select');
 const languagePickerBtn = document.getElementById('language-picker-btn');
 const languagePickerMenu = document.getElementById('language-picker-menu');
@@ -1027,6 +1029,9 @@ let recommendationsRequestId = 0;
 let providerSelectionRequestId = 0;
 let providerTestRequestId = 0;
 let selectedProviderId = 'webbrain_cloud';
+let standaloneWebgpuEnabled = false;
+let standaloneWebgpuReady = false;
+let standaloneWebgpuActive = false;
 let recommendedActionsCollapsed = false;
 let webbrainPromotionHasAnimated = false;
 let slashCommandMatches = [];
@@ -4121,6 +4126,7 @@ async function init() {
   restoreLatestChatTurnPosition();
 
   await loadProviders();
+  await refreshStandaloneWebgpuStatus();
   await testConnection({ skipWebBrainCloud: true });
   await windowScope.syncActiveTab();
   refreshScheduledJobs({ tabId: currentTabId });
@@ -4143,6 +4149,7 @@ async function init() {
     }
     if (changes.providers || changes.activeProvider) {
       void loadProviders();
+      void refreshStandaloneWebgpuStatus();
     }
   });
 }
@@ -4379,6 +4386,8 @@ async function adoptRestoredRunState(tabId, state) {
       requestId,
       mode,
       foreground: runUi.foreground === true,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
+      ...standaloneWebgpuRunPayload(),
     }, {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
@@ -6541,6 +6550,7 @@ async function loadProviders() {
     selectedProviderId = selectableProviderIds.has(res.active) ? res.active : 'webbrain_cloud';
     providerSelect.value = selectedProviderId;
     syncProviderPickerButton();
+    syncStandaloneWebgpuUi();
   } catch (e) {
     console.error('Failed to load providers:', e);
   }
@@ -6553,6 +6563,50 @@ async function openProvidersSettingsPage() {
   } catch {
     chrome.runtime.openOptionsPage();
   }
+}
+
+function setActiveChatProvider(providerId) {
+  return sendToBackground('set_active_provider', { providerId });
+}
+
+function standaloneWebgpuRunPayload() {
+  return isStandaloneWindow && standaloneWebgpuActive ? { providerId: 'webgpu' } : {};
+}
+
+function syncStandaloneWebgpuUi() {
+  if (!standaloneWebgpuBtn) return;
+  standaloneWebgpuBtn.hidden = !isStandaloneWindow;
+  if (!isStandaloneWindow) return;
+  if (!standaloneWebgpuEnabled) standaloneWebgpuActive = false;
+  standaloneWebgpuBtn.disabled = !standaloneWebgpuEnabled;
+  standaloneWebgpuBtn.classList.toggle('active', standaloneWebgpuActive);
+  standaloneWebgpuBtn.setAttribute('aria-pressed', String(standaloneWebgpuActive));
+  standaloneWebgpuBtn.title = !standaloneWebgpuEnabled
+    ? 'Enable Apocalypse Mode first'
+    : standaloneWebgpuActive
+      ? standaloneWebgpuReady
+        ? 'Using WebGPU for this standalone chat'
+        : 'Using WebGPU for this standalone chat · download LFM2.5 2.6B before sending'
+      : standaloneWebgpuReady
+        ? 'Use WebGPU for this standalone chat'
+        : 'Use WebGPU for this standalone chat · model download required';
+  providerSelect.disabled = standaloneWebgpuActive;
+  providerPickerBtn.disabled = standaloneWebgpuActive;
+  providerPicker?.classList.toggle('webgpu-override', standaloneWebgpuActive);
+  if (standaloneWebgpuActive) setProviderPickerOpen(false);
+}
+
+async function refreshStandaloneWebgpuStatus() {
+  if (!isStandaloneWindow || !standaloneWebgpuBtn) return;
+  try {
+    const status = await sendToBackground('get_standalone_webgpu_status');
+    standaloneWebgpuEnabled = status?.enabled === true;
+    standaloneWebgpuReady = status?.ready === true;
+  } catch {
+    standaloneWebgpuEnabled = false;
+    standaloneWebgpuReady = false;
+  }
+  syncStandaloneWebgpuUi();
 }
 
 function isWebBrainCloudProviderSelected() {
@@ -8130,6 +8184,7 @@ async function sendMessage(extraChatParams = {}) {
       } : {}),
       ...(attachmentsForSend.length ? { attachments: attachmentsForSend } : {}),
       ...chatExtraParams,
+      ...standaloneWebgpuRunPayload(),
     });
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
@@ -8421,6 +8476,11 @@ chrome.runtime.onMessage.addListener((msg) => {
       || msg.action !== 'user_memory_created'
       || document.visibilityState === 'hidden') return;
   showComposerToast(t('sp.memory.remembered'), { duration: 3200, effect: 'memory' });
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!isStandaloneWindow || !['webgpu-text-download-state', 'apocalypse-mode-state'].includes(msg?.type)) return;
+  void refreshStandaloneWebgpuStatus();
 });
 
 // Recorder broadcasts — independent of the per-tab agent_update flow.
@@ -10621,6 +10681,8 @@ async function continueAgent(options = {}) {
       requestId,
       mode: modeForSend,
       foreground: foregroundForSend,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
+      ...standaloneWebgpuRunPayload(),
     });
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
@@ -12511,7 +12573,7 @@ providerSelect.addEventListener('change', async () => {
   const requestId = ++providerSelectionRequestId;
   providerTestRequestId += 1;
   try {
-    await sendToBackground('set_active_provider', { providerId });
+    await setActiveChatProvider(providerId);
   } catch (e) {
     if (requestId === providerSelectionRequestId && providerSelect.value === providerId) {
       markSelectedProviderFailed(e);
@@ -12521,12 +12583,19 @@ providerSelect.addEventListener('change', async () => {
   if (requestId !== providerSelectionRequestId || providerSelect.value !== providerId) {
     const latestProviderId = providerSelect.value;
     if (latestProviderId && latestProviderId !== providerId) {
-      sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});
+      setActiveChatProvider(latestProviderId).catch(() => {});
     }
     return;
   }
   selectedProviderId = providerId;
   await testConnection({ providerId });
+});
+
+standaloneWebgpuBtn?.addEventListener('click', async () => {
+  await refreshStandaloneWebgpuStatus();
+  if (!standaloneWebgpuEnabled) return;
+  standaloneWebgpuActive = !standaloneWebgpuActive;
+  syncStandaloneWebgpuUi();
 });
 
 providerPickerBtn?.addEventListener('click', (event) => {

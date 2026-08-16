@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="vi" dir="ltr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Câu hỏi thường gặp — WebBrain</title>
+  <meta name="description" content="Câu trả lời nhanh về thiết lập, mô hình, thanh toán, an toàn và cách WebBrain hoạt động trong trình duyệt của bạn.">
+  <link rel="canonical" href="https://webbrain.one/docs/vi/faq/">
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/docs/faq/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/docs/es/faq/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/docs/fr/faq/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/docs/tr/faq/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/faq/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/docs/ru/faq/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/docs/uk/faq/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/docs/ar/faq/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/docs/ja/faq/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/docs/ko/faq/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/docs/id/faq/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/docs/th/faq/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/docs/ms/faq/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/docs/tl/faq/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/docs/he/faq/">
+  <link rel="alternate" hreflang="hi" href="https://webbrain.one/docs/hi/faq/">
+  <link rel="alternate" hreflang="pt" href="https://webbrain.one/docs/pt/faq/">
+  <link rel="alternate" hreflang="vi" href="https://webbrain.one/docs/vi/faq/">
+  <link rel="alternate" hreflang="bn" href="https://webbrain.one/docs/bn/faq/">
+  <link rel="alternate" hreflang="fa" href="https://webbrain.one/docs/fa/faq/">
+  <link rel="alternate" hreflang="nl" href="https://webbrain.one/docs/nl/faq/">
+  <link rel="alternate" hreflang="de" href="https://webbrain.one/docs/de/faq/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/faq/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Câu hỏi thường gặp — WebBrain">
+  <meta property="og:description" content="Câu trả lời nhanh về thiết lập, mô hình, thanh toán, an toàn và cách WebBrain hoạt động trong trình duyệt của bạn.">
+  <meta property="og:url" content="https://webbrain.one/docs/vi/faq/">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.png">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script>
+  <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "inLanguage": "vi-VN",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "WebBrain có phải là giải pháp thay thế miễn phí cho plugin trình duyệt của Claude không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vâng. WebBrain cung cấp các khả năng tương tự của tác nhân trình duyệt AI — đọc trang, trích xuất dữ liệu, nhấp vào nút, điền biểu mẫu và tự động hóa quy trình làm việc nhiều bước. Không giống như plugin trình duyệt độc quyền của Claude yêu cầu đăng ký Claude Pro và chỉ hoạt động với các mẫu của Anthropic, WebBrain hoàn toàn miễn phí, nguồn mở (giấy phép MIT) và hỗ trợ nhiều nhà cung cấp LLM bao gồm các mẫu cục bộ chạy hoàn toàn trên máy của bạn."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Thuê bao WebBrain Cloud có giá bao nhiêu?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Đám mây WebBrain hiện đang $5/tháng cho mỗi hồ sơ thiết bị, rẻ hơn nhiều so với Claude Pro ở thời điểm hiện tại. Việc sử dụng hiện không giới hạn theo chính sách sử dụng hợp lý: sử dụng cá nhân bình thường là được, nhưng không được phép sử dụng lạm dụng, tự động, bán lại hoặc sử dụng số lượng lớn bất thường. Đăng ký được liên kết với mã nhận dạng thiết bị do tiện ích mở rộng tạo ra cho trình duyệt đó + GUID hệ điều hành, chứ không phải với tài khoản người dùng. Nếu số nhận dạng đó bị mất do bạn đặt lại bộ nhớ tiện ích mở rộng, xóa hồ sơ trình duyệt, cài đặt lại trình duyệt, thay đổi trình duyệt/HĐH hoặc mất thiết bị, chúng tôi không thể truy xuất hoặc chuyển thiết bị đó và chúng tôi không hoàn lại tiền cho sự mất mát đó."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Làm cách nào để quản lý hoặc hủy gói đăng ký?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Quản lý thanh toán tại api.webbrain.one/account và đăng nhập bằng email của bạn."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Cloud Sync được mã hóa hoạt động như thế nào?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cloud Sync là một tính năng tùy chọn dành cho những người đăng ký WebBrain Cloud đang hoạt động. Nó đồng bộ hóa bộ nhớ WebBrain, văn bản tự động điền hồ sơ và cấu hình nhà cung cấp được hỗ trợ, bao gồm cả khóa API. Nó có không đồng bộ hóa lịch sử trò chuyện, lịch sử trình duyệt, ảnh chụp màn hình trang hoặc mã thông báo làm mới và truy cập OAuth cũ. Trình duyệt của bạn mã hóa kho đồng bộ hóa trước khi tải lên bằng mật khẩu bạn chọn. WebBrain Cloud chỉ lưu trữ kho tiền được mã hóa; nó không thể đọc ký ức, văn bản hồ sơ, cài đặt nhà cung cấp hoặc khóa API của bạn và không thể khôi phục mật khẩu đồng bộ hóa cho bạn. Trường email dành cho xác thực đăng ký/thanh toán liên kết ma thuật trên đám mây WebBrain. Nó không phải là mật khẩu tài khoản. Nếu giao diện người dùng thông báo thay đổi mật khẩu trong Cloud Sync, điều đó có nghĩa là đồng bộ mật khẩu mã hóa, không phải mật khẩu tài khoản WebBrain. Nếu bạn quên mật khẩu đồng bộ hóa, kho lưu trữ đám mây được mã hóa cũ sẽ không thể giải mã được. Bạn có thể đặt lại kho lưu trữ đám mây và tải lên bản sao được mã hóa mới từ thiết bị vẫn còn dữ liệu cục bộ."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain so sánh với OpenClaw, Sử dụng trình duyệt và các khung tác nhân AI khác như thế nào?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Chúng là những loại công cụ khác nhau. WebBrain là một tiện ích mở rộng của trình duyệt — bạn cài đặt nó trong Chrome hoặc Firefox và trò chuyện với nó trong bảng điều khiển bên cạnh, không cần mã hóa. Các khung như OpenClaw và Browser-Use là SDK dành cho nhà phát triển để xây dựng quy trình trình duyệt tự động bằng Python, thường sử dụng trình duyệt không có giao diện người dùng và CDP. Hãy nghĩ theo cách này: WebBrain dành cho duyệt web hàng ngày với trợ lý AI; các khung tác nhân dùng để xây dựng các bot quét và tự động hóa thử nghiệm. Bạn có thể sử dụng cả hai - chúng bổ sung cho nhau."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi có thể sử dụng WebBrain hoàn toàn ngoại tuyến không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vâng. Nhà cung cấp mặc định của WebBrain là llama.cpp, chạy mô hình AI cục bộ trên máy tính của bạn. Không cần khóa API, không cần internet cho AI và không có dữ liệu nào rời khỏi máy của bạn. Chỉ cần tải xuống mô hình GGUF, khởi động máy chủ llama và bạn có một tác nhân trình duyệt AI hoàn toàn riêng tư. Bạn cũng có thể sử dụng Ollama với điểm cuối tương thích OpenAI."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain hỗ trợ những mẫu AI nào?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "WebBrain hỗ trợ bốn loại nhà cung cấp: llama.cpp (bất kỳ mô hình GGUF cục bộ nào), OpenAI (GPT-4o, GPT-4, v.v.), Claude (Claude Opus, Sonnet, Haiku qua API gốc) và OpenRouter (truy cập vào hơn 100 mô hình từ nhiều nhà cung cấp khác nhau). Mọi điểm cuối API tương thích với OpenAI đều hoạt động, vì vậy bạn cũng có thể sử dụng các dịch vụ như Together AI, Groq, Mistral hoặc bất kỳ máy chủ cục bộ nào có giao diện tương thích với OpenAI."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Mô hình được khuyên dùng nhất là gì?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "kể từ Ngày 21 tháng 4 năm 2026, khuyến nghị hàng đầu là Qwen 3.6 35B. Tại sao: trong tiêu chuẩn tầm nhìn của chúng tôi (tầm nhìn-mô hình-bắn súng), nó vượt trội hơn Gemma 4 về khả năng hiểu ảnh chụp màn hình trong khi vẫn thực tế cho suy luận cục bộ. Đối với GPU dành cho người tiêu dùng, RTX 5090 là lý tưởng và RTX 4090 thường có thể hoạt động được với lượng tử hóa INT4 AutoRound thông qua Intel/Qwen3.6-35B-A3B-int4-AutoRound. Để có tốc độ tối đa, chúng tôi khuyên bạn nên phân phát trên vLLM. Lệnh mẫu: python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{\"image\": 4, \"video\": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '[\"*\"]' --speculative-config '{\"method\": \"dflash\", \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\", \"num_speculative_tokens\": 15}' --attention-backend flash_attn Giải mã suy đoán DFlash là tùy chọn."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tại sao WebGPU chỉ có trong Chế độ Apocalypse?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vì chúng tôi chưa cho rằng suy luận văn bản WebGPU trong trình duyệt đủ tốt cho phần lớn người dùng, và không muốn bạn phải chịu trải nghiệm kém. Nếu muốn dùng cục bộ cùng mô hình LFM2.5 2.6B, hãy chạy suy luận trên máy của bạn bằng llama.cpp hoặc Ollama rồi trỏ WebBrain đến endpoint cục bộ đó thay vì phụ thuộc vào WebGPU. Tính năng dự phòng thị giác qua WebGPU vẫn có sẵn vì mô hình của nó nhỏ hơn nhiều và chỉ thỉnh thoảng mới được dùng."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi nhận được thông báo \"Không tìm nạp được\" khi kết nối với máy chủ LLM cục bộ (vLLM, Ollama, llama.cpp) trên mạng của mình",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nếu máy chủ LLM của bạn nằm trên một máy khác trong mạng cục bộ của bạn (ví dụ: http://192.168.1.x:8000), Chrome chặn yêu cầu trừ khi máy chủ gửi Tiêu đề CORS. Cách khắc phục tùy thuộc vào máy chủ của bạn: vLLM: Bắt đầu với --allowed-origins '[\"*\"]' (giá trị phải là danh sách JSON). Ollama: Đặt biến môi trường OLLAMA_ORIGINS=* trước khi bắt đầu. llama.cpp: CORS được bật theo mặc định - không cần thay đổi. Nếu máy chủ của bạn chạy trên localhost (cùng máy với trình duyệt), CORS thường không bắt buộc. Sự cố chỉ ảnh hưởng đến kết nối nhiều máy trên mạng cục bộ. Đảm bảo URL cơ sở của bạn trong cài đặt WebBrain kết thúc bằng /v1 (ví dụ: http://192.168.1.47:8000/v1). Ngoại lệ: Ollama được sử dụng từ tiện ích mở rộng trình duyệt có thể vẫn cần OLLAMA_ORIGINS; xem Câu hỏi thường gặp về Ollama bên dưới."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tại sao Ollama trên localhost trả về 403 từ tiện ích mở rộng WebBrain?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Các phiên bản Ollama gần đây có thể từ chối yêu cầu từ nguồn mở rộng trình duyệt ngay cả khi Ollama đang chạy trên cùng một máy. Tiện ích mở rộng sẽ gửi một Origin chẳng hạn như chrome-extension://... hoặc moz-extension://...và Ollama có thể trả lời 403 trừ khi những nguồn gốc đó được cho phép. Thoát khỏi mọi ứng dụng máy tính để bàn Ollama đang giữ cổng 11434, sau đó khởi động Ollama bằng một trong các lệnh sau: OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve Giữ URL cơ sở Ollama của WebBrain được đặt thành http://localhost:11434/v1. thiết bị đầu cuối curl kiểm tra vẫn có thể hoạt động mà không cần cài đặt này vì chúng không gửi nguồn gốc tiện ích mở rộng trình duyệt."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain có hoạt động trên Firefox không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vâng. WebBrain có cả phiên bản Chrome (Manifest V3, sử dụng API sidePanel) và phiên bản Firefox (Manifest V2, sử dụng sidebar_action). Cả hai phiên bản đều có tính năng giống hệt nhau. Phiên bản Firefox có thể được tải dưới dạng tiện ích bổ sung tạm thời để phát triển hoặc được xuất bản lên addons.mozilla.org để cài đặt vĩnh viễn."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi có thể di chuyển thanh bên Firefox từ trái sang phải, giống như bảng điều khiển bên của Chrome không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Có — Thanh bên của Firefox mặc định ở bên trái nhưng bạn có thể lật nó. Nhấp chuột phải vào bất kỳ đâu trong tiêu đề thanh bên và chọn Di chuyển thanh bên sang phải (hoặc sử dụng Xem → Thanh bên → Di chuyển Thanh bên sang phải từ thanh menu). Vị trí vẫn tồn tại trong quá trình khởi động lại. SidePanel của Chrome mặc định ở bên phải và người dùng không thể di chuyển khỏi bảng đó."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Có hạn chế nào khi sử dụng WebBrain trong Web Panel của Vivaldi không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vâng. Bảng điều khiển web Vivaldi ngăn chặn các hộp thoại JavaScript gốc như confirm(), alert()và prompt(). Công tắc chuyển đổi chế độ Hỏi, Hành động và Nhà phát triển của WebBrain không còn phụ thuộc vào các hộp thoại đó nữa nhưng một số hành động phụ vẫn thực hiện. Ghi âm: không sử dụng /record ở Vivaldi bây giờ. Nếu quá trình ghi không thành công, Vivaldi có thể ẩn cảnh báo lỗi và không để lại lời giải thích rõ ràng. Cài đặt, Lịch sử, Dấu vết và chuyển giao Ollama: Chúng cũng chứa các hộp thoại gốc, nhưng WebBrain thường mở chúng dưới dạng tab thông thường, nơi chúng hoạt động. Nếu bạn đặt một bảng vào Bảng điều khiển Web theo cách thủ công, hãy mở nó trong tab thông thường trước khi sử dụng các hành động phụ thuộc vào hộp thoại."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain có an toàn khi sử dụng không? Nó có thể sửa đổi các trang web?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "WebBrain có ba chế độ. Chế độ Hỏi (mặc định) là chỉ đọc và không thể sửa đổi bất cứ điều gì trên trang. Chế độ hành động cho phép các hành động của trình duyệt như nhấp, nhập và điều hướng, trong khi chế độ Dev bổ sung các công cụ gỡ lỗi trang. Các hành động tiếp theo cần được phê duyệt theo mặc định; nếu cổng cấp phép đó bị tắt, WebBrain sẽ hiển thị biểu ngữ cảnh báo hiển thị. Bạn có thể dừng tác nhân bất cứ lúc nào bằng nút Dừng. Mã nguồn của tiện ích mở rộng hoàn toàn mở để kiểm tra trên GitHub."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Biểu ngữ \"WebBrain đã bắt đầu gỡ lỗi trình duyệt này\" là gì? Tại sao WebBrain sử dụng CDP?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Để hoạt động trên một trang một cách đáng tin cậy, WebBrain sử dụng Giao thức DevTools Chrome (CDP) thông qua tiêu chuẩn chrome.debugger API tiện ích mở rộng - đó là những gì kích hoạt biểu ngữ \"WebBrain đã bắt đầu gỡ lỗi trình duyệt này\" của Chrome. CDP là thứ cho phép tác nhân nhấp và gõ bằng sự kiện đầu vào đáng tin cậy mà những địa điểm hiện đại thực sự tôn vinh; các sự kiện tổng hợp được kích hoạt từ tập lệnh nội dung bị nhiều trang web, Thành phần web và đầu vào do khung kiểm soát từ chối. Đó cũng là cách WebBrain chụp ảnh màn hình chính xác đến từng pixel để dự phòng tầm nhìn và tiếp cận iframe có nguồn gốc chéo và DOM bóng mà tập lệnh nội dung không thể nhìn thấy. Chỉ đọc Chế độ hỏi không cần CDP — việc đọc trang và cây khả năng truy cập sẽ đi qua các tập lệnh nội dung thông thường. Đó là Chế độ hành động độ tin cậy và công việc có nguồn gốc chéo yêu cầu nó và trong tiện ích mở rộng Manifest V3 không có API không phải trình gỡ lỗi cho đầu vào đáng tin cậy. WebBrain đính kèm trình gỡ lỗi chỉ khi một hành động cần nó, trên mỗi tab và toàn bộ tiện ích mở rộng là nguồn mở nên bạn có thể kiểm tra chính xác hoạt động của phiên. CDP rất mạnh nên chúng tôi coi dấu vết của nó như một thứ gì đó cần chứa — đính kèm theo yêu cầu, tiếp tục đọc — và thắt chặt hơn nữa điều đó nằm trong lộ trình bảo mật của chúng tôi."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Nó hỏi tôi quá nhiều câu hỏi. Tôi có thể vô hiệu hóa nó được không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Những lời nhắc phê duyệt đó là vì sự an toàn của bạn. Ngay cả trên các trang web mà bạn tin cậy, các tác nhân độc hại có thể bắt chước các hướng dẫn LLM hoặc chèn nội dung cố gắng khiến tác nhân thay mặt bạn thực hiện những việc mà bạn không chấp thuận. Đó là lý do tại sao WebBrain hỏi trước các hành động mang tính hậu quả. Nếu bạn vẫn không muốn xem qua những lời nhắc đó, hãy gõ /dangerously-skip-permissions trong bảng điều khiển bên cạnh hoặc mở plugin bên cạnh, nhấp vào biểu tượng bánh xe trong tiêu đề, đi tới Quyền tab vào settings.html, và tắt Hỏi trước các hành động mang tính hậu quả."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Làm cách nào để sử dụng WebBrain để quét web và trích xuất dữ liệu?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Chỉ cần mở bất kỳ trang web nào, mở bảng điều khiển bên WebBrain và hỏi bằng ngôn ngữ tự nhiên: \"Trích xuất tất cả tên sản phẩm và giá từ trang này\", \"Nhận tất cả địa chỉ email trên trang này\" hoặc \"Tóm tắt bài viết này bằng dấu đầu dòng\". Tác nhân AI đọc nội dung trang, hiểu cấu trúc và trả về dữ liệu được trích xuất. Để quét phức tạp hơn, hãy chuyển sang chế độ Hành động và nhân viên có thể điều hướng giữa các trang, nhấp vào nút phân trang và tổng hợp dữ liệu trên nhiều trang."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain có gọi API trực tiếp hay luôn nhấp qua giao diện người dùng?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Theo mặc định, WebBrain luôn đi qua giao diện người dùng hiển thị đối với bất kỳ hành động nào tạo, sửa đổi, xóa, gửi, gửi, đăng hoặc mua bất kỳ thứ gì. Nó sẽ điều hướng đến trang, điền vào biểu mẫu và nhấp vào nút - chính xác theo cách bạn muốn. Nó từ chối gọi trực tiếp các điểm cuối REST/GraphQL qua nền fetch() đối với các đột biến. Điều này là có chủ ý: Các hành động API là vô hình (bạn không nhìn thấy những gì đang được gửi), thường yêu cầu các mã thông báo xác thực riêng biệt mà bạn có thể chưa định cấu hình và có bán kính vụ nổ lớn hơn nhiều so với một lần bấm nhầm có thể nhìn thấy được. Ưu tiên giao diện người dùng có nghĩa là mọi thứ đều hiển thị trên màn hình, trong phiên trình duyệt thông thường của bạn và có thể dừng lại. cho đọc sách dữ liệu — tìm nạp README, tra cứu vấn đề, so sánh giá giữa các trang web, kiểm tra trang trạng thái — WebBrain tự do sử dụng các yêu cầu HTTP nền thông qua fetch_url và research_url công cụ. Đọc không giống như diễn; nó không thay đổi bất cứ điều gì trên một dịch vụ từ xa, vì vậy những lo ngại về an toàn không được áp dụng. Nếu bạn đặc biệt muốn cho phép đột biến API cho một tác vụ cụ thể, hãy nhập /allow-api ở đầu tin nhắn của bạn (tùy chọn theo sau là một mô tả nhiệm vụ ngắn). Tính năng ghi đè mỗi cuộc hội thoại này cho phép WebBrain quay trở lại điểm cuối API khi giao diện người dùng thực sự bị lỗi hoặc không thể hoạt động được, trong khi vẫn ưu tiên giao diện người dùng khi giao diện người dùng hoạt động. Huy hiệu cố định vẫn hiển thị phía trên khu vực nhập liệu trong khi tính năng ghi đè được kích hoạt và biểu tượng này sẽ xóa khi bạn đặt lại cuộc trò chuyện."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi có thể sử dụng nó trong LM Studio không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Vâng. Công cụ mạng chỉ đọc của WebBrain — fetch_url và research_url - cũng được vận chuyển dưới dạng độc lập LM Studio cắm vào webbrain/công cụ web. Cài đặt với lms clone webbrain/web-tools và bật nó trong bất kỳ cuộc trò chuyện LM Studio nào - sau đó, bất kỳ kiểu máy nào có khả năng sử dụng công cụ đều có thể gọi hai công cụ đó mà không cần bạn cài đặt tiện ích mở rộng trình duyệt. Nút thuần túy, không có trình duyệt không đầu. Nguồn: lmstudio-plugin/."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi có thể cuộn lên hoặc xuống trong khi WebBrain đang làm việc trên tab của mình không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Hầu hết thời gian là có — đặc biệt trong chế độ Ask đối với các yêu cầu chỉ đọc như “Tóm tắt trang này”. Bạn có thể tiếp tục cuộn trong khi WebBrain làm việc. Khi nào tôi nên tránh? Ảnh chụp màn hình tự động phản ánh khung nhìn hiện tại của tab. Khi WebBrain đang chủ động kiểm tra hoặc tương tác với nội dung hiển thị trong chế độ Act hoặc Dev, việc cuộn có thể làm dịch chuyển mục tiêu hoặc thay đổi nội dung mà mô hình nhìn thấy. Hãy để bước đó hoàn tất trước khi cuộn; ngoài những lúc đó, bạn có thể tiếp tục sử dụng trang."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi có thể chuyển sang tab khác trong khi WebBrain đang hoạt động trên một trang không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Có. Kể từ phiên bản 27.0.0, WebBrain tránh chiếm tiêu điểm trên cả trình duyệt dựa trên Chromium và Firefox, trừ khi quyền truy cập ở nền trước là thực sự cần thiết. Phiên chạy vẫn gắn với tab nơi nó bắt đầu, vì vậy bạn có thể làm việc an toàn trong một tab khác. Nếu một bước hiếm gặp cần đưa tab ban đầu ra nền trước, WebBrain có thể chuyển tiêu điểm sang tab đó trong giây lát. Tránh nhấp hoặc nhập trong cùng tab khi WebBrain đang chủ động thao tác trên đó."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tính năng tự động điền hồ sơ hoạt động như thế nào và có an toàn không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Tự động điền hồ sơ là một tính năng tùy chọn trong Cài đặt → Hồ sơ. Bạn nhập một tiểu sử ngắn gọn — tên, email công việc, công ty và địa chỉ đồ bỏ đi mật khẩu dành cho những người đăng ký có mức đặt cược thấp — và bật nó lên. Khi được bật, WebBrain sẽ thêm văn bản đó vào lời nhắc hệ thống của tổng đài viên để nó có thể điền vào biểu mẫu đăng ký mà không cần phải hỏi mọi lúc. Văn bản được lưu trữ trong bản rõ trong bộ nhớ cục bộ của trình duyệt của bạn. Đó là không được truyền tới dự án WebBrain, nhưng nó là được gửi tới bất kỳ nhà cung cấp LLM nào mà bạn đã định cấu hình mỗi lần, như một phần của lời nhắc hệ thống. Tắt theo mặc định. Không đặt mật khẩu cho những tài khoản quan trọng (Google, Apple, iCloud, ngân hàng, SSO cơ quan, email chính) tại đây. Những tài khoản đó nên sử dụng 2FA và không nên giao cho đại lý. Mật khẩu dùng một lần mà bạn sử dụng lại để đăng ký bản tin và dùng thử miễn phí là trường hợp sử dụng dự kiến."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Cài đặt chỉnh sửa Ảnh chụp màn hình có đảm bảo dữ liệu riêng tư của tôi không bao giờ đạt tới mô hình thị giác trên đám mây không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Không - nó làm giảm mức độ phơi nhiễm, nó không phải là sự đảm bảo. Khi được bật (Cài đặt → Đa chế độ → Chỉnh sửa ảnh chụp màn hình, tắt theo mặc định), WebBrain tạo pixel các trường biểu mẫu và văn bản trông giống địa chỉ email hoặc số điện thoại trên mỗi ảnh chụp màn hình trước đây nó được gửi đến một mô hình tầm nhìn. Tính năng phát hiện chạy hoàn toàn trên thiết bị của bạn bằng phương pháp phỏng đoán DOM; không có gì thêm được truyền đi. Đó là nỗ lực tốt nhất và thất bại. Nếu trình phát hiện không thể chạy trên một trang — ví dụ: ngay sau khi điều hướng, trên trình xem PDF hoặc trên các trang trình duyệt bị hạn chế — thì ảnh chụp màn hình vẫn được gửi chưa được biên soạn thay vì hủy bỏ nhiệm vụ của bạn. Nội dung mà phương pháp chẩn đoán DOM không thể nhìn thấy (văn bản được vẽ trên canvas, hình ảnh PII bên trong, các vật dụng bất thường) cũng có thể bị lọt qua. Và cài đặt chỉ bao gồm ảnh chụp màn hình: trang văn bản được gửi đến mô hình không bị nó biên tập lại. Để có được sự riêng tư toàn diện về tầm nhìn, hãy sử dụng mô hình cục bộ. Với nhà cung cấp ngoại tuyến như llama.cpp hoặc Ollama, ảnh chụp màn hình và văn bản trang sẽ không bao giờ rời khỏi máy của bạn, do đó, không có gì cần chỉnh sửa ngay từ đầu — đó là cấu hình duy nhất đảm bảo quyền riêng tư. Xem \"Tôi có thể sử dụng WebBrain hoàn toàn ngoại tuyến không?\" bên trên. Bạn không có máy có thể chạy mô hình địa phương có khả năng nhìn? Nền tảng trung bình tốt là một mô hình cục bộ nhỏ để lập kế hoạch và gọi công cụ (đủ nhanh và nhẹ cho CPU/GPU khiêm tốn) được ghép nối với nhà cung cấp đám mây cho các lệnh gọi phụ tầm nhìn, có bật tính năng chỉnh sửa Ảnh chụp màn hình. Bạn vẫn giữ cuộc trò chuyện và văn bản trên trang của mình trên thiết bị, đồng thời mọi ảnh chụp màn hình dành cho chế độ xem trên đám mây đều có các trường biểu mẫu và email/điện thoại được phát hiện trước tiên sẽ bị làm mờ — giảm mức độ hiển thị trên đám mây mà không cần phần cứng cho mô hình tầm nhìn cục bộ đầy đủ. Định cấu hình phân chia tầm nhìn bên dưới Cài đặt → Tầm nhìn (xem \"WebBrain làm cách nào để kiểm soát hóa đơn LLM trên đám mây?\" ở trên)."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain làm gì với biểu ngữ cookie và tường phí?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Biểu ngữ bánh quy: WebBrain nhận dạng các biểu ngữ lấy sự đồng ý từ các khuôn khổ phổ biến (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) và loại bỏ chúng trước khi đưa ra lý do về trang. Ưu tiên là \"Từ chối tất cả\" / \"Từ chối không cần thiết\" / \"Chỉ cần thiết\" khi nhìn thấy rõ ràng; nó quay trở lại \"Chấp nhận tất cả\" thay vì biến mất trong mê cung \"Quản lý tùy chọn\". Tường phí: WebBrain báo cáo tường phí một cách trung thực và cho bạn biết những gì nó thực sự có thể nhìn thấy (tiêu đề, nội dung, đoạn đầu tiên). Nó có không cố gắng vượt qua các bức tường thanh toán - không có archive.today, 12ft.io, xóa cookie, vô hiệu hóa JS hoặc các thủ thuật ở chế độ đọc. Nếu bạn muốn có toàn bộ bài viết, hãy đăng nhập bằng cách đăng ký hoặc yêu cầu WebBrain tìm kiếm bản tin miễn phí về cùng một câu chuyện."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain có hỗ trợ chế độ chạy khô không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "kể từ 7.0.0, chưa. Chế độ chạy thử đã được lên kế hoạch và đã có sẵn trên lộ trình."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain có gửi toàn bộ DOM đến mô hình AI không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Không. Theo mặc định, WebBrain không gửi HTML thô hoặc bản sao DOM thô. Hệ thống bắt đầu với URL và tiêu đề trang, hướng dẫn phù hợp cho trang web và ảnh chụp vùng hiển thị tùy chọn khi tính năng thị giác được bật. Khi tác vụ cần nội dung trang, WebBrain đọc nội dung đó theo yêu cầu dưới dạng cây trợ năng ngữ nghĩa đã rút gọn hoặc văn bản được trích xuất. Các lần đọc được lọc theo khả năng hiển thị khi phù hợp, giới hạn số ký tự và phân trang. Quyền truy cập mã nguồn trang thô chỉ có trong chế độ Dev."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain kiểm soát hóa đơn LLM trên đám mây như thế nào?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ba lớp độc lập: Ảnh chụp màn hình có ý thức về mã thông báo. Trước khi bất kỳ hình ảnh nào rời khỏi máy của bạn, WebBrain sẽ thay đổi kích thước hình ảnh đó (giới hạn cạnh ngắn hơn, giữ nguyên tỷ lệ khung hình) và nén JPEG lặp đi lặp lại cho đến khi phù hợp với ngân sách mã thông báo hình ảnh mỗi lượt. Ảnh chụp màn hình 2000×1200 sẽ tiêu tốn của bạn ~1.500 mã thông báo đầu vào trên GPT-4o sẽ được nén xuống ~300–500 mã thông báo mà không gây tổn thất thực tế nào cho các tác vụ đọc trang. Thực hiện tại _fitImageDimensions với các bài kiểm tra đơn vị cho môn toán ngân sách. Cắt tỉa bối cảnh thông minh. Lịch sử hội thoại, kết quả đầu ra của công cụ và kết xuất DOM nội tuyến được giới hạn mỗi lượt và được cắt bớt cũ nhất trước tiên khi cửa sổ ngữ cảnh của mô hình đang hoạt động sắp đầy. Bạn sẽ không thấy bong bóng đang chạy âm thầm từ 10k token lên 100k vì một read_page đã trả lại một bài báo dài như tiểu thuyết. Mô hình tầm nhìn chuyên dụng. Ghép nối một mô hình văn bản giá rẻ (ví dụ: GPT-4o-mini) để lập kế hoạch và gọi công cụ với một mô hình có khả năng hiển thị riêng biệt (ví dụ: GPT-4o) chỉ dành cho ảnh chụp màn hình, do đó, bạn không phải trả giá cho mô hình đa phương thức cho mỗi lượt. Cấu hình dưới Cài đặt → Tầm nhìn. Kết quả cuối cùng: các phiên dài với các nhà cung cấp đám mây luôn có thể dự đoán được. Để có toàn quyền kiểm soát, hãy sử dụng llama.cpp cục bộ — không tốn phí cho mỗi mã thông báo."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Tôi có thể đóng góp cho WebBrain không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Chắc chắn rồi! WebBrain được MIT cấp phép và hoan nghênh những đóng góp. Kiểm tra Kho lưu trữ GitHub về các vấn đề, yêu cầu tính năng và hướng dẫn đóng góp."
+      }
+    }
+  ]
+}
+  </script>
+  <style>
+    [hidden] { display: none !important; }
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .faq-shell { grid-template-columns: 238px minmax(0, 820px); justify-content: center; }
+    .faq-language {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      min-width: 142px;
+    }
+    .faq-language select {
+      width: 100%;
+      height: 36px;
+      appearance: none;
+      padding: 0 34px 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    [dir="rtl"] .faq-language select { padding: 0 13px 0 34px; }
+    .faq-language::after {
+      content: "⌄";
+      position: absolute;
+      inset-inline-end: 13px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .sidebar-link-note {
+      float: inline-end;
+      color: var(--faint);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10px;
+    }
+    .faq-hero { padding-bottom: 30px; }
+    .faq-search {
+      position: relative;
+      display: block;
+      max-width: 640px;
+      margin-top: 26px;
+    }
+    .faq-search svg {
+      position: absolute;
+      inset-inline-start: 18px;
+      top: 17px;
+      width: 19px;
+      height: 19px;
+      color: var(--signal);
+      pointer-events: none;
+    }
+    .faq-search input {
+      width: 100%;
+      height: 54px;
+      padding: 0 46px;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: linear-gradient(145deg, var(--panel), var(--panel-2));
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.16);
+      color: var(--ink);
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+    .faq-search input:focus {
+      border-color: color-mix(in srgb, var(--signal) 65%, var(--line));
+      box-shadow: 0 0 0 3px var(--signal-soft), 0 18px 54px rgba(0, 0, 0, 0.2);
+    }
+    .faq-search input::placeholder { color: var(--faint); }
+    .faq-search kbd {
+      position: absolute;
+      inset-inline-end: 14px;
+      top: 15px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .faq-empty {
+      margin: 34px 0;
+      padding: 18px 20px;
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      text-align: center;
+    }
+    .faq-topic { padding: 38px 0 2px; scroll-margin-top: calc(var(--header-h) + 22px); }
+    .faq-topic + .faq-topic { border-top: 1px solid var(--line); }
+    .faq-topic-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+    .faq-topic-header h2 { margin: 0; font-size: 25px; }
+    .faq-topic-header > span {
+      min-width: 30px;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--faint);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      text-align: center;
+    }
+    .faq-question {
+      border-top: 1px solid var(--line);
+      scroll-margin-top: calc(var(--header-h) + 22px);
+    }
+    .faq-question:last-child { border-bottom: 1px solid var(--line); }
+    .faq-question summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+      min-height: 66px;
+      padding: 15px 4px;
+      color: var(--ink);
+      font-weight: 720;
+      line-height: 1.4;
+      list-style: none;
+      cursor: pointer;
+    }
+    .faq-question summary::-webkit-details-marker { display: none; }
+    .faq-question summary:hover { color: var(--brand-2); }
+    .faq-question-mark {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--signal);
+    }
+    .faq-question-mark::before,
+    .faq-question-mark::after {
+      content: "";
+      position: absolute;
+      left: 5px;
+      right: 5px;
+      top: 10px;
+      height: 1px;
+      background: currentColor;
+    }
+    .faq-question-mark::after { transform: rotate(90deg); transition: transform 0.18s ease; }
+    .faq-question[open] .faq-question-mark { border-color: var(--signal); background: var(--signal-soft); }
+    .faq-question[open] .faq-question-mark::after { transform: rotate(0); }
+    .faq-answer {
+      padding: 0 44px 20px 4px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    [dir="rtl"] .faq-answer { padding: 0 4px 20px 44px; }
+    .faq-answer p { margin: 0 0 14px; color: var(--muted); }
+    .faq-answer p:last-child { margin-bottom: 0; }
+    .faq-answer strong { color: var(--ink); }
+    .faq-answer ul, .faq-answer ol { padding-inline-start: 22px; }
+    .faq-answer a { overflow-wrap: anywhere; }
+    @media (max-width: 1080px) {
+      .faq-shell { grid-template-columns: 220px minmax(0, 1fr); }
+    }
+    @media (max-width: 780px) {
+      .faq-shell { display: block; }
+      .faq-language { min-width: 118px; }
+      .faq-language select { max-width: 118px; }
+    }
+    @media (max-width: 560px) {
+      .faq-language { min-width: 104px; }
+      .faq-language select { max-width: 104px; }
+      .faq-search kbd { display: none; }
+      .faq-search input { padding-inline-end: 18px; }
+      .faq-topic-header h2 { font-size: 22px; }
+      .faq-question summary { min-height: 62px; font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Chuyển đến nội dung chính</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="https://webbrain.one/vi/"><img src="/logo-github.png" alt=""><span>WebBrain</span><span class="brand-docs">Câu hỏi thường gặp</span></a>
+      <nav class="top-nav" aria-label="Tài liệu">
+        <a href="/docs/">Tài liệu</a>
+        <a href="/blog/">Blog</a>
+        <a href="https://github.com/webbrain-one/webbrain">GitHub</a>
+      </nav>
+      <div class="header-tools">
+        <label class="faq-language">
+          <span class="visually-hidden">Chọn ngôn ngữ</span>
+          <select data-faq-language aria-label="Chọn ngôn ngữ"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option><option value="hi">हिन्दी</option><option value="pt">Português</option><option value="vi" selected>Tiếng Việt</option><option value="bn">বাংলা</option><option value="fa">فارسی</option><option value="nl">Nederlands</option><option value="de">Deutsch</option></select>
+        </label>
+        <button class="icon-button" type="button" data-theme-toggle aria-label="Chuyển đổi chủ đề sáng / tối">☀</button>
+        <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="Chủ đề">☰</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="docs-shell faq-shell">
+    <aside class="docs-sidebar" aria-label="Chủ đề">
+      <div class="sidebar-group">
+        <div class="sidebar-label">Chủ đề</div>
+        <nav><a href="#topic-about">Giới thiệu WebBrain</a><a href="#topic-cloud">Đám mây và thanh toán</a><a href="#topic-models">Mô hình và thiết lập cục bộ</a><a href="#topic-browsers">Trình duyệt và sử dụng hằng ngày</a><a href="#topic-safety">An toàn và quyền riêng tư</a></nav>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-label">Tài liệu</div>
+        <nav>
+          <a href="/docs/">Tài liệu <span class="sidebar-link-note">EN</span></a>
+          <a href="https://discord.gg/cgC325ssfw">WebBrain trên Discord</a>
+        </nav>
+      </div>
+    </aside>
+
+    <main class="doc-main" id="main">
+      <div class="breadcrumb"><a href="/docs/">Tài liệu</a> / Câu hỏi thường gặp</div>
+      <section class="doc-hero faq-hero">
+        <div class="eyebrow">Câu hỏi thường gặp</div>
+        <h1>Câu hỏi thường gặp</h1>
+        <p class="lede">Câu trả lời nhanh về thiết lập, mô hình, thanh toán, an toàn và cách WebBrain hoạt động trong trình duyệt của bạn.</p>
+        <label class="faq-search">
+          <span class="visually-hidden">Tìm kiếm câu hỏi và câu trả lời…</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+          <input type="search" data-faq-search placeholder="Tìm kiếm câu hỏi và câu trả lời…" autocomplete="off" spellcheck="false">
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+      </section>
+
+      <p class="faq-empty" data-faq-empty role="status" aria-live="polite" hidden>Không có câu trả lời nào khớp với tìm kiếm này.</p>
+    <section class="faq-topic" id="topic-about" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>Giới thiệu WebBrain</h2>
+        <span aria-label="6">6</span>
+      </header>
+      <details class="faq-question" id="alt-claude" data-faq-item>
+        <summary><span>WebBrain có phải là giải pháp thay thế miễn phí cho plugin trình duyệt của Claude không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Vâng. WebBrain cung cấp các khả năng tương tự của tác nhân trình duyệt AI — đọc trang, trích xuất dữ liệu, nhấp vào nút, điền biểu mẫu và tự động hóa quy trình làm việc nhiều bước. Không giống như plugin trình duyệt độc quyền của Claude yêu cầu đăng ký Claude Pro và chỉ hoạt động với các mẫu của Anthropic, WebBrain hoàn toàn miễn phí, nguồn mở (giấy phép MIT) và hỗ trợ nhiều nhà cung cấp LLM bao gồm các mẫu cục bộ chạy hoàn toàn trên máy của bạn.</p></div>
+      </details>
+      <details class="faq-question" id="vs-frameworks" data-faq-item>
+        <summary><span>WebBrain so sánh với OpenClaw, Sử dụng trình duyệt và các khung tác nhân AI khác như thế nào?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Chúng là những loại công cụ khác nhau. WebBrain là một tiện ích mở rộng của trình duyệt — bạn cài đặt nó trong Chrome hoặc Firefox và trò chuyện với nó trong bảng điều khiển bên cạnh, không cần mã hóa. Các khung như OpenClaw và Browser-Use là SDK dành cho nhà phát triển để xây dựng quy trình trình duyệt tự động bằng Python, thường sử dụng trình duyệt không có giao diện người dùng và CDP. Hãy nghĩ theo cách này: WebBrain dành cho duyệt web hàng ngày với trợ lý AI; các khung tác nhân dùng để xây dựng các bot quét và tự động hóa thử nghiệm. Bạn có thể sử dụng cả hai - chúng bổ sung cho nhau.</p></div>
+      </details>
+      <details class="faq-question" id="firefox" data-faq-item>
+        <summary><span>WebBrain có hoạt động trên Firefox không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Vâng. WebBrain có cả phiên bản Chrome (Manifest V3, sử dụng API sidePanel) và phiên bản Firefox (Manifest V2, sử dụng sidebar_action). Cả hai phiên bản đều có tính năng giống hệt nhau. Phiên bản Firefox có thể được tải dưới dạng tiện ích bổ sung tạm thời để phát triển hoặc được xuất bản lên addons.mozilla.org để cài đặt vĩnh viễn.</p></div>
+      </details>
+      <details class="faq-question" id="scraping" data-faq-item>
+        <summary><span>Làm cách nào để sử dụng WebBrain để quét web và trích xuất dữ liệu?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Chỉ cần mở bất kỳ trang web nào, mở bảng điều khiển bên WebBrain và hỏi bằng ngôn ngữ tự nhiên: "Trích xuất tất cả tên sản phẩm và giá từ trang này", "Nhận tất cả địa chỉ email trên trang này" hoặc "Tóm tắt bài viết này bằng dấu đầu dòng". Tác nhân AI đọc nội dung trang, hiểu cấu trúc và trả về dữ liệu được trích xuất. Để quét phức tạp hơn, hãy chuyển sang chế độ Hành động và nhân viên có thể điều hướng giữa các trang, nhấp vào nút phân trang và tổng hợp dữ liệu trên nhiều trang.</p></div>
+      </details>
+      <details class="faq-question" id="multilingual" data-faq-item>
+        <summary><span>WebBrain có hỗ trợ chế độ chạy khô không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>kể từ <strong>7.0.0</strong>, chưa. Chế độ chạy thử đã được lên kế hoạch và đã có sẵn trên lộ trình.</p></div>
+      </details>
+      <details class="faq-question" id="contribute" data-faq-item>
+        <summary><span>Tôi có thể đóng góp cho WebBrain không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Chắc chắn rồi! WebBrain được MIT cấp phép và hoan nghênh những đóng góp. Kiểm tra <a href="https://github.com/webbrain-one/webbrain" target="_blank">Kho lưu trữ GitHub</a> về các vấn đề, yêu cầu tính năng và hướng dẫn đóng góp.</p></div>
+      </details>
+    </section>
+    <section class="faq-topic" id="topic-cloud" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>Đám mây và thanh toán</h2>
+        <span aria-label="4">4</span>
+      </header>
+      <details class="faq-question" id="cloud-subscription" data-faq-item>
+        <summary><span>Thuê bao WebBrain Cloud có giá bao nhiêu?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Đám mây WebBrain hiện đang <strong>$5/tháng cho mỗi hồ sơ thiết bị</strong>, rẻ hơn nhiều so với Claude Pro ở thời điểm hiện tại. Việc sử dụng hiện không giới hạn theo chính sách sử dụng hợp lý: sử dụng cá nhân bình thường là được, nhưng không được phép sử dụng lạm dụng, tự động, bán lại hoặc sử dụng số lượng lớn bất thường.</p><p>Đăng ký được liên kết với mã nhận dạng thiết bị do tiện ích mở rộng tạo ra cho trình duyệt đó + GUID hệ điều hành, chứ không phải với tài khoản người dùng. Nếu số nhận dạng đó bị mất do bạn đặt lại bộ nhớ tiện ích mở rộng, xóa hồ sơ trình duyệt, cài đặt lại trình duyệt, thay đổi trình duyệt/HĐH hoặc mất thiết bị, chúng tôi không thể truy xuất hoặc chuyển thiết bị đó và chúng tôi không hoàn lại tiền cho sự mất mát đó.</p></div>
+      </details>
+      <details class="faq-question" id="manage-subscription" data-faq-item>
+        <summary><span>Làm cách nào để quản lý hoặc hủy gói đăng ký?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Quản lý thanh toán tại <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> và đăng nhập bằng email của bạn.</p></div>
+      </details>
+      <details class="faq-question" id="cloud-sync" data-faq-item>
+        <summary><span>Cloud Sync được mã hóa hoạt động như thế nào?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Cloud Sync là một tính năng tùy chọn dành cho những người đăng ký WebBrain Cloud đang hoạt động. Nó đồng bộ hóa bộ nhớ WebBrain, văn bản tự động điền hồ sơ và cấu hình nhà cung cấp được hỗ trợ, bao gồm cả khóa API. Nó có <strong>không</strong> đồng bộ hóa lịch sử trò chuyện, lịch sử trình duyệt, ảnh chụp màn hình trang hoặc mã thông báo làm mới và truy cập OAuth cũ.</p><p>Trình duyệt của bạn mã hóa kho đồng bộ hóa trước khi tải lên bằng mật khẩu bạn chọn. WebBrain Cloud chỉ lưu trữ kho tiền được mã hóa; nó không thể đọc ký ức, văn bản hồ sơ, cài đặt nhà cung cấp hoặc khóa API của bạn và không thể khôi phục mật khẩu đồng bộ hóa cho bạn.</p><p>Trường email dành cho xác thực đăng ký/thanh toán liên kết ma thuật trên đám mây WebBrain. Nó không phải là mật khẩu tài khoản. Nếu giao diện người dùng thông báo thay đổi mật khẩu trong Cloud Sync, điều đó có nghĩa là <strong>đồng bộ mật khẩu mã hóa</strong>, không phải mật khẩu tài khoản WebBrain.</p><p>Nếu bạn quên mật khẩu đồng bộ hóa, kho lưu trữ đám mây được mã hóa cũ sẽ không thể giải mã được. Bạn có thể đặt lại kho lưu trữ đám mây và tải lên bản sao được mã hóa mới từ thiết bị vẫn còn dữ liệu cục bộ.</p></div>
+      </details>
+      <details class="faq-question" id="token-conscious" data-faq-item>
+        <summary><span>WebBrain kiểm soát hóa đơn LLM trên đám mây như thế nào?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Ba lớp độc lập:</p><p><strong>Ảnh chụp màn hình có ý thức về mã thông báo.</strong> Trước khi bất kỳ hình ảnh nào rời khỏi máy của bạn, WebBrain sẽ thay đổi kích thước hình ảnh đó (giới hạn cạnh ngắn hơn, giữ nguyên tỷ lệ khung hình) và nén JPEG lặp đi lặp lại cho đến khi phù hợp với ngân sách mã thông báo hình ảnh mỗi lượt. Ảnh chụp màn hình 2000×1200 sẽ tiêu tốn của bạn ~1.500 mã thông báo đầu vào trên GPT-4o sẽ được nén xuống ~300–500 mã thông báo mà không gây tổn thất thực tế nào cho các tác vụ đọc trang. Thực hiện tại <code>_fitImageDimensions</code> với các bài kiểm tra đơn vị cho môn toán ngân sách.</p><p><strong>Cắt tỉa bối cảnh thông minh.</strong> Lịch sử hội thoại, kết quả đầu ra của công cụ và kết xuất DOM nội tuyến được giới hạn mỗi lượt và được cắt bớt cũ nhất trước tiên khi cửa sổ ngữ cảnh của mô hình đang hoạt động sắp đầy. Bạn sẽ không thấy bong bóng đang chạy âm thầm từ 10k token lên 100k vì một <code>read_page</code> đã trả lại một bài báo dài như tiểu thuyết.</p><p><strong>Mô hình tầm nhìn chuyên dụng.</strong> Ghép nối một mô hình văn bản giá rẻ (ví dụ: GPT-4o-mini) để lập kế hoạch và gọi công cụ với một mô hình có khả năng hiển thị riêng biệt (ví dụ: GPT-4o) chỉ dành cho ảnh chụp màn hình, do đó, bạn không phải trả giá cho mô hình đa phương thức cho mỗi lượt. Cấu hình dưới <strong>Cài đặt → Tầm nhìn</strong>.</p><p>Kết quả cuối cùng: các phiên dài với các nhà cung cấp đám mây luôn có thể dự đoán được. Để có toàn quyền kiểm soát, hãy sử dụng llama.cpp cục bộ — không tốn phí cho mỗi mã thông báo.</p></div>
+      </details>
+    </section>
+    <section class="faq-topic" id="topic-models" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>Mô hình và thiết lập cục bộ</h2>
+        <span aria-label="7">7</span>
+      </header>
+      <details class="faq-question" id="offline" data-faq-item>
+        <summary><span>Tôi có thể sử dụng WebBrain hoàn toàn ngoại tuyến không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Vâng. Nhà cung cấp mặc định của WebBrain là llama.cpp, chạy mô hình AI cục bộ trên máy tính của bạn. Không cần khóa API, không cần internet cho AI và không có dữ liệu nào rời khỏi máy của bạn. Chỉ cần tải xuống mô hình GGUF, khởi động máy chủ llama và bạn có một tác nhân trình duyệt AI hoàn toàn riêng tư. Bạn cũng có thể sử dụng Ollama với điểm cuối tương thích OpenAI.</p></div>
+      </details>
+      <details class="faq-question" id="models-supported" data-faq-item>
+        <summary><span>WebBrain hỗ trợ những mẫu AI nào?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain hỗ trợ bốn loại nhà cung cấp: llama.cpp (bất kỳ mô hình GGUF cục bộ nào), OpenAI (GPT-4o, GPT-4, v.v.), Claude (Claude Opus, Sonnet, Haiku qua API gốc) và OpenRouter (truy cập vào hơn 100 mô hình từ nhiều nhà cung cấp khác nhau). Mọi điểm cuối API tương thích với OpenAI đều hoạt động, vì vậy bạn cũng có thể sử dụng các dịch vụ như Together AI, Groq, Mistral hoặc bất kỳ máy chủ cục bộ nào có giao diện tương thích với OpenAI.</p></div>
+      </details>
+      <details class="faq-question" id="recommended-model" data-faq-item>
+        <summary><span>Mô hình được khuyên dùng nhất là gì?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>kể từ <strong>Ngày 21 tháng 4 năm 2026</strong>, khuyến nghị hàng đầu là <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. Tại sao: trong tiêu chuẩn tầm nhìn của chúng tôi (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">tầm nhìn-mô hình-bắn súng</a>), nó vượt trội hơn Gemma 4 về khả năng hiểu ảnh chụp màn hình trong khi vẫn thực tế cho suy luận cục bộ.</p><p>Đối với GPU dành cho người tiêu dùng, RTX 5090 là lý tưởng và RTX 4090 thường có thể hoạt động được với lượng tử hóa INT4 AutoRound thông qua <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a>.</p><p>Để có tốc độ tối đa, chúng tôi khuyên bạn nên phân phát trên <strong>vLLM</strong>. Lệnh mẫu:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>Giải mã suy đoán DFlash là tùy chọn.</em></p></div>
+      </details>
+      <details class="faq-question" id="webgpu-apocalypse" data-faq-item>
+        <summary><span>Tại sao WebGPU chỉ có trong Chế độ Apocalypse?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Vì chúng tôi chưa cho rằng suy luận văn bản WebGPU trong trình duyệt đủ tốt cho phần lớn người dùng, và không muốn bạn phải chịu trải nghiệm kém. Nếu muốn dùng cục bộ cùng mô hình LFM2.5 2.6B, hãy chạy suy luận trên máy của bạn bằng <strong>llama.cpp</strong> hoặc <strong>Ollama</strong> rồi trỏ WebBrain đến endpoint cục bộ đó thay vì phụ thuộc vào WebGPU.</p><p>Tính năng dự phòng thị giác qua WebGPU vẫn có sẵn vì mô hình của nó nhỏ hơn nhiều và chỉ thỉnh thoảng mới được dùng.</p></div>
+      </details>
+      <details class="faq-question" id="cors" data-faq-item>
+        <summary><span>Tôi nhận được thông báo &quot;Không tìm nạp được&quot; khi kết nối với máy chủ LLM cục bộ (vLLM, Ollama, llama.cpp) trên mạng của mình</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Nếu máy chủ LLM của bạn nằm trên một máy khác trong mạng cục bộ của bạn (ví dụ: <code>http://192.168.1.x:8000</code>), Chrome chặn yêu cầu trừ khi máy chủ gửi <strong>Tiêu đề CORS</strong>. Cách khắc phục tùy thuộc vào máy chủ của bạn:</p><p><strong>vLLM:</strong> Bắt đầu với <code>--allowed-origins '["*"]'</code> (giá trị phải là danh sách JSON).<br><strong>Ollama:</strong> Đặt biến môi trường <code>OLLAMA_ORIGINS=*</code> trước khi bắt đầu.<br><strong>llama.cpp:</strong> CORS được bật theo mặc định - không cần thay đổi.</p><p>Nếu máy chủ của bạn chạy trên <code>localhost</code> (cùng máy với trình duyệt), CORS thường không bắt buộc. Sự cố chỉ ảnh hưởng đến kết nối nhiều máy trên mạng cục bộ. Đảm bảo URL cơ sở của bạn trong cài đặt WebBrain kết thúc bằng <code>/v1</code> (ví dụ: <code>http://192.168.1.47:8000/v1</code>). Ngoại lệ: Ollama được sử dụng từ tiện ích mở rộng trình duyệt có thể vẫn cần <code>OLLAMA_ORIGINS</code>; xem Câu hỏi thường gặp về Ollama bên dưới.</p></div>
+      </details>
+      <details class="faq-question" id="ollama-origins" data-faq-item>
+        <summary><span>Tại sao Ollama trên localhost trả về 403 từ tiện ích mở rộng WebBrain?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Các phiên bản Ollama gần đây có thể từ chối yêu cầu từ nguồn mở rộng trình duyệt ngay cả khi Ollama đang chạy trên cùng một máy. Tiện ích mở rộng sẽ gửi một <code>Origin</code> chẳng hạn như <code>chrome-extension://...</code> hoặc <code>moz-extension://...</code>và Ollama có thể trả lời 403 trừ khi những nguồn gốc đó được cho phép.</p><p>Thoát khỏi mọi ứng dụng máy tính để bàn Ollama đang giữ cổng <code>11434</code>, sau đó khởi động Ollama bằng một trong các lệnh sau:</p><p><code>OLLAMA_ORIGINS="*" ollama serve</code><br><code>OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ollama serve</code></p><p>Giữ URL cơ sở Ollama của WebBrain được đặt thành <code>http://localhost:11434/v1</code>. thiết bị đầu cuối <code>curl</code> kiểm tra vẫn có thể hoạt động mà không cần cài đặt này vì chúng không gửi nguồn gốc tiện ích mở rộng trình duyệt.</p></div>
+      </details>
+      <details class="faq-question" id="lm-studio" data-faq-item>
+        <summary><span>Tôi có thể sử dụng nó trong LM Studio không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Vâng. Công cụ mạng chỉ đọc của WebBrain — <code>fetch_url</code> và <code>research_url</code> - cũng được vận chuyển dưới dạng độc lập <a href="https://lmstudio.ai" target="_blank">LM Studio</a> cắm vào <a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/công cụ web</a>. Cài đặt với <code>lms clone webbrain/web-tools</code> và bật nó trong bất kỳ cuộc trò chuyện LM Studio nào - sau đó, bất kỳ kiểu máy nào có khả năng sử dụng công cụ đều có thể gọi hai công cụ đó mà không cần bạn cài đặt tiện ích mở rộng trình duyệt. Nút thuần túy, không có trình duyệt không đầu. Nguồn: <a href="https://github.com/webbrain-one/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>.</p></div>
+      </details>
+    </section>
+    <section class="faq-topic" id="topic-browsers" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>Trình duyệt và sử dụng hằng ngày</h2>
+        <span aria-label="5">5</span>
+      </header>
+      <details class="faq-question" id="firefox-sidebar-move" data-faq-item>
+        <summary><span>Tôi có thể di chuyển thanh bên Firefox từ trái sang phải, giống như bảng điều khiển bên của Chrome không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Có — Thanh bên của Firefox mặc định ở bên trái nhưng bạn có thể lật nó. Nhấp chuột phải vào bất kỳ đâu trong tiêu đề thanh bên và chọn <strong>Di chuyển thanh bên sang phải</strong> (hoặc sử dụng <strong>Xem → Thanh bên → Di chuyển Thanh bên sang phải</strong> từ thanh menu). Vị trí vẫn tồn tại trong quá trình khởi động lại. SidePanel của Chrome mặc định ở bên phải và người dùng không thể di chuyển khỏi bảng đó.</p></div>
+      </details>
+      <details class="faq-question" id="vivaldi-dialogs" data-faq-item>
+        <summary><span>Có hạn chế nào khi sử dụng WebBrain trong Web Panel của Vivaldi không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Vâng. Bảng điều khiển web Vivaldi ngăn chặn các hộp thoại JavaScript gốc như <code>confirm()</code>, <code>alert()</code>và <code>prompt()</code>. Công tắc chuyển đổi chế độ Hỏi, Hành động và Nhà phát triển của WebBrain không còn phụ thuộc vào các hộp thoại đó nữa nhưng một số hành động phụ vẫn thực hiện.</p><p><strong>Ghi âm:</strong> không sử dụng <code>/record</code> ở Vivaldi bây giờ. Nếu quá trình ghi không thành công, Vivaldi có thể ẩn cảnh báo lỗi và không để lại lời giải thích rõ ràng.</p><p><strong>Cài đặt, Lịch sử, Dấu vết và chuyển giao Ollama:</strong> Chúng cũng chứa các hộp thoại gốc, nhưng WebBrain thường mở chúng dưới dạng tab thông thường, nơi chúng hoạt động. Nếu bạn đặt một bảng vào Bảng điều khiển Web theo cách thủ công, hãy mở nó trong tab thông thường trước khi sử dụng các hành động phụ thuộc vào hộp thoại.</p></div>
+      </details>
+      <details class="faq-question" id="scroll-during-run" data-faq-item>
+        <summary><span>Tôi có thể cuộn lên hoặc xuống trong khi WebBrain đang làm việc trên tab của mình không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Hầu hết thời gian là có — đặc biệt trong <strong>chế độ Ask</strong> đối với các yêu cầu chỉ đọc như “Tóm tắt trang này”. Bạn có thể tiếp tục cuộn trong khi WebBrain làm việc.</p><p><strong>Khi nào tôi nên tránh?</strong> Ảnh chụp màn hình tự động phản ánh khung nhìn hiện tại của tab. Khi WebBrain đang chủ động kiểm tra hoặc tương tác với nội dung hiển thị trong <strong>chế độ Act hoặc Dev</strong>, việc cuộn có thể làm dịch chuyển mục tiêu hoặc thay đổi nội dung mà mô hình nhìn thấy. Hãy để bước đó hoàn tất trước khi cuộn; ngoài những lúc đó, bạn có thể tiếp tục sử dụng trang.</p></div>
+      </details>
+      <details class="faq-question" id="tab-switch-during-run" data-faq-item>
+        <summary><span>Tôi có thể chuyển sang tab khác trong khi WebBrain đang hoạt động trên một trang không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Có. Kể từ phiên bản <strong>27.0.0</strong>, WebBrain tránh chiếm tiêu điểm trên cả trình duyệt dựa trên Chromium và Firefox, trừ khi quyền truy cập ở nền trước là thực sự cần thiết. Phiên chạy vẫn gắn với tab nơi nó bắt đầu, vì vậy bạn có thể làm việc an toàn trong một tab khác.</p><p>Nếu một bước hiếm gặp cần đưa tab ban đầu ra nền trước, WebBrain có thể chuyển tiêu điểm sang tab đó trong giây lát. Tránh nhấp hoặc nhập trong cùng tab khi WebBrain đang chủ động thao tác trên đó.</p></div>
+      </details>
+      <details class="faq-question" id="cookies-paywalls" data-faq-item>
+        <summary><span>WebBrain làm gì với biểu ngữ cookie và tường phí?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p><strong>Biểu ngữ bánh quy:</strong> WebBrain nhận dạng các biểu ngữ lấy sự đồng ý từ các khuôn khổ phổ biến (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) và loại bỏ chúng trước khi đưa ra lý do về trang. Ưu tiên là "Từ chối tất cả" / "Từ chối không cần thiết" / "Chỉ cần thiết" khi nhìn thấy rõ ràng; nó quay trở lại "Chấp nhận tất cả" thay vì biến mất trong mê cung "Quản lý tùy chọn".</p><p><strong>Tường phí:</strong> WebBrain báo cáo tường phí một cách trung thực và cho bạn biết những gì nó thực sự có thể nhìn thấy (tiêu đề, nội dung, đoạn đầu tiên). Nó có <strong>không</strong> cố gắng vượt qua các bức tường thanh toán - không có archive.today, 12ft.io, xóa cookie, vô hiệu hóa JS hoặc các thủ thuật ở chế độ đọc. Nếu bạn muốn có toàn bộ bài viết, hãy đăng nhập bằng cách đăng ký hoặc yêu cầu WebBrain tìm kiếm bản tin miễn phí về cùng một câu chuyện.</p></div>
+      </details>
+    </section>
+    <section class="faq-topic" id="topic-safety" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>An toàn và quyền riêng tư</h2>
+        <span aria-label="7">7</span>
+      </header>
+      <details class="faq-question" id="safe" data-faq-item>
+        <summary><span>WebBrain có an toàn khi sử dụng không? Nó có thể sửa đổi các trang web?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain có ba chế độ. Chế độ Hỏi (mặc định) là chỉ đọc và không thể sửa đổi bất cứ điều gì trên trang. Chế độ hành động cho phép các hành động của trình duyệt như nhấp, nhập và điều hướng, trong khi chế độ Dev bổ sung các công cụ gỡ lỗi trang. Các hành động tiếp theo cần được phê duyệt theo mặc định; nếu cổng cấp phép đó bị tắt, WebBrain sẽ hiển thị biểu ngữ cảnh báo hiển thị. Bạn có thể dừng tác nhân bất cứ lúc nào bằng nút Dừng. Mã nguồn của tiện ích mở rộng hoàn toàn mở để kiểm tra trên GitHub.</p></div>
+      </details>
+      <details class="faq-question" id="cdp" data-faq-item>
+        <summary><span>Biểu ngữ &quot;WebBrain đã bắt đầu gỡ lỗi trình duyệt này&quot; là gì? Tại sao WebBrain sử dụng CDP?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Để hoạt động trên một trang một cách đáng tin cậy, WebBrain sử dụng Giao thức DevTools Chrome (CDP) thông qua tiêu chuẩn <code>chrome.debugger</code> API tiện ích mở rộng - đó là những gì kích hoạt biểu ngữ "WebBrain đã bắt đầu gỡ lỗi trình duyệt này" của Chrome. CDP là thứ cho phép tác nhân nhấp và gõ bằng <strong>sự kiện đầu vào đáng tin cậy</strong> mà những địa điểm hiện đại thực sự tôn vinh; các sự kiện tổng hợp được kích hoạt từ tập lệnh nội dung bị nhiều trang web, Thành phần web và đầu vào do khung kiểm soát từ chối. Đó cũng là cách WebBrain chụp ảnh màn hình chính xác đến từng pixel để dự phòng tầm nhìn và tiếp cận <strong>iframe có nguồn gốc chéo và DOM bóng</strong> mà tập lệnh nội dung không thể nhìn thấy.</p><p>Chỉ đọc <strong>Chế độ hỏi không cần CDP</strong> — việc đọc trang và cây khả năng truy cập sẽ đi qua các tập lệnh nội dung thông thường. Đó là <strong>Chế độ hành động</strong> độ tin cậy và công việc có nguồn gốc chéo yêu cầu nó và trong tiện ích mở rộng Manifest V3 không có API không phải trình gỡ lỗi cho đầu vào đáng tin cậy. WebBrain đính kèm trình gỡ lỗi <strong>chỉ khi một hành động cần nó</strong>, trên mỗi tab và toàn bộ tiện ích mở rộng là nguồn mở nên bạn có thể kiểm tra chính xác hoạt động của phiên. CDP rất mạnh nên chúng tôi coi dấu vết của nó như một thứ gì đó cần chứa — đính kèm theo yêu cầu, tiếp tục đọc — và thắt chặt hơn nữa điều đó nằm trong lộ trình bảo mật của chúng tôi.</p></div>
+      </details>
+      <details class="faq-question" id="disable-approval-questions" data-faq-item>
+        <summary><span>Nó hỏi tôi quá nhiều câu hỏi. Tôi có thể vô hiệu hóa nó được không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Những lời nhắc phê duyệt đó là vì sự an toàn của bạn. Ngay cả trên các trang web mà bạn tin cậy, các tác nhân độc hại có thể bắt chước các hướng dẫn LLM hoặc chèn nội dung cố gắng khiến tác nhân thay mặt bạn thực hiện những việc mà bạn không chấp thuận. Đó là lý do tại sao WebBrain hỏi trước các hành động mang tính hậu quả. Nếu bạn vẫn không muốn xem qua những lời nhắc đó, hãy gõ <code>/dangerously-skip-permissions</code> trong bảng điều khiển bên cạnh hoặc mở plugin bên cạnh, nhấp vào biểu tượng bánh xe trong tiêu đề, đi tới <strong>Quyền</strong> tab vào <code>settings.html</code>, và tắt <strong>Hỏi trước các hành động mang tính hậu quả</strong>.</p></div>
+      </details>
+      <details class="faq-question" id="api-mutations" data-faq-item>
+        <summary><span>WebBrain có gọi API trực tiếp hay luôn nhấp qua giao diện người dùng?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Theo mặc định, WebBrain <strong>luôn đi qua giao diện người dùng hiển thị</strong> đối với bất kỳ hành động nào tạo, sửa đổi, xóa, gửi, gửi, đăng hoặc mua bất kỳ thứ gì. Nó sẽ điều hướng đến trang, điền vào biểu mẫu và nhấp vào nút - chính xác theo cách bạn muốn. Nó từ chối gọi trực tiếp các điểm cuối REST/GraphQL qua nền <code>fetch()</code> đối với các đột biến. Điều này là có chủ ý: Các hành động API là vô hình (bạn không nhìn thấy những gì đang được gửi), thường yêu cầu các mã thông báo xác thực riêng biệt mà bạn có thể chưa định cấu hình và có bán kính vụ nổ lớn hơn nhiều so với một lần bấm nhầm có thể nhìn thấy được. Ưu tiên giao diện người dùng có nghĩa là mọi thứ đều hiển thị trên màn hình, trong phiên trình duyệt thông thường của bạn và có thể dừng lại.</p><p>cho <strong>đọc sách</strong> dữ liệu — tìm nạp README, tra cứu vấn đề, so sánh giá giữa các trang web, kiểm tra trang trạng thái — WebBrain tự do sử dụng các yêu cầu HTTP nền thông qua <code>fetch_url</code> và <code>research_url</code> công cụ. Đọc không giống như diễn; nó không thay đổi bất cứ điều gì trên một dịch vụ từ xa, vì vậy những lo ngại về an toàn không được áp dụng.</p><p>Nếu bạn đặc biệt muốn cho phép đột biến API cho một tác vụ cụ thể, hãy nhập <code>/allow-api</code> ở đầu tin nhắn của bạn (tùy chọn theo sau là một mô tả nhiệm vụ ngắn). Tính năng ghi đè mỗi cuộc hội thoại này cho phép WebBrain quay trở lại điểm cuối API khi giao diện người dùng thực sự bị lỗi hoặc không thể hoạt động được, trong khi vẫn ưu tiên giao diện người dùng khi giao diện người dùng hoạt động. Huy hiệu cố định vẫn hiển thị phía trên khu vực nhập liệu trong khi tính năng ghi đè được kích hoạt và biểu tượng này sẽ xóa khi bạn đặt lại cuộc trò chuyện.</p></div>
+      </details>
+      <details class="faq-question" id="profile" data-faq-item>
+        <summary><span>Tính năng tự động điền hồ sơ hoạt động như thế nào và có an toàn không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Tự động điền hồ sơ là một tính năng tùy chọn trong <strong>Cài đặt → Hồ sơ</strong>. Bạn nhập một tiểu sử ngắn gọn — tên, email công việc, công ty và địa chỉ <em>đồ bỏ đi</em> mật khẩu dành cho những người đăng ký có mức đặt cược thấp — và bật nó lên. Khi được bật, WebBrain sẽ thêm văn bản đó vào lời nhắc hệ thống của tổng đài viên để nó có thể điền vào biểu mẫu đăng ký mà không cần phải hỏi mọi lúc.</p><p>Văn bản được lưu trữ <strong>trong bản rõ</strong> trong bộ nhớ cục bộ của trình duyệt của bạn. Đó là <strong>không</strong> được truyền tới dự án WebBrain, nhưng nó <strong>là</strong> được gửi tới bất kỳ nhà cung cấp LLM nào mà bạn đã định cấu hình mỗi lần, như một phần của lời nhắc hệ thống. Tắt theo mặc định.</p><p><strong>Không đặt mật khẩu cho những tài khoản quan trọng</strong> (Google, Apple, iCloud, ngân hàng, SSO cơ quan, email chính) tại đây. Những tài khoản đó nên sử dụng 2FA và không nên giao cho đại lý. Mật khẩu dùng một lần mà bạn sử dụng lại để đăng ký bản tin và dùng thử miễn phí là trường hợp sử dụng dự kiến.</p></div>
+      </details>
+      <details class="faq-question" id="screenshot-redaction" data-faq-item>
+        <summary><span>Cài đặt chỉnh sửa Ảnh chụp màn hình có đảm bảo dữ liệu riêng tư của tôi không bao giờ đạt tới mô hình thị giác trên đám mây không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Không - nó làm giảm mức độ phơi nhiễm, nó không phải là sự đảm bảo. Khi được bật (<strong>Cài đặt → Đa chế độ → Chỉnh sửa ảnh chụp màn hình</strong>, tắt theo mặc định), WebBrain tạo pixel các trường biểu mẫu và văn bản trông giống địa chỉ email hoặc số điện thoại trên mỗi ảnh chụp màn hình <em>trước đây</em> nó được gửi đến một mô hình tầm nhìn. Tính năng phát hiện chạy hoàn toàn trên thiết bị của bạn bằng phương pháp phỏng đoán DOM; không có gì thêm được truyền đi.</p><p><strong>Đó là nỗ lực tốt nhất và thất bại.</strong> Nếu trình phát hiện không thể chạy trên một trang — ví dụ: ngay sau khi điều hướng, trên trình xem PDF hoặc trên các trang trình duyệt bị hạn chế — thì ảnh chụp màn hình vẫn được gửi <em>chưa được biên soạn</em> thay vì hủy bỏ nhiệm vụ của bạn. Nội dung mà phương pháp chẩn đoán DOM không thể nhìn thấy (văn bản được vẽ trên canvas, hình ảnh PII bên trong, các vật dụng bất thường) cũng có thể bị lọt qua. Và cài đặt chỉ bao gồm ảnh chụp màn hình: trang <em>văn bản</em> được gửi đến mô hình không bị nó biên tập lại.</p><p><strong>Để có được sự riêng tư toàn diện về tầm nhìn, hãy sử dụng mô hình cục bộ.</strong> Với nhà cung cấp ngoại tuyến như llama.cpp hoặc Ollama, ảnh chụp màn hình và văn bản trang sẽ không bao giờ rời khỏi máy của bạn, do đó, không có gì cần chỉnh sửa ngay từ đầu — đó là cấu hình duy nhất đảm bảo quyền riêng tư. Xem "Tôi có thể sử dụng WebBrain hoàn toàn ngoại tuyến không?" bên trên.</p><p><strong>Bạn không có máy có thể chạy mô hình địa phương có khả năng nhìn?</strong> Nền tảng trung bình tốt là một mô hình cục bộ nhỏ để lập kế hoạch và gọi công cụ (đủ nhanh và nhẹ cho CPU/GPU khiêm tốn) được ghép nối với nhà cung cấp đám mây cho các lệnh gọi phụ tầm nhìn, có bật tính năng chỉnh sửa Ảnh chụp màn hình. Bạn vẫn giữ cuộc trò chuyện và văn bản trên trang của mình trên thiết bị, đồng thời mọi ảnh chụp màn hình dành cho chế độ xem trên đám mây đều có các trường biểu mẫu và email/điện thoại được phát hiện trước tiên sẽ bị làm mờ — giảm mức độ hiển thị trên đám mây mà không cần phần cứng cho mô hình tầm nhìn cục bộ đầy đủ. Định cấu hình phân chia tầm nhìn bên dưới <strong>Cài đặt → Tầm nhìn</strong> (xem "WebBrain làm cách nào để kiểm soát hóa đơn LLM trên đám mây?" ở trên).</p></div>
+      </details>
+      <details class="faq-question" id="page-context" data-faq-item>
+        <summary><span>WebBrain có gửi toàn bộ DOM đến mô hình AI không?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Không. Theo mặc định, WebBrain không gửi HTML thô hoặc bản sao DOM thô. Hệ thống bắt đầu với URL và tiêu đề trang, hướng dẫn phù hợp cho trang web và ảnh chụp vùng hiển thị tùy chọn khi tính năng thị giác được bật.</p><p>Khi tác vụ cần nội dung trang, WebBrain đọc nội dung đó theo yêu cầu dưới dạng cây trợ năng ngữ nghĩa đã rút gọn hoặc văn bản được trích xuất. Các lần đọc được lọc theo khả năng hiển thị khi phù hợp, giới hạn số ký tự và phân trang. Quyền truy cập mã nguồn trang thô chỉ có trong chế độ Dev.</p></div>
+      </details>
+    </section>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner"><span>WebBrain · Câu hỏi thường gặp</span><div class="footer-links"><a href="/docs/">Tài liệu</a><a href="/privacy">Chính sách bảo mật</a><a href="https://github.com/webbrain-one/webbrain/issues">Báo cáo lỗi</a></div></div>
+  </footer>
+
+  <script>
+    (function () {
+      const root = document.documentElement;
+      const themeButton = document.querySelector('[data-theme-toggle]');
+      const sidebarButton = document.querySelector('[data-sidebar-toggle]');
+      const languageSelect = document.querySelector('[data-faq-language]');
+      const languageRoutes = Object.freeze({"en":"/docs/faq/","es":"/docs/es/faq/","fr":"/docs/fr/faq/","tr":"/docs/tr/faq/","zh":"/docs/zh/faq/","ru":"/docs/ru/faq/","uk":"/docs/uk/faq/","ar":"/docs/ar/faq/","ja":"/docs/ja/faq/","ko":"/docs/ko/faq/","id":"/docs/id/faq/","th":"/docs/th/faq/","ms":"/docs/ms/faq/","tl":"/docs/tl/faq/","he":"/docs/he/faq/","hi":"/docs/hi/faq/","pt":"/docs/pt/faq/","vi":"/docs/vi/faq/","bn":"/docs/bn/faq/","fa":"/docs/fa/faq/","nl":"/docs/nl/faq/","de":"/docs/de/faq/"});
+      const searchInput = document.querySelector('[data-faq-search]');
+      const emptyState = document.querySelector('[data-faq-empty]');
+      const topics = Array.from(document.querySelectorAll('[data-faq-topic]'));
+
+      function setTheme(theme, persist) {
+        root.dataset.theme = theme;
+        themeButton.textContent = theme === 'dark' ? '☀' : '☾';
+        if (persist) try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+      }
+      setTheme(root.dataset.theme === 'light' ? 'light' : 'dark', false);
+      themeButton.addEventListener('click', function () {
+        setTheme(root.dataset.theme === 'light' ? 'dark' : 'light', true);
+      });
+
+      languageSelect.addEventListener('change', function () {
+        const route = languageRoutes[languageSelect.value];
+        if (route) window.location.assign(route);
+      });
+
+      sidebarButton.addEventListener('click', function () {
+        const open = document.body.classList.toggle('sidebar-open');
+        sidebarButton.setAttribute('aria-expanded', String(open));
+      });
+      document.querySelectorAll('.docs-sidebar a').forEach(function (link) {
+        link.addEventListener('click', function () {
+          document.body.classList.remove('sidebar-open');
+          sidebarButton.setAttribute('aria-expanded', 'false');
+        });
+      });
+
+      function normalize(value) {
+        return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+      }
+      function filterFaq() {
+        const query = normalize(searchInput.value);
+        let totalVisible = 0;
+        topics.forEach(function (topic) {
+          let topicVisible = 0;
+          topic.querySelectorAll('[data-faq-item]').forEach(function (item) {
+            const match = !query || normalize(item.textContent).includes(query);
+            item.hidden = !match;
+            if (match) topicVisible += 1;
+          });
+          topic.hidden = topicVisible === 0;
+          const count = topic.querySelector('.faq-topic-header > span');
+          count.textContent = String(topicVisible);
+          totalVisible += topicVisible;
+        });
+        emptyState.hidden = !query || totalVisible > 0;
+      }
+      searchInput.addEventListener('input', filterFaq);
+      searchInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && searchInput.value) {
+          searchInput.value = '';
+          filterFaq();
+        }
+      });
+      document.addEventListener('keydown', function (event) {
+        const target = event.target;
+        const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+        if (event.key === '/' && !typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          searchInput.focus();
+        }
+      });
+
+      function openHashTarget() {
+        if (!window.location.hash) return;
+        const target = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+        if (target && target.matches('details')) target.open = true;
+      }
+      window.addEventListener('hashchange', openHashTarget);
+      openHashTarget();
+    })();
+  </script>
+</body>
+</html>

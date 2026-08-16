@@ -179,6 +179,10 @@ export class ProviderManager {
     }
     this.activeProviderId = legacyActiveProviderId || WEBBRAIN_CLOUD_PROVIDER_ID;
     if (!configs[this.activeProviderId]) this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
+    if (this.activeProviderId === 'webgpu') {
+      this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
+      providerStateMigrated = true;
+    }
     if (this.activeProviderId !== WEBBRAIN_CLOUD_PROVIDER_ID && configs[this.activeProviderId]?.configured !== true) {
       this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
       providerStateMigrated = true;
@@ -862,6 +866,13 @@ export class ProviderManager {
     return provider;
   }
 
+  /** Get a provider without changing the user's globally selected provider. */
+  getProvider(id) {
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`Provider not found: ${id}`);
+    return provider;
+  }
+
   async _fetchVisionCapability(providerId, provider, identity) {
     const root = identity.baseUrl.replace(/\/v1$/i, '');
     const headers = this._modelListHeaders(provider);
@@ -1208,7 +1219,7 @@ export class ProviderManager {
     if (nextProvider instanceof WebGPUProvider) {
       const download = await nextProvider.downloadStatus();
       if (!download.ready) {
-        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Settings > Providers > WebGPU before selecting it for chat.`);
+        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Apocalypse Mode > WebGPU before selecting it for chat.`);
       }
     }
     this.activeProviderId = id;

@@ -11,12 +11,13 @@ const WIKIPEDIA_LANGUAGES = Object.freeze([
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
 const WEBGPU_VISION_DOWNLOAD_STATE_KEY = 'webgpuVisionDownloadState';
+const SUPPORTED_CATALOG_TIERS = new Set(['text', 'full']);
 const supportsWebgpuVision = typeof globalThis.chrome?.offscreen?.createDocument === 'function';
 const store = createApocalypseStore();
 const storage = createOpfsArchiveStorage();
 const elements = Object.fromEntries([
-  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language', 'catalog-tier',
-  'storage-target', 'external-storage-option', 'load-catalog', 'catalog', 'import-file', 'import-language', 'import-button', 'cancel-import', 'notice',
+  'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'installed', 'language',
+  'storage-target', 'external-storage-option', 'load-catalog', 'catalog-status', 'catalog', 'import-file', 'import-language', 'import-button', 'cancel-import', 'notice',
   'update-policy', 'vision-model-card', 'vision-model-status', 'vision-model-progress',
 ].map(id => [id, document.getElementById(id)]));
 for (const select of [elements.language, elements['import-language']]) {
@@ -25,6 +26,9 @@ for (const select of [elements.language, elements['import-language']]) {
 elements['vision-model-card'].hidden = !supportsWebgpuVision;
 let snapshot = null;
 let catalogItems = [];
+let catalogLoading = false;
+let catalogRequest = 0;
+let installReviewInFlight = false;
 let importController = null;
 let polling = false;
 let processingDownload = false;
@@ -54,6 +58,27 @@ function escapeHtml(value) {
 function notice(message, kind = '') {
   elements.notice.textContent = message || '';
   elements.notice.dataset.kind = kind;
+}
+
+function setCatalogStatus(message, kind = '') {
+  elements['catalog-status'].textContent = message || '';
+  elements['catalog-status'].dataset.kind = kind;
+}
+
+function setCatalogEmpty(message) {
+  elements.catalog.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+}
+
+function syncCatalogAvailability() {
+  const enabled = snapshot?.enabled === true;
+  elements['load-catalog'].disabled = !enabled || catalogLoading;
+  if (enabled) return;
+  catalogRequest += 1;
+  catalogLoading = false;
+  catalogItems = [];
+  elements.catalog.setAttribute('aria-busy', 'false');
+  setCatalogStatus(t('ap.catalog.enable'));
+  setCatalogEmpty(t('ap.catalog.enable'));
 }
 
 async function authorizeFileHandle(handle, mode) {
@@ -86,7 +111,12 @@ function archiveButtons(record) {
   }
   if (record.status === 'paused') return `<button data-action="resume" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.resume'))}</button>`;
   if (record.status === 'error' && record.downloadUrl && record.errorKind !== 'archive-unreadable') return `<button data-action="retry" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.retry'))}</button>`;
-  if (record.status === 'ready' && record.downloadUrl) return `<button data-action="update" data-id="${escapeHtml(record.id)}">${escapeHtml(t(record.updateAvailable ? 'ap.review_update' : 'ap.check_update'))}</button>`;
+  if (record.status === 'ready') {
+    const update = record.downloadUrl
+      ? `<button data-action="update" data-id="${escapeHtml(record.id)}">${escapeHtml(t(record.updateAvailable ? 'ap.review_update' : 'ap.check_update'))}</button>`
+      : '';
+    return `<button class="primary" data-action="read" data-id="${escapeHtml(record.id)}">${escapeHtml(t('ap.reader.open'))}</button>${update}`;
+  }
   return '';
 }
 
@@ -113,18 +143,35 @@ function renderInstalled() {
 }
 
 function renderCatalog() {
-  const tier = elements['catalog-tier'].value || 'text';
-  const items = tier === 'all' ? catalogItems : catalogItems.filter(item => item.tier === tier);
+  const items = catalogItems;
   if (!items.length) {
-    elements.catalog.innerHTML = `<div class="empty">${escapeHtml(t('ap.no_match'))}</div>`;
+    setCatalogEmpty(t(catalogLoading ? 'ap.loading_catalog' : 'ap.no_match'));
     return;
   }
-  elements.catalog.innerHTML = items.slice(0, 80).map((item, index) => `<article class="item"><div><h3>${escapeHtml(item.title)}</h3>
+  elements.catalog.innerHTML = items.map((item, index) => `<article class="item"><div><h3>${escapeHtml(item.title)}</h3>
     <div class="meta">${escapeHtml(item.language)} · ${escapeHtml(item.archiveDate)} · ${escapeHtml(t(`ap.tier.${item.tier}`))} · ${Number(item.articleCount || 0).toLocaleString()}</div>
     <div class="meta">${escapeHtml(t('ap.catalog.size_pending'))}</div></div>
     <div class="actions"><button class="primary" data-install="${index}">${escapeHtml(t('ap.review_install'))}</button></div></article>`).join('');
-  const visible = items.slice(0, 80);
-  elements.catalog.querySelectorAll('[data-install]').forEach(button => button.addEventListener('click', () => reviewInstall(visible[Number(button.dataset.install)])));
+  const visible = items;
+  elements.catalog.querySelectorAll('[data-install]').forEach((button) => {
+    button.disabled = installReviewInFlight;
+    button.addEventListener('click', () => reviewInstall(visible[Number(button.dataset.install)], button));
+  });
+}
+
+function openWikipediaReader(id) {
+  const url = runtimeApi.runtime.getURL(`src/ui/wikipedia-reader.html?id=${encodeURIComponent(id)}`);
+  const popup = { url, type: 'popup', width: 1180, height: 840 };
+  try {
+    if (globalThis.browser?.windows?.create) globalThis.browser.windows.create(popup).catch(() => globalThis.open(url, '_blank'));
+    else if (globalThis.chrome?.windows?.create) {
+      globalThis.chrome.windows.create(popup, () => {
+        if (globalThis.chrome.runtime.lastError) globalThis.open(url, '_blank');
+      });
+    } else globalThis.open(url, '_blank');
+  } catch {
+    globalThis.open(url, '_blank');
+  }
 }
 
 function renderVisionDownload() {
@@ -173,11 +220,54 @@ async function refresh() {
   }
   elements.enabled.checked = snapshot.enabled === true;
   elements['update-policy'].value = snapshot.updatePolicy === 'automatic' ? 'automatic' : 'manual';
+  syncCatalogAvailability();
   renderInstalled();
   await refreshVisionDownload().catch(() => {});
 }
 
-async function reviewInstall(item) {
+async function loadCatalog() {
+  if (snapshot?.enabled !== true) {
+    syncCatalogAvailability();
+    return;
+  }
+  const request = ++catalogRequest;
+  catalogLoading = true;
+  catalogItems = [];
+  elements['load-catalog'].disabled = true;
+  elements.catalog.setAttribute('aria-busy', 'true');
+  setCatalogStatus(t('ap.loading_catalog'), 'loading');
+  setCatalogEmpty(t('ap.loading_catalog'));
+  try {
+    const result = await command('catalog', { language: elements.language.value });
+    if (request !== catalogRequest) return;
+    catalogItems = Array.isArray(result.items) ? result.items : [];
+    catalogItems = catalogItems.filter(item => SUPPORTED_CATALOG_TIERS.has(item.tier));
+    renderCatalog();
+    setCatalogStatus(t('ap.loaded_catalog', { count: catalogItems.length }), 'success');
+  } catch (error) {
+    if (request !== catalogRequest) return;
+    elements.catalog.innerHTML = '';
+    setCatalogStatus(error.message, 'error');
+  } finally {
+    if (request === catalogRequest) {
+      catalogLoading = false;
+      elements.catalog.setAttribute('aria-busy', 'false');
+      elements['load-catalog'].disabled = snapshot?.enabled !== true;
+    }
+  }
+}
+
+async function reviewInstall(item, sourceButton = null) {
+  if (installReviewInFlight) return;
+  installReviewInFlight = true;
+  const originalButtonText = sourceButton?.textContent || '';
+  elements.catalog.querySelectorAll('[data-install]').forEach((button) => { button.disabled = true; });
+  if (sourceButton) {
+    sourceButton.disabled = true;
+    sourceButton.setAttribute('aria-busy', 'true');
+    sourceButton.textContent = t('ap.review_loading');
+  }
+  notice(t('ap.resolving'));
   try {
     let target = null;
     if (elements['storage-target'].value === 'file') {
@@ -189,7 +279,6 @@ async function reviewInstall(item) {
       await authorizeFileHandle(handle, 'readwrite');
       target = { kind: 'file-handle', handle, access: 'readwrite' };
     }
-    notice(t('ap.resolving'));
     const { download } = await command('resolve', { item });
     const capacity = normalizeStorageEstimate(snapshot?.storage);
     const implication = target
@@ -217,6 +306,19 @@ async function reviewInstall(item) {
     renderInstalled();
     notice(t('ap.queued'), 'success');
   } catch (error) { notice(error.message, 'error'); }
+  finally {
+    installReviewInFlight = false;
+    elements.catalog.querySelectorAll('[data-install]').forEach((button) => {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = t('ap.review_install');
+    });
+    if (sourceButton && !sourceButton.matches('[data-install]')) {
+      sourceButton.disabled = false;
+      sourceButton.removeAttribute('aria-busy');
+      sourceButton.textContent = originalButtonText;
+    }
+  }
 }
 
 async function reviewImport(file, external) {
@@ -249,8 +351,10 @@ async function reviewImport(file, external) {
 elements.enabled.addEventListener('change', async () => {
   try {
     snapshot = await command('enable', { enabled: elements.enabled.checked });
+    syncCatalogAvailability();
     renderInstalled();
     notice(t(elements.enabled.checked ? 'ap.enabled_notice' : 'ap.disabled_notice'), 'success');
+    if (snapshot.enabled === true) await loadCatalog();
   } catch (error) { elements.enabled.checked = !elements.enabled.checked; notice(error.message, 'error'); }
 });
 
@@ -266,21 +370,17 @@ elements['update-policy'].addEventListener('change', async () => {
   }
 });
 
-elements['load-catalog'].addEventListener('click', async () => {
-  try {
-    notice(t('ap.loading_catalog'));
-    const result = await command('catalog', { language: elements.language.value });
-    catalogItems = Array.isArray(result.items) ? result.items : [];
-    renderCatalog();
-    notice(t('ap.loaded_catalog', { count: catalogItems.length }), 'success');
-  } catch (error) { notice(error.message, 'error'); }
-});
-elements['catalog-tier'].addEventListener('change', renderCatalog);
+elements['load-catalog'].addEventListener('click', loadCatalog);
+elements.language.addEventListener('change', loadCatalog);
 
 elements.installed.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action;
+  if (action === 'read') {
+    openWikipediaReader(button.dataset.id);
+    return;
+  }
   if (action === 'delete') {
     const record = snapshot.archives.find(item => item.id === button.dataset.id);
     const message = record?.target?.kind === 'file-handle'
@@ -308,7 +408,7 @@ elements.installed.addEventListener('click', async (event) => {
         replacement = selectKiwixUpdate(record, result.items);
       }
       if (!replacement) { notice(t('ap.current'), 'success'); return; }
-      await reviewInstall(replacement);
+      await reviewInstall(replacement, button);
       return;
     }
     snapshot = await command(action, { id: button.dataset.id });
@@ -379,4 +479,5 @@ async function poll() {
 }
 
 await refresh().catch(error => notice(error.message, 'error'));
+if (snapshot?.enabled === true) void loadCatalog();
 setInterval(poll, 2000);

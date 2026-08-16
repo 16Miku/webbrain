@@ -10,7 +10,7 @@ export const WEBGPU_DTYPE = 'q4f16';
 export const WEBGPU_MODEL_PRESETS = Object.freeze([
   Object.freeze({ id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B', size: '1.55 GB', dtype: WEBGPU_DTYPE, dtypeLabel: WEBGPU_DTYPE }),
 ]);
-export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`;
+export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
@@ -157,7 +157,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     }
     const download = await this.downloadStatus();
     if (!download.ready) {
-      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
+      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`);
     }
     const response = await this._dispatch({
       type: 'webgpu-chat',
@@ -173,11 +173,11 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     });
     if (!response || response.error) {
       const error = new Error(`In-browser WebGPU: ${response?.error || 'no response from the inference worker'}`);
-      // A failed OrtRun leaves the WebGPU session/device in an unknown state.
-      // The agent's generic two-second network retry only repeats a costly GPU
-      // failure, so surface this terminally and let the user free resources or
-      // restart Chrome before attempting another turn.
-      if (/OrtRun|BufferManager::Download|mapAsync|GPUBuffer|device lost/i.test(error.message)) {
+      // A failed OrtRun leaves the WebGPU session/device in an unknown state,
+      // while an exhausted generation budget is deterministic for the same
+      // prompt. The generic two-second network retry only repeats either costly
+      // GPU failure, so surface these terminally instead.
+      if (/OrtRun|BufferManager::Download|mapAsync|GPUBuffer|device lost|used its generation budget before finishing reasoning/i.test(error.message)) {
         error.isAskStreamTerminalError = true;
       }
       throw error;

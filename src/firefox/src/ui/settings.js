@@ -3122,13 +3122,39 @@ function syncInputsIntoProvidersData() {
   });
 }
 
+const PROVIDER_REFRESH_MANAGED_KEYS = new Set([
+  'id',
+  'type',
+  'category',
+  'configured',
+  'duplicateOf',
+  'sourceProviderId',
+  'isDuplicate',
+  'hasDuplicate',
+  'canDuplicate',
+  'visionDetection',
+]);
+
+function restoreProviderDrafts(drafts) {
+  for (const [providerId, draft] of Object.entries(drafts || {})) {
+    const refreshed = providersData[providerId];
+    if (!refreshed || !draft) continue;
+    for (const [key, value] of Object.entries(draft)) {
+      if (!PROVIDER_REFRESH_MANAGED_KEYS.has(key)) refreshed[key] = value;
+    }
+  }
+}
+
 async function duplicateProvider(id) {
   try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
     await saveProvider(id, { showFlash: false, markConfigured: false });
     const created = await sendToBackground('duplicate_provider', { providerId: id });
     const refreshed = await sendToBackground('get_providers');
     providersData = refreshed.providers;
     activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
     expandedProviders.add(created.providerId);
     renderProviders();
   } catch (error) {
@@ -3139,10 +3165,13 @@ async function duplicateProvider(id) {
 async function removeDuplicateProvider(id) {
   if (!window.confirm(t('st.providers.remove_duplicate_confirm'))) return;
   try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
     await sendToBackground('remove_duplicate_provider', { providerId: id });
     const refreshed = await sendToBackground('get_providers');
     providersData = refreshed.providers;
     activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
     expandedProviders.delete(id);
     providerCompatibilityJsonDrafts.delete(id);
     renderProviders();
