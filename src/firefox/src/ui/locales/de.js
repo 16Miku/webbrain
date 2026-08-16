@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Nativen Druckdialog der aktuellen Seite öffnen',
+  'sp.print.error': 'Druckdialog konnte nicht geöffnet werden: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Der Antwortstream wurde unterbrochen; dieser Ask-Durchgang wird ohne Streaming erneut versucht.',
   'sp.providers.no_setup_group': 'Keine Einrichtung erforderlich',

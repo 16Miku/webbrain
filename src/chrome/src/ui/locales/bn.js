@@ -2,6 +2,8 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'বর্তমান পৃষ্ঠার নেটিভ প্রিন্ট ডায়ালগ খুলুন',
+  'sp.print.error': 'প্রিন্ট ডায়ালগ খোলা যায়নি: {msg}',
   'sp.streaming.fallback': 'প্রতিক্রিয়া স্ট্রিম বাধাগ্রস্ত হয়েছে; স্ট্রিমিং ছাড়া এই Ask পালাটি আবার চেষ্টা করা হচ্ছে।',
   'sp.providers.no_setup_group': "কোন সেটআপ প্রয়োজন",
   'sp.providers.no_setup': "কোনো সেটআপ নেই",

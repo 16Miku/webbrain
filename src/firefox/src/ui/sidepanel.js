@@ -544,6 +544,7 @@ const SLASH_COMMANDS = [
   { value: '/compact', usage: '/compact [prompt]', descriptionKey: 'sp.slash.compact', action: 'compact', acceptsPayload: true },
   { value: '/verbose', usage: '/verbose', descriptionKey: 'sp.slash.verbose', action: 'toggle', outOfBand: true },
   { value: '/reset', usage: '/reset', descriptionKey: 'sp.slash.reset', action: 'reset' },
+  { value: '/print', usage: '/print', descriptionKey: 'sp.slash.print', action: 'print' },
   {
     value: '/screenshot',
     usage: '/screenshot',
@@ -7065,6 +7066,20 @@ function toggledVisionProviderConfig(providerId, config) {
   return { enabled, config: { ...config, supportsVision: enabled } };
 }
 
+async function executePrintSlashCommand(tabId, currentTabId, tabs, showToast, translate) {
+  try {
+    const tab = tabId == null ? null : await tabs.get(tabId);
+    if (currentTabId !== tabId || !tab?.active) return { skipped: true };
+    await tabs.executeScript(tabId, { code: 'window.print();' });
+    return { ok: true };
+  } catch (error) {
+    if (currentTabId === tabId) {
+      showToast(translate('sp.print.error', { msg: error?.message || 'unknown error' }), { duration: 5000 });
+    }
+    return { error: error?.message || 'unknown error' };
+  }
+}
+
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
     const watchArgs = parseWatchSlashCommand(text);
@@ -7117,7 +7132,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
-  if ((command.value === '/screenshot' || command.value === '/record')
+  if ((command.value === '/screenshot' || command.value === '/record' || command.value === '/print')
       && isSelectionGroundedForTab(tabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return '';
@@ -7277,6 +7292,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     } finally {
       setConversationClearInProgress(tabId, false);
     }
+    return '';
+  }
+
+  if (command.value === '/print') {
+    await executePrintSlashCommand(tabId, currentTabId, browser.tabs, showComposerToast, t);
     return '';
   }
 
@@ -7631,7 +7651,7 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
-    if (sourceGrounding && /^\s*\/(?:screenshot|record)(?:\s|$)/i.test(text)) {
+    if (sourceGrounding && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
       showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
       return false;
     }

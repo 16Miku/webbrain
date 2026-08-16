@@ -2,6 +2,8 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'वर्तमान पृष्ठ का मूल प्रिंट संवाद खोलें',
+  'sp.print.error': 'प्रिंट संवाद नहीं खुल सका: {msg}',
   'sp.streaming.fallback': 'प्रतिक्रिया स्ट्रीम बाधित हुई; इस Ask टर्न को बिना स्ट्रीमिंग के फिर से आज़माया जा रहा है।',
   'sp.providers.no_setup_group': "किसी सेटअप की आवश्यकता नहीं है",
   'sp.providers.no_setup': "कोई सेटअप नहीं",

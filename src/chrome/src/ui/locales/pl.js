@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Otwórz natywne okno drukowania bieżącej strony',
+  'sp.print.error': 'Nie udało się otworzyć okna drukowania: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Strumieniowanie odpowiedzi zostało przerwane; ponawiam tę turę Ask bez strumieniowania.',
   'sp.providers.no_setup_group': 'Bez konfiguracji',

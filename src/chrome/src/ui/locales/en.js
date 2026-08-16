@@ -2,6 +2,8 @@
 import apocalypseModeCopy from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Open the current page’s native print dialog',
+  'sp.print.error': 'Could not open the print dialog: {msg}',
   'sp.streaming.fallback': 'Response streaming was interrupted; retrying this Ask turn without streaming.',
   'sp.providers.no_setup_group': 'No setup required',
   'sp.providers.no_setup': 'No setup',

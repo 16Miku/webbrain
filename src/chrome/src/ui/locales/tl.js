@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Buksan ang native na dialog ng pag-print ng kasalukuyang pahina',
+  'sp.print.error': 'Hindi mabuksan ang dialog ng pag-print: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Naputol ang pag-stream ng tugon; sinusubukang muli ang Ask turn na ito nang walang streaming.',
   'sp.providers.no_setup_group': 'Walang setup',

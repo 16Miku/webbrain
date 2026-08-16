@@ -39,6 +39,7 @@ for its available flags.
 | `/compact` | Force context compaction for the current conversation |
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |
+| `/print` | Open the current page's native print dialog |
 | `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Chrome only) |
 | `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | Record the current tab, or a selected screen/window with `--full-screen` (Chrome only); add `--hide-recording-indicator` to hide the banner or `--transcribe` to save a transcript after stop |
 | `/export [--traces \| --config]` | Download version-stamped conversation Markdown, export the version-stamped tool chain with `--traces`, or export a Settings snapshot with `--config` |

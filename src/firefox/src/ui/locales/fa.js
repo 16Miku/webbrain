@@ -2,6 +2,8 @@
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'باز کردن گفت‌وگوی چاپ بومی صفحهٔ فعلی',
+  'sp.print.error': 'گفت‌وگوی چاپ باز نشد: {msg}',
   'sp.streaming.fallback': 'جریان پاسخ قطع شد؛ این نوبت Ask بدون پخش جریانی دوباره امتحان می‌شود.',
   'sp.providers.no_setup_group': "بدون نیاز به راه اندازی",
   'sp.providers.no_setup': "بدون راه اندازی",

@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Abrir el diálogo de impresión nativo de la página actual',
+  'sp.print.error': 'No se pudo abrir el diálogo de impresión: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Se interrumpió la transmisión de la respuesta; reintentando este turno de Ask sin transmisión.',
   'sp.providers.no_setup_group': 'Sin configuración',

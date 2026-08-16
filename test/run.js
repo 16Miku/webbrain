@@ -250,6 +250,7 @@ function binaryResponse(status, body = 'media-bytes', contentType = 'video/mp4',
 const {
   getActiveAdapter,
   getFullPageCapturePolicy,
+  getMessageRecipientGuardPolicy,
   listAdapters,
   listAdapterWorkflowProfiles,
 } = await import(
@@ -258,6 +259,7 @@ const {
 const {
   getActiveAdapter: getActiveAdapterFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
+  getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
   listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapters.js').replace(/\\/g, '/')
@@ -938,6 +940,12 @@ const { Agent: AgentCh } = await import(
 );
 const { Agent: AgentFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/agent.js').replace(/\\/g, '/')
+);
+const MessageRecipientGuardCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
+);
+const MessageRecipientGuardFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
 );
 const { repairDoubleEscapedAssistantText: repairDoubleEscapedAssistantTextCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/text-sanitize.js').replace(/\\/g, '/')
@@ -2581,7 +2589,8 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
       return {};
     };
 
-    const result = await new AgentCh({}).executeTool(42, 'press_keys', { key: ';' });
+    const agent = new AgentCh({});
+    const result = await agent.executeTool(42, 'press_keys', { key: ';' });
     assert.deepEqual(result, {
       success: true,
       dispatched: true,
@@ -2601,6 +2610,29 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
         params: { type: 'keyUp', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
       },
     ]);
+
+    calls.length = 0;
+    agent._consumeMessageRecipientDispatchBinding = async () => ({
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      messageRecipientGuard: true,
+      reasonCode: 'active_recipient_changed_before_dispatch',
+      error: 'active recipient changed',
+    });
+    const blockedEnter = await agent.executeTool(
+      42,
+      'press_keys',
+      { key: 'Enter' },
+      null,
+      {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'recipient-enter' },
+      },
+    );
+    assert.equal(blockedEnter.reasonCode, 'active_recipient_changed_before_dispatch');
+    assert.equal(blockedEnter.noDispatch, true);
+    assert.equal(calls.length, 0, 'recipient revalidation must block before CDP Enter dispatch');
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
@@ -3321,6 +3353,560 @@ test('matches Douyin video and live surfaces with verification and publication g
   assert.match(a?.notes||'',/关注.*点赞.*收藏.*评论.*私信/s);
   assert.match(a?.notes||'',/投稿.*creator\.douyin\.com.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
   assert.equal(f?.notes,a?.notes);
+  assert.deepEqual(getMessageRecipientGuardPolicy('https://www.douyin.com/chat'), {
+    adapterName: 'douyin', verifyActiveRecipient: true,
+  });
+  assert.deepEqual(getMessageRecipientGuardPolicyFx('https://www.douyin.com/chat'), {
+    adapterName: 'douyin', verifyActiveRecipient: true,
+  });
+  assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/chat/123')?.adapterName, 'douyin');
+  assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/video/123'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://creator.douyin.com/creator-micro/content/upload'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://example.com/chat'), null);
+});
+
+test('direct-message recipient guard uses structured intent and exact active identity evidence', async () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/message-recipient-guard.js'), 'utf8'),
+    'Chrome and Firefox recipient comparison helpers diverged',
+  );
+  for (const helper of [MessageRecipientGuardCh, MessageRecipientGuardFx]) {
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipient: ' 迷你世界皓宸 ' }), {
+      target_kind: 'named', recipient: '迷你世界皓宸',
+    });
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipient: 'ignored' }), {
+      target_kind: 'active_conversation', recipient: '',
+    });
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice'), true);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice · online'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice Smith'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Team', 'Team-Sales'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Search results for Alice'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Malice'), false);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['迷你世界皓宸'],
+    ), true);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜', '迷你世界皓宸'],
+    ), false, 'ambiguous identity evidence must never authorize dispatch');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜'],
+    ), false);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'active_conversation', recipient: '' },
+      ['清辉月下夜'],
+    ), false, 'un-pinned active-conversation intent must never authorize dispatch');
+  }
+
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27101 : 27102;
+    agent._currentUrl = async () => 'https://www.douyin.com/chat';
+    let probe = {
+      success: true,
+      conclusive: true,
+      messageSend: false,
+      strongIdentityCandidates: ['清辉月下夜'],
+      identityCandidates: ['清辉月下夜'],
+    };
+    agent._messageRecipientContentProbe = async () => probe;
+
+    const pinned = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.douyin.com/chat',
+    );
+    assert.deepEqual(pinned.target, {
+      target_kind: 'named', recipient: '清辉月下夜',
+    }, `${label}: active conversation was not pinned before execution`);
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: false,
+      strongIdentityCandidates: ['Alice', 'Bob'],
+      identityCandidates: ['Alice', 'Bob'],
+    };
+    const ambiguousPin = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.douyin.com/chat',
+    );
+    assert.equal(ambiguousPin.ok, false, `${label}: ambiguous active conversation was authorized`);
+
+    agent._planExecutionGuards.set(tabId, {
+      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+    });
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['清辉月下夜'],
+      strongIdentityCandidates: ['清辉月下夜'],
+    };
+
+    const blocked = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(blocked?.noDispatch, true, `${label}: mismatched active recipient was not blocked`);
+    assert.equal(blocked?.reasonCode, 'active_recipient_unverified', `${label}: mismatch reason is unstable`);
+
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸'],
+      strongIdentityCandidates: ['迷你世界皓宸'],
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    };
+    const enterExecutionContext = {};
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'press_keys',
+        { key: 'Enter' },
+        'https://www.douyin.com/chat',
+        enterExecutionContext,
+      ),
+      null,
+      `${label}: matching active recipient was blocked`,
+    );
+    assert.deepEqual(enterExecutionContext, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    });
+    for (const [tool, args] of [
+      ['click', { selector: '#send' }],
+      ['click_ax', { ref_id: 'ref_send' }],
+    ]) {
+      const clickExecutionContext = {};
+      assert.equal(
+        await agent._messageRecipientGuardBlock(
+          tabId,
+          tool,
+          args,
+          'https://www.douyin.com/chat',
+          clickExecutionContext,
+        ),
+        null,
+        `${label}: matching ${tool} was blocked before binding`,
+      );
+      assert.deepEqual(clickExecutionContext, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+      });
+    }
+    const recipientExecutionContext = {};
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'set_field',
+        { ref_id: 'ref_composer', text: 'hello', submit: true },
+        'https://www.douyin.com/chat',
+        recipientExecutionContext,
+      ),
+      null,
+      `${label}: matching set_field submit was blocked before binding`,
+    );
+    assert.deepEqual(recipientExecutionContext, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    });
+    delete probe.messageRecipientDispatchBinding;
+    const unboundSubmit = await agent._messageRecipientGuardBlock(
+      tabId,
+      'click_ax',
+      { ref_id: 'ref_send' },
+      'https://www.douyin.com/chat',
+      {},
+    );
+    assert.equal(unboundSubmit?.reasonCode, 'recipient_dispatch_binding_unavailable', `${label}: unbound click_ax failed open`);
+    const repeatedEnter = await agent._messageRecipientGuardBlock(
+      tabId,
+      'press_keys',
+      { key: 'Enter', repeat: 2 },
+    );
+    assert.equal(repeatedEnter?.noDispatch, true, `${label}: repeated Enter bypassed one-send verification`);
+    assert.equal(repeatedEnter?.reasonCode, 'recipient_guard_repeated_enter');
+
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸', 'Other conversation'],
+      strongIdentityCandidates: ['迷你世界皓宸', 'Other conversation'],
+    };
+    const ambiguousDispatch = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(ambiguousDispatch?.noDispatch, true, `${label}: ambiguous header identities authorized dispatch`);
+
+    agent._planExecutionGuards.set(tabId, { messaging: null });
+    const missing = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(missing?.reasonCode, 'authorized_recipient_missing', `${label}: missing planner authorization did not fail closed`);
+
+    probe = { success: true, conclusive: true, messageSend: false, identityCandidates: [] };
+    assert.equal(
+      await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
+      null,
+      `${label}: conclusively non-message Enter was incorrectly blocked`,
+    );
+
+    probe = { success: true, conclusive: false, messageSend: null, identityCandidates: [] };
+    const inconclusive = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(inconclusive?.reasonCode, 'message_send_classification_inconclusive', `${label}: inconclusive probe failed open`);
+
+    for (const unsafeTool of ['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']) {
+      const unsafe = await agent._messageRecipientGuardBlock(tabId, unsafeTool, {});
+      assert.equal(unsafe?.noDispatch, true, `${label}: ${unsafeTool} bypassed recipient verification`);
+      assert.equal(unsafe?.reasonCode, 'recipient_unverifiable_dispatch_path');
+    }
+  }
+});
+
+test('direct-message recipient probe accepts only a unique active-thread header as identity evidence', () => {
+  const runProbe = (prefix) => {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const start = source.indexOf('function _probeMessageRecipientGuard(');
+    const end = source.indexOf('\n\n  // --- Message handler ---', start);
+    assert.ok(start >= 0 && end > start, `${prefix}: recipient probe should remain independently testable`);
+
+    const element = (text, rect, options = {}) => {
+      const attributes = { ...(options.attributes || {}) };
+      if (options.role) attributes.role = options.role;
+      if (options.dataAction === true) attributes['data-action'] = 'true';
+      const el = {
+        nodeType: 1,
+        isConnected: true,
+        tagName: options.tagName || 'DIV',
+        isContentEditable: false,
+        value: options.value || '',
+        textContent: text,
+        innerText: text,
+        children: [],
+        parentElement: options.parentElement || null,
+        clientHeight: options.clientHeight || rect.height || 0,
+        scrollHeight: options.scrollHeight || rect.height || 0,
+        getBoundingClientRect: () => rect,
+        getAttribute: (name) => attributes[name] || '',
+        closest: () => null,
+        hasAttribute: (name) => Object.prototype.hasOwnProperty.call(attributes, name),
+      };
+      el.contains = (candidate) => candidate === el;
+      return el;
+    };
+    const composer = element('', { left: 400, right: 900, top: 700, bottom: 760, width: 500, height: 60 }, {
+      tagName: 'TEXTAREA', value: 'hello',
+    });
+    const searchBox = element('', { left: 20, right: 300, top: 130, bottom: 180, width: 280, height: 50 }, {
+      tagName: 'TEXTAREA', role: 'searchbox', value: 'Bob',
+    });
+    const alternateComposer = element('', {
+      left: 420, right: 860, top: 590, bottom: 650, width: 440, height: 60,
+    }, {
+      tagName: 'TEXTAREA', value: 'alternate reply',
+    });
+    const searchedName = element('迷你世界皓宸', {
+      left: 20, right: 300, top: 100, bottom: 140, width: 280, height: 40,
+    }, { tagName: 'H2' });
+    const activeHeader = element('清辉月下夜', {
+      left: 450, right: 700, top: 80, bottom: 120, width: 250, height: 40,
+    }, { tagName: 'H2' });
+    const conversationMessageHeading = element('迷你世界皓宸', {
+      left: 450, right: 700, top: 250, bottom: 290, width: 250, height: 40,
+    }, { tagName: 'H2' });
+    const sendButton = element('Send', {
+      left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
+    }, { tagName: 'BUTTON', role: 'button' });
+    sendButton.closest = () => sendButton;
+    const customSendControl = element('Quick send', {
+      left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
+    }, { dataAction: true });
+    customSendControl.closest = () => customSendControl;
+    const distantControl = element('Forward', {
+      left: 20, right: 140, top: 300, bottom: 350, width: 120, height: 50,
+    }, { tagName: 'BUTTON', role: 'button' });
+    distantControl.closest = () => distantControl;
+    const conversationRail = element('', {
+      left: 0, right: 340, top: 80, bottom: 900, width: 340, height: 820,
+    }, { role: 'list', clientHeight: 820, scrollHeight: 820 });
+    conversationRail.contains = (candidate) => candidate === conversationRail
+      || candidate === conversationRow
+      || candidate === conversationRowLabel
+      || candidate === conversationRowMenu
+      || candidate === conversationRowMenuLeaf;
+    const conversationRow = element('迷你世界皓宸', {
+      left: 20, right: 320, top: 220, bottom: 290, width: 300, height: 70,
+    }, { role: 'listitem', parentElement: conversationRail });
+    conversationRow.closest = (selector) => selector.includes('[role="listitem"]') ? conversationRow : null;
+    const conversationRowLabel = element('迷你世界皓宸', {
+      left: 60, right: 250, top: 235, bottom: 275, width: 190, height: 40,
+    }, { parentElement: conversationRow });
+    conversationRowLabel.closest = (selector) => selector.includes('[role="listitem"]') ? conversationRow : null;
+    const conversationRowMenu = element('More', {
+      left: 270, right: 315, top: 235, bottom: 275, width: 45, height: 40,
+    }, { tagName: 'BUTTON', role: 'button', parentElement: conversationRow });
+    conversationRowMenu.closest = (selector) => selector.includes('button')
+      ? conversationRowMenu
+      : (selector.includes('[role="listitem"]') ? conversationRow : null);
+    const conversationRowMenuLeaf = element('', {
+      left: 280, right: 305, top: 242, bottom: 267, width: 25, height: 25,
+    }, { tagName: 'SPAN', parentElement: conversationRowMenu });
+    conversationRowMenuLeaf.closest = (selector) => selector.includes('button')
+      ? conversationRowMenu
+      : (selector.includes('[role="listitem"]') ? conversationRow : null);
+    conversationRow.contains = (candidate) => candidate === conversationRow
+      || candidate === conversationRowLabel
+      || candidate === conversationRowMenu
+      || candidate === conversationRowMenuLeaf;
+    let activeElement = composer;
+    const document = {
+      activeElement,
+      querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
+      querySelectorAll: (selector) => {
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox, alternateComposer];
+        if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
+        if (selector.startsWith('[aria-selected')) return [];
+        if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
+        if (selector.startsWith('[data-testid')) return [];
+        return [];
+      },
+      body: { querySelectorAll: () => [searchedName, activeHeader, conversationMessageHeading] },
+    };
+    const context = {
+      document,
+      window: {
+        innerHeight: 1000,
+        __wb_ax_lookup: (refId) => {
+          if (refId === 'conversation-row-label') return conversationRowLabel;
+          if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
+          if (refId === 'alternate-composer') return alternateComposer;
+          return null;
+        },
+      },
+      getComputedStyle: (el) => ({
+        display: 'block',
+        visibility: 'visible',
+        overflowY: el === conversationRail ? 'auto' : 'visible',
+      }),
+      _deepActiveElement: () => activeElement,
+    };
+    const probe = vm.runInNewContext(`(${source.slice(start, end)})`, context);
+    const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
+    const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+
+    activeElement = searchBox;
+    const searchEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    composer.isConnected = false;
+    alternateComposer.isConnected = false;
+    const searchWithoutComposerResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    composer.isConnected = true;
+    alternateComposer.isConnected = true;
+
+    activeElement = alternateComposer;
+    const alternateComposerEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    const alternateComposerSubmitResult = probe({
+      tool: 'set_field', args: { ref_id: 'alternate-composer', text: 'send', submit: true },
+    });
+
+    activeElement = element('', {
+      left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800,
+    }, { tagName: 'BODY' });
+    const unfocusedClickResult = probe({ tool: 'click', args: { text: 'Send' } });
+    const distantClickResult = probe({ tool: 'click', args: { text: 'Forward' } });
+    const conversationSelectorResult = probe({ tool: 'click', args: { selector: '#conversation-row' } });
+    const conversationAxResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-label' } });
+    const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
+    const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
+    const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
+    composer.value = '';
+    const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
+    return {
+      observationResult,
+      enterResult,
+      searchEnterResult,
+      searchWithoutComposerResult,
+      alternateComposerEnterResult,
+      alternateComposerSubmitResult,
+      unfocusedClickResult,
+      distantClickResult,
+      conversationSelectorResult,
+      conversationAxResult,
+      conversationMenuResult,
+      conversationMenuLeafResult,
+      unresolvedClickResult,
+      emptyComposerCustomSendResult,
+    };
+  };
+
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const {
+      observationResult,
+      enterResult: result,
+      searchEnterResult,
+      searchWithoutComposerResult,
+      alternateComposerEnterResult,
+      alternateComposerSubmitResult,
+      unfocusedClickResult,
+      distantClickResult,
+      conversationSelectorResult,
+      conversationAxResult,
+      conversationMenuResult,
+      conversationMenuLeafResult,
+      unresolvedClickResult,
+      emptyComposerCustomSendResult,
+    } = runProbe(prefix);
+    assert.equal(observationResult.success, true);
+    assert.equal(observationResult.conclusive, true);
+    assert.deepEqual(Array.from(observationResult.strongIdentityCandidates), ['清辉月下夜']);
+    assert.equal(observationResult.strongIdentityCandidates.includes('迷你世界皓宸'), false);
+    assert.equal(result.success, true);
+    assert.equal(result.conclusive, true);
+    assert.equal(result.messageSend, true);
+    assert.deepEqual(Array.from(result.identityCandidates), ['清辉月下夜']);
+    assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false, `${prefix}: message heading became recipient evidence`);
+    assert.equal(searchEnterResult.messageSend, false, `${prefix}: search Enter was classified as a message send`);
+    assert.equal(searchEnterResult.conclusive, true);
+    assert.equal(searchWithoutComposerResult.messageSend, null, `${prefix}: upper search field was promoted to composer`);
+    assert.equal(searchWithoutComposerResult.conclusive, false);
+    assert.equal(alternateComposerEnterResult.messageSend, null, `${prefix}: alternate composer Enter bypassed recipient verification`);
+    assert.equal(alternateComposerEnterResult.conclusive, false);
+    assert.equal(alternateComposerSubmitResult.messageSend, null, `${prefix}: alternate composer submit bypassed recipient verification`);
+    assert.equal(alternateComposerSubmitResult.conclusive, false);
+    assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
+    assert.equal(unfocusedClickResult.conclusive, true);
+    assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);
+    assert.equal(emptyComposerCustomSendResult.conclusive, true);
+    assert.equal(distantClickResult.messageSend, null, `${prefix}: distant control was declared non-sending`);
+    assert.equal(distantClickResult.conclusive, false);
+    for (const selectionResult of [conversationSelectorResult, conversationAxResult]) {
+      assert.equal(selectionResult.messageSend, false, `${prefix}: verified conversation row could not be selected`);
+      assert.equal(selectionResult.conclusive, true);
+      assert.equal(selectionResult.conversationSelection, true);
+    }
+    assert.equal(conversationMenuResult.messageSend, null, `${prefix}: nested row action was treated as conversation selection`);
+    assert.equal(conversationMenuResult.conclusive, false);
+    assert.equal(conversationMenuLeafResult.messageSend, null, `${prefix}: nested row action descendant was treated as conversation selection`);
+    assert.equal(conversationMenuLeafResult.conclusive, false);
+    assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
+    assert.equal(unresolvedClickResult.conclusive, false);
+  }
+});
+
+test('message recipient dispatch binding detects composer and active-thread races', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('const _messageRecipientDispatchBindings = new Map();');
+    const end = source.indexOf(label === 'chrome'
+      ? '\n\n  // Above this length'
+      : '\n\n  function _releaseDispatchBinding', start);
+    assert.ok(start >= 0 && end > start, `${label}: dispatch binding helpers should remain independently testable`);
+    const composer = { isConnected: true, closest() { return this; } };
+    const replacementComposer = { isConnected: true };
+    const sendButton = { isConnected: true, closest() { return this; } };
+    const replacementButton = { isConnected: true, closest() { return this; } };
+    let liveComposer = composer;
+    let liveTarget = sendButton;
+    let liveIdentities = ['Alice'];
+    const helpers = vm.runInNewContext(`(() => {
+      ${source.slice(start, end)}
+      return {
+        remember: _rememberMessageRecipientDispatchBinding,
+        consume: _consumeMessageRecipientDispatchBinding,
+      };
+    })()`, {
+      window: {},
+      location: { href: 'https://www.douyin.com/chat' },
+      crypto: { getRandomValues: array => { array.fill(7); return array; } },
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+      _probeMessageRecipientGuard: params => (
+        params.expectedDispatchTarget !== liveTarget || params.expectedComposer !== liveComposer
+          ? { success: false, dispatchTargetChanged: true }
+          : {
+              success: true,
+              conclusive: true,
+              messageSend: true,
+              strongIdentityCandidates: liveIdentities,
+            }
+      ),
+    });
+
+    const dispatch = { tool: 'click_ax', args: { ref_id: 'ref_send' }, actionTarget: sendButton };
+    const matchingToken = helpers.remember(composer, ['Alice'], dispatch);
+    assert.equal(helpers.consume({
+      messageRecipientDispatchBinding: { token: matchingToken },
+    }, sendButton).success, true, `${label}: stable recipient binding was rejected`);
+    const replayedToken = helpers.consume({
+      messageRecipientDispatchBinding: { token: matchingToken },
+    }, sendButton);
+    assert.equal(replayedToken.success, false, `${label}: recipient binding was not one-use`);
+    assert.equal(replayedToken.reasonCode, 'recipient_dispatch_binding_stale');
+
+    const changedRecipientToken = helpers.remember(composer, ['Alice'], dispatch);
+    liveIdentities = ['Bob'];
+    const changedRecipient = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedRecipientToken },
+    }, sendButton);
+    assert.equal(changedRecipient.success, false);
+    assert.equal(changedRecipient.reasonCode, 'active_recipient_changed_before_dispatch');
+
+    liveIdentities = ['Alice'];
+    const changedComposerToken = helpers.remember(composer, ['Alice'], dispatch);
+    liveComposer = replacementComposer;
+    const changedComposer = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedComposerToken },
+    }, sendButton);
+    assert.equal(changedComposer.success, false);
+    assert.equal(changedComposer.reasonCode, 'recipient_dispatch_binding_stale');
+
+    liveComposer = composer;
+    const changedTargetToken = helpers.remember(composer, ['Alice'], dispatch);
+    const changedTarget = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedTargetToken },
+    }, replacementButton);
+    assert.equal(changedTarget.success, false);
+    assert.equal(changedTarget.reasonCode, 'recipient_dispatch_binding_stale');
+
+    const branchStart = source.indexOf("'set_field': async () => {");
+    const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
+    const branch = source.slice(branchStart, branchEnd);
+    const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
+    const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
+    assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
+
+    const pressStart = source.indexOf('function pressKeys(params)');
+    const pressEnd = source.indexOf('\n\n  /**', pressStart + 20);
+    const pressBranch = source.slice(pressStart, pressEnd);
+    const pressRecipientCheck = pressBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, focusedTarget)');
+    const pressDispatch = pressBranch.indexOf('for (let i = 0; i < repeat; i++)');
+    assert.ok(
+      pressRecipientCheck >= 0 && pressDispatch > pressRecipientCheck,
+      `${label}: press_keys recipient binding must be consumed before key dispatch`,
+    );
+
+    const clickStart = source.indexOf('function clickElement(params)');
+    const clickEnd = source.indexOf('\n\n  function typeText', clickStart);
+    const clickBranch = source.slice(clickStart, clickEnd);
+    const clickRecipientCheck = clickBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, el)');
+    const clickDispatch = clickBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
+    assert.ok(
+      clickRecipientCheck >= 0 && clickDispatch > clickRecipientCheck,
+      `${label}: click recipient binding must be consumed before click dispatch`,
+    );
+
+    const clickAxStart = source.indexOf("'click_ax': () => {");
+    const clickAxEnd = source.indexOf("'type_ax': async () => {", clickAxStart);
+    const clickAxBranch = source.slice(clickAxStart, clickAxEnd);
+    const clickAxRecipientCheck = clickAxBranch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
+    const clickAxDispatch = clickAxBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
+    assert.ok(
+      clickAxRecipientCheck >= 0 && clickAxDispatch > clickAxRecipientCheck,
+      `${label}: click_ax recipient binding must be consumed before click dispatch`,
+    );
+  }
 });
 
 test('matches BOSS Zhipin job surfaces with safe search and communication guidance', () => {
@@ -11499,7 +12085,7 @@ test('coordinate semantic reconciliation: stale semantic dispatch never retries 
   }
 });
 
-test('click_ax preserves rich-text toolbar dispatch bindings after helper extraction', async () => {
+test('click_ax preserves toolbar and recipient bindings without a second protected dispatch', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
   for (const [label, AgentClass, globalKey] of [
@@ -11527,14 +12113,27 @@ test('click_ax preserves rich-text toolbar dispatch bindings after helper extrac
         agent._clickProgressSnapshot = async () => '';
         agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
         agent._captureClickAxObservation = async () => ({});
-        agent._maybeFallbackClickAxWithCdp = async (_tabId, _args, response) => response;
+        agent._maybeFallbackClickAxWithCdp = async () => {
+          throw new Error('protected click_ax must not issue a second CDP dispatch');
+        };
         agent._annotateClickProgress = async () => {};
         agent._recordInteractionRect = () => {};
       }
       const dispatchBinding = { token: 'toolbar-binding', frameId: 7, ref_id: 'ref_906' };
-      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, { dispatchBinding });
+      const recipientBinding = { token: 'recipient-binding' };
+      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, {
+        dispatchBinding,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: recipientBinding,
+      });
       const clickMessage = messages.find(entry => entry.message.action === 'click_ax');
       assert.deepEqual(clickMessage?.message.params.dispatchBinding, dispatchBinding, `${label}: click_ax binding was dropped`);
+      assert.equal(clickMessage?.message.params.messageRecipientGuardRequired, true, `${label}: recipient guard marker was dropped`);
+      assert.deepEqual(
+        clickMessage?.message.params.messageRecipientDispatchBinding,
+        recipientBinding,
+        `${label}: click_ax recipient binding was dropped`,
+      );
       assert.deepEqual(clickMessage?.options, { frameId: 7 }, `${label}: click_ax frame binding was dropped`);
     } finally {
       if (globalKey === 'chrome') {
@@ -24187,6 +24786,146 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
   }
 });
 
+test('/print opens the current page native print dialog in both builds', () => {
+  const docs = fs.readFileSync(path.join(ROOT, 'docs/slash-commands.md'), 'utf8');
+  assert.match(docs, /\| `\/print` \| Open the current page's native print dialog \|/);
+
+  for (const [label, panelRel, localeRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales/en.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
+    const slash = loadSlashCommandRuntime(panelRel);
+    const invocation = slash.parseSlashInvocation('/print');
+
+    assert.equal(invocation.command.value, '/print', `${label}: /print should be discoverable`);
+    assert.equal(invocation.command.usage, '/print', `${label}: /print should not advertise format or selection arguments`);
+    assert.equal(invocation.action, 'print', `${label}: /print action missing`);
+    assert.equal(slash.slashInvocationIsOutOfBand(invocation), false, `${label}: /print should wait until an active run finishes`);
+    assert.equal(slash.parseSlashInvocation('/print selected')?.error, 'invalid-usage', `${label}: /print should reject unsupported selection or format arguments`);
+    assert.match(locale, /'sp\.slash\.print': 'Open the current page’s native print dialog'/, `${label}: /print description missing`);
+    assert.match(locale, /'sp\.print\.error': 'Could not open the print dialog: \{msg\}'/, `${label}: /print failure message missing`);
+
+    const routeStart = panel.indexOf("if (command.value === '/print') {");
+    assert.notEqual(routeStart, -1, `${label}: /print parser route missing`);
+    const routeEnd = panel.indexOf("if (command.value === '/screenshot'", routeStart);
+    assert.notEqual(routeEnd, -1, `${label}: /print parser route boundary missing`);
+    const route = panel.slice(routeStart, routeEnd);
+    assert.match(route, /executePrintSlashCommand\(tabId, currentTabId,/, `${label}: /print should delegate to executePrintSlashCommand`);
+    const helperStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(helperStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const helperEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', helperStart);
+    assert.notEqual(helperEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const helper = panel.slice(helperStart, helperEnd);
+    assert.match(helper, /tabs\.get\(tabId\)/, `${label}: /print should validate the initiating tab`);
+    assert.match(helper, /currentTabId !== tabId \|\| !tab\?\.active/, `${label}: /print should not target a stale or background tab`);
+    assert.match(helper, /sp\.print\.error/, `${label}: /print failures should be visible`);
+    if (label === 'chrome') {
+      assert.match(helper, /scripting\.executeScript\(\{[\s\S]*?target: \{ tabId \},[\s\S]*?func: \(\) => window\.print\(\)/, 'chrome: /print should invoke the page print dialog through MV3 scripting');
+    } else {
+      assert.match(helper, /tabs\.executeScript\(tabId, \{ code: 'window\.print\(\);' \}\)/, 'firefox: /print should invoke the page print dialog through MV2 scripting');
+    }
+  }
+});
+
+test('/print routes are exercised with mocked tab and injection APIs in both builds', async () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const fnStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(fnStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const fnEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', fnStart);
+    assert.notEqual(fnEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const executePrintSlashCommand = vm.runInNewContext(
+      `(() => { ${panel.slice(fnStart, fnEnd + 2)}; return executePrintSlashCommand; })()`,
+      {}
+    );
+
+    // Success path: active tab, injection succeeds.
+    let getCalled = false;
+    let executeCalled = false;
+    const successTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const successScripting = {
+      executeScript: async ({ target, func }) => {
+        executeCalled = true;
+        assert.equal(target.tabId, 7, `${label}: should target the initiating tab`);
+        assert.equal(typeof func, 'function', `${label}: should pass a function for injection`);
+      },
+    };
+    const toasts = [];
+    const showToast = (msg) => { toasts.push(msg); };
+    const t = (key, params) => `${key}:${JSON.stringify(params || {})}`;
+
+    const successResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...successTabs, executeScript: async (tabId, details) => {
+          executeCalled = true;
+          assert.equal(tabId, 7, `${label}: should target the initiating tab`);
+          assert.equal(details.code, "window.print();", `${label}: should pass the print script`);
+        } }, showToast, t);
+    assert.equal(successResult.ok, true, `${label}: success path should return ok`);
+    assert.equal(getCalled, true, `${label}: success path should call tabs.get`);
+    assert.equal(executeCalled, true, `${label}: success path should call executeScript`);
+
+    // Stale-tab guard: currentTabId differs from the command tab.
+    getCalled = false;
+    executeCalled = false;
+    const staleResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 99, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 99, { ...successTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(staleResult.skipped, true, `${label}: stale tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: stale tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: stale tab should not inject`);
+
+    // Background-tab guard: tab exists but is not active.
+    getCalled = false;
+    executeCalled = false;
+    const inactiveTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: false };
+      },
+    };
+    const inactiveResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, inactiveTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...inactiveTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(inactiveResult.skipped, true, `${label}: inactive tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: inactive tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: inactive tab should not inject`);
+
+    // Rejected-injection path: injection throws.
+    getCalled = false;
+    executeCalled = false;
+    const rejectTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const rejectScripting = {
+      executeScript: async () => { executeCalled = true; throw new Error('injection blocked'); },
+    };
+    const rejectResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, rejectTabs, rejectScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...rejectTabs, executeScript: async () => { throw new Error('injection blocked'); } }, showToast, t);
+    assert.equal(rejectResult.error, 'injection blocked', `${label}: should surface injection failure`);
+    assert.equal(getCalled, true, `${label}: rejection path should still validate the tab`);
+    assert.equal(executeCalled, label === 'chrome' ? true : false, `${label}: rejection path should attempt injection`);
+    assert.ok(toasts.some(t => t.includes('sp.print.error')), `${label}: should show localized error toast on rejection`);
+  }
+});
+
 test('/watch slash parser keeps Chrome and Firefox validation aligned', async () => {
   const chromeWatch = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/watch-command.js')).href);
   const firefoxWatch = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/watch-command.js')).href);
@@ -25118,8 +25857,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
-    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page-capture slash commands should stop before dispatch in selected-text conversations`);
-    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page-capture commands before slash dispatch`);
+    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record' \|\| command\.value === '\/print'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page and screen slash commands should stop before dispatch in selected-text conversations`);
+    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\|print\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page and screen commands before slash dispatch`);
     assert.match(panel, /runCaptureDirective = parseTrailingRunCaptureDirective\(text\);[\s\S]*?if \(runCaptureDirective[\s\S]*?sourceGrounding \|\| isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?text = runCaptureDirective\.prompt;/, `${label}: trailing page-capture directives should stop before prompt dispatch in selected-text conversations`);
     assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile while preserving local scope until the authoritative probe succeeds`);
     assert.doesNotMatch(panel.slice(
@@ -38333,6 +39072,28 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(ordinaryButton.success, true);
   assert.equal(ordinaryButton.type, 'button', 'selector clicks should preserve the resolved button type');
   assert.equal(ordinaryButton.isSubmitControl, false, 'selector clicks should preserve non-submit metadata');
+
+  const blockedCommands = [];
+  client.sendCommand = async (_tabId, method, params) => {
+    blockedCommands.push({ method, params });
+    return {};
+  };
+  const recipientBlocked = await client.clickElement(42, '#send', {
+    trustedOnly: true,
+    beforeDispatch: async () => ({
+      success: false,
+      reasonCode: 'active_recipient_changed_before_dispatch',
+      error: 'active recipient changed',
+    }),
+  });
+  assert.equal(recipientBlocked.success, false);
+  assert.equal(recipientBlocked.noDispatch, true);
+  assert.equal(recipientBlocked.reasonCode, 'active_recipient_changed_before_dispatch');
+  assert.equal(
+    blockedCommands.some(call => call.params?.type === 'mousePressed'),
+    false,
+    'recipient revalidation must block before selector mousePressed dispatch',
+  );
 
   client.sendCommand = async (_tabId, _method, params) => {
     if (params.type === 'mousePressed') throw new Error('dispatch response lost');
@@ -54395,6 +55156,7 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
   try {
     const commands = [];
     let verified = true;
+    let recipientValid = true;
     let contentEditable = false;
     let prepareCalls = 0;
     const prepareSelectionModes = [];
@@ -54419,6 +55181,15 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
               actual: verified ? message.params.expected : '',
               fieldMeta: { type: 'text' },
             };
+          }
+          if (message.action === 'consume_message_recipient_dispatch_binding') {
+            return recipientValid
+              ? { success: true, matched: true }
+              : {
+                  success: false,
+                  reasonCode: 'active_recipient_changed_before_dispatch',
+                  error: 'active conversation changed',
+                };
           }
           throw new Error(`unexpected action ${message.action}`);
         },
@@ -54456,6 +55227,31 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
       ],
       'trusted text must settle before Enter is dispatched',
     );
+
+    commands.length = 0;
+    recipientValid = false;
+    const recipientRace = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'set_field',
+      { ref_id: 'ref_search', text: 'gary flake', submit: true },
+      {
+        success: false,
+        verified: false,
+        error: 'controlled input reset',
+        _expectedValue: 'gary flake',
+        recoveryRequired: 'fresh_tree',
+      },
+      {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'recipient-race' },
+      },
+    );
+    assert.equal(recipientRace.success, false);
+    assert.equal(recipientRace.messageDispatched, false);
+    assert.equal(recipientRace.reasonCode, 'active_recipient_changed_before_dispatch');
+    assert.equal(commands.some(command => command.method === 'Input.insertText'), true, 'field typing should remain visible');
+    assert.equal(commands.some(command => command.params?.key === 'Enter'), false, 'recipient race must stop before Enter');
+    recipientValid = true;
 
     commands.length = 0;
     contentEditable = true;
@@ -58659,6 +59455,7 @@ function plannerIntentFixture({
   requestKind = 'execute',
   requiresStateChange = false,
   requiresSubmission = false,
+  messaging = null,
   requiresDownload = false,
   allowsPlannerShapedResult = false,
   allowsAppStateToolEvidence = false,
@@ -58676,6 +59473,7 @@ function plannerIntentFixture({
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
+    messaging,
     completion_requirements: { download: requiresDownload },
     allows_planner_shaped_result: allowsPlannerShapedResult,
     allows_app_state_tool_evidence: allowsAppStateToolEvidence,
@@ -67436,6 +68234,60 @@ test('planner schemas require structured download completion metadata in both br
     assert.equal(completion?.additionalProperties, false, `${label}: completion requirements accept undeclared fields`);
     assert.deepEqual(completion?.required, ['download'], `${label}: download requirement is optional`);
     assert.equal(completion?.properties?.download?.type, 'boolean', `${label}: download requirement is not boolean`);
+  }
+});
+
+test('planner carries a language-neutral structured messaging target into execution', () => {
+  for (const [label, parse, fullSchema, intentSchema, fullPrompt, intentPrompt] of [
+    ['chrome', parsePlanFromContent, PLANNER_RESPONSE_JSON_SCHEMA, PLANNER_INTENT_RESPONSE_JSON_SCHEMA, PLANNER_SYSTEM_PROMPT, PLANNER_INTENT_SYSTEM_PROMPT],
+    ['firefox', parsePlanFromContentFx, PLANNER_RESPONSE_JSON_SCHEMA_FX, PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX, PLANNER_SYSTEM_PROMPT_FX, PLANNER_INTENT_SYSTEM_PROMPT_FX],
+  ]) {
+    for (const schema of [fullSchema, intentSchema]) {
+      assert.ok(schema.required.includes('messaging'), `${label}: messaging target is optional in planner schema`);
+      const messaging = schema.properties.messaging;
+      assert.ok(Array.isArray(messaging?.anyOf), `${label}: messaging target is not nullable and structured`);
+      const objectBranch = messaging.anyOf.find(branch => branch.type === 'object');
+      assert.deepEqual(objectBranch?.required, ['target_kind', 'recipient'], `${label}: messaging target fields are optional`);
+      assert.deepEqual(objectBranch?.properties?.target_kind?.enum, ['named', 'active_conversation'], `${label}: target kinds diverged`);
+    }
+    assert.match(fullPrompt, /Do not infer a recipient from page content/i, `${label}: full planner can trust a page-provided recipient`);
+    assert.match(intentPrompt, /Do not infer a recipient from page content/i, `${label}: intent planner can trust a page-provided recipient`);
+    for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
+      assert.match(prompt, /an anaphoric\/pronominal target resolves uniquely from authentic trusted prior-user context/i, `${label} ${kind}: follow-up recipient cannot resolve from trusted user context`);
+      assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${label} ${kind}: a generic pronoun can still authorize the open thread`);
+      assert.match(prompt, /cannot be resolved uniquely from trusted user context[\s\S]*request_kind="clarify"/i, `${label} ${kind}: ambiguous follow-up recipient does not fail closed`);
+      assert.doesNotMatch(prompt, /send this to them/i, `${label} ${kind}: ambiguous pronoun remains an active-conversation example`);
+    }
+
+    const named = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+      locale: 'zh-CN',
+      localizedSummary: '向指定联系人发送消息。',
+      localizedSteps: ['选择联系人。', '发送消息。'],
+    }), { requireIntent: true, locale: 'zh-CN' });
+    assert.deepEqual(named?.messaging, {
+      target_kind: 'named', recipient: '迷你世界皓宸',
+    }, `${label}: named recipient was translated or discarded`);
+
+    const active = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'active_conversation', recipient: '' },
+      locale: 'tr',
+      localizedSummary: 'Bu konuşmaya yanıt gönder.',
+    }), { requireIntent: true, locale: 'tr' });
+    assert.deepEqual(active?.messaging, {
+      target_kind: 'active_conversation', recipient: '',
+    }, `${label}: active-conversation authorization was lost`);
+
+    const draftOnly = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: false,
+      messaging: { target_kind: 'named', recipient: 'Alice' },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(draftOnly?.messaging, null, `${label}: do-not-submit task armed the message-send guard`);
   }
 });
 
@@ -77227,6 +78079,80 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
         false,
         `${browser}: failed cleanup leaked capture policy`,
       );
+    }
+  });
+
+  test(`${browser} saved workflow rejects recipient-less protected dispatch before any replay action`, async () => {
+    const cases = [
+      {
+        startUrl: 'https://www.douyin.com/chat',
+        blockedStep: 1,
+        workflow: {
+          id: 'workflow_protected_chat',
+          name: 'Draft then send',
+          start: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+          steps: [
+            {
+              id: 'step_1',
+              tool: 'set_field',
+              args: { text: 'draft only', submit: false },
+              scope: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+            },
+            {
+              id: 'step_2',
+              tool: 'click_ax',
+              args: {},
+              scope: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+            },
+          ],
+        },
+      },
+      {
+        startUrl: 'https://example.com/start',
+        blockedStep: 1,
+        workflow: {
+          id: 'workflow_navigate_to_protected_chat',
+          name: 'Navigate then send',
+          start: { origin: 'https://example.com', pathFamily: '/start' },
+          steps: [
+            {
+              id: 'step_1',
+              tool: 'navigate',
+              args: { url: 'https://www.douyin.com/chat' },
+            },
+            {
+              id: 'step_2',
+              tool: 'click',
+              args: { selector: '#send' },
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const fixture of cases) {
+      const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+      let pageActions = 0;
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      agent.ensureConversationId = async () => `conversation_${fixture.workflow.id}`;
+      agent._currentUrl = async () => fixture.startUrl;
+      agent.executeTool = async () => {
+        pageActions += 1;
+        return { success: true };
+      };
+      agent._executeToolBatch = async () => {
+        pageActions += 1;
+        return { action: 'continue' };
+      };
+
+      const result = await agent.replaySavedWorkflow(778, fixture.workflow);
+      assert.equal(result.status, 'stopped');
+      assert.equal(result.stepIndex, fixture.blockedStep);
+      assert.equal(result.matchedSteps, 0);
+      assert.match(result.reason, /fresh structured recipient authorization/);
+      assert.equal(pageActions, 0, `${browser}: protected replay acted before recipient preflight`);
+      assert.equal(agent.isRunning(778), false);
     }
   });
 

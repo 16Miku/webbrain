@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Buka dialog cetak asli halaman semasa',
+  'sp.print.error': 'Tidak dapat membuka dialog cetak: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Penstriman respons terganggu; mencuba semula giliran Ask ini tanpa penstriman.',
   'sp.providers.no_setup_group': 'Tanpa persediaan',

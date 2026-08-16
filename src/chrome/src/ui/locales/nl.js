@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Het systeemeigen afdrukvenster van de huidige pagina openen',
+  'sp.print.error': 'Het afdrukvenster kon niet worden geopend: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'De antwoordstream is onderbroken; deze Ask-beurt wordt opnieuw geprobeerd zonder streaming.',
   'sp.providers.no_setup_group': 'Geen configuratie nodig',

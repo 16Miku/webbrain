@@ -4,6 +4,8 @@ import chromeWebStoreLocale from './chrome-web-store.mjs';
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 
 export default {
+  'sp.slash.print': 'Geçerli sayfanın yerel yazdırma iletişim kutusunu aç',
+  'sp.print.error': 'Yazdırma iletişim kutusu açılamadı: {msg}',
   ...chromeWebStoreLocale,
   'sp.streaming.fallback': 'Yanıt akışı kesildi; bu Ask turu akış olmadan yeniden deneniyor.',
   'sp.providers.no_setup_group': 'Kurulum gerektirmez',

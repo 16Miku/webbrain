@@ -29,7 +29,8 @@ import { buildGithubStargazerProgressItems } from './observers/github-stargazers
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
-import { getActiveAdapter, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { getActiveAdapter, getMessageRecipientGuardPolicy, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import {
   fetchUrl,
   executeHttpSkillTool,
@@ -125,6 +126,45 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
+const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
+  'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
+]);
+
+function savedWorkflowStepMayDispatchMessage(step) {
+  const tool = String(step?.tool || '');
+  if (SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS.has(tool)) return true;
+  if (tool === 'set_field') return step?.args?.submit === true;
+  return tool === 'press_keys' && String(step?.args?.key || '') === 'Enter';
+}
+
+function savedWorkflowScopeUrl(scope, fallback = '') {
+  if (!scope?.origin) return String(fallback || '');
+  try {
+    return new URL(String(scope.pathFamily || '/'), String(scope.origin)).href;
+  } catch {
+    return String(fallback || '');
+  }
+}
+
+function savedWorkflowProtectedMessagingStepIndex(workflow, startUrl = '') {
+  let inferredUrl = String(startUrl || '') || savedWorkflowScopeUrl(workflow?.start);
+  const steps = Array.isArray(workflow?.steps) ? workflow.steps : [];
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index];
+    const scopedUrl = savedWorkflowScopeUrl(step?.scope, inferredUrl);
+    let protectedMessaging = false;
+    try {
+      protectedMessaging = getMessageRecipientGuardPolicy(scopedUrl)?.verifyActiveRecipient === true;
+    } catch {}
+    if (protectedMessaging && savedWorkflowStepMayDispatchMessage(step)) return index;
+    if (step?.tool === 'navigate' && typeof step?.args?.url === 'string') {
+      inferredUrl = step.args.url;
+    } else if (step?.scope?.origin) {
+      inferredUrl = scopedUrl;
+    }
+  }
+  return -1;
+}
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -5129,6 +5169,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         afterUrl = beforeUrl;
       }
 
+      // Reuse the navigation snapshot so this last-moment recipient check does
+      // not add another URL read or perturb navigation detection. Keep it as
+      // close to dispatch as possible: permission and confirmation can happen
+      // first, but a mismatched conversation never reaches executeTool().
+      const messageRecipientExecutionContext = {};
+      const messageRecipientBlock = await this._messageRecipientGuardBlock(
+        tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+      );
+      if (messageRecipientBlock) {
+        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+        onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(messageRecipientBlock),
+        });
+        const runId = this.currentRunId.get(tabId);
+        if (runId) trace.recordToolCall(runId, step, {
+          name: fnName, args: fnArgs, result: messageRecipientBlock, latencyMs: 0,
+        });
+        onUpdate('warning', { message: 'Message send blocked until the active recipient is verified.' });
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
+
       onUpdate('tool_call', {
         name: fnName,
         args: fnArgs,
@@ -5156,6 +5221,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           completionBatchStartState,
           promptTier,
           dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
+          ...messageRecipientExecutionContext,
           iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
         },
       );
@@ -6135,7 +6201,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
     let contentArgs = axScope?.documentToken
       ? {
           ...args,
@@ -6145,6 +6211,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : args;
     if (dispatchBinding?.token) {
       contentArgs = { ...contentArgs, dispatchBinding };
+    }
+    if (messageRecipientContext.messageRecipientGuardRequired === true) {
+      contentArgs = {
+        ...contentArgs,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: messageRecipientContext.messageRecipientDispatchBinding || null,
+      };
     }
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
@@ -6184,7 +6257,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
     const target = resolution?.semanticTarget;
     const semanticEligible = resolution?.success === true
@@ -6197,6 +6270,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
+        null,
+        messageRecipientContext,
       );
       return {
         result: {
@@ -8435,6 +8510,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? gate.requiresStateChange
         : null,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
+      messaging: normalizeMessageTarget(gate.messaging),
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence: gate.allowsAppStateToolEvidence === true,
       requiredSchedulingTool: gate.requiredSchedulingTool || null,
@@ -9210,6 +9286,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
         };
       }
+      const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
+      if (!messagingPin.ok) {
+        onUpdate('warning', { message: messagingPin.error });
+        return {
+          proceed: false,
+          message: messagingPin.error,
+          reason: 'active_recipient_unverified',
+          requestKind: 'clarify',
+          requiresStateChange: false,
+          requiresSubmission: true,
+        };
+      }
+      plan.messaging = messagingPin.target;
       if (!recheckOnly) this._armReadCompletenessFromPlan(tabId, plan);
       return {
         proceed: true,
@@ -9217,6 +9306,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         responseLanguagePolicy: plan.response_language,
         requiresStateChange: plan.requires_state_change === true,
         requiresSubmission: plan.requires_submission,
+        messaging: plan.messaging,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: plan.scheduling?.tool || null,
@@ -9435,6 +9525,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
 
+      const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
+      if (!messagingPin.ok) {
+        onUpdate('warning', { message: messagingPin.error });
+        return {
+          proceed: false,
+          message: messagingPin.error,
+          reason: 'active_recipient_unverified',
+          requestKind: 'clarify',
+          requiresStateChange: false,
+          requiresSubmission: true,
+        };
+      }
+      plan.messaging = messagingPin.target;
+
       const eligibleSkillIds = new Set(skillCatalog.map((skill) => skill.id));
       plan.skill_ids = (plan.skill_ids || []).filter((skillId) => eligibleSkillIds.has(skillId));
 
@@ -9461,6 +9565,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: plan.requires_state_change === true,
           requiresSubmission: plan.requires_submission,
+          messaging: plan.messaging,
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
           allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
           requiredSchedulingTool: plan.scheduling?.tool || null,
@@ -9544,6 +9649,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(approvedPlanEdited ? { responseLanguageApprovedPlanOverride: true } : {}),
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
+        messaging: approvedPlanEdited ? null : plan.messaging,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
@@ -10610,6 +10716,180 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       controlFingerprint: (hash >>> 0).toString(16),
     };
   };
+
+  async _messageRecipientContentProbe(tabId, params) {
+    try {
+      return await browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'probe_message_recipient_guard',
+        params,
+      });
+    } catch (error) {
+      return { success: false, messageSend: null, conclusive: false, error: error?.message || String(error) };
+    }
+  }
+
+  async _consumeMessageRecipientDispatchBinding(tabId, binding, params = {}) {
+    if (!binding?.token) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_unavailable',
+        error: 'Message send blocked because recipient dispatch binding was unavailable.',
+      };
+    }
+    try {
+      return await browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'consume_message_recipient_dispatch_binding',
+        params: {
+          messageRecipientDispatchBinding: binding,
+          ...params,
+        },
+      });
+    } catch (error) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_revalidation_failed',
+        error: `Message send blocked because recipient revalidation failed before dispatch: ${error?.message || String(error)}`,
+      };
+    }
+  }
+
+  async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
+    const target = normalizeMessageTarget(messaging);
+    if (target?.target_kind !== 'active_conversation') return { ok: true, target };
+
+    let policy = null;
+    try {
+      policy = getMessageRecipientGuardPolicy(pageUrl || await this._currentUrl(tabId));
+    } catch {}
+    if (!policy?.verifyActiveRecipient) return { ok: true, target };
+
+    const probe = await this._messageRecipientContentProbe(tabId, {
+      tool: 'observe_active_conversation',
+      args: {},
+      adapterName: policy.adapterName,
+    });
+    const identities = new Map();
+    for (const value of Array.isArray(probe?.strongIdentityCandidates)
+      ? probe.strongIdentityCandidates
+      : []) {
+      const identity = String(value || '').trim();
+      const normalized = normalizeRecipientIdentity(identity);
+      if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
+    }
+    if (probe?.success === true && probe?.conclusive === true && identities.size === 1) {
+      return {
+        ok: true,
+        target: { target_kind: 'named', recipient: [...identities.values()][0] },
+        pinnedActiveConversation: true,
+      };
+    }
+    return {
+      ok: false,
+      target: null,
+      error: 'WebBrain could not pin the currently open conversation to one verified recipient identity. Name the recipient explicitly, or open a conversation with one clear visible header and retry. No page tools ran.',
+    };
+  }
+
+  async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
+    const name = String(toolName || '');
+    const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys']);
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']);
+    if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
+    if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
+    if (name === 'set_field' && args?.submit !== true) return null;
+
+    let policy = null;
+    try {
+      policy = getMessageRecipientGuardPolicy(pageUrl || await this._currentUrl(tabId));
+    } catch {}
+    if (!policy?.verifyActiveRecipient) return null;
+
+    if (name === 'press_keys') {
+      const repeatRaw = Number(args?.repeat ?? 1);
+      const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
+      if (repeat > 1) {
+        return {
+          success: false,
+          blocked: true,
+          noDispatch: true,
+          dispatched: false,
+          messageRecipientGuard: true,
+          reasonCode: 'recipient_guard_repeated_enter',
+          error: 'Message send blocked: protected conversations allow exactly one Enter per verified dispatch. Retry with repeat: 1, then verify the result before another send.',
+        };
+      }
+    }
+
+    if (unbindableDispatchTools.has(name)) {
+      return {
+        success: false,
+        blocked: true,
+        noDispatch: true,
+        dispatched: false,
+        messageRecipientGuard: true,
+        unsafeMessageDispatchPath: true,
+        reasonCode: 'recipient_unverifiable_dispatch_path',
+        error: `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+      };
+    }
+
+    const probe = await this._messageRecipientContentProbe(tabId, {
+      tool: name,
+      args,
+      adapterName: policy.adapterName,
+      bindDispatch: true,
+    });
+    if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
+
+    const guard = this._planExecutionGuards.get(tabId);
+    const target = normalizeMessageTarget(guard?.messaging);
+    const verified = probe?.success === true
+      && probe.messageSend === true
+      && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
+    if (verified) {
+      const binding = probe?.messageRecipientDispatchBinding;
+      if (!binding?.token) {
+        return {
+          success: false,
+          blocked: true,
+          noDispatch: true,
+          dispatched: false,
+          messageRecipientGuard: true,
+          reasonCode: 'recipient_dispatch_binding_unavailable',
+          error: 'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once.',
+        };
+      }
+      if (executionContext && typeof executionContext === 'object') {
+        executionContext.messageRecipientGuardRequired = true;
+        executionContext.messageRecipientDispatchBinding = binding;
+      }
+      return null;
+    }
+
+    return {
+      success: false,
+      blocked: true,
+      noDispatch: true,
+      dispatched: false,
+      messageRecipientGuard: true,
+      reasonCode: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+        ? 'message_send_classification_inconclusive'
+        : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
+      error: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+        ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
+        : target
+          ? 'Message send blocked: the active conversation does not exactly match the recipient authorized by the user. Select the intended conversation, re-read its visible header, then retry the send action.'
+          : 'Message send blocked: the current task has no structured recipient authorization. Ask the user to name the recipient or explicitly authorize the currently open conversation before retrying.',
+    };
+  }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
     const normalizedHost = normalizeHost(host || '') || String(host || '').trim() || 'this site';
@@ -13257,6 +13537,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const requiresSubmission = typeof gateOutcome?.requiresSubmission === 'boolean'
       ? gateOutcome.requiresSubmission
       : null;
+    const messaging = normalizeMessageTarget(gateOutcome?.messaging);
     const allowsAppStateToolEvidence = gateOutcome?.allowsAppStateToolEvidence === true;
     const requiredSchedulingTool = gateOutcome?.requiredSchedulingTool === 'schedule_task'
       || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
@@ -13270,6 +13551,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried?.requestKind === 'execute'
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
+      && JSON.stringify(carried.messaging || null) === JSON.stringify(messaging)
       && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
@@ -13279,6 +13561,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestKind,
       requiresStateChange,
       requiresSubmission,
+      messaging,
       requiresDownload,
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence,
@@ -13485,6 +13768,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requestKind: guard.requestKind,
         requiresStateChange: guard.requiresStateChange,
         requiresSubmission: guard.requiresSubmission,
+        messaging: guard.messaging,
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,
@@ -15597,11 +15881,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           prompt: workflowFallbackPrompt(workflow, 0, reason),
         };
       }
+      const protectedMessagingStep = savedWorkflowProtectedMessagingStepIndex(workflow, startUrl);
+      if (protectedMessagingStep >= 0) {
+        trace.recordNote(traceRunId, 0, 'workflow_replay_recipient_authorization_missing', {
+          workflowId: workflow.id,
+          stepId: workflow.steps[protectedMessagingStep]?.id || '',
+          tool: workflow.steps[protectedMessagingStep]?.tool || '',
+        });
+        return finishStopped(
+          'protected messaging replay requires fresh structured recipient authorization; start a normal Act task and name the recipient',
+          protectedMessagingStep,
+        );
+      }
 
       for (let index = 0; index < workflow.steps.length; index++) {
         if (this._checkAbort(tabId)) return finishStopped('stopped by the user', index);
         const step = workflow.steps[index];
         const stepUrl = await this._currentUrl(tabId);
+        let protectedMessaging = false;
+        try {
+          protectedMessaging = getMessageRecipientGuardPolicy(stepUrl)?.verifyActiveRecipient === true;
+        } catch {}
+        if (protectedMessaging && savedWorkflowStepMayDispatchMessage(step)) {
+          return finishStopped(
+            'protected messaging replay requires fresh structured recipient authorization; start a normal Act task and name the recipient',
+            index,
+          );
+        }
         if (step.scope && !workflowUrlMatches(step.scope, stepUrl)) {
           const reason = 'page scope mismatch';
           trace.recordNote(traceRunId, index + 1, 'workflow_replay_scope_miss', {
@@ -15864,6 +16170,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
     let dispatchBinding = dispatchContext.dispatchBinding || null;
+    const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
+    const messageRecipientDispatchBinding = dispatchContext.messageRecipientDispatchBinding || null;
     if (coordinatePoint && dispatchBinding?.token) {
       coordinateDiagnostic = this._coordinateReconciliationDiagnostic(
         coordinatePoint,
@@ -18470,7 +18778,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch { /* tab lookup failures are non-fatal — fall through */ }
 
     if (name === 'click_ax') {
-      return this._dispatchClickAx(tabId, args, this._lastAxScopes.get(tabId), dispatchBinding);
+      return this._dispatchClickAx(
+        tabId,
+        args,
+        this._lastAxScopes.get(tabId),
+        dispatchBinding,
+        { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+      );
     }
 
     if (name === 'click') {
@@ -18485,7 +18799,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (duplicateSubmit) return duplicateSubmit;
       if (coordinatePoint && !dispatchBinding?.token) {
-        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint);
+        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint, {
+          messageRecipientGuardRequired,
+          messageRecipientDispatchBinding,
+        });
         if (reconciled.result) return reconciled.result;
         coordinateDiagnostic = reconciled.diagnostic;
       }
@@ -18516,6 +18833,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       contentArgs = {
         ...contentArgs,
         dispatchBinding,
+      };
+    }
+    if (messageRecipientGuardRequired
+      && ['click', 'press_keys', 'set_field'].includes(name)) {
+      contentArgs = {
+        ...contentArgs,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding,
       };
     }
 

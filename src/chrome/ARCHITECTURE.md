@@ -117,7 +117,8 @@ src/chrome/
 Manual action-mode runs (Act or Dev) always call `agent/planner.js` before the
 first tool loop. Off uses the compact structured intent schema; Try and Strict
 use the full bounded JSON plan with steps, memory strategy, scheduling hints,
-and risks. The side panel renders a full plan
+risks, and a language-neutral structured messaging target when the trusted
+request authorizes an external message. The side panel renders a full plan
 as an editable approval card; approving it pins the plan to the scratchpad so it
 survives context compaction. Rejecting, timing out, or pressing Stop cancels
 before browser tools execute. In the default Try mode, invalid JSON after one
@@ -756,6 +757,8 @@ advertise mutation availability and route still-missing required inputs through
 | Finance | Stripe, Coinbase, Robinhood, TradingView, `finance-generic` (banks/exchanges/payments) |
 
 Finance adapters carry a `[FINANCE / HIGH-STAKES]` banner and extra confirmation guidance. The `finance-generic` adapter matches a curated regex of bank, brokerage, crypto exchange, and payment domains as a catch-all when no site-specific adapter exists.
+
+Adapters may also opt into narrow runtime enforcement. On Douyin `/chat`, an `active_conversation` planner target must first be pinned to exactly one strong visible header identity before any page tool runs. Send-like actions then run a read-only content probe immediately before dispatch. Only one unique exact normalized identity from the narrow, non-scrollable header above a lower-page layout composer can match the pinned or explicitly named recipient; unresolved controls/composers, ambiguous evidence, and mismatches return a no-dispatch blocker. Enter in another editable such as recipient search is non-message, and a structurally verified conversation row in the separate left rail remains selectable even when a short list does not overflow, but distant controls and nested row actions remain inconclusive. Protected composer Enter dispatch is limited to one keypress per verification. Send-capable clicks, accessibility clicks, submitted fields, and Enter presses carry a one-use binding to the action target, composer, URL, and identity set; direct content paths and trusted CDP mouse/key paths consume and revalidate it immediately before the consequential click or key event. Protected accessibility clicks never issue a second no-progress fallback click. Search text, message content, and form values never count as recipient evidence. Dispatch-capable tools that cannot bind effects to the probed recipient are blocked on the protected route, including `upload_file` because a page change handler may auto-send the attachment. Saved workflows cannot inherit a planner recipient target, so any potentially dispatching step scoped to a protected messaging route stops before deterministic replay and must be run as a normal Act task with a freshly named recipient.
 
 ---
 
