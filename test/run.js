@@ -48496,7 +48496,12 @@ test('GPT-5.6 Responses request preserves reasoning and converts messages and to
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'openai/gpt-5.6-terra',
     })._addMaxTokens(compatibleProviderBody, { maxTokens: 5 });
-    assert.equal(compatibleProviderBody.max_tokens, 5, 'compatible providers should keep their requested token cap');
+    assert.equal(
+      compatibleProviderBody.max_completion_tokens,
+      5,
+      'routed gpt-5.6-terra rejects max_tokens, so compatible providers must keep the new-contract token cap',
+    );
+    assert.equal(compatibleProviderBody.max_tokens, undefined, 'routed gpt-5.6-terra must not receive max_tokens');
   }
 });
 
@@ -50190,6 +50195,80 @@ test('OpenAI-compatible local providers always use legacy request token fields',
       assert.equal(body.max_tokens, 123, `${providerName} should use max_tokens`);
       assert.equal(body.max_completion_tokens, undefined, `${providerName} should not use max_completion_tokens`);
     }
+  }
+});
+
+test('router-prefixed OpenAI reasoning model ids use the new contract while routed legacy models keep the legacy one', () => {
+  const messages = [{ role: 'user', content: 'hello' }];
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    for (const model of ['openai/o1', 'openai/o3-mini', 'openai/gpt-5.6-terra']) {
+      const provider = new Provider({
+        providerName: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model,
+      });
+      assert.equal(provider._isNewOpenAIContract(), true, `${model} should use the new contract`);
+      const body = provider._buildChatCompletionsBody(messages, { maxTokens: 123, temperature: 0.2 }, false);
+      assert.equal(body.max_completion_tokens, 123, `${model} should use max_completion_tokens`);
+      assert.equal(body.max_tokens, undefined, `${model} must not send max_tokens`);
+      assert.equal(body.temperature, undefined, `${model} must omit temperature`);
+    }
+
+    for (const model of ['openai/gpt-4o', 'openai/gpt-4.1', 'gpt-4.1', 'openrouter/deepseek-v3', 'openrouter/mistral-large', 'o365-assistant']) {
+      const provider = new Provider({
+        providerName: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model,
+      });
+      assert.equal(provider._isNewOpenAIContract(), false, `${model} should keep the legacy contract`);
+      const body = provider._buildChatCompletionsBody(messages, { maxTokens: 123 }, false);
+      assert.equal(body.max_tokens, 123, `${model} should use max_tokens`);
+      assert.equal(body.max_completion_tokens, undefined, `${model} must not send max_completion_tokens`);
+      assert.equal(body.temperature, 0.7, `${model} should keep the default temperature`);
+    }
+
+    // gpt-4.1 accepts both parameter sets; it must stay legacy so explicit
+    // temperatures (deterministic planner/compaction paths) are not dropped.
+    const gpt41 = new Provider({
+      providerName: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4.1',
+    });
+    assert.equal(gpt41._isNewOpenAIContract(), false, 'gpt-4.1 must keep the legacy contract');
+    const gpt41Body = gpt41._buildChatCompletionsBody(messages, { maxTokens: 123, temperature: 0 }, false);
+    assert.equal(gpt41Body.max_tokens, 123, 'gpt-4.1 should use max_tokens');
+    assert.equal(gpt41Body.temperature, 0, 'gpt-4.1 must preserve an explicit temperature');
+
+    const lmstudio = new Provider({
+      providerName: 'lmstudio',
+      category: 'local',
+      baseUrl: 'http://localhost:1234/v1',
+      model: 'openai/o1',
+    });
+    assert.equal(lmstudio._isNewOpenAIContract(), false, 'lmstudio must keep the legacy contract even for reasoning ids');
+    const lmstudioBody = lmstudio._buildChatCompletionsBody(messages, { maxTokens: 123 }, false);
+    assert.equal(lmstudioBody.max_tokens, 123, 'lmstudio should use max_tokens');
+    assert.equal(lmstudioBody.temperature, 0.7, 'lmstudio should keep the default temperature');
+
+    // The guard must be case-insensitive: a hand-built or duplicated config
+    // with providerName 'LMStudio' still gets the legacy contract.
+    const lmstudioMixedCase = new Provider({
+      providerName: 'LMStudio',
+      category: 'cloud',
+      baseUrl: 'http://localhost:1234/v1',
+      model: 'openai/o1',
+    });
+    assert.equal(lmstudioMixedCase._isNewOpenAIContract(), false, 'LM Studio guard must be case-insensitive');
+
+    const official = new Provider({
+      providerName: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.6-terra',
+    });
+    assert.equal(official._isNewOpenAIContract(), true, 'unprefixed gpt-5.6-terra should still use the new contract');
+    const officialBody = official._buildChatCompletionsBody(messages, { maxTokens: 123 }, false);
+    assert.equal(officialBody.max_completion_tokens, 123, 'gpt-5.6-terra should use max_completion_tokens');
+    assert.equal(officialBody.temperature, undefined, 'gpt-5.6-terra must omit temperature');
   }
 });
 
