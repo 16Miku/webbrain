@@ -9428,11 +9428,35 @@ test('coord click: 5px drift collapses to same bucket', () => {
   assert.equal(d._checkCoordClickLoop(1, 102, 199).kind, 'nudge');
 });
 
-test('coord click: 10px drift = different bucket', () => {
+ test('coord click: 10px drift = different bucket', () => {
   const d = new ConfiguredLoopDetector();
   d._checkCoordClickLoop(1, 100, 200);
   // (115, 200) rounds to (115, 200) — different bucket
   assert.equal(d._checkCoordClickLoop(1, 115, 200).kind, 'none');
+});
+
+test('coord click: buckets in image space even when a downscale factor is stored', () => {
+  // The detector must measure the coordinates the model actually reasoned
+  // in — the image pixels of the screenshot it was shown. Screenshot
+  // click scales are always >= 1 (they are cssW / shrunk.width, set only
+  // when a resize happened), so converting to CSS pixels first would
+  // magnify 2-4px image nudges out of the fixed 5px bucket and let a dead
+  // button burn the whole step budget.
+  const d = new ConfiguredLoopDetector();
+  const taps = [[500, 300], [501, 301], [502, 302], [499, 299], [501, 300]];
+  for (const [x, y] of taps.slice(0, 4)) {
+    assert.equal(d._checkCoordClickLoop(1, x, y).kind, 'none');
+  }
+  assert.equal(d._checkCoordClickLoop(1, 501, 300).kind, 'nudge', '5th image-space tap must nudge');
+  // A 3840x2160 viewport downscaled to 1568x882 stores scale ~2.449. The
+  // same taps converted to CSS pixels spread across three 5px buckets, so
+  // converting first would let the count never reach 5:
+  const converted = taps.map(([x, y]) => [
+    Math.round(x * 2.449),
+    Math.round(y * 2.449),
+  ]);
+  const cssBuckets = new Set(converted.map(([x, y]) => `${Math.round(x / 5) * 5},${Math.round(y / 5) * 5}`));
+  assert.ok(cssBuckets.size > 1, 'converted CSS taps must NOT collapse to one bucket');
 });
 
 test('coord click: survives interleaved noise (the failure mode this fixes)', () => {
