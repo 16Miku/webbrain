@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="{{locale_code}}" dir="{{locale_dir}}" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{t:faq.title}} — WebBrain</title>
+  <meta name="description" content="{{t:faq.page.lede}}">
+  <link rel="canonical" href="{{faq_canonical}}">
+{{faq_hreflang_links}}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{t:faq.title}} — WebBrain">
+  <meta property="og:description" content="{{t:faq.page.lede}}">
+  <meta property="og:url" content="{{faq_canonical}}">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.png">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script>
+  <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
+{{plausible_analytics}}
+  <script type="application/ld+json">
+{{faq_jsonld}}
+  </script>
+  <style>
+    [hidden] { display: none !important; }
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .faq-shell { grid-template-columns: 238px minmax(0, 820px); justify-content: center; }
+    .faq-language {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      min-width: 142px;
+    }
+    .faq-language select {
+      width: 100%;
+      height: 36px;
+      appearance: none;
+      padding: 0 34px 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    [dir="rtl"] .faq-language select { padding: 0 13px 0 34px; }
+    .faq-language::after {
+      content: "⌄";
+      position: absolute;
+      inset-inline-end: 13px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .sidebar-link-note {
+      float: inline-end;
+      color: var(--faint);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10px;
+    }
+    .faq-hero { padding-bottom: 30px; }
+    .faq-search {
+      position: relative;
+      display: block;
+      max-width: 640px;
+      margin-top: 26px;
+    }
+    .faq-search svg {
+      position: absolute;
+      inset-inline-start: 18px;
+      top: 17px;
+      width: 19px;
+      height: 19px;
+      color: var(--signal);
+      pointer-events: none;
+    }
+    .faq-search input {
+      width: 100%;
+      height: 54px;
+      padding: 0 46px;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: linear-gradient(145deg, var(--panel), var(--panel-2));
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.16);
+      color: var(--ink);
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+    .faq-search input:focus {
+      border-color: color-mix(in srgb, var(--signal) 65%, var(--line));
+      box-shadow: 0 0 0 3px var(--signal-soft), 0 18px 54px rgba(0, 0, 0, 0.2);
+    }
+    .faq-search input::placeholder { color: var(--faint); }
+    .faq-search kbd {
+      position: absolute;
+      inset-inline-end: 14px;
+      top: 15px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .faq-empty {
+      margin: 34px 0;
+      padding: 18px 20px;
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      text-align: center;
+    }
+    .faq-topic { padding: 38px 0 2px; scroll-margin-top: calc(var(--header-h) + 22px); }
+    .faq-topic + .faq-topic { border-top: 1px solid var(--line); }
+    .faq-topic-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+    .faq-topic-header h2 { margin: 0; font-size: 25px; }
+    .faq-topic-header > span {
+      min-width: 30px;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--faint);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      text-align: center;
+    }
+    .faq-question {
+      border-top: 1px solid var(--line);
+      scroll-margin-top: calc(var(--header-h) + 22px);
+    }
+    .faq-question:last-child { border-bottom: 1px solid var(--line); }
+    .faq-question summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+      min-height: 66px;
+      padding: 15px 4px;
+      color: var(--ink);
+      font-weight: 720;
+      line-height: 1.4;
+      list-style: none;
+      cursor: pointer;
+    }
+    .faq-question summary::-webkit-details-marker { display: none; }
+    .faq-question summary:hover { color: var(--brand-2); }
+    .faq-question-mark {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--signal);
+    }
+    .faq-question-mark::before,
+    .faq-question-mark::after {
+      content: "";
+      position: absolute;
+      left: 5px;
+      right: 5px;
+      top: 10px;
+      height: 1px;
+      background: currentColor;
+    }
+    .faq-question-mark::after { transform: rotate(90deg); transition: transform 0.18s ease; }
+    .faq-question[open] .faq-question-mark { border-color: var(--signal); background: var(--signal-soft); }
+    .faq-question[open] .faq-question-mark::after { transform: rotate(0); }
+    .faq-answer {
+      padding: 0 44px 20px 4px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    [dir="rtl"] .faq-answer { padding: 0 4px 20px 44px; }
+    .faq-answer p { margin: 0 0 14px; color: var(--muted); }
+    .faq-answer p:last-child { margin-bottom: 0; }
+    .faq-answer strong { color: var(--ink); }
+    .faq-answer ul, .faq-answer ol { padding-inline-start: 22px; }
+    .faq-answer a { overflow-wrap: anywhere; }
+    @media (max-width: 1080px) {
+      .faq-shell { grid-template-columns: 220px minmax(0, 1fr); }
+    }
+    @media (max-width: 780px) {
+      .faq-shell { display: block; }
+      .faq-language { min-width: 118px; }
+      .faq-language select { max-width: 118px; }
+    }
+    @media (max-width: 560px) {
+      .faq-language { min-width: 104px; }
+      .faq-language select { max-width: 104px; }
+      .faq-search kbd { display: none; }
+      .faq-search input { padding-inline-end: 18px; }
+      .faq-topic-header h2 { font-size: 22px; }
+      .faq-question summary { min-height: 62px; font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">{{t:faq.page.skip_to_main}}</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="{{locale_home_url}}"><img src="/logo-github.png" alt=""><span>WebBrain</span><span class="brand-docs">{{t:faq.label}}</span></a>
+      <nav class="top-nav" aria-label="{{t:nav.docs}}">
+        <a href="{{docs_url}}">{{t:nav.docs}}</a>
+        <a href="/blog/">{{t:nav.blog}}</a>
+        <a href="https://github.com/webbrain-one/webbrain">{{t:nav.github}}</a>
+      </nav>
+      <div class="header-tools">
+        <label class="faq-language">
+          <span class="visually-hidden">{{t:nav.language_aria}}</span>
+          <select data-faq-language aria-label="{{t:nav.language_aria}}">{{faq_language_options}}</select>
+        </label>
+        <button class="icon-button" type="button" data-theme-toggle aria-label="{{t:nav.theme_toggle_aria}}">☀</button>
+        <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="{{t:faq.page.topics}}">☰</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="docs-shell faq-shell">
+    <aside class="docs-sidebar" aria-label="{{t:faq.page.topics}}">
+      <div class="sidebar-group">
+        <div class="sidebar-label">{{t:faq.page.topics}}</div>
+        <nav>{{faq_sidebar_links}}</nav>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-label">{{t:nav.docs}}</div>
+        <nav>
+          <a href="{{docs_url}}">{{t:nav.docs}} <span class="sidebar-link-note">{{docs_language_label}}</span></a>
+          <a href="https://discord.gg/cgC325ssfw">{{t:social.discord_label}}</a>
+        </nav>
+      </div>
+    </aside>
+
+    <main class="doc-main" id="main">
+      <div class="breadcrumb"><a href="{{docs_url}}">{{t:nav.docs}}</a> / {{t:faq.label}}</div>
+      <section class="doc-hero faq-hero">
+        <div class="eyebrow">{{t:faq.label}}</div>
+        <h1>{{t:faq.title}}</h1>
+        <p class="lede">{{t:faq.page.lede}}</p>
+        <label class="faq-search">
+          <span class="visually-hidden">{{t:faq.page.search}}</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+          <input type="search" data-faq-search placeholder="{{t:faq.page.search}}" autocomplete="off" spellcheck="false">
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+      </section>
+
+      <p class="faq-empty" data-faq-empty role="status" aria-live="polite" hidden>{{t:faq.page.no_results}}</p>
+{{faq_sections}}
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner"><span>WebBrain · {{t:faq.title}}</span><div class="footer-links"><a href="{{docs_url}}">{{t:nav.docs}}</a><a href="/privacy">{{t:footer.link_privacy}}</a><a href="https://github.com/webbrain-one/webbrain/issues">{{t:footer.link_report_bug}}</a></div></div>
+  </footer>
+
+  <script>
+    (function () {
+      const root = document.documentElement;
+      const themeButton = document.querySelector('[data-theme-toggle]');
+      const sidebarButton = document.querySelector('[data-sidebar-toggle]');
+      const languageSelect = document.querySelector('[data-faq-language]');
+      const languageRoutes = Object.freeze({{faq_language_routes}});
+      const searchInput = document.querySelector('[data-faq-search]');
+      const emptyState = document.querySelector('[data-faq-empty]');
+      const topics = Array.from(document.querySelectorAll('[data-faq-topic]'));
+
+      function setTheme(theme, persist) {
+        root.dataset.theme = theme;
+        themeButton.textContent = theme === 'dark' ? '☀' : '☾';
+        if (persist) try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+      }
+      setTheme(root.dataset.theme === 'light' ? 'light' : 'dark', false);
+      themeButton.addEventListener('click', function () {
+        setTheme(root.dataset.theme === 'light' ? 'dark' : 'light', true);
+      });
+
+      languageSelect.addEventListener('change', function () {
+        const route = languageRoutes[languageSelect.value];
+        if (route) window.location.assign(route);
+      });
+
+      sidebarButton.addEventListener('click', function () {
+        const open = document.body.classList.toggle('sidebar-open');
+        sidebarButton.setAttribute('aria-expanded', String(open));
+      });
+      document.querySelectorAll('.docs-sidebar a').forEach(function (link) {
+        link.addEventListener('click', function () {
+          document.body.classList.remove('sidebar-open');
+          sidebarButton.setAttribute('aria-expanded', 'false');
+        });
+      });
+
+      function normalize(value) {
+        return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+      }
+      function filterFaq() {
+        const query = normalize(searchInput.value);
+        let totalVisible = 0;
+        topics.forEach(function (topic) {
+          let topicVisible = 0;
+          topic.querySelectorAll('[data-faq-item]').forEach(function (item) {
+            const match = !query || normalize(item.textContent).includes(query);
+            item.hidden = !match;
+            if (match) topicVisible += 1;
+          });
+          topic.hidden = topicVisible === 0;
+          const count = topic.querySelector('.faq-topic-header > span');
+          count.textContent = String(topicVisible);
+          totalVisible += topicVisible;
+        });
+        emptyState.hidden = !query || totalVisible > 0;
+      }
+      searchInput.addEventListener('input', filterFaq);
+      searchInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && searchInput.value) {
+          searchInput.value = '';
+          filterFaq();
+        }
+      });
+      document.addEventListener('keydown', function (event) {
+        const target = event.target;
+        const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+        if (event.key === '/' && !typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          searchInput.focus();
+        }
+      });
+
+      function openHashTarget() {
+        if (!window.location.hash) return;
+        const target = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+        if (target && target.matches('details')) target.open = true;
+      }
+      window.addEventListener('hashchange', openHashTarget);
+      openHashTarget();
+    })();
+  </script>
+</body>
+</html>

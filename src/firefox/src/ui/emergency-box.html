@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="eb.page_title"></title>
+  <link rel="stylesheet" href="emergency-box.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="back-button" href="apocalypse-mode.html" data-i18n-aria-label="eb.back" title="Apocalypse Mode">←</a>
+    <span class="apocalypse-icon" aria-hidden="true">☢</span>
+    <div class="title-block">
+      <h1 data-i18n="eb.title"></h1>
+      <p data-i18n="eb.subtitle"></p>
+    </div>
+    <span id="mode-status" class="mode-status" role="status"></span>
+  </header>
+
+  <main class="library-shell">
+    <aside class="category-rail">
+      <div class="rail-heading">
+        <span data-i18n="eb.collections"></span>
+        <span id="resource-count" class="count-badge">0</span>
+      </div>
+      <nav id="category-nav" aria-label="Emergency Box collections">
+        <button type="button" class="category-button active" data-filter="all">
+          <span class="category-icon" aria-hidden="true">▦</span>
+          <span data-i18n="eb.filter.all"></span>
+        </button>
+        <button type="button" class="category-button" data-filter="installed">
+          <span class="category-icon" aria-hidden="true">✓</span>
+          <span data-i18n="eb.filter.installed"></span>
+          <span id="installed-rail-count" class="rail-count">0</span>
+        </button>
+        <button type="button" class="category-button" data-filter="education">
+          <span class="category-icon" aria-hidden="true">▤</span>
+          <span data-i18n="eb.filter.education"></span>
+        </button>
+        <button type="button" class="category-button" data-filter="health">
+          <span class="category-icon" aria-hidden="true">✚</span>
+          <span data-i18n="eb.filter.health"></span>
+        </button>
+        <button type="button" class="category-button" data-filter="field">
+          <span class="category-icon" aria-hidden="true">⌁</span>
+          <span data-i18n="eb.filter.field"></span>
+        </button>
+      </nav>
+      <div class="field-note">
+        <span class="field-note-icon" aria-hidden="true">!</span>
+        <p data-i18n="eb.medical_warning"></p>
+      </div>
+    </aside>
+
+    <section class="resource-pane" aria-labelledby="pane-title">
+      <div class="pane-head">
+        <div>
+          <p class="eyebrow" data-i18n="eb.offline_library"></p>
+          <h2 id="pane-title" data-i18n="eb.pane_title"></h2>
+        </div>
+        <div class="storage-summary">
+          <span data-i18n="eb.installed"></span>
+          <strong id="installed-count">0</strong>
+          <span class="summary-divider" aria-hidden="true"></span>
+          <strong id="installed-bytes">0 B</strong>
+        </div>
+      </div>
+
+      <div class="library-controls">
+        <label class="search-field">
+          <span class="visually-hidden" data-i18n="eb.search_label"></span>
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="resource-search" type="search" data-i18n-placeholder="eb.search_placeholder" autocomplete="off">
+        </label>
+        <div class="catalog-actions">
+          <button type="button" id="load-openstax" class="secondary-button">
+            <span aria-hidden="true">↻</span>
+            <span data-i18n="eb.update_openstax"></span>
+          </button>
+          <button type="button" id="download-all" class="primary-button">
+            <span aria-hidden="true">⇩</span>
+            <span data-download-all-label data-i18n="eb.download_all"></span>
+          </button>
+        </div>
+      </div>
+
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+      <div id="resource-list" class="resource-list" aria-live="polite"></div>
+    </section>
+  </main>
+  <script type="module" src="emergency-box.js"></script>
+</body>
+</html>

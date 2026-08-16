@@ -539,9 +539,11 @@ const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
+const providerPicker = document.getElementById('provider-picker');
 const providerPickerBtn = document.getElementById('provider-picker-btn');
 const providerPickerMenu = document.getElementById('provider-picker-menu');
 const providerPickerLabel = document.getElementById('provider-picker-label');
+const standaloneWebgpuBtn = document.getElementById('btn-webgpu-standalone');
 const languageSelect = document.getElementById('language-select');
 const languagePickerBtn = document.getElementById('language-picker-btn');
 const languagePickerMenu = document.getElementById('language-picker-menu');
@@ -667,6 +669,7 @@ const SLASH_COMMANDS = [
   { value: '/compact', usage: '/compact [prompt]', descriptionKey: 'sp.slash.compact', action: 'compact', acceptsPayload: true },
   { value: '/verbose', usage: '/verbose', descriptionKey: 'sp.slash.verbose', action: 'toggle', outOfBand: true },
   { value: '/reset', usage: '/reset', descriptionKey: 'sp.slash.reset', action: 'reset' },
+  { value: '/print', usage: '/print', descriptionKey: 'sp.slash.print', action: 'print' },
   {
     value: '/screenshot',
     usage: '/screenshot [--full-page]',
@@ -1028,6 +1031,9 @@ let recommendationsRequestId = 0;
 let providerSelectionRequestId = 0;
 let providerTestRequestId = 0;
 let selectedProviderId = 'webbrain_cloud';
+let standaloneWebgpuEnabled = false;
+let standaloneWebgpuReady = false;
+let standaloneWebgpuActive = false;
 let recommendedActionsCollapsed = false;
 let webbrainPromotionHasAnimated = false;
 let slashCommandMatches = [];
@@ -4122,6 +4128,7 @@ async function init() {
   restoreLatestChatTurnPosition();
 
   await loadProviders();
+  await refreshStandaloneWebgpuStatus();
   await testConnection({ skipWebBrainCloud: true });
   await windowScope.syncActiveTab();
   refreshScheduledJobs({ tabId: currentTabId });
@@ -4145,6 +4152,7 @@ async function init() {
     }
     if (changes.providers || changes.activeProvider) {
       void loadProviders();
+      void refreshStandaloneWebgpuStatus();
     }
   });
 }
@@ -4382,6 +4390,8 @@ async function adoptRestoredRunState(tabId, state) {
       requestId,
       mode,
       foreground: runUi.foreground === true,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
+      ...standaloneWebgpuRunPayload(),
     }, {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
@@ -6280,7 +6290,7 @@ function appendProviderPickerGroup(label) {
   providerPickerMenu.appendChild(el);
 }
 
-function appendProviderPickerOption(id, name, meta) {
+function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   if (!providerPickerMenu) return;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -6291,7 +6301,7 @@ function appendProviderPickerOption(id, name, meta) {
 
   // Icons only in the open menu — closed header stays text-only so the
   // WebBrain mark (and other brand chips) don't compete with the chrome.
-  const iconSrc = providerIconUrl(id);
+  const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');
     img.className = 'provider-icon provider-icon-sm';
@@ -6531,7 +6541,7 @@ async function loadProviders() {
         opt.textContent = `${name} — ${t('sp.providers.active')}`;
         activeGroup.appendChild(opt);
         providerPickerLabelById.set(id, name);
-        appendProviderPickerOption(id, name, t('sp.providers.active'));
+        appendProviderPickerOption(id, name, t('sp.providers.active'), config.sourceProviderId || id);
       }
       providerSelect.appendChild(activeGroup);
     }
@@ -6546,6 +6556,7 @@ async function loadProviders() {
     selectedProviderId = selectableProviderIds.has(res.active) ? res.active : 'webbrain_cloud';
     providerSelect.value = selectedProviderId;
     syncProviderPickerButton();
+    syncStandaloneWebgpuUi();
   } catch (e) {
     console.error('Failed to load providers:', e);
   }
@@ -6558,6 +6569,50 @@ async function openProvidersSettingsPage() {
   } catch {
     chrome.runtime.openOptionsPage();
   }
+}
+
+function setActiveChatProvider(providerId) {
+  return sendToBackground('set_active_provider', { providerId });
+}
+
+function standaloneWebgpuRunPayload() {
+  return isStandaloneWindow && standaloneWebgpuActive ? { providerId: 'webgpu' } : {};
+}
+
+function syncStandaloneWebgpuUi() {
+  if (!standaloneWebgpuBtn) return;
+  standaloneWebgpuBtn.hidden = !isStandaloneWindow;
+  if (!isStandaloneWindow) return;
+  if (!standaloneWebgpuEnabled) standaloneWebgpuActive = false;
+  standaloneWebgpuBtn.disabled = !standaloneWebgpuEnabled;
+  standaloneWebgpuBtn.classList.toggle('active', standaloneWebgpuActive);
+  standaloneWebgpuBtn.setAttribute('aria-pressed', String(standaloneWebgpuActive));
+  standaloneWebgpuBtn.title = !standaloneWebgpuEnabled
+    ? 'Enable Apocalypse Mode first'
+    : standaloneWebgpuActive
+      ? standaloneWebgpuReady
+        ? 'Using WebGPU for this standalone chat'
+        : 'Using WebGPU for this standalone chat · download LFM2.5 2.6B before sending'
+      : standaloneWebgpuReady
+        ? 'Use WebGPU for this standalone chat'
+        : 'Use WebGPU for this standalone chat · model download required';
+  providerSelect.disabled = standaloneWebgpuActive;
+  providerPickerBtn.disabled = standaloneWebgpuActive;
+  providerPicker?.classList.toggle('webgpu-override', standaloneWebgpuActive);
+  if (standaloneWebgpuActive) setProviderPickerOpen(false);
+}
+
+async function refreshStandaloneWebgpuStatus() {
+  if (!isStandaloneWindow || !standaloneWebgpuBtn) return;
+  try {
+    const status = await sendToBackground('get_standalone_webgpu_status');
+    standaloneWebgpuEnabled = status?.enabled === true;
+    standaloneWebgpuReady = status?.ready === true;
+  } catch {
+    standaloneWebgpuEnabled = false;
+    standaloneWebgpuReady = false;
+  }
+  syncStandaloneWebgpuUi();
 }
 
 function isWebBrainCloudProviderSelected() {
@@ -7229,6 +7284,23 @@ function toggledVisionProviderConfig(providerId, config) {
   return { enabled, config: { ...config, supportsVision: enabled } };
 }
 
+async function executePrintSlashCommand(tabId, currentTabId, tabs, scripting, showToast, translate) {
+  try {
+    const tab = tabId == null ? null : await tabs.get(tabId);
+    if (currentTabId !== tabId || !tab?.active) return { skipped: true };
+    await scripting.executeScript({
+      target: { tabId },
+      func: () => window.print(),
+    });
+    return { ok: true };
+  } catch (error) {
+    if (currentTabId === tabId) {
+      showToast(translate('sp.print.error', { msg: error?.message || 'unknown error' }), { duration: 5000 });
+    }
+    return { error: error?.message || 'unknown error' };
+  }
+}
+
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
     const watchArgs = parseWatchSlashCommand(text);
@@ -7281,7 +7353,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
-  if ((command.value === '/screenshot' || command.value === '/record')
+  if ((command.value === '/screenshot' || command.value === '/record' || command.value === '/print')
       && isSelectionGroundedForTab(tabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return '';
@@ -7442,6 +7514,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     } finally {
       setConversationClearInProgress(tabId, false);
     }
+    return '';
+  }
+
+  if (command.value === '/print') {
+    await executePrintSlashCommand(tabId, currentTabId, chrome.tabs, chrome.scripting, showComposerToast, t);
     return '';
   }
 
@@ -7685,7 +7762,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       const { providers, active } = await sendToBackground('get_providers');
       const config = providers[active];
       if (config) {
-        const toggled = toggledVisionProviderConfig(active, config);
+        const toggled = toggledVisionProviderConfig(config.sourceProviderId || active, config);
         await sendToBackground('update_provider', {
           providerId: active,
           config: toggled.config,
@@ -7905,7 +7982,7 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
-    if (sourceGrounding && /^\s*\/(?:screenshot|record)(?:\s|$)/i.test(text)) {
+    if (sourceGrounding && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
       showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
       return false;
     }
@@ -8136,6 +8213,7 @@ async function sendMessage(extraChatParams = {}) {
       } : {}),
       ...(attachmentsForSend.length ? { attachments: attachmentsForSend } : {}),
       ...chatExtraParams,
+      ...standaloneWebgpuRunPayload(),
     });
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
@@ -8427,6 +8505,11 @@ chrome.runtime.onMessage.addListener((msg) => {
       || msg.action !== 'user_memory_created'
       || document.visibilityState === 'hidden') return;
   showComposerToast(t('sp.memory.remembered'), { duration: 3200, effect: 'memory' });
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!isStandaloneWindow || !['webgpu-text-download-state', 'apocalypse-mode-state'].includes(msg?.type)) return;
+  void refreshStandaloneWebgpuStatus();
 });
 
 // Recorder broadcasts — independent of the per-tab agent_update flow.
@@ -10778,6 +10861,8 @@ async function continueAgent(options = {}) {
       requestId,
       mode: modeForSend,
       foreground: foregroundForSend,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
+      ...standaloneWebgpuRunPayload(),
     });
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
@@ -12669,7 +12754,7 @@ providerSelect.addEventListener('change', async () => {
   const requestId = ++providerSelectionRequestId;
   providerTestRequestId += 1;
   try {
-    await sendToBackground('set_active_provider', { providerId });
+    await setActiveChatProvider(providerId);
   } catch (e) {
     if (requestId === providerSelectionRequestId && providerSelect.value === providerId) {
       markSelectedProviderFailed(e);
@@ -12679,12 +12764,19 @@ providerSelect.addEventListener('change', async () => {
   if (requestId !== providerSelectionRequestId || providerSelect.value !== providerId) {
     const latestProviderId = providerSelect.value;
     if (latestProviderId && latestProviderId !== providerId) {
-      sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});
+      setActiveChatProvider(latestProviderId).catch(() => {});
     }
     return;
   }
   selectedProviderId = providerId;
   await testConnection({ providerId });
+});
+
+standaloneWebgpuBtn?.addEventListener('click', async () => {
+  await refreshStandaloneWebgpuStatus();
+  if (!standaloneWebgpuEnabled) return;
+  standaloneWebgpuActive = !standaloneWebgpuActive;
+  syncStandaloneWebgpuUi();
 });
 
 providerPickerBtn?.addEventListener('click', (event) => {

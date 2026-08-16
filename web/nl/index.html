@@ -78,223 +78,6 @@
   "screenshot": "https://webbrain.one/og-image.png"
 }
   </script>
-  <script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "inLanguage": "nl-NL",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "Is WebBrain een gratis alternatief voor Claude's browserplugin?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ja. WebBrain biedt vergelijkbare AI browser agent-mogelijkheden — pagina's lezen, data extraheren, knoppen klikken, formulieren invullen en meerdere-stappen workflows automatiseren. In tegenstelling tot Claude's eigen browserplugin die een Claude Pro-abonnement vereist en alleen werkt met Anthropic-modellen, is WebBrain volledig gratis, open-source (MIT-licentie) en ondersteunt meerdere LLM-providers waaronder lokale modellen die volledig op uw machine draaien."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Wat kost een WebBrain Cloud-abonnement?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain Cloud kost momenteel $5/maand per apparaatprofiel, veel goedkoper dan Claude Pro op dit moment. Het gebruik is momenteel onbeperkt onder een fair-use-beleid: normaal persoonlijk gebruik is toegestaan, maar misbruik, geautomatiseerd gebruik, wederverkoop of ongebruikelijk hoog volume is niet toegestaan. Het abonnement is gekoppeld aan de apparaat-ID die door de extensie wordt gegenereerd voor die browser + OS GUID, niet aan een gebruikersaccount. Als die ID verloren gaat doordat u extensieopslag reset, de browserprofiel verwijdert, de browser opnieuw installeert, van browser/OS wisselt of het apparaat verliest, kunnen we deze niet ophalen of overdragen en geven we geen terugbetaling voor dat verlies. U kunt zich abonneren of facturering beheren via de Account-sectie van de plugin-instellingenpagina met de knop Facturering beheren. Om handmatig op te zeggen, neem contact met ons op via e-mail met het e-mailadres dat u bij het afrekenen heeft gebruikt."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Hoe werkt versleutelde Cloud Sync?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cloud Sync is een optionele functie voor actieve WebBrain Cloud-abonnees. Het synchroniseert uw WebBrain-geheugens, Profiel auto-invultekst en ondersteunde providerconfiguratie, inclusief API-sleutels. Het synchroniseert niet de chatgeschiedenis, browsergeschiedenis, paginascreenshots of verouderde OAuth-access- en refreshtokens. Uw browser versleutelt de synchronisatietruc vóór het uploaden met een wachtwoord dat u kiest. WebBrain Cloud slaat alleen de versleutelde truc op; het kan uw geheugens, profieltekst, providerinstellingen of API-sleutels niet lezen, en het kan het synchronisatiewachtwoord niet voor u herstellen. Het e-mailveld is bedoeld voor WebBrain Cloud magic-link facturering-/abonnement authenticatie. Het is geen accountwachtwoord. Als de UI zegt wachtwoord wijzigen in Cloud Sync, bedoelt het het versleutelingswachtwoord voor synchronisatie, niet een WebBrain-accountwachtwoord. Als u het synchronisatiewachtwoord vergeet, kan de oude versleutelde cloudtruc niet worden ontsleuteld. U kunt de cloudtruc resetten en een nieuwe versleutelde kopie uploaden vanaf een apparaat dat de gegevens nog lokaal heeft."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Hoe verhoudt WebBrain zich tot OpenClaw, Browser-Use en andere AI agent frameworks?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Het zijn verschillende categorieën tools. WebBrain is een browser extensie — u installeert het in Chrome of Firefox en chat ermee in een zijbalk, geen codering vereist. Frameworks zoals OpenClaw en Browser-Use zijn ontwikkelaars-SDK's voor het bouwen van geautomatiseerde browserpipelines in Python, doorgaans met headless browsers en CDP. Denk er zo aan: WebBrain is voor dagelijks browsen met een AI-assistent; agentframeworks zijn voor het bouwen van scrapingbots en testautomatisering. U kunt beide gebruiken — ze vullen elkaar aan."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Kan ik WebBrain volledig offline gebruiken?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ja. De standaardprovider van WebBrain is llama.cpp, dat een lokaal AI-model op uw computer draait. Geen API-sleutels nodig, geen internetverbinding vereist voor de AI, en er verlaat nooit data uw machine. Download simpelweg een GGUF-model, start llama-server en u heeft een volledig privé AI browser agent. U kunt ook Ollama gebruiken met diens OpenAI-compatibele endpoint."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Welke AI-modellen ondersteunt WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain ondersteunt vier provider-types: llama.cpp (elk lokaal GGUF-model), OpenAI (GPT-4o, GPT-4, etc.), Claude (Claude Opus, Sonnet, Haiku via de native API) en OpenRouter (toegang tot 100+ modellen van diverse providers). Elke OpenAI-compatibele API-endpoint werkt, dus u kunt ook diensten gebruiken zoals Together AI, Groq, Mistral of elke lokale server met een OpenAI-compatibele interface."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Wat is het meest aanbevolen model?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Per 21 april 2026 is de topaanbeveling Qwen 3.6 35B. Waarom: in onze vision benchmark (vision-model-shootout) presteerde het beter dan Gemma 4 bij screenshotbegrip terwijl het praktisch bleef voor lokale inferentie. Voor consumenten-GPU's is de RTX 5090 ideaal, en de RTX 4090 is vaak werkbaar met INT4 AutoRound-kwantisatie via Intel/Qwen3.6-35B-A3B-int4-AutoRound. Voor maximale snelheid raden we aan te serveren op vLLM. Voorbeeldopdracht: python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{\"image\": 4, \"video\": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '[\"*\"]' --speculative-config '{\"method\": \"dflash\", \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\", \"num_speculative_tokens\": 15}' --attention-backend flash_attn DFlash speculatieve decoding is optioneel."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Ik krijg \"Failed to fetch\" bij het verbinden met een lokale LLM-server (vLLM, Ollama, llama.cpp) op mijn netwerk",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Als uw LLM-server op een andere machine op uw lokale netwerk staat (bijv. http://192.168.1.x:8000), blokkeert Chrome het verzoek tenzij de server CORS-headers stuurt. De oplossing hangt af van uw server: vLLM: Start met --allowed-origins '[\"*\"]' (de waarde moet een JSON-lijst zijn). Ollama: Stel de omgevingsvariabele OLLAMA_ORIGINS=* in vóór het starten. llama.cpp: CORS is standaard ingeschakeld — geen wijzigingen nodig. Als uw server op localhost draait (dezelfde machine als de browser), is CORS meestal niet vereist. Het probleem treedt alleen op bij cross-machine verbindingen op het lokale netwerk. Zorg ervoor dat uw basis-URL in de WebBrain-instellingen eindigt op /v1 (bijv. http://192.168.1.47:8000/v1). Uitzondering: Ollama vanuit een browser extensie heeft mogelijk nog steeds OLLAMA_ORIGINS nodig; zie de Ollama FAQ hieronder."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Waarom geeft Ollama op localhost 403 terug vanuit de WebBrain-extensie?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Recente Ollama-versies kunnen verzoeken van browserextensie-origins weigeren, zelfs als Ollama op dezelfde machine draait. De extensie stuurt een Origin zoals chrome-extension://... of moz-extension://..., en Ollama kan 403 teruggeven als die origins niet zijn toegestaan. Sluit elke Ollama-desktop-app die al poort 11434 bezet, en start Ollama met een van deze opdrachten: OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve Houd WebBrain's Ollama basis-URL ingesteld op http://localhost:11434/v1. Terminal curl-checks kunnen nog steeds werken zonder deze instelling, omdat ze geen browserextensie-origin sturen."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Werkt WebBrain op Firefox?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ja. WebBrain wordt geleverd met zowel een Chrome-versie (Manifest V3, via de sidePanel API) als een Firefox-versie (Manifest V2, via sidebar_action). Beide versies hebben identieke functies. De Firefox-versie kan als tijdelijke add-on worden geladen voor ontwikkeling, of gepubliceerd op addons.mozilla.org voor permanente installatie."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Kan ik de Firefox-zijbalk van links naar rechts verplaatsen, zoals Chrome's side panel?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ja — de Firefox-zijbalk staat standaard links, maar u kunt hem omschakelen. Klik met de rechtermuisknop ergens in de zijbalk-header en kies Zijbalk naar rechts verplaatsen (of gebruik Weergave → Zijbalk → Zijbalk naar rechts verplaatsen vanuit de menubalk). De positie blijft behouden tussen herstarts. Chrome's side panel staat standaard rechts en is niet door de gebruiker te verplaatsen vanuit het paneel zelf."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Is WebBrain veilig in gebruik? Kan het webpagina's wijzigen?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain heeft drie modi. Vraag modus (standaard) is lees-only en kan niets op de pagina wijzigen. Actie modus maakt browseracties mogelijk zoals klikken, typen en navigeren, terwijl Dev modus paginadbugtools toevoegt. Gevolgvolle acties vereisen standaard goedkeuring; als die toestemmingsdrempel is uitgeschakeld, toont WebBrain een zichtbare waarschuwingsbanner. U kunt de agent op elk moment stoppen met de Stop-knop. De broncode van de extensie is volledig open voor audit op GitHub."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Wat is de \"WebBrain started debugging this browser\"-banner? Waarom gebruikt WebBrain CDP?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Om betrouwbaar op een pagina te handelen, gebruikt WebBrain het Chrome DevTools Protocol (CDP) via de standaard chrome.debugger extensie-API — dat is wat Chrome's \"WebBrain started debugging this browser\"-banner activeert. CDP stelt de agent in staat te klikken en te typen met vertrouwde invoergebeurtenissen die moderne sites daadwerkelijk accepteren; synthetische gebeurtenissen die vanuit een content script worden afgevuurd, worden door veel sites, Web Components en framework-gecontroleerde velden afgewezen. Het is ook hoe WebBrain pixel-accurate screenshots vastlegt voor de vision-back-up en toegang krijgt tot cross-origin iframes en shadow DOM die content scripts niet kunnen zien. Lees-only Vraag Modus heeft geen CDP nodig — pagina- en toegankelijkheidsboom-lezingen gaan via gewone content scripts. Het is de Actie Modus-betrouwbaarheid en cross-origin werk die het vereisen, en in een Manifest V3-extensie is er geen non-debugger API voor vertrouwde invoer. WebBrain hecht de debugger alleen wanneer een actie het nodig heeft, per tabblad, en de volledige extensie is open-source zodat u precies kunt auditeren wat de sessie doet. CDP is krachtig, daarom behandelen we zijn voetafdruk als iets om in te perken — op aanvraag hechten, lezingen ervan weren — en dat verder aanscherpen staat op onze beveiligingsroadmap."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Het stelt te veel vragen. Kan ik dat uitschakelen?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Die goedkeuringsverzoeken zijn voor uw veiligheid. Zelfs op sites die u vertrouwt, kunnen kwaadwillenden LLM-instructies nabootsen of inhoud injecteren die de agent ertoe brengt namens u dingen te doen die u niet goedkeurt. Daarom vraagt WebBrain om goedkeuring vóór gevolgvolle acties. Als u toch niet door die verzoeken wilt gaan, typt u /dangerously-skip-permissions in de zijbalk, of opent u de zijplugin, klikt u op het tandwielicoon in de header, gaat u naar het Permissions-tabblad in settings.html, en schakelt u Ask before consequential actions uit."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Hoe gebruik ik WebBrain voor web scraping en data-extractie?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Open eenvoudig elke webpagina, open de WebBrain-zijbalk en vraag in natuurlijke taal: \"Extraheer alle productnamen en prijzen van deze pagina\", \"Haal alle e-mailadressen van deze pagina\" of \"Vat dit artikel samen in kernpunten\". De AI agent leest de pagina-inhoud, begrijpt de structuur en retourneert de geëxtraheerde data. Voor complexere scraping, schakel naar Actie modus en de agent kan tussen pagina's navigeren, op pagineringsknoppen klikken en data van meerdere pagina's samenvoegen."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Roept WebBrain API's direct aan, of klikt het altijd door de UI?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Standaard gaat WebBrain altijd door de zichtbare UI voor elke actie die iets aanmaakt, wijzigt, verwijdert, verstuurt, indient, plaatst of koopt. Het navigeert naar de pagina, vult het formulier in en klikt op de knop — precies zoals u zou doen. Het weigert om REST/GraphQL-endpoints direct aan te roepen via achtergrond-fetch() voor mutaties. Dit is bewust: API-acties zijn onzichtbaar (u ziet niet wat er wordt verstuurd), vereisen vaak aparte authenticatietokens die u mogelijk niet heeft geconfigureerd, en hebben een veel groter schaduwoppervlak dan een zichtbare mis-klik. UI-first betekent dat alles op het scherm is, in uw normale browsersessie, en stopbaar. Voor het lezen van data — een README ophalen, een issue opzoeken, prijzen tussen sites vergelijken, een statuspagina controleren — gebruikt WebBrain vrijelijk achtergrond HTTP-verzoeken via de fetch_url- en research_url-tools. Lezen is niet hetzelfde als handelen; het wijzigt niets op een externe service, dus de veiligheidsbezwaren zijn niet van toepassing. Als u specifiek API-mutaties wilt toestaan voor een bepaalde taak, typt u /allow-api aan het begin van uw bericht (optioneel gevolgd door een korte taakbeschrijving). Deze per-gesprek-uitzondering laat WebBrain terugvallen op API-endpoints wanneer de UI echt faalt of onwerkbaar is, terwijl het nog steeds de UI verkiest als deze werkt. Een sticky badge blijft zichtbaar boven het invoergebied zolang de uitzondering actief is, en verdwijnt wanneer u het gesprek reset."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Kan ik het ook in LM Studio gebruiken?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ja. WebBrain's lees-only netwerktools — fetch_url en research_url — worden ook uitgebracht als een standalone LM Studio-plugin op webbrain/web-tools. Installeer met lms clone webbrain/web-tools en schakel het in bij elk LM Studio-chat — elk model met toolondersteuning kan dan die twee tools aanroepen zonder dat u de browserextensie installeert. Puur Node, geen headless browser. Bron: lmstudio-plugin/."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Kan ik omhoog of omlaag scrollen terwijl WebBrain in mijn tabblad werkt?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Meestal wel — vooral in de Ask-modus voor alleen-lezenverzoeken zoals “Vat deze pagina samen”. U kunt blijven scrollen terwijl WebBrain werkt. Wanneer kan ik dit beter niet doen? Automatische screenshots geven het huidige zichtbare gedeelte van het tabblad weer. Terwijl WebBrain in de Act- of Dev-modus zichtbare inhoud actief inspecteert of ermee werkt, kan scrollen een doel verplaatsen of wijzigen wat het model ziet. Laat die stap afronden voordat u scrollt; buiten die momenten kunt u de pagina gewoon blijven gebruiken."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Kan ik naar een ander tabblad schakelen terwijl WebBrain aan een pagina werkt?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Ja. Sinds versie 27.0.0 voorkomt WebBrain dat het de focus overneemt in zowel Chromium-gebaseerde browsers als Firefox, tenzij toegang op de voorgrond strikt noodzakelijk is. De uitvoering blijft gekoppeld aan het tabblad waarop deze is gestart, zodat u veilig in een ander tabblad kunt werken. Als voor een zeldzame stap het oorspronkelijke tabblad op de voorgrond moet staan, kan WebBrain er kort de focus op zetten. Klik of typ niet in hetzelfde tabblad terwijl WebBrain daar actief handelingen uitvoert."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Hoe werkt Profiel auto-invullen, en is het veilig?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Profiel auto-invullen is een optionele functie in Instellingen → Profiel. U voert een korte bio in — naam, werkmail, bedrijf en een wegwerpwachtwoord voor low-stakes inschrijvingen — en schakelt het in. Wanneer ingeschakeld, voegt WebBrain die tekst toe aan het systeemprompt van de agent zodat het inschrijvingsformulieren kan invullen zonder telkens te vragen. De tekst wordt in platte tekst opgeslagen in de lokale opslag van uw browser. Het wordt niet verzonden naar het WebBrain-project, maar het wel naar welke LLM-provider u heeft geconfigureerd bij elke beurt, als onderdeel van het systeemprompt. Standaard uit. Doe hier geen wachtwoorden voor belangrijke accounts (Google, Apple, iCloud, bankzaken, werk-SSO, primair e-mail). Die accounts zouden 2FA moeten gebruiken en moeten sowieso niet aan een agent worden overhandigd. Een wegwerpwachtwoord dat u hergebruikt voor nieuwsbrieft en gratis proefversies is het beoogde gebruiksscenario."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Garandeert de Screenshot-redactie-instelling dat mijn privédata nooit een cloud vision-model bereikt?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Nee — het vermindert de blootstelling, het is geen garantie. Wanneer ingeschakeld (Instellingen → Multimodal → Screenshot-redactie, standaard uit), pixeleert WebBrain formulieren en tekst die lijkt op een e-mailadres of telefoonnummer op elke screenshot voordat deze naar een vision-model wordt gestuurd. Detectie draait volledig op uw apparaat via DOM-heuristieken; er wordt niets extra's verzonden. Het is een best-effort, fail-open aanpak. Als de detector niet kan draaien op een pagina — bijvoorbeeld direct na navigatie, op PDF-viewers, of op beperkte browserpagina's — wordt de screenshot nog steeds onbewerkt verzonden in plaats van uw taak te annuleren. Inhoud die de DOM-heuristieken niet kunnen zien (tekst op een canvas, PBI in afbeeldingen, ongebruikelijke widgets) kan ook doorglippen. En de instelling dekt alleen screenshots: paginatekst die naar het model wordt gestuurd, wordt er niet door bewerkt. Voor volledige vision-privacy, gebruik een lokaal model. Met een offline provider zoals llama.cpp of Ollama verlaten screenshots en paginatekst uw machine nooit, dus er is niets om te bewerken — dat is de enige configuratie waarbij privacy gegarandeerd is. Zie \"Kan ik WebBrain volledig offline gebruiken?\" hierboven. Geen machine die een vision-capabel lokaal model kan draaien? Een goede middenweg is een klein lokaal model voor planning en tool-aanroepen (snel en licht genoeg voor een bescheiden CPU/GPU) gekoppeld aan een cloudprovider voor de vis子onderdelen, met Screenshot-redactie ingeschakeld. U behoudt uw gesprek en paginatekst op het apparaat, en elke screenshot die naar cloud-vision vertrekt heeft formulieren en gedetecteerde e-mails/telefoonnummers eerst vervaagd — verminderde cloudblootstelling zonder hardware voor een volledig lokaal vision-model. Configureer de vision-splitsing onder Instellingen → Vision (zie \"Hoe houdt WebBrain cloud LLM-rekeningen onder controle?\" hierboven)."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Wat doet WebBrain met cookie-banners en paywalls?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cookie-banners: WebBrain herkent toestemmingsbanners van veelgebruikte frameworks (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) en wuift ze weg voordat de pagina wordt geanalyseerd. Prioriteit gaat naar \"Allen weigeren\" / \"Niet-essentiëlen weigeren\" / \"Alleen noodzakelijk\" wanneer duidelijk zichtbaar; het kiest voor \"Allen accepteren\" in plaats van te verdwalen in het \"Voorkeuren beheren\"-doolhof. Paywalls: WebBrain meldt de paywall eerlijk en vertelt u wat het daadwerkelijk kon zien (kop, lead, eerste alinea's). Het probeert niet paywalls te omzeilen — geen archive.today, 12ft.io, cookie-wissen, JS uitschakelen of lezer-modustrucs. Als u het volledige artikel wilt, log in met een abonnement of vraag WebBrain om gratis berichtgeving over hetzelfde onderwerp te zoeken."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Ondersteunt WebBrain een dry-run modus?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Vanaf versie 7.0.0, nog niet. Dry-run modus staat gepland en staat al op de roadmap."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Stuurt WebBrain de volledige DOM naar het AI-model?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Nee. WebBrain verstuurt standaard geen onbewerkte HTML of ruwe DOM-dump. Het begint met de URL en titel van de pagina, bijpassende site-instructies en, wanneer beeldherkenning is ingeschakeld, optioneel een schermafbeelding van het zichtbare deel. Wanneer een taak pagina-inhoud nodig heeft, leest WebBrain die op aanvraag als een verkleinde semantische toegankelijkheidsboom of als geëxtraheerde tekst. Lezingen worden waar passend op zichtbaarheid gefilterd, hebben tekenlimieten en worden gepagineerd. Toegang tot de ruwe paginabron is alleen beschikbaar in de Dev-modus."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Hoe houdt WebBrain cloud LLM-rekeningen onder controle?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Drie onafhankelijke lagen: Token-bewuste screenshots. Voordat een afbeelding uw machine verlaat, resizeert WebBrain deze (korte kant begrensd, beeldverhouding behouden) en comprimeert iteratief JPEG totdat deze past binnen een per-beurt afbeeldingstoken-budget. Een 2000×1200 screenshot dat u ~1.500 invoertokens zou kosten op GPT-4o, wordt gecomprimeerd naar ~300–500 tokens zonder praktisch verlies voor paginaleestaken. Geïmplementeerd in _fitImageDimensions met unittesten voor de budgetberekening. Slimme contextbijsnijding. Gespreksgeschiedenis, tooluitvoer en inline DOM-dumps worden per beurt begrensd en van oudste naar nieuwste bijgesneden wanneer het contextvenster van het actieve model bijna vol is. U zult niet zien dat een sessie stilzwellig opzwelt van 10k naar 100k tokens doordat een read_page een artikel ter lengte van een roman retourneerde. Gewijd vision-model. Koppel een goedkoop tekstmodel (bijv. GPT-4o-mini) voor planning en tool-aanroepen aan een apart vision-capabel model (bijv. GPT-4o) alleen voor screenshots, zodat u niet het multimodale model-tarief betaalt bij elke beurt. Configureer onder Instellingen → Vision. Nettoresultaat: lange sessies met cloudproviders blijven voorspelbaar. Voor volledige controle, gebruik llama.cpp lokaal — nul kosten per token."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Kan ik bijdragen aan WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Uiteraard! WebBrain heeft een MIT-licentie en verwelkomt bijdragen. Bekijk de GitHub-repository voor issues, functieverzoeken en bijdragerichtlijnen."
-      }
-    }
-  ]
-}
-  </script>
   <style>
     /* ================================================================
        RESET & BASE
@@ -2747,58 +2530,37 @@
     }
 
     /* ================================================================
-       FAQ
+       FAQ BRIDGE
        ================================================================ */
-    .faq-list {
+    .faq-bridge {
       max-width: 760px;
-      margin: 32px auto 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .faq-item {
-      background: var(--bg-card);
+      margin: 34px auto 0;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
-      transition: border-color 0.2s;
+      background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(45,212,191,0.05));
     }
-    .faq-item[open] {
-      border-color: rgba(108,99,255,0.25);
-    }
-    .faq-item summary {
-      padding: 16px 20px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: color 0.2s;
-    }
-    .faq-item summary::-webkit-details-marker { display: none; }
-    .faq-item summary::after {
-      content: '+';
-      font-size: 20px;
-      color: var(--text-dim);
-      flex-shrink: 0;
-      margin-inline-start: 16px;
-      transition: transform 0.2s;
-    }
-    .faq-item[open] summary::after {
-      content: '−';
-      color: var(--accent);
-    }
-    .faq-item summary:hover { color: var(--accent2); }
-    .faq-item p {
-      padding: 0 20px 16px;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .faq-item p a {
+    .faq-bridge-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(45,212,191,0.28);
+      border-radius: 50%;
       color: var(--accent2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 800;
+    }
+    .faq-bridge strong { font-size: 14px; }
+    .faq-bridge a { color: var(--accent2); font-size: 13px; font-weight: 700; }
+    .faq-bridge a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 560px) {
+      .faq-bridge { grid-template-columns: auto 1fr; }
+      .faq-bridge a { grid-column: 2; }
     }
 
     /* ================================================================
@@ -2943,6 +2705,7 @@
     </a>
     <div class="nav-links">
       <a href="/docs/">Documentatie</a>
+      <a href="/docs/nl/faq/">FAQ</a>
       <a href="/blog">Blog</a>
       <a href="#download" class="nav-cta">Downloaden</a>
       <div class="language-picker" id="language-picker">
@@ -3629,6 +3392,11 @@
       </div>
     </div>
   </div>
+  <aside class="faq-bridge" id="faq" aria-label="Veelgestelde Vragen">
+    <span class="faq-bridge-mark" aria-hidden="true">?</span>
+    <strong>Veelgestelde Vragen</strong>
+    <a href="/docs/nl/faq/">FAQ <span aria-hidden="true">→</span></a>
+  </aside>
 </section>
 
 <!-- MCP SERVER -->
@@ -3789,149 +3557,6 @@
   </div>
 </dialog>
 
-<!-- FAQ -->
-<section class="section" id="faq">
-  <div class="section-label">FAQ</div>
-  <h2 class="section-title">Veelgestelde Vragen</h2>
-
-  <div class="faq-list">
-    <details class="faq-item">
-      <summary>Is WebBrain een gratis alternatief voor Claude&#39;s browserplugin?</summary>
-      <p>Ja. WebBrain biedt vergelijkbare AI browser agent-mogelijkheden — pagina's lezen, data extraheren, knoppen klikken, formulieren invullen en meerdere-stappen workflows automatiseren. In tegenstelling tot Claude's eigen browserplugin die een Claude Pro-abonnement vereist en alleen werkt met Anthropic-modellen, is WebBrain volledig gratis, open-source (MIT-licentie) en ondersteunt meerdere LLM-providers waaronder lokale modellen die volledig op uw machine draaien.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Wat kost een WebBrain Cloud-abonnement?</summary>
-      <p>WebBrain Cloud kost momenteel <strong>$5/maand per apparaatprofiel</strong>, veel goedkoper dan Claude Pro op dit moment. Het gebruik is momenteel onbeperkt onder een fair-use-beleid: normaal persoonlijk gebruik is toegestaan, maar misbruik, geautomatiseerd gebruik, wederverkoop of ongebruikelijk hoog volume is niet toegestaan.</p><p>Het abonnement is gekoppeld aan de apparaat-ID die door de extensie wordt gegenereerd voor die browser + OS GUID, niet aan een gebruikersaccount. Als die ID verloren gaat doordat u extensieopslag reset, de browserprofiel verwijdert, de browser opnieuw installeert, van browser/OS wisselt of het apparaat verliest, kunnen we deze niet ophalen of overdragen en geven we geen terugbetaling voor dat verlies.</p><p>U kunt zich abonneren of facturering beheren via de <strong>Account</strong>-sectie van de plugin-instellingenpagina met de knop <strong>Facturering beheren</strong>. Om handmatig op te zeggen, neem contact met ons op via e-mail met het e-mailadres dat u bij het afrekenen heeft gebruikt.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Hoe werkt versleutelde Cloud Sync?</summary>
-      <p>Cloud Sync is een optionele functie voor actieve WebBrain Cloud-abonnees. Het synchroniseert uw WebBrain-geheugens, Profiel auto-invultekst en ondersteunde providerconfiguratie, inclusief API-sleutels. Het synchroniseert <strong>niet</strong> de chatgeschiedenis, browsergeschiedenis, paginascreenshots of verouderde OAuth-access- en refreshtokens.</p><p>Uw browser versleutelt de synchronisatietruc vóór het uploaden met een wachtwoord dat u kiest. WebBrain Cloud slaat alleen de versleutelde truc op; het kan uw geheugens, profieltekst, providerinstellingen of API-sleutels niet lezen, en het kan het synchronisatiewachtwoord niet voor u herstellen.</p><p>Het e-mailveld is bedoeld voor WebBrain Cloud magic-link facturering-/abonnement authenticatie. Het is geen accountwachtwoord. Als de UI zegt wachtwoord wijzigen in Cloud Sync, bedoelt het het <strong>versleutelingswachtwoord voor synchronisatie</strong>, niet een WebBrain-accountwachtwoord.</p><p>Als u het synchronisatiewachtwoord vergeet, kan de oude versleutelde cloudtruc niet worden ontsleuteld. U kunt de cloudtruc resetten en een nieuwe versleutelde kopie uploaden vanaf een apparaat dat de gegevens nog lokaal heeft.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Hoe verhoudt WebBrain zich tot OpenClaw, Browser-Use en andere AI agent frameworks?</summary>
-      <p>Het zijn verschillende categorieën tools. WebBrain is een browser extensie — u installeert het in Chrome of Firefox en chat ermee in een zijbalk, geen codering vereist. Frameworks zoals OpenClaw en Browser-Use zijn ontwikkelaars-SDK's voor het bouwen van geautomatiseerde browserpipelines in Python, doorgaans met headless browsers en CDP. Denk er zo aan: WebBrain is voor dagelijks browsen met een AI-assistent; agentframeworks zijn voor het bouwen van scrapingbots en testautomatisering. U kunt beide gebruiken — ze vullen elkaar aan.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Kan ik WebBrain volledig offline gebruiken?</summary>
-      <p>Ja. De standaardprovider van WebBrain is llama.cpp, dat een lokaal AI-model op uw computer draait. Geen API-sleutels nodig, geen internetverbinding vereist voor de AI, en er verlaat nooit data uw machine. Download simpelweg een GGUF-model, start llama-server en u heeft een volledig privé AI browser agent. U kunt ook Ollama gebruiken met diens OpenAI-compatibele endpoint.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Welke AI-modellen ondersteunt WebBrain?</summary>
-      <p>WebBrain ondersteunt vier provider-types: llama.cpp (elk lokaal GGUF-model), OpenAI (GPT-4o, GPT-4, etc.), Claude (Claude Opus, Sonnet, Haiku via de native API) en OpenRouter (toegang tot 100+ modellen van diverse providers). Elke OpenAI-compatibele API-endpoint werkt, dus u kunt ook diensten gebruiken zoals Together AI, Groq, Mistral of elke lokale server met een OpenAI-compatibele interface.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Wat is het meest aanbevolen model?</summary>
-      <p>Per <strong>21 april 2026</strong> is de topaanbeveling <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. Waarom: in onze vision benchmark (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">vision-model-shootout</a>) presteerde het beter dan Gemma 4 bij screenshotbegrip terwijl het praktisch bleef voor lokale inferentie.</p><p>Voor consumenten-GPU's is de RTX 5090 ideaal, en de RTX 4090 is vaak werkbaar met INT4 AutoRound-kwantisatie via <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a>.</p><p>Voor maximale snelheid raden we aan te serveren op <strong>vLLM</strong>. Voorbeeldopdracht:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>DFlash speculatieve decoding is optioneel.</em></p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Ik krijg &quot;Failed to fetch&quot; bij het verbinden met een lokale LLM-server (vLLM, Ollama, llama.cpp) op mijn netwerk</summary>
-      <p>Als uw LLM-server op een andere machine op uw lokale netwerk staat (bijv. <code>http://192.168.1.x:8000</code>), blokkeert Chrome het verzoek tenzij de server <strong>CORS-headers</strong> stuurt. De oplossing hangt af van uw server:</p><p><strong>vLLM:</strong> Start met <code>--allowed-origins '["*"]'</code> (de waarde moet een JSON-lijst zijn).<br><strong>Ollama:</strong> Stel de omgevingsvariabele <code>OLLAMA_ORIGINS=*</code> in vóór het starten.<br><strong>llama.cpp:</strong> CORS is standaard ingeschakeld — geen wijzigingen nodig.</p><p>Als uw server op <code>localhost</code> draait (dezelfde machine als de browser), is CORS meestal niet vereist. Het probleem treedt alleen op bij cross-machine verbindingen op het lokale netwerk. Zorg ervoor dat uw basis-URL in de WebBrain-instellingen eindigt op <code>/v1</code> (bijv. <code>http://192.168.1.47:8000/v1</code>). Uitzondering: Ollama vanuit een browser extensie heeft mogelijk nog steeds <code>OLLAMA_ORIGINS</code> nodig; zie de Ollama FAQ hieronder.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Waarom geeft Ollama op localhost 403 terug vanuit de WebBrain-extensie?</summary>
-      <p>Recente Ollama-versies kunnen verzoeken van browserextensie-origins weigeren, zelfs als Ollama op dezelfde machine draait. De extensie stuurt een <code>Origin</code> zoals <code>chrome-extension://...</code> of <code>moz-extension://...</code>, en Ollama kan 403 teruggeven als die origins niet zijn toegestaan.</p><p>Sluit elke Ollama-desktop-app die al poort <code>11434</code> bezet, en start Ollama met een van deze opdrachten:</p><p><code>OLLAMA_ORIGINS="*" ollama serve</code><br><code>OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ollama serve</code></p><p>Houd WebBrain's Ollama basis-URL ingesteld op <code>http://localhost:11434/v1</code>. Terminal <code>curl</code>-checks kunnen nog steeds werken zonder deze instelling, omdat ze geen browserextensie-origin sturen.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Werkt WebBrain op Firefox?</summary>
-      <p>Ja. WebBrain wordt geleverd met zowel een Chrome-versie (Manifest V3, via de sidePanel API) als een Firefox-versie (Manifest V2, via sidebar_action). Beide versies hebben identieke functies. De Firefox-versie kan als tijdelijke add-on worden geladen voor ontwikkeling, of gepubliceerd op addons.mozilla.org voor permanente installatie.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Kan ik de Firefox-zijbalk van links naar rechts verplaatsen, zoals Chrome&#39;s side panel?</summary>
-      <p>Ja — de Firefox-zijbalk staat standaard links, maar u kunt hem omschakelen. Klik met de rechtermuisknop ergens in de zijbalk-header en kies <strong>Zijbalk naar rechts verplaatsen</strong> (of gebruik <strong>Weergave → Zijbalk → Zijbalk naar rechts verplaatsen</strong> vanuit de menubalk). De positie blijft behouden tussen herstarts. Chrome's side panel staat standaard rechts en is niet door de gebruiker te verplaatsen vanuit het paneel zelf.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Zijn er beperkingen bij het gebruik van WebBrain in Vivaldi&#39;s Web Panel?</summary>
-      <p>Ja. Vivaldi Web Panels onderdrukken native JavaScript-dialogen zoals <code>confirm()</code>, <code>alert()</code> en <code>prompt()</code>. WebBrain's Vraag-, Actie- en Dev-modusschakelaar is niet langer afhankelijk van deze dialogen, maar een paar secundaire acties wel nog.</p><p><strong>Opname:</strong> Gebruik <code>/record</code> nog niet in Vivaldi. Als opname mislukt, kan Vivaldi de foutmelding verbergen en geen zichtbare uitleg geven.</p><p><strong>Instellingen, Geschiedenis, Traces en Ollama-overdracht:</strong> Deze bevatten ook native dialogen, maar WebBrain opent ze normaal als reguliere tabbladen, waar ze werken. Als u er een handmatig in een Web Panel plaatst, open het dan in een normaal tabblad voordat u dialoogafhankelijke acties gebruikt.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Is WebBrain veilig in gebruik? Kan het webpagina&#39;s wijzigen?</summary>
-      <p>WebBrain heeft drie modi. Vraag modus (standaard) is lees-only en kan niets op de pagina wijzigen. Actie modus maakt browseracties mogelijk zoals klikken, typen en navigeren, terwijl Dev modus paginadbugtools toevoegt. Gevolgvolle acties vereisen standaard goedkeuring; als die toestemmingsdrempel is uitgeschakeld, toont WebBrain een zichtbare waarschuwingsbanner. U kunt de agent op elk moment stoppen met de Stop-knop. De broncode van de extensie is volledig open voor audit op GitHub.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Wat is de &quot;WebBrain started debugging this browser&quot;-banner? Waarom gebruikt WebBrain CDP?</summary>
-      <p>Om betrouwbaar op een pagina te handelen, gebruikt WebBrain het Chrome DevTools Protocol (CDP) via de standaard <code>chrome.debugger</code> extensie-API — dat is wat Chrome's "WebBrain started debugging this browser"-banner activeert. CDP stelt de agent in staat te klikken en te typen met <strong>vertrouwde invoergebeurtenissen</strong> die moderne sites daadwerkelijk accepteren; synthetische gebeurtenissen die vanuit een content script worden afgevuurd, worden door veel sites, Web Components en framework-gecontroleerde velden afgewezen. Het is ook hoe WebBrain pixel-accurate screenshots vastlegt voor de vision-back-up en toegang krijgt tot <strong>cross-origin iframes en shadow DOM</strong> die content scripts niet kunnen zien.</p><p><strong>Lees-only Vraag Modus heeft geen CDP nodig</strong> — pagina- en toegankelijkheidsboom-lezingen gaan via gewone content scripts. Het is de <strong>Actie Modus</strong>-betrouwbaarheid en cross-origin werk die het vereisen, en in een Manifest V3-extensie is er geen non-debugger API voor vertrouwde invoer. WebBrain hecht de debugger <strong>alleen wanneer een actie het nodig heeft</strong>, per tabblad, en de volledige extensie is open-source zodat u precies kunt auditeren wat de sessie doet. CDP is krachtig, daarom behandelen we zijn voetafdruk als iets om in te perken — op aanvraag hechten, lezingen ervan weren — en dat verder aanscherpen staat op onze beveiligingsroadmap.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Het stelt te veel vragen. Kan ik dat uitschakelen?</summary>
-      <p>Die goedkeuringsverzoeken zijn voor uw veiligheid. Zelfs op sites die u vertrouwt, kunnen kwaadwillenden LLM-instructies nabootsen of inhoud injecteren die de agent ertoe brengt namens u dingen te doen die u niet goedkeurt. Daarom vraagt WebBrain om goedkeuring vóór gevolgvolle acties. Als u toch niet door die verzoeken wilt gaan, typt u <code>/dangerously-skip-permissions</code> in de zijbalk, of opent u de zijplugin, klikt u op het tandwielicoon in de header, gaat u naar het <strong>Permissions</strong>-tabblad in <code>settings.html</code>, en schakelt u <strong>Ask before consequential actions</strong> uit.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Hoe gebruik ik WebBrain voor web scraping en data-extractie?</summary>
-      <p>Open eenvoudig elke webpagina, open de WebBrain-zijbalk en vraag in natuurlijke taal: "Extraheer alle productnamen en prijzen van deze pagina", "Haal alle e-mailadressen van deze pagina" of "Vat dit artikel samen in kernpunten". De AI agent leest de pagina-inhoud, begrijpt de structuur en retourneert de geëxtraheerde data. Voor complexere scraping, schakel naar Actie modus en de agent kan tussen pagina's navigeren, op pagineringsknoppen klikken en data van meerdere pagina's samenvoegen.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Roept WebBrain API&#39;s direct aan, of klikt het altijd door de UI?</summary>
-      <p>Standaard gaat WebBrain <strong>altijd door de zichtbare UI</strong> voor elke actie die iets aanmaakt, wijzigt, verwijdert, verstuurt, indient, plaatst of koopt. Het navigeert naar de pagina, vult het formulier in en klikt op de knop — precies zoals u zou doen. Het weigert om REST/GraphQL-endpoints direct aan te roepen via achtergrond-<code>fetch()</code> voor mutaties. Dit is bewust: API-acties zijn onzichtbaar (u ziet niet wat er wordt verstuurd), vereisen vaak aparte authenticatietokens die u mogelijk niet heeft geconfigureerd, en hebben een veel groter schaduwoppervlak dan een zichtbare mis-klik. UI-first betekent dat alles op het scherm is, in uw normale browsersessie, en stopbaar.</p><p>Voor het <strong>lezen</strong> van data — een README ophalen, een issue opzoeken, prijzen tussen sites vergelijken, een statuspagina controleren — gebruikt WebBrain vrijelijk achtergrond HTTP-verzoeken via de <code>fetch_url</code>- en <code>research_url</code>-tools. Lezen is niet hetzelfde als handelen; het wijzigt niets op een externe service, dus de veiligheidsbezwaren zijn niet van toepassing.</p><p>Als u specifiek API-mutaties wilt toestaan voor een bepaalde taak, typt u <code>/allow-api</code> aan het begin van uw bericht (optioneel gevolgd door een korte taakbeschrijving). Deze per-gesprek-uitzondering laat WebBrain terugvallen op API-endpoints wanneer de UI echt faalt of onwerkbaar is, terwijl het nog steeds de UI verkiest als deze werkt. Een sticky badge blijft zichtbaar boven het invoergebied zolang de uitzondering actief is, en verdwijnt wanneer u het gesprek reset.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Kan ik het ook in LM Studio gebruiken?</summary>
-      <p>Ja. WebBrain's lees-only netwerktools — <code>fetch_url</code> en <code>research_url</code> — worden ook uitgebracht als een standalone <a href="https://lmstudio.ai" target="_blank">LM Studio</a>-plugin op <a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/web-tools</a>. Installeer met <code>lms clone webbrain/web-tools</code> en schakel het in bij elk LM Studio-chat — elk model met toolondersteuning kan dan die twee tools aanroepen zonder dat u de browserextensie installeert. Puur Node, geen headless browser. Bron: <a href="https://github.com/webbrain-one/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Kan ik omhoog of omlaag scrollen terwijl WebBrain in mijn tabblad werkt?</summary>
-      <p>Meestal wel — vooral in de <strong>Ask-modus</strong> voor alleen-lezenverzoeken zoals “Vat deze pagina samen”. U kunt blijven scrollen terwijl WebBrain werkt.</p><p><strong>Wanneer kan ik dit beter niet doen?</strong> Automatische screenshots geven het huidige zichtbare gedeelte van het tabblad weer. Terwijl WebBrain in de <strong>Act- of Dev-modus</strong> zichtbare inhoud actief inspecteert of ermee werkt, kan scrollen een doel verplaatsen of wijzigen wat het model ziet. Laat die stap afronden voordat u scrollt; buiten die momenten kunt u de pagina gewoon blijven gebruiken.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Kan ik naar een ander tabblad schakelen terwijl WebBrain aan een pagina werkt?</summary>
-      <p>Ja. Sinds versie <strong>27.0.0</strong> voorkomt WebBrain dat het de focus overneemt in zowel Chromium-gebaseerde browsers als Firefox, tenzij toegang op de voorgrond strikt noodzakelijk is. De uitvoering blijft gekoppeld aan het tabblad waarop deze is gestart, zodat u veilig in een ander tabblad kunt werken.</p><p>Als voor een zeldzame stap het oorspronkelijke tabblad op de voorgrond moet staan, kan WebBrain er kort de focus op zetten. Klik of typ niet in hetzelfde tabblad terwijl WebBrain daar actief handelingen uitvoert.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Hoe werkt Profiel auto-invullen, en is het veilig?</summary>
-      <p>Profiel auto-invullen is een optionele functie in <strong>Instellingen → Profiel</strong>. U voert een korte bio in — naam, werkmail, bedrijf en een <em>wegwerp</em>wachtwoord voor low-stakes inschrijvingen — en schakelt het in. Wanneer ingeschakeld, voegt WebBrain die tekst toe aan het systeemprompt van de agent zodat het inschrijvingsformulieren kan invullen zonder telkens te vragen.</p><p>De tekst wordt <strong>in platte tekst</strong> opgeslagen in de lokale opslag van uw browser. Het wordt <strong>niet</strong> verzonden naar het WebBrain-project, maar het <strong>wel</strong> naar welke LLM-provider u heeft geconfigureerd bij elke beurt, als onderdeel van het systeemprompt. Standaard uit.</p><p><strong>Doe hier geen wachtwoorden voor belangrijke accounts</strong> (Google, Apple, iCloud, bankzaken, werk-SSO, primair e-mail). Die accounts zouden 2FA moeten gebruiken en moeten sowieso niet aan een agent worden overhandigd. Een wegwerpwachtwoord dat u hergebruikt voor nieuwsbrieft en gratis proefversies is het beoogde gebruiksscenario.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Garandeert de Screenshot-redactie-instelling dat mijn privédata nooit een cloud vision-model bereikt?</summary>
-      <p>Nee — het vermindert de blootstelling, het is geen garantie. Wanneer ingeschakeld (<strong>Instellingen → Multimodal → Screenshot-redactie</strong>, standaard uit), pixeleert WebBrain formulieren en tekst die lijkt op een e-mailadres of telefoonnummer op elke screenshot <em>voordat</em> deze naar een vision-model wordt gestuurd. Detectie draait volledig op uw apparaat via DOM-heuristieken; er wordt niets extra's verzonden.</p><p><strong>Het is een best-effort, fail-open aanpak.</strong> Als de detector niet kan draaien op een pagina — bijvoorbeeld direct na navigatie, op PDF-viewers, of op beperkte browserpagina's — wordt de screenshot nog steeds <em>onbewerkt</em> verzonden in plaats van uw taak te annuleren. Inhoud die de DOM-heuristieken niet kunnen zien (tekst op een canvas, PBI in afbeeldingen, ongebruikelijke widgets) kan ook doorglippen. En de instelling dekt alleen screenshots: pagina<em>tekst</em> die naar het model wordt gestuurd, wordt er niet door bewerkt.</p><p><strong>Voor volledige vision-privacy, gebruik een lokaal model.</strong> Met een offline provider zoals llama.cpp of Ollama verlaten screenshots en paginatekst uw machine nooit, dus er is niets om te bewerken — dat is de enige configuratie waarbij privacy gegarandeerd is. Zie "Kan ik WebBrain volledig offline gebruiken?" hierboven.</p><p><strong>Geen machine die een vision-capabel lokaal model kan draaien?</strong> Een goede middenweg is een klein lokaal model voor planning en tool-aanroepen (snel en licht genoeg voor een bescheiden CPU/GPU) gekoppeld aan een cloudprovider voor de vis子onderdelen, met Screenshot-redactie ingeschakeld. U behoudt uw gesprek en paginatekst op het apparaat, en elke screenshot die naar cloud-vision vertrekt heeft formulieren en gedetecteerde e-mails/telefoonnummers eerst vervaagd — verminderde cloudblootstelling zonder hardware voor een volledig lokaal vision-model. Configureer de vision-splitsing onder <strong>Instellingen → Vision</strong> (zie "Hoe houdt WebBrain cloud LLM-rekeningen onder controle?" hierboven).</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Wat doet WebBrain met cookie-banners en paywalls?</summary>
-      <p><strong>Cookie-banners:</strong> WebBrain herkent toestemmingsbanners van veelgebruikte frameworks (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) en wuift ze weg voordat de pagina wordt geanalyseerd. Prioriteit gaat naar "Allen weigeren" / "Niet-essentiëlen weigeren" / "Alleen noodzakelijk" wanneer duidelijk zichtbaar; het kiest voor "Allen accepteren" in plaats van te verdwalen in het "Voorkeuren beheren"-doolhof.</p><p><strong>Paywalls:</strong> WebBrain meldt de paywall eerlijk en vertelt u wat het daadwerkelijk kon zien (kop, lead, eerste alinea's). Het probeert <strong>niet</strong> paywalls te omzeilen — geen archive.today, 12ft.io, cookie-wissen, JS uitschakelen of lezer-modustrucs. Als u het volledige artikel wilt, log in met een abonnement of vraag WebBrain om gratis berichtgeving over hetzelfde onderwerp te zoeken.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Ondersteunt WebBrain een dry-run modus?</summary>
-      <p>Vanaf versie <strong>7.0.0</strong>, nog niet. Dry-run modus staat gepland en staat al op de roadmap.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Stuurt WebBrain de volledige DOM naar het AI-model?</summary>
-      <p>Nee. WebBrain verstuurt standaard geen onbewerkte HTML of ruwe DOM-dump. Het begint met de URL en titel van de pagina, bijpassende site-instructies en, wanneer beeldherkenning is ingeschakeld, optioneel een schermafbeelding van het zichtbare deel.</p><p>Wanneer een taak pagina-inhoud nodig heeft, leest WebBrain die op aanvraag als een verkleinde semantische toegankelijkheidsboom of als geëxtraheerde tekst. Lezingen worden waar passend op zichtbaarheid gefilterd, hebben tekenlimieten en worden gepagineerd. Toegang tot de ruwe paginabron is alleen beschikbaar in de Dev-modus.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Hoe houdt WebBrain cloud LLM-rekeningen onder controle?</summary>
-      <p>Drie onafhankelijke lagen:</p><p><strong>Token-bewuste screenshots.</strong> Voordat een afbeelding uw machine verlaat, resizeert WebBrain deze (korte kant begrensd, beeldverhouding behouden) en comprimeert iteratief JPEG totdat deze past binnen een per-beurt afbeeldingstoken-budget. Een 2000×1200 screenshot dat u ~1.500 invoertokens zou kosten op GPT-4o, wordt gecomprimeerd naar ~300–500 tokens zonder praktisch verlies voor paginaleestaken. Geïmplementeerd in <code>_fitImageDimensions</code> met unittesten voor de budgetberekening.</p><p><strong>Slimme contextbijsnijding.</strong> Gespreksgeschiedenis, tooluitvoer en inline DOM-dumps worden per beurt begrensd en van oudste naar nieuwste bijgesneden wanneer het contextvenster van het actieve model bijna vol is. U zult niet zien dat een sessie stilzwellig opzwelt van 10k naar 100k tokens doordat een <code>read_page</code> een artikel ter lengte van een roman retourneerde.</p><p><strong>Gewijd vision-model.</strong> Koppel een goedkoop tekstmodel (bijv. GPT-4o-mini) voor planning en tool-aanroepen aan een apart vision-capabel model (bijv. GPT-4o) alleen voor screenshots, zodat u niet het multimodale model-tarief betaalt bij elke beurt. Configureer onder <strong>Instellingen → Vision</strong>.</p><p>Nettoresultaat: lange sessies met cloudproviders blijven voorspelbaar. Voor volledige controle, gebruik llama.cpp lokaal — nul kosten per token.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>Kan ik bijdragen aan WebBrain?</summary>
-      <p>Uiteraard! WebBrain heeft een MIT-licentie en verwelkomt bijdragen. Bekijk de <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub-repository</a> voor issues, functieverzoeken en bijdragerichtlijnen.</p>
-    </details>
-  </div>
-</section>
-
 <!-- SPREAD THE WORD / OPEN SOURCE -->
 <section class="section">
   <div class="oss-banner">
@@ -3975,6 +3600,7 @@
       </a>
       <a href="/blog">Blog</a>
       <a href="/docs/">Documentatie</a>
+      <a href="/docs/nl/faq/">FAQ</a>
       <a href="/privacy">Privacybeleid</a>
       <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">Bug rapporteren</a>
       <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">MIT-licentie</a>

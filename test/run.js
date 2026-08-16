@@ -250,6 +250,7 @@ function binaryResponse(status, body = 'media-bytes', contentType = 'video/mp4',
 const {
   getActiveAdapter,
   getFullPageCapturePolicy,
+  getMessageRecipientGuardPolicy,
   listAdapters,
   listAdapterWorkflowProfiles,
 } = await import(
@@ -258,6 +259,7 @@ const {
 const {
   getActiveAdapter: getActiveAdapterFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
+  getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
   listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapters.js').replace(/\\/g, '/')
@@ -347,6 +349,12 @@ const ApocalypseModeCh = await import(
 );
 const ApocalypseModeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
+);
+const EmergencyBoxCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/emergency-box.js').replace(/\\/g, '/')
+);
+const EmergencyBoxFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/emergency-box.js').replace(/\\/g, '/')
 );
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
@@ -932,6 +940,12 @@ const { Agent: AgentCh } = await import(
 );
 const { Agent: AgentFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/agent.js').replace(/\\/g, '/')
+);
+const MessageRecipientGuardCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
+);
+const MessageRecipientGuardFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
 );
 const { repairDoubleEscapedAssistantText: repairDoubleEscapedAssistantTextCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/text-sanitize.js').replace(/\\/g, '/')
@@ -2575,7 +2589,8 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
       return {};
     };
 
-    const result = await new AgentCh({}).executeTool(42, 'press_keys', { key: ';' });
+    const agent = new AgentCh({});
+    const result = await agent.executeTool(42, 'press_keys', { key: ';' });
     assert.deepEqual(result, {
       success: true,
       dispatched: true,
@@ -2595,6 +2610,29 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
         params: { type: 'keyUp', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
       },
     ]);
+
+    calls.length = 0;
+    agent._consumeMessageRecipientDispatchBinding = async () => ({
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      messageRecipientGuard: true,
+      reasonCode: 'active_recipient_changed_before_dispatch',
+      error: 'active recipient changed',
+    });
+    const blockedEnter = await agent.executeTool(
+      42,
+      'press_keys',
+      { key: 'Enter' },
+      null,
+      {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'recipient-enter' },
+      },
+    );
+    assert.equal(blockedEnter.reasonCode, 'active_recipient_changed_before_dispatch');
+    assert.equal(blockedEnter.noDispatch, true);
+    assert.equal(calls.length, 0, 'recipient revalidation must block before CDP Enter dispatch');
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
@@ -3315,6 +3353,560 @@ test('matches Douyin video and live surfaces with verification and publication g
   assert.match(a?.notes||'',/关注.*点赞.*收藏.*评论.*私信/s);
   assert.match(a?.notes||'',/投稿.*creator\.douyin\.com.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
   assert.equal(f?.notes,a?.notes);
+  assert.deepEqual(getMessageRecipientGuardPolicy('https://www.douyin.com/chat'), {
+    adapterName: 'douyin', verifyActiveRecipient: true,
+  });
+  assert.deepEqual(getMessageRecipientGuardPolicyFx('https://www.douyin.com/chat'), {
+    adapterName: 'douyin', verifyActiveRecipient: true,
+  });
+  assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/chat/123')?.adapterName, 'douyin');
+  assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/video/123'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://creator.douyin.com/creator-micro/content/upload'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://example.com/chat'), null);
+});
+
+test('direct-message recipient guard uses structured intent and exact active identity evidence', async () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/message-recipient-guard.js'), 'utf8'),
+    'Chrome and Firefox recipient comparison helpers diverged',
+  );
+  for (const helper of [MessageRecipientGuardCh, MessageRecipientGuardFx]) {
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipient: ' 迷你世界皓宸 ' }), {
+      target_kind: 'named', recipient: '迷你世界皓宸',
+    });
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipient: 'ignored' }), {
+      target_kind: 'active_conversation', recipient: '',
+    });
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice'), true);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice · online'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice Smith'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Team', 'Team-Sales'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Search results for Alice'), false);
+    assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Malice'), false);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['迷你世界皓宸'],
+    ), true);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜', '迷你世界皓宸'],
+    ), false, 'ambiguous identity evidence must never authorize dispatch');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      ['清辉月下夜'],
+    ), false);
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'active_conversation', recipient: '' },
+      ['清辉月下夜'],
+    ), false, 'un-pinned active-conversation intent must never authorize dispatch');
+  }
+
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27101 : 27102;
+    agent._currentUrl = async () => 'https://www.douyin.com/chat';
+    let probe = {
+      success: true,
+      conclusive: true,
+      messageSend: false,
+      strongIdentityCandidates: ['清辉月下夜'],
+      identityCandidates: ['清辉月下夜'],
+    };
+    agent._messageRecipientContentProbe = async () => probe;
+
+    const pinned = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.douyin.com/chat',
+    );
+    assert.deepEqual(pinned.target, {
+      target_kind: 'named', recipient: '清辉月下夜',
+    }, `${label}: active conversation was not pinned before execution`);
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: false,
+      strongIdentityCandidates: ['Alice', 'Bob'],
+      identityCandidates: ['Alice', 'Bob'],
+    };
+    const ambiguousPin = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.douyin.com/chat',
+    );
+    assert.equal(ambiguousPin.ok, false, `${label}: ambiguous active conversation was authorized`);
+
+    agent._planExecutionGuards.set(tabId, {
+      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+    });
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['清辉月下夜'],
+      strongIdentityCandidates: ['清辉月下夜'],
+    };
+
+    const blocked = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(blocked?.noDispatch, true, `${label}: mismatched active recipient was not blocked`);
+    assert.equal(blocked?.reasonCode, 'active_recipient_unverified', `${label}: mismatch reason is unstable`);
+
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸'],
+      strongIdentityCandidates: ['迷你世界皓宸'],
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    };
+    const enterExecutionContext = {};
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'press_keys',
+        { key: 'Enter' },
+        'https://www.douyin.com/chat',
+        enterExecutionContext,
+      ),
+      null,
+      `${label}: matching active recipient was blocked`,
+    );
+    assert.deepEqual(enterExecutionContext, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    });
+    for (const [tool, args] of [
+      ['click', { selector: '#send' }],
+      ['click_ax', { ref_id: 'ref_send' }],
+    ]) {
+      const clickExecutionContext = {};
+      assert.equal(
+        await agent._messageRecipientGuardBlock(
+          tabId,
+          tool,
+          args,
+          'https://www.douyin.com/chat',
+          clickExecutionContext,
+        ),
+        null,
+        `${label}: matching ${tool} was blocked before binding`,
+      );
+      assert.deepEqual(clickExecutionContext, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+      });
+    }
+    const recipientExecutionContext = {};
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'set_field',
+        { ref_id: 'ref_composer', text: 'hello', submit: true },
+        'https://www.douyin.com/chat',
+        recipientExecutionContext,
+      ),
+      null,
+      `${label}: matching set_field submit was blocked before binding`,
+    );
+    assert.deepEqual(recipientExecutionContext, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    });
+    delete probe.messageRecipientDispatchBinding;
+    const unboundSubmit = await agent._messageRecipientGuardBlock(
+      tabId,
+      'click_ax',
+      { ref_id: 'ref_send' },
+      'https://www.douyin.com/chat',
+      {},
+    );
+    assert.equal(unboundSubmit?.reasonCode, 'recipient_dispatch_binding_unavailable', `${label}: unbound click_ax failed open`);
+    const repeatedEnter = await agent._messageRecipientGuardBlock(
+      tabId,
+      'press_keys',
+      { key: 'Enter', repeat: 2 },
+    );
+    assert.equal(repeatedEnter?.noDispatch, true, `${label}: repeated Enter bypassed one-send verification`);
+    assert.equal(repeatedEnter?.reasonCode, 'recipient_guard_repeated_enter');
+
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸', 'Other conversation'],
+      strongIdentityCandidates: ['迷你世界皓宸', 'Other conversation'],
+    };
+    const ambiguousDispatch = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(ambiguousDispatch?.noDispatch, true, `${label}: ambiguous header identities authorized dispatch`);
+
+    agent._planExecutionGuards.set(tabId, { messaging: null });
+    const missing = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(missing?.reasonCode, 'authorized_recipient_missing', `${label}: missing planner authorization did not fail closed`);
+
+    probe = { success: true, conclusive: true, messageSend: false, identityCandidates: [] };
+    assert.equal(
+      await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
+      null,
+      `${label}: conclusively non-message Enter was incorrectly blocked`,
+    );
+
+    probe = { success: true, conclusive: false, messageSend: null, identityCandidates: [] };
+    const inconclusive = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
+    assert.equal(inconclusive?.reasonCode, 'message_send_classification_inconclusive', `${label}: inconclusive probe failed open`);
+
+    for (const unsafeTool of ['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']) {
+      const unsafe = await agent._messageRecipientGuardBlock(tabId, unsafeTool, {});
+      assert.equal(unsafe?.noDispatch, true, `${label}: ${unsafeTool} bypassed recipient verification`);
+      assert.equal(unsafe?.reasonCode, 'recipient_unverifiable_dispatch_path');
+    }
+  }
+});
+
+test('direct-message recipient probe accepts only a unique active-thread header as identity evidence', () => {
+  const runProbe = (prefix) => {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const start = source.indexOf('function _probeMessageRecipientGuard(');
+    const end = source.indexOf('\n\n  // --- Message handler ---', start);
+    assert.ok(start >= 0 && end > start, `${prefix}: recipient probe should remain independently testable`);
+
+    const element = (text, rect, options = {}) => {
+      const attributes = { ...(options.attributes || {}) };
+      if (options.role) attributes.role = options.role;
+      if (options.dataAction === true) attributes['data-action'] = 'true';
+      const el = {
+        nodeType: 1,
+        isConnected: true,
+        tagName: options.tagName || 'DIV',
+        isContentEditable: false,
+        value: options.value || '',
+        textContent: text,
+        innerText: text,
+        children: [],
+        parentElement: options.parentElement || null,
+        clientHeight: options.clientHeight || rect.height || 0,
+        scrollHeight: options.scrollHeight || rect.height || 0,
+        getBoundingClientRect: () => rect,
+        getAttribute: (name) => attributes[name] || '',
+        closest: () => null,
+        hasAttribute: (name) => Object.prototype.hasOwnProperty.call(attributes, name),
+      };
+      el.contains = (candidate) => candidate === el;
+      return el;
+    };
+    const composer = element('', { left: 400, right: 900, top: 700, bottom: 760, width: 500, height: 60 }, {
+      tagName: 'TEXTAREA', value: 'hello',
+    });
+    const searchBox = element('', { left: 20, right: 300, top: 130, bottom: 180, width: 280, height: 50 }, {
+      tagName: 'TEXTAREA', role: 'searchbox', value: 'Bob',
+    });
+    const alternateComposer = element('', {
+      left: 420, right: 860, top: 590, bottom: 650, width: 440, height: 60,
+    }, {
+      tagName: 'TEXTAREA', value: 'alternate reply',
+    });
+    const searchedName = element('迷你世界皓宸', {
+      left: 20, right: 300, top: 100, bottom: 140, width: 280, height: 40,
+    }, { tagName: 'H2' });
+    const activeHeader = element('清辉月下夜', {
+      left: 450, right: 700, top: 80, bottom: 120, width: 250, height: 40,
+    }, { tagName: 'H2' });
+    const conversationMessageHeading = element('迷你世界皓宸', {
+      left: 450, right: 700, top: 250, bottom: 290, width: 250, height: 40,
+    }, { tagName: 'H2' });
+    const sendButton = element('Send', {
+      left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
+    }, { tagName: 'BUTTON', role: 'button' });
+    sendButton.closest = () => sendButton;
+    const customSendControl = element('Quick send', {
+      left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
+    }, { dataAction: true });
+    customSendControl.closest = () => customSendControl;
+    const distantControl = element('Forward', {
+      left: 20, right: 140, top: 300, bottom: 350, width: 120, height: 50,
+    }, { tagName: 'BUTTON', role: 'button' });
+    distantControl.closest = () => distantControl;
+    const conversationRail = element('', {
+      left: 0, right: 340, top: 80, bottom: 900, width: 340, height: 820,
+    }, { role: 'list', clientHeight: 820, scrollHeight: 820 });
+    conversationRail.contains = (candidate) => candidate === conversationRail
+      || candidate === conversationRow
+      || candidate === conversationRowLabel
+      || candidate === conversationRowMenu
+      || candidate === conversationRowMenuLeaf;
+    const conversationRow = element('迷你世界皓宸', {
+      left: 20, right: 320, top: 220, bottom: 290, width: 300, height: 70,
+    }, { role: 'listitem', parentElement: conversationRail });
+    conversationRow.closest = (selector) => selector.includes('[role="listitem"]') ? conversationRow : null;
+    const conversationRowLabel = element('迷你世界皓宸', {
+      left: 60, right: 250, top: 235, bottom: 275, width: 190, height: 40,
+    }, { parentElement: conversationRow });
+    conversationRowLabel.closest = (selector) => selector.includes('[role="listitem"]') ? conversationRow : null;
+    const conversationRowMenu = element('More', {
+      left: 270, right: 315, top: 235, bottom: 275, width: 45, height: 40,
+    }, { tagName: 'BUTTON', role: 'button', parentElement: conversationRow });
+    conversationRowMenu.closest = (selector) => selector.includes('button')
+      ? conversationRowMenu
+      : (selector.includes('[role="listitem"]') ? conversationRow : null);
+    const conversationRowMenuLeaf = element('', {
+      left: 280, right: 305, top: 242, bottom: 267, width: 25, height: 25,
+    }, { tagName: 'SPAN', parentElement: conversationRowMenu });
+    conversationRowMenuLeaf.closest = (selector) => selector.includes('button')
+      ? conversationRowMenu
+      : (selector.includes('[role="listitem"]') ? conversationRow : null);
+    conversationRow.contains = (candidate) => candidate === conversationRow
+      || candidate === conversationRowLabel
+      || candidate === conversationRowMenu
+      || candidate === conversationRowMenuLeaf;
+    let activeElement = composer;
+    const document = {
+      activeElement,
+      querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
+      querySelectorAll: (selector) => {
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox, alternateComposer];
+        if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
+        if (selector.startsWith('[aria-selected')) return [];
+        if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
+        if (selector.startsWith('[data-testid')) return [];
+        return [];
+      },
+      body: { querySelectorAll: () => [searchedName, activeHeader, conversationMessageHeading] },
+    };
+    const context = {
+      document,
+      window: {
+        innerHeight: 1000,
+        __wb_ax_lookup: (refId) => {
+          if (refId === 'conversation-row-label') return conversationRowLabel;
+          if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
+          if (refId === 'alternate-composer') return alternateComposer;
+          return null;
+        },
+      },
+      getComputedStyle: (el) => ({
+        display: 'block',
+        visibility: 'visible',
+        overflowY: el === conversationRail ? 'auto' : 'visible',
+      }),
+      _deepActiveElement: () => activeElement,
+    };
+    const probe = vm.runInNewContext(`(${source.slice(start, end)})`, context);
+    const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
+    const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+
+    activeElement = searchBox;
+    const searchEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    composer.isConnected = false;
+    alternateComposer.isConnected = false;
+    const searchWithoutComposerResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    composer.isConnected = true;
+    alternateComposer.isConnected = true;
+
+    activeElement = alternateComposer;
+    const alternateComposerEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    const alternateComposerSubmitResult = probe({
+      tool: 'set_field', args: { ref_id: 'alternate-composer', text: 'send', submit: true },
+    });
+
+    activeElement = element('', {
+      left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800,
+    }, { tagName: 'BODY' });
+    const unfocusedClickResult = probe({ tool: 'click', args: { text: 'Send' } });
+    const distantClickResult = probe({ tool: 'click', args: { text: 'Forward' } });
+    const conversationSelectorResult = probe({ tool: 'click', args: { selector: '#conversation-row' } });
+    const conversationAxResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-label' } });
+    const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
+    const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
+    const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
+    composer.value = '';
+    const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
+    return {
+      observationResult,
+      enterResult,
+      searchEnterResult,
+      searchWithoutComposerResult,
+      alternateComposerEnterResult,
+      alternateComposerSubmitResult,
+      unfocusedClickResult,
+      distantClickResult,
+      conversationSelectorResult,
+      conversationAxResult,
+      conversationMenuResult,
+      conversationMenuLeafResult,
+      unresolvedClickResult,
+      emptyComposerCustomSendResult,
+    };
+  };
+
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const {
+      observationResult,
+      enterResult: result,
+      searchEnterResult,
+      searchWithoutComposerResult,
+      alternateComposerEnterResult,
+      alternateComposerSubmitResult,
+      unfocusedClickResult,
+      distantClickResult,
+      conversationSelectorResult,
+      conversationAxResult,
+      conversationMenuResult,
+      conversationMenuLeafResult,
+      unresolvedClickResult,
+      emptyComposerCustomSendResult,
+    } = runProbe(prefix);
+    assert.equal(observationResult.success, true);
+    assert.equal(observationResult.conclusive, true);
+    assert.deepEqual(Array.from(observationResult.strongIdentityCandidates), ['清辉月下夜']);
+    assert.equal(observationResult.strongIdentityCandidates.includes('迷你世界皓宸'), false);
+    assert.equal(result.success, true);
+    assert.equal(result.conclusive, true);
+    assert.equal(result.messageSend, true);
+    assert.deepEqual(Array.from(result.identityCandidates), ['清辉月下夜']);
+    assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false, `${prefix}: message heading became recipient evidence`);
+    assert.equal(searchEnterResult.messageSend, false, `${prefix}: search Enter was classified as a message send`);
+    assert.equal(searchEnterResult.conclusive, true);
+    assert.equal(searchWithoutComposerResult.messageSend, null, `${prefix}: upper search field was promoted to composer`);
+    assert.equal(searchWithoutComposerResult.conclusive, false);
+    assert.equal(alternateComposerEnterResult.messageSend, null, `${prefix}: alternate composer Enter bypassed recipient verification`);
+    assert.equal(alternateComposerEnterResult.conclusive, false);
+    assert.equal(alternateComposerSubmitResult.messageSend, null, `${prefix}: alternate composer submit bypassed recipient verification`);
+    assert.equal(alternateComposerSubmitResult.conclusive, false);
+    assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
+    assert.equal(unfocusedClickResult.conclusive, true);
+    assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);
+    assert.equal(emptyComposerCustomSendResult.conclusive, true);
+    assert.equal(distantClickResult.messageSend, null, `${prefix}: distant control was declared non-sending`);
+    assert.equal(distantClickResult.conclusive, false);
+    for (const selectionResult of [conversationSelectorResult, conversationAxResult]) {
+      assert.equal(selectionResult.messageSend, false, `${prefix}: verified conversation row could not be selected`);
+      assert.equal(selectionResult.conclusive, true);
+      assert.equal(selectionResult.conversationSelection, true);
+    }
+    assert.equal(conversationMenuResult.messageSend, null, `${prefix}: nested row action was treated as conversation selection`);
+    assert.equal(conversationMenuResult.conclusive, false);
+    assert.equal(conversationMenuLeafResult.messageSend, null, `${prefix}: nested row action descendant was treated as conversation selection`);
+    assert.equal(conversationMenuLeafResult.conclusive, false);
+    assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
+    assert.equal(unresolvedClickResult.conclusive, false);
+  }
+});
+
+test('message recipient dispatch binding detects composer and active-thread races', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('const _messageRecipientDispatchBindings = new Map();');
+    const end = source.indexOf(label === 'chrome'
+      ? '\n\n  // Above this length'
+      : '\n\n  function _releaseDispatchBinding', start);
+    assert.ok(start >= 0 && end > start, `${label}: dispatch binding helpers should remain independently testable`);
+    const composer = { isConnected: true, closest() { return this; } };
+    const replacementComposer = { isConnected: true };
+    const sendButton = { isConnected: true, closest() { return this; } };
+    const replacementButton = { isConnected: true, closest() { return this; } };
+    let liveComposer = composer;
+    let liveTarget = sendButton;
+    let liveIdentities = ['Alice'];
+    const helpers = vm.runInNewContext(`(() => {
+      ${source.slice(start, end)}
+      return {
+        remember: _rememberMessageRecipientDispatchBinding,
+        consume: _consumeMessageRecipientDispatchBinding,
+      };
+    })()`, {
+      window: {},
+      location: { href: 'https://www.douyin.com/chat' },
+      crypto: { getRandomValues: array => { array.fill(7); return array; } },
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+      _probeMessageRecipientGuard: params => (
+        params.expectedDispatchTarget !== liveTarget || params.expectedComposer !== liveComposer
+          ? { success: false, dispatchTargetChanged: true }
+          : {
+              success: true,
+              conclusive: true,
+              messageSend: true,
+              strongIdentityCandidates: liveIdentities,
+            }
+      ),
+    });
+
+    const dispatch = { tool: 'click_ax', args: { ref_id: 'ref_send' }, actionTarget: sendButton };
+    const matchingToken = helpers.remember(composer, ['Alice'], dispatch);
+    assert.equal(helpers.consume({
+      messageRecipientDispatchBinding: { token: matchingToken },
+    }, sendButton).success, true, `${label}: stable recipient binding was rejected`);
+    const replayedToken = helpers.consume({
+      messageRecipientDispatchBinding: { token: matchingToken },
+    }, sendButton);
+    assert.equal(replayedToken.success, false, `${label}: recipient binding was not one-use`);
+    assert.equal(replayedToken.reasonCode, 'recipient_dispatch_binding_stale');
+
+    const changedRecipientToken = helpers.remember(composer, ['Alice'], dispatch);
+    liveIdentities = ['Bob'];
+    const changedRecipient = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedRecipientToken },
+    }, sendButton);
+    assert.equal(changedRecipient.success, false);
+    assert.equal(changedRecipient.reasonCode, 'active_recipient_changed_before_dispatch');
+
+    liveIdentities = ['Alice'];
+    const changedComposerToken = helpers.remember(composer, ['Alice'], dispatch);
+    liveComposer = replacementComposer;
+    const changedComposer = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedComposerToken },
+    }, sendButton);
+    assert.equal(changedComposer.success, false);
+    assert.equal(changedComposer.reasonCode, 'recipient_dispatch_binding_stale');
+
+    liveComposer = composer;
+    const changedTargetToken = helpers.remember(composer, ['Alice'], dispatch);
+    const changedTarget = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedTargetToken },
+    }, replacementButton);
+    assert.equal(changedTarget.success, false);
+    assert.equal(changedTarget.reasonCode, 'recipient_dispatch_binding_stale');
+
+    const branchStart = source.indexOf("'set_field': async () => {");
+    const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
+    const branch = source.slice(branchStart, branchEnd);
+    const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
+    const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
+    assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
+
+    const pressStart = source.indexOf('function pressKeys(params)');
+    const pressEnd = source.indexOf('\n\n  /**', pressStart + 20);
+    const pressBranch = source.slice(pressStart, pressEnd);
+    const pressRecipientCheck = pressBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, focusedTarget)');
+    const pressDispatch = pressBranch.indexOf('for (let i = 0; i < repeat; i++)');
+    assert.ok(
+      pressRecipientCheck >= 0 && pressDispatch > pressRecipientCheck,
+      `${label}: press_keys recipient binding must be consumed before key dispatch`,
+    );
+
+    const clickStart = source.indexOf('function clickElement(params)');
+    const clickEnd = source.indexOf('\n\n  function typeText', clickStart);
+    const clickBranch = source.slice(clickStart, clickEnd);
+    const clickRecipientCheck = clickBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, el)');
+    const clickDispatch = clickBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
+    assert.ok(
+      clickRecipientCheck >= 0 && clickDispatch > clickRecipientCheck,
+      `${label}: click recipient binding must be consumed before click dispatch`,
+    );
+
+    const clickAxStart = source.indexOf("'click_ax': () => {");
+    const clickAxEnd = source.indexOf("'type_ax': async () => {", clickAxStart);
+    const clickAxBranch = source.slice(clickAxStart, clickAxEnd);
+    const clickAxRecipientCheck = clickAxBranch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
+    const clickAxDispatch = clickAxBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
+    assert.ok(
+      clickAxRecipientCheck >= 0 && clickAxDispatch > clickAxRecipientCheck,
+      `${label}: click_ax recipient binding must be consumed before click dispatch`,
+    );
+  }
 });
 
 test('matches BOSS Zhipin job surfaces with safe search and communication guidance', () => {
@@ -7457,6 +8049,7 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     api_mutations_allowed: true,
     user_memory_enabled: true,
     selection_grounded: false,
+    standalone_webgpu_profile: true,
     max_agent_steps: 130,
     max_image_dimension: 1568,
     max_screenshots_per_turn: 4,
@@ -7480,6 +8073,7 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     api_mutations_allowed: true,
     user_memory_enabled: true,
     selection_grounded: false,
+    standalone_webgpu_profile: true,
     max_agent_steps: 130,
     max_image_dimension: 1568,
     max_screenshots_per_turn: 4,
@@ -11491,7 +12085,7 @@ test('coordinate semantic reconciliation: stale semantic dispatch never retries 
   }
 });
 
-test('click_ax preserves rich-text toolbar dispatch bindings after helper extraction', async () => {
+test('click_ax preserves toolbar and recipient bindings without a second protected dispatch', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
   for (const [label, AgentClass, globalKey] of [
@@ -11519,14 +12113,27 @@ test('click_ax preserves rich-text toolbar dispatch bindings after helper extrac
         agent._clickProgressSnapshot = async () => '';
         agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
         agent._captureClickAxObservation = async () => ({});
-        agent._maybeFallbackClickAxWithCdp = async (_tabId, _args, response) => response;
+        agent._maybeFallbackClickAxWithCdp = async () => {
+          throw new Error('protected click_ax must not issue a second CDP dispatch');
+        };
         agent._annotateClickProgress = async () => {};
         agent._recordInteractionRect = () => {};
       }
       const dispatchBinding = { token: 'toolbar-binding', frameId: 7, ref_id: 'ref_906' };
-      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, { dispatchBinding });
+      const recipientBinding = { token: 'recipient-binding' };
+      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, {
+        dispatchBinding,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: recipientBinding,
+      });
       const clickMessage = messages.find(entry => entry.message.action === 'click_ax');
       assert.deepEqual(clickMessage?.message.params.dispatchBinding, dispatchBinding, `${label}: click_ax binding was dropped`);
+      assert.equal(clickMessage?.message.params.messageRecipientGuardRequired, true, `${label}: recipient guard marker was dropped`);
+      assert.deepEqual(
+        clickMessage?.message.params.messageRecipientDispatchBinding,
+        recipientBinding,
+        `${label}: click_ax recipient binding was dropped`,
+      );
       assert.deepEqual(clickMessage?.options, { frameId: 7 }, `${label}: click_ax frame binding was dropped`);
     } finally {
       if (globalKey === 'chrome') {
@@ -20978,6 +21585,220 @@ test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
   }
 });
 
+test('Emergency Box maps the OpenStax catalog and resolves compact PDFs on demand', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const requests = [];
+    const fetchImpl = async (url) => {
+      requests.push(String(url));
+      if (String(url).includes('/pages/?')) {
+        return new Response(JSON.stringify({ items: [{
+          id: 38,
+          title: 'Algebra and Trigonometry',
+          meta: {
+            detail_url: 'https://openstax.example/books/38',
+            html_url: 'https://openstax.org/details/books/algebra-and-trigonometry',
+            first_published_at: '2016-03-09T00:00:00Z',
+            locale: 'en',
+          },
+        }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        low_resolution_pdf_url: 'https://openstax.example/algebra-low.pdf',
+        high_resolution_pdf_url: 'https://openstax.example/algebra-high.pdf',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const catalog = await runtime.loadOpenStaxCatalog(fetchImpl);
+    assert.equal(catalog.length, 1, `${label}: OpenStax catalog item missing`);
+    assert.equal(catalog[0].id, 'openstax-38', `${label}: OpenStax identity is unstable`);
+    assert.equal(catalog[0].category, 'education', `${label}: OpenStax item is not categorized as education`);
+    const resolved = await runtime.resolveEmergencyResource(catalog[0], fetchImpl);
+    assert.equal(resolved.url, 'https://openstax.example/algebra-low.pdf', `${label}: compact OpenStax PDF should be preferred`);
+    assert.equal(requests.length, 2, `${label}: resolving one book made unexpected catalog requests`);
+    assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.length >= 100, `${label}: bundled OpenStax catalog is unexpectedly incomplete`);
+    assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.some(item => item.id === 'openstax-38'), `${label}: bundled OpenStax catalog lost a stable book`);
+    assert.match(runtime.OPENSTAX_CATALOG_SNAPSHOT_DATE, /^\d{4}-\d{2}-\d{2}$/, `${label}: bundled OpenStax catalog has no snapshot date`);
+
+    const who = await runtime.resolveEmergencyResource({
+      id: 'who-fixture', title: 'WHO Fixture', whoHandle: '10665/371090', sourceUrl: 'https://iris.who.int/handle/10665/371090',
+    }, async (url) => {
+      if (String(url).includes('/handle/')) {
+        return { ok: true, status: 200, url: 'https://iris.who.int/items/0bd7f7b4-0c31-47a4-adb2-69cb4f38c0da' };
+      }
+      return new Response(JSON.stringify({ _embedded: { bundles: { _embedded: { bundles: [{
+        name: 'ORIGINAL',
+        _embedded: { bitstreams: { _embedded: { bitstreams: [
+          { name: 'guide_fra.pdf', _links: { content: { href: 'https://iris.example/french' } } },
+          { name: 'guide_eng.pdf', _links: { content: { href: 'https://iris.example/english' } } },
+        ] } } },
+      }] } } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    assert.equal(who.url, 'https://iris.example/english', `${label}: WHO DSpace resolver did not select the English original PDF`);
+
+    const archive = await runtime.resolveEmergencyResource({
+      id: 'archive-fixture', title: 'Archive Fixture', archiveIdentifier: 'field-manual', sourceUrl: 'https://archive.org/details/field-manual',
+    }, async () => new Response(JSON.stringify({ files: [
+      { name: 'manual_text.pdf', size: '99999' },
+      { name: 'manual.pdf', size: '50000' },
+      { name: 'preview.pdf', size: '1000' },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    assert.equal(archive.url, 'https://archive.org/download/field-manual/manual.pdf', `${label}: archive resolver did not select the largest non-derived PDF`);
+  }
+});
+
+test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF responses', async () => {
+  function memoryAdapters(initial = new Uint8Array()) {
+    const records = new Map();
+    let committed = initial.slice();
+    return {
+      records,
+      store: {
+        async get(id) { return records.get(id); },
+        async put(record) { records.set(record.id, { ...record }); return record; },
+        async delete(id) { records.delete(id); },
+      },
+      storage: {
+        async open() { return new Blob([committed], { type: 'application/pdf' }); },
+        async size() { return committed.byteLength; },
+        async createWriter() {
+          let working = committed.slice();
+          return {
+            async write(position, bytes) {
+              const needed = position + bytes.byteLength;
+              if (working.byteLength < needed) {
+                const expanded = new Uint8Array(needed);
+                expanded.set(working);
+                working = expanded;
+              }
+              working.set(bytes, position);
+            },
+            async truncate(size) { working = working.slice(0, size); },
+            async close() { committed = working; },
+            async abort() {},
+          };
+        },
+        async delete() { committed = new Uint8Array(); },
+      },
+      bytes() { return new TextDecoder().decode(committed); },
+    };
+  }
+
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const adapters = memoryAdapters();
+    const pdf = '%PDF-1.7\nEmergency Box fixture';
+    const resource = {
+      id: 'fixture-pdf', title: 'Fixture', category: 'health', publisher: 'Fixture Publisher',
+      url: 'https://example.test/fixture.pdf', sourceUrl: 'https://example.test/source',
+    };
+    const ready = await runtime.downloadEmergencyResource(resource, {
+      ...adapters,
+      fetchImpl: async () => new Response(pdf, { status: 200, headers: { 'content-type': 'application/pdf' } }),
+    });
+    assert.equal(ready.status, 'ready', `${label}: valid PDF did not become readable`);
+    assert.equal(adapters.bytes(), pdf, `${label}: streamed PDF bytes were not preserved`);
+    assert.equal(ready.bytesReceived, new TextEncoder().encode(pdf).byteLength, `${label}: installed byte count is wrong`);
+
+    const invalid = memoryAdapters();
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-html' }, {
+        ...invalid,
+        fetchImpl: async () => new Response('<html>blocked</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+      }),
+      /not a valid PDF/i,
+      `${label}: HTML error page was accepted as an emergency PDF`,
+    );
+    assert.equal(invalid.records.get('fixture-html')?.status, 'error', `${label}: invalid PDF failure was not actionable`);
+    assert.equal(invalid.bytes(), '', `${label}: invalid PDF bytes were retained`);
+  }
+});
+
+test('Emergency Box commits partial PDF bytes before recording a paused download', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    let committed = new Uint8Array();
+    const records = new Map();
+    const controller = new AbortController();
+    const chunks = [new TextEncoder().encode('%PDF-partial'), new TextEncoder().encode('-ignored')];
+    const storage = {
+      async size() { return committed.byteLength; },
+      async createWriter() {
+        let working = committed.slice();
+        return {
+          async write(position, bytes) {
+            const expanded = new Uint8Array(position + bytes.byteLength);
+            expanded.set(working);
+            expanded.set(bytes, position);
+            working = expanded;
+          },
+          async truncate(size) { working = working.slice(0, size); },
+          async close() { committed = working; },
+          async abort() {},
+        };
+      },
+    };
+    let readIndex = 0;
+    const result = await runtime.downloadEmergencyResource({
+      id: 'paused-pdf', title: 'Paused PDF', url: 'https://example.test/paused.pdf',
+    }, {
+      signal: controller.signal,
+      storage,
+      store: {
+        async get(id) { return records.get(id); },
+        async put(record) { records.set(record.id, { ...record }); return record; },
+      },
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get() { return null; } },
+        body: { getReader() { return { async read() {
+          if (readIndex === 1) controller.abort();
+          if (readIndex >= chunks.length) return { done: true };
+          return { done: false, value: chunks[readIndex++] };
+        } }; } },
+      }),
+    });
+
+    assert.equal(result.status, 'paused', `${label}: aborted PDF did not become paused`);
+    assert.equal(result.bytesReceived, chunks[0].byteLength, `${label}: paused byte count was rolled back`);
+    assert.equal(committed.byteLength, chunks[0].byteLength, `${label}: partial PDF transaction was not committed`);
+  }
+});
+
+test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
+  const files = [
+    'src/agent/emergency-box.js',
+    'src/agent/openstax-catalog.js',
+    'src/ui/emergency-box.html',
+    'src/ui/emergency-box.css',
+    'src/ui/emergency-box.js',
+    'src/ui/emergency-pdf.html',
+    'src/ui/emergency-pdf.css',
+    'src/ui/emergency-pdf.js',
+    'src/ui/locales/emergency-copy.mjs',
+    'src/ui/wikipedia-reader.html',
+    'src/ui/wikipedia-reader.css',
+    'src/ui/wikipedia-reader.js',
+  ];
+  for (const relative of files) {
+    const chrome = fs.readFileSync(path.join(ROOT, 'src/chrome', relative), 'utf8');
+    const firefox = fs.readFileSync(path.join(ROOT, 'src/firefox', relative), 'utf8');
+    assert.equal(firefox, chrome, `${relative}: Emergency Box browser implementations diverged`);
+  }
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+    const apocalypse = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.html'), 'utf8');
+    const box = fs.readFileSync(path.join(uiDir, 'emergency-box.html'), 'utf8');
+    const reader = fs.readFileSync(path.join(uiDir, 'emergency-pdf.html'), 'utf8');
+    const readerCss = fs.readFileSync(path.join(uiDir, 'emergency-pdf.css'), 'utf8');
+    assert.match(apocalypse, /href="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
+    assert.match(box, /id="load-openstax"/, `${browser}: OpenStax catalog control missing`);
+    assert.match(box, /id="download-all"/, `${browser}: bulk emergency download control missing`);
+    assert.match(box, /id="resource-list"/, `${browser}: resource browser missing`);
+    assert.match(reader, /id="pdf-canvas"/, `${browser}: internal PDF renderer missing`);
+    assert.match(reader, /id="save-copy"/, `${browser}: PDF export control missing`);
+    assert.match(readerCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/, `${browser}: reader hidden states can expose a stale canvas`);
+    assert.match(fs.readFileSync(path.join(uiDir, 'wikipedia-reader.html'), 'utf8'), /id="article-text"/, `${browser}: text-only Wikipedia reader is missing`);
+  }
+});
+
 test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata before install', () => {
   const catalogXml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
     <entry><id>urn:uuid:test-mini</id><title>Wikipedia 100</title><updated>2026-07-17T00:00:00Z</updated>
@@ -20993,6 +21814,15 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
     <url priority="2">https://mirror.example.test/wikipedia/example.zim</url>
     <url priority="1">https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim</url>
   </file></metalink>`;
+  const libraryXml = `<?xml version="1.0"?><library version="20110515">
+    <book id="static-text" size="324181" articleCount="5918889" title="Wikipedia" description="The free encyclopedia" language="eng"
+      creator="Wikipedia" publisher="openZIM" name="wikipedia_en_all" date="2026-07-17" flavour="nopic"
+      tags="wikipedia;_category:wikipedia;_pictures:no" url="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_all_nopic_2026-07.zim.meta4" />
+    <book id="wrong-language" size="100" articleCount="10" title="Wikipédia" language="fra" creator="Wikipedia" publisher="openZIM"
+      name="wikipedia_fr_all" date="2026-07-17" flavour="mini" url="https://example.test/fr.zim.meta4" />
+    <book id="wrong-category" size="100" articleCount="10" title="Other" language="eng" creator="Other" publisher="openZIM"
+      name="gutenberg_en_all" date="2026-07-17" flavour="mini" url="https://example.test/other.zim.meta4" />
+  </library>`;
 
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const [item] = runtime.parseKiwixCatalog(catalogXml);
@@ -21011,6 +21841,39 @@ test('Apocalypse Mode resolves exact Kiwix archive size and integrity metadata b
       'https://dumps.wikimedia.org/kiwix/zim/wikipedia/example.zim',
       'https://mirror.example.test/wikipedia/example.zim',
     ], `${label}: priority-ordered Metalink mirrors were not retained`);
+    const [staticItem] = runtime.parseKiwixLibrary(libraryXml, 'eng');
+    assert.equal(staticItem.id, 'static-text', `${label}: static Kiwix catalog fallback did not preserve archive identity`);
+    assert.equal(staticItem.tier, 'text', `${label}: static Kiwix archive flavour was not classified`);
+    assert.equal(staticItem.catalogSize, 324181 * 1024, `${label}: static Kiwix size was not converted from KiB`);
+    assert.equal(runtime.parseKiwixLibrary(libraryXml, 'eng').length, 1, `${label}: static fallback did not filter language and category`);
+    const catalogUrl = new URL(runtime.kiwixCatalogUrl('eng'));
+    assert.equal(catalogUrl.searchParams.get('category'), 'wikipedia', `${label}: OPDS request does not use the supported category filter`);
+  }
+});
+
+test('Apocalypse Mode falls back to the official static Kiwix catalog', async () => {
+  const libraryXml = `<?xml version="1.0"?><library><book id="fallback" size="512" articleCount="100" title="Wikipedia Mini"
+    description="A small archive" language="eng" creator="Wikipedia" publisher="openZIM" name="wikipedia_en_100" date="2026-08-01"
+    flavour="mini" tags="wikipedia;_category:wikipedia" url="https://lb.download.kiwix.org/zim/wikipedia/fallback.zim.meta4" /></library>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const urls = [];
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store: {
+        async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+        async listArchives() { return []; },
+      },
+      storage: {},
+      fetchImpl: async (url) => {
+        urls.push(String(url));
+        if (String(url).includes('opds.library.kiwix.org')) return { ok: false, status: 503 };
+        return { ok: true, status: 200, async text() { return libraryXml; } };
+      },
+    });
+
+    const items = await controller.catalog('eng');
+    assert.deepEqual(items.map(item => item.id), ['fallback'], `${label}: static Kiwix fallback did not recover the catalog`);
+    assert.equal(urls.length, 2, `${label}: catalog fallback made an unexpected number of requests`);
+    assert.match(urls[1], /download\.kiwix\.org\/library\/library_zim\.xml/, `${label}: fallback did not use Kiwix's static library catalog`);
   }
 });
 
@@ -21161,6 +22024,11 @@ test('Apocalypse Mode reads Wikipedia passages and attribution from a local ZIM 
     assert.equal(passage.language, 'eng', `${label}: archive language was lost`);
     assert.equal(passage.archiveDate, '2026-07-17', `${label}: archive date was lost`);
     assert.equal(passage.license, 'CC BY-SA 4.0', `${label}: archive license was lost`);
+    assert.equal(passage.path, 'Alan_Turing', `${label}: reader path was not preserved by archive search`);
+    const article = await archive.readArticle(passage.path);
+    assert.equal(article.title, 'Alan Turing', `${label}: text reader opened the wrong article`);
+    assert.match(article.text, /computer scientist/, `${label}: text reader did not extract the complete local article`);
+    assert.equal(article.truncated, false, `${label}: short local article was incorrectly marked truncated`);
     assert.equal(archive.embeddedMetadata.Name, 'wikipedia_en_test', `${label}: embedded archive identity was not exposed for import validation`);
   }
   const corrupt = new Blob([new Uint8Array(96)]);
@@ -21187,6 +22055,28 @@ test('Apocalypse Mode short-circuits exact ZIM casing probes and bounds director
     assert.ok(reads.length < 20, `${label}: exact common-case search expanded through every casing variant`);
     assert.ok(reads.every(([start, end]) => end - start <= 4 * 1024),
       `${label}: ordinary directory lookup still issued a 64 KiB read`);
+  }
+});
+
+test('Apocalypse Mode reuses one random-access ZIM handle for search and text reading', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    let opens = 0;
+    const archiveCache = new Map();
+    const provider = runtime.createKiwixZimProvider({
+      archiveCache,
+      storage: { async open() { opens += 1; return minimalWikipediaZimFixture(); } },
+    });
+    const record = {
+      id: 'cached-wikipedia', archiveKind: 'wikipedia', status: 'ready', generation: 1,
+      updatedAt: 100, size: 1024, language: 'eng', archiveDate: '2026-07-17',
+      target: { kind: 'opfs', key: 'wikipedia.zim' },
+    };
+    const [first] = await provider.search(record, 'Alan Turing');
+    await provider.search(record, 'Alan Turing');
+    const article = await provider.read(record, first.path);
+    assert.equal(opens, 1, `${label}: repeated reads reopened the large ZIM archive`);
+    assert.match(article.text, /computer scientist/, `${label}: cached reader returned the wrong article text`);
+    assert.equal(article.archiveId, record.id, `${label}: cached reader lost archive identity`);
   }
 });
 
@@ -21708,14 +22598,20 @@ test('Apocalypse Mode catalog and Metalink network access require opt-in', async
     const controller = runtime.createApocalypseController({ alarms: {} }, {
       store,
       storage: { async estimate() { return {}; } },
-      fetchImpl: async () => { fetches += 1; return { ok: true, async text() { return '<feed></feed>'; } }; },
+      fetchImpl: async () => {
+        fetches += 1;
+        return { ok: true, async text() {
+          return '<feed><entry><id>urn:uuid:enabled</id><title>Wikipedia</title><language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/archive.meta4" /></entry></feed>';
+        } };
+      },
       clearUpdateChecks() {},
     });
     await assert.rejects(controller.handle('catalog', { language: 'eng' }), /disabled/i, `${label}: catalog fetch was allowed before opt-in`);
     await assert.rejects(controller.handle('resolve', { item: { name: 'wikipedia_en_all', metaUrl: 'https://example.test/archive.meta4' } }), /disabled/i, `${label}: Metalink fetch was allowed before opt-in`);
     assert.equal(fetches, 0, `${label}: archive network activity occurred before opt-in`);
     config.enabled = true;
-    assert.deepEqual(await controller.handle('catalog', { language: 'eng' }), { items: [] }, `${label}: enabled catalog request failed`);
+    const result = await controller.handle('catalog', { language: 'eng' });
+    assert.deepEqual(result.items.map(item => item.id), ['enabled'], `${label}: enabled catalog request failed`);
     assert.equal(fetches, 1, `${label}: enabled catalog request did not use the network exactly once`);
   }
 });
@@ -22124,6 +23020,36 @@ test('Apocalypse Mode rolls back an interrupted OPFS write session before resumi
     assert.deepEqual(ranges, ['bytes=0-0'], `${label}: resume trusted bytes from an uncommitted write session`);
     assert.deepEqual(writes, [[0, 1]], `${label}: resumed write used the wrong durable offset`);
     assert.equal(records.get(record.id).writeSessionStartPiece, null, `${label}: committed batch left a recovery marker behind`);
+  }
+});
+
+test('Apocalypse Mode bounds production OPFS write sessions', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'bounded-session', status: 'queued', generation: 1, updatedAt: 1,
+      filename: 'archive.zim', size: 10, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: Array(10).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
+      target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 0, bytesDownloaded: 0, retryCount: 0,
+    };
+    const records = new Map([[record.id, record]]);
+    let closes = 0;
+    const manager = runtime.createApocalypseArchiveManager({
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(value => ({ ...value })); },
+        async getArchive(id) { const value = records.get(id); return value ? { ...value } : null; },
+        async putArchive(value) { records.set(value.id, { ...value }); return value; },
+      },
+      storage: { async createWriter() { return { async write() {}, async close() { closes += 1; }, async abort() {} }; } },
+      fetchImpl: async () => ({ ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } }),
+      digestHex: async () => 'valid', schedule() {}, randomId: () => 'bounded-lease', now: () => 100,
+    });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive.status, 'queued', `${label}: default wake consumed the entire archive`);
+    assert.equal(result.archive.pieceIndex, 8, `${label}: default write batch was not bounded`);
+    assert.equal(closes, 1, `${label}: bounded write batch was not committed`);
   }
 });
 
@@ -22767,15 +23693,25 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
     const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
     const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const apocalypseCopy = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/apocalypse-copy.mjs'), 'utf8');
     assert.match(pageHtml, /data-i18n="ap\.download_background"/, `${prefix}: background-download guidance is not persistently visible`);
-    assert.match(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier selection is missing`);
-    for (const tier of ['all', 'starter', 'introductions', 'text', 'full']) {
-      assert.match(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: ${tier} archive tier is unavailable`);
+    assert.doesNotMatch(pageHtml, /id="catalog-tier"/, `${prefix}: archive tier select should be hidden`);
+    for (const tier of ['all', 'starter', 'introductions']) {
+      assert.doesNotMatch(pageHtml, new RegExp(`<option value="${tier}"`), `${prefix}: unsupported ${tier} archive tier is still selectable`);
     }
     assert.match(pageScript, /catalogItems = Array\.isArray\(result\.items\) \? result\.items : \[\]/,
       `${prefix}: catalog items are discarded before tier selection`);
-    assert.match(pageScript, /tier === 'all' \? catalogItems : catalogItems\.filter\(item => item\.tier === tier\)/,
-      `${prefix}: catalog tier selection does not preserve all tiers`);
+    assert.match(pageScript, /SUPPORTED_CATALOG_TIERS = new Set\(\['text', 'full'\]\)/,
+      `${prefix}: catalog results are not restricted to the two supported archive types`);
+    assert.match(pageScript, /catalogItems = catalogItems\.filter\(item => SUPPORTED_CATALOG_TIERS\.has\(item\.tier\)\)/,
+      `${prefix}: unsupported catalog entries are not removed before rendering`);
+    assert.match(pageScript, /const items = catalogItems;/, `${prefix}: full-text and full archives are not rendered together`);
+    assert.match(pageScript, /if \(installReviewInFlight\) return;[\s\S]*?installReviewInFlight = true;/,
+      `${prefix}: Review & install can start duplicate metadata requests`);
+    assert.match(pageScript, /sourceButton\.disabled = true;[\s\S]*?sourceButton\.textContent = t\('ap\.review_loading'\)/,
+      `${prefix}: Review & install does not show immediate busy feedback`);
+    assert.match(pageScript, /reviewInstall\(visible\[Number\(button\.dataset\.install\)\], button\)/,
+      `${prefix}: catalog install buttons are not bound to the single-flight review flow`);
     assert.doesNotMatch(pageScript, /await command\('process'\)/,
       `${prefix}: status polling blocks behind the long-running download loop`);
     assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?await refresh\(\)/,
@@ -22787,8 +23723,29 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     assert.match(pageScript, /chrome\?\.offscreen\?\.createDocument/, `${prefix}: Chromium vision capability is not detected safely`);
     if (prefix === 'src/chrome') {
       assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
+      assert.match(pageHtml, /id="webgpu-provider-card"[^>]*hidden/, 'chrome: the WebGPU provider block is missing from Apocalypse Mode');
+      const heroStart = pageHtml.indexOf('<section class="card hero">');
+      const textModel = pageHtml.indexOf('id="webgpu-provider-card"', heroStart);
+      const visionModel = pageHtml.indexOf('id="vision-model-card"', heroStart);
+      const heroEnd = pageHtml.indexOf('</section>', visionModel);
+      assert.ok(heroStart >= 0 && textModel > heroStart && visionModel > textModel && heroEnd > visionModel,
+        'chrome: local text and vision models must be stacked text-first inside the hero');
+      assert.match(pageHtml, /data-model-kind="text"[\s\S]*?<svg[\s\S]*?data-webgpu-download-panel/,
+        'chrome: the text model is missing its icon or download box');
+      assert.doesNotMatch(pageHtml, /id="webgpu-test"/,
+        'chrome: the local text model should not expose a Test action');
+      assert.match(pageHtml, /data-i18n="ap\.webgpu\.rag"/, 'chrome: local Wikipedia RAG is not explained beside the WebGPU model');
+      assert.match(pageHtml, /data-model-kind="vision"[\s\S]*?<svg[\s\S]*?id="vision-model-test"/,
+        'chrome: the vision model is missing its icon or Test action');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID/, 'chrome: Apocalypse Mode does not configure the fixed WebGPU download');
+      assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
+        'chrome: the removed local text Test action is still wired');
+      assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
+        'chrome: the local vision Test action does not exercise the fallback');
+      assert.doesNotMatch(pageScript, /set_active_provider/, 'chrome: Apocalypse Mode must not change the global chat provider');
     } else {
       assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
+      assert.doesNotMatch(pageHtml, /id="webgpu-provider-card"/, 'firefox: Chromium-only WebGPU provider block leaked into Apocalypse Mode');
     }
     for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
       assert.match(pageScript, new RegExp(`\\['${language}',`), `${prefix}: Wikipedia language ${language} is missing`);
@@ -22800,12 +23757,38 @@ test('Apocalypse Mode has a dedicated header gateway and management page in both
     assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
       `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
     assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    assert.match(pageHtml, /<header><span class="apocalypse-icon" aria-hidden="true">☢<\/span>/,
+      `${prefix}: Apocalypse Mode page header does not match the radioactive settings gateway icon`);
+    assert.match(pageHtml, /class="header-copy"[\s\S]*?data-i18n="ap\.title"[\s\S]*?data-i18n="ap\.subtitle"/,
+      `${prefix}: Apocalypse Mode title and offline slogan are not grouped in the page header`);
+    assert.match(apocalypseCopy, /'ap\.subtitle': 'WebBrain, ready when the internet isn’t\.'/,
+      `${prefix}: Apocalypse Mode header does not advertise offline access`);
+    assert.match(apocalypseCopy, /'ap\.hero\.desc': '[^']*offline search and factual answers[^']*without an internet connection/,
+      `${prefix}: Apocalypse Mode does not explain how offline Wikipedia helps the user`);
+    assert.match(apocalypseCopy, /'ap\.catalog\.title': 'Download Wikipedia for offline use'/,
+      `${prefix}: the archive catalog is described with implementation terminology`);
+    assert.match(apocalypseCopy, /'ap\.import\.desc': '[^']*\.zim[^']*file format[^']*offline use\.'/,
+      `${prefix}: the optional .zim import format is not explained in plain language`);
+    assert.doesNotMatch(apocalypseCopy, /'ap\.import\.desc': '[^']*Kiwix/,
+      `${prefix}: the import introduction assumes the user already understands Kiwix`);
+    assert.match(pageHtml, /\.apocalypse-icon \{[^}]*font-size:48px/,
+      `${prefix}: Apocalypse Mode page icon is too small for the page header`);
     assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
     const advancedStart = settingsHtml.indexOf('<details class="advanced-settings">');
     const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
     assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
     assert.match(pageHtml, /id="load-catalog"/, `${prefix}: catalog management control is missing`);
+    assert.match(pageScript, /data-action="read"/, `${prefix}: installed archives have no text reader action`);
+    assert.match(pageScript, /wikipedia-reader\.html\?id=/, `${prefix}: text reader action is not wired to its archive`);
+    assert.match(pageHtml, /id="catalog-status"[^>]*role="status"/, `${prefix}: catalog loading and errors are not visible beside the archive list`);
+    for (const icon of ['storage', 'catalog', 'import']) {
+      assert.match(pageHtml, new RegExp(`class="section-icon" data-kind="${icon}"[\\s\\S]*?<svg`), `${prefix}: ${icon} section icon is missing`);
+    }
+    assert.match(pageScript, /if \(snapshot\?\.enabled === true\) void loadCatalog\(\)/,
+      `${prefix}: enabled Apocalypse Mode does not load the catalog automatically`);
+    assert.match(pageScript, /elements\.language\.addEventListener\('change', loadCatalog\)/,
+      `${prefix}: changing Wikipedia language does not reload the catalog`);
     assert.match(pageHtml, /id="update-policy"/, `${prefix}: update policy control is missing`);
     assert.match(pageHtml, /id="cancel-import"/, `${prefix}: import cancellation control is missing`);
     assert.match(pageHtml, /id="storage-target"/, `${prefix}: supported storage selection is missing`);
@@ -22837,6 +23820,315 @@ test('Wikipedia tools use installed Apocalypse Mode archives only after online f
     assert.equal(result.provider, 'local Kiwix/ZIM archive', `${label}: local provider was not identified`);
     assert.equal(result.resultPolicy, 'untrusted', `${label}: local archive bytes must remain untrusted`);
     assert.equal(result.data.pages[0].archiveDate, '2026-07-17', `${label}: archive provenance was lost`);
+  }
+});
+
+test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passages', async () => {
+  for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Who was Alan Turing?'), true, `${label}: factual question did not trigger local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Alan Turing'), true, `${label}: short encyclopedia topic did not trigger local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Write an email to Alan'), false, `${label}: writing request triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('What is the weather today?'), false, `${label}: current-data question triggered a stale archive lookup`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('are you high?'), false, `${label}: assistant banter triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia("how can i patch my dog's yara"), false, `${label}: first-person practical advice triggered encyclopedia retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia("it's a cut"), false, `${label}: a conversational follow-up triggered a title search`);
+    assert.equal(runtime.localWikipediaSearchQuery('What is photosynthesis?'), 'photosynthesis', `${label}: factual question was not reduced to a searchable article topic`);
+    assert.equal(runtime.localWikipediaSearchQuery('what is a chocolate made of'), 'chocolate', `${label}: composition question was not reduced to its article topic`);
+    assert.equal(runtime.localWikipediaSearchQuery('who founded ottoman empire?'), 'ottoman empire', `${label}: founder question was not reduced to its entity topic`);
+    assert.equal(
+      runtime.localWikipediaSearchQuery('tell me more about sokullu mehmed pasha when was he born?'),
+      'sokullu mehmed pasha',
+      `${label}: compound biography question was not reduced to the article subject`,
+    );
+    let limit = 0;
+    let searchQuery = '';
+    const records = await runtime.retrieveLocalWikipediaForStandalone('Who was Alan Turing?', {
+      apocalypseSearch: async (_query, options) => {
+        searchQuery = _query;
+        limit = options.limit;
+        return [{
+          title: 'Alan Turing', excerpt: 'Alan Turing was an English mathematician and computer scientist.',
+          url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng', archiveDate: '2026-07-17',
+          archiveTitle: 'Wikipedia English full text', source: 'Kiwix / openZIM',
+        }];
+      },
+    });
+    assert.equal(searchQuery, 'Alan Turing', `${label}: standalone RAG searched the whole question instead of its topic`);
+    assert.equal(limit, 6, `${label}: local RAG did not inspect a bounded candidate set before relevance filtering`);
+    assert.deepEqual(runtime.formatLocalWikipediaRag(records), [{
+      title: 'Alan Turing', passage: 'Alan Turing was an English mathematician and computer scientist.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing', language: 'eng', archiveDate: '2026-07-17',
+      archiveTitle: 'Wikipedia English full text', source: 'Kiwix / openZIM',
+    }], `${label}: local RAG lost archive attribution`);
+    const strictRecords = runtime.rankLocalWikipediaRagRecords([
+      { title: 'Ottoman Empire', excerpt: 'A general history of the empire.' },
+      { title: 'Sokollu Mehmed Pasha', excerpt: 'Sokollu Mehmed Pasha was born around 1505.' },
+    ], 'Sokollu Mehmed Pasha Ottoman Empire biography');
+    assert.deepEqual(strictRecords.map(record => record.title), ['Sokollu Mehmed Pasha'],
+      `${label}: generic contextual titles outranked the requested person`);
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords(
+        [{ title: 'Ottoman Empire', excerpt: 'A general history of the empire.' }],
+        'Sokollu Mehmed Pasha Ottoman Empire biography',
+      ),
+      [],
+      `${label}: a generic Ottoman Empire page passed strict entity relevance`,
+    );
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords([
+        { title: 'Chocolate (color)', excerpt: 'A color resembling chocolate.' },
+        { title: 'Chocolate', excerpt: 'A food made from cacao beans.' },
+      ], 'chocolate').map(record => record.title),
+      ['Chocolate'],
+      `${label}: an exact article title did not suppress weaker related titles`,
+    );
+  }
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.match(agentSource, /_isStandaloneWebgpuRun\(runOptions = \{\}\)[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?providerId \|\| ''\) === 'webgpu'/,
+    'chrome: local Wikipedia RAG is not guarded to standalone WebGPU runs');
+  assert.match(agentSource, /_wrapUntrusted\('local_wikipedia_archive'/,
+    'chrome: local Wikipedia RAG passages are not marked as untrusted data');
+  assert.equal((agentSource.match(/_applyStandaloneWikipediaRag\(enriched, userMessage, runOptions,/g) || []).length, 2,
+    'chrome: local Wikipedia RAG is not applied to both standalone message entry paths');
+});
+
+test('standalone WebGPU uses a compact tool-free chat profile with no browser context', async () => {
+  const agent = new AgentCh({
+    getActive() { throw new Error('standalone prompt must not consult the globally selected provider'); },
+  });
+  const tabId = 1701;
+  agent._standaloneWebgpuRunTabs.add(tabId);
+  const prompt = agent._buildSystemPrompt('ask', tabId);
+  assert.match(prompt, /private on-device chat assistant/);
+  assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
+  assert.match(prompt, /Offline Wikipedia/);
+  assert.ok(prompt.length < 1400, `standalone WebGPU system prompt is unexpectedly large (${prompt.length} chars)`);
+  assert.doesNotMatch(prompt, /cookie|paywall|click_ax|get_accessibility_tree|CAPTCHA|User profile/i);
+  assert.match(
+    agent._wrapUntrusted('local_wikipedia_archive', '{"reference":"quoted data"}'),
+    /^<untrusted_page_content id="[a-z0-9]+">[\s\S]*<\/untrusted_page_content id="[a-z0-9]+">$/,
+    'local Wikipedia passages must be enclosed in the real untrusted-content boundary',
+  );
+
+  agent.alwaysAllowApiMutations = true;
+  const question = 'tell me more about sokullu mehmed pasha when was he born?';
+  const enriched = await agent._enrichUserMessageWithCurrentPage(tabId, [], question, null, {
+    standaloneChat: true,
+    providerId: 'webgpu',
+  });
+  assert.deepEqual(enriched, { role: 'user', content: question },
+    'standalone WebGPU must not receive runtime, page, recording, API, adapter, or screenshot context');
+
+  const provenance = buildPromptTraceProvenanceCh([
+    { role: 'system', content: prompt },
+    { role: 'user', content: question },
+  ], [], 'ask');
+  assert.equal(provenance.systemPromptVariant, 'standalone_webgpu');
+  assert.equal(provenance.systemPromptMode, 'ask');
+  assert.equal(provenance.toolCount, 0);
+  assert.equal(provenance.systemPromptMatchesRuntime, true);
+
+  const standaloneRun = { standaloneChat: true, providerId: 'webgpu' };
+  const inventedGoogleCalls = "<|tool_call_start|>[google(query='Sokollu Mehmed Pasha birth date biography'), google(query='Sokollu Mehmed Pasha Ottoman Empire biography')]<|tool_call_end|>";
+  const inventedOfflineWikipediaCall = "<|tool_call_start|>[offline_wikipedia(query='Sokollu Mehmed Pasha', limit=5)]<|tool_call_end|>";
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedGoogleCalls, standaloneRun),
+    ['Sokollu Mehmed Pasha birth date biography', 'Sokollu Mehmed Pasha Ottoman Empire biography'],
+    'standalone WebGPU must reinterpret the native Google markup as bounded local search queries',
+  );
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedOfflineWikipediaCall, standaloneRun),
+    ['Sokollu Mehmed Pasha'],
+    'standalone WebGPU must reinterpret native offline_wikipedia markup as a local search query',
+  );
+  for (const alias of [
+    'local_wikipedia', 'local_wikipedia_search', 'offline_wikipedia_search',
+    'search_local_wikipedia', 'search_offline_wikipedia', 'search_wiki',
+    'search_wikipedia', 'wiki_search', 'wikipedia', 'wikipedia_search',
+  ]) {
+    const markup = `<|tool_call_start|>[${alias}(query='Sokollu Mehmed Pasha')]<|tool_call_end|>`;
+    assert.deepEqual(
+      agent._standaloneWikipediaSearchQueriesFromModelText(markup, standaloneRun),
+      ['Sokollu Mehmed Pasha'],
+      `standalone WebGPU did not reinterpret the ${alias} alias as local retrieval`,
+    );
+  }
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(
+      "<|tool_call_start|>[browse_web(query='Sokollu Mehmed Pasha')]<|tool_call_end|>",
+      standaloneRun,
+    ),
+    [],
+    'unknown invented tools must remain rejected instead of becoming local retrieval aliases',
+  );
+  assert.deepEqual(
+    agent._standaloneWikipediaSearchQueriesFromModelText(inventedGoogleCalls, { standaloneChat: false, providerId: 'webgpu' }),
+    [],
+    'Google markup translation must not escape the standalone WebGPU profile',
+  );
+  const fallbackEnriched = { role: 'user', content: question };
+  const fallbackRag = await agent._applyStandaloneWikipediaModelSearch(
+    fallbackEnriched,
+    inventedOfflineWikipediaCall,
+    standaloneRun,
+    {
+      apocalypseSearch: async query => query.includes('Sokollu') ? [{
+        title: 'Sokollu Mehmed Pasha',
+        excerpt: 'Sokollu Mehmed Pasha was born in 1505.',
+        url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+        language: 'eng',
+        archiveDate: '2026-07-17',
+        archiveTitle: 'Wikipedia English full text',
+        source: 'Kiwix / openZIM',
+      }] : [],
+    },
+  );
+  assert.deepEqual(
+    { status: fallbackRag.status, matchCount: fallbackRag.matchCount, modelSearchFallback: fallbackRag.modelSearchFallback },
+    { status: 'matched', matchCount: 1, modelSearchFallback: true },
+    'invented Google calls must produce local RAG metadata without becoming executable tools',
+  );
+  const fallbackModelContent = JSON.stringify(fallbackEnriched.content);
+  assert.match(fallbackModelContent, /Local Wikipedia archive references found for the requested local search:/);
+  assert.match(fallbackModelContent, /<untrusted_page_content id=/);
+  assert.match(fallbackModelContent, /Sokollu Mehmed Pasha was born in 1505/);
+  const persistedFallback = agent._standalonePersistedUserMessage(fallbackEnriched, standaloneRun);
+  assert.equal(persistedFallback.content, question,
+    'local Wikipedia passages must be removed from the durable conversation turn');
+  assert.doesNotMatch(JSON.stringify(persistedFallback), /Wikipedia|Sokollu Mehmed Pasha was born/,
+    'durable conversation history retained ephemeral RAG content');
+  const legacyHistory = [{
+    role: 'user',
+    content: `${question}\n\nLocal Wikipedia archive references found for the requested local search:\n<untrusted_page_content id="legacy1">{"references":[{"passage":"stale Ottoman context"}]}</untrusted_page_content id="legacy1">`,
+  }];
+  assert.equal(agent._stripPersistedStandaloneWikipediaContext(legacyHistory), true,
+    'legacy persisted RAG context was not detected');
+  assert.equal(legacyHistory[0].content, question,
+    'legacy persisted RAG context was not removed from conversation history');
+  const attributed = agent._withStandaloneWikipediaAttribution('He was born around 1505.', [{
+    title: 'Sokollu Mehmed Pasha',
+    archiveDate: '2026-07-17',
+    url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
+  }], standaloneRun);
+  assert.match(attributed, /Offline Wikipedia — Sokollu Mehmed Pasha \(archive 2026-07-17\): https:\/\/en\.wikipedia\.org\/wiki\/Sokollu_Mehmed_Pasha/,
+    'standalone RAG answers must receive deterministic archive attribution');
+  assert.deepEqual(
+    agent._mergeStandaloneWikipediaReferences(
+      [{ title: 'Initial match', url: 'https://en.wikipedia.org/wiki/Initial', archiveDate: '2026-07-17' }],
+      [
+        { title: 'Initial duplicate', url: 'https://en.wikipedia.org/wiki/Initial', archiveDate: '2026-07-17' },
+        { title: 'Fallback match', url: 'https://en.wikipedia.org/wiki/Fallback', archiveDate: '2026-07-17' },
+      ],
+    ).map(reference => reference.title),
+    ['Initial match', 'Fallback match'],
+    'fallback retrieval must preserve initial attribution sources while deduplicating repeats',
+  );
+
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.equal(
+    (agentSource.match(/if \(selectionOnly \|\| standaloneChatRun\) tools = \[\];/g) || []).length,
+    4,
+    'both initial and repeated requests on both agent entry paths must suppress tools',
+  );
+  assert.equal(
+    (agentSource.match(/steps > 0 && !selectionOnly && !standaloneChatRun/g) || []).length,
+    2,
+    'standalone chat must not re-inject page adapters on a follow-up generation step',
+  );
+  assert.match(agentSource, /_beginReadCompleteness[\s\S]*?_isStandaloneChatRun\(runOptions\)[\s\S]*?createReadCompletenessState\(token, false, false, ''\)/,
+    'standalone chat must not inspect the current page for thread-read classification');
+  assert.equal(
+    (agentSource.match(/standaloneWikipediaModelSearchAttempted = true;/g) || []).length,
+    2,
+    'both standalone agent entry paths must bound model-requested local RAG to one retry',
+  );
+  assert.match(agentSource, /standalone_wikipedia_search_requested[\s\S]*?lfm_native_search_markup/,
+    'intercepted local search markup is not reclassified in traces');
+});
+
+test('standalone chat isolates browser context and inherited sidepanel history for every provider', async () => {
+  for (const [label, AgentClass, provenanceBuilder] of [
+    ['chrome', AgentCh, buildPromptTraceProvenanceCh],
+    ['firefox', AgentFx, buildPromptTraceProvenanceFx],
+  ]) {
+    const agent = new AgentClass({
+      getActive() { throw new Error('standalone prompt must not inspect the active provider'); },
+    });
+    const tabId = label === 'chrome' ? 1702 : 1703;
+    agent._standaloneChatRunTabs.add(tabId);
+    const prompt = agent._buildSystemPrompt('ask', tabId);
+    assert.match(prompt, /standalone chat assistant/);
+    assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
+    assert.doesNotMatch(prompt, /click_ax|get_accessibility_tree|User profile|cookie|paywall/i);
+
+    const question = 'What year was Ada Lovelace born?';
+    const enriched = await agent._enrichUserMessageWithCurrentPage(tabId, [], question, null, {
+      standaloneChat: true,
+      providerId: 'openai',
+    });
+    assert.deepEqual(enriched, { role: 'user', content: question },
+      `${label}: non-WebGPU standalone chat received browser/runtime context`);
+
+    const persisted = agent._standalonePersistedUserMessage(enriched, { standaloneChat: true });
+    const inherited = [
+      { role: 'system', content: prompt },
+      { role: 'user', content: '[Current page context — URL: https://example.test]\nRead this page' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'old-tool', function: { name: 'read_page', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'old-tool', content: 'secret page text' },
+      persisted,
+    ];
+    const modelMessages = agent._messagesForStandaloneChatRun(inherited, persisted, enriched);
+    assert.deepEqual(modelMessages, [
+      { role: 'system', content: prompt },
+      { role: 'user', content: question },
+    ], `${label}: inherited sidepanel page/tool history crossed into standalone chat`);
+    assert.doesNotMatch(JSON.stringify(modelMessages), /example\.test|read_page|secret page text/);
+
+    inherited.push({ role: 'assistant', content: '' });
+    inherited.push({ role: 'user', content: '[System nudge: answer directly.]' });
+    const retryMessages = agent._messagesForStandaloneChatRun(inherited, persisted, enriched);
+    assert.equal(retryMessages.at(-1)?.content, '[System nudge: answer directly.]',
+      `${label}: standalone recovery nudge was dropped from the isolated model view`);
+
+    const provenance = provenanceBuilder(modelMessages, [], 'ask');
+    assert.equal(provenance.systemPromptVariant, 'standalone_chat');
+    assert.equal(provenance.systemPromptMatchesRuntime, true);
+  }
+});
+
+test('trace export reports local Wikipedia RAG without passage text', () => {
+  const runs = [{
+    run: { runId: 'local-rag', userMessage: 'Who was Sokullu Mehmed Pasha?', model: 'LFM2.5', status: 'done' },
+    events: [{
+      runId: 'local-rag', seq: 1, kind: 'llm_request', data: {
+        messageCount: 2,
+        toolsCount: 0,
+        localWikipediaRag: {
+          attempted: true,
+          status: 'matched',
+          matchCount: 2,
+          archiveDates: ['2026-07-17'],
+          queryNormalized: true,
+        },
+      },
+    }, {
+      runId: 'local-rag', seq: 2, kind: 'note', data: {
+        step: 1,
+        note: 'standalone_wikipedia_search_requested',
+        extra: { queryCount: 2, source: 'lfm_native_search_markup' },
+      },
+    }],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /0 tools · local Wikipedia RAG matched · 2 matches · archive 2026-07-17/,
+      `${label}: RAG activation and archive date are missing from the trace export`);
+    assert.doesNotMatch(markdown, /passage|Sokullu was born/,
+      `${label}: trace metadata must not persist retrieved passage text`);
+    assert.match(markdown, /On-device model requested local Wikipedia retrieval · 2 queries/,
+      `${label}: intercepted search was not represented as local retrieval`);
+    assert.doesNotMatch(markdown, /tool_call_start|google\(/,
+      `${label}: intercepted native search markup leaked into the conversation export`);
   }
 });
 
@@ -23494,6 +24786,146 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
   }
 });
 
+test('/print opens the current page native print dialog in both builds', () => {
+  const docs = fs.readFileSync(path.join(ROOT, 'docs/slash-commands.md'), 'utf8');
+  assert.match(docs, /\| `\/print` \| Open the current page's native print dialog \|/);
+
+  for (const [label, panelRel, localeRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales/en.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
+    const slash = loadSlashCommandRuntime(panelRel);
+    const invocation = slash.parseSlashInvocation('/print');
+
+    assert.equal(invocation.command.value, '/print', `${label}: /print should be discoverable`);
+    assert.equal(invocation.command.usage, '/print', `${label}: /print should not advertise format or selection arguments`);
+    assert.equal(invocation.action, 'print', `${label}: /print action missing`);
+    assert.equal(slash.slashInvocationIsOutOfBand(invocation), false, `${label}: /print should wait until an active run finishes`);
+    assert.equal(slash.parseSlashInvocation('/print selected')?.error, 'invalid-usage', `${label}: /print should reject unsupported selection or format arguments`);
+    assert.match(locale, /'sp\.slash\.print': 'Open the current page’s native print dialog'/, `${label}: /print description missing`);
+    assert.match(locale, /'sp\.print\.error': 'Could not open the print dialog: \{msg\}'/, `${label}: /print failure message missing`);
+
+    const routeStart = panel.indexOf("if (command.value === '/print') {");
+    assert.notEqual(routeStart, -1, `${label}: /print parser route missing`);
+    const routeEnd = panel.indexOf("if (command.value === '/screenshot'", routeStart);
+    assert.notEqual(routeEnd, -1, `${label}: /print parser route boundary missing`);
+    const route = panel.slice(routeStart, routeEnd);
+    assert.match(route, /executePrintSlashCommand\(tabId, currentTabId,/, `${label}: /print should delegate to executePrintSlashCommand`);
+    const helperStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(helperStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const helperEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', helperStart);
+    assert.notEqual(helperEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const helper = panel.slice(helperStart, helperEnd);
+    assert.match(helper, /tabs\.get\(tabId\)/, `${label}: /print should validate the initiating tab`);
+    assert.match(helper, /currentTabId !== tabId \|\| !tab\?\.active/, `${label}: /print should not target a stale or background tab`);
+    assert.match(helper, /sp\.print\.error/, `${label}: /print failures should be visible`);
+    if (label === 'chrome') {
+      assert.match(helper, /scripting\.executeScript\(\{[\s\S]*?target: \{ tabId \},[\s\S]*?func: \(\) => window\.print\(\)/, 'chrome: /print should invoke the page print dialog through MV3 scripting');
+    } else {
+      assert.match(helper, /tabs\.executeScript\(tabId, \{ code: 'window\.print\(\);' \}\)/, 'firefox: /print should invoke the page print dialog through MV2 scripting');
+    }
+  }
+});
+
+test('/print routes are exercised with mocked tab and injection APIs in both builds', async () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const fnStart = panel.indexOf('async function executePrintSlashCommand(');
+    assert.notEqual(fnStart, -1, `${label}: executePrintSlashCommand helper missing`);
+    const fnEnd = panel.indexOf('\n}\n\nasync function parseSlashCommands', fnStart);
+    assert.notEqual(fnEnd, -1, `${label}: executePrintSlashCommand boundary missing`);
+    const executePrintSlashCommand = vm.runInNewContext(
+      `(() => { ${panel.slice(fnStart, fnEnd + 2)}; return executePrintSlashCommand; })()`,
+      {}
+    );
+
+    // Success path: active tab, injection succeeds.
+    let getCalled = false;
+    let executeCalled = false;
+    const successTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const successScripting = {
+      executeScript: async ({ target, func }) => {
+        executeCalled = true;
+        assert.equal(target.tabId, 7, `${label}: should target the initiating tab`);
+        assert.equal(typeof func, 'function', `${label}: should pass a function for injection`);
+      },
+    };
+    const toasts = [];
+    const showToast = (msg) => { toasts.push(msg); };
+    const t = (key, params) => `${key}:${JSON.stringify(params || {})}`;
+
+    const successResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...successTabs, executeScript: async (tabId, details) => {
+          executeCalled = true;
+          assert.equal(tabId, 7, `${label}: should target the initiating tab`);
+          assert.equal(details.code, "window.print();", `${label}: should pass the print script`);
+        } }, showToast, t);
+    assert.equal(successResult.ok, true, `${label}: success path should return ok`);
+    assert.equal(getCalled, true, `${label}: success path should call tabs.get`);
+    assert.equal(executeCalled, true, `${label}: success path should call executeScript`);
+
+    // Stale-tab guard: currentTabId differs from the command tab.
+    getCalled = false;
+    executeCalled = false;
+    const staleResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 99, successTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 99, { ...successTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(staleResult.skipped, true, `${label}: stale tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: stale tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: stale tab should not inject`);
+
+    // Background-tab guard: tab exists but is not active.
+    getCalled = false;
+    executeCalled = false;
+    const inactiveTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: false };
+      },
+    };
+    const inactiveResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, inactiveTabs, successScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...inactiveTabs, executeScript: async () => { executeCalled = true; } }, showToast, t);
+    assert.equal(inactiveResult.skipped, true, `${label}: inactive tab should skip without injecting`);
+    assert.equal(getCalled, true, `${label}: inactive tab should still validate the tab`);
+    assert.equal(executeCalled, false, `${label}: inactive tab should not inject`);
+
+    // Rejected-injection path: injection throws.
+    getCalled = false;
+    executeCalled = false;
+    const rejectTabs = {
+      get: async (id) => {
+        getCalled = true;
+        assert.equal(id, 7, `${label}: should query the initiating tab`);
+        return { id: 7, active: true };
+      },
+    };
+    const rejectScripting = {
+      executeScript: async () => { executeCalled = true; throw new Error('injection blocked'); },
+    };
+    const rejectResult = label === 'chrome'
+      ? await executePrintSlashCommand(7, 7, rejectTabs, rejectScripting, showToast, t)
+      : await executePrintSlashCommand(7, 7, { ...rejectTabs, executeScript: async () => { throw new Error('injection blocked'); } }, showToast, t);
+    assert.equal(rejectResult.error, 'injection blocked', `${label}: should surface injection failure`);
+    assert.equal(getCalled, true, `${label}: rejection path should still validate the tab`);
+    assert.equal(executeCalled, label === 'chrome' ? true : false, `${label}: rejection path should attempt injection`);
+    assert.ok(toasts.some(t => t.includes('sp.print.error')), `${label}: should show localized error toast on rejection`);
+  }
+});
+
 test('/watch slash parser keeps Chrome and Firefox validation aligned', async () => {
   const chromeWatch = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/watch-command.js')).href);
   const firefoxWatch = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/watch-command.js')).href);
@@ -23714,6 +25146,7 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
   const requiredTranslatedKeys = [
     'st.display.apocalypse_mode.desc',
     'st.display.apocalypse_mode.status.off',
+    'ap.subtitle',
     'ap.hero.desc',
     'ap.hero.consent',
     'ap.vision.auto',
@@ -23721,7 +25154,10 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
     'ap.catalog.desc',
     'ap.download_background',
     'ap.include_images',
+    'ap.import.title',
     'ap.import.desc',
+    'ap.import.button',
+    'ap.file_description',
     'ap.confirm_install',
     'ap.confirm_import',
     'ap.update_policy.automatic_notice',
@@ -24421,8 +25857,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
-    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page-capture slash commands should stop before dispatch in selected-text conversations`);
-    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page-capture commands before slash dispatch`);
+    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record' \|\| command\.value === '\/print'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page and screen slash commands should stop before dispatch in selected-text conversations`);
+    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\|print\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page and screen commands before slash dispatch`);
     assert.match(panel, /runCaptureDirective = parseTrailingRunCaptureDirective\(text\);[\s\S]*?if \(runCaptureDirective[\s\S]*?sourceGrounding \|\| isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?text = runCaptureDirective\.prompt;/, `${label}: trailing page-capture directives should stop before prompt dispatch in selected-text conversations`);
     assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile while preserving local scope until the authoritative probe succeeds`);
     assert.doesNotMatch(panel.slice(
@@ -28625,12 +30061,16 @@ test('sidepanel drops stale provider selection and connection checks', () => {
     const changeCaptureIdx = changeBody.indexOf('const providerId = providerSelect.value;');
     const changeRequestIdx = changeBody.indexOf('const requestId = ++providerSelectionRequestId;');
     const invalidateIdx = changeBody.indexOf('providerTestRequestId += 1;');
-    const activateIdx = changeBody.indexOf("await sendToBackground('set_active_provider', { providerId });");
+    const activateIdx = changeBody.indexOf(label === 'chrome'
+      ? 'await setActiveChatProvider(providerId);'
+      : "await sendToBackground('set_active_provider', { providerId });");
     const catchIdx = changeBody.indexOf('} catch (e) {');
     const failureGuardIdx = changeBody.indexOf('if (requestId === providerSelectionRequestId && providerSelect.value === providerId) {');
     const failureStatusIdx = changeBody.indexOf('markSelectedProviderFailed(e);');
     const changeStaleGuardIdx = changeBody.indexOf('if (requestId !== providerSelectionRequestId || providerSelect.value !== providerId) {');
-    const repairIdx = changeBody.indexOf("sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
+    const repairIdx = changeBody.indexOf(label === 'chrome'
+      ? 'setActiveChatProvider(latestProviderId).catch(() => {});'
+      : "sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
     const changeTestIdx = changeBody.indexOf('await testConnection({ providerId });');
     assert.notEqual(changeCaptureIdx, -1, `${label}: provider change should capture the intended provider`);
     assert.notEqual(changeRequestIdx, -1, `${label}: provider change should increment a request sequence`);
@@ -28837,7 +30277,7 @@ test('settings warns on missing or short API keys and shows the Ollama localhost
     );
     assert.match(
       settings,
-      /id === 'ollama'[\s\S]*?provider-ollama-warning[\s\S]*?OLLAMA_ORIGINS="\$\{escapeHtml\(extensionOrigin\)\}" ollama serve[\s\S]*?https:\/\/www\.webbrain\.one\/blog\/ollama-launch-handoff[\s\S]*?target="_blank" rel="noopener noreferrer"/,
+      /definitionId === 'ollama'[\s\S]*?provider-ollama-warning[\s\S]*?OLLAMA_ORIGINS="\$\{escapeHtml\(extensionOrigin\)\}" ollama serve[\s\S]*?https:\/\/www\.webbrain\.one\/blog\/ollama-launch-handoff[\s\S]*?target="_blank" rel="noopener noreferrer"/,
       `${label}: Ollama card should include the current WebBrain origin command and external handoff link`,
     );
     assert.ok(
@@ -28897,10 +30337,10 @@ test('Ollama settings use tri-state vision capability with mirrored preflight wi
     assert.match(settings, /data-ollama-vision-status/, `${label}: the status should remain addressable when Auto is not initially selected`);
     assert.match(settings, /select\[data-provider="ollama"\]\[data-key="visionMode"\][\s\S]*?addEventListener\('change', refreshOllamaVisionStatus\)/,
       `${label}: changing the override should update status visibility immediately`);
-    assert.match(settings, /input\[data-key="model"\][\s\S]*refreshOllamaVisionStatus\(\)/,
+    assert.match(settings, /input\[data-key="model"\][\s\S]*providerDefinitionId\(input\.dataset\.provider\) === 'ollama'[\s\S]*refreshVisionStatus\(input\.dataset\.provider\)/,
       `${label}: editing the model or endpoint should invalidate the displayed detection`);
-    assert.match(settings, /changes\.providers\?\.newValue\?\.ollama[\s\S]*visionDetection[\s\S]*refreshOllamaVisionStatus\(\)/,
-      `${label}: background detection storage updates should refresh an open Settings page`);
+    assert.match(settings, /Object\.entries\(changes\.providers\.newValue\)[\s\S]*?providerDefinitionId\(id\)[\s\S]*?VISION_UI_PROVIDER_IDS\.has\(definitionId\)[\s\S]*?refreshVisionStatus\(id\)/,
+      `${label}: background detection storage updates should refresh source and duplicate cards on an open Settings page`);
     assert.match(manager, /visionMode: 'auto'[\s\S]*visionDetection: null/, `${label}: Ollama defaults should be auto and unresolved`);
     assert.doesNotMatch(handoff, /supportsVision:\s*true/, `${label}: launch handoff must not force vision`);
     assert.match(handoff, /visionMode:\s*'auto'/, `${label}: launch handoff should request metadata detection`);
@@ -30327,7 +31767,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const regularProvider = toggleVision('openai', { supportsVision: false });
     assert.equal(regularProvider.enabled, true, `${label}: /vision should preserve boolean toggles for non-Ollama providers`);
     assert.equal(regularProvider.config.supportsVision, true);
-    assert.match(visionBody, /toggledVisionProviderConfig\(active, config\)[\s\S]*?config: toggled\.config[\s\S]*?toggled\.enabled/, `${label}: /vision should persist and report the provider-aware toggle result`);
+    assert.match(visionBody, /toggledVisionProviderConfig\(config\.sourceProviderId \|\| active, config\)[\s\S]*?config: toggled\.config[\s\S]*?toggled\.enabled/, `${label}: /vision should classify duplicates by their source while updating the active runtime provider`);
   }
 });
 
@@ -31132,6 +32572,88 @@ test('standalone chat runs omit active extension-page context and screenshots', 
     assert.equal(visionProviderCalls, 0, `${label}: standalone enrichment invoked a vision provider`);
     assert.equal(screenshotCalls, 0, `${label}: standalone enrichment captured the chat UI`);
   }
+});
+
+test('standalone WebGPU control uses a per-run provider without changing global selection', async () => {
+  const markup = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8');
+  const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src/chrome/styles/sidepanel.css'), 'utf8');
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+
+  assert.match(markup, /id="btn-webgpu-standalone"[\s\S]*?☢/, 'standalone header is missing the nuclear WebGPU control');
+  assert.match(css, /\.standalone-webgpu-toggle\.active\s*\{[\s\S]*?background: var\(--success\)/,
+    'active WebGPU control should turn green');
+  assert.match(panel, /standaloneWebgpuBtn\.hidden = !isStandaloneWindow/,
+    'the WebGPU control must stay out of the ordinary side panel');
+  assert.match(panel, /providerSelect\.disabled = standaloneWebgpuActive[\s\S]*?providerPickerBtn\.disabled = standaloneWebgpuActive/,
+    'the ordinary provider picker should lock while the WebGPU override is active');
+  assert.match(panel, /standaloneWebgpuBtn\.disabled = !standaloneWebgpuEnabled/,
+    'the nuclear control should be clickable whenever Apocalypse Mode is enabled');
+  assert.match(panel, /function standaloneWebgpuRunPayload\(\) \{\s*return isStandaloneWindow && standaloneWebgpuActive \? \{ providerId: 'webgpu' \} : \{\};/,
+    'standalone WebGPU state is not carried as a run-scoped override');
+  assert.match(background, /case 'get_providers': \{[\s\S]*?delete providers\.webgpu/,
+    'WebGPU must never appear in the ordinary provider picker');
+  assert.match(background, /case 'set_active_provider': \{[\s\S]*?msg\.providerId === 'webgpu'[\s\S]*?nuclear WebGPU control/,
+    'WebGPU must not become the globally active provider');
+  assert.match(background, /case 'get_standalone_webgpu_status': \{[\s\S]*?enabled: apocalypse\?\.enabled === true[\s\S]*?ready:/,
+    'the standalone control should distinguish Apocalypse enablement from model readiness');
+  assert.match(background, /type: 'apocalypse-mode-state'[\s\S]*?enabled: snapshot\.enabled === true/,
+    'open standalone windows should be notified when Apocalypse Mode changes');
+  assert.match(agentSource, /this\._runProviderOverrides = new Map\(\)/);
+  assert.match(agentSource, /getProvider\(overrideId\)/);
+
+  const globalProvider = { name: 'global' };
+  const webgpuProvider = { name: 'webgpu' };
+  const manager = {
+    getActive: () => globalProvider,
+    getProvider: id => id === 'webgpu' ? webgpuProvider : null,
+  };
+  const agent = new AgentCh(manager);
+  agent._runProviderOverrides.set(71, 'webgpu');
+  assert.equal(agent._activeProvider(71), webgpuProvider, 'the standalone tab should resolve WebGPU');
+  assert.equal(agent._activeProvider(72), globalProvider, 'another tab should keep the global provider');
+
+  const helperStart = background.indexOf('async function standaloneRunProviderId(msg) {');
+  const helperEnd = background.indexOf('\n}', helperStart) + 2;
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'standalone WebGPU background guard is missing');
+  const apocalypseState = { enabled: true };
+  const webgpuState = { ready: true };
+  const standaloneRunProviderId = vm.runInNewContext(
+    `(${background.slice(helperStart, helperEnd)})`,
+    {
+      WEBGPU_MODEL_ID: 'LiquidAI/LFM2.5-2.6B-ONNX',
+      apocalypseController: {
+        handle: async () => ({ enabled: apocalypseState.enabled }),
+      },
+      providerManager: {
+        getAll: () => ({
+          webgpu: { model: 'LiquidAI/LFM2.5-2.6B-ONNX' },
+        }),
+        getWebgpuDownloadStatus: async () => ({ ready: webgpuState.ready }),
+      },
+    },
+  );
+  assert.equal(await standaloneRunProviderId({}), null);
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: false }),
+    /standalone chat control/,
+  );
+  assert.equal(
+    await standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    'webgpu',
+  );
+  apocalypseState.enabled = false;
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    /Enable Apocalypse Mode/,
+  );
+  apocalypseState.enabled = true;
+  webgpuState.ready = false;
+  await assert.rejects(
+    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    /Download LFM2\.5 2\.6B/,
+  );
 });
 
 test('standalone window transport, sizing, and translations are mirrored', async () => {
@@ -31940,7 +33462,7 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       agent,
-      /plannerTabInfo = selectionOnly \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
+      /plannerTabInfo = selectionOnly \|\| standaloneChatRun \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
       `${label}: Act planner should not receive page URL or title for a selection-only run`,
     );
     assert.match(
@@ -37551,6 +39073,28 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(ordinaryButton.type, 'button', 'selector clicks should preserve the resolved button type');
   assert.equal(ordinaryButton.isSubmitControl, false, 'selector clicks should preserve non-submit metadata');
 
+  const blockedCommands = [];
+  client.sendCommand = async (_tabId, method, params) => {
+    blockedCommands.push({ method, params });
+    return {};
+  };
+  const recipientBlocked = await client.clickElement(42, '#send', {
+    trustedOnly: true,
+    beforeDispatch: async () => ({
+      success: false,
+      reasonCode: 'active_recipient_changed_before_dispatch',
+      error: 'active recipient changed',
+    }),
+  });
+  assert.equal(recipientBlocked.success, false);
+  assert.equal(recipientBlocked.noDispatch, true);
+  assert.equal(recipientBlocked.reasonCode, 'active_recipient_changed_before_dispatch');
+  assert.equal(
+    blockedCommands.some(call => call.params?.type === 'mousePressed'),
+    false,
+    'recipient revalidation must block before selector mousePressed dispatch',
+  );
+
   client.sendCommand = async (_tabId, _method, params) => {
     if (params.type === 'mousePressed') throw new Error('dispatch response lost');
     return {};
@@ -42291,8 +43835,8 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   const streamingStart = agentSource.indexOf('async _processMessageStreamInner(');
   const standardPath = agentSource.slice(standardStart, streamingStart);
   const streamingPath = agentSource.slice(streamingStart);
-  assert.match(standardPath, /if \(mode === 'dev'\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
-  assert.match(streamingPath, /if \(mode === 'dev'\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
+  assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
+  assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
@@ -42887,6 +44431,12 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       error => error.isAskStreamTerminalError === true && /OrtRun/.test(error.message),
       'fatal WebGPU execution failures should bypass the generic network retry',
     );
+    webgpuExecutionError = `${WEBGPU_MODEL_ID} used its generation budget before finishing reasoning. Retry with a shorter prompt.`;
+    await assert.rejects(
+      generalProvider.chat([{ role: 'user', content: 'Exercise the deterministic token limit.' }]),
+      error => error.isAskStreamTerminalError === true && /generation budget/.test(error.message),
+      'a deterministic WebGPU generation-budget failure should not repeat the same expensive request',
+    );
 
     const preload = await new WebGPUVisionProvider().preload();
     assert.deepEqual(preload, { ok: true, started: true, ready: false });
@@ -42993,6 +44543,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
@@ -43036,7 +44588,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'Chrome startup must resume an enabled, incomplete local-vision preload');
   assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
     'local-vision recovery must run with the service-worker startup restoration');
-  assert.doesNotMatch(background, /apocalypseController\.handle\('status'\)/,
+  const startupRecovery = background.slice(
+    background.indexOf('Promise.all([', background.indexOf('async function resumeInterruptedVisionPreload')),
+    background.indexOf('const agent = new Agent', background.indexOf('async function resumeInterruptedVisionPreload')),
+  );
+  assert.doesNotMatch(startupRecovery, /apocalypseController\.handle\('status'\)/,
     'service-worker startup must not override a later local-vision opt-out');
   assert.match(worker, /let visionRuntime = null/);
   assert.match(worker, /let textRuntime = null/);
@@ -43083,29 +44639,32 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(settingsScript, /chrome\.storage\.local\.remove\(WEBGPU_VISION_AUTO_SELECTED_KEY\)/,
     'an explicit local-vision selection must clear automatic-selection provenance');
   assert.match(settingsScript, /dispose_webgpu_vision/);
-  assert.match(settingsScript, /data-webgpu-download-action="start"/);
-  assert.match(settingsScript, /data-webgpu-download-action="pause"/);
-  assert.match(settingsScript, /data-webgpu-download-action="resume"/);
-  assert.match(settingsScript, /data-webgpu-download-action="stop"/);
-  assert.match(settingsScript, /get_webgpu_download_status/);
-  assert.match(settingsScript, /webgpu-text-download-state/);
+  assert.match(apocalypseHtml, /id="webgpu-provider-card"[^>]*hidden/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="start"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="pause"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="resume"/);
+  assert.match(apocalypseHtml, /data-webgpu-download-action="stop"/);
+  assert.match(apocalypseScript, /get_webgpu_download_status/);
+  assert.match(apocalypseScript, /webgpu-text-download-state/);
+  assert.doesNotMatch(settingsScript, /data-webgpu-download-action=/,
+    'the WebGPU provider download block must live on Apocalypse Mode, not Settings');
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
-  const webgpuSettingsBlock = settingsScript.slice(
-    settingsScript.indexOf('webgpu: {'),
-    settingsScript.indexOf('azure_openai: {'),
-  );
-  assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
-  assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
-  assert.match(webgpuSettingsBlock, /key: 'model'/);
-  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
-  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey)'/);
-  assert.match(settingsScript, /normalizeWebgpuModelId/);
-  assert.match(settingsScript, /<option value="__custom__"/);
-  assert.match(settingsScript, /data-webgpu-model-link/);
+  assert.match(settingsScript, /Object\.entries\(providersData\)\.filter\(\(\[id\]\) => id !== 'webgpu'\)/,
+    'Settings still renders the WebGPU provider card');
+  assert.match(apocalypseHtml, /LFM2\.5 2\.6B local chat/);
+  assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
+  assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
+  assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
+  assert.match(apocalypseHtml, /id="vision-model-test"[^>]*data-i18n="st\.vision\.test"[^>]*disabled/);
+  assert.doesNotMatch(apocalypseHtml, /(?:base-url|api-key|__custom__|data-webgpu-model-link)/);
+  assert.doesNotMatch(apocalypseScript, /WEBGPU_MODEL_PRESETS|normalizeWebgpuModelId|set_active_provider/);
+  assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
+  assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
-  assert.match(englishLocale, /LFM2\.5 2\.6B is the only tested model[\s\S]*Other models entered through Custom are untested and likely will not work/);
+  assert.match(englishLocale, /Download it in Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
@@ -43133,6 +44692,8 @@ test('WebGPU worker replays text tool history and applies model-specific generat
   const previousReleaseTextDownload = globalThis.__releaseWebgpuTextDownload;
   const previousGenerationOptions = globalThis.__webgpuGenerationOptions;
   const previousPipelineOptions = globalThis.__webgpuPipelineOptions;
+  const previousHoldTextGeneration = globalThis.__holdWebgpuTextGeneration;
+  const previousReleaseTextGeneration = globalThis.__releaseWebgpuTextGeneration;
   let workerListener = null;
   const posted = [];
   try {
@@ -43230,6 +44791,9 @@ test('WebGPU worker replays text tool history and applies model-specific generat
           await new Promise(resolve => { globalThis.__releaseWebgpuTextDownload = resolve; });
         }
         const instance = async (input, options) => {
+          if (globalThis.__holdWebgpuTextGeneration) {
+            await new Promise(resolve => { globalThis.__releaseWebgpuTextGeneration = resolve; });
+          }
           globalThis.__webgpuGenerationOptions = options;
           const content = modelId === 'LiquidAI/LFM2.5-2.6B-ONNX'
             ? 'private model reasoning</think>Hello!'
@@ -43383,6 +44947,24 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     assert.equal(activeStatus.status, 'ready');
     assert.equal(activeStatus.ready, true);
 
+    globalThis.__holdWebgpuTextGeneration = true;
+    const generationId = requestId++;
+    const generationPromise = workerListener({ data: { id: generationId, type: 'text-chat', payload: activePayload } });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextGeneration; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const queuedPayload = { ...textPayload, modelId: 'text-model-queued' };
+    const queuedId = requestId++;
+    const queuedPromise = workerListener({ data: { id: queuedId, type: 'start-download-text', payload: queuedPayload } });
+    const stopQueuedId = requestId++;
+    const stopQueuedPromise = workerListener({ data: { id: stopQueuedId, type: 'stop-text-download', payload: queuedPayload } });
+    globalThis.__releaseWebgpuTextGeneration();
+    await Promise.all([generationPromise, queuedPromise, stopQueuedPromise]);
+    assert.equal(posted.find(message => message.id === queuedId)?.status, 'not-downloaded', 'stopped queued download still started');
+    assert.equal(posted.find(message => message.id === stopQueuedId)?.status, 'not-downloaded', 'queued Stop did not clear the target model');
+    globalThis.__holdWebgpuTextGeneration = false;
+    globalThis.__releaseWebgpuTextGeneration = null;
+
     globalThis.__holdWebgpuTextDownload = false;
     globalThis.__releaseWebgpuTextDownload = null;
     const objectDtypePayload = {
@@ -43446,6 +45028,10 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     else globalThis.__webgpuGenerationOptions = previousGenerationOptions;
     if (previousPipelineOptions === undefined) delete globalThis.__webgpuPipelineOptions;
     else globalThis.__webgpuPipelineOptions = previousPipelineOptions;
+    if (previousHoldTextGeneration === undefined) delete globalThis.__holdWebgpuTextGeneration;
+    else globalThis.__holdWebgpuTextGeneration = previousHoldTextGeneration;
+    if (previousReleaseTextGeneration === undefined) delete globalThis.__releaseWebgpuTextGeneration;
+    else globalThis.__releaseWebgpuTextGeneration = previousReleaseTextGeneration;
   }
 });
 
@@ -43744,7 +45330,7 @@ test('tri-state local vision controls and pre-enrichment preparation stay mirror
       assert.match(block, /VISION_MODE_FIELD/, `${prefix}/${id}: tri-state selector missing`);
     }
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
-    assert.match(panel, /toggledVisionProviderConfig\(active, config\)/);
+    assert.match(panel, /toggledVisionProviderConfig\(config\.sourceProviderId \|\| active, config\)/);
   }
 });
 
@@ -45445,6 +47031,323 @@ test('ProviderManager update rejects unknown providers and pins existing provide
   }
 });
 
+function makeProviderManagerWriteRuntime(writes) {
+  return {
+    storage: {
+      local: {
+        async set(patch) {
+          writes.push(structuredClone(patch));
+        },
+      },
+    },
+  };
+}
+
+test('ProviderManager creates one independent duplicate per provider', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const writes = [];
+      globalThis[runtimeKey] = makeProviderManagerWriteRuntime(writes);
+      const manager = new PM();
+      const sourceConfig = {
+        ...manager._defaultConfigs().openai,
+        apiKey: `${label}-work-key`,
+        model: `${label}-work-model`,
+        configured: true,
+        compat: { reasoningEffort: 'medium' },
+      };
+      manager.providers.set('openai', manager._createProvider('openai', sourceConfig));
+      manager.activeProviderId = 'openai';
+      assert.equal(manager.getAll().openai.canDuplicate, true, `${label}: eligible sources should advertise duplicate availability`);
+
+      const created = await manager.duplicateProvider('openai');
+      assert.equal(created.providerId, 'openai__duplicate', `${label}: duplicate ID should be stable and safe`);
+      assert.equal(created.sourceProviderId, 'openai', `${label}: duplicate should retain its provider definition`);
+      const duplicate = manager.providers.get(created.providerId);
+      assert.equal(duplicate?.config.duplicateOf, 'openai', `${label}: duplicate origin should persist with the config`);
+      assert.equal(duplicate?.config.label, 'OpenAI 2', `${label}: duplicate should be distinguishable in provider pickers`);
+      assert.equal(duplicate?.config.apiKey, sourceConfig.apiKey, `${label}: duplicate should start with the source credentials`);
+      assert.equal(duplicate?.config.model, sourceConfig.model, `${label}: duplicate should start with the source model`);
+      assert.equal(duplicate?.config.configured, true, `${label}: a configured provider should create a selectable duplicate`);
+      assert.notEqual(duplicate?.config.compat, manager.providers.get('openai')?.config.compat, `${label}: nested config must not be shared`);
+
+      await manager.updateProvider(created.providerId, {
+        apiKey: `${label}-personal-key`,
+        model: `${label}-personal-model`,
+        duplicateOf: 'kimi',
+      });
+      assert.equal(manager.providers.get(created.providerId)?.config.duplicateOf, 'openai', `${label}: updates must not reparent a duplicate`);
+      assert.equal(manager.providers.get('openai')?.config.apiKey, `${label}-work-key`, `${label}: editing the duplicate changed the source key`);
+      assert.equal(manager.providers.get('openai')?.config.model, `${label}-work-model`, `${label}: editing the duplicate changed the source model`);
+      assert.equal(manager.providers.get(created.providerId)?.config.apiKey, `${label}-personal-key`);
+      assert.equal(manager.providers.get(created.providerId)?.config.model, `${label}-personal-model`);
+      const surfaced = manager.getAll();
+      assert.equal(surfaced.openai.hasDuplicate, true, `${label}: source should advertise its existing duplicate`);
+      assert.equal(surfaced.openai.canDuplicate, false, `${label}: source should enforce the one-duplicate limit in UI metadata`);
+      assert.equal(surfaced[created.providerId].isDuplicate, true, `${label}: duplicate metadata missing`);
+      assert.equal(surfaced[created.providerId].sourceProviderId, 'openai', `${label}: duplicate source metadata missing`);
+      assert.equal(surfaced[created.providerId].canDuplicate, false, `${label}: duplicates must not be duplicable`);
+
+      await assert.rejects(
+        () => manager.duplicateProvider('openai'),
+        /already has a duplicate/i,
+        `${label}: a second duplicate should be rejected`,
+      );
+      await assert.rejects(
+        () => manager.duplicateProvider(created.providerId),
+        /cannot be duplicated/i,
+        `${label}: duplicating a duplicate should be rejected`,
+      );
+      assert.equal(writes.length, 2, `${label}: create and independent update should each persist once`);
+      assert.equal(writes.at(-1)?.providers?.openai?.apiKey, `${label}-work-key`);
+      assert.equal(writes.at(-1)?.providers?.[created.providerId]?.apiKey, `${label}-personal-key`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('ProviderManager removes only duplicates and safely reselects their source', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const writes = [];
+      globalThis[runtimeKey] = makeProviderManagerWriteRuntime(writes);
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('webbrain_cloud', manager._createProvider('webbrain_cloud', defaults.webbrain_cloud));
+      manager.providers.set('openai', manager._createProvider('openai', {
+        ...defaults.openai,
+        apiKey: `${label}-key`,
+        configured: true,
+      }));
+      manager.activeProviderId = 'openai';
+
+      const { providerId } = await manager.duplicateProvider('openai');
+      await manager.setActive(providerId);
+      assert.equal(manager.activeProviderId, providerId, `${label}: duplicate should be selectable before removal`);
+
+      await assert.rejects(
+        () => manager.removeDuplicateProvider('openai'),
+        /only duplicate providers can be removed/i,
+        `${label}: a built-in provider must not be removable`,
+      );
+      const removed = await manager.removeDuplicateProvider(providerId);
+      assert.deepEqual(removed, { removedProviderId: providerId, activeProviderId: 'openai' });
+      assert.equal(manager.providers.has(providerId), false, `${label}: duplicate should be removed from the runtime map`);
+      assert.equal(manager.activeProviderId, 'openai', `${label}: removing the selected duplicate should select its configured source`);
+      assert.equal(writes.at(-1)?.providers?.[providerId], undefined, `${label}: removed duplicate remained in storage`);
+      assert.equal(writes.at(-1)?.activeProvider, 'openai', `${label}: fallback selection was not persisted atomically`);
+
+      const recreated = await manager.duplicateProvider('openai');
+      assert.equal(recreated.providerId, providerId, `${label}: removing a duplicate should release the one-duplicate limit`);
+
+      await assert.rejects(
+        () => manager.duplicateProvider('webbrain_cloud'),
+        /cannot be duplicated/i,
+        `${label}: the managed no-setup provider should not produce meaningless copies`,
+      );
+      if (defaults.webgpu) {
+        manager.providers.set('webgpu', manager._createProvider('webgpu', defaults.webgpu));
+        await assert.rejects(
+          () => manager.duplicateProvider('webgpu'),
+          /cannot be duplicated/i,
+          `${label}: a shared in-browser WebGPU runtime should not be duplicated`,
+        );
+      }
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('duplicated local providers retain their source-native model and vision behavior', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const requests = [];
+      globalThis[runtimeKey] = {
+        storage: { local: { async set() {} } },
+        runtime: { id: `${label}-runtime` },
+      };
+      globalThis.fetch = async (url, init = {}) => {
+        requests.push({ url: String(url), method: init.method || 'GET' });
+        if (String(url).endsWith('/api/tags')) {
+          return new Response(JSON.stringify({ models: [{ name: 'work-model' }, { name: 'personal-model' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (String(url).endsWith('/api/show')) {
+          return new Response(JSON.stringify({ capabilities: ['completion', 'vision'] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('missing', { status: 404 });
+      };
+
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('ollama', manager._createProvider('ollama', {
+        ...defaults.ollama,
+        model: 'work-model',
+        configured: true,
+        visionDetection: {
+          model: 'work-model',
+          baseUrl: defaults.ollama.baseUrl,
+          supportsVision: false,
+          source: 'ollama_show',
+        },
+      }));
+      manager.activeProviderId = 'ollama';
+      const { providerId } = await manager.duplicateProvider('ollama');
+
+      await manager.updateProvider(providerId, { model: 'personal-model' });
+      assert.equal(manager.providers.get(providerId)?.config.visionDetection, null, `${label}: changing the duplicate model should invalidate copied Ollama detection`);
+      const listed = await manager.listProviderModels(providerId);
+      assert.deepEqual(listed.models, ['personal-model', 'work-model'], `${label}: duplicate should parse Ollama's native model list`);
+      assert.equal(requests.some(request => request.url.endsWith('/api/tags')), true, `${label}: duplicate should use Ollama /api/tags`);
+
+      await manager.setActive(providerId);
+      const detected = await manager.prepareActiveProviderCapabilities();
+      assert.equal(detected.ok, true, `${label}: duplicate Ollama vision detection should succeed`);
+      assert.equal(detected.supportsVision, true, `${label}: duplicate should preserve Ollama native vision detection`);
+      assert.equal(requests.some(request => request.url.endsWith('/api/show') && request.method === 'POST'), true, `${label}: duplicate should use Ollama /api/show`);
+      assert.equal(manager.getActive().supportsVision, true, `${label}: duplicate runtime should receive the detected vision capability`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('ProviderManager reloads one valid duplicate and purges forged duplicate entries', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const validGuid = '11111111-1111-4111-8111-111111111111';
+
+  function makeRuntime(storageData) {
+    return {
+      storage: {
+        local: {
+          async get(keys) {
+            return Object.fromEntries(keys.map(key => [key, structuredClone(storageData[key])]));
+          },
+          async set(patch) {
+            Object.assign(storageData, structuredClone(patch));
+          },
+        },
+      },
+      runtime: {
+        id: 'test-runtime',
+        getPlatformInfo() {
+          return Promise.resolve({ os: 'test', arch: 'x64', nacl_arch: 'x64' });
+        },
+      },
+    };
+  }
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const defaults = new PM()._defaultConfigs();
+      const source = {
+        ...defaults.openai,
+        apiKey: `${label}-work-key`,
+        configured: true,
+      };
+      const validDuplicate = {
+        ...structuredClone(source),
+        duplicateOf: 'openai',
+        label: 'OpenAI 2',
+        apiKey: `${label}-personal-key`,
+      };
+      const storageData = {
+        webbrainDeviceGuid: validGuid,
+        activeProvider: 'openai__duplicate',
+        providers: {
+          openai: source,
+          openai__duplicate: validDuplicate,
+          openai__duplicate_2: { ...validDuplicate },
+          missing__duplicate: { ...validDuplicate, duplicateOf: 'missing' },
+          webbrain_cloud__duplicate: {
+            ...structuredClone(defaults.webbrain_cloud),
+            duplicateOf: 'webbrain_cloud',
+            label: 'WebBrain Cloud 2',
+          },
+          groq: {
+            ...structuredClone(defaults.groq),
+            duplicateOf: 'openai',
+            configured: true,
+          },
+        },
+      };
+      globalThis[runtimeKey] = makeRuntime(storageData);
+
+      const manager = new PM();
+      await manager.load();
+      assert.equal(manager.activeProviderId, 'openai__duplicate', `${label}: a valid selected duplicate should survive reload`);
+      assert.equal(manager.providers.get('openai__duplicate')?.config.apiKey, `${label}-personal-key`);
+      assert.equal(manager.providers.has('openai__duplicate_2'), false, `${label}: forged second duplicate should be rejected`);
+      assert.equal(manager.providers.has('missing__duplicate'), false, `${label}: orphan duplicate should be rejected`);
+      assert.equal(manager.providers.has('webbrain_cloud__duplicate'), false, `${label}: managed cloud duplicate should be rejected`);
+      assert.equal(manager.providers.has('groq'), true, `${label}: forged metadata must not delete a built-in provider`);
+      assert.equal(manager.providers.get('groq')?.config.duplicateOf, undefined, `${label}: forged duplicate metadata should be stripped from built-ins`);
+      assert.equal(storageData.providers.openai__duplicate?.apiKey, `${label}-personal-key`, `${label}: valid duplicate was not persisted`);
+      assert.equal(storageData.providers.openai__duplicate_2, undefined, `${label}: forged duplicate was not purged from storage`);
+      assert.equal(storageData.providers.missing__duplicate, undefined, `${label}: orphan duplicate was not purged from storage`);
+      assert.equal(storageData.providers.webbrain_cloud__duplicate, undefined, `${label}: managed duplicate was not purged from storage`);
+      assert.equal(storageData.providers.groq?.duplicateOf, undefined, `${label}: forged built-in duplicate metadata was not purged`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('duplicate provider controls are wired through background and settings in both browsers', () => {
+  for (const [label, backgroundRel, settingsRel, sidepanelRel] of [
+    ['chrome', 'src/chrome/src/background.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/background.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const sidepanel = fs.readFileSync(path.join(ROOT, sidepanelRel), 'utf8');
+    assert.match(background, /case 'duplicate_provider':[\s\S]*?providerManager\.duplicateProvider\(msg\.providerId\)/, `${label}: duplicate background action missing`);
+    assert.match(background, /case 'remove_duplicate_provider':[\s\S]*?providerManager\.removeDuplicateProvider\(msg\.providerId\)/, `${label}: remove-duplicate background action missing`);
+    assert.match(settings, /const definitionId = providerDefinitionId\(id, config\);[\s\S]*?providerConfigs\[definitionId\]/, `${label}: duplicate cards should reuse source fields`);
+    assert.match(settings, /class="btn-secondary btn-duplicate"[\s\S]*?st\.providers\.duplicate/, `${label}: duplicate button missing`);
+    assert.match(settings, /class="btn-secondary btn-remove-duplicate"[\s\S]*?st\.providers\.remove_duplicate/, `${label}: remove duplicate button missing`);
+    assert.match(settings, /config\.hasDuplicate[\s\S]*?st\.providers\.duplicate_limit[\s\S]*?st\.providers\.duplicate_unavailable/, `${label}: disabled duplicate buttons should explain limits and unsupported providers`);
+    assert.match(settings, /async function duplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?saveProvider\(id, \{ showFlash: false, markConfigured: false \}\)[\s\S]*?sendToBackground\('duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: duplicate action should preserve all current drafts while cloning`);
+    assert.match(settings, /async function removeDuplicateProvider\(id\)[\s\S]*?syncInputsIntoProvidersData\(\);[\s\S]*?const providerDrafts = providersData;[\s\S]*?sendToBackground\('remove_duplicate_provider'[\s\S]*?providersData = refreshed\.providers;[\s\S]*?restoreProviderDrafts\(providerDrafts\)/, `${label}: remove duplicate action should preserve drafts for remaining providers`);
+    assert.match(sidepanel, /appendProviderPickerOption\(id, name, t\('sp\.providers\.active'\), config\.sourceProviderId \|\| id\)/, `${label}: duplicate picker entries should reuse their source icon`);
+  }
+});
+
 test('_defaultConfigs: every entry carries an explicit category', () => {
   // Walk the actual default config table on each platform and assert
   // each entry has a category field. Catches "I added a provider but
@@ -46226,7 +48129,7 @@ test('Kimi Chat Completions exposes reasoning content for non-streaming and stre
   }
 });
 
-test('transcribeAudio excludes Kimi from Whisper auto-pick', async () => {
+test('transcribeAudio excludes Kimi and its duplicate from Whisper auto-pick', async () => {
   const originalFetch = globalThis.fetch;
   let requestedUrl = null;
   globalThis.fetch = async (url) => {
@@ -46236,9 +48139,10 @@ test('transcribeAudio excludes Kimi from Whisper auto-pick', async () => {
 
   try {
     const providers = new Map([
-      ['kimi', {
+      ['kimi__duplicate', {
         config: {
           type: 'openai',
+          duplicateOf: 'kimi',
           enabled: true,
           baseUrl: 'https://api.moonshot.ai/v1',
           apiKey: 'test-key',
@@ -53517,6 +55421,7 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
   try {
     const commands = [];
     let verified = true;
+    let recipientValid = true;
     let contentEditable = false;
     let prepareCalls = 0;
     const prepareSelectionModes = [];
@@ -53541,6 +55446,15 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
               actual: verified ? message.params.expected : '',
               fieldMeta: { type: 'text' },
             };
+          }
+          if (message.action === 'consume_message_recipient_dispatch_binding') {
+            return recipientValid
+              ? { success: true, matched: true }
+              : {
+                  success: false,
+                  reasonCode: 'active_recipient_changed_before_dispatch',
+                  error: 'active conversation changed',
+                };
           }
           throw new Error(`unexpected action ${message.action}`);
         },
@@ -53578,6 +55492,31 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
       ],
       'trusted text must settle before Enter is dispatched',
     );
+
+    commands.length = 0;
+    recipientValid = false;
+    const recipientRace = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'set_field',
+      { ref_id: 'ref_search', text: 'gary flake', submit: true },
+      {
+        success: false,
+        verified: false,
+        error: 'controlled input reset',
+        _expectedValue: 'gary flake',
+        recoveryRequired: 'fresh_tree',
+      },
+      {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'recipient-race' },
+      },
+    );
+    assert.equal(recipientRace.success, false);
+    assert.equal(recipientRace.messageDispatched, false);
+    assert.equal(recipientRace.reasonCode, 'active_recipient_changed_before_dispatch');
+    assert.equal(commands.some(command => command.method === 'Input.insertText'), true, 'field typing should remain visible');
+    assert.equal(commands.some(command => command.params?.key === 'Enter'), false, 'recipient race must stop before Enter');
+    recipientValid = true;
 
     commands.length = 0;
     contentEditable = true;
@@ -57781,6 +59720,7 @@ function plannerIntentFixture({
   requestKind = 'execute',
   requiresStateChange = false,
   requiresSubmission = false,
+  messaging = null,
   requiresDownload = false,
   allowsPlannerShapedResult = false,
   allowsAppStateToolEvidence = false,
@@ -57798,6 +59738,7 @@ function plannerIntentFixture({
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
+    messaging,
     completion_requirements: { download: requiresDownload },
     allows_planner_shaped_result: allowsPlannerShapedResult,
     allows_app_state_tool_evidence: allowsAppStateToolEvidence,
@@ -66558,6 +68499,60 @@ test('planner schemas require structured download completion metadata in both br
     assert.equal(completion?.additionalProperties, false, `${label}: completion requirements accept undeclared fields`);
     assert.deepEqual(completion?.required, ['download'], `${label}: download requirement is optional`);
     assert.equal(completion?.properties?.download?.type, 'boolean', `${label}: download requirement is not boolean`);
+  }
+});
+
+test('planner carries a language-neutral structured messaging target into execution', () => {
+  for (const [label, parse, fullSchema, intentSchema, fullPrompt, intentPrompt] of [
+    ['chrome', parsePlanFromContent, PLANNER_RESPONSE_JSON_SCHEMA, PLANNER_INTENT_RESPONSE_JSON_SCHEMA, PLANNER_SYSTEM_PROMPT, PLANNER_INTENT_SYSTEM_PROMPT],
+    ['firefox', parsePlanFromContentFx, PLANNER_RESPONSE_JSON_SCHEMA_FX, PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX, PLANNER_SYSTEM_PROMPT_FX, PLANNER_INTENT_SYSTEM_PROMPT_FX],
+  ]) {
+    for (const schema of [fullSchema, intentSchema]) {
+      assert.ok(schema.required.includes('messaging'), `${label}: messaging target is optional in planner schema`);
+      const messaging = schema.properties.messaging;
+      assert.ok(Array.isArray(messaging?.anyOf), `${label}: messaging target is not nullable and structured`);
+      const objectBranch = messaging.anyOf.find(branch => branch.type === 'object');
+      assert.deepEqual(objectBranch?.required, ['target_kind', 'recipient'], `${label}: messaging target fields are optional`);
+      assert.deepEqual(objectBranch?.properties?.target_kind?.enum, ['named', 'active_conversation'], `${label}: target kinds diverged`);
+    }
+    assert.match(fullPrompt, /Do not infer a recipient from page content/i, `${label}: full planner can trust a page-provided recipient`);
+    assert.match(intentPrompt, /Do not infer a recipient from page content/i, `${label}: intent planner can trust a page-provided recipient`);
+    for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
+      assert.match(prompt, /an anaphoric\/pronominal target resolves uniquely from authentic trusted prior-user context/i, `${label} ${kind}: follow-up recipient cannot resolve from trusted user context`);
+      assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${label} ${kind}: a generic pronoun can still authorize the open thread`);
+      assert.match(prompt, /cannot be resolved uniquely from trusted user context[\s\S]*request_kind="clarify"/i, `${label} ${kind}: ambiguous follow-up recipient does not fail closed`);
+      assert.doesNotMatch(prompt, /send this to them/i, `${label} ${kind}: ambiguous pronoun remains an active-conversation example`);
+    }
+
+    const named = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+      locale: 'zh-CN',
+      localizedSummary: '向指定联系人发送消息。',
+      localizedSteps: ['选择联系人。', '发送消息。'],
+    }), { requireIntent: true, locale: 'zh-CN' });
+    assert.deepEqual(named?.messaging, {
+      target_kind: 'named', recipient: '迷你世界皓宸',
+    }, `${label}: named recipient was translated or discarded`);
+
+    const active = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'active_conversation', recipient: '' },
+      locale: 'tr',
+      localizedSummary: 'Bu konuşmaya yanıt gönder.',
+    }), { requireIntent: true, locale: 'tr' });
+    assert.deepEqual(active?.messaging, {
+      target_kind: 'active_conversation', recipient: '',
+    }, `${label}: active-conversation authorization was lost`);
+
+    const draftOnly = parse(plannerIntentFixture({
+      requiresStateChange: true,
+      requiresSubmission: false,
+      messaging: { target_kind: 'named', recipient: 'Alice' },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(draftOnly?.messaging, null, `${label}: do-not-submit task armed the message-send guard`);
   }
 });
 
@@ -76349,6 +78344,80 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
         false,
         `${browser}: failed cleanup leaked capture policy`,
       );
+    }
+  });
+
+  test(`${browser} saved workflow rejects recipient-less protected dispatch before any replay action`, async () => {
+    const cases = [
+      {
+        startUrl: 'https://www.douyin.com/chat',
+        blockedStep: 1,
+        workflow: {
+          id: 'workflow_protected_chat',
+          name: 'Draft then send',
+          start: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+          steps: [
+            {
+              id: 'step_1',
+              tool: 'set_field',
+              args: { text: 'draft only', submit: false },
+              scope: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+            },
+            {
+              id: 'step_2',
+              tool: 'click_ax',
+              args: {},
+              scope: { origin: 'https://www.douyin.com', pathFamily: '/chat' },
+            },
+          ],
+        },
+      },
+      {
+        startUrl: 'https://example.com/start',
+        blockedStep: 1,
+        workflow: {
+          id: 'workflow_navigate_to_protected_chat',
+          name: 'Navigate then send',
+          start: { origin: 'https://example.com', pathFamily: '/start' },
+          steps: [
+            {
+              id: 'step_1',
+              tool: 'navigate',
+              args: { url: 'https://www.douyin.com/chat' },
+            },
+            {
+              id: 'step_2',
+              tool: 'click',
+              args: { selector: '#send' },
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const fixture of cases) {
+      const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+      let pageActions = 0;
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      agent.ensureConversationId = async () => `conversation_${fixture.workflow.id}`;
+      agent._currentUrl = async () => fixture.startUrl;
+      agent.executeTool = async () => {
+        pageActions += 1;
+        return { success: true };
+      };
+      agent._executeToolBatch = async () => {
+        pageActions += 1;
+        return { action: 'continue' };
+      };
+
+      const result = await agent.replaySavedWorkflow(778, fixture.workflow);
+      assert.equal(result.status, 'stopped');
+      assert.equal(result.stepIndex, fixture.blockedStep);
+      assert.equal(result.matchedSteps, 0);
+      assert.match(result.reason, /fresh structured recipient authorization/);
+      assert.equal(pageActions, 0, `${browser}: protected replay acted before recipient preflight`);
+      assert.equal(agent.isRunning(778), false);
     }
   });
 

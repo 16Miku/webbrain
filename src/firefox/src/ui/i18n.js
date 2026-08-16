@@ -25,8 +25,10 @@ import bn from './locales/bn.js';
 import fa from './locales/fa.js';
 import nl from './locales/nl.js';
 import de from './locales/de.js';
+import emergencyCopy from './locales/emergency-copy.mjs';
 
-const DICTS = { en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de };
+const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de })
+  .map(([code, dict]) => [code, { ...emergencyCopy, ...dict }]));
 const LS_KEY = 'wbLocale';
 const RTL_LOCALES = new Set(['ar', 'he', 'fa']);
 

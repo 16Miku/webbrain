@@ -1,7 +1,10 @@
 import { decompress as decompressZstd } from '../../vendor/fzstd.js';
 
-const KIWIX_CATALOG_URL = 'https://library.kiwix.org/catalog/v2/entries';
+const KIWIX_CATALOG_URL = 'https://opds.library.kiwix.org/catalog/v2/entries';
+const KIWIX_LIBRARY_URL = 'https://download.kiwix.org/library/library_zim.xml';
 const UNDECLARED_LICENSE_NOTICE = 'Not declared by the current catalog/archive metadata. Wikipedia text is generally CC BY-SA 4.0 unless otherwise noted; archive components may use additional licenses.';
+const SHARED_KIWIX_ARCHIVE_CACHE = new Map();
+const MAX_CACHED_KIWIX_ARCHIVES = 3;
 export const APOCALYPSE_FILE_PERMISSION_REQUIRED = 'file-permission-required';
 
 function filePermissionError() {
@@ -81,6 +84,38 @@ export function parseKiwixCatalog(xml) {
   }).filter(item => item.id && item.language && item.metaUrl);
 }
 
+export function parseKiwixLibrary(xml, language = 'eng') {
+  const selectedLanguage = String(language || 'eng').toLowerCase();
+  const books = String(xml || '').match(/<book\b[^>]*\/?>/gi) || [];
+  return books.map((book) => {
+    const name = attrText(book, 'name');
+    const languages = attrText(book, 'language').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+    if (!/^wikipedia(?:_|$)/i.test(name) || !languages.includes(selectedLanguage)) return null;
+    const flavour = attrText(book, 'flavour');
+    const creator = attrText(book, 'creator');
+    const publisher = attrText(book, 'publisher');
+    const declaredLicense = attrText(book, 'license');
+    const catalogSizeKiB = positiveInteger(attrText(book, 'size'));
+    return {
+      id: attrText(book, 'id'),
+      title: attrText(book, 'title') || name,
+      summary: attrText(book, 'description'),
+      language: selectedLanguage,
+      name,
+      flavour,
+      tier: classifyArchiveTier(name, flavour),
+      tags: attrText(book, 'tags').split(';').filter(Boolean),
+      articleCount: positiveInteger(attrText(book, 'articleCount')),
+      archiveDate: attrText(book, 'date'),
+      metaUrl: attrText(book, 'url'),
+      catalogSize: catalogSizeKiB * 1024,
+      source: [creator, publisher].filter(Boolean).join(' / ') || 'Kiwix / openZIM',
+      license: declaredLicense || UNDECLARED_LICENSE_NOTICE,
+      licenseDeclared: Boolean(declaredLicense),
+    };
+  }).filter(item => item?.id && item.metaUrl);
+}
+
 export function resolveKiwixDownload(item, metalinkXml) {
   const fileBlock = (String(metalinkXml || '').match(/<file\b[^>]*>[\s\S]*?<\/file>/i) || [])[0] || '';
   const pieces = (fileBlock.match(/<pieces\b[^>]*>[\s\S]*?<\/pieces>/i) || [])[0] || '';
@@ -116,7 +151,7 @@ export function resolveKiwixDownload(item, metalinkXml) {
 export function kiwixCatalogUrl(language) {
   const url = new URL(KIWIX_CATALOG_URL);
   url.searchParams.set('lang', String(language || 'eng'));
-  url.searchParams.set('q', 'wikipedia');
+  url.searchParams.set('category', 'wikipedia');
   url.searchParams.set('count', '200');
   return url.href;
 }
@@ -186,6 +221,27 @@ function decodeHtmlText(html) {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeHtmlArticleText(html) {
+  return String(html || '')
+    .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[^]*?-->/g, ' ')
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|table|tr|ul)>/gi, '\n\n')
+    .replace(/<li\b[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code[0].toLowerCase() === 'x' ? code.slice(1) : code, code[0].toLowerCase() === 'x' ? 16 : 10)))
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/[^\S\r\n]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -500,6 +556,7 @@ export async function openKiwixZim(source, metadata = {}) {
       results.push({
         title: entry.title,
         excerpt,
+        path: entry.url,
         url: wikipediaArticleUrl(wikipediaLanguage, entry.url),
         ...provenance,
       });
@@ -507,7 +564,29 @@ export async function openKiwixZim(source, metadata = {}) {
     return results;
   }
 
-  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, search };
+  async function readArticle(path, options = {}) {
+    const normalizedPath = String(path || '').trim().replace(/^\/+/, '').replace(/\s+/g, '_');
+    if (!normalizedPath) throw new Error('Choose a Wikipedia article to read.');
+    const located = (await findPaths(normalizedPath, 1))[0];
+    if (!located || located.url !== normalizedPath) throw new Error('The selected article is not present in this archive.');
+    const entry = await resolvedEntry(located);
+    if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) {
+      throw new Error('The selected archive entry is not a readable text article.');
+    }
+    const maxChars = Math.max(2_000, Math.min(500_000, Number(options.maxChars) || 250_000));
+    const text = decodeHtmlArticleText(new TextDecoder().decode(await clusterBlob(entry.clusterIndex, entry.blobIndex)));
+    const wikipediaLanguage = ISO_639_3_TO_1[provenance.language] || provenance.language.slice(0, 2);
+    return {
+      title: located.title || entry.title,
+      path: located.url,
+      text: text.slice(0, maxChars),
+      truncated: text.length > maxChars,
+      url: wikipediaArticleUrl(wikipediaLanguage, located.url),
+      ...provenance,
+    };
+  }
+
+  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, search, readArticle };
 }
 
 const APOCALYPSE_DB_NAME = 'webbrain_apocalypse_mode';
@@ -742,6 +821,7 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
 }
 
 const MAX_RETRY_ATTEMPTS = 6;
+const DEFAULT_MAX_PIECES_PER_WAKE = 8;
 const BASE_RETRY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 export const APOCALYPSE_DOWNLOAD_ALARM = 'wb_apocalypse_archive_download';
@@ -817,7 +897,9 @@ export function createApocalypseArchiveManager(options = {}) {
   const randomId = options.randomId || (() => globalThis.crypto.randomUUID());
   const now = options.now || (() => Date.now());
   const configuredMaxPieces = Number(options.maxPiecesPerWake);
-  const maxPiecesPerWake = Number.isFinite(configuredMaxPieces) ? Math.max(1, Math.floor(configuredMaxPieces)) : Number.POSITIVE_INFINITY;
+  const maxPiecesPerWake = Number.isFinite(configuredMaxPieces)
+    ? Math.max(1, Math.floor(configuredMaxPieces))
+    : DEFAULT_MAX_PIECES_PER_WAKE;
   const controllers = new Map();
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');
@@ -1161,9 +1243,9 @@ export async function searchApocalypseArchives(query, options = {}) {
   const store = options.store || createApocalypseStore();
   const storage = options.storage || createOpfsArchiveStorage();
   const config = await store.getConfig();
-  if (config.enabled !== true) return [];
+  if (config.enabled !== true && options.requireEnabled !== false) return [];
   const archives = (await store.listArchives())
-    .filter(record => record.status === 'ready')
+    .filter(record => record.status === 'ready' && (!options.archiveId || record.id === options.archiveId))
     .sort((left, right) => String(right.archiveDate || '').localeCompare(String(left.archiveDate || '')));
   const providers = options.providers || [createKiwixZimProvider({ storage })];
   const results = [];
@@ -1196,8 +1278,29 @@ export async function searchApocalypseArchives(query, options = {}) {
   return results.slice(0, Math.max(1, Math.min(10, Number(options.limit) || 3)));
 }
 
+function cachedKiwixArchive(record, storage, cache) {
+  const targetIdentity = record?.target?.kind === 'file-handle'
+    ? record.target.handle?.name || record.filename || 'selected-file'
+    : record?.target?.key || record?.filename || 'browser-storage';
+  const key = [record?.id, record?.generation, record?.updatedAt, record?.size, targetIdentity].join(':');
+  if (cache.has(key)) {
+    const pending = cache.get(key);
+    cache.delete(key);
+    cache.set(key, pending);
+    return pending;
+  }
+  const pending = storage.open(record.target).then(source => openKiwixZim(source, record));
+  cache.set(key, pending);
+  while (cache.size > MAX_CACHED_KIWIX_ARCHIVES) cache.delete(cache.keys().next().value);
+  pending.catch(() => {
+    if (cache.get(key) === pending) cache.delete(key);
+  });
+  return pending;
+}
+
 export function createKiwixZimProvider(options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
+  const archiveCache = options.archiveCache || SHARED_KIWIX_ARCHIVE_CACHE;
   return {
     id: 'kiwix-zim',
     supports(record) {
@@ -1205,10 +1308,32 @@ export function createKiwixZimProvider(options = {}) {
         && (record?.target?.kind === 'opfs' || record?.target?.kind === 'file-handle');
     },
     async search(record, query, searchOptions = {}) {
-      const archive = await openKiwixZim(await storage.open(record.target), record);
-      return await archive.search(query, searchOptions);
+      const archive = await cachedKiwixArchive(record, storage, archiveCache);
+      return (await archive.search(query, searchOptions)).map(result => ({
+        ...result,
+        archiveId: record.id,
+        archiveTitle: record.title || record.filename,
+      }));
+    },
+    async read(record, path, readOptions = {}) {
+      const archive = await cachedKiwixArchive(record, storage, archiveCache);
+      return {
+        ...(await archive.readArticle(path, readOptions)),
+        archiveId: record.id,
+        archiveTitle: record.title || record.filename,
+      };
     },
   };
+}
+
+export async function readApocalypseArticle(archiveId, path, options = {}) {
+  const store = options.store || createApocalypseStore();
+  const storage = options.storage || createOpfsArchiveStorage();
+  const record = (await store.listArchives()).find(item => item.id === archiveId && item.status === 'ready');
+  if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
+  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  if (!provider?.read) throw new Error('This archive cannot be opened by the text reader.');
+  return await provider.read(record, path, { maxChars: options.maxChars });
 }
 
 function importedArchiveRecord(metadata, file, inspected, id, target, status) {
@@ -1345,6 +1470,8 @@ export function createApocalypseController(api, options = {}) {
   const store = options.store || createApocalypseStore();
   const storage = options.storage || createOpfsArchiveStorage();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const catalogTimeoutMs = Math.max(1_000, Number(options.catalogTimeoutMs) || 5_000);
+  const libraryTimeoutMs = Math.max(5_000, Number(options.libraryTimeoutMs) || 30_000);
   const schedule = options.schedule || ((delayMs) => api?.alarms?.create?.(APOCALYPSE_DOWNLOAD_ALARM, {
     delayInMinutes: Math.max(0.05, Number(delayMs) / 60_000),
   }));
@@ -1354,6 +1481,7 @@ export function createApocalypseController(api, options = {}) {
   const now = options.now || (() => Date.now());
   let lastRecoveryAt = Number.NEGATIVE_INFINITY;
   let recoveryInFlight = null;
+  let libraryCatalogTextPromise = null;
   const scheduleUpdateChecks = options.scheduleUpdateChecks || (() => api?.alarms?.create?.(APOCALYPSE_UPDATE_ALARM, {
     delayInMinutes: 1,
     periodInMinutes: APOCALYPSE_UPDATE_PERIOD_MINUTES,
@@ -1395,12 +1523,47 @@ export function createApocalypseController(api, options = {}) {
     return { ...state, archives, storage: { usage: capacity.usage, quota: capacity.quota } };
   }
 
+  async function fetchCatalogResponse(url, timeoutMs) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      return await fetchImpl(url, {
+        credentials: 'omit',
+        redirect: 'follow',
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  async function loadLibraryCatalog() {
+    if (!libraryCatalogTextPromise) {
+      libraryCatalogTextPromise = fetchCatalogResponse(KIWIX_LIBRARY_URL, libraryTimeoutMs).then(async (response) => {
+        if (!response.ok) throw new Error(`Kiwix library returned HTTP ${response.status}.`);
+        return await response.text();
+      }).catch((error) => {
+        libraryCatalogTextPromise = null;
+        throw error;
+      });
+    }
+    return await libraryCatalogTextPromise;
+  }
+
   async function catalog(language) {
     const config = await store.getConfig();
     if (config.enabled !== true) throw new Error('Apocalypse Mode is disabled. Enable it before loading the Kiwix catalog.');
-    const response = await fetchImpl(kiwixCatalogUrl(language), { credentials: 'omit', redirect: 'follow' });
-    if (!response.ok) throw new Error(`Kiwix catalog returned HTTP ${response.status}.`);
-    return parseKiwixCatalog(await response.text());
+    try {
+      const response = await fetchCatalogResponse(kiwixCatalogUrl(language), catalogTimeoutMs);
+      if (!response.ok) throw new Error(`Kiwix catalog returned HTTP ${response.status}.`);
+      const items = parseKiwixCatalog(await response.text());
+      if (items.length) return items;
+    } catch { /* Fall back to Kiwix's static library catalog below. */ }
+    try {
+      const items = parseKiwixLibrary(await loadLibraryCatalog(), language);
+      if (items.length) return items;
+    } catch { /* Present one stable, actionable error to the management page. */ }
+    throw new Error('Kiwix archives are temporarily unavailable. Try again.');
   }
 
   async function resolve(item) {

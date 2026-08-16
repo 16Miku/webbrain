@@ -53,12 +53,8 @@ import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 import {
-  WEBGPU_DTYPE,
-  WEBGPU_MODEL_ID,
-  WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_ENABLED_KEY,
-  normalizeWebgpuModelId,
 } from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
@@ -334,233 +330,21 @@ let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
 let currentVisionConfig = {};
 let webgpuVisionEnabled = false;
-let webgpuDownloadState = {
-  status: 'checking',
-  ready: false,
-  modelId: WEBGPU_MODEL_ID,
-  dtype: WEBGPU_DTYPE,
-  file: '',
-  loaded: 0,
-  total: 0,
-  progress: 0,
-  error: '',
-};
-let webgpuDownloadStatusRequest = 0;
-
-function normalizeWebgpuDownloadState(state = {}) {
-  const allowedStatuses = new Set(['checking', 'not-downloaded', 'downloading', 'paused', 'stopping', 'ready', 'error']);
-  const status = allowedStatuses.has(state.status) ? state.status : 'not-downloaded';
-  const loaded = Math.max(0, Number(state.loaded) || 0);
-  const total = Math.max(0, Number(state.total) || 0);
-  const progress = status === 'ready'
-    ? 100
-    : Math.max(0, Math.min(100, Number(state.progress) || (total > 0 ? loaded / total * 100 : 0)));
-  return {
-    status,
-    ready: state.ready === true || status === 'ready',
-    modelId: String(state.modelId || ''),
-    dtype: state.dtype && typeof state.dtype === 'object'
-      ? state.dtype
-      : String(state.dtype || WEBGPU_DTYPE),
-    file: String(state.file || ''),
-    loaded,
-    total,
-    progress,
-    error: String(state.error || ''),
-  };
-}
-
-function selectedWebgpuModelId() {
-  const input = document.querySelector('input[data-provider="webgpu"][data-key="model"]');
-  return normalizeWebgpuModelId(input?.value || providersData.webgpu?.model || WEBGPU_MODEL_ID);
-}
-
-function webgpuModelPresentation(modelId) {
-  const normalized = normalizeWebgpuModelId(modelId);
-  const preset = WEBGPU_MODEL_PRESETS.find(option => option.id === normalized);
-  return {
-    id: normalized,
-    label: preset?.label || normalized,
-    size: preset?.size || 'Size varies',
-    dtypeLabel: preset?.dtypeLabel || WEBGPU_DTYPE,
-    url: `https://huggingface.co/${normalized.split('/').map(encodeURIComponent).join('/')}/`,
-  };
-}
-
-function updateWebgpuModelPresentation(modelId) {
-  const presentation = webgpuModelPresentation(modelId);
-  const link = document.querySelector('[data-webgpu-model-link]');
-  const size = document.querySelector('[data-webgpu-model-size]');
-  if (link) {
-    link.href = presentation.url;
-    link.textContent = presentation.label;
-  }
-  if (size) size.textContent = `${presentation.size} · ${presentation.dtypeLabel}`;
-}
-
-function formatWebgpuBytes(bytes) {
-  const value = Math.max(0, Number(bytes) || 0);
-  if (value < 1024) return `${Math.round(value)} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let amount = value / 1024;
-  let index = 0;
-  while (amount >= 1024 && index < units.length - 1) {
-    amount /= 1024;
-    index++;
-  }
-  return `${amount >= 100 ? amount.toFixed(0) : amount >= 10 ? amount.toFixed(1) : amount.toFixed(2)} ${units[index]}`;
-}
-
-function webgpuDownloadStatusText(state = webgpuDownloadState) {
-  const progress = Math.round(state.progress);
-  switch (state.status) {
-    case 'checking': return t('st.providers.webgpu_download.checking');
-    case 'downloading': return t('st.providers.webgpu_download.downloading', { progress });
-    case 'paused': return t('st.providers.webgpu_download.paused', { progress });
-    case 'stopping': return t('st.providers.webgpu_download.stopping');
-    case 'ready': return t('st.providers.webgpu_download.ready');
-    case 'error': return t('st.providers.webgpu_download.error');
-    default: return t('st.providers.webgpu_download.not_downloaded');
-  }
-}
-
-function webgpuDownloadDetailText(state = webgpuDownloadState) {
-  if (state.status === 'error') return state.error || t('st.providers.webgpu_download.error_detail');
-  if (state.status === 'ready') return t('st.providers.webgpu_download.ready_detail');
-  const file = state.file.split('/').pop() || '';
-  if (state.total > 0) {
-    const bytes = `${formatWebgpuBytes(state.loaded)} / ${formatWebgpuBytes(state.total)}`;
-    return file ? `${file} · ${bytes}` : bytes;
-  }
-  if (file) return file;
-  if (state.status === 'paused') return t('st.providers.webgpu_download.paused_detail');
-  if (state.status === 'downloading') return t('st.providers.webgpu_download.preparing');
-  return t('st.providers.webgpu_download.required');
-}
-
-function updateWebgpuDownloadPanel() {
-  const panel = document.querySelector('[data-webgpu-download-panel]');
-  if (!panel) return;
-  const state = webgpuDownloadState;
-  const progress = Math.round(state.progress);
-  panel.dataset.state = state.status;
-  panel.dataset.indeterminate = String(state.status === 'downloading' && state.total <= 0);
-  const status = panel.querySelector('[data-webgpu-download-status]');
-  const detail = panel.querySelector('[data-webgpu-download-detail]');
-  const track = panel.querySelector('[data-webgpu-download-track]');
-  const fill = panel.querySelector('[data-webgpu-download-fill]');
-  if (status) status.textContent = webgpuDownloadStatusText(state);
-  if (detail) detail.textContent = webgpuDownloadDetailText(state);
-  if (fill) fill.style.width = `${progress}%`;
-  if (track) {
-    track.setAttribute('aria-valuenow', String(progress));
-    track.setAttribute('aria-valuetext', webgpuDownloadStatusText(state));
-  }
-  const start = panel.querySelector('[data-webgpu-download-action="start"]');
-  const pause = panel.querySelector('[data-webgpu-download-action="pause"]');
-  const resume = panel.querySelector('[data-webgpu-download-action="resume"]');
-  const stop = panel.querySelector('[data-webgpu-download-action="stop"]');
-  if (start) start.hidden = !['not-downloaded', 'error'].includes(state.status);
-  if (pause) pause.hidden = state.status !== 'downloading';
-  if (resume) resume.hidden = state.status !== 'paused';
-  if (stop) stop.hidden = !['downloading', 'paused', 'stopping', 'ready', 'error'].includes(state.status);
-  for (const button of [start, pause, resume, stop]) {
-    if (button) button.disabled = ['checking', 'stopping'].includes(state.status);
-  }
-  const transferActive = ['downloading', 'paused', 'stopping'].includes(state.status);
-  const modelSelect = document.querySelector('.model-select[data-model-for="webgpu"]');
-  const modelInput = document.querySelector('input[data-provider="webgpu"][data-key="model"]');
-  if (modelSelect) modelSelect.disabled = transferActive;
-  if (modelInput) modelInput.disabled = transferActive;
-  const activate = document.querySelector('.btn-activate[data-provider="webgpu"]');
-  if (activate) {
-    activate.disabled = !state.ready;
-    activate.title = state.ready ? '' : t('st.providers.webgpu_download.activate_blocked');
-  }
-}
-
-function setWebgpuDownloadState(state) {
-  const normalized = normalizeWebgpuDownloadState(state);
-  let selectedModel = '';
-  try { selectedModel = selectedWebgpuModelId(); } catch {}
-  if (normalized.modelId && selectedModel && normalized.modelId !== selectedModel) return;
-  webgpuDownloadState = normalized;
-  updateWebgpuDownloadPanel();
-}
-
-async function refreshWebgpuDownloadStatus() {
-  const requestId = ++webgpuDownloadStatusRequest;
-  try {
-    const state = await sendToBackground('get_webgpu_download_status');
-    if (requestId === webgpuDownloadStatusRequest) setWebgpuDownloadState(state);
-  } catch (error) {
-    if (requestId === webgpuDownloadStatusRequest) {
-      setWebgpuDownloadState({ status: 'error', error: error.message });
-    }
-  }
-}
-
-async function runWebgpuDownloadAction(action) {
-  const actionMap = {
-    start: 'start_webgpu_download',
-    resume: 'start_webgpu_download',
-    pause: 'pause_webgpu_download',
-    stop: 'stop_webgpu_download',
-  };
-  const backgroundAction = actionMap[action];
-  if (!backgroundAction) return;
-  try {
-    await saveProvider('webgpu', {
-      showFlash: false,
-      markConfigured: false,
-    });
-  } catch (error) {
-    setWebgpuDownloadState({
-      status: 'error',
-      modelId: '',
-      error: error.message,
-    });
-    return;
-  }
-  if (action === 'start' || action === 'resume') {
-    setWebgpuDownloadState({ ...webgpuDownloadState, status: 'downloading', error: '' });
-  } else if (action === 'pause') {
-    setWebgpuDownloadState({ ...webgpuDownloadState, status: 'paused', error: '' });
-  } else {
-    setWebgpuDownloadState({ ...webgpuDownloadState, status: 'stopping', error: '' });
-  }
-  try {
-    setWebgpuDownloadState(await sendToBackground(backgroundAction));
-  } catch (error) {
-    setWebgpuDownloadState({ ...webgpuDownloadState, status: 'error', ready: false, error: error.message });
-  }
-}
-
-if (globalThis.chrome?.runtime?.onMessage) {
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type !== 'webgpu-text-download-state') return false;
-    setWebgpuDownloadState(message.state);
-    return false;
-  });
-}
 
 if (globalThis.chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes[WEBGPU_VISION_ENABLED_KEY]) loadVisionConfig().catch(() => {});
     if (!changes.providers?.newValue) return;
-    const nextOllama = changes.providers?.newValue?.ollama;
-    if (nextOllama && providersData.ollama) {
-      providersData.ollama.visionDetection = nextOllama.visionDetection || null;
-      refreshOllamaVisionStatus();
-    }
-    for (const id of AUTO_VISION_PROVIDER_IDS) {
-      const next = changes.providers.newValue[id];
-      if (!next || !providersData[id]) continue;
+    for (const [id, next] of Object.entries(changes.providers.newValue)) {
+      if (!providersData[id] || next.visionDetection === undefined) continue;
       // Background detection may finish while the settings page contains
       // unsaved drafts. Refresh only the detected result.
       providersData[id].visionDetection = next.visionDetection || null;
-      refreshVisionStatus(id);
+      const definitionId = providerDefinitionId(id);
+      if (VISION_UI_PROVIDER_IDS.has(definitionId)) {
+        refreshVisionStatus(id);
+      }
     }
   });
 }
@@ -2367,6 +2151,10 @@ const VISION_MODE_FIELD = {
 };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 
+function providerDefinitionId(id, config = providersData[id]) {
+  return String(config?.sourceProviderId || config?.duplicateOf || id || '');
+}
+
 function visionStatusKey(id, config) {
   if (!providerVisionDetectionMatches(id, config)) return 'st.provider.field.vision_pending';
   return config.visionDetection.supportsVision
@@ -2375,9 +2163,10 @@ function visionStatusKey(id, config) {
 }
 
 function refreshVisionStatus(id) {
-  if (!VISION_UI_PROVIDER_IDS.has(id)) return;
-  const hint = id === 'ollama'
-    ? document.querySelector('[data-ollama-vision-status]')
+  const definitionId = providerDefinitionId(id);
+  if (!VISION_UI_PROVIDER_IDS.has(definitionId)) return;
+  const hint = definitionId === 'ollama'
+    ? document.querySelector(`[data-ollama-vision-status="${id}"]`)
     : document.querySelector(`[data-vision-status="${id}"]`);
   if (!hint) return;
   const mode = document.querySelector(`select[data-provider="${id}"][data-key="visionMode"]`)?.value || 'auto';
@@ -2397,7 +2186,8 @@ function refreshOllamaVisionStatus() {
 }
 
 function providerVisionDetectionMatches(id, config, detection = config?.visionDetection) {
-  if (id !== 'ollama') return visionDetectionMatches(id, config, detection, { allowTransient: true });
+  const definitionId = providerDefinitionId(id, config);
+  if (definitionId !== 'ollama') return visionDetectionMatches(definitionId, config, detection, { allowTransient: true });
   const model = String(config?.model || '').trim();
   const baseUrl = canonicalizeOllamaBaseUrl(config?.baseUrl);
   return !!model && !!baseUrl
@@ -2782,23 +2572,6 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
-    webgpu: {
-      fields: [
-        {
-          key: 'model',
-          labelKey: 'st.provider.field.model',
-          type: 'text',
-          placeholder: 'owner/repository',
-          suggestions: WEBGPU_MODEL_PRESETS.map(option => option.id),
-          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.map(option => [
-            option.id,
-            `${option.label} — ${option.id}`,
-          ])),
-        },
-        CONTEXT_WINDOW_FIELD,
-        PROMPT_TIER_FIELD,
-      ],
-    },
     azure_openai: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://{resource}.openai.azure.com' },
@@ -3052,7 +2825,7 @@ function renderProviders() {
 
   providersContainer.appendChild(renderProviderFilterBar());
 
-  let entries = Object.entries(providersData);
+  let entries = Object.entries(providersData).filter(([id]) => id !== 'webgpu');
   const providerQuery = normalizeGeneralSearchText(providerSearchQuery);
   if (providerQuery) {
     entries = entries
@@ -3068,7 +2841,8 @@ function renderProviders() {
   for (const [id, config] of entries) {
     const isSelected = id === activeProviderId;
     const isConfigured = id !== 'webbrain_cloud' && config.configured === true;
-    const fieldDefs = providerConfigs[id]?.fields || [];
+    const definitionId = providerDefinitionId(id, config);
+    const fieldDefs = providerConfigs[definitionId]?.fields || [];
 
     // Active is a strict status filter. Category filters keep the selected
     // provider visible so users never lose track of the provider in use.
@@ -3095,8 +2869,8 @@ function renderProviders() {
             <select data-provider="${id}" data-key="${field.key}" data-type="select">${optionsHTML}</select>
           </div>
         `;
-        if (VISION_UI_PROVIDER_IDS.has(id) && field.key === 'visionMode') {
-          const statusAttribute = id === 'ollama' ? 'data-ollama-vision-status' : `data-vision-status="${id}"`;
+        if (VISION_UI_PROVIDER_IDS.has(definitionId) && field.key === 'visionMode') {
+          const statusAttribute = definitionId === 'ollama' ? `data-ollama-vision-status="${id}"` : `data-vision-status="${id}"`;
           fieldsHTML += `<div class="field-hint" ${statusAttribute}${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(visionStatusKey(id, config)))}</div>`;
         }
       } else if (field.type === 'checkbox') {
@@ -3129,7 +2903,7 @@ function renderProviders() {
         `;
       } else {
         const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy'];
-        const canLoadModels = localModelProviders.includes(id) && field.key === 'model';
+        const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
         const loadedModelsDialogHTML = canLoadModels
@@ -3191,41 +2965,13 @@ function renderProviders() {
            ${t('st.providers.webbrain_data_use.body', { privacyLink, subscribeLink, accountLink })}
          </div>`;
     }
-    if (id === 'webgpu') {
-      const selectedModel = webgpuModelPresentation(config.model);
-      const modelLink = `<a href="${escapeHtml(selectedModel.url)}" target="_blank" rel="noopener noreferrer" data-webgpu-model-link>${escapeHtml(selectedModel.label)}</a>`;
-      providerNote = `<div style="margin-top:10px;padding:10px 12px;border-radius:6px;
-                  background:rgba(74,144,217,0.08);border:1px solid rgba(74,144,217,0.22);
-                  font-size:12px;color:var(--text2);line-height:1.5;">
-           ${t('st.providers.webgpu_note.managed_body', { modelLink })}
-         </div>
-         <section class="webgpu-transfer" data-webgpu-download-panel data-state="${escapeHtml(webgpuDownloadState.status)}" data-indeterminate="${webgpuDownloadState.total <= 0}" aria-labelledby="webgpu-transfer-title">
-           <div class="webgpu-transfer-heading">
-             <span class="webgpu-transfer-title" id="webgpu-transfer-title">${escapeHtml(t('st.providers.webgpu_download.title'))}</span>
-             <span class="webgpu-transfer-size" data-webgpu-model-size>${escapeHtml(selectedModel.size)} · ${escapeHtml(selectedModel.dtypeLabel)}</span>
-           </div>
-           <div class="webgpu-transfer-status-row" role="status" aria-live="polite">
-             <span class="webgpu-transfer-dot" aria-hidden="true"></span>
-             <span class="webgpu-transfer-status" data-webgpu-download-status>${escapeHtml(webgpuDownloadStatusText())}</span>
-           </div>
-           <div class="webgpu-transfer-track" data-webgpu-download-track role="progressbar" aria-label="${escapeHtml(t('st.providers.webgpu_download.progress_label'))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(webgpuDownloadState.progress)}">
-             <div class="webgpu-transfer-fill" data-webgpu-download-fill style="width:${Math.round(webgpuDownloadState.progress)}%"></div>
-           </div>
-           <div class="webgpu-transfer-detail" data-webgpu-download-detail>${escapeHtml(webgpuDownloadDetailText())}</div>
-           <div class="webgpu-transfer-actions">
-             <button type="button" class="btn-primary" data-webgpu-download-action="start">${escapeHtml(t('st.providers.webgpu_download.start'))}</button>
-             <button type="button" class="btn-secondary" data-webgpu-download-action="pause" hidden>${escapeHtml(t('st.providers.webgpu_download.pause'))}</button>
-             <button type="button" class="btn-primary" data-webgpu-download-action="resume" hidden>${escapeHtml(t('st.providers.webgpu_download.resume'))}</button>
-             <button type="button" class="btn-secondary" data-webgpu-download-action="stop" hidden>${escapeHtml(t('st.providers.webgpu_download.stop'))}</button>
-           </div>
-         </section>`;
-    }
     const extensionOrigin = chrome.runtime.getURL('').replace(/\/$/, '');
-    const ollamaWarning = id === 'ollama'
+    const ollamaWarningTitleId = `ollama-warning-title-${id}`;
+    const ollamaWarning = definitionId === 'ollama'
       ? `<aside class="provider-warning provider-ollama-warning" role="note"
-                aria-labelledby="ollama-warning-title">
+                aria-labelledby="${ollamaWarningTitleId}">
            <div class="provider-warning-label">${escapeHtml(t('st.providers.ollama_warning.label'))}</div>
-           <strong class="provider-warning-title" id="ollama-warning-title">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
+           <strong class="provider-warning-title" id="${ollamaWarningTitleId}">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
            <p>${escapeHtml(t('st.providers.ollama_warning.body'))}</p>
            <p>${escapeHtml(t('st.providers.ollama_warning.restart'))}</p>
            <pre><code>OLLAMA_ORIGINS="${escapeHtml(extensionOrigin)}" ollama serve</code></pre>
@@ -3246,6 +2992,13 @@ function renderProviders() {
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
         ${billingButton}
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
+        ${config.isDuplicate
+          ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
+          : (config.canDuplicate
+            ? `<button class="btn-secondary btn-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.duplicate'))}</button>`
+            : (config.hasDuplicate
+              ? `<button class="btn-secondary btn-duplicate" data-provider="${id}" aria-disabled="true" title="${escapeHtml(t('st.providers.duplicate_limit'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`
+              : `<button class="btn-secondary btn-duplicate" data-provider="${id}" aria-disabled="true" title="${escapeHtml(t('st.providers.duplicate_unavailable'))}">${escapeHtml(t('st.providers.duplicate'))}</button>`))}
       </div>
       <div class="test-result" id="test-${id}"></div>
     `;
@@ -3276,6 +3029,12 @@ function renderProviders() {
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
   });
+  document.querySelectorAll('.btn-duplicate:not([aria-disabled="true"])').forEach(btn => {
+    btn.addEventListener('click', () => duplicateProvider(btn.dataset.provider));
+  });
+  document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
+  });
   document.querySelectorAll('.btn-load-models').forEach(btn => {
     btn.addEventListener('click', () => loadProviderModels(btn.dataset.provider));
   });
@@ -3286,9 +3045,6 @@ function renderProviders() {
       window.open(href, '_blank', 'noopener,noreferrer');
     });
   });
-  document.querySelectorAll('[data-webgpu-download-action]').forEach((button) => {
-    button.addEventListener('click', () => runWebgpuDownloadAction(button.dataset.webgpuDownloadAction));
-  });
   document.querySelectorAll('.model-select').forEach(sel => {
     sel.addEventListener('change', () => {
       const providerId = sel.dataset.modelFor;
@@ -3298,36 +3054,13 @@ function renderProviders() {
         input.style.display = '';
         input.value = '';
         input.focus();
-        if (providerId === 'webgpu') {
-          setWebgpuDownloadState({ status: 'not-downloaded', modelId: '', ready: false });
-        }
       } else {
         input.style.display = 'none';
         input.value = sel.value;
-        if (providerId === 'webgpu') {
-          providersData.webgpu.model = sel.value;
-          updateWebgpuModelPresentation(sel.value);
-          setWebgpuDownloadState({ status: 'checking', modelId: sel.value, ready: false });
-          void saveProvider('webgpu', { showFlash: false, markConfigured: false })
-            .catch(error => setProviderTestResult('webgpu', 'fail', t('st.providers.failed', { error: error.message })));
-        }
       }
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
     });
-  });
-  document.querySelector('input[data-provider="webgpu"][data-key="model"]')?.addEventListener('change', async (event) => {
-    try {
-      const model = normalizeWebgpuModelId(event.currentTarget.value);
-      event.currentTarget.value = model;
-      providersData.webgpu.model = model;
-      updateWebgpuModelPresentation(model);
-      setWebgpuDownloadState({ status: 'checking', modelId: model, ready: false });
-      await saveProvider('webgpu', { showFlash: false, markConfigured: false });
-    } catch (error) {
-      setWebgpuDownloadState({ status: 'error', modelId: '', ready: false, error: error.message });
-      setProviderTestResult('webgpu', 'fail', t('st.providers.failed', { error: error.message }));
-    }
   });
   document.querySelectorAll('select[data-key="visionMode"]').forEach((select) => {
     select.addEventListener('change', () => refreshVisionStatus(select.dataset.provider));
@@ -3346,11 +3079,9 @@ function renderProviders() {
     input.addEventListener('input', () => {
       refreshProviderCompatibilitySummary(input.dataset.provider);
       refreshVisionStatus(input.dataset.provider);
-      if (input.dataset.provider === 'ollama') refreshOllamaVisionStatus();
+      if (providerDefinitionId(input.dataset.provider) === 'ollama') refreshVisionStatus(input.dataset.provider);
     });
   });
-  updateWebgpuDownloadPanel();
-  if (document.querySelector('[data-webgpu-download-panel]')) void refreshWebgpuDownloadStatus();
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
     button.addEventListener('click', () => {
       const id = button.dataset.provider;
@@ -3415,6 +3146,7 @@ function renderProviderFilterBar() {
     { key: 'router', labelKey: 'st.providers.filter.router' },
   ];
   const filterCounts = Object.entries(providersData).reduce((counts, [id, config]) => {
+    if (id === 'webgpu') return counts;
     counts.all += 1;
     if (providerIsActive(id, config)) counts.active += 1;
     const category = config.category || 'cloud';
@@ -3506,7 +3238,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   header.innerHTML = `
     <div class="provider-header-left">
       <span class="provider-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
-      ${providerIconHtml(id, label)}
+      ${providerIconHtml(providerDefinitionId(id, config), label)}
       <span class="provider-name">${escapeHtml(label)}</span>
       <span class="provider-type">${escapeHtml(config.type)}</span>
       ${config.category ? `<span class="provider-category-badge provider-category-${escapeHtml(config.category)}">${escapeHtml(config.category)}</span>` : ''}
@@ -3544,7 +3276,7 @@ function providerIsActive(id, config) {
 
 function refreshActiveProviderFilterCount() {
   const count = Object.entries(providersData)
-    .filter(([id, config]) => providerIsActive(id, config))
+    .filter(([id, config]) => id !== 'webgpu' && providerIsActive(id, config))
     .length;
   const countEl = document.querySelector('.provider-filter-pill[data-filter="active"] .provider-filter-count');
   if (countEl) countEl.textContent = String(count);
@@ -3685,13 +3417,6 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
     });
-    if (id === 'webgpu') {
-      const modelSelect = document.querySelector('.model-select[data-model-for="webgpu"]');
-      if (modelSelect?.value === '__custom__' && !String(config.model || '').trim()) {
-        throw new Error('Enter a Hugging Face repository as owner/repository.');
-      }
-      config.model = normalizeWebgpuModelId(config.model);
-    }
     apiKeyWarning = providerApiKeyWarning(id, config);
     await sendToBackground('update_provider', { providerId: id, config, markConfigured });
   } catch (e) {
@@ -3702,20 +3427,13 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
   if (providersData[id]) {
     const priorVisionDetection = providersData[id].visionDetection;
     Object.assign(providersData[id], config);
-    if (VISION_UI_PROVIDER_IDS.has(id) && (
+    if (VISION_UI_PROVIDER_IDS.has(providerDefinitionId(id, providersData[id])) && (
       providersData[id].visionMode !== 'auto'
       || !providerVisionDetectionMatches(id, providersData[id], priorVisionDetection)
     )) {
       providersData[id].visionDetection = null;
     }
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
-  }
-  if (id === 'webgpu') {
-    const modelInput = document.querySelector('input[data-provider="webgpu"][data-key="model"]');
-    if (modelInput) modelInput.value = config.model;
-    updateWebgpuModelPresentation(config.model);
-    setWebgpuDownloadState({ status: 'checking', modelId: config.model, ready: false });
-    await refreshWebgpuDownloadStatus();
   }
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);
@@ -3799,6 +3517,64 @@ function syncInputsIntoProvidersData() {
     }
     setProviderConfigValue(providersData[id], key, providerInputValue(input));
   });
+}
+
+const PROVIDER_REFRESH_MANAGED_KEYS = new Set([
+  'id',
+  'type',
+  'category',
+  'configured',
+  'duplicateOf',
+  'sourceProviderId',
+  'isDuplicate',
+  'hasDuplicate',
+  'canDuplicate',
+  'visionDetection',
+]);
+
+function restoreProviderDrafts(drafts) {
+  for (const [providerId, draft] of Object.entries(drafts || {})) {
+    const refreshed = providersData[providerId];
+    if (!refreshed || !draft) continue;
+    for (const [key, value] of Object.entries(draft)) {
+      if (!PROVIDER_REFRESH_MANAGED_KEYS.has(key)) refreshed[key] = value;
+    }
+  }
+}
+
+async function duplicateProvider(id) {
+  try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
+    await saveProvider(id, { showFlash: false, markConfigured: false });
+    const created = await sendToBackground('duplicate_provider', { providerId: id });
+    const refreshed = await sendToBackground('get_providers');
+    providersData = refreshed.providers;
+    activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
+    expandedProviders.add(created.providerId);
+    renderProviders();
+  } catch (error) {
+    setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
+  }
+}
+
+async function removeDuplicateProvider(id) {
+  if (!window.confirm(t('st.providers.remove_duplicate_confirm'))) return;
+  try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
+    await sendToBackground('remove_duplicate_provider', { providerId: id });
+    const refreshed = await sendToBackground('get_providers');
+    providersData = refreshed.providers;
+    activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
+    expandedProviders.delete(id);
+    providerCompatibilityJsonDrafts.delete(id);
+    renderProviders();
+  } catch (error) {
+    setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
+  }
 }
 
 async function activateProvider(id) {

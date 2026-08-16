@@ -1995,6 +1995,10 @@
       if (_isFocusableElement(el)) _focusElement(el);
     }
 
+    if (params?.messageRecipientGuardRequired === true) {
+      const recipientValidation = _consumeMessageRecipientDispatchBinding(params, el);
+      if (recipientValidation.success !== true) return recipientValidation;
+    }
     const clickedRect = rememberInteractionPoint(el, 'click');
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
@@ -2374,6 +2378,10 @@
     if (params?.dispatchBinding?.token) {
       const validation = _consumeFocusedDispatchBinding(params);
       if (validation.success !== true) return validation;
+    }
+    if (params?.messageRecipientGuardRequired === true) {
+      const recipientValidation = _consumeMessageRecipientDispatchBinding(params, focusedTarget);
+      if (recipientValidation.success !== true) return recipientValidation;
     }
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
       ? focusedTarget
@@ -3327,6 +3335,112 @@
     return { success: true, matched: true };
   }
 
+  const _messageRecipientDispatchBindings = new Map();
+
+  function _messageRecipientIdentityKey(values = []) {
+    return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
+      .map(value => String(value ?? '')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim())
+      .filter(Boolean))).sort());
+  }
+
+  function _messageRecipientDispatchControl(element) {
+    return element?.closest?.(
+      'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
+    ) || element || null;
+  }
+
+  function _messageRecipientDispatchTargetsMatch(expected, actual) {
+    if (!expected || !actual) return false;
+    if (expected === actual) return true;
+    return _messageRecipientDispatchControl(expected) === _messageRecipientDispatchControl(actual);
+  }
+
+  function _rememberMessageRecipientDispatchBinding(composer, identities, dispatch = {}) {
+    const tool = String(dispatch.tool || '');
+    const actionTarget = dispatch.actionTarget || null;
+    if (!composer?.isConnected || !tool || !actionTarget?.isConnected) return '';
+    const identityKey = _messageRecipientIdentityKey(identities);
+    if (!identityKey || identityKey === '[]') return '';
+    const entropy = new Uint32Array(3);
+    globalThis.crypto.getRandomValues(entropy);
+    const token = `wbmr_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+    const record = {
+      composer,
+      actionTarget,
+      tool,
+      args: dispatch.args && typeof dispatch.args === 'object' ? { ...dispatch.args } : {},
+      identityKey,
+      pageUrl: location.href,
+      timer: null,
+    };
+    _messageRecipientDispatchBindings.set(token, record);
+    record.timer = setTimeout(() => {
+      if (_messageRecipientDispatchBindings.get(token) === record) {
+        _messageRecipientDispatchBindings.delete(token);
+      }
+    }, 60000);
+    return token;
+  }
+
+  function _consumeMessageRecipientDispatchBinding(params = {}, actualTarget = null) {
+    const token = String(params.messageRecipientDispatchBinding?.token || '');
+    const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
+    if (token) _messageRecipientDispatchBindings.delete(token);
+    if (expected?.timer) clearTimeout(expected.timer);
+    let pointTarget = null;
+    const pointX = Number(params.dispatchPoint?.x);
+    const pointY = Number(params.dispatchPoint?.y);
+    if (Number.isFinite(pointX) && Number.isFinite(pointY)) {
+      try { pointTarget = document.elementFromPoint(pointX, pointY); } catch {}
+    }
+    const dispatchedTarget = actualTarget || pointTarget;
+    if (!expected || !expected.composer?.isConnected || !expected.actionTarget?.isConnected
+      || expected.pageUrl !== location.href
+      || (dispatchedTarget && !_messageRecipientDispatchTargetsMatch(expected.actionTarget, dispatchedTarget))) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_stale',
+        error: 'Message send blocked because the verified composer changed before Enter dispatch. Re-read the active conversation and retry the send once.',
+      };
+    }
+    const live = _probeMessageRecipientGuard({
+      tool: expected.tool,
+      args: expected.args,
+      bindDispatch: false,
+      expectedDispatchTarget: expected.actionTarget,
+      expectedComposer: expected.composer,
+    });
+    if (live?.dispatchTargetChanged === true) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_stale',
+        error: 'Message send blocked because the verified action target or composer changed before dispatch. Re-read the active conversation and retry the send once.',
+      };
+    }
+    const liveIdentityKey = _messageRecipientIdentityKey(live?.strongIdentityCandidates);
+    if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
+      || liveIdentityKey !== expected.identityKey) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'active_recipient_changed_before_dispatch',
+        error: 'Message send blocked because the active conversation changed after recipient verification. The text may remain in the composer; re-read the visible header before sending.',
+      };
+    }
+    return { success: true, matched: true };
+  }
+
   function _releaseDispatchBinding(params = {}) {
     const token = String(params.dispatchBinding?.token || '');
     const record = token ? _dispatchBindings.get(token) : null;
@@ -3545,6 +3659,352 @@
     }
   }
 
+  // Read-only pre-dispatch probe for adapters that require a verified active
+  // conversation before a message can be sent. It deliberately ignores input
+  // values and ordinary page text: a searched recipient name is not proof that
+  // the corresponding conversation is active.
+  function _probeMessageRecipientGuard(params = {}) {
+    try {
+      const tool = String(params.tool || '');
+      const observationOnly = tool === 'observe_active_conversation';
+      const args = params.args && typeof params.args === 'object' ? params.args : {};
+      const compact = (value, max = 240) => String(value ?? '')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, max);
+      const visible = (el) => {
+        if (!el || el.nodeType !== 1 || !el.isConnected) return false;
+        try {
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0;
+        } catch {
+          return false;
+        }
+      };
+      const editable = (el) => {
+        if (!el || el.nodeType !== 1) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
+        const role = String(el.getAttribute?.('role') || '').toLowerCase();
+        const textInput = tag === 'input'
+          && !/^(button|submit|reset|checkbox|radio|file|image|range|color|hidden)$/.test(type);
+        return !!el.isContentEditable
+          || tag === 'textarea'
+          || textInput
+          || role === 'textbox'
+          || role === 'searchbox';
+      };
+      const verifiedNavigationEditable = (el) => {
+        if (!editable(el)) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.getAttribute?.('type') || '').toLowerCase();
+        const role = String(el.getAttribute?.('role') || '').toLowerCase();
+        if (role === 'searchbox' || (tag === 'input' && type === 'search')) return true;
+        try {
+          return !!el.closest?.('search,[role="search"],form[role="search"],nav,[role="navigation"]');
+        } catch {
+          return false;
+        }
+      };
+      const active = typeof _deepActiveElement === 'function' ? _deepActiveElement() : document.activeElement;
+
+      let target = null;
+      let dispatchTarget = null;
+      let targetResolved = observationOnly || tool === 'press_keys';
+      if (tool === 'click_ax' || tool === 'set_field') {
+        const refId = String(args.ref_id || '');
+        if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
+        targetResolved = !!target;
+      } else if (tool === 'click') {
+        if (typeof args.selector === 'string' && args.selector) {
+          try { target = document.querySelector(args.selector); } catch {}
+        } else if (Number.isInteger(args.index) && args.index >= 0) {
+          target = queryInteractiveForToolIndex()[args.index] || null;
+        } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
+          target = document.elementFromPoint(args.x, args.y);
+        } else if (typeof args.text === 'string' && args.text.trim()) {
+          const needle = compact(args.text).toLocaleLowerCase();
+          const matches = Array.from(document.querySelectorAll(
+            'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
+          )).filter((el) => compact(
+            el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title')
+          ).toLocaleLowerCase() === needle);
+          if (matches.length === 1) target = matches[0];
+        }
+        targetResolved = !!target;
+      }
+
+      const composerCandidates = [];
+      const addComposer = (el) => {
+        if (editable(el) && visible(el) && !composerCandidates.includes(el)) composerCandidates.push(el);
+      };
+      addComposer(active);
+      addComposer(target);
+      try {
+        for (const el of document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')) {
+          addComposer(el);
+        }
+      } catch {}
+      composerCandidates.sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return (br.bottom - ar.bottom)
+          || (br.left - ar.left)
+          || ((br.width * br.height) - (ar.width * ar.height));
+      });
+      const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
+      const layoutCandidate = composerCandidates[0] || null;
+      const layoutCandidateRect = layoutCandidate?.getBoundingClientRect?.();
+      // A recipient/search field can be the only focused editable while the
+      // real composer is temporarily hidden. Never promote an upper-page
+      // editable into the message composer merely because it is focused.
+      const layoutComposer = layoutCandidate
+        && (!viewportHeight || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
+        ? layoutCandidate
+        : null;
+
+      const independentScrollableRegion = (el, excluded) => {
+        let node = el || null;
+        while (node && node !== document.body) {
+          try {
+            const style = getComputedStyle(node);
+            const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
+            const scrollable = /^(auto|scroll|overlay)$/.test(overflowY)
+              && Number(node.scrollHeight) > Number(node.clientHeight) + 1;
+            if (scrollable && !(typeof node.contains === 'function' && node.contains(excluded))) return node;
+          } catch {}
+          node = node.parentElement;
+        }
+        return null;
+      };
+      const verifiedConversationSelection = (clicked, composer) => {
+        if (!clicked || !composer || editable(clicked)) return false;
+        const semanticRowSelector = [
+          '[role="option"]',
+          '[role="listitem"]',
+          '[role="treeitem"]',
+          '[role="tab"]',
+          '[aria-selected]',
+          '[aria-current]',
+          '[data-conversation-id]',
+          '[data-thread-id]',
+          '[data-chat-id]',
+        ].join(',');
+        // Prefer the semantic conversation row over a nested action link. A
+        // plain navigation link can itself be the row only when no stronger
+        // row container exists.
+        const row = clicked.closest?.(semanticRowSelector)
+          || clicked.closest?.('a[href]')
+          || null;
+        if (!row || !visible(row) || editable(row)) return false;
+
+        // Reject the entire descendant chain of a nested menu/delete/forward
+        // control. Selector and AX resolution often return a span or SVG
+        // inside the actual button, so checking only the leaf tag/role lets
+        // the click bubble into a consequential row action.
+        if (row !== clicked) {
+          const nestedActionSelector = [
+            'a[href]', 'button', 'input', 'select', 'textarea', 'summary',
+            '[contenteditable="true"]', '[contenteditable=""]',
+            '[role="button"]', '[role="link"]', '[role="menuitem"]',
+            '[role="checkbox"]', '[role="radio"]', '[role="switch"]',
+            '[role="combobox"]', '[role="textbox"]', '[aria-haspopup]',
+            '[onclick]', '[data-action]',
+          ].join(',');
+          const nestedAction = clicked.closest?.(nestedActionSelector) || null;
+          if (nestedAction && nestedAction !== row && row.contains?.(nestedAction)) return false;
+        }
+
+        const role = String(row.getAttribute?.('role') || '').toLowerCase();
+        const tag = String(row.tagName || '').toLowerCase();
+        const hasRowSemantics = /^(option|listitem|treeitem|tab)$/.test(role)
+          || row.hasAttribute?.('aria-selected')
+          || row.hasAttribute?.('aria-current')
+          || ['data-conversation-id', 'data-thread-id', 'data-chat-id']
+            .some(name => compact(row.getAttribute?.(name), 120));
+        const hasNavigationHref = tag === 'a' && compact(row.getAttribute?.('href'), 500);
+        if (!hasRowSemantics && !hasNavigationHref) return false;
+
+        // Overflow is strong evidence when the rail has enough rows to scroll;
+        // semantic row identity plus full separation from the composer also
+        // covers short conversation lists that do not currently overflow.
+        const rail = independentScrollableRegion(row, composer) || row;
+        const composerRect = composer.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const railRect = rail.getBoundingClientRect();
+        // Protected chat adapters currently expose the conversation list as a
+        // separate left rail. Message-history controls overlap the composer
+        // column and deliberately remain inconclusive.
+        return rowRect.right <= composerRect.left + 24
+          && railRect.right <= composerRect.left + 64;
+      };
+
+      let composer = null;
+      let messageSend = null;
+      if (observationOnly) {
+        composer = layoutComposer;
+      } else if (tool === 'press_keys') {
+        if (!editable(active) || !visible(active) || !layoutComposer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (active !== layoutComposer) {
+          return verifiedNavigationEditable(active)
+            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
+            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = layoutComposer;
+        dispatchTarget = active;
+        messageSend = String(args.key || '') === 'Enter';
+      } else if (tool === 'set_field') {
+        if (!targetResolved || !editable(target) || !visible(target)) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (!layoutComposer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (target !== layoutComposer) {
+          return verifiedNavigationEditable(target)
+            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
+            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = layoutComposer;
+        dispatchTarget = target;
+        messageSend = args.submit === true;
+      } else if (tool === 'click' || tool === 'click_ax') {
+        if (!targetResolved || !target) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        const control = target.closest?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') || target;
+        if (!visible(control)) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = layoutComposer;
+        if (!composer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (editable(target) && target !== composer) {
+          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+        }
+        if (verifiedConversationSelection(target, composer)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            conversationSelection: true,
+            identityCandidates: [],
+          };
+        }
+        dispatchTarget = target;
+        const composerRect = composer.getBoundingClientRect();
+        const controlRect = control.getBoundingClientRect();
+        const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
+        const verticalGap = Math.max(0, composerRect.top - controlRect.bottom, controlRect.top - composerRect.bottom);
+        const sameForm = !!composer.closest?.('form') && composer.closest('form') === control.closest?.('form');
+        // Framework chat controls are often clickable divs rather than native
+        // buttons, and a nearby control can send an attachment even when the
+        // text composer is empty. Geometry must therefore win over tag shape.
+        messageSend = sameForm || (horizontalGap <= 240 && verticalGap <= 120);
+        if (!messageSend) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+      }
+
+      if (!composer) {
+        return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: 'Active conversation composer could not be resolved.' };
+      }
+      if (params.expectedDispatchTarget
+        && (dispatchTarget !== params.expectedDispatchTarget || composer !== params.expectedComposer)) {
+        return {
+          success: false,
+          messageSend: null,
+          conclusive: false,
+          dispatchTargetChanged: true,
+          identityCandidates: [],
+          strongIdentityCandidates: [],
+          error: 'The verified message action target or composer changed before dispatch.',
+        };
+      }
+
+      const composerRect = composer.getBoundingClientRect();
+      const headerBandBottom = Math.min(
+        composerRect.top - 12,
+        Math.min(220, Math.max(140, viewportHeight * 0.2)),
+      );
+      const strongIdentities = [];
+      const strongSeen = new Set();
+      const inConversationHeaderBand = (el) => {
+        if (headerBandBottom <= 0) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.top >= 0
+          && rect.bottom <= headerBandBottom
+          && rect.right >= composerRect.left
+          && rect.left <= composerRect.right;
+      };
+      const addStrongIdentity = (el) => {
+        if (!visible(el) || editable(el) || el.closest?.('input,textarea,[contenteditable="true"]')) return;
+        if (!inConversationHeaderBand(el) || independentScrollableRegion(el, composer)) return;
+        const text = compact(
+          el.getAttribute?.('aria-label')
+          || el.getAttribute?.('title')
+          || el.innerText
+          || el.textContent
+        );
+        if (!text || text.length > 120 || strongSeen.has(text)) return;
+        strongSeen.add(text);
+        strongIdentities.push(text);
+      };
+
+      for (const el of document.querySelectorAll(
+        '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
+      )) {
+        // Search results and navigation rows can also be selected/current, so
+        // they count only inside the narrow, non-scrollable conversation
+        // header above the composer.
+        addStrongIdentity(el);
+        if (strongIdentities.length >= 8) break;
+      }
+
+      if (strongIdentities.length < 8) {
+        for (const el of document.querySelectorAll(
+          'h1,h2,h3,h4,[role="heading"]'
+        )) {
+          addStrongIdentity(el);
+          if (strongIdentities.length >= 8) break;
+        }
+      }
+
+      const messageRecipientDispatchToken = params.bindDispatch === true
+        && messageSend === true
+        && strongIdentities.length === 1
+        ? _rememberMessageRecipientDispatchBinding(composer, strongIdentities, {
+            tool,
+            args,
+            actionTarget: dispatchTarget,
+          })
+        : '';
+      return {
+        success: true,
+        messageSend: observationOnly ? false : messageSend === true,
+        conclusive: true,
+        // Only recipient-specific header evidence is authoritative. Ordinary
+        // message text, test-id containers, and other leaf content are never
+        // returned as dispatch identities.
+        identityCandidates: strongIdentities.slice(0, 8),
+        strongIdentityCandidates: strongIdentities.slice(0, 8),
+        ...(messageRecipientDispatchToken
+          ? { messageRecipientDispatchBinding: { token: messageRecipientDispatchToken } }
+          : {}),
+      };
+    } catch (error) {
+      return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: error?.message || String(error) };
+    }
+  }
+
   // --- Message handler ---
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
@@ -3561,9 +4021,11 @@
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
+      'consume_message_recipient_dispatch_binding': () => _consumeMessageRecipientDispatchBinding(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
+      'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}),
       'scroll': () => scrollPage(msg.params || {}),
       'extract_data': () => extractData(msg.params || {}),
@@ -3889,6 +4351,16 @@
                 }
               }
             } catch {}
+          }
+          if (msg.params?.messageRecipientGuardRequired === true) {
+            const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+            if (recipientValidation.success !== true) {
+              return failure(recipientValidation.error, {
+                messageDispatched: false,
+                messageRecipientGuard: true,
+                reasonCode: recipientValidation.reasonCode,
+              });
+            }
           }
           rememberInteractionPoint(el, 'click_ax');
           dispatched = true;
@@ -4402,6 +4874,18 @@
                 dispatchKey('keydown', 'ArrowDown', 40);
                 dispatchKey('keyup', 'ArrowDown', 40);
                 await new Promise(r => setTimeout(r, 30));
+              }
+              if (msg.params?.messageRecipientGuardRequired === true) {
+                const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+                if (recipientValidation.success !== true) {
+                  return failure(recipientValidation.error, {
+                    verified: true,
+                    submitted: false,
+                    messageDispatched: false,
+                    messageRecipientGuard: true,
+                    reasonCode: recipientValidation.reasonCode,
+                  });
+                }
               }
               dispatchKey('keydown', 'Enter', 13);
               dispatchKey('keypress', 'Enter', 13);

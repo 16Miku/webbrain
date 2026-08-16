@@ -78,223 +78,6 @@
   "screenshot": "https://webbrain.one/og-image.png"
 }
   </script>
-  <script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "inLanguage": "he-IL",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "האם WebBrain הוא חלופה חינמית לתוסף הדפדפן של Claude?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כן. WebBrain מספק יכולות דומות של סוכן דפדפן חכם — קריאת דפים, חליצת נתונים, לחיצה על כפתורים, מילוי טפסים ואוטמט תהליכי עבודה מרובים שלבים. בניגוד לתוסף המסחרי של Claude שדורש מינוי Claude Pro ועובד רק עם מודלי Anthropic, WebBrain הוא בחינם לחלוטין, קוד פתוח (רישיון MIT) ותומך בספקי LLM רבים כולל מודלים מקומיים שפועלים לחלוטין על המכשיר שלך."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "כמה עולה מינוי WebBrain Cloud?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain Cloud עולה כיום 5$ לחודש לכל פרופיל מכשיר, הרבה יותר זול מ-Claude Pro נכון לעכשיו. השימוש כעת ללא הגבלה במסגרת מדיניות שימוש הוגן: שימוש אישי רגיל הוא בסדר, אך שימוש פוגעני, אוטמטי, למכירה חוזרת או בנפחים חריגים אינו מותר. המינוי קשור למזהה המכשיר שנוצר על ידי התוסף עבור אותו GUID של דפדפן + מערכת הפעלה, לא לחשבון משתמש. אם מזהה זה אובדן בגלל איפוס אחסון התוסף, מחיקת פרופיל הדפדפן, התקנה מחדש של הדפדפן, החלפת דפדפן/מערכת הפעלה או אובדן המכשיר, לא ניתן לשחזרו או להעבירו ואיננו נותנים החזרים על אובדן זה. ניתן להירשם או לנהל חיוב מקטע החשבון בדף ההגדרות של התוסף עם כפתור Manage billing. לביטול ידני, צור קשר בדוא\"ל עם כתובת הדוא\"ל שבה השתמשת בתשלום."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "כיצד עובד סנכרון ענן מוצפן?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cloud Sync הוא תכונה אופציונלית למנויי WebBrain Cloud פעילים. הוא מסנכרן את זיכרונות WebBrain, טקסט מילוי אוטומטי של הפרופיל ותצורת ספקים נתמכת, כולל מפתחות API. הוא אינו מסנכרן היסטוריית צ'אט, היסטוריית דפדפן, צילומי מסך של דפים, או אסימוני OAuth ישנים לגישה ולרענון. הדפדפן מצפין את כספת הסנכרון לפני ההעלאה עם סיסמה שאתם בוחרים. WebBrain Cloud שומר רק את הכספת המוצפנת; הוא אינו יכול לקרוא את הזיכרונות, טקסט הפרופיל, הגדרות הספקים או מפתחות ה-API, ואינו יכול לשחזר עבורכם את סיסמת הסנכרון. שדה האימייל מיועד לאימות חיוב/מנוי בקישור קסם של WebBrain Cloud. זו אינה סיסמת חשבון. אם הממשק אומר לשנות סיסמה ב-Cloud Sync, הכוונה היא לסיסמת הצפנת הסנכרון, לא לסיסמת חשבון WebBrain. אם תשכחו את סיסמת הסנכרון, לא ניתן לפענח את כספת הענן המוצפנת הישנה. אפשר לאפס את כספת הענן ולהעלות עותק מוצפן חדש ממכשיר שעדיין מחזיק את הנתונים מקומית."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "כיצד WebBrain משתווה ל-OpenClaw, Browser-Use ומסגרות סוכני בינה מלאכותית אחרות?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "אלו קטגוריות שונות של כלים. WebBrain הוא הרחבת דפדפן — אתה מתקין אותו ב-Chrome או Firefox ומדבר איתו בסרגל צד, ללא צורך בתכנות. מסגרות כמו OpenClaw ו-Browser-Use הן SDK למפתחים לבניית תהליכי אוטמט דפדפן ב-Python, לרוב עם דפדפנים ללא ממשק ו-CDP. בקיצור: WebBrain לגלישה יומית עם עוזר חכם; מסגרות סוכנים לבניית בוטי גריפה ואוטמט בדיקות. אתה יכול להשתמש בשניהם — הם משלימים זה את זה."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם אני יכול להשתמש ב-WebBrain לחלוטין לא מקוון?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כן. הספק כברירת מחדל של WebBrain הוא llama.cpp, שפועל מודל בינה מלאכותית מקומי על המחשב שלך. ללא מפתחות API, ללא חיבור לאינטרנט для הבינה המלאכותית, ואין נתונים שעוזבים את המכשיר שלך לעולם. פשוט הורד מודל GGUF, הפעל llama-server, ויהיה לך סוכן דפדפן חכם פרטי לחלוטין. אפשר גם להשתמש ב-Ollama עם קצה התואם ל-OpenAI."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "אילו מודלי בינה מלאכותית WebBrain תומך?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain תומך בארבעה סוגי ספקים: llama.cpp (כל מודל GGUF מקומי), OpenAI (GPT-4o, GPT-4, וכו׳), Claude (Claude Opus, Sonnet, Haiku דרך API מקורי) ו-OpenRouter (גישה ליותר מ-100 מודלים מספקים שונים). כל קצה API תואם OpenAI עובד, אז אפשר גם להשתמש בשירותים כמו Together AI, Groq, Mistral או כל שרת מקומי עם ממשק תואם OpenAI."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "מהו המודל המומלץ ביותר?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "נכון ל21 באפריל 2026, ההמלצה העליונה היא Qwen 3.6 35B. למה: ב benchmark הראייה שלנו (vision-model-shootout), הוא עלה על Gemma 4 בהבנת צילומי מסך תוך כדי שמירה על מעשיות למסור מקומי. לכרטיסי מסך צרכניים, RTX 5090 הוא אידיאלי, ו-RTX 4090 לרוב עובד עם קванטיזציה INT4 AutoRound דרך Intel/Qwen3.6-35B-A3B-int4-AutoRound. למהירות מקסימלית, אנו ממליצים להפעיל על vLLM. דוגמת פקודה: python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{\"image\": 4, \"video\": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '[\"*\"]' --speculative-config '{\"method\": \"dflash\", \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\", \"num_speculative_tokens\": 15}' --attention-backend flash_attn פענוח ספקולטיבי DFlash הוא אופציונלי."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "אני מקבל \"Failed to fetch\" בעת חיבור לשרת LLM מקומי (vLLM, Ollama, llama.cpp) ברשת שלי",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "אם שרת ה-LLM שלך נמצא על מכשיר אחר ברשת המקומית שלך (למשל http://192.168.1.x:8000), Chrome חוסם את הבקשה אלא אם כן השרת שולח כותרות CORS. התיקון תלוי בשרת שלך: vLLM: התחל עם --allowed-origins '[\"*\"]' (הערך חייב להיות רשימה של JSON). Ollama: הגדר את משתנה הסביבה OLLAMA_ORIGINS=* לפני ההפעלה. llama.cpp: CORS מופעל כברירת מחדל — ללא שינויים נדרשים. אם השרת שלך פועל על localhost (אותו מכשיר כמו הדפדפן), בדרך כלל אין צורך ב-CORS. הבעיה משפיעה רק על חיבורים בין מכשירים ברשת המקומית. ודא שכתובת ה-URL הבסיסית בהגדרות WebBrain מסתיימת ב-/v1 (למשל http://192.168.1.47:8000/v1). חריג: Ollama המשמש מהרחבת דפדפן עדיין עשוי להזדקק ל-OLLAMA_ORIGINS; ראה את ה-FAQ של Ollama למטה."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "מדוע Ollama על localhost מחזיר 403 מהתוסף של WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "גרסאות חדשות של Ollama יכולות לדחות בקשות ממקורות של הרחבות דפדפן גם כש-Ollama פועל על אותו מכשיר. התוסף שולח Origin כמו chrome-extension://... או moz-extension://..., ו-Ollama יכול להחזיר 403 אלא אם כן מקורות אלה מורשים. סגור כל יישום שולחני של Ollama שתופס כבר את הפורט 11434, ואז הפעל את Ollama עם אחת מפקודות אלה: OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve שמר על כתובת ה-URL הבסיסית של Ollama ב-WebBrain על http://localhost:11434/v1. בדיקות curl במסוף עדיין יכולות לעבוד ללא הגדרה זו כי הן אינן שולחות מקור של הרחבת דפדפן."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם WebBrain עובד ב-Firefox?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כן. WebBrain מגיע עם גרסת Chrome (Manifest V3, משתמש ב-sidePanel API) וגרסת Firefox (Manifest V2, משתמש ב-sidebar_action). שתי הגרסאות זהות בתכונות. גרסת Firefox ניתן לטעינה כתוסף זמני לפיתוח, או פרסום ב-addons.mozilla.org להתקנה קבועה."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם אני יכול להעביר את סרגל הצד של Firefox משמאל לימין, כמו סרגל הצד של Chrome?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כן — סרגל הצד של Firefox כברירת מחדל בצד שמאל, אבל אפשר להפוך אותו. לחץ באמצעות הכפתור הימני בכל מקום בכותרת סרגל הצד ובחר Move Sidebar to Right (או דרך התפריט View → Sidebar → Move Sidebar to Right). המיקום נשמר בין הפעלות מחדש. סרגל הצד של Chrome בצד ימין כברירת מחדל ואינו ניתן להזזה על ידי המשתמש מהסרגל עצמו."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם WebBrain בטוח לשימוש? האם הוא יכול לשנות דפי אינטרנט?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "ל-WebBrain שלושה מצבים. מצב Ask (ברירת המחדל) הוא לקריאה בלבד ואינו יכול לשנות דבר בדף. מצב Act מאפשר פעולות דפדפן כמו לחיצה, הקלדה וניווט, ומצב Dev מוסיף כלי ניפוי שגיאות לדף. פעולות בעלות השלכות דורשות אישור כברירת מחדל; אם שער ההרשאות הזה כבוי, WebBrain מציג סרגל אזהרה גלוי. אפשר לעצור את הסוכן בכל עת באמצעות כפתור העצירה. קוד המקור של התוסף פתוח לחלוטין לבדיקה ב-GitHub."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "מהו סרגל \"WebBrain started debugging this browser\"? למה WebBrain משתמש ב-CDP?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כדי לפעול על דף בצורה אמינה, WebBrain משתמש בפרוטוקול Chrome DevTools (CDP) דרך ממשק ההרחבה הסטנדרטי chrome.debugger — זה מה שגורם לסרגל \"WebBrain started debugging this browser\" של Chrome. CDP הוא מה שמאפשר לסוכן ללחוץ ולהקליד עם אירועי הקלדה מהימנים שאתרים מודרניים באמת מקבלים; אירועים סינתטיים הנורים מ-content script נדחים על ידי אתרים רבים, Web Components ושדות הנשלטים על ידי מסגרות. זה גם איך WebBrain מצלם צילומי מסך בדיקת פיקסל ל-Retreat החזותי ומגיע לiframes חוצי מקורות ו-shadow DOM ש-content scripts לא יכולים לראות. מצב Ask לקריאה בלבד אינו צריך CDP — קריאות הדף ועץ הנגישות עוברות דרך content scripts רגילים. מה שנדרש הוא אמינות מצב Act ועבודה חוצת מקורות, ובמצב V3 של Manifest אין ממשק ללא מקשקש מהימן для הקלדה. WebBrain מצרף את המקשקש רק כשפעולה דורשת זאת, לכל כרטיסייה, וההרחבת בשלמותה בקוד פתוח כך שאתה יכול לבדוק בדיוק מה ה-session עושה. CDP חזק, אז אנחנו מתייחסים לחשיפה שלו כמשהו שצריך להכיל (צרף כשנדרש, שמור את ה readings הרחק ממנו), וצמצום נוסף נמצא ב roadmap האבטחה שלנו."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "הוא שואל אותי יותר מדי שאלות. האם אני יכול לבטל את זה?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "prompts האישור האלה הם לבטיחותך. אפילו באתרים שאתה סומך עליהם, גורמים זדוניים יכולים לחקות הוראות LLM או להזריק תוכן שמנסה לגרום לסוכן לעשות דברים בשמך שלא היית מאשר. לכן WebBrain שואל לפני פעולות בעלות השלכות. אם אתה עדיין לא רוצה לעבור על那些 prompts, הקלד /dangerously-skip-permissions בסרגל הצד, או פתח את התוסף בצד, לחץ על סמל ההגדרות בכותרת, עבור ללשונית הרשאות ב-settings.html, וכבה את Ask before consequential actions."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "כיצד אני משתמש ב-WebBrain לגריפת רשת וחילוץ נתונים?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "פשוט פתח כל דף אינטרנט, פתח את סרגל הצד של WebBrain, ושאל בשפה טבעית: \"חלץ את כל שמות המוצרים והמחירים מדף זה\", \"קבל את כל כתובות הדוא\"ל בדף זה\", או \"סכם מאמר זה בנקודות\". סוכן הבינה המלאכותית קורא את תוכן הדף, מבין את המבנה ומחזיר את הנתונים שחולצו. לגריפה מורכבת יותר, עבור למצב Act והסוכן יכול לנווט בין דפים, ללחוץ על כפתורי ניווט ולאסוף נתונים عبر דפים מרובים."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם WebBrain קורא ל-API ישירות, או תמיד לוחץ דרך הממשק?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כברירת מחדל, WebBrain תמיד עובר דרך הממשק הגלוי לכל פעולה שיוצרת, משנה, מוחקת, שולחת, מגישה, מפרסמת או קונה משהו. הוא ינווט לדף, ימלא את הטופס וילחץ על הכפתור — בדיוק כפי שאתה היית עושה. הוא מסרב לקרוא לקצוות REST/GraphQL ישירות דרך fetch() ברקע לשינויים. זה מכוון: פעולות API בלתי נראות (אתה לא רואה מה נשלח), דורשות לרוב אסימוני אימות נפרדים שאולי לא הגדרת, ובעלות טווח השפעה הרבה יותר רחב מלחיצה גלוייה שגויה. UI-first פירושו שהכל על המסך, ב sessions הרגיל שלך, ואפשר לעצור אותו. לקריאה של נתונים — שליפת README, חיפוש issue, השוואת מחירים בין אתרים, בדיקת דף סטטוס — WebBrain משתמש בחופשיות בבקשות HTTP ברקע דרך הכלים fetch_url ו-research_url. קריאה אינה פעולה; היא לא משנה שום דבר בשירות מרוחק, אז דאגות הבטיחות לא חלות. אם אתה רוצה לאפשר特意️ APImutations למשימה מסוימת, הקלד /allow-api בתחילת ההודעה שלך (אופציונלי עם תיאור קצר של המשימה). החרגה זו מאפשרת ל-WebBrain לחזור לקצוות API כשהממשק נכשל באמת או לא מעשי, תוך שמירה על העדפת ממשק כשהוא עובד. סמל דביק נשאר גלוי מעל אזור הקלטขณะ שההחרגה פעילה, והוא נמחק כשאתה מאפס את השיחה."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם אני יכול להשתמש בו ב-LM Studio גם?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כן. כלי הרשת לקריאה בלבד של WebBrain — fetch_url ו-research_url — מגיעים גם כתוסף עצמאי של LM Studio ב-webbrain/web-tools. התקן עם lms clone webbrain/web-tools והפעל בכל שיחת LM Studio — כל מודל התומך בכליים יכול אז לקרוא לשתי הכלים הללו מבלי להתקין את הרחבת הדפדפן. Node טהור, ללא דפדפן ללא ממשק. קוד מקור: lmstudio-plugin/."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם אפשר לגלול למעלה או למטה בזמן ש-WebBrain עובד בכרטיסייה שלי?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "ברוב המקרים כן — במיוחד במצב Ask עבור בקשות לקריאה בלבד, כמו „סכם את הדף הזה”. אפשר להמשיך לגלול בזמן ש-WebBrain עובד. מתי כדאי להימנע מכך? צילומי המסך האוטומטיים משקפים את אזור התצוגה הנוכחי של הכרטיסייה. כאשר WebBrain בודק תוכן גלוי או מקיים איתו אינטראקציה באופן פעיל במצב Act או Dev, גלילה עלולה להזיז יעד או לשנות את מה שהמודל רואה. יש להמתין לסיום השלב לפני הגלילה; מחוץ לרגעים האלה אפשר להמשיך להשתמש בדף."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם אפשר לעבור לכרטיסייה אחרת בזמן ש-WebBrain עובד על דף?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כן. החל מגרסה 27.0.0, WebBrain נמנע מלקחת את המיקוד גם בדפדפנים מבוססי Chromium וגם ב-Firefox, אלא אם גישה לחזית הכרחית לחלוטין. ההפעלה נשארת מקושרת לכרטיסייה שבה התחילה, ולכן אפשר לעבוד בבטחה בכרטיסייה אחרת. אם שלב נדיר מחייב שהכרטיסייה המקורית תהיה בחזית, WebBrain עשוי להעביר אליה את המיקוד לזמן קצר. יש להימנע מלחיצה או הקלדה באותה כרטיסייה בזמן ש-WebBrain מבצע בה פעולות באופן פעיל."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "כיצד מילוי הפרופיל האוטומטי עובד, והאם זה בטוח?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "מילוי פרופיל אוטומטי הוא תכונה אופציונלית בהגדרות ← פרופיל. אתה מזין ביוגרפיה קצרה — שם, דוא\"ל עסקי, חברה וסיסמה לשימוש חד-פעמי להרשמות בסיכון נמוך — ומפעיל אותה. כשפעיל, WebBrain מצרף את הטקסט הזה לפרומפט המערכת של הסוכן כדי שהוא ימלא טפסי הרשמה מבלי לשאול בכל פעם. הטקסט מאוחסן בטקסט פשוט באחסון המקומי של הדפדפן שלך. הוא אינו מועבר לפרויקט WebBrain, אבל הוא מועבר לכל ספק LLM שהגדרת בכל תור, כחלק מפרומפט המערכת. מושבת כברירת מחדל. אל תשים סיסמאות לחשבונות חשובים כאן (Google, Apple, iCloud, בנקים, SSO עסקי, דוא\"ל ראשי). חשבונות אלה צריכים להשתמש ב-2FA ולא צריך להעביר אותם לסוכן ממילא. סיסמה לשימוש חד-פעמי שאתה מחדש לרשמות ניוזלטר וניסויים חינם היא מקרה השימוש המיועד."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם ההגדרה טשטוש צילומי מסך מבטיחה שהנתונים הפרטיים שלי לעולם לא יגיעו למודל ראייה בענן?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "לא — היא מפחיתה חשיפה, אך אינה ערבות. כשההגדרה מופעלת (הגדרות ← מולטי-מודאלי ← טשטוש צילומי מסך, כבויה כברירת מחדל), WebBrain מפקסל שדות טופס וטקסט שנראה ככתובת דוא\"ל או מספר טלפון בכל צילום מסך לפני שהוא נשלח למודל ראייה. הזיהוי מתבצע כולו במכשיר שלך באמצעות היוריסטיקות DOM; שום דבר נוסף לא מועבר. זהו טשטוש במאמץ סביר (best-effort) מסוג fail-open. אם המזהה אינו יכול לפעול בדף מסוים — למשל מיד אחרי ניווט, בצפייה בקבצי PDF, או בדפי דפדפן מוגבלים — צילום המסך עדיין יישלח ללא טשטוש במקום לבטל את המשימה שלך. תוכן שהיוריסטיקות של DOM אינן יכולות לראות (טקסט המצויר על canvas, מידע אישי בתוך תמונות, רכיבי ממשק חריגים) עלול גם הוא לחמוק. וההגדרה מכסה רק צילומי מסך: טקסט הדף הנשלח למודל אינו מטושטש על ידה. לפרטיות מלאה בראייה, השתמש במודל מקומי. עם ספק לא מקוון כמו llama.cpp או Ollama, צילומי המסך וטקסט הדף לעולם אינם עוזבים את המכשיר שלך, כך שאין כלל מה לטשטש מלכתחילה — זו התצורה היחידה שבה הפרטיות מובטחת. ראה \"האם אני יכול להשתמש ב-WebBrain לחלוטין לא מקוון?\" למעלה. אין לך מכשיר שמסוגל להריץ מודל מקומי עם תמיכה בראייה? פשרה טובה היא שימוש במודל מקומי קטן לתכנון ולקריאה לכלים (קליל מספיק למעבד/כרטיס מסך צנוע), בשילוב עם ספק ענן עבור קריאות המשנה של הראייה, כאשר טשטוש צילומי מסך מופעל. השיחה שלך וטקסט הדף נשארים במכשיר, וכל צילום מסך שיוצא לראייה בענן כבר עבר טשטוש של שדות טופס ודוא\"ל/טלפון שזוהו — פחות חשיפה בענן מבלי להזדקק לחומרה עבור מודל ראייה מקומי מלא. הגדר את החלוקה הזו תחת הגדרות ← ראייה (ראה \"כיצד WebBrain שומר על חשבונות LLM בענן בשליטה?\" למעלה)."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "מה WebBrain עושה עם כרזות עוגיות וקירות תשלום?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "כרזות עוגיות: WebBrain מזהה כרזות הסכמה ממסגרות נפוצות (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) וסוגר אותן לפני הסקת מסקנות על הדף. העדפה היא \"דחה הכל\" / \"דחה לא הכרחי\" / \"רק הכרחי\" כשהם גלויים בבירור; הוא חוזר ל\"אשר הכל\" במקום ללכת לאיבוד במבוך \"ניהול העדפות\". קירות תשלום: WebBrain מדווח על קיר התשלום בכנות ומספר לך מה הוא באמת ראה (כותרת, כותרת משנה, פסקאות ראשונות). הוא אינו מנסה לעקוף קירות תשלום — לא archive.today, לא 12ft.io, לא מחיקת עוגיות, לא השבתת JS, לא טריקים של מצב קריאה. אם אתה רוצה את המאמר המלא, היכנס עם מינוי או בקש מ-WebBrain לחפש סיקור חינם של אותה ה故事."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם WebBrain תומך במצב dry-run?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "מגרסה 7.0.0, עדיין לא. מצב dry-run מתוכנן וכבר על מפת הדרכים."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם WebBrain שולח את כל ה-DOM למודל הבינה המלאכותית?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "לא. כברירת מחדל, WebBrain אינו שולח HTML גולמי או עותק גולמי של ה-DOM. הוא מתחיל מכתובת ה-URL וכותרת הדף, מהנחיות האתר המתאימות ומצילום מסך אופציונלי של האזור הנראה כאשר יכולת הראייה מופעלת. כאשר משימה דורשת תוכן מהדף, WebBrain קורא אותו לפי הצורך כעץ נגישות סמנטי מצומצם או כטקסט שחולץ. הקריאות מסוננות לפי נראות במקומות המתאימים, מוגבלות במספר תווים ומחולקות לעמודים. גישה למקור הדף הגולמי זמינה רק במצב Dev."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "כיצד WebBrain שומר על חשבונות LLM בענן בשליטה?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "שלוש שכבות עצמאיות: צילומי מסך חוסכי אסימונים. לפני שכל תמונה עוזבת את המכשיר שלך, WebBrain משנה את גודלה (הצד הקצר מוגבל, תוך שמירה על יחס רוחב-גובה) ודוחס אותה חוזרת ב-JPEG עד שהיא מתאימה למכסת אסימוני תמונה לכל תור. צילום מסך של 2000×1200 שהיה עולה לך כ-1500 אסימוני כניסה ב-GPT-4o דוחס לכ-300-500 אסימונים ללא אובדן מעשי למשימות קריאת דפים. מומש ב-_fitImageDimensions עם בדיקות יחידה לחישובי המכסה. גיזום קשר חכם. היסטוריית שיחה, פלטי כלים ופריקת DOM מוטמעות מוגבלות לכל תור וɡізוזות מהישן לחדש כשחלון הקשר של המודל הפעיל מתקרב למלואו. לא תראה הפעלה מתנפחת בשקט מ-10k אסימונים ל-100k רק בגלל ש-read_page החזיר מאמר באורך רומן. מודל ראייה ייעודי.זוג מודל טקסט זול (כמו GPT-4o-mini) לתכנון וקריאה לכלים עם מודל ראייה נפרד (כמו GPT-4o) רק לצילומי מסך, כדי לא לשלם מחירים של מודל רב-תכליתי בכל תור. להגדרות בהגדרות ← ראייה. תוצאה סופית: ישיבות ארוכות עם ספקי ענן נשארות צפויות. לשליטה מלאה, השתמש ב-llama.cpp מקומי — אפס עלות לאסימון."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "האם אני יכול לתרום ל-WebBrain?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "בהחלט! WebBrain ברישיון MIT ומקבל בתרומות. בדוק את המאגר ב-GitHub לבעיות, בקשות תכונות והנחיות תרומה."
-      }
-    }
-  ]
-}
-  </script>
   <style>
     /* ================================================================
        RESET & BASE
@@ -2747,58 +2530,37 @@
     }
 
     /* ================================================================
-       FAQ
+       FAQ BRIDGE
        ================================================================ */
-    .faq-list {
+    .faq-bridge {
       max-width: 760px;
-      margin: 32px auto 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .faq-item {
-      background: var(--bg-card);
+      margin: 34px auto 0;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
-      transition: border-color 0.2s;
+      background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(45,212,191,0.05));
     }
-    .faq-item[open] {
-      border-color: rgba(108,99,255,0.25);
-    }
-    .faq-item summary {
-      padding: 16px 20px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: color 0.2s;
-    }
-    .faq-item summary::-webkit-details-marker { display: none; }
-    .faq-item summary::after {
-      content: '+';
-      font-size: 20px;
-      color: var(--text-dim);
-      flex-shrink: 0;
-      margin-inline-start: 16px;
-      transition: transform 0.2s;
-    }
-    .faq-item[open] summary::after {
-      content: '−';
-      color: var(--accent);
-    }
-    .faq-item summary:hover { color: var(--accent2); }
-    .faq-item p {
-      padding: 0 20px 16px;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .faq-item p a {
+    .faq-bridge-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(45,212,191,0.28);
+      border-radius: 50%;
       color: var(--accent2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 800;
+    }
+    .faq-bridge strong { font-size: 14px; }
+    .faq-bridge a { color: var(--accent2); font-size: 13px; font-weight: 700; }
+    .faq-bridge a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 560px) {
+      .faq-bridge { grid-template-columns: auto 1fr; }
+      .faq-bridge a { grid-column: 2; }
     }
 
     /* ================================================================
@@ -2943,6 +2705,7 @@
     </a>
     <div class="nav-links">
       <a href="/docs/">תיעוד</a>
+      <a href="/docs/he/faq/">שאלות נפוצות</a>
       <a href="/blog">בלוג</a>
       <a href="#download" class="nav-cta">הורדה</a>
       <div class="language-picker" id="language-picker">
@@ -3629,6 +3392,11 @@
       </div>
     </div>
   </div>
+  <aside class="faq-bridge" id="faq" aria-label="שאלות נפוצות">
+    <span class="faq-bridge-mark" aria-hidden="true">?</span>
+    <strong>שאלות נפוצות</strong>
+    <a href="/docs/he/faq/">שאלות נפוצות <span aria-hidden="true">→</span></a>
+  </aside>
 </section>
 
 <!-- MCP SERVER -->
@@ -3789,149 +3557,6 @@
   </div>
 </dialog>
 
-<!-- FAQ -->
-<section class="section" id="faq">
-  <div class="section-label">שאלות נפוצות</div>
-  <h2 class="section-title">שאלות נפוצות</h2>
-
-  <div class="faq-list">
-    <details class="faq-item">
-      <summary>האם WebBrain הוא חלופה חינמית לתוסף הדפדפן של Claude?</summary>
-      <p>כן. WebBrain מספק יכולות דומות של סוכן דפדפן חכם — קריאת דפים, חליצת נתונים, לחיצה על כפתורים, מילוי טפסים ואוטמט תהליכי עבודה מרובים שלבים. בניגוד לתוסף המסחרי של Claude שדורש מינוי Claude Pro ועובד רק עם מודלי Anthropic, WebBrain הוא בחינם לחלוטין, קוד פתוח (רישיון MIT) ותומך בספקי LLM רבים כולל מודלים מקומיים שפועלים לחלוטין על המכשיר שלך.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>כמה עולה מינוי WebBrain Cloud?</summary>
-      <p>WebBrain Cloud עולה כיום <strong>5$ לחודש לכל פרופיל מכשיר</strong>, הרבה יותר זול מ-Claude Pro נכון לעכשיו. השימוש כעת ללא הגבלה במסגרת מדיניות שימוש הוגן: שימוש אישי רגיל הוא בסדר, אך שימוש פוגעני, אוטמטי, למכירה חוזרת או בנפחים חריגים אינו מותר.</p><p>המינוי קשור למזהה המכשיר שנוצר על ידי התוסף עבור אותו GUID של דפדפן + מערכת הפעלה, לא לחשבון משתמש. אם מזהה זה אובדן בגלל איפוס אחסון התוסף, מחיקת פרופיל הדפדפן, התקנה מחדש של הדפדפן, החלפת דפדפן/מערכת הפעלה או אובדן המכשיר, לא ניתן לשחזרו או להעבירו ואיננו נותנים החזרים על אובדן זה.</p><p>ניתן להירשם או לנהל חיוב מ<strong>קטע החשבון</strong> בדף ההגדרות של התוסף עם כפתור <strong>Manage billing</strong>. לביטול ידני, צור קשר בדוא"ל עם כתובת הדוא"ל שבה השתמשת בתשלום.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>כיצד עובד סנכרון ענן מוצפן?</summary>
-      <p>Cloud Sync הוא תכונה אופציונלית למנויי WebBrain Cloud פעילים. הוא מסנכרן את זיכרונות WebBrain, טקסט מילוי אוטומטי של הפרופיל ותצורת ספקים נתמכת, כולל מפתחות API. הוא <strong>אינו</strong> מסנכרן היסטוריית צ'אט, היסטוריית דפדפן, צילומי מסך של דפים, או אסימוני OAuth ישנים לגישה ולרענון.</p><p>הדפדפן מצפין את כספת הסנכרון לפני ההעלאה עם סיסמה שאתם בוחרים. WebBrain Cloud שומר רק את הכספת המוצפנת; הוא אינו יכול לקרוא את הזיכרונות, טקסט הפרופיל, הגדרות הספקים או מפתחות ה-API, ואינו יכול לשחזר עבורכם את סיסמת הסנכרון.</p><p>שדה האימייל מיועד לאימות חיוב/מנוי בקישור קסם של WebBrain Cloud. זו אינה סיסמת חשבון. אם הממשק אומר לשנות סיסמה ב-Cloud Sync, הכוונה היא ל<strong>סיסמת הצפנת הסנכרון</strong>, לא לסיסמת חשבון WebBrain.</p><p>אם תשכחו את סיסמת הסנכרון, לא ניתן לפענח את כספת הענן המוצפנת הישנה. אפשר לאפס את כספת הענן ולהעלות עותק מוצפן חדש ממכשיר שעדיין מחזיק את הנתונים מקומית.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>כיצד WebBrain משתווה ל-OpenClaw, Browser-Use ומסגרות סוכני בינה מלאכותית אחרות?</summary>
-      <p>אלו קטגוריות שונות של כלים. WebBrain הוא הרחבת דפדפן — אתה מתקין אותו ב-Chrome או Firefox ומדבר איתו בסרגל צד, ללא צורך בתכנות. מסגרות כמו OpenClaw ו-Browser-Use הן SDK למפתחים לבניית תהליכי אוטמט דפדפן ב-Python, לרוב עם דפדפנים ללא ממשק ו-CDP. בקיצור: WebBrain לגלישה יומית עם עוזר חכם; מסגרות סוכנים לבניית בוטי גריפה ואוטמט בדיקות. אתה יכול להשתמש בשניהם — הם משלימים זה את זה.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם אני יכול להשתמש ב-WebBrain לחלוטין לא מקוון?</summary>
-      <p>כן. הספק כברירת מחדל של WebBrain הוא llama.cpp, שפועל מודל בינה מלאכותית מקומי על המחשב שלך. ללא מפתחות API, ללא חיבור לאינטרנט для הבינה המלאכותית, ואין נתונים שעוזבים את המכשיר שלך לעולם. פשוט הורד מודל GGUF, הפעל llama-server, ויהיה לך סוכן דפדפן חכם פרטי לחלוטין. אפשר גם להשתמש ב-Ollama עם קצה התואם ל-OpenAI.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>אילו מודלי בינה מלאכותית WebBrain תומך?</summary>
-      <p>WebBrain תומך בארבעה סוגי ספקים: llama.cpp (כל מודל GGUF מקומי), OpenAI (GPT-4o, GPT-4, וכו׳), Claude (Claude Opus, Sonnet, Haiku דרך API מקורי) ו-OpenRouter (גישה ליותר מ-100 מודלים מספקים שונים). כל קצה API תואם OpenAI עובד, אז אפשר גם להשתמש בשירותים כמו Together AI, Groq, Mistral או כל שרת מקומי עם ממשק תואם OpenAI.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>מהו המודל המומלץ ביותר?</summary>
-      <p>נכון ל<strong>21 באפריל 2026</strong>, ההמלצה העליונה היא <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>. למה: ב benchmark הראייה שלנו (<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">vision-model-shootout</a>), הוא עלה על Gemma 4 בהבנת צילומי מסך תוך כדי שמירה על מעשיות למסור מקומי.</p><p>לכרטיסי מסך צרכניים, RTX 5090 הוא אידיאלי, ו-RTX 4090 לרוב עובד עם קванטיזציה INT4 AutoRound דרך <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a>.</p><p>למהירות מקסימלית, אנו ממליצים להפעיל על <strong>vLLM</strong>. דוגמת פקודה:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>פענוח ספקולטיבי DFlash הוא אופציונלי.</em></p>
-    </details>
-
-    <details class="faq-item">
-      <summary>אני מקבל &quot;Failed to fetch&quot; בעת חיבור לשרת LLM מקומי (vLLM, Ollama, llama.cpp) ברשת שלי</summary>
-      <p>אם שרת ה-LLM שלך נמצא על מכשיר אחר ברשת המקומית שלך (למשל <code>http://192.168.1.x:8000</code>), Chrome חוסם את הבקשה אלא אם כן השרת שולח <strong>כותרות CORS</strong>. התיקון תלוי בשרת שלך:</p><p><strong>vLLM:</strong> התחל עם <code>--allowed-origins '["*"]'</code> (הערך חייב להיות רשימה של JSON).<br><strong>Ollama:</strong> הגדר את משתנה הסביבה <code>OLLAMA_ORIGINS=*</code> לפני ההפעלה.<br><strong>llama.cpp:</strong> CORS מופעל כברירת מחדל — ללא שינויים נדרשים.</p><p>אם השרת שלך פועל על <code>localhost</code> (אותו מכשיר כמו הדפדפן), בדרך כלל אין צורך ב-CORS. הבעיה משפיעה רק על חיבורים בין מכשירים ברשת המקומית. ודא שכתובת ה-URL הבסיסית בהגדרות WebBrain מסתיימת ב-<code>/v1</code> (למשל <code>http://192.168.1.47:8000/v1</code>). חריג: Ollama המשמש מהרחבת דפדפן עדיין עשוי להזדקק ל-<code>OLLAMA_ORIGINS</code>; ראה את ה-FAQ של Ollama למטה.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>מדוע Ollama על localhost מחזיר 403 מהתוסף של WebBrain?</summary>
-      <p>גרסאות חדשות של Ollama יכולות לדחות בקשות ממקורות של הרחבות דפדפן גם כש-Ollama פועל על אותו מכשיר. התוסף שולח <code>Origin</code> כמו <code>chrome-extension://...</code> או <code>moz-extension://...</code>, ו-Ollama יכול להחזיר 403 אלא אם כן מקורות אלה מורשים.</p><p>סגור כל יישום שולחני של Ollama שתופס כבר את הפורט <code>11434</code>, ואז הפעל את Ollama עם אחת מפקודות אלה:</p><p><code>OLLAMA_ORIGINS="*" ollama serve</code><br><code>OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ollama serve</code></p><p>שמר על כתובת ה-URL הבסיסית של Ollama ב-WebBrain על <code>http://localhost:11434/v1</code>. בדיקות <code>curl</code> במסוף עדיין יכולות לעבוד ללא הגדרה זו כי הן אינן שולחות מקור של הרחבת דפדפן.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם WebBrain עובד ב-Firefox?</summary>
-      <p>כן. WebBrain מגיע עם גרסת Chrome (Manifest V3, משתמש ב-sidePanel API) וגרסת Firefox (Manifest V2, משתמש ב-sidebar_action). שתי הגרסאות זהות בתכונות. גרסת Firefox ניתן לטעינה כתוסף זמני לפיתוח, או פרסום ב-addons.mozilla.org להתקנה קבועה.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם אני יכול להעביר את סרגל הצד של Firefox משמאל לימין, כמו סרגל הצד של Chrome?</summary>
-      <p>כן — סרגל הצד של Firefox כברירת מחדל בצד שמאל, אבל אפשר להפוך אותו. לחץ באמצעות הכפתור הימני בכל מקום בכותרת סרגל הצד ובחר <strong>Move Sidebar to Right</strong> (או דרך התפריט <strong>View → Sidebar → Move Sidebar to Right</strong>). המיקום נשמר בין הפעלות מחדש. סרגל הצד של Chrome בצד ימין כברירת מחדל ואינו ניתן להזזה על ידי המשתמש מהסרגל עצמו.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם יש מגבלות בשימוש ב-WebBrain בתוך Web Panel של Vivaldi?</summary>
-      <p>כן. Web Panels של Vivaldi חוסמים תיבות דו-שיח מקוריות של JavaScript, כגון <code>confirm()</code>, <code>alert()</code> ו-<code>prompt()</code>. המעבר בין מצבי Ask, Act ו-Dev של WebBrain כבר אינו תלוי בהן, אך כמה פעולות משניות עדיין כן.</p><p><strong>הקלטה:</strong> אל תשתמש ב-<code>/record</code> ב-Vivaldi לעת עתה. אם ההקלטה נכשלת, Vivaldi עלול להסתיר את התראת השגיאה ולא להציג הסבר.</p><p><strong>Settings, History, Traces והעברה ל-Ollama:</strong> גם דפים אלה מכילים תיבות דו-שיח מקוריות, אך WebBrain פותח אותם בדרך כלל בלשוניות רגילות שבהן הם פועלים. אם הוספת אחד מהם ידנית ל-Web Panel, פתח אותו בלשונית רגילה לפני שימוש בפעולה שתלויה בתיבת דו-שיח.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם WebBrain בטוח לשימוש? האם הוא יכול לשנות דפי אינטרנט?</summary>
-      <p>ל-WebBrain שלושה מצבים. מצב Ask (ברירת המחדל) הוא לקריאה בלבד ואינו יכול לשנות דבר בדף. מצב Act מאפשר פעולות דפדפן כמו לחיצה, הקלדה וניווט, ומצב Dev מוסיף כלי ניפוי שגיאות לדף. פעולות בעלות השלכות דורשות אישור כברירת מחדל; אם שער ההרשאות הזה כבוי, WebBrain מציג סרגל אזהרה גלוי. אפשר לעצור את הסוכן בכל עת באמצעות כפתור העצירה. קוד המקור של התוסף פתוח לחלוטין לבדיקה ב-GitHub.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>מהו סרגל &quot;WebBrain started debugging this browser&quot;? למה WebBrain משתמש ב-CDP?</summary>
-      <p>כדי לפעול על דף בצורה אמינה, WebBrain משתמש בפרוטוקול Chrome DevTools (CDP) דרך ממשק ההרחבה הסטנדרטי <code>chrome.debugger</code> — זה מה שגורם לסרגל "WebBrain started debugging this browser" של Chrome. CDP הוא מה שמאפשר לסוכן ללחוץ ולהקליד עם <strong>אירועי הקלדה מהימנים</strong> שאתרים מודרניים באמת מקבלים; אירועים סינתטיים הנורים מ-content script נדחים על ידי אתרים רבים, Web Components ושדות הנשלטים על ידי מסגרות. זה גם איך WebBrain מצלם צילומי מסך בדיקת פיקסל ל-Retreat החזותי ומגיע ל<strong>iframes חוצי מקורות ו-shadow DOM</strong> ש-content scripts לא יכולים לראות.</p><p><strong>מצב Ask</strong> לקריאה בלבד <strong>אינו צריך CDP</strong> — קריאות הדף ועץ הנגישות עוברות דרך content scripts רגילים. מה ש<strong>נדרש</strong> הוא אמינות <strong>מצב Act</strong> ועבודה חוצת מקורות, ובמצב V3 של Manifest אין ממשק ללא מקשקש מהימן для הקלדה. WebBrain מצרף את המקשקש <strong>רק כשפעולה דורשת זאת</strong>, לכל כרטיסייה, וההרחבת בשלמותה בקוד פתוח כך שאתה יכול לבדוק בדיוק מה ה-session עושה. CDP חזק, אז אנחנו מתייחסים לחשיפה שלו כמשהו שצריך להכיל (צרף כשנדרש, שמור את ה readings הרחק ממנו), וצמצום נוסף נמצא ב roadmap האבטחה שלנו.</p></p>
-    </details>
-
-    <details class="faq-item">
-      <summary>הוא שואל אותי יותר מדי שאלות. האם אני יכול לבטל את זה?</summary>
-      <p>prompts האישור האלה הם לבטיחותך. אפילו באתרים שאתה סומך עליהם, גורמים זדוניים יכולים לחקות הוראות LLM או להזריק תוכן שמנסה לגרום לסוכן לעשות דברים בשמך שלא היית מאשר. לכן WebBrain שואל לפני פעולות בעלות השלכות. אם אתה עדיין לא רוצה לעבור על那些 prompts, הקלד <code>/dangerously-skip-permissions</code> בסרגל הצד, או פתח את התוסף בצד, לחץ על סמל ההגדרות בכותרת, עבור ללשונית <strong>הרשאות</strong> ב-<code>settings.html</code>, וכבה את <strong>Ask before consequential actions</strong>.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>כיצד אני משתמש ב-WebBrain לגריפת רשת וחילוץ נתונים?</summary>
-      <p>פשוט פתח כל דף אינטרנט, פתח את סרגל הצד של WebBrain, ושאל בשפה טבעית: "חלץ את כל שמות המוצרים והמחירים מדף זה", "קבל את כל כתובות הדוא"ל בדף זה", או "סכם מאמר זה בנקודות". סוכן הבינה המלאכותית קורא את תוכן הדף, מבין את המבנה ומחזיר את הנתונים שחולצו. לגריפה מורכבת יותר, עבור למצב Act והסוכן יכול לנווט בין דפים, ללחוץ על כפתורי ניווט ולאסוף נתונים عبر דפים מרובים.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם WebBrain קורא ל-API ישירות, או תמיד לוחץ דרך הממשק?</summary>
-      <p> כברירת מחדל, WebBrain <strong>תמיד עובר דרך הממשק הגלוי</strong> לכל פעולה שיוצרת, משנה, מוחקת, שולחת, מגישה, מפרסמת או קונה משהו. הוא ינווט לדף, ימלא את הטופס וילחץ על הכפתור — בדיוק כפי שאתה היית עושה. הוא מסרב לקרוא לקצוות REST/GraphQL ישירות דרך <code>fetch()</code> ברקע לשינויים. זה מכוון: פעולות API בלתי נראות (אתה לא רואה מה נשלח), דורשות לרוב אסימוני אימות נפרדים שאולי לא הגדרת, ובעלות טווח השפעה הרבה יותר רחב מלחיצה גלוייה שגויה. UI-first פירושו שהכל על המסך, ב sessions הרגיל שלך, ואפשר לעצור אותו.</p><p>ל<strong>קריאה</strong> של נתונים — שליפת README, חיפוש issue, השוואת מחירים בין אתרים, בדיקת דף סטטוס — WebBrain משתמש בחופשיות בבקשות HTTP ברקע דרך הכלים <code>fetch_url</code> ו-<code>research_url</code>. קריאה אינה פעולה; היא לא משנה שום דבר בשירות מרוחק, אז דאגות הבטיחות לא חלות.</p><p>אם אתה רוצה לאפשר特意️ APImutations למשימה מסוימת, הקלד <code>/allow-api</code> בתחילת ההודעה שלך (אופציונלי עם תיאור קצר של המשימה). החרגה זו מאפשרת ל-WebBrain לחזור לקצוות API כשהממשק נכשל באמת או לא מעשי, תוך שמירה על העדפת ממשק כשהוא עובד. סמל דביק נשאר גלוי מעל אזור הקלטขณะ שההחרגה פעילה, והוא נמחק כשאתה מאפס את השיחה.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם אני יכול להשתמש בו ב-LM Studio גם?</summary>
-      <p>כן. כלי הרשת לקריאה בלבד של WebBrain — <code>fetch_url</code> ו-<code>research_url</code> — מגיעים גם כתוסף עצמאי של <a href="https://lmstudio.ai" target="_blank">LM Studio</a> ב-<a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/web-tools</a>. התקן עם <code>lms clone webbrain/web-tools</code> והפעל בכל שיחת LM Studio — כל מודל התומך בכליים יכול אז לקרוא לשתי הכלים הללו מבלי להתקין את הרחבת הדפדפן. Node טהור, ללא דפדפן ללא ממשק. קוד מקור: <a href="https://github.com/webbrain-one/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם אפשר לגלול למעלה או למטה בזמן ש-WebBrain עובד בכרטיסייה שלי?</summary>
-      <p>ברוב המקרים כן — במיוחד ב<strong>מצב Ask</strong> עבור בקשות לקריאה בלבד, כמו „סכם את הדף הזה”. אפשר להמשיך לגלול בזמן ש-WebBrain עובד.</p><p><strong>מתי כדאי להימנע מכך?</strong> צילומי המסך האוטומטיים משקפים את אזור התצוגה הנוכחי של הכרטיסייה. כאשר WebBrain בודק תוכן גלוי או מקיים איתו אינטראקציה באופן פעיל ב<strong>מצב Act או Dev</strong>, גלילה עלולה להזיז יעד או לשנות את מה שהמודל רואה. יש להמתין לסיום השלב לפני הגלילה; מחוץ לרגעים האלה אפשר להמשיך להשתמש בדף.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם אפשר לעבור לכרטיסייה אחרת בזמן ש-WebBrain עובד על דף?</summary>
-      <p>כן. החל מגרסה <strong>27.0.0</strong>, WebBrain נמנע מלקחת את המיקוד גם בדפדפנים מבוססי Chromium וגם ב-Firefox, אלא אם גישה לחזית הכרחית לחלוטין. ההפעלה נשארת מקושרת לכרטיסייה שבה התחילה, ולכן אפשר לעבוד בבטחה בכרטיסייה אחרת.</p><p>אם שלב נדיר מחייב שהכרטיסייה המקורית תהיה בחזית, WebBrain עשוי להעביר אליה את המיקוד לזמן קצר. יש להימנע מלחיצה או הקלדה באותה כרטיסייה בזמן ש-WebBrain מבצע בה פעולות באופן פעיל.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>כיצד מילוי הפרופיל האוטומטי עובד, והאם זה בטוח?</summary>
-      <p>מילוי פרופיל אוטומטי הוא תכונה אופציונלית ב<strong>הגדרות ← פרופיל</strong>. אתה מזין ביוגרפיה קצרה — שם, דוא"ל עסקי, חברה וסיסמה <em>לשימוש חד-פעמי</em> להרשמות בסיכון נמוך — ומפעיל אותה. כשפעיל, WebBrain מצרף את הטקסט הזה לפרומפט המערכת של הסוכן כדי שהוא ימלא טפסי הרשמה מבלי לשאול בכל פעם.</p><p>הטקסט מאוחסן <strong>בטקסט פשוט</strong> באחסון המקומי של הדפדפן שלך. הוא <strong>אינו</strong> מועבר לפרויקט WebBrain, אבל הוא <strong>מועבר</strong> לכל ספק LLM שהגדרת בכל תור, כחלק מפרומפט המערכת. מושבת כברירת מחדל.</p><p><strong>אל תשים סיסמאות לחשבונות חשובים</strong> כאן (Google, Apple, iCloud, בנקים, SSO עסקי, דוא"ל ראשי). חשבונות אלה צריכים להשתמש ב-2FA ולא צריך להעביר אותם לסוכן ממילא. סיסמה לשימוש חד-פעמי שאתה מחדש לרשמות ניוזלטר וניסויים חינם היא מקרה השימוש המיועד.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם ההגדרה טשטוש צילומי מסך מבטיחה שהנתונים הפרטיים שלי לעולם לא יגיעו למודל ראייה בענן?</summary>
-      <p>לא — היא מפחיתה חשיפה, אך אינה ערבות. כשההגדרה מופעלת (<strong>הגדרות ← מולטי-מודאלי ← טשטוש צילומי מסך</strong>, כבויה כברירת מחדל), WebBrain מפקסל שדות טופס וטקסט שנראה ככתובת דוא"ל או מספר טלפון בכל צילום מסך <em>לפני</em> שהוא נשלח למודל ראייה. הזיהוי מתבצע כולו במכשיר שלך באמצעות היוריסטיקות DOM; שום דבר נוסף לא מועבר.</p><p><strong>זהו טשטוש במאמץ סביר (best-effort) מסוג fail-open.</strong> אם המזהה אינו יכול לפעול בדף מסוים — למשל מיד אחרי ניווט, בצפייה בקבצי PDF, או בדפי דפדפן מוגבלים — צילום המסך עדיין יישלח <em>ללא טשטוש</em> במקום לבטל את המשימה שלך. תוכן שהיוריסטיקות של DOM אינן יכולות לראות (טקסט המצויר על canvas, מידע אישי בתוך תמונות, רכיבי ממשק חריגים) עלול גם הוא לחמוק. וההגדרה מכסה רק צילומי מסך: <em>טקסט</em> הדף הנשלח למודל אינו מטושטש על ידה.</p><p><strong>לפרטיות מלאה בראייה, השתמש במודל מקומי.</strong> עם ספק לא מקוון כמו llama.cpp או Ollama, צילומי המסך וטקסט הדף לעולם אינם עוזבים את המכשיר שלך, כך שאין כלל מה לטשטש מלכתחילה — זו התצורה היחידה שבה הפרטיות מובטחת. ראה "האם אני יכול להשתמש ב-WebBrain לחלוטין לא מקוון?" למעלה.</p><p><strong>אין לך מכשיר שמסוגל להריץ מודל מקומי עם תמיכה בראייה?</strong> פשרה טובה היא שימוש במודל מקומי קטן לתכנון ולקריאה לכלים (קליל מספיק למעבד/כרטיס מסך צנוע), בשילוב עם ספק ענן עבור קריאות המשנה של הראייה, כאשר טשטוש צילומי מסך מופעל. השיחה שלך וטקסט הדף נשארים במכשיר, וכל צילום מסך שיוצא לראייה בענן כבר עבר טשטוש של שדות טופס ודוא"ל/טלפון שזוהו — פחות חשיפה בענן מבלי להזדקק לחומרה עבור מודל ראייה מקומי מלא. הגדר את החלוקה הזו תחת <strong>הגדרות ← ראייה</strong> (ראה "כיצד WebBrain שומר על חשבונות LLM בענן בשליטה?" למעלה).</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>מה WebBrain עושה עם כרזות עוגיות וקירות תשלום?</summary>
-      <strong>כרזות עוגיות:</strong> WebBrain מזהה כרזות הסכמה ממסגרות נפוצות (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) וסוגר אותן לפני הסקת מסקנות על הדף. העדפה היא "דחה הכל" / "דחה לא הכרחי" / "רק הכרחי" כשהם גלויים בבירור; הוא חוזר ל"אשר הכל" במקום ללכת לאיבוד במבוך "ניהול העדפות".</p><p><strong>קירות תשלום:</strong> WebBrain מדווח על קיר התשלום בכנות ומספר לך מה הוא באמת ראה (כותרת, כותרת משנה, פסקאות ראשונות). הוא <strong>אינו</strong> מנסה לעקוף קירות תשלום — לא archive.today, לא 12ft.io, לא מחיקת עוגיות, לא השבתת JS, לא טריקים של מצב קריאה. אם אתה רוצה את המאמר המלא, היכנס עם מינוי או בקש מ-WebBrain לחפש סיקור חינם של אותה ה故事.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם WebBrain תומך במצב dry-run?</summary>
-      <p>מגרסה <strong>7.0.0</strong>, עדיין לא. מצב dry-run מתוכנן וכבר על מפת הדרכים.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם WebBrain שולח את כל ה-DOM למודל הבינה המלאכותית?</summary>
-      <p>לא. כברירת מחדל, WebBrain אינו שולח HTML גולמי או עותק גולמי של ה-DOM. הוא מתחיל מכתובת ה-URL וכותרת הדף, מהנחיות האתר המתאימות ומצילום מסך אופציונלי של האזור הנראה כאשר יכולת הראייה מופעלת.</p><p>כאשר משימה דורשת תוכן מהדף, WebBrain קורא אותו לפי הצורך כעץ נגישות סמנטי מצומצם או כטקסט שחולץ. הקריאות מסוננות לפי נראות במקומות המתאימים, מוגבלות במספר תווים ומחולקות לעמודים. גישה למקור הדף הגולמי זמינה רק במצב Dev.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>כיצד WebBrain שומר על חשבונות LLM בענן בשליטה?</summary>
-      <p>שלוש שכבות עצמאיות:</p><p><strong>צילומי מסך חוסכי אסימונים.</strong> לפני שכל תמונה עוזבת את המכשיר שלך, WebBrain משנה את גודלה (הצד הקצר מוגבל, תוך שמירה על יחס רוחב-גובה) ודוחס אותה חוזרת ב-JPEG עד שהיא מתאימה למכסת אסימוני תמונה לכל תור. צילום מסך של 2000×1200 שהיה עולה לך כ-1500 אסימוני כניסה ב-GPT-4o דוחס לכ-300-500 אסימונים ללא אובדן מעשי למשימות קריאת דפים. מומש ב-<code>_fitImageDimensions</code> עם בדיקות יחידה לחישובי המכסה.</p><p><strong>גיזום קשר חכם.</strong> היסטוריית שיחה, פלטי כלים ופריקת DOM מוטמעות מוגבלות לכל תור וɡізוזות מהישן לחדש כשחלון הקשר של המודל הפעיל מתקרב למלואו. לא תראה הפעלה מתנפחת בשקט מ-10k אסימונים ל-100k רק בגלל ש-<code>read_page</code> החזיר מאמר באורך רומן.</p><p><strong>מודל ראייה ייעודי.</strong>זוג מודל טקסט זול (כמו GPT-4o-mini) לתכנון וקריאה לכלים עם מודל ראייה נפרד (כמו GPT-4o) רק לצילומי מסך, כדי לא לשלם מחירים של מודל רב-תכליתי בכל תור. להגדרות ב<strong>הגדרות ← ראייה</strong>.</p><p>תוצאה סופית: ישיבות ארוכות עם ספקי ענן נשארות צפויות. לשליטה מלאה, השתמש ב-llama.cpp מקומי — אפס עלות לאסימון.</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>האם אני יכול לתרום ל-WebBrain?</summary>
-      <p>בהחלט! WebBrain ברישיון MIT ומקבל בתרומות. בדוק את <a href="https://github.com/webbrain-one/webbrain" target="_blank">המאגר ב-GitHub</a> לבעיות, בקשות תכונות והנחיות תרומה.</p>
-    </details>
-  </div>
-</section>
-
 <!-- SPREAD THE WORD / OPEN SOURCE -->
 <section class="section">
   <div class="oss-banner">
@@ -3975,6 +3600,7 @@
       </a>
       <a href="/blog">בלוג</a>
       <a href="/docs/">תיעוד</a>
+      <a href="/docs/he/faq/">שאלות נפוצות</a>
       <a href="/privacy">מדיניות פרטיות</a>
       <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">דווח באג</a>
       <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">רישיון MIT</a>

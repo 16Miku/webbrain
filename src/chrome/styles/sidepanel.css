@@ -862,6 +862,47 @@ body {
   transition: transform 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 
+.standalone-webgpu-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: 16px/1 system-ui, sans-serif;
+  transition: color 0.2s, border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.standalone-webgpu-toggle[hidden] {
+  display: none;
+}
+
+.standalone-webgpu-toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--success);
+}
+
+.standalone-webgpu-toggle.active {
+  color: #fff;
+  border-color: var(--success);
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.standalone-webgpu-toggle:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.provider-picker-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .provider-picker-caret svg {
   display: block;
 }

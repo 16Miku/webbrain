@@ -844,7 +844,7 @@ async function runText(payload) {
   const dtype = payload?.dtype || 'q4f16';
   const usesLfm25ReasoningTemplate = modelId === WEBGPU_LFM25_MODEL_ID;
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
+    throw new Error(`${modelId} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
@@ -957,12 +957,15 @@ self.addEventListener('message', async event => {
       const request = assertTextDownloadCanStart(payload);
       queuedTextDownload = request;
       let acknowledged = false;
-      const operation = enqueueModelOperation(() => downloadTextModel(payload, {
-        onStarted(state) {
-          acknowledged = true;
-          self.postMessage({ id, ok: true, ...state });
-        },
-      }));
+      const operation = enqueueModelOperation(() => {
+        if (queuedTextDownload !== request) return getTextDownloadStatus(request.modelId, request.dtype);
+        return downloadTextModel(payload, {
+          onStarted(state) {
+            acknowledged = true;
+            self.postMessage({ id, ok: true, ...state });
+          },
+        });
+      });
       void operation.then((state) => {
         if (!acknowledged) self.postMessage({ id, ok: true, ...state });
       }).catch((error) => {
@@ -979,6 +982,9 @@ self.addEventListener('message', async event => {
     if (type === 'stop-text-download') {
       const modelId = String(payload?.modelId || '').trim();
       const dtype = payload?.dtype || 'q4f16';
+      const targetsQueuedTransfer = queuedTextDownload
+        && sameTextModel(queuedTextDownload.modelId, queuedTextDownload.dtype, modelId, dtype);
+      if (targetsQueuedTransfer) queuedTextDownload = null;
       const targetsTrackedTransfer = sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype);
       if (targetsTrackedTransfer) {
         textDownloadCancelMode = 'stop';

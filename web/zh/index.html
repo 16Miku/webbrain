@@ -78,223 +78,6 @@
   "screenshot": "https://webbrain.one/og-image.png"
 }
   </script>
-  <script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "inLanguage": "zh-CN",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "WebBrain 是 Claude 浏览器插件的免费替代品吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "是的。WebBrain 提供类似的 AI 浏览器代理能力 —— 阅读页面、提取数据、点击按钮、填写表单并自动化多步骤工作流。与需要 Claude Pro 订阅且仅支持 Anthropic 模型的专有 Claude 插件不同,WebBrain 完全免费、开源(MIT 许可),并支持多个 LLM 提供商,包括完全在你的机器上运行的本地模型。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain Cloud 订阅多少钱？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain Cloud 目前为每个设备配置文件每月 5 美元，暂时比 Claude Pro 便宜得多。当前用量在公平使用政策下不限量：正常个人使用没问题，但不允许滥用、自动化刷量、转售或异常高流量使用。 订阅绑定到扩展为该浏览器 + 操作系统 GUID 生成的设备标识符，而不是用户账户。如果你重置扩展存储、删除浏览器配置文件、重新安装浏览器、更换浏览器/操作系统或丢失设备而导致该标识符丢失，我们无法找回或转移，也不会因此退款。 你可以在插件设置页的账户区域通过管理账单按钮订阅或管理账单。若要手动取消，请用结账时使用的邮箱地址给我们发邮件。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "加密的 Cloud Sync 如何工作？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cloud Sync 是面向有效 WebBrain Cloud 订阅用户的可选功能。它会同步你的 WebBrain 记忆、个人资料自动填充文本，以及受支持的提供商配置（包括 API 密钥）。它不会同步聊天记录、浏览器历史、页面截图，或旧版 OAuth 访问令牌与刷新令牌。 浏览器会在上传前使用你选择的密码对同步保险库进行加密。WebBrain Cloud 只存储加密后的保险库；无法读取你的记忆、个人资料文本、提供商设置或 API 密钥，也无法帮你找回同步密码。 邮箱字段用于 WebBrain Cloud 的 magic-link 账单/订阅身份验证，不是账户密码。如果界面在 Cloud Sync 中提示更改密码，指的是同步加密密码，而不是 WebBrain 账户密码。 如果你忘记了同步密码，旧的加密云端保险库将无法解密。你可以重置云端保险库，并从仍保留本地数据的设备重新上传一份新的加密副本。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 与 OpenClaw、Browser-Use 以及其他 AI 代理框架有何不同?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "它们属于不同类别的工具。WebBrain 是浏览器扩展 —— 你在 Chrome 或 Firefox 中安装它,并在侧边栏中与它对话,无需编码。OpenClaw 和 Browser-Use 等框架是面向开发者的 SDK,用 Python 构建自动化浏览器流水线,通常使用无头浏览器和 CDP。换句话说:WebBrain 用于日常浏览时的 AI 助手;代理框架用于构建抓取机器人和测试自动化。你可以同时使用 —— 二者互补。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "我能完全离线使用 WebBrain 吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "可以。WebBrain 的默认提供商是 llama.cpp,它在你的电脑上运行本地 AI 模型。无需 API 密钥,AI 无需互联网,数据不会离开你的机器。下载一个 GGUF 模型,启动 llama-server,你就拥有了一个完全私有的 AI 浏览器代理。你也可以通过 OpenAI 兼容端点使用 Ollama。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 支持哪些 AI 模型?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain 支持四类提供商:llama.cpp(任意本地 GGUF 模型)、OpenAI(GPT-4o、GPT-4 等)、Claude(通过原生 API 使用 Claude Opus、Sonnet、Haiku)以及 OpenRouter(访问多家提供商的 100 多种模型)。任何 OpenAI 兼容的 API 端点都能工作,因此你也可以使用 Together AI、Groq、Mistral 等服务,或任何提供 OpenAI 兼容接口的本地服务器。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "最推荐的模型是什么?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "截至 2026 年 4 月 21 日,最推荐的是 Qwen 3.6 35B。原因:在我们的视觉基准测试中(vision-model-shootout),它在截图理解方面超过了 Gemma 4,同时对本地推理仍然可行。 在消费级 GPU 上,RTX 5090 是理想选择;RTX 4090 通常可借助 Intel/Qwen3.6-35B-A3B-int4-AutoRound 的 INT4 AutoRound 量化运行。 追求最高速度时,推荐使用 vLLM 提供服务。示例命令: python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{\"image\": 4, \"video\": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '[\"*\"]' --speculative-config '{\"method\": \"dflash\", \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\", \"num_speculative_tokens\": 15}' --attention-backend flash_attn DFlash 推测解码是可选项。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "连接到我网络上的本地 LLM 服务器(vLLM、Ollama、llama.cpp)时出现「Failed to fetch」",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "如果你的 LLM 服务器在本地网络中的另一台机器上(例如 http://192.168.1.x:8000),除非服务器发送 CORS 头,否则 Chrome 会拦截该请求。解决方案因服务器而异: vLLM:启动时添加 --allowed-origins '[\"*\"]'(值必须是 JSON 列表)。 Ollama:启动前设置环境变量 OLLAMA_ORIGINS=*。 llama.cpp:默认启用 CORS,无需更改。 如果你的服务器运行在 localhost(与浏览器同一台机器),通常不需要 CORS。该问题仅影响本地网络上跨机器的连接。请确保 WebBrain 设置中的基础 URL 以 /v1 结尾(例如 http://192.168.1.47:8000/v1)。 例外：从浏览器扩展使用 Ollama 时仍可能需要 OLLAMA_ORIGINS；请参见下方的 Ollama FAQ。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "为什么 localhost 上的 Ollama 会对 WebBrain 扩展返回 403？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "较新的 Ollama 版本即使运行在同一台机器上，也可能拒绝来自浏览器扩展来源的请求。扩展会发送类似 chrome-extension://... 或 moz-extension://... 的 Origin，如果未允许这些来源，Ollama 可能返回 403。 先退出任何已经占用 11434 端口的 Ollama 桌面应用，然后用以下命令之一启动 Ollama： OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve 将 WebBrain 的 Ollama Base URL 保持为 http://localhost:11434/v1。终端中的 curl 检查即使没有这个设置也可能正常工作，因为它们不会发送浏览器扩展来源。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 在 Firefox 上能用吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "能。WebBrain 同时提供 Chrome 版(使用 sidePanel API 的 Manifest V3)和 Firefox 版(使用 sidebar_action 的 Manifest V2)。两个版本功能一致。Firefox 版本可以作为临时附加组件用于开发,也可以发布到 addons.mozilla.org 进行永久安装。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "我可以像 Chrome 那样把 Firefox 的侧边栏从左边移到右边吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "可以 —— Firefox 的侧边栏默认显示在左侧,但你可以把它切换到右侧。在侧边栏标题栏上右键点击,选择「将侧边栏移到右侧」(也可以从菜单栏走「查看 → 侧边栏 → 将侧边栏移到右侧」)。重启后位置保持不变。Chrome 的 sidePanel 默认在右侧,且无法由用户从面板本身移动。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "使用 WebBrain 安全吗?它能修改网页吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "WebBrain 有三种模式。询问模式(默认)只读,无法修改页面内容。执行模式可进行点击、输入和导航等浏览器操作,开发模式则增加页面调试工具。会产生后果的操作默认需要批准;如果关闭该权限门控,WebBrain 会显示明显的警告横幅。你可以随时通过「停止」按钮停止代理。扩展源代码在 GitHub 上完全开放供审计。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "「WebBrain started debugging this browser」横幅是什么?WebBrain 为什么使用 CDP?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "为了可靠地在页面上执行操作,WebBrain 通过标准的 chrome.debugger 扩展 API 使用 Chrome DevTools Protocol(CDP)——这也是触发 Chrome「WebBrain started debugging this browser」横幅的原因。CDP 让代理能够以现代网站真正接受的可信输入事件进行点击和输入;从 content script 派发的合成事件会被许多网站、Web Components 以及由框架控制的输入字段拒绝。WebBrain 也借此为视觉回退捕获像素级精确的截图,并访问 content script 看不到的跨域 iframe 和 shadow DOM。 只读的询问模式不需要 CDP——页面和无障碍树的读取都通过普通的 content script 完成。需要它的是执行模式的可靠性和跨域操作;而在 Manifest V3 扩展中,没有任何无需调试器的 API 能提供可信输入。WebBrain 仅在某个操作需要时才按标签页附加调试器,而且整个扩展都是开源的,你可以审计会话究竟做了什么。CDP 很强大,因此我们把它的影响范围当作需要约束的东西(按需附加、读取不经过它),进一步收紧它已列入我们的安全路线图。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "它问我的问题太多了。可以关闭吗？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "这些批准提示是为了保护你的安全。即使在你信任的网站上，恶意行为者也可能伪造 LLM 指令或注入内容，试图让代理代表你执行你不会同意的操作。因此，WebBrain 在执行有后果的操作之前始终需要你的批准。如果你仍然不想经过这些提示，也可以关闭它们：打开侧边插件，点击标题栏中的齿轮图标，进入 settings.html 的 Permissions 标签页，然后关闭 Ask before consequential actions 选项。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "如何用 WebBrain 进行网页抓取和数据提取?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "打开任意网页,打开 WebBrain 侧边栏,用自然语言提问:「提取本页面所有产品名称和价格」、「获取本页面所有邮箱地址」或「用要点总结这篇文章」。AI 代理会读取页面内容、理解结构并返回提取的数据。对于更复杂的抓取,切换到执行模式,代理可以在页面间导航、点击分页按钮,并在多个页面上聚合数据。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 是直接调用 API,还是始终通过界面点击?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "默认情况下,WebBrain 对任何会创建、修改、删除、发送、提交、发布或购买的操作,始终通过可见界面进行。它会导航到页面、填写表单、点击按钮 —— 完全像你一样操作。它拒绝在后台通过 fetch() 直接调用 REST/GraphQL 端点进行变更。这是刻意设计:API 操作是不可见的(你看不到发送了什么),通常需要你可能未配置的单独认证令牌,而且相比于一次可见的误点击,影响范围大得多。UI-first 意味着一切都在屏幕上、在你平时的浏览器会话中、并且可中断。 对于读取数据 —— 获取 README、查找议题、跨站比价、检查状态页 —— WebBrain 会自由地通过 fetch_url 和 research_url 工具发送后台 HTTP 请求。读取不等于操作;它不会改变远程服务上的任何东西,因此不存在同样的安全顾虑。 如果你希望在某个具体任务上允许 API 变更,请在消息开头输入 /allow-api(可以后跟一段简短的任务描述)。这个按会话生效的覆盖会让 WebBrain 在界面确实失败或不可用时回退到 API 端点,但只要界面可用仍优先使用界面。覆盖启用期间,输入区上方会显示一枚置顶徽章,重置会话后该标志会清除。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "我能在 LM Studio 里也用吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "可以。WebBrain 的只读网络工具 —— fetch_url 和 research_url —— 也作为独立的 LM Studio 插件发布在 webbrain/web-tools。用 lms clone webbrain/web-tools 安装,然后在任意 LM Studio 聊天里开启 —— 任何支持工具调用的模型都能调用这两个工具,你不需要安装浏览器扩展。纯 Node,无 headless 浏览器。源码:lmstudio-plugin/。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 在我的标签页上工作时，我可以上下滚动吗？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "大多数时候可以——尤其是在 Ask 模式下处理“总结此页面”之类的只读请求时。WebBrain 工作期间，你可以继续滚动。 什么时候不适合滚动？ 自动截图反映的是标签页当前的视口。WebBrain 在 Act 或 Dev 模式下主动检查可见内容或与其交互时，滚动可能会移走目标或改变模型看到的内容。请先让该步骤完成再滚动；除此之外，你可以继续使用页面。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 工作时，我可以切换标签页吗？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "可以。从 27.0.0 起，除非确实需要前台访问，否则 WebBrain 在基于 Chromium 的浏览器和 Firefox 中都不会抢占焦点。任务会继续绑定到启动时的标签页，因此你可以放心地在另一个标签页中工作。 如果某个极少见的步骤需要将原标签页置于前台，WebBrain 可能会短暂聚焦该标签页。WebBrain 正在其中执行操作时，请避免在同一标签页点击或输入。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "个人资料自动填写如何工作?它安全吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "个人资料自动填写是 设置 → 个人资料 中的可选功能。你输入一段简短的自述 —— 姓名、工作邮箱、公司以及用于低风险注册的一次性密码 —— 然后将其打开。启用后,WebBrain 会将这段文本附加到代理的系统提示中,这样它就能无需每次询问即可填写注册表单。 该文本以明文保存在浏览器的本地存储中。它不会被传送到 WebBrain 项目,但会在每一轮作为系统提示的一部分发送给你配置的 LLM 提供商。默认关闭。 不要在此放置重要账户的密码(Google、Apple、iCloud、银行、公司 SSO、主邮箱)。这些账户应启用 2FA,而且本就不该交给代理。预期用途是你在订阅通讯和免费试用注册时反复使用的一次性密码。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "截图打码设置能保证我的隐私数据永远不会到达云端视觉模型吗？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "不能——它只是降低了暴露风险，并不是保证。启用后（设置 → 多模态 → 截图打码，默认关闭），WebBrain 会在每张截图发送给视觉模型之前，对表单字段以及看起来像邮箱地址或电话号码的文本进行打码。检测完全在你的设备上通过 DOM 启发式方法运行；不会额外传输任何内容。 这是尽力而为且失败开放（fail-open）的处理。如果检测器无法在某个页面上运行——例如刚导航完成之后、在 PDF 查看器中，或在受限的浏览器页面上——截图仍会以未打码的原样发送，而不会中止你的任务。DOM 启发式方法看不到的内容（canvas 上绘制的文字、图片中的个人信息、不常见的组件）同样可能被遗漏。而且该设置只覆盖截图：发送给模型的页面文本不会被它打码。 若需要完全的视觉隐私，请使用本地模型。使用 llama.cpp 或 Ollama 等离线提供方时，截图和页面文本永远不会离开你的设备，因此从一开始就没有需要打码的内容——这是唯一能保证隐私的配置。参见上文的\"我能完全离线使用 WebBrain 吗?\"。 没有能运行支持视觉的本地模型的设备？一个不错的折中方案是：用一个体积小的本地模型负责规划和工具调用（轻量到普通 CPU/GPU 也能胜任），再搭配一个云端提供方负责视觉子调用，同时开启截图打码。这样你的对话和页面文本仍留在本地，而每一张发往云端视觉的截图都已先对表单字段和检测到的邮箱/电话进行了打码——在不需要完整本地视觉模型硬件的情况下减少了云端暴露。请在设置 → 视觉中配置这种拆分（参见上文的\"WebBrain 如何控制云端 LLM 的账单?\"）。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 如何处理 Cookie 横幅和付费墙?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Cookie 横幅:WebBrain 能识别常见框架(OneTrust、Cookiebot、Didomi、Quantcast、Google Funding Choices、TrustArc)的同意横幅,并在对页面进行推理之前将其关闭。当「全部拒绝」/「拒绝非必要」/「仅必要」清晰可见时优先选择这些选项;否则会退而点击「全部接受」,而不是陷入「管理偏好」的迷宫。 付费墙:WebBrain 会如实报告付费墙,并告诉你它实际看到了什么(标题、副标题、开头几段)。它不会尝试绕过付费墙 —— 不使用 archive.today、12ft.io、不清除 Cookie、不禁用 JS、不使用阅读模式小技巧。如果你想要完整文章,请使用订阅登录,或请 WebBrain 搜索同一报道的免费报道。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 支持 dry-run（演练）模式吗？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "截至 7.0.0 版本, 还不支持。dry-run 模式已在路线图中, 后续会提供。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 会把整个 DOM 发送给 AI 模型吗？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "不会。默认情况下，WebBrain 不会发送原始 HTML 或完整的 DOM 转储。它首先使用页面 URL 和标题、匹配的网站指引，并在启用视觉功能时选择性地提供当前视口截图。 当任务需要页面内容时，WebBrain 会按需读取精简的语义化无障碍树或提取后的文本。读取结果会在适当情况下按可见性过滤，并设置字符上限和分页。只有 Dev 模式可以访问原始页面源代码。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "WebBrain 如何控制云端 LLM 的账单?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "三个独立的层: 节省 token 的截图。在任何图像离开你的机器之前,WebBrain 会先缩放它(短边封顶,保持宽高比),然后迭代 JPEG 压缩直到适配每轮的图像 token 预算。一张 2000×1200 的截图,在 GPT-4o 上原本大约要花 1500 个输入 token,可被压缩到约 300–500 个 token,对页面阅读任务来说没有实际损失。实现位于 _fitImageDimensions,并有覆盖预算计算的单元测试。 智能上下文裁剪。对话历史、工具输出和内联 DOM 转储都会按每轮加以限制,当活跃模型的上下文窗口接近占满时,会从最早的内容开始裁剪。你不会看到一次运行因为一次 read_page 返回了一篇长篇大论,就从 1 万 token 悄悄膨胀到 10 万。 专用视觉模型。将便宜的文本模型(如 GPT-4o-mini)用于规划和工具调用,再配一个专门的视觉模型(如 GPT-4o)只用于截图,这样你不必在每一轮都支付多模态模型的价格。可在 设置 → 视觉 中配置。 结果:与云端提供商的长会话保持可预测。如需完全控制,请使用本地 llama.cpp —— 每 token 成本为零。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "我可以为 WebBrain 做贡献吗?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "当然可以!WebBrain 采用 MIT 许可,欢迎贡献。请查看 GitHub 仓库 了解议题、功能请求和贡献指南。"
-      }
-    }
-  ]
-}
-  </script>
   <style>
     /* ================================================================
        RESET & BASE
@@ -2747,58 +2530,37 @@
     }
 
     /* ================================================================
-       FAQ
+       FAQ BRIDGE
        ================================================================ */
-    .faq-list {
+    .faq-bridge {
       max-width: 760px;
-      margin: 32px auto 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .faq-item {
-      background: var(--bg-card);
+      margin: 34px auto 0;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
-      transition: border-color 0.2s;
+      background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(45,212,191,0.05));
     }
-    .faq-item[open] {
-      border-color: rgba(108,99,255,0.25);
-    }
-    .faq-item summary {
-      padding: 16px 20px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: color 0.2s;
-    }
-    .faq-item summary::-webkit-details-marker { display: none; }
-    .faq-item summary::after {
-      content: '+';
-      font-size: 20px;
-      color: var(--text-dim);
-      flex-shrink: 0;
-      margin-inline-start: 16px;
-      transition: transform 0.2s;
-    }
-    .faq-item[open] summary::after {
-      content: '−';
-      color: var(--accent);
-    }
-    .faq-item summary:hover { color: var(--accent2); }
-    .faq-item p {
-      padding: 0 20px 16px;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .faq-item p a {
+    .faq-bridge-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(45,212,191,0.28);
+      border-radius: 50%;
       color: var(--accent2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 800;
+    }
+    .faq-bridge strong { font-size: 14px; }
+    .faq-bridge a { color: var(--accent2); font-size: 13px; font-weight: 700; }
+    .faq-bridge a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 560px) {
+      .faq-bridge { grid-template-columns: auto 1fr; }
+      .faq-bridge a { grid-column: 2; }
     }
 
     /* ================================================================
@@ -2943,6 +2705,7 @@
     </a>
     <div class="nav-links">
       <a href="/docs/zh/">文档</a>
+      <a href="/docs/zh/faq/">常见问题</a>
       <a href="/blog">博客</a>
       <a href="#download" class="nav-cta">下载</a>
       <div class="language-picker" id="language-picker">
@@ -3629,6 +3392,11 @@
       </div>
     </div>
   </div>
+  <aside class="faq-bridge" id="faq" aria-label="常见问题解答">
+    <span class="faq-bridge-mark" aria-hidden="true">?</span>
+    <strong>常见问题解答</strong>
+    <a href="/docs/zh/faq/">常见问题 <span aria-hidden="true">→</span></a>
+  </aside>
 </section>
 
 <!-- MCP SERVER -->
@@ -3789,149 +3557,6 @@
   </div>
 </dialog>
 
-<!-- FAQ -->
-<section class="section" id="faq">
-  <div class="section-label">常见问题</div>
-  <h2 class="section-title">常见问题解答</h2>
-
-  <div class="faq-list">
-    <details class="faq-item">
-      <summary>WebBrain 是 Claude 浏览器插件的免费替代品吗?</summary>
-      <p>是的。WebBrain 提供类似的 AI 浏览器代理能力 —— 阅读页面、提取数据、点击按钮、填写表单并自动化多步骤工作流。与需要 Claude Pro 订阅且仅支持 Anthropic 模型的专有 Claude 插件不同,WebBrain 完全免费、开源(MIT 许可),并支持多个 LLM 提供商,包括完全在你的机器上运行的本地模型。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain Cloud 订阅多少钱？</summary>
-      <p>WebBrain Cloud 目前为<strong>每个设备配置文件每月 5 美元</strong>，暂时比 Claude Pro 便宜得多。当前用量在公平使用政策下不限量：正常个人使用没问题，但不允许滥用、自动化刷量、转售或异常高流量使用。</p><p>订阅绑定到扩展为该浏览器 + 操作系统 GUID 生成的设备标识符，而不是用户账户。如果你重置扩展存储、删除浏览器配置文件、重新安装浏览器、更换浏览器/操作系统或丢失设备而导致该标识符丢失，我们无法找回或转移，也不会因此退款。</p><p>你可以在插件设置页的<strong>账户</strong>区域通过<strong>管理账单</strong>按钮订阅或管理账单。若要手动取消，请用结账时使用的邮箱地址给我们发邮件。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>加密的 Cloud Sync 如何工作？</summary>
-      <p>Cloud Sync 是面向有效 WebBrain Cloud 订阅用户的可选功能。它会同步你的 WebBrain 记忆、个人资料自动填充文本，以及受支持的提供商配置（包括 API 密钥）。它<strong>不会</strong>同步聊天记录、浏览器历史、页面截图，或旧版 OAuth 访问令牌与刷新令牌。</p><p>浏览器会在上传前使用你选择的密码对同步保险库进行加密。WebBrain Cloud 只存储加密后的保险库；无法读取你的记忆、个人资料文本、提供商设置或 API 密钥，也无法帮你找回同步密码。</p><p>邮箱字段用于 WebBrain Cloud 的 magic-link 账单/订阅身份验证，不是账户密码。如果界面在 Cloud Sync 中提示更改密码，指的是<strong>同步加密密码</strong>，而不是 WebBrain 账户密码。</p><p>如果你忘记了同步密码，旧的加密云端保险库将无法解密。你可以重置云端保险库，并从仍保留本地数据的设备重新上传一份新的加密副本。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 与 OpenClaw、Browser-Use 以及其他 AI 代理框架有何不同?</summary>
-      <p>它们属于不同类别的工具。WebBrain 是浏览器扩展 —— 你在 Chrome 或 Firefox 中安装它,并在侧边栏中与它对话,无需编码。OpenClaw 和 Browser-Use 等框架是面向开发者的 SDK,用 Python 构建自动化浏览器流水线,通常使用无头浏览器和 CDP。换句话说:WebBrain 用于日常浏览时的 AI 助手;代理框架用于构建抓取机器人和测试自动化。你可以同时使用 —— 二者互补。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>我能完全离线使用 WebBrain 吗?</summary>
-      <p>可以。WebBrain 的默认提供商是 llama.cpp,它在你的电脑上运行本地 AI 模型。无需 API 密钥,AI 无需互联网,数据不会离开你的机器。下载一个 GGUF 模型,启动 llama-server,你就拥有了一个完全私有的 AI 浏览器代理。你也可以通过 OpenAI 兼容端点使用 Ollama。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 支持哪些 AI 模型?</summary>
-      <p>WebBrain 支持四类提供商:llama.cpp(任意本地 GGUF 模型)、OpenAI(GPT-4o、GPT-4 等)、Claude(通过原生 API 使用 Claude Opus、Sonnet、Haiku)以及 OpenRouter(访问多家提供商的 100 多种模型)。任何 OpenAI 兼容的 API 端点都能工作,因此你也可以使用 Together AI、Groq、Mistral 等服务,或任何提供 OpenAI 兼容接口的本地服务器。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>最推荐的模型是什么?</summary>
-      <p>截至 <strong>2026 年 4 月 21 日</strong>,最推荐的是 <a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B" target="_blank">Qwen 3.6 35B</a>。原因:在我们的视觉基准测试中(<a href="https://www.webbrain.one/blog/vision-model-shootout" target="_blank">vision-model-shootout</a>),它在截图理解方面超过了 Gemma 4,同时对本地推理仍然可行。</p><p>在消费级 GPU 上,RTX 5090 是理想选择;RTX 4090 通常可借助 <a href="https://huggingface.co/Intel/Qwen3.6-35B-A3B-int4-AutoRound" target="_blank">Intel/Qwen3.6-35B-A3B-int4-AutoRound</a> 的 INT4 AutoRound 量化运行。</p><p>追求最高速度时,推荐使用 <strong>vLLM</strong> 提供服务。示例命令:</p><p><code>python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{"image": 4, "video": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '["*"]' --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' --attention-backend flash_attn</code></p><p><em>DFlash 推测解码是可选项。</em></p>
-    </details>
-
-    <details class="faq-item">
-      <summary>连接到我网络上的本地 LLM 服务器(vLLM、Ollama、llama.cpp)时出现「Failed to fetch」</summary>
-      <p>如果你的 LLM 服务器在本地网络中的另一台机器上(例如 <code>http://192.168.1.x:8000</code>),除非服务器发送 <strong>CORS 头</strong>,否则 Chrome 会拦截该请求。解决方案因服务器而异:</p><p><strong>vLLM:</strong>启动时添加 <code>--allowed-origins '["*"]'</code>(值必须是 JSON 列表)。<br><strong>Ollama:</strong>启动前设置环境变量 <code>OLLAMA_ORIGINS=*</code>。<br><strong>llama.cpp:</strong>默认启用 CORS,无需更改。</p><p>如果你的服务器运行在 <code>localhost</code>(与浏览器同一台机器),通常不需要 CORS。该问题仅影响本地网络上跨机器的连接。请确保 WebBrain 设置中的基础 URL 以 <code>/v1</code> 结尾(例如 <code>http://192.168.1.47:8000/v1</code>)。 例外：从浏览器扩展使用 Ollama 时仍可能需要 <code>OLLAMA_ORIGINS</code>；请参见下方的 Ollama FAQ。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>为什么 localhost 上的 Ollama 会对 WebBrain 扩展返回 403？</summary>
-      <p>较新的 Ollama 版本即使运行在同一台机器上，也可能拒绝来自浏览器扩展来源的请求。扩展会发送类似 <code>chrome-extension://...</code> 或 <code>moz-extension://...</code> 的 <code>Origin</code>，如果未允许这些来源，Ollama 可能返回 403。</p><p>先退出任何已经占用 <code>11434</code> 端口的 Ollama 桌面应用，然后用以下命令之一启动 Ollama：</p><p><code>OLLAMA_ORIGINS="*" ollama serve</code><br><code>OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ollama serve</code></p><p>将 WebBrain 的 Ollama Base URL 保持为 <code>http://localhost:11434/v1</code>。终端中的 <code>curl</code> 检查即使没有这个设置也可能正常工作，因为它们不会发送浏览器扩展来源。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 在 Firefox 上能用吗?</summary>
-      <p>能。WebBrain 同时提供 Chrome 版(使用 sidePanel API 的 Manifest V3)和 Firefox 版(使用 sidebar_action 的 Manifest V2)。两个版本功能一致。Firefox 版本可以作为临时附加组件用于开发,也可以发布到 addons.mozilla.org 进行永久安装。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>我可以像 Chrome 那样把 Firefox 的侧边栏从左边移到右边吗?</summary>
-      <p>可以 —— Firefox 的侧边栏默认显示在左侧,但你可以把它切换到右侧。在侧边栏标题栏上右键点击,选择<strong>「将侧边栏移到右侧」</strong>(也可以从菜单栏走<strong>「查看 → 侧边栏 → 将侧边栏移到右侧」</strong>)。重启后位置保持不变。Chrome 的 sidePanel 默认在右侧,且无法由用户从面板本身移动。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>在 Vivaldi 的 Web Panel 中使用 WebBrain 有哪些限制?</summary>
-      <p>有。Vivaldi Web Panel 会屏蔽 <code>confirm()</code>、<code>alert()</code> 和 <code>prompt()</code> 等原生 JavaScript 对话框。WebBrain 的询问、执行和开发模式切换已不再依赖这些对话框,但少数次要操作仍然依赖。</p><p><strong>录制:</strong> 暂时不要在 Vivaldi 中使用 <code>/record</code>。如果录制失败,Vivaldi 可能会隐藏错误提示,因而不会显示任何说明。</p><p><strong>设置、历史记录、跟踪记录和 Ollama 交接:</strong> 这些页面也包含原生对话框,但 WebBrain 通常会在普通标签页中打开它们,因此可以正常工作。如果你手动把其中某个页面放进 Web Panel,请先在普通标签页中打开它,再使用依赖对话框的操作。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>使用 WebBrain 安全吗?它能修改网页吗?</summary>
-      <p>WebBrain 有三种模式。询问模式(默认)只读,无法修改页面内容。执行模式可进行点击、输入和导航等浏览器操作,开发模式则增加页面调试工具。会产生后果的操作默认需要批准;如果关闭该权限门控,WebBrain 会显示明显的警告横幅。你可以随时通过「停止」按钮停止代理。扩展源代码在 GitHub 上完全开放供审计。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>「WebBrain started debugging this browser」横幅是什么?WebBrain 为什么使用 CDP?</summary>
-      <p>为了可靠地在页面上执行操作,WebBrain 通过标准的 <code>chrome.debugger</code> 扩展 API 使用 Chrome DevTools Protocol(CDP)——这也是触发 Chrome「WebBrain started debugging this browser」横幅的原因。CDP 让代理能够以现代网站真正接受的<strong>可信输入事件</strong>进行点击和输入;从 content script 派发的合成事件会被许多网站、Web Components 以及由框架控制的输入字段拒绝。WebBrain 也借此为视觉回退捕获像素级精确的截图,并访问 content script 看不到的<strong>跨域 iframe 和 shadow DOM</strong>。</p><p>只读的<strong>询问模式不需要 CDP</strong>——页面和无障碍树的读取都通过普通的 content script 完成。需要它的是<strong>执行模式</strong>的可靠性和跨域操作;而在 Manifest V3 扩展中,没有任何无需调试器的 API 能提供可信输入。WebBrain <strong>仅在某个操作需要时</strong>才按标签页附加调试器,而且整个扩展都是开源的,你可以审计会话究竟做了什么。CDP 很强大,因此我们把它的影响范围当作需要约束的东西(按需附加、读取不经过它),进一步收紧它已列入我们的安全路线图。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>它问我的问题太多了。可以关闭吗？</summary>
-      <p>这些批准提示是为了保护你的安全。即使在你信任的网站上，恶意行为者也可能伪造 LLM 指令或注入内容，试图让代理代表你执行你不会同意的操作。因此，WebBrain 在执行有后果的操作之前始终需要你的批准。如果你仍然不想经过这些提示，也可以关闭它们：打开侧边插件，点击标题栏中的齿轮图标，进入 <code>settings.html</code> 的 <strong>Permissions</strong> 标签页，然后关闭 <strong>Ask before consequential actions</strong> 选项。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>如何用 WebBrain 进行网页抓取和数据提取?</summary>
-      <p>打开任意网页,打开 WebBrain 侧边栏,用自然语言提问:「提取本页面所有产品名称和价格」、「获取本页面所有邮箱地址」或「用要点总结这篇文章」。AI 代理会读取页面内容、理解结构并返回提取的数据。对于更复杂的抓取,切换到执行模式,代理可以在页面间导航、点击分页按钮,并在多个页面上聚合数据。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 是直接调用 API,还是始终通过界面点击?</summary>
-      <p>默认情况下,WebBrain 对任何会创建、修改、删除、发送、提交、发布或购买的操作,<strong>始终通过可见界面进行</strong>。它会导航到页面、填写表单、点击按钮 —— 完全像你一样操作。它拒绝在后台通过 <code>fetch()</code> 直接调用 REST/GraphQL 端点进行变更。这是刻意设计:API 操作是不可见的(你看不到发送了什么),通常需要你可能未配置的单独认证令牌,而且相比于一次可见的误点击,影响范围大得多。UI-first 意味着一切都在屏幕上、在你平时的浏览器会话中、并且可中断。</p><p>对于<strong>读取</strong>数据 —— 获取 README、查找议题、跨站比价、检查状态页 —— WebBrain 会自由地通过 <code>fetch_url</code> 和 <code>research_url</code> 工具发送后台 HTTP 请求。读取不等于操作;它不会改变远程服务上的任何东西,因此不存在同样的安全顾虑。</p><p>如果你希望在某个具体任务上允许 API 变更,请在消息开头输入 <code>/allow-api</code>(可以后跟一段简短的任务描述)。这个按会话生效的覆盖会让 WebBrain 在界面确实失败或不可用时回退到 API 端点,但只要界面可用仍优先使用界面。覆盖启用期间,输入区上方会显示一枚置顶徽章,重置会话后该标志会清除。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>我能在 LM Studio 里也用吗?</summary>
-      <p>可以。WebBrain 的只读网络工具 —— <code>fetch_url</code> 和 <code>research_url</code> —— 也作为独立的 <a href="https://lmstudio.ai" target="_blank">LM Studio</a> 插件发布在 <a href="https://lmstudio.ai/webbrain/web-tools" target="_blank">webbrain/web-tools</a>。用 <code>lms clone webbrain/web-tools</code> 安装,然后在任意 LM Studio 聊天里开启 —— 任何支持工具调用的模型都能调用这两个工具,你不需要安装浏览器扩展。纯 Node,无 headless 浏览器。源码:<a href="https://github.com/webbrain-one/webbrain/tree/main/lmstudio-plugin" target="_blank">lmstudio-plugin/</a>。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 在我的标签页上工作时，我可以上下滚动吗？</summary>
-      <p>大多数时候可以——尤其是在 <strong>Ask 模式</strong>下处理“总结此页面”之类的只读请求时。WebBrain 工作期间，你可以继续滚动。</p><p><strong>什么时候不适合滚动？</strong> 自动截图反映的是标签页当前的视口。WebBrain 在 <strong>Act 或 Dev 模式</strong>下主动检查可见内容或与其交互时，滚动可能会移走目标或改变模型看到的内容。请先让该步骤完成再滚动；除此之外，你可以继续使用页面。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 工作时，我可以切换标签页吗？</summary>
-      <p>可以。从 <strong>27.0.0</strong> 起，除非确实需要前台访问，否则 WebBrain 在基于 Chromium 的浏览器和 Firefox 中都不会抢占焦点。任务会继续绑定到启动时的标签页，因此你可以放心地在另一个标签页中工作。</p><p>如果某个极少见的步骤需要将原标签页置于前台，WebBrain 可能会短暂聚焦该标签页。WebBrain 正在其中执行操作时，请避免在同一标签页点击或输入。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>个人资料自动填写如何工作?它安全吗?</summary>
-      <p>个人资料自动填写是 <strong>设置 → 个人资料</strong> 中的可选功能。你输入一段简短的自述 —— 姓名、工作邮箱、公司以及用于低风险注册的<em>一次性</em>密码 —— 然后将其打开。启用后,WebBrain 会将这段文本附加到代理的系统提示中,这样它就能无需每次询问即可填写注册表单。</p><p>该文本以<strong>明文</strong>保存在浏览器的本地存储中。它<strong>不会</strong>被传送到 WebBrain 项目,但<strong>会</strong>在每一轮作为系统提示的一部分发送给你配置的 LLM 提供商。默认关闭。</p><p><strong>不要在此放置重要账户的密码</strong>(Google、Apple、iCloud、银行、公司 SSO、主邮箱)。这些账户应启用 2FA,而且本就不该交给代理。预期用途是你在订阅通讯和免费试用注册时反复使用的一次性密码。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>截图打码设置能保证我的隐私数据永远不会到达云端视觉模型吗？</summary>
-      <p>不能——它只是降低了暴露风险，并不是保证。启用后（<strong>设置 → 多模态 → 截图打码</strong>，默认关闭），WebBrain 会在每张截图发送给视觉模型<em>之前</em>，对表单字段以及看起来像邮箱地址或电话号码的文本进行打码。检测完全在你的设备上通过 DOM 启发式方法运行；不会额外传输任何内容。</p><p><strong>这是尽力而为且失败开放（fail-open）的处理。</strong>如果检测器无法在某个页面上运行——例如刚导航完成之后、在 PDF 查看器中，或在受限的浏览器页面上——截图仍会以<em>未打码</em>的原样发送，而不会中止你的任务。DOM 启发式方法看不到的内容（canvas 上绘制的文字、图片中的个人信息、不常见的组件）同样可能被遗漏。而且该设置只覆盖截图：发送给模型的页面<em>文本</em>不会被它打码。</p><p><strong>若需要完全的视觉隐私，请使用本地模型。</strong>使用 llama.cpp 或 Ollama 等离线提供方时，截图和页面文本永远不会离开你的设备，因此从一开始就没有需要打码的内容——这是唯一能保证隐私的配置。参见上文的"我能完全离线使用 WebBrain 吗?"。</p><p><strong>没有能运行支持视觉的本地模型的设备？</strong>一个不错的折中方案是：用一个体积小的本地模型负责规划和工具调用（轻量到普通 CPU/GPU 也能胜任），再搭配一个云端提供方负责视觉子调用，同时开启截图打码。这样你的对话和页面文本仍留在本地，而每一张发往云端视觉的截图都已先对表单字段和检测到的邮箱/电话进行了打码——在不需要完整本地视觉模型硬件的情况下减少了云端暴露。请在<strong>设置 → 视觉</strong>中配置这种拆分（参见上文的"WebBrain 如何控制云端 LLM 的账单?"）。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 如何处理 Cookie 横幅和付费墙?</summary>
-      <p><strong>Cookie 横幅:</strong>WebBrain 能识别常见框架(OneTrust、Cookiebot、Didomi、Quantcast、Google Funding Choices、TrustArc)的同意横幅,并在对页面进行推理之前将其关闭。当「全部拒绝」/「拒绝非必要」/「仅必要」清晰可见时优先选择这些选项;否则会退而点击「全部接受」,而不是陷入「管理偏好」的迷宫。</p><p><strong>付费墙:</strong>WebBrain 会如实报告付费墙,并告诉你它实际看到了什么(标题、副标题、开头几段)。它<strong>不会</strong>尝试绕过付费墙 —— 不使用 archive.today、12ft.io、不清除 Cookie、不禁用 JS、不使用阅读模式小技巧。如果你想要完整文章,请使用订阅登录,或请 WebBrain 搜索同一报道的免费报道。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 支持 dry-run（演练）模式吗？</summary>
-      <p>截至 <strong>7.0.0</strong> 版本, 还不支持。dry-run 模式已在路线图中, 后续会提供。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 会把整个 DOM 发送给 AI 模型吗？</summary>
-      <p>不会。默认情况下，WebBrain 不会发送原始 HTML 或完整的 DOM 转储。它首先使用页面 URL 和标题、匹配的网站指引，并在启用视觉功能时选择性地提供当前视口截图。</p><p>当任务需要页面内容时，WebBrain 会按需读取精简的语义化无障碍树或提取后的文本。读取结果会在适当情况下按可见性过滤，并设置字符上限和分页。只有 Dev 模式可以访问原始页面源代码。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>WebBrain 如何控制云端 LLM 的账单?</summary>
-      <p>三个独立的层:</p><p><strong>节省 token 的截图。</strong>在任何图像离开你的机器之前,WebBrain 会先缩放它(短边封顶,保持宽高比),然后迭代 JPEG 压缩直到适配每轮的图像 token 预算。一张 2000×1200 的截图,在 GPT-4o 上原本大约要花 1500 个输入 token,可被压缩到约 300–500 个 token,对页面阅读任务来说没有实际损失。实现位于 <code>_fitImageDimensions</code>,并有覆盖预算计算的单元测试。</p><p><strong>智能上下文裁剪。</strong>对话历史、工具输出和内联 DOM 转储都会按每轮加以限制,当活跃模型的上下文窗口接近占满时,会从最早的内容开始裁剪。你不会看到一次运行因为一次 <code>read_page</code> 返回了一篇长篇大论,就从 1 万 token 悄悄膨胀到 10 万。</p><p><strong>专用视觉模型。</strong>将便宜的文本模型(如 GPT-4o-mini)用于规划和工具调用,再配一个专门的视觉模型(如 GPT-4o)只用于截图,这样你不必在每一轮都支付多模态模型的价格。可在 <strong>设置 → 视觉</strong> 中配置。</p><p>结果:与云端提供商的长会话保持可预测。如需完全控制,请使用本地 llama.cpp —— 每 token 成本为零。</p>
-    </details>
-
-    <details class="faq-item">
-      <summary>我可以为 WebBrain 做贡献吗?</summary>
-      <p>当然可以!WebBrain 采用 MIT 许可,欢迎贡献。请查看 <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub 仓库</a> 了解议题、功能请求和贡献指南。</p>
-    </details>
-  </div>
-</section>
-
 <!-- SPREAD THE WORD / OPEN SOURCE -->
 <section class="section">
   <div class="oss-banner">
@@ -3975,6 +3600,7 @@
       </a>
       <a href="/blog">博客</a>
       <a href="/docs/zh/">文档</a>
+      <a href="/docs/zh/faq/">常见问题</a>
       <a href="/privacy">隐私政策</a>
       <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">报告 Bug</a>
       <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">MIT 许可</a>
