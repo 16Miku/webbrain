@@ -3598,7 +3598,12 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       tagName: 'TEXTAREA', value: 'hello',
     });
     const searchBox = element('', { left: 20, right: 300, top: 130, bottom: 180, width: 280, height: 50 }, {
-      tagName: 'TEXTAREA', value: 'Bob',
+      tagName: 'TEXTAREA', role: 'searchbox', value: 'Bob',
+    });
+    const alternateComposer = element('', {
+      left: 420, right: 860, top: 590, bottom: 650, width: 440, height: 60,
+    }, {
+      tagName: 'TEXTAREA', value: 'alternate reply',
     });
     const searchedName = element('迷你世界皓宸', {
       left: 20, right: 300, top: 100, bottom: 140, width: 280, height: 40,
@@ -3658,7 +3663,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       activeElement,
       querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
       querySelectorAll: (selector) => {
-        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox];
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox, alternateComposer];
         if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
@@ -3674,6 +3679,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         __wb_ax_lookup: (refId) => {
           if (refId === 'conversation-row-label') return conversationRowLabel;
           if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
+          if (refId === 'alternate-composer') return alternateComposer;
           return null;
         },
       },
@@ -3691,8 +3697,16 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     activeElement = searchBox;
     const searchEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
     composer.isConnected = false;
+    alternateComposer.isConnected = false;
     const searchWithoutComposerResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
     composer.isConnected = true;
+    alternateComposer.isConnected = true;
+
+    activeElement = alternateComposer;
+    const alternateComposerEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    const alternateComposerSubmitResult = probe({
+      tool: 'set_field', args: { ref_id: 'alternate-composer', text: 'send', submit: true },
+    });
 
     activeElement = element('', {
       left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800,
@@ -3711,6 +3725,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       enterResult,
       searchEnterResult,
       searchWithoutComposerResult,
+      alternateComposerEnterResult,
+      alternateComposerSubmitResult,
       unfocusedClickResult,
       distantClickResult,
       conversationSelectorResult,
@@ -3728,6 +3744,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       enterResult: result,
       searchEnterResult,
       searchWithoutComposerResult,
+      alternateComposerEnterResult,
+      alternateComposerSubmitResult,
       unfocusedClickResult,
       distantClickResult,
       conversationSelectorResult,
@@ -3750,6 +3768,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(searchEnterResult.conclusive, true);
     assert.equal(searchWithoutComposerResult.messageSend, null, `${prefix}: upper search field was promoted to composer`);
     assert.equal(searchWithoutComposerResult.conclusive, false);
+    assert.equal(alternateComposerEnterResult.messageSend, null, `${prefix}: alternate composer Enter bypassed recipient verification`);
+    assert.equal(alternateComposerEnterResult.conclusive, false);
+    assert.equal(alternateComposerSubmitResult.messageSend, null, `${prefix}: alternate composer submit bypassed recipient verification`);
+    assert.equal(alternateComposerSubmitResult.conclusive, false);
     assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
     assert.equal(unfocusedClickResult.conclusive, true);
     assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);

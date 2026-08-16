@@ -4495,8 +4495,27 @@
       const editable = (el) => {
         if (!el || el.nodeType !== 1) return false;
         const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
         const role = String(el.getAttribute?.('role') || '').toLowerCase();
-        return !!el.isContentEditable || tag === 'textarea' || role === 'textbox';
+        const textInput = tag === 'input'
+          && !/^(button|submit|reset|checkbox|radio|file|image|range|color|hidden)$/.test(type);
+        return !!el.isContentEditable
+          || tag === 'textarea'
+          || textInput
+          || role === 'textbox'
+          || role === 'searchbox';
+      };
+      const verifiedNavigationEditable = (el) => {
+        if (!editable(el)) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.getAttribute?.('type') || '').toLowerCase();
+        const role = String(el.getAttribute?.('role') || '').toLowerCase();
+        if (role === 'searchbox' || (tag === 'input' && type === 'search')) return true;
+        try {
+          return !!el.closest?.('search,[role="search"],form[role="search"],nav,[role="navigation"]');
+        } catch {
+          return false;
+        }
       };
       const active = typeof _deepActiveElement === 'function' ? _deepActiveElement() : document.activeElement;
 
@@ -4640,7 +4659,9 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         if (active !== layoutComposer) {
-          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          return verifiedNavigationEditable(active)
+            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
+            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         composer = layoutComposer;
         dispatchTarget = active;
@@ -4653,7 +4674,9 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         if (target !== layoutComposer) {
-          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          return verifiedNavigationEditable(target)
+            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
+            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         composer = layoutComposer;
         dispatchTarget = target;
