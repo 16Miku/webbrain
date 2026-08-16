@@ -5134,8 +5134,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // not add another URL read or perturb navigation detection. Keep it as
       // close to dispatch as possible: permission and confirmation can happen
       // first, but a mismatched conversation never reaches executeTool().
+      const messageRecipientExecutionContext = {};
       const messageRecipientBlock = await this._messageRecipientGuardBlock(
-        tabId, fnName, fnArgs, beforeUrl,
+        tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
       );
       if (messageRecipientBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
@@ -5181,6 +5182,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           completionBatchStartState,
           promptTier,
           dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
+          ...messageRecipientExecutionContext,
           iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
         },
       );
@@ -10716,7 +10718,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '') {
+  async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys']);
     const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']);
@@ -10763,6 +10765,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: name,
       args,
       adapterName: policy.adapterName,
+      bindDispatch: name === 'set_field' && args?.submit === true,
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
 
@@ -10771,7 +10774,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const verified = probe?.success === true
       && probe.messageSend === true
       && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
-    if (verified) return null;
+    if (verified) {
+      if (name === 'set_field') {
+        const binding = probe?.messageRecipientDispatchBinding;
+        if (!binding?.token) {
+          return {
+            success: false,
+            blocked: true,
+            noDispatch: true,
+            dispatched: false,
+            messageRecipientGuard: true,
+            reasonCode: 'recipient_dispatch_binding_unavailable',
+            error: 'Message send blocked because WebBrain could not bind recipient verification to the final Enter dispatch. Re-read the active conversation and retry once.',
+          };
+        }
+        if (executionContext && typeof executionContext === 'object') {
+          executionContext.messageRecipientGuardRequired = true;
+          executionContext.messageRecipientDispatchBinding = binding;
+        }
+      }
+      return null;
+    }
 
     return {
       success: false,
@@ -16047,6 +16070,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
     let dispatchBinding = dispatchContext.dispatchBinding || null;
+    const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
+    const messageRecipientDispatchBinding = dispatchContext.messageRecipientDispatchBinding || null;
     if (coordinatePoint && dispatchBinding?.token) {
       coordinateDiagnostic = this._coordinateReconciliationDiagnostic(
         coordinatePoint,
@@ -18699,6 +18724,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       contentArgs = {
         ...contentArgs,
         dispatchBinding,
+      };
+    }
+    if (name === 'set_field' && messageRecipientGuardRequired) {
+      contentArgs = {
+        ...contentArgs,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding,
       };
     }
 

@@ -3327,6 +3327,74 @@
     return { success: true, matched: true };
   }
 
+  const _messageRecipientDispatchBindings = new Map();
+
+  function _messageRecipientIdentityKey(values = []) {
+    return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
+      .map(value => String(value ?? '')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim())
+      .filter(Boolean))).sort());
+  }
+
+  function _rememberMessageRecipientDispatchBinding(composer, identities) {
+    if (!composer?.isConnected) return '';
+    const identityKey = _messageRecipientIdentityKey(identities);
+    if (!identityKey || identityKey === '[]') return '';
+    const entropy = new Uint32Array(3);
+    globalThis.crypto.getRandomValues(entropy);
+    const token = `wbmr_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+    const record = { composer, identityKey, pageUrl: location.href, timer: null };
+    _messageRecipientDispatchBindings.set(token, record);
+    record.timer = setTimeout(() => {
+      if (_messageRecipientDispatchBindings.get(token) === record) {
+        _messageRecipientDispatchBindings.delete(token);
+      }
+    }, 60000);
+    return token;
+  }
+
+  function _consumeMessageRecipientDispatchBinding(params = {}) {
+    const token = String(params.messageRecipientDispatchBinding?.token || '');
+    const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
+    if (token) _messageRecipientDispatchBindings.delete(token);
+    if (expected?.timer) clearTimeout(expected.timer);
+    const refId = String(params.ref_id || '');
+    const composer = refId && typeof window.__wb_ax_lookup === 'function'
+      ? window.__wb_ax_lookup(refId)
+      : null;
+    if (!expected || !composer || expected.composer !== composer
+      || !composer.isConnected || expected.pageUrl !== location.href) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_stale',
+        error: 'Message send blocked because the verified composer changed before Enter dispatch. Re-read the active conversation and retry the send once.',
+      };
+    }
+    const live = _probeMessageRecipientGuard({
+      tool: 'set_field',
+      args: { ref_id: refId, submit: true },
+      bindDispatch: false,
+    });
+    const liveIdentityKey = _messageRecipientIdentityKey(live?.strongIdentityCandidates);
+    if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
+      || liveIdentityKey !== expected.identityKey) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'active_recipient_changed_before_dispatch',
+        error: 'Message send blocked because the active conversation changed after recipient verification. The text may remain in the composer; re-read the visible header before sending.',
+      };
+    }
+    return { success: true, matched: true };
+  }
+
   function _releaseDispatchBinding(params = {}) {
     const token = String(params.dispatchBinding?.token || '');
     const record = token ? _dispatchBindings.get(token) : null;
@@ -3813,6 +3881,13 @@
         }
       }
 
+      const messageRecipientDispatchToken = params.bindDispatch === true
+        && tool === 'set_field'
+        && args.submit === true
+        && messageSend === true
+        && strongIdentities.length === 1
+        ? _rememberMessageRecipientDispatchBinding(composer, strongIdentities)
+        : '';
       return {
         success: true,
         messageSend: observationOnly ? false : messageSend === true,
@@ -3822,6 +3897,9 @@
         // returned as dispatch identities.
         identityCandidates: strongIdentities.slice(0, 8),
         strongIdentityCandidates: strongIdentities.slice(0, 8),
+        ...(messageRecipientDispatchToken
+          ? { messageRecipientDispatchBinding: { token: messageRecipientDispatchToken } }
+          : {}),
       };
     } catch (error) {
       return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: error?.message || String(error) };
@@ -3844,6 +3922,7 @@
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
+      'consume_message_recipient_dispatch_binding': () => _consumeMessageRecipientDispatchBinding(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
@@ -4686,6 +4765,18 @@
                 dispatchKey('keydown', 'ArrowDown', 40);
                 dispatchKey('keyup', 'ArrowDown', 40);
                 await new Promise(r => setTimeout(r, 30));
+              }
+              if (msg.params?.messageRecipientGuardRequired === true) {
+                const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params);
+                if (recipientValidation.success !== true) {
+                  return failure(recipientValidation.error, {
+                    verified: true,
+                    submitted: false,
+                    messageDispatched: false,
+                    messageRecipientGuard: true,
+                    reasonCode: recipientValidation.reasonCode,
+                  });
+                }
               }
               dispatchKey('keydown', 'Enter', 13);
               dispatchKey('keypress', 'Enter', 13);

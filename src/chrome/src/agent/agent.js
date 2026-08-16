@@ -6183,9 +6183,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // not add another URL read or perturb navigation detection. Keep it as
       // close to dispatch as possible: permission and confirmation can happen
       // first, but a mismatched conversation never reaches executeTool().
+      const messageRecipientExecutionContext = {};
       const messageRecipientBlock = protectedPageFailure
         ? null
-        : await this._messageRecipientGuardBlock(tabId, fnName, fnArgs, beforeUrl);
+        : await this._messageRecipientGuardBlock(
+            tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+          );
       if (messageRecipientBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
@@ -6228,6 +6231,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             completionBatchStartState,
             promptTier,
             dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
+            ...messageRecipientExecutionContext,
             iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
           },
         );
@@ -12427,7 +12431,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '') {
+  async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys']);
     const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']);
@@ -12474,6 +12478,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: name,
       args,
       adapterName: policy.adapterName,
+      bindDispatch: name === 'set_field' && args?.submit === true,
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
 
@@ -12482,7 +12487,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const verified = probe?.success === true
       && probe.messageSend === true
       && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
-    if (verified) return null;
+    if (verified) {
+      if (name === 'set_field') {
+        const binding = probe?.messageRecipientDispatchBinding;
+        if (!binding?.token) {
+          return {
+            success: false,
+            blocked: true,
+            noDispatch: true,
+            dispatched: false,
+            messageRecipientGuard: true,
+            reasonCode: 'recipient_dispatch_binding_unavailable',
+            error: 'Message send blocked because WebBrain could not bind recipient verification to the final Enter dispatch. Re-read the active conversation and retry once.',
+          };
+        }
+        if (executionContext && typeof executionContext === 'object') {
+          executionContext.messageRecipientGuardRequired = true;
+          executionContext.messageRecipientDispatchBinding = binding;
+        }
+      }
+      return null;
+    }
 
     return {
       success: false,
@@ -18408,6 +18433,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
     const dispatchBinding = dispatchContext.dispatchBinding || null;
+    const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
+    const messageRecipientDispatchBinding = dispatchContext.messageRecipientDispatchBinding || null;
     if (coordinatePoint && dispatchBinding?.token) {
       coordinateDiagnostic = this._coordinateReconciliationDiagnostic(
         coordinatePoint,
@@ -23320,6 +23347,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         dispatchBinding,
       };
     }
+    if (name === 'set_field' && messageRecipientGuardRequired) {
+      contentArgs = {
+        ...contentArgs,
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding,
+      };
+    }
 
     const messageOptions = DISPATCH_BINDING_TOOLS.has(name)
       && dispatchBinding?.token
@@ -23370,7 +23404,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         response = await this._completeSetCheckedWithCdp(tabId, args, response, contentArgs);
       }
       if (name === 'type_ax' || name === 'set_field') {
-        response = await this._maybeFallbackFieldWithCdp(tabId, name, args, response);
+        response = await this._maybeFallbackFieldWithCdp(
+          tabId,
+          name,
+          args,
+          response,
+          { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+        );
       }
       await this._annotateClickProgress(
         tabId,
@@ -23757,7 +23797,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { done: false };
   }
 
-  async _maybeFallbackFieldWithCdp(tabId, toolName, args, response) {
+  async _maybeFallbackFieldWithCdp(tabId, toolName, args, response, messageRecipientContext = {}) {
     if (!response || (toolName !== 'type_ax' && toolName !== 'set_field')) return response;
     const expected = typeof response._expectedValue === 'string' ? response._expectedValue : null;
     const clearsExisting = toolName === 'set_field'
@@ -23890,6 +23930,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40,
           });
+        }
+        if (messageRecipientContext.messageRecipientGuardRequired === true) {
+          const recipientValidation = await chrome.tabs.sendMessage(tabId, {
+            target: 'content',
+            action: 'consume_message_recipient_dispatch_binding',
+            params: {
+              ref_id: args.ref_id,
+              messageRecipientDispatchBinding: messageRecipientContext.messageRecipientDispatchBinding || null,
+            },
+          });
+          if (recipientValidation?.success !== true) {
+            return {
+              ...recovered,
+              success: false,
+              submitted: false,
+              messageDispatched: false,
+              messageRecipientGuard: true,
+              reasonCode: recipientValidation?.reasonCode || 'recipient_dispatch_revalidation_failed',
+              error: recipientValidation?.error
+                || 'Message send blocked because the active recipient could not be revalidated immediately before Enter dispatch.',
+            };
+          }
         }
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,

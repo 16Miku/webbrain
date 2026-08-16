@@ -3440,6 +3440,39 @@ test('direct-message recipient guard uses structured intent and exact active ide
       null,
       `${label}: matching active recipient was blocked`,
     );
+    probe = {
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      identityCandidates: ['迷你世界皓宸'],
+      strongIdentityCandidates: ['迷你世界皓宸'],
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    };
+    const recipientExecutionContext = {};
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'set_field',
+        { ref_id: 'ref_composer', text: 'hello', submit: true },
+        'https://www.douyin.com/chat',
+        recipientExecutionContext,
+      ),
+      null,
+      `${label}: matching set_field submit was blocked before binding`,
+    );
+    assert.deepEqual(recipientExecutionContext, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+    });
+    delete probe.messageRecipientDispatchBinding;
+    const unboundSubmit = await agent._messageRecipientGuardBlock(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_composer', text: 'hello', submit: true },
+      'https://www.douyin.com/chat',
+      {},
+    );
+    assert.equal(unboundSubmit?.reasonCode, 'recipient_dispatch_binding_unavailable', `${label}: unbound set_field submit failed open`);
     const repeatedEnter = await agent._messageRecipientGuardBlock(
       tabId,
       'press_keys',
@@ -3665,6 +3698,75 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(conversationMenuResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
+  }
+});
+
+test('message recipient dispatch binding detects composer and active-thread races', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('const _messageRecipientDispatchBindings = new Map();');
+    const end = source.indexOf(label === 'chrome'
+      ? '\n\n  // Above this length'
+      : '\n\n  function _releaseDispatchBinding', start);
+    assert.ok(start >= 0 && end > start, `${label}: dispatch binding helpers should remain independently testable`);
+    const composer = { isConnected: true };
+    const replacementComposer = { isConnected: true };
+    let resolvedComposer = composer;
+    let liveIdentities = ['Alice'];
+    const helpers = vm.runInNewContext(`(() => {
+      ${source.slice(start, end)}
+      return {
+        remember: _rememberMessageRecipientDispatchBinding,
+        consume: _consumeMessageRecipientDispatchBinding,
+      };
+    })()`, {
+      window: { __wb_ax_lookup: () => resolvedComposer },
+      location: { href: 'https://www.douyin.com/chat' },
+      crypto: { getRandomValues: array => { array.fill(7); return array; } },
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+      _probeMessageRecipientGuard: () => ({
+        success: true,
+        conclusive: true,
+        messageSend: true,
+        strongIdentityCandidates: liveIdentities,
+      }),
+    });
+
+    const matchingToken = helpers.remember(composer, ['Alice']);
+    assert.equal(helpers.consume({
+      ref_id: 'ref_composer',
+      messageRecipientDispatchBinding: { token: matchingToken },
+    }).success, true, `${label}: stable recipient binding was rejected`);
+
+    const changedRecipientToken = helpers.remember(composer, ['Alice']);
+    liveIdentities = ['Bob'];
+    const changedRecipient = helpers.consume({
+      ref_id: 'ref_composer',
+      messageRecipientDispatchBinding: { token: changedRecipientToken },
+    });
+    assert.equal(changedRecipient.success, false);
+    assert.equal(changedRecipient.reasonCode, 'active_recipient_changed_before_dispatch');
+
+    liveIdentities = ['Alice'];
+    const changedComposerToken = helpers.remember(composer, ['Alice']);
+    resolvedComposer = replacementComposer;
+    const changedComposer = helpers.consume({
+      ref_id: 'ref_composer',
+      messageRecipientDispatchBinding: { token: changedComposerToken },
+    });
+    assert.equal(changedComposer.success, false);
+    assert.equal(changedComposer.reasonCode, 'recipient_dispatch_binding_stale');
+
+    const branchStart = source.indexOf("'set_field': async () => {");
+    const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
+    const branch = source.slice(branchStart, branchEnd);
+    const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params)');
+    const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
+    assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
   }
 });
 
@@ -54679,6 +54781,7 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
   try {
     const commands = [];
     let verified = true;
+    let recipientValid = true;
     let contentEditable = false;
     let prepareCalls = 0;
     const prepareSelectionModes = [];
@@ -54703,6 +54806,15 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
               actual: verified ? message.params.expected : '',
               fieldMeta: { type: 'text' },
             };
+          }
+          if (message.action === 'consume_message_recipient_dispatch_binding') {
+            return recipientValid
+              ? { success: true, matched: true }
+              : {
+                  success: false,
+                  reasonCode: 'active_recipient_changed_before_dispatch',
+                  error: 'active conversation changed',
+                };
           }
           throw new Error(`unexpected action ${message.action}`);
         },
@@ -54740,6 +54852,31 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
       ],
       'trusted text must settle before Enter is dispatched',
     );
+
+    commands.length = 0;
+    recipientValid = false;
+    const recipientRace = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'set_field',
+      { ref_id: 'ref_search', text: 'gary flake', submit: true },
+      {
+        success: false,
+        verified: false,
+        error: 'controlled input reset',
+        _expectedValue: 'gary flake',
+        recoveryRequired: 'fresh_tree',
+      },
+      {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'recipient-race' },
+      },
+    );
+    assert.equal(recipientRace.success, false);
+    assert.equal(recipientRace.messageDispatched, false);
+    assert.equal(recipientRace.reasonCode, 'active_recipient_changed_before_dispatch');
+    assert.equal(commands.some(command => command.method === 'Input.insertText'), true, 'field typing should remain visible');
+    assert.equal(commands.some(command => command.params?.key === 'Enter'), false, 'recipient race must stop before Enter');
+    recipientValid = true;
 
     commands.length = 0;
     contentEditable = true;
