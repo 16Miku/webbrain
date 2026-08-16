@@ -1920,6 +1920,8 @@ export class Agent extends LoopDetector {
     let reasoningContent = '';
     let usage = null;
     let responseItems = null;
+    let terminalFinishReason = '';
+    let terminalRaw = null;
     let sawCompleted = false;
     let usageRecorded = false;
     const toolCalls = new Map();
@@ -1987,6 +1989,8 @@ export class Agent extends LoopDetector {
         } else if (chunk?.type === 'done') {
           if (Array.isArray(chunk.responseItems)) responseItems = chunk.responseItems;
           if (chunk.usage) usage = chunk.usage;
+          if (chunk.finishReason) terminalFinishReason = String(chunk.finishReason);
+          if (chunk.raw) terminalRaw = chunk.raw;
           sawCompleted = true;
           break;
         }
@@ -2013,6 +2017,8 @@ export class Agent extends LoopDetector {
       toolCalls: toolCalls.size ? [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call) : null,
       usage,
       responseItems,
+      ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}),
+      ...(terminalRaw ? { raw: terminalRaw } : {}),
     };
     const after = await recordUsage();
     if (after) result.costAllowanceMessage = after;

@@ -10144,12 +10144,47 @@ function messageCompletionFromElement(msgEl) {
   };
 }
 
+let messageInfoRowUid = 0;
+
+function messageInfoRowId(msgEl) {
+  const existingRow = msgEl.querySelector(':scope > .message-info');
+  if (existingRow?.id) {
+    msgEl.__wbMessageInfoRowId = existingRow.id;
+    return existingRow.id;
+  }
+  if (!msgEl.__wbMessageInfoRowId) {
+    messageInfoRowUid += 1;
+    msgEl.__wbMessageInfoRowId = `message-info-${messageInfoRowUid}`;
+  }
+  return msgEl.__wbMessageInfoRowId;
+}
+
+function messageInfoToggleButton(msgEl) {
+  let toggle = msgEl.querySelector(':scope > .message-info-toggle');
+  if (!toggle) {
+    toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'message-info-toggle';
+    toggle.textContent = 'i';
+    msgEl.appendChild(toggle);
+  }
+  return toggle;
+}
+
+function syncMessageInfoToggleState(msgEl) {
+  const open = msgEl.classList.contains('message-info-open');
+  const toggle = msgEl.querySelector(':scope > .message-info-toggle');
+  if (toggle) toggle.setAttribute('aria-expanded', String(open));
+  return open;
+}
+
 function renderMessageInfo(msgEl) {
   if (!msgEl) return;
   let row = msgEl.querySelector(':scope > .message-info');
   if (!row) {
     row = document.createElement('div');
     row.className = 'message-info';
+    row.id = messageInfoRowId(msgEl);
     row.setAttribute('role', 'status');
     msgEl.appendChild(row);
   }
@@ -10178,7 +10213,7 @@ function messageInfoClickIsInteractive(target) {
 
 function toggleMessageInfo(msgEl) {
   const open = msgEl.classList.toggle('message-info-open');
-  msgEl.setAttribute('aria-expanded', String(open));
+  syncMessageInfoToggleState(msgEl);
   renderMessageInfo(msgEl);
   schedulePersist();
 }
@@ -10186,19 +10221,20 @@ function toggleMessageInfo(msgEl) {
 function bindMessageInfoToggle(msgEl) {
   if (!msgEl?.matches?.('.message.user, .message.assistant')) return;
   if (!messageCreatedAt(msgEl)) return;
-  msgEl.tabIndex = 0;
-  msgEl.title = t('sp.message_info.hint');
-  msgEl.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
-  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
   if (msgEl.__wbMessageInfoBound) return;
   msgEl.__wbMessageInfoBound = true;
-  msgEl.addEventListener('click', (event) => {
-    if (messageInfoClickIsInteractive(event.target)) return;
+  const toggle = messageInfoToggleButton(msgEl);
+  toggle.setAttribute('aria-controls', messageInfoRowId(msgEl));
+  toggle.setAttribute('aria-label', t('sp.message_info.hint'));
+  toggle.title = t('sp.message_info.hint');
+  syncMessageInfoToggleState(msgEl);
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  toggle.addEventListener('click', (event) => {
+    event.stopPropagation();
     toggleMessageInfo(msgEl);
   });
-  msgEl.addEventListener('keydown', (event) => {
-    if (event.target !== msgEl || (event.key !== 'Enter' && event.key !== ' ')) return;
-    event.preventDefault();
+  msgEl.addEventListener('click', (event) => {
+    if (messageInfoClickIsInteractive(event.target)) return;
     toggleMessageInfo(msgEl);
   });
 }
@@ -10231,7 +10267,11 @@ function applyMessageCompletion(msgEl, completion = {}) {
 function refreshOpenMessageInfoRows() {
   messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant').forEach((msgEl) => {
     if (!messageCreatedAt(msgEl)) return;
-    msgEl.title = t('sp.message_info.hint');
+    const toggle = msgEl.querySelector(':scope > .message-info-toggle');
+    if (toggle) {
+      toggle.setAttribute('aria-label', t('sp.message_info.hint'));
+      toggle.title = t('sp.message_info.hint');
+    }
     if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
   });
 }

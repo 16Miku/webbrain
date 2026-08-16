@@ -155,6 +155,7 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
     const decoder = new TextDecoder();
     let buffer = '';
     let finalUsage = null;
+    let terminalFinishReason = '';
     while (true) {
       let chunk;
       try {
@@ -176,7 +177,7 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
         const payload = trimmed.slice(6);
         if (payload === '[DONE]') {
           if (finalUsage) yield { type: 'usage', usage: finalUsage };
-          yield { type: 'done', content: '' };
+          yield { type: 'done', content: '', ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}) };
           return;
         }
         let json;
@@ -202,6 +203,7 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
             `${this.name} stream was blocked by the Azure content filter.`,
           );
         }
+        if (choice?.finish_reason) terminalFinishReason = choice.finish_reason;
         const delta = choice?.delta;
         const reasoningDelta = delta?.reasoning_content || delta?.reasoning;
         if (typeof reasoningDelta === 'string' && reasoningDelta) {

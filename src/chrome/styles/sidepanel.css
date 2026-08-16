@@ -1482,6 +1482,42 @@ body {
   display: none;
 }
 
+.message-info-toggle {
+  align-self: flex-start;
+  margin-top: 5px;
+  margin-left: 4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.message:hover .message-info-toggle,
+.message-info-toggle:focus-visible {
+  opacity: 1;
+}
+
+.message-info-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.message.user .message-info-toggle {
+  align-self: flex-end;
+  margin-left: 0;
+  margin-right: 4px;
+}
+
 .message-info-pill {
   padding: 3px 8px;
   border: 1px solid var(--border);

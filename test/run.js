@@ -23707,7 +23707,7 @@ test('all locales cover English keys and preserve interpolation placeholders', a
         );
       }
     }
-  }
+   }
 });
 
 test('Apocalypse Mode copy is translated instead of inherited from English in every locale', async () => {
@@ -45740,8 +45740,8 @@ test('Chat Completions streaming rejects premature EOF and accepts terminal comp
       }
       assert.deepEqual(complete, [
         { type: 'text', content: 'done' },
-        { type: 'done', content: '' },
-      ], `${label}: terminal finish_reason should complete the stream`);
+        { type: 'done', content: '', finishReason: 'stop' },
+      ], `${label}: terminal finish_reason should complete the stream with its reason`);
     }
   } finally {
     globalThis.fetch = originalFetch;
@@ -81069,13 +81069,19 @@ test('sidepanels reveal persisted message info while verbose gates completion de
       /function bindMessageInfoToggle\([\s\S]*?addEventListener\('click'[\s\S]*?toggleMessageInfo\(/,
       `${label}: clicking a chat message should toggle its info row`,
     );
+    assert.match(panel, /function messageInfoToggleButton\(msgEl\)[\s\S]*?createElement\('button'\)/, `${label}: message info should expose a real toggle button`);
+    assert.match(panel, /setAttribute\('aria-controls', messageInfoRowId\(msgEl\)\)/, `${label}: the toggle button should name the info row it controls`);
+    assert.match(panel, /syncMessageInfoToggleState\(msgEl\)[\s\S]*?setAttribute\('aria-expanded', String\(open\)\)/, `${label}: the toggle button should publish its expanded state`);
+    assert.match(panel, /function messageInfoRowId\(msgEl\)[\s\S]*?`message-info-\$\{messageInfoRowUid\}`/, `${label}: info rows should receive stable ids for aria-controls`);
+    const bindToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.doesNotMatch(bindToggle, /tabIndex = 0/, `${label}: the message bubble must not become a raw focus target`);
+    assert.doesNotMatch(bindToggle, /aria-expanded'/, `${label}: the bubble must not publish aria-expanded`);
     assert.match(panel, /case 'message_info':[\s\S]*?applyMessageCompletion\(/, `${label}: live completion metadata should reach the active message`);
     assert.match(panel, /case 'run_complete':[\s\S]*?setMessageCreatedAt\([\s\S]*?data\?\.endedAt/, `${label}: assistant sent time should use the terminal timestamp`);
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindMessageInfoToggles\(\)/, `${label}: restored messages should regain click behavior`);
     assert.match(panel, /createdAt: messageCreatedAt\(msgEl\)/, `${label}: durable history should preserve each message timestamp`);
     const createdAtReader = panel.match(/function messageCreatedAt\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
     assert.doesNotMatch(createdAtReader, /Date\.now\(\)/, `${label}: unknown legacy timestamps must remain unknown`);
-    const bindToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
     assert.doesNotMatch(bindToggle, /setMessageCreatedAt\(/, `${label}: legacy restored messages must not invent a sent time while rebinding`);
     assert.match(panel, /setMessageCreatedAt\(msgEl, options\.createdAt \?\? Date\.now\(\)\)/, `${label}: newly-created messages should receive a real sent time`);
     assert.match(css, /\.message-info \{[\s\S]*?\.message-info-pill \{/, `${label}: info rows and verbose pills should be styled`);
@@ -81084,6 +81090,201 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     }
   }
   assert.equal(messageInfoSources[1], messageInfoSources[0], 'message-info behavior should stay byte-identical across browsers');
+});
+
+test('message info toggles behaviorally through a semantic button, terminal replay, and restore in both builds', async () => {
+  const { buildMessageInfoPills } = await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/message-info.js')).href
+  );
+
+  const fakeMessagesEl = {
+    querySelectorAll: () => [],
+  };
+
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const blockStart = panel.indexOf('function messageCreatedAt(msgEl) {');
+    const blockEnd = panel.indexOf('function addMessage(', blockStart);
+    assert.notEqual(blockStart, -1, `${label}: message-info block start missing`);
+    assert.notEqual(blockEnd, -1, `${label}: message-info block boundary missing`);
+    const block = panel.slice(blockStart, blockEnd);
+
+    const sandbox = {
+      document: {
+        createElement: (tag) => fakeDomElement('', tag),
+      },
+      messagesEl: fakeMessagesEl,
+      buildMessageInfoPills,
+      verboseMode: true,
+      getLocale: () => 'en-GB',
+      t: (key) => key,
+      schedulePersist: () => {},
+    };
+    const { messageCreatedAt, setMessageCreatedAt, messageCompletionFromElement, renderMessageInfo, toggleMessageInfo, bindMessageInfoToggle, applyMessageCompletion } = vm.runInNewContext(
+      `(() => { ${block} return { messageCreatedAt, setMessageCreatedAt, messageCompletionFromElement, renderMessageInfo, toggleMessageInfo, bindMessageInfoToggle, applyMessageCompletion }; })()`,
+      sandbox,
+    );
+
+    const msgEl = fakeDomElement('message assistant');
+    assert.equal(messageCreatedAt(msgEl), undefined, `${label}: unknown timestamps start unknown`);
+    setMessageCreatedAt(msgEl, 1734000000000);
+    assert.equal(messageCreatedAt(msgEl), 1734000000000, `${label}: sent time should persist on the message`);
+    bindMessageInfoToggle(msgEl);
+
+    // A real toggle button with aria-controls, not a focusable bubble.
+    const toggle = msgEl.children.find((child) => child.className === 'message-info-toggle');
+    assert.ok(toggle, `${label}: binding should create a semantic toggle button`);
+    assert.equal(toggle.type, 'button', `${label}: the toggle should be a real button control`);
+    assert.match(String(toggle.attributes['aria-controls'] || ''), /^message-info-\d+$/, `${label}: the toggle should target the info row by id`);
+    assert.equal(toggle.attributes['aria-expanded'], 'false', `${label}: the toggle should start collapsed`);
+    assert.equal(toggle.attributes['aria-label'], 'sp.message_info.hint', `${label}: the toggle should expose its localized label`);
+    assert.equal(msgEl.tabIndex, undefined, `${label}: the bubble itself must not become a focus target`);
+    assert.equal(msgEl.attributes['aria-expanded'], undefined, `${label}: the bubble must not carry aria-expanded`);
+
+    // Bubble-click delegation still toggles (mouse convenience path).
+    msgEl.dispatch('click', { target: msgEl });
+    assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: bubble click should open the info row`);
+    assert.equal(toggle.attributes['aria-expanded'], 'true', `${label}: the toggle should mirror the open state`);
+    const openRow = msgEl.children.find((child) => child.className === 'message-info');
+    assert.ok(openRow, `${label}: opening should render the info row`);
+    assert.equal(openRow.hidden, false, `${label}: the info row should be visible when open`);
+    assert.equal(openRow.id, toggle.attributes['aria-controls'], `${label}: the row id should match the toggle target`);
+    const sentPill = openRow.children.find((child) => child.className.includes('message-info-sent'));
+    assert.ok(sentPill, `${label}: the sent-time pill should render`);
+
+    // Live completion metadata reaches the datasets and renders in verbose mode.
+    applyMessageCompletion(msgEl, {
+      inputTokens: 1000,
+      outputTokens: 600,
+      totalTokens: 1600,
+      durationMs: 5000,
+      finishReason: 'stop',
+    });
+    assert.equal(messageCompletionFromElement(msgEl).finishReason, 'stop', `${label}: completion should reach the message datasets`);
+    const finishPill = openRow.children.find((child) => child.className.includes('message-info-finish'));
+    assert.ok(finishPill, `${label}: the finish-reason pill should render in verbose mode`);
+
+    // Terminal replay: run_complete with endedAt replaces the sent time.
+    setMessageCreatedAt(msgEl, 1734000123456, { replace: true });
+    assert.equal(messageCreatedAt(msgEl), 1734000123456, `${label}: run_complete endedAt should win over the request-start time`);
+
+    // Restore: a fresh element rebuilt from persisted datasets and the open
+    // class (messagesEl.innerHTML round-trip) must regain the same behavior
+    // and retained metadata without inventing a sent time.
+    const restored = fakeDomElement('message assistant');
+    restored.dataset.messageCreatedAt = String(1734000123456);
+    restored.dataset.messageInputTokens = '1000';
+    restored.dataset.messageOutputTokens = '600';
+    restored.dataset.messageTotalTokens = '1600';
+    restored.dataset.messageDurationMs = '5000';
+    restored.dataset.messageFinishReason = 'stop';
+    restored.classList.add('message-info-open');
+    bindMessageInfoToggle(restored);
+    const restoredToggle = restored.children.find((child) => child.className === 'message-info-toggle');
+    assert.ok(restoredToggle, `${label}: restored messages should regain a toggle button`);
+    assert.equal(restoredToggle.attributes['aria-expanded'], 'true', `${label}: restored open state should be preserved`);
+    assert.equal(messageCreatedAt(restored), 1734000123456, `${label}: restored sent time should be retained`);
+    const restoredRow = restored.children.find((child) => child.className === 'message-info');
+    assert.ok(restoredRow, `${label}: restored open rows should render`);
+    assert.equal(restoredRow.hidden, false, `${label}: restored open rows should stay visible`);
+    assert.ok(
+      restoredRow.children.some((child) => child.className.includes('message-info-finish')),
+      `${label}: restored completion metrics should be retained`,
+    );
+
+    // Keyboard-equivalent activation: the toggle button itself toggles.
+    restoredToggle.dispatch('click', { target: restoredToggle });
+    assert.equal(restored.classList.contains('message-info-open'), false, `${label}: the toggle button should close the row`);
+    assert.equal(restoredToggle.attributes['aria-expanded'], 'false', `${label}: the toggle should mirror the closed state`);
+    assert.equal(restoredRow.hidden, true, `${label}: the row should hide when closed`);
+
+    // Unknown legacy timestamps must stay unknown through rebinding.
+    const legacy = fakeDomElement('message assistant');
+    legacy.dataset.messageFinishReason = 'stop';
+    bindMessageInfoToggle(legacy);
+    assert.equal(messageCreatedAt(legacy), undefined, `${label}: legacy messages without a timestamp stay unknown`);
+    assert.equal(legacy.children.some((child) => child.className === 'message-info-toggle'), false, `${label}: legacy messages should not expose a toggle`);
+  }
+
+  function fakeDomElement(className = '', tag = 'div') {
+    const element = {
+      tagName: String(tag || 'div').toUpperCase(),
+      className,
+      id: '',
+      type: 'button',
+      tabIndex: undefined,
+      hidden: false,
+      title: '',
+      textContent: '',
+      parentNode: null,
+      children: [],
+      dataset: {},
+      attributes: {},
+      classList: {
+        _set: new Set(className.split(/\s+/).filter(Boolean)),
+        add(name) { this._set.add(name); },
+        remove(name) { this._set.delete(name); },
+        contains(name) { return this._set.has(name); },
+        toggle(name) {
+          if (this._set.has(name)) { this._set.delete(name); return false; }
+          this._set.add(name); return true;
+        },
+      },
+      _listeners: {},
+      setAttribute(name, value) { this.attributes[name] = String(value); },
+      appendChild(child) {
+        child.parentNode = this;
+        this.children.push(child);
+        return child;
+      },
+      replaceChildren(...items) {
+        this.children = items;
+        items.forEach((child) => { child.parentNode = this; });
+      },
+      querySelector(selector) {
+        if (selector === ':scope > .message-info') {
+          return this.children.find((child) => child.className === 'message-info') || null;
+        }
+        if (selector === ':scope > .message-info-toggle') {
+          return this.children.find((child) => child.className === 'message-info-toggle') || null;
+        }
+        return null;
+      },
+      matches(selector) {
+        return selector.split(',').some((part) => {
+          return part.trim().split(/[\s.]+/).filter(Boolean).every((cls) => {
+            return this.classList.contains(cls);
+          });
+        });
+      },
+      closest(selector) {
+        const interactiveTags = new Set(['a', 'button', 'input', 'textarea', 'select', 'summary']);
+        const interactive = selector.split(',').some((part) => {
+          const trimmed = part.trim();
+          if (interactiveTags.has(trimmed)) return this.tagName === trimmed.toUpperCase();
+          return false;
+        });
+        return interactive ? this : null;
+      },
+      addEventListener(type, handler) {
+        (this._listeners[type] ||= []).push(handler);
+      },
+      dispatch(type, event = {}) {
+        const dispatchEvent = {
+          ...event,
+          type,
+          target: event.target || element,
+          preventDefault() {},
+          stopPropagation() {},
+        };
+        for (const handler of this._listeners[type] || []) handler.call(this, dispatchEvent);
+      },
+    };
+    return element;
+  }
 });
 
 await run();

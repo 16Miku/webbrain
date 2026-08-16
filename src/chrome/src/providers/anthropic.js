@@ -318,6 +318,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     const decoder = new TextDecoder();
     let buffer = '';
     let sawUsage = false;
+    let terminalStopReason = '';
     const accumulatedUsage = {};
     const updateUsage = (usage) => {
       if (!usage || typeof usage !== 'object') return;
@@ -390,6 +391,7 @@ export class AnthropicProvider extends BaseLLMProvider {
           updateUsage(event.message?.usage);
         } else if (event.type === 'message_delta') {
           updateUsage(event.usage);
+          if (event.delta?.stop_reason) terminalStopReason = event.delta.stop_reason;
         } else if (event.type === 'content_block_delta') {
           if (event.delta?.type === 'text_delta') {
             yield { type: 'text', content: event.delta.text };
@@ -409,7 +411,7 @@ export class AnthropicProvider extends BaseLLMProvider {
         } else if (event.type === 'message_stop') {
           const usage = usageChunk();
           if (usage) yield { type: 'usage', usage };
-          yield { type: 'done', content: '' };
+          yield { type: 'done', content: '', ...(terminalStopReason ? { finishReason: terminalStopReason } : {}) };
           return;
         }
       }
