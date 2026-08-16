@@ -1,5 +1,6 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
+import { configuredMaxTokensField } from './provider-compatibility.js';
 
 /**
  * Azure OpenAI provider (deployment-based OpenAI-compatible API).
@@ -60,10 +61,24 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
   }
 
   _addMaxTokens(body, options) {
+    // The Compatibility panel's "max tokens field" is the explicit
+    // per-deployment switch. `_addConfiguredMaxTokens` already honors
+    // `compat.maxTokensField` (and `config.maxTokensField`) through
+    // `configuredMaxTokensField`, so a reasoning deployment set to
+    // `max_completion_tokens` in Settings sends the new field with no
+    // name-guessing here.
     this._addConfiguredMaxTokens(body, options, 'max_tokens');
   }
 
   _addTemperature(body, options) {
+    // Azure deployment names do not reveal the model behind them (prod-chat
+    // may back o3-mini; o365-assistant may back gpt-35-turbo), so never guess
+    // the contract from the name. A reasoning deployment opts in by setting
+    // the Compatibility "max tokens field" to `max_completion_tokens` (which
+    // also drops temperature — reasoning models reject any non-default), or
+    // by enabling `omitTemperature` directly.
+    if (this.config.omitTemperature) return;
+    if (configuredMaxTokensField(this.config, 'max_tokens') === 'max_completion_tokens') return;
     body.temperature = options.temperature ?? 0.7;
   }
 
