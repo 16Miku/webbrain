@@ -79,6 +79,15 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   get model() {
     if (this.config.model) return this.config.model;
     if (this.config.requiresModel) throw new Error(`${this.config.label || this.name} model is required.`);
+    // LM Studio applies the server's own default model when none is
+    // configured (as does llama.cpp, handled by its own provider class).
+    // Local servers that reject an empty model instead carry
+    // `requiresModel: true` in the catalog and throw above, so no local
+    // server ever receives a fabricated model id.
+    if (this.config.category === 'local'
+      && String(this.config.providerName || '').toLowerCase() === 'lmstudio') {
+      return null;
+    }
     return String(this.config.providerName || '').toLowerCase() === 'openai'
       && this._isOfficialOpenAIBaseUrl()
       ? 'gpt-5.6-terra'
@@ -376,10 +385,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    */
   _buildChatCompletionsBody(messages, options = {}, stream = false) {
     let body = {
-      model: this.model,
       messages: this._chatMessages(messages, options),
       stream,
     };
+    if (this.model) body.model = this.model;
     this._addTemperature(body, options);
     this._addMaxTokens(body, options);
     if (this._shouldSendTools(messages, options)) {
@@ -499,7 +508,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   _responsesBody(messages, options, stream) {
     let body = {
-      model: this.model,
       input: this._responsesInput(messages),
       stream,
       store: false,
@@ -514,6 +522,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (body.reasoning.effort === 'auto' || body.reasoning.effort === 'off') {
       body.reasoning.effort = body.reasoning.effort === 'off' ? 'none' : 'medium';
     }
+    if (this.model) body.model = this.model;
 
     if (this._shouldSendTools(messages, options)) {
       body.tools = this._responsesTools(options.tools);

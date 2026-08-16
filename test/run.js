@@ -48208,6 +48208,62 @@ test('official OpenAI GPT-5.6 and Responses-only GPT-5 Pro variants route to Res
   }
 });
 
+test('local OpenAI-compatible servers that require a model throw a clear error when unset', () => {
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    for (const providerName of ['ollama', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
+      const provider = new Provider({
+        providerName,
+        category: 'local',
+        baseUrl: 'http://localhost:1234/v1',
+        requiresModel: true,
+      });
+      assert.throws(
+        () => provider._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {}),
+        /model is required/,
+        `${providerName}: empty model must fail loudly instead of sending a fabricated id`,
+      );
+    }
+  }
+});
+
+test('LM Studio omits the model field when unset and sends it when configured', () => {
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    const empty = new Provider({
+      providerName: 'lmstudio',
+      category: 'local',
+      baseUrl: 'http://localhost:1234/v1',
+    });
+    assert.equal(empty.model, null, 'lmstudio must not fabricate a model id');
+    const body = empty._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {});
+    assert.equal('model' in body, false, 'lmstudio request body must omit model when unset');
+
+    const configured = new Provider({
+      providerName: 'lmstudio',
+      category: 'local',
+      baseUrl: 'http://localhost:1234/v1',
+      model: 'llama-3.2-3b',
+    });
+    assert.equal(
+      configured._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {}).model,
+      'llama-3.2-3b',
+      'configured local model must be sent',
+    );
+  }
+});
+
+test('non-local OpenAI-compatible providers keep the legacy model fallback', () => {
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    assert.equal(new Provider({ providerName: 'openrouter' }).model, 'gpt-4o');
+    assert.equal(new Provider({ providerName: 'openai', baseUrl: 'https://proxy.example.test/v1' }).model, 'gpt-4o');
+    assert.equal(new Provider({ providerName: 'openai' }).model, 'gpt-5.6-terra');
+    const body = new Provider({ providerName: 'openrouter' })._buildChatCompletionsBody(
+      [{ role: 'user', content: 'hello' }],
+      {},
+    );
+    assert.equal(body.model, 'gpt-4o', 'non-local fallback model must stay on the wire');
+  }
+});
+
 test('Responses reasoning effort is normalized for GPT-5 Pro model constraints', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
     for (const model of ['gpt-5-pro', 'gpt-5-pro-2025-10-06']) {
