@@ -1,7 +1,14 @@
 // Bengali — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'বর্তমান পৃষ্ঠার নেটিভ প্রিন্ট ডায়ালগ খুলুন',
   'sp.print.error': 'প্রিন্ট ডায়ালগ খোলা যায়নি: {msg}',
   'sp.streaming.fallback': 'প্রতিক্রিয়া স্ট্রিম বাধাগ্রস্ত হয়েছে; স্ট্রিমিং ছাড়া এই Ask পালাটি আবার চেষ্টা করা হচ্ছে।',
@@ -331,6 +338,7 @@ export default {
   'sp.perm.verb.upload': "একটি ফাইল আপলোড করুন",
   'sp.perm.verb.record': "ট্যাব (এবং মাইক্রোফোন) চালু করুন",
   'sp.perm.verb.schedule': "ভবিষ্যত কাজের সময়সূচী",
+  'sp.perm.verb.window': 'ব্রাউজার উইন্ডোর আকার পরিবর্তন করুন',
 
   'sp.step.details': "বিস্তারিত",
   'sp.step.input_label': "ইনপুট",
@@ -526,6 +534,7 @@ export default {
   'st.display.search.empty': "কোনো সাধারণ সেটিংস মেলে না।",
   'st.display.advanced': "উন্নত",
   ...getApocalypseModeCopy('bn'),
+  ...getEmergencyBoxCopy('bn'),
   'st.display.cloud_bridge.label': 'ক্লাউড ব্রিজ',
   'st.display.cloud_bridge.desc': 'এই Chromium প্রোফাইলে একটি স্থানীয় কন্ট্রোলার সংযুক্ত করুন। WebBrain Cloud-এর জন্য পোর্ট 17373, MCP ক্লায়েন্টের জন্য 17374 অথবা LM Studio-এর জন্য 17375 ব্যবহার করুন। একবারে শুধু একটি ব্রিজ সক্রিয় থাকতে পারে; স্বাভাবিক অনুমতির অনুরোধ প্রযোজ্য থাকবে।',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',
@@ -621,6 +630,12 @@ export default {
   'st.providers.search.empty': "কোন প্রদানকারী এই অনুসন্ধান এবং ফিল্টার মেলে না.",
   'st.providers.save': "সংরক্ষণ করুন",
   'st.providers.test': "পরীক্ষা সংযোগ",
+  'st.providers.duplicate': 'ডুপ্লিকেট',
+  'st.providers.duplicate_limit': 'শুধু একটি ডুপ্লিকেট অনুমোদিত',
+  'st.providers.duplicate_unavailable': 'এই প্রদানকারীকে ডুপ্লিকেট করা যাবে না',
+  'st.providers.duplicate_inactive': 'ডুপ্লিকেট করার আগে এই প্রদানকারীটি সংরক্ষণ করুন',
+  'st.providers.remove_duplicate': 'ডুপ্লিকেট মুছুন',
+  'st.providers.remove_duplicate_confirm': 'এই ডুপ্লিকেট প্রদানকারী ও এর সংরক্ষিত সেটিংস মুছবেন?',
   'st.providers.set_active': "সক্রিয় সেট করুন",
   'st.providers.active': "সক্রিয়",
   'st.providers.saved': "সংরক্ষিত !",

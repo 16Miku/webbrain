@@ -4,6 +4,7 @@
  */
 
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
+import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
 import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
@@ -26,6 +27,7 @@ import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
+import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
@@ -1807,7 +1809,7 @@ function extractChatHistoryMessages(root = messagesEl) {
       text: normalizeHistoryText(historyTextFromElement(textEl, { markdown: format === 'markdown' })),
       format,
       index,
-      createdAt: Date.now(),
+      createdAt: messageCreatedAt(msgEl),
       ...(attachments.length ? { attachments } : {}),
     };
   }).filter((message) => message.text || message.attachments?.length);
@@ -3992,6 +3994,7 @@ async function init() {
     if (changes.verboseMode) {
       verboseMode = changes.verboseMode.newValue;
       if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+      refreshOpenMessageInfoRows();
     }
     if (changes.alwaysAllowApiMutations) {
       alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
@@ -4044,6 +4047,7 @@ if (verboseBtn) {
     // Normal click → toggle verbose mode
     verboseMode = !verboseMode;
     verboseBtn.classList.toggle('active', verboseMode);
+    refreshOpenMessageInfoRows();
     await browser.storage.local.set({ verboseMode }).catch(() => {});
   });
 }
@@ -4432,6 +4436,7 @@ async function applyActiveRunState(numericTabId, state) {
           finalContent: runUi.finalContent,
           submittedTurnDurable: state?.submittedTurnDurable === true,
           attachmentDeliveryState: runUi.attachmentDeliveryState || '',
+          endedAt: runUi.endedAt,
         },
       });
     }
@@ -5981,6 +5986,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
 function rebindRestoredMessageControls() {
   restoreStagedScreenshotAttachments();
   rebindCopyButtons();
+  rebindMessageInfoToggles();
   rebindCompactStepDetailsToggles();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
@@ -6122,7 +6128,7 @@ function appendProviderPickerGroup(label) {
   providerPickerMenu.appendChild(el);
 }
 
-function appendProviderPickerOption(id, name, meta) {
+function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   if (!providerPickerMenu) return;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -6133,7 +6139,7 @@ function appendProviderPickerOption(id, name, meta) {
 
   // Icons only in the open menu — closed header stays text-only so the
   // WebBrain mark (and other brand chips) don't compete with the chrome.
-  const iconSrc = providerIconUrl(id);
+  const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');
     img.className = 'provider-icon provider-icon-sm';
@@ -6373,7 +6379,7 @@ async function loadProviders() {
         opt.textContent = `${name} — ${t('sp.providers.active')}`;
         activeGroup.appendChild(opt);
         providerPickerLabelById.set(id, name);
-        appendProviderPickerOption(id, name, t('sp.providers.active'));
+        appendProviderPickerOption(id, name, t('sp.providers.active'), config.sourceProviderId || id);
       }
       providerSelect.appendChild(activeGroup);
     }
@@ -7274,6 +7280,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/verbose') {
     verboseMode = !verboseMode;
     if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+    refreshOpenMessageInfoRows();
     await browser.storage.local.set({ verboseMode }).catch(() => {});
     if (currentTabId !== tabId) return '';
     showComposerToast(systemHtml(verboseMode
@@ -7470,7 +7477,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       const { providers, active } = await sendToBackground('get_providers');
       const config = providers[active];
       if (config) {
-        const toggled = toggledVisionProviderConfig(active, config);
+        const toggled = toggledVisionProviderConfig(config.sourceProviderId || active, config);
         await sendToBackground('update_provider', {
           providerId: active,
           config: toggled.config,
@@ -8442,6 +8449,10 @@ function handleAgentUpdateMessage(msg) {
       reportTrailingRunCaptureError({ kind: data?.kind }, new Error(data?.message || 'unknown error'), eventTabId);
       break;
 
+    case 'message_info':
+      applyMessageCompletion(eventAssistantEl || currentAssistantEl, data);
+      break;
+
     case 'error':
       hideActivity();
       if (currentAssistantEl) markLastStepFailed();
@@ -8489,6 +8500,7 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'run_complete':
+      setMessageCreatedAt(eventAssistantEl || currentAssistantEl, data?.endedAt, { replace: true });
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
       reconcileRunMessageAttachmentState(
         eventTabId,
@@ -8801,8 +8813,13 @@ function renderClarifyCard(data) {
     card.dataset.permission = '1';
     const host = String(data.permission.host || '');
     const cap = String(data.permission.capability || '');
-    const verb = t('sp.perm.verb.' + cap);
-    qEl.textContent = t('sp.perm.question', { verb, host });
+    const verbKey = 'sp.perm.verb.' + cap;
+    const verb = t(verbKey);
+    // English falls back to the single CAPABILITY_LABEL source of truth so the
+    // consent wording cannot drift between two English copies; other locales
+    // carry their own translation under the key.
+    const resolvedVerb = verb === verbKey ? (CAPABILITY_LABEL[cap] || cap) : verb;
+    qEl.textContent = t('sp.perm.question', { verb: resolvedVerb, host });
 
     const reasonEl = document.createElement('div');
     reasonEl.className = 'clarify-reason';
@@ -10126,6 +10143,162 @@ function messageAttachmentMetadata(msgEl) {
   }, item.dataset.deliveryState));
 }
 
+function messageCreatedAt(msgEl) {
+  const value = Number(msgEl?.dataset?.messageCreatedAt);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function setMessageCreatedAt(msgEl, value, { replace = false } = {}) {
+  if (!msgEl) return null;
+  const existing = Number(msgEl.dataset.messageCreatedAt);
+  if (!replace && Number.isFinite(existing) && existing > 0) return existing;
+  const candidate = Number(value);
+  const next = Number.isFinite(candidate) && candidate > 0 ? candidate : existing;
+  if (!Number.isFinite(next) || next <= 0) return null;
+  msgEl.dataset.messageCreatedAt = String(Math.round(next));
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  return next;
+}
+
+function messageCompletionFromElement(msgEl) {
+  return {
+    inputTokens: Number(msgEl?.dataset?.messageInputTokens) || 0,
+    outputTokens: Number(msgEl?.dataset?.messageOutputTokens) || 0,
+    totalTokens: Number(msgEl?.dataset?.messageTotalTokens) || 0,
+    durationMs: Number(msgEl?.dataset?.messageDurationMs) || 0,
+    finishReason: String(msgEl?.dataset?.messageFinishReason || ''),
+  };
+}
+
+let messageInfoRowId = 0;
+
+function ensureMessageInfoElements(msgEl) {
+  let bar = msgEl.querySelector(':scope > .message-info-bar');
+  let row = bar?.querySelector(':scope > .message-info')
+    || msgEl.querySelector(':scope > .message-info');
+  let toggle = msgEl.querySelector(':scope > .message-info-toggle')
+    || bar?.querySelector(':scope > .message-info-toggle');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'message-info-bar';
+    const legacyControl = toggle || row;
+    if (legacyControl) msgEl.insertBefore(bar, legacyControl);
+    else msgEl.appendChild(bar);
+  }
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'message-info';
+    row.setAttribute('role', 'status');
+  }
+  if (row.parentNode !== bar) {
+    bar.appendChild(row);
+  }
+  if (!row.id) {
+    let id;
+    do {
+      id = `message-info-${++messageInfoRowId}`;
+    } while (document.getElementById(id));
+    row.id = id;
+  }
+  if (!toggle) {
+    toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'message-info-toggle';
+  }
+  toggle.textContent = '';
+  if (toggle.parentNode !== msgEl) {
+    msgEl.insertBefore(toggle, msgEl.children[0] || null);
+  }
+  toggle.setAttribute('aria-controls', row.id);
+  toggle.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
+  toggle.setAttribute('aria-label', t('sp.message_info.hint'));
+  toggle.title = t('sp.message_info.hint');
+  return { row, toggle };
+}
+
+function renderMessageInfo(msgEl) {
+  if (!msgEl) return;
+  const { row } = ensureMessageInfoElements(msgEl);
+  const pills = buildMessageInfoPills({
+    createdAt: messageCreatedAt(msgEl),
+    completion: messageCompletionFromElement(msgEl),
+    verbose: verboseMode,
+    locale: getLocale(),
+  });
+  row.replaceChildren(...pills.map((pill) => {
+    const item = document.createElement('span');
+    item.className = pill.kind === 'sent'
+      ? 'message-info-item message-info-sent'
+      : `message-info-item message-info-pill message-info-${pill.kind}`;
+    item.textContent = t(pill.key, pill.params);
+    return item;
+  }));
+  row.hidden = !msgEl.classList.contains('message-info-open') || pills.length === 0;
+}
+
+function messageInfoClickIsInteractive(target) {
+  return !!target?.closest?.(
+    'a, button, input, textarea, select, summary, [role="button"], [contenteditable="true"]',
+  );
+}
+
+function toggleMessageInfo(msgEl) {
+  const open = msgEl.classList.toggle('message-info-open');
+  ensureMessageInfoElements(msgEl).toggle.setAttribute('aria-expanded', String(open));
+  renderMessageInfo(msgEl);
+  schedulePersist();
+}
+
+function bindMessageInfoToggle(msgEl) {
+  if (!msgEl?.matches?.('.message.user, .message.assistant')) return;
+  if (!messageCreatedAt(msgEl)) return;
+  msgEl.removeAttribute('tabindex');
+  msgEl.removeAttribute('aria-expanded');
+  msgEl.removeAttribute('title');
+  const { toggle } = ensureMessageInfoElements(msgEl);
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  if (msgEl.__wbMessageInfoBound) return;
+  msgEl.__wbMessageInfoBound = true;
+  toggle.addEventListener('click', () => toggleMessageInfo(msgEl));
+  msgEl.addEventListener('click', (event) => {
+    if (messageInfoClickIsInteractive(event.target)) return;
+    toggleMessageInfo(msgEl);
+  });
+}
+
+function rebindMessageInfoToggles() {
+  messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant')
+    .forEach(bindMessageInfoToggle);
+}
+
+function applyMessageCompletion(msgEl, completion = {}) {
+  if (!msgEl) return;
+  const values = {
+    messageInputTokens: completion.inputTokens,
+    messageOutputTokens: completion.outputTokens,
+    messageTotalTokens: completion.totalTokens,
+    messageDurationMs: completion.durationMs,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    const number = Number(value);
+    msgEl.dataset[key] = String(Number.isFinite(number) && number >= 0 ? Math.round(number) : 0);
+  }
+  msgEl.dataset.messageFinishReason = String(completion.finishReason || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 80);
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  schedulePersist();
+}
+
+function refreshOpenMessageInfoRows() {
+  messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant').forEach((msgEl) => {
+    if (!messageCreatedAt(msgEl)) return;
+    ensureMessageInfoElements(msgEl);
+    if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  });
+}
+
 function addMessage(role, content, options = {}) {
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
@@ -10175,6 +10348,10 @@ function addMessage(role, content, options = {}) {
     messagesEl.insertBefore(msgEl, currentAssistantEl);
   } else {
     messagesEl.appendChild(msgEl);
+  }
+  if (role === 'user' || role === 'assistant') {
+    setMessageCreatedAt(msgEl, options.createdAt ?? Date.now());
+    bindMessageInfoToggle(msgEl);
   }
 
   if (role === 'error' && options.retryPayload
@@ -12038,6 +12215,7 @@ document.addEventListener('wb-locale-changed', () => {
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
   syncSelectionScopeUi();
+  refreshOpenMessageInfoRows();
   void loadProviders();
 });
 

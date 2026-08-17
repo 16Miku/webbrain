@@ -1,7 +1,14 @@
 // English — canonical locale. Other locales inherit key names from this file.
 import apocalypseModeCopy from './apocalypse-copy.mjs';
+import emergencyCopy from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Open the current page’s native print dialog',
   'sp.print.error': 'Could not open the print dialog: {msg}',
   'sp.streaming.fallback': 'Response streaming was interrupted; retrying this Ask turn without streaming.',
@@ -329,6 +336,7 @@ export default {
   'sp.perm.verb.upload': 'upload a file to',
   'sp.perm.verb.record': 'record the tab (and microphone) on',
   'sp.perm.verb.schedule': 'schedule future work for',
+  'sp.perm.verb.window': 'resize the browser window for',
 
   'sp.step.details': 'details',
   'sp.step.input_label': 'Input',
@@ -523,6 +531,7 @@ export default {
   'st.display.search.empty': 'No General settings match.',
   'st.display.advanced': 'Advanced',
   ...apocalypseModeCopy,
+  ...emergencyCopy,
   'st.display.help_improve.label': 'Help Improve WebBrain',
   'st.display.help_improve.desc_html': 'Allow eligible WebBrain Cloud text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
   'st.display.clarify_timeout.label': 'Clarify timeout',
@@ -606,6 +615,12 @@ export default {
   'st.providers.search.empty': 'No providers match this search and filter.',
   'st.providers.save': 'Save',
   'st.providers.test': 'Test Connection',
+  'st.providers.duplicate': 'Duplicate',
+  'st.providers.duplicate_limit': 'Only one duplicate is allowed',
+  'st.providers.duplicate_unavailable': 'This provider cannot be duplicated',
+  'st.providers.duplicate_inactive': 'Save this provider before duplicating it',
+  'st.providers.remove_duplicate': 'Remove duplicate',
+  'st.providers.remove_duplicate_confirm': 'Remove this duplicate provider and its saved configuration?',
   'st.providers.set_active': 'Set Active',
   'st.providers.active': 'ACTIVE',
   'st.providers.saved': 'Saved!',

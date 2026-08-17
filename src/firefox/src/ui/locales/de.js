@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Nativen Druckdialog der aktuellen Seite öffnen',
   'sp.print.error': 'Druckdialog konnte nicht geöffnet werden: {msg}',
   ...chromeWebStoreLocale,
@@ -339,6 +346,7 @@ export default {
   'sp.perm.verb.upload': 'Datei hochladen zu',
   'sp.perm.verb.record': 'Tab (und Mikrofon) aufnehmen auf',
   'sp.perm.verb.schedule': 'zukünftige Aufgaben planen für',
+  'sp.perm.verb.window': 'die Größe des Browserfensters ändern auf',
   'sp.help.shortcuts_html': '<strong>Tastenkürzel</strong><br><code>Ctrl/Cmd+/</code> — Eingabefeld fokussieren<br><code>Ctrl/Cmd+Shift+A</code> — Zum Fragen-Modus wechseln<br><code>Ctrl/Cmd+Shift+X</code> — Zum Handeln-Modus wechseln<br><code>Ctrl/Cmd+Shift+D</code> — Zum Dev-Modus wechseln<br><code>Escape</code> — Aktiven Durchlauf stoppen<br><code>Escape</code> zweimal — Aktive Aufnahme stoppen',
   'sp.compact.nothing_to_compact': 'Noch nichts zu kompaktieren — es gibt nicht genügend älteren Kontext.',
   'sp.compact.busy': 'Kompaktierung nicht möglich, während ein Durchlauf läuft — warten Sie auf dessen Abschluss.',
@@ -518,6 +526,7 @@ export default {
   'st.display.search.empty': 'Keine passenden allgemeinen Einstellungen.',
   'st.display.advanced': 'Erweitert',
   ...getApocalypseModeCopy('de'),
+  ...getEmergencyBoxCopy('de'),
   'st.display.help_improve.label': 'Bei der Verbesserung von WebBrain helfen',
   'st.display.help_improve.desc_html': 'Ermöglichen Sie, dass geeignete WebBrain Cloud-Text- und Tool-Interaktionen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Standardmäßig aktiviert. Wenn Sie dies deaktivieren, wird die aktuelle Unterhaltung dauerhaft ausgeschlossen; eine erneute Aktivierung gilt ab der nächsten neuen Unterhaltung. Screenshots und Bilddaten werden nicht in der WebBrain-Verbesserungsdatenbank gespeichert. <u>Anfragen an lokale Modelle und mit eigenen APIs werden niemals von WebBrain erfasst.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Datenschutzrichtlinie →</a>',
   'st.display.clarify_timeout.label': 'Zeitlimit für Klärungsfragen',
@@ -600,6 +609,12 @@ export default {
   'st.providers.search.empty': 'Kein Anbieter passt zu dieser Suche und diesem Filter.',
   'st.providers.save': 'Speichern',
   'st.providers.test': 'Verbindung testen',
+  'st.providers.duplicate': 'Duplizieren',
+  'st.providers.duplicate_limit': 'Es ist nur ein Duplikat zulässig',
+  'st.providers.duplicate_unavailable': 'Dieser Anbieter kann nicht dupliziert werden',
+  'st.providers.duplicate_inactive': 'Speichern Sie diesen Anbieter, bevor Sie ihn duplizieren',
+  'st.providers.remove_duplicate': 'Duplikat entfernen',
+  'st.providers.remove_duplicate_confirm': 'Diesen duplizierten Anbieter und seine gespeicherte Konfiguration entfernen?',
   'st.providers.set_active': 'Als aktiv setzen',
   'st.providers.active': 'AKTIV',
   'st.providers.saved': 'Gespeichert!',

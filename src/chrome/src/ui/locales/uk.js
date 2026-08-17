@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Відкрити системне діалогове вікно друку поточної сторінки',
   'sp.print.error': 'Не вдалося відкрити діалогове вікно друку: {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': 'Безкоштовне щоденне використання WebBrain Cloud включено. Запити проходять через api.webbrain.one; за замовчуванням ми записуємо метадані для квоти та налагодження, а не текст запитів, вміст сторінок, знімки екрана чи відповіді моделі. {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Політика конфіденційності',
   'st.providers.test': 'Перевірити з\'єднання',
+  'st.providers.duplicate': 'Дублювати',
+  'st.providers.duplicate_limit': 'Дозволено лише один дублікат',
+  'st.providers.duplicate_unavailable': 'Цього постачальника не можна дублювати',
+  'st.providers.duplicate_inactive': 'Збережіть цього постачальника перед дублюванням',
+  'st.providers.remove_duplicate': 'Видалити дублікат',
+  'st.providers.remove_duplicate_confirm': 'Видалити цього дубльованого постачальника та його збережені налаштування?',
   'st.providers.set_active': 'Зробити активним',
   'st.providers.active': 'АКТИВНИЙ',
   'st.providers.saved': 'Збережено!',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Чернетник очищено.',
   'sp.scratchpad.error': 'Чернетник недоступний: {msg}',
   'sp.perm.verb.schedule': 'запланувати майбутню роботу для',
+  'sp.perm.verb.window': 'змінити розмір вікна браузера на',
   'tool.schedule_resume': 'Планування відновлення',
   'tool.schedule_task': 'Планування завдання',
   'st.display.scheduled_tasks.label': 'Заплановані завдання',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': 'Немає збігів у загальних налаштуваннях.',
   'st.display.advanced': 'Розширені',
   ...getApocalypseModeCopy('uk'),
+  ...getEmergencyBoxCopy('uk'),
   'st.display.cloud_bridge.label': 'Хмарний міст',
   'st.display.cloud_bridge.desc': 'Підключіть один локальний контролер до цього профілю Chromium. Використовуйте порт 17373 для WebBrain Cloud, 17374 для клієнтів MCP або 17375 для LM Studio. Одночасно може бути активним лише один міст; звичайні запити дозволів залишаються чинними.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

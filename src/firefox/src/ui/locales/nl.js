@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Het systeemeigen afdrukvenster van de huidige pagina openen',
   'sp.print.error': 'Het afdrukvenster kon niet worden geopend: {msg}',
   ...chromeWebStoreLocale,
@@ -317,6 +324,7 @@ export default {
   'sp.perm.verb.upload': 'een bestand uploaden naar',
   'sp.perm.verb.record': 'het tabblad (en microfoon) opnemen op',
   'sp.perm.verb.schedule': 'geplande taken instellen voor',
+  'sp.perm.verb.window': 'het browservenster aanpassen op',
   'sp.step.details': 'details',
   'sp.step.input_label': 'Invoer',
   'sp.step.result_label': 'Resultaat',
@@ -500,6 +508,7 @@ export default {
   'st.display.search.empty': 'Geen algemene instellingen gevonden.',
   'st.display.advanced': 'Geavanceerd',
   ...getApocalypseModeCopy('nl'),
+  ...getEmergencyBoxCopy('nl'),
   'st.display.help_improve.label': 'Help WebBrain verbeteren',
   'st.display.help_improve.desc_html': 'Sta toe dat geschikte WebBrain Cloud-tekst- en toolinteracties worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Standaard ingeschakeld. Als u dit uitschakelt, wordt het huidige gesprek permanent uitgesloten; opnieuw inschakelen geldt vanaf het volgende nieuwe gesprek. Screenshots en afbeeldingsbytes worden niet bewaard in de WebBrain-verbeteringsdatabase. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacybeleid →</a>',
   'st.display.clarify_timeout.label': 'Verduidelijkingstime-out',
@@ -581,6 +590,12 @@ export default {
   'st.providers.search.empty': 'Geen providers komen overeen met deze zoekopdracht en filter.',
   'st.providers.save': 'Opslaan',
   'st.providers.test': 'Verbinding testen',
+  'st.providers.duplicate': 'Dupliceren',
+  'st.providers.duplicate_limit': 'Er is slechts één duplicaat toegestaan',
+  'st.providers.duplicate_unavailable': 'Deze provider kan niet worden gedupliceerd',
+  'st.providers.duplicate_inactive': 'Sla deze provider op voordat u deze dupliceert',
+  'st.providers.remove_duplicate': 'Duplicaat verwijderen',
+  'st.providers.remove_duplicate_confirm': 'Deze gedupliceerde provider en de opgeslagen configuratie verwijderen?',
   'st.providers.set_active': 'Actief instellen',
   'st.providers.active': 'ACTIEF',
   'st.providers.saved': 'Opgeslagen!',

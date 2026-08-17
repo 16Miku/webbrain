@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Otwórz natywne okno drukowania bieżącej strony',
   'sp.print.error': 'Nie udało się otworzyć okna drukowania: {msg}',
   ...chromeWebStoreLocale,
@@ -238,6 +245,7 @@ export default {
   'sp.perm.verb.upload': 'przesłać plik do',
   'sp.perm.verb.record': 'nagrać kartę (i mikrofon) na',
   'sp.perm.verb.schedule': 'zaplanować przyszłe działania dla',
+  'sp.perm.verb.window': 'zmienić rozmiar okna przeglądarki na',
   'sp.step.details': 'szczegóły',
   'sp.step.input_label': 'Wejście',
   'sp.step.result_label': 'Wynik',
@@ -425,6 +433,12 @@ export default {
   'st.providers.search.empty': 'Żaden dostawca nie pasuje do tego wyszukiwania i filtra.',
   'st.providers.save': 'Zapisz',
   'st.providers.test': 'Testuj połączenie',
+  'st.providers.duplicate': 'Duplikuj',
+  'st.providers.duplicate_limit': 'Dozwolony jest tylko jeden duplikat',
+  'st.providers.duplicate_unavailable': 'Tego dostawcy nie można zduplikować',
+  'st.providers.duplicate_inactive': 'Zapisz tego dostawcę przed jego zduplikowaniem',
+  'st.providers.remove_duplicate': 'Usuń duplikat',
+  'st.providers.remove_duplicate_confirm': 'Usunąć tego zduplikowanego dostawcę i jego zapisaną konfigurację?',
   'st.providers.set_active': 'Ustaw jako aktywny',
   'st.providers.active': 'AKTYWNY',
   'st.providers.saved': 'Zapisano!',
@@ -659,6 +673,7 @@ export default {
   'st.display.search.empty': 'Brak pasujących ustawień ogólnych.',
   'st.display.advanced': 'Zaawansowane',
   ...getApocalypseModeCopy('pl'),
+  ...getEmergencyBoxCopy('pl'),
   'st.display.clarify_timeout.label': 'Limit czasu dopytania',
   'st.display.clarify_timeout.desc': 'Jak długo czekać na odpowiedź na dopytanie, zanim automatycznie wybrana zostanie pierwsza opcja (lub upłynie limit, gdy brak opcji). 0 = Natychmiast (zawsze auto-wybór). Powyżej 1200s czekaj bez limitu (Wył.). Domyślnie 60s. Nie dotyczy uprawnień ani potwierdzeń wysyłki formularza.',
   'st.display.clarify_timeout.off': 'Wył.',

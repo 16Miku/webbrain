@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Abrir el diálogo de impresión nativo de la página actual',
   'sp.print.error': 'No se pudo abrir el diálogo de impresión: {msg}',
   ...chromeWebStoreLocale,
@@ -258,6 +265,12 @@ export default {
   'st.providers.webbrain_note.body': 'El uso diario gratuito de WebBrain Cloud está incluido. Las solicitudes pasan por api.webbrain.one; de forma predeterminada registramos metadatos para la cuota y la depuración, no el texto de las indicaciones, el contenido de la página, las capturas de pantalla ni las respuestas del modelo. {privacyLink}. Para más uso, suscríbete en {subscribeLink}. Gestiona la facturación en {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Política de privacidad',
   'st.providers.test': 'Probar conexión',
+  'st.providers.duplicate': 'Duplicar',
+  'st.providers.duplicate_limit': 'Solo se permite un duplicado',
+  'st.providers.duplicate_unavailable': 'Este proveedor no se puede duplicar',
+  'st.providers.duplicate_inactive': 'Guarda este proveedor antes de duplicarlo',
+  'st.providers.remove_duplicate': 'Eliminar duplicado',
+  'st.providers.remove_duplicate_confirm': '¿Eliminar este proveedor duplicado y su configuración guardada?',
   'st.providers.set_active': 'Establecer activo',
   'st.providers.active': 'ACTIVO',
   'st.providers.saved': '¡Guardado!',
@@ -575,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': 'Bloc de notas borrado.',
   'sp.scratchpad.error': 'Bloc de notas no disponible: {msg}',
   'sp.perm.verb.schedule': 'programar trabajo futuro en',
+  'sp.perm.verb.window': 'cambiar el tamaño de la ventana del navegador en',
   'tool.schedule_resume': 'Programando reanudación',
   'tool.schedule_task': 'Programando tarea',
   'st.display.scheduled_tasks.label': 'Tareas programadas',
@@ -668,6 +682,7 @@ export default {
   'st.display.search.empty': 'No hay ajustes generales que coincidan.',
   'st.display.advanced': 'Avanzado',
   ...getApocalypseModeCopy('es'),
+  ...getEmergencyBoxCopy('es'),
   'st.display.clarify_timeout.label': 'Tiempo de espera de aclaración',
   'st.display.clarify_timeout.desc': 'Cuánto esperar una respuesta a una pregunta de aclaración antes de elegir automáticamente la primera opción (o agotar el tiempo si no hay opciones). 0 = Instantáneo (autoelegir siempre). Valores por encima de 1200s esperan indefinidamente (Desactivado). Predeterminado 60s. No se aplica a permisos ni confirmaciones de envío de formularios.',
   'st.display.clarify_timeout.off': 'Desactivado',

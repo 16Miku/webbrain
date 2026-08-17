@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': '現在のページのネイティブ印刷ダイアログを開く',
   'sp.print.error': '印刷ダイアログを開けませんでした: {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': '無料の毎日の WebBrain Cloud 利用が含まれています。リクエストは api.webbrain.one を経由します。デフォルトでは、割り当てとデバッグのためにメタデータを記録し、プロンプトテキスト、ページの内容、スクリーンショット、モデルの応答は記録しません。{privacyLink}。さらに利用するには {subscribeLink} で登録してください。請求は {accountLink} で管理できます。',
   'st.providers.webbrain_note.privacy_link': 'プライバシーポリシー',
   'st.providers.test': '接続テスト',
+  'st.providers.duplicate': '複製',
+  'st.providers.duplicate_limit': '複製は1つだけ作成できます',
+  'st.providers.duplicate_unavailable': 'このプロバイダーは複製できません',
+  'st.providers.duplicate_inactive': '複製する前にこのプロバイダーを保存してください',
+  'st.providers.remove_duplicate': '複製を削除',
+  'st.providers.remove_duplicate_confirm': 'この複製プロバイダーと保存済み設定を削除しますか？',
   'st.providers.set_active': '有効化',
   'st.providers.active': '有効',
   'st.providers.saved': '保存しました！',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'スクラッチパッドをクリアしました。',
   'sp.scratchpad.error': 'スクラッチパッドを取得できませんでした: {msg}',
   'sp.perm.verb.schedule': 'での将来の作業のスケジュールを',
+  'sp.perm.verb.window': 'でのブラウザウィンドウのサイズ変更を',
   'tool.schedule_resume': '再開をスケジュール中',
   'tool.schedule_task': 'タスクをスケジュール中',
   'st.display.scheduled_tasks.label': 'スケジュールタスク',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': '一致する一般設定はありません。',
   'st.display.advanced': '詳細設定',
   ...getApocalypseModeCopy('ja'),
+  ...getEmergencyBoxCopy('ja'),
   'st.display.cloud_bridge.label': 'クラウドブリッジ',
   'st.display.cloud_bridge.desc': 'この Chromium プロファイルにローカルコントローラーを1つ接続します。WebBrain Cloud はポート 17373、MCP クライアントは 17374、LM Studio は 17375 を使用します。有効にできるブリッジは1つだけで、通常の権限確認は引き続き適用されます。',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

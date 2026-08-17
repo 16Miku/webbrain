@@ -1,7 +1,14 @@
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Mở hộp thoại in gốc của trang hiện tại',
   'sp.print.error': 'Không thể mở hộp thoại in: {msg}',
   'sp.streaming.fallback': 'Luồng phản hồi bị gián đoạn; đang thử lại lượt Ask này mà không phát trực tuyến.',
@@ -329,6 +336,7 @@ export default {
   'sp.perm.verb.upload': "tải một tập tin lên",
   'sp.perm.verb.record': "ghi lại tab (và micrô) trên",
   'sp.perm.verb.schedule': "sắp xếp công việc trong tương lai cho",
+  'sp.perm.verb.window': 'thay đổi kích thước cửa sổ trình duyệt trên',
 
   'sp.step.details': "chi tiết",
   'sp.step.input_label': "đầu vào",
@@ -523,6 +531,7 @@ export default {
   'st.display.search.empty': "Không có cài đặt chung nào khớp.",
   'st.display.advanced': "Nâng cao",
   ...getApocalypseModeCopy('vi'),
+  ...getEmergencyBoxCopy('vi'),
   'st.display.help_improve.label': "Giúp cải thiện WebBrain",
   'st.display.help_improve.desc_html': "Cho phép giữ lại và sử dụng các tương tác văn bản và công cụ trên Đám mây WebBrain đủ điều kiện để đánh giá, cải tiến, tinh chỉnh và đào tạo. Bật theo mặc định. Tắt tính năng này vĩnh viễn sẽ chọn không tham gia cuộc trò chuyện hiện tại; việc bật lại sẽ áp dụng cho cuộc trò chuyện mới tiếp theo. Ảnh chụp màn hình và byte hình ảnh không được giữ lại trong cơ sở dữ liệu cải tiến WebBrain. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Chính sách bảo mật →</a>",
   'st.display.clarify_timeout.label': "Làm rõ thời gian chờ",
@@ -605,6 +614,12 @@ export default {
   'st.providers.search.empty': "Không có nhà cung cấp nào phù hợp với tìm kiếm và bộ lọc này.",
   'st.providers.save': "Lưu",
   'st.providers.test': "Kiểm tra kết nối",
+  'st.providers.duplicate': 'Nhân bản',
+  'st.providers.duplicate_limit': 'Chỉ được phép có một bản sao',
+  'st.providers.duplicate_unavailable': 'Không thể nhân bản nhà cung cấp này',
+  'st.providers.duplicate_inactive': 'Lưu nhà cung cấp này trước khi nhân bản',
+  'st.providers.remove_duplicate': 'Xóa bản sao',
+  'st.providers.remove_duplicate_confirm': 'Xóa nhà cung cấp nhân bản này và cấu hình đã lưu?',
   'st.providers.set_active': "Đặt hoạt động",
   'st.providers.active': "HOẠT ĐỘNG",
   'st.providers.saved': "Đã lưu!",

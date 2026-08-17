@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Buksan ang native na dialog ng pag-print ng kasalukuyang pahina',
   'sp.print.error': 'Hindi mabuksan ang dialog ng pag-print: {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': 'Kasama ang libreng pang-araw-araw na paggamit ng WebBrain Cloud. Dumadaan ang mga request sa api.webbrain.one; bilang default ay nagla-log kami ng metadata para sa quota at debugging, hindi ang teksto ng prompt, nilalaman ng pahina, mga screenshot, o mga tugon ng modelo. {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang pagsingil sa {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Patakaran sa privacy',
   'st.providers.test': 'Subukan ang Koneksyon',
+  'st.providers.duplicate': 'I-duplicate',
+  'st.providers.duplicate_limit': 'Isang duplicate lang ang pinapayagan',
+  'st.providers.duplicate_unavailable': 'Hindi maaaring i-duplicate ang provider na ito',
+  'st.providers.duplicate_inactive': 'I-save ang provider na ito bago ito i-duplicate',
+  'st.providers.remove_duplicate': 'Alisin ang duplicate',
+  'st.providers.remove_duplicate_confirm': 'Alisin ang duplicate na provider na ito at ang naka-save nitong configuration?',
   'st.providers.set_active': 'Itakda Bilang Aktibo',
   'st.providers.active': 'AKTIBO',
   'st.providers.saved': 'Na-save!',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Na-clear ang scratchpad.',
   'sp.scratchpad.error': 'Hindi available ang scratchpad: {msg}',
   'sp.perm.verb.schedule': 'mag-iskedyul ng gawaing hinaharap para sa',
+  'sp.perm.verb.window': 'baguhin ang laki ng window ng browser sa',
   'tool.schedule_resume': 'Nag-iiskedyul ng pagpapatuloy',
   'tool.schedule_task': 'Nag-iiskedyul ng gawain',
   'st.display.scheduled_tasks.label': 'Mga naka-iskedyul na gawain',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': 'Walang tugmang General na mga setting.',
   'st.display.advanced': 'Advanced',
   ...getApocalypseModeCopy('tl'),
+  ...getEmergencyBoxCopy('tl'),
   'st.display.cloud_bridge.label': 'Cloud bridge',
   'st.display.cloud_bridge.desc': 'Ikonekta ang isang lokal na controller sa Chromium profile na ito. Gamitin ang port 17373 para sa WebBrain Cloud, 17374 para sa mga MCP client, o 17375 para sa LM Studio. Isang bridge lang ang maaaring aktibo; nalalapat pa rin ang karaniwang mga prompt ng pahintulot.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

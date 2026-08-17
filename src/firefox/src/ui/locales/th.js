@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'เปิดกล่องโต้ตอบการพิมพ์ดั้งเดิมของหน้าปัจจุบัน',
   'sp.print.error': 'ไม่สามารถเปิดกล่องโต้ตอบการพิมพ์ได้: {msg}',
   ...chromeWebStoreLocale,
@@ -258,6 +265,12 @@ export default {
   'st.providers.webbrain_note.body': 'รวมการใช้งาน WebBrain Cloud รายวันฟรีไว้แล้ว คำขอจะผ่าน api.webbrain.one โดยค่าเริ่มต้นเราจะบันทึกข้อมูลเมตาสำหรับโควตาและการแก้จุดบกพร่อง ไม่ใช่ข้อความพรอมต์ เนื้อหาหน้าเว็บ ภาพหน้าจอ หรือการตอบกลับของโมเดล {privacyLink} หากต้องการใช้งานเพิ่มเติม สมัครสมาชิกที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}',
   'st.providers.webbrain_note.privacy_link': 'นโยบายความเป็นส่วนตัว',
   'st.providers.test': 'ทดสอบการเชื่อมต่อ',
+  'st.providers.duplicate': 'ทำสำเนา',
+  'st.providers.duplicate_limit': 'อนุญาตให้มีสำเนาได้เพียงหนึ่งรายการ',
+  'st.providers.duplicate_unavailable': 'ไม่สามารถทำสำเนาผู้ให้บริการนี้ได้',
+  'st.providers.duplicate_inactive': 'บันทึกผู้ให้บริการนี้ก่อนทำสำเนา',
+  'st.providers.remove_duplicate': 'ลบสำเนา',
+  'st.providers.remove_duplicate_confirm': 'ลบผู้ให้บริการสำเนานี้และการตั้งค่าที่บันทึกไว้หรือไม่',
   'st.providers.set_active': 'ตั้งเป็นใช้งาน',
   'st.providers.active': 'ใช้งานอยู่',
   'st.providers.saved': 'บันทึกแล้ว!',
@@ -575,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': 'ล้างกระดานร่างแล้ว',
   'sp.scratchpad.error': 'ไม่สามารถใช้กระดานร่างได้: {msg}',
   'sp.perm.verb.schedule': 'ตั้งเวลางานในอนาคตสำหรับ',
+  'sp.perm.verb.window': 'ปรับขนาดหน้าต่างเบราว์เซอร์บน',
   'tool.schedule_resume': 'กำลังตั้งเวลาต่องาน',
   'tool.schedule_task': 'กำลังตั้งเวลางาน',
   'st.display.scheduled_tasks.label': 'งานที่ตั้งเวลาไว้',
@@ -668,6 +682,7 @@ export default {
   'st.display.search.empty': 'ไม่พบการตั้งค่าทั่วไปที่ตรงกัน',
   'st.display.advanced': 'ขั้นสูง',
   ...getApocalypseModeCopy('th'),
+  ...getEmergencyBoxCopy('th'),
   'st.display.clarify_timeout.label': 'หมดเวลา clarify',
   'st.display.clarify_timeout.desc': 'ระยะเวลารอคำตอบ clarify ก่อนเลือกตัวเลือกแรกอัตโนมัติ (หรือหมดเวลาหากไม่มีตัวเลือก) 0 = ทันที (เลือกอัตโนมัติเสมอ) เกิน 1200 วินาที = รอไม่จำกัด (ปิด) ค่าเริ่มต้น 60 วินาที ไม่ใช้กับสิทธิ์หรือการยืนยันส่งฟอร์ม',
   'st.display.clarify_timeout.off': 'ปิด',

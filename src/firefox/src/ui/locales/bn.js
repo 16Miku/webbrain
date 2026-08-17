@@ -1,7 +1,14 @@
 // Bengali — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'বর্তমান পৃষ্ঠার নেটিভ প্রিন্ট ডায়ালগ খুলুন',
   'sp.print.error': 'প্রিন্ট ডায়ালগ খোলা যায়নি: {msg}',
   'sp.streaming.fallback': 'প্রতিক্রিয়া স্ট্রিম বাধাগ্রস্ত হয়েছে; স্ট্রিমিং ছাড়া এই Ask পালাটি আবার চেষ্টা করা হচ্ছে।',
@@ -329,6 +336,7 @@ export default {
   'sp.perm.verb.upload': "একটি ফাইল আপলোড করুন",
   'sp.perm.verb.record': "ট্যাব (এবং মাইক্রোফোন) চালু করুন",
   'sp.perm.verb.schedule': "ভবিষ্যত কাজের সময়সূচী",
+  'sp.perm.verb.window': 'ব্রাউজার উইন্ডোর আকার পরিবর্তন করুন',
 
   'sp.step.details': "বিস্তারিত",
   'sp.step.input_label': "ইনপুট",
@@ -523,6 +531,7 @@ export default {
   'st.display.search.empty': "কোনো সাধারণ সেটিংস মেলে না।",
   'st.display.advanced': "উন্নত",
   ...getApocalypseModeCopy('bn'),
+  ...getEmergencyBoxCopy('bn'),
   'st.display.help_improve.label': "WebBrain উন্নত করতে সাহায্য করুন",
   'st.display.help_improve.desc_html': "যোগ্য WebBrain ক্লাউড টেক্সট এবং টুল ইন্টারঅ্যাকশনগুলিকে ধরে রাখার এবং মূল্যায়ন, উন্নতি, ফাইন-টিউনিং এবং প্রশিক্ষণের জন্য ব্যবহার করার অনুমতি দিন। ডিফল্টরূপে চালু এটি স্থায়ীভাবে বন্ধ করা বর্তমান কথোপকথন অপ্ট আউট করে; এটিকে আবার চালু করা পরবর্তী নতুন কথোপকথনের ক্ষেত্রে প্রযোজ্য। WebBrain উন্নতি ডাটাবেসে স্ক্রিনশট এবং ইমেজ বাইট রাখা হয় না। <u>স্থানীয়-মডেল এবং আন-আপনার-নিজের API অনুরোধগুলি WebBrain দ্বারা সংগ্রহ করা হয় না।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">গোপনীয়তা নীতি →</a>",
   'st.display.clarify_timeout.label': "সময়সীমা পরিষ্কার করুন",
@@ -605,6 +614,12 @@ export default {
   'st.providers.search.empty': "কোন প্রদানকারী এই অনুসন্ধান এবং ফিল্টার মেলে না.",
   'st.providers.save': "সংরক্ষণ করুন",
   'st.providers.test': "পরীক্ষা সংযোগ",
+  'st.providers.duplicate': 'ডুপ্লিকেট',
+  'st.providers.duplicate_limit': 'শুধু একটি ডুপ্লিকেট অনুমোদিত',
+  'st.providers.duplicate_unavailable': 'এই প্রদানকারীকে ডুপ্লিকেট করা যাবে না',
+  'st.providers.duplicate_inactive': 'ডুপ্লিকেট করার আগে এই প্রদানকারীটি সংরক্ষণ করুন',
+  'st.providers.remove_duplicate': 'ডুপ্লিকেট মুছুন',
+  'st.providers.remove_duplicate_confirm': 'এই ডুপ্লিকেট প্রদানকারী ও এর সংরক্ষিত সেটিংস মুছবেন?',
   'st.providers.set_active': "সক্রিয় সেট করুন",
   'st.providers.active': "সক্রিয়",
   'st.providers.saved': "সংরক্ষিত !",

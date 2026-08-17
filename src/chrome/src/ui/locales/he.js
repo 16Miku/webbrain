@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'פתיחת תיבת הדו־שיח המקורית להדפסת הדף הנוכחי',
   'sp.print.error': 'לא ניתן לפתוח את תיבת הדו־שיח להדפסה: {msg}',
   ...chromeWebStoreLocale,
@@ -305,6 +312,7 @@ export default {
   "sp.perm.verb.download": "להוריד קבצים מ",
   "sp.perm.verb.upload": "להעלות קובץ ל",
   "sp.perm.verb.schedule": "לתזמן עבודה עתידית עבור",
+  "sp.perm.verb.window": "לשנות את גודל חלון הדפדפן באתר",
   "sp.step.details": "פרטים",
   "sp.step.input_label": "קלט",
   "sp.step.result_label": "תוצאה",
@@ -498,6 +506,7 @@ export default {
   "st.display.search.empty": "אין הגדרות כלליות תואמות.",
   "st.display.advanced": "מִתקַדֵם",
   ...getApocalypseModeCopy('he'),
+  ...getEmergencyBoxCopy('he'),
   'st.display.cloud_bridge.label': 'גשר ענן',
   'st.display.cloud_bridge.desc': 'חבר בקר מקומי אחד לפרופיל Chromium הזה. השתמש ביציאה 17373 עבור WebBrain Cloud, ב-17374 עבור לקוחות MCP או ב-17375 עבור LM Studio. רק גשר אחד יכול להיות פעיל; בקשות ההרשאה הרגילות עדיין חלות.',
   'st.display.cloud_bridge.url_label': 'כתובת WebSocket',
@@ -590,6 +599,12 @@ export default {
   "st.providers.search.empty": "אין ספקים שתואמים לחיפוש ולמסנן אלה.",
   "st.providers.save": "שמור",
   "st.providers.test": "בדיקת חיבור",
+  'st.providers.duplicate': 'שכפול',
+  'st.providers.duplicate_limit': 'מותר שכפול אחד בלבד',
+  'st.providers.duplicate_unavailable': 'לא ניתן לשכפל ספק זה',
+  'st.providers.duplicate_inactive': 'יש לשמור את הספק הזה לפני שכפולו',
+  'st.providers.remove_duplicate': 'הסרת השכפול',
+  'st.providers.remove_duplicate_confirm': 'להסיר את הספק המשוכפל ואת ההגדרות השמורות שלו?',
   "st.providers.set_active": "הגדר פעיל",
   "st.providers.active": "ACTIVE",
   "st.providers.saved": "נשמר!",

@@ -351,6 +351,8 @@ await pm.save();                    // Persist to chrome.storage.local
 pm.getActive();                     // Get the active provider instance
 await pm.setActive('openai');       // Switch active provider
 await pm.updateProvider('openai', { model: 'gpt-5' }); // Update config
+await pm.duplicateProvider('openai'); // Create openai__duplicate
+await pm.removeDuplicateProvider('openai__duplicate'); // Remove it
 pm.getAll();                        // All provider configs (for Settings UI)
 await pm.testProvider('openai');    // Test connection
 ```
@@ -362,6 +364,17 @@ state and is separate from `activeProvider`, which is the provider currently
 configured. Connection tests report reachability but do not control the Active
 flag.
 
+Settings can create one independent duplicate of each configurable endpoint
+provider. A duplicate is stored as a normal provider entry with the stable ID
+`<source>__duplicate` and a `duplicateOf` reference to the source definition,
+so credentials, models, endpoint URLs, compatibility options, export/import,
+and active-provider selection continue to use the existing provider schema.
+The manager rejects duplicate-of-duplicate, second, orphaned, type-mismatched,
+and forged duplicate entries when loading storage. WebBrain Cloud and the
+Chromium-only WebGPU runtime are not duplicable because they do not represent
+independent user-managed API credentials or endpoints; their cards keep the
+Duplicate affordance disabled with an explanatory tooltip.
+
 ### Settings Search
 
 The Settings search index includes provider IDs, labels, type/category, model,
@@ -372,7 +385,7 @@ ties, and the selected provider remains visible across category filters.
 
 ### Config Persistence
 
-Configs are stored in `chrome.storage.local` under the `providers` key, merged against defaults. Defaults provide the SHAPE (which provider keys exist); stored configs override per-key values. This allows upgrades that introduce new provider entries to work without users clearing storage.
+Configs are stored in `chrome.storage.local` under the `providers` key, merged against defaults. Defaults provide the SHAPE (which provider keys exist); stored configs override per-key values. This allows upgrades that introduce new provider entries to work without users clearing storage. Duplicate entries share this same persistence path and therefore remain portable through Settings config export/import.
 
 Deprecated provider entries (`webbrain`, `openai_subscription`,
 `claude_subscription`) are filtered out.
@@ -417,7 +430,7 @@ this option because its build has no MV3 offscreen document.
 
 ### Transcription Provider
 
-Used by Tab Recorder for Whisper transcription. Falls back through configured providers in priority order: OpenAI → Groq → LM Studio → llama.cpp. Blocklist excludes providers known not to host Whisper (Anthropic, Gemini, Mistral, DeepSeek, xAI, Nvidia).
+Used by Tab Recorder for Whisper transcription. Falls back through configured providers in priority order: OpenAI → Groq → LM Studio → llama.cpp. Blocklist excludes providers known not to host Whisper (Anthropic, Gemini, Mistral, DeepSeek, xAI, Nvidia, Kimi), including duplicates of those providers.
 
 ---
 

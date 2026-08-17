@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Buka dialog cetak bawaan halaman saat ini',
   'sp.print.error': 'Tidak dapat membuka dialog cetak: {msg}',
   ...chromeWebStoreLocale,
@@ -258,6 +265,12 @@ export default {
   'st.providers.webbrain_note.body': 'Penggunaan harian gratis WebBrain Cloud sudah termasuk. Permintaan melewati api.webbrain.one; secara default kami mencatat metadata untuk kuota dan debugging, bukan teks prompt, konten halaman, tangkapan layar, atau respons model. {privacyLink}. Untuk penggunaan lebih, berlangganan di {subscribeLink}. Kelola penagihan di {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Kebijakan privasi',
   'st.providers.test': 'Uji koneksi',
+  'st.providers.duplicate': 'Duplikat',
+  'st.providers.duplicate_limit': 'Hanya satu duplikat yang diizinkan',
+  'st.providers.duplicate_unavailable': 'Penyedia ini tidak dapat diduplikasi',
+  'st.providers.duplicate_inactive': 'Simpan penyedia ini sebelum menduplikasinya',
+  'st.providers.remove_duplicate': 'Hapus duplikat',
+  'st.providers.remove_duplicate_confirm': 'Hapus penyedia duplikat ini beserta konfigurasi tersimpannya?',
   'st.providers.set_active': 'Jadikan aktif',
   'st.providers.active': 'AKTIF',
   'st.providers.saved': 'Tersimpan!',
@@ -575,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': 'Bak pasir dikosongkan.',
   'sp.scratchpad.error': 'Bak pasir tidak tersedia: {msg}',
   'sp.perm.verb.schedule': 'menjadwalkan pekerjaan mendatang untuk',
+  'sp.perm.verb.window': 'mengubah ukuran jendela browser di',
   'tool.schedule_resume': 'Menjadwalkan lanjutan',
   'tool.schedule_task': 'Menjadwalkan tugas',
   'st.display.scheduled_tasks.label': 'Tugas terjadwal',
@@ -668,6 +682,7 @@ export default {
   'st.display.search.empty': 'Tidak ada pengaturan Umum yang cocok.',
   'st.display.advanced': 'Lanjutan',
   ...getApocalypseModeCopy('id'),
+  ...getEmergencyBoxCopy('id'),
   'st.display.clarify_timeout.label': 'Batas waktu klarifikasi',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan pada prompt klarifikasi sebelum memilih opsi pertama secara otomatis (atau timeout jika tidak ada opsi). 0 = Instan (selalu pilih otomatis). Di atas 1200 detik menunggu tanpa batas (Nonaktif). Default 60 detik. Tidak berlaku untuk izin atau konfirmasi kirim formulir.',
   'st.display.clarify_timeout.off': 'Nonaktif',

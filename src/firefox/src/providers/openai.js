@@ -843,7 +843,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             if (response.usage) {
               yield { type: 'usage', usage: this._normalizeResponsesUsage(response.usage) };
             }
-            yield { type: 'done', content: '', responseItems: response.output || [] };
+            const finishReason = response.finish_reason ?? response.stop_reason;
+            yield {
+              type: 'done',
+              content: '',
+              responseItems: response.output || [],
+              ...(finishReason != null ? { finishReason: String(finishReason) } : {}),
+            };
             return;
           } else if (event.type === 'response.incomplete') {
             // Incomplete is terminal (token limit / filter / etc.). Surface it
@@ -954,6 +960,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     let buffer = '';
     let finalUsage = null;
     let sawTerminalFinish = false;
+    let terminalFinishReason = '';
 
     while (true) {
       let chunk;
@@ -978,7 +985,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         const payload = trimmed.slice(6);
         if (payload === '[DONE]') {
           if (finalUsage) yield { type: 'usage', usage: finalUsage };
-          yield { type: 'done', content: '' };
+          yield {
+            type: 'done',
+            content: '',
+            ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}),
+          };
           return;
         }
         let json;
@@ -1017,6 +1028,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         }
         if (finishReason != null) {
           sawTerminalFinish = true;
+          terminalFinishReason = String(finishReason);
         }
         const delta = choice?.delta;
         const reasoningDelta = delta?.reasoning_content || delta?.reasoning;
@@ -1033,7 +1045,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
     if (finalUsage) yield { type: 'usage', usage: finalUsage };
     if (sawTerminalFinish) {
-      yield { type: 'done', content: '' };
+      yield { type: 'done', content: '', finishReason: terminalFinishReason };
       return;
     }
     if (this._supportsInteractiveAskStreaming()) {

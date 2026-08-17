@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': '현재 페이지의 기본 인쇄 대화상자 열기',
   'sp.print.error': '인쇄 대화상자를 열 수 없습니다: {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': '무료 일일 WebBrain Cloud 사용량이 포함되어 있습니다. 요청은 api.webbrain.one을 통해 처리됩니다. 기본적으로 할당량과 디버깅을 위한 메타데이터만 기록하며, 프롬프트 텍스트, 페이지 콘텐츠, 스크린샷, 모델 응답은 기록하지 않습니다. {privacyLink}. 더 많은 사용량이 필요하면 {subscribeLink}에서 구독하세요. 청구는 {accountLink}에서 관리하세요.',
   'st.providers.webbrain_note.privacy_link': '개인정보 처리방침',
   'st.providers.test': '연결 테스트',
+  'st.providers.duplicate': '복제',
+  'st.providers.duplicate_limit': '복제본은 하나만 만들 수 있습니다',
+  'st.providers.duplicate_unavailable': '이 공급자는 복제할 수 없습니다',
+  'st.providers.duplicate_inactive': '이 공급자를 복제하기 전에 저장하세요',
+  'st.providers.remove_duplicate': '복제본 삭제',
+  'st.providers.remove_duplicate_confirm': '이 복제 공급자와 저장된 설정을 삭제할까요?',
   'st.providers.set_active': '활성으로 설정',
   'st.providers.active': '활성',
   'st.providers.saved': '저장되었습니다!',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': '스크래치패드가 지워졌습니다.',
   'sp.scratchpad.error': '스크래치패드를 사용할 수 없습니다: {msg}',
   'sp.perm.verb.schedule': '미래 작업 예약',
+  'sp.perm.verb.window': '브라우저 창 크기 조절',
   'tool.schedule_resume': '재개 예약 중',
   'tool.schedule_task': '작업 예약 중',
   'st.display.scheduled_tasks.label': '예약된 작업',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': '일치하는 일반 설정이 없습니다.',
   'st.display.advanced': '고급',
   ...getApocalypseModeCopy('ko'),
+  ...getEmergencyBoxCopy('ko'),
   'st.display.cloud_bridge.label': '클라우드 브리지',
   'st.display.cloud_bridge.desc': '로컬 컨트롤러 하나를 이 Chromium 프로필에 연결합니다. WebBrain Cloud는 포트 17373, MCP 클라이언트는 17374, LM Studio는 17375를 사용하세요. 브리지는 하나만 활성화할 수 있으며 일반 권한 확인은 계속 적용됩니다.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',

@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': '現在のページのネイティブ印刷ダイアログを開く',
   'sp.print.error': '印刷ダイアログを開けませんでした: {msg}',
   ...chromeWebStoreLocale,
@@ -258,6 +265,12 @@ export default {
   'st.providers.webbrain_note.body': '無料の毎日の WebBrain Cloud 利用が含まれています。リクエストは api.webbrain.one を経由します。デフォルトでは、割り当てとデバッグのためにメタデータを記録し、プロンプトテキスト、ページの内容、スクリーンショット、モデルの応答は記録しません。{privacyLink}。さらに利用するには {subscribeLink} で登録してください。請求は {accountLink} で管理できます。',
   'st.providers.webbrain_note.privacy_link': 'プライバシーポリシー',
   'st.providers.test': '接続テスト',
+  'st.providers.duplicate': '複製',
+  'st.providers.duplicate_limit': '複製は1つだけ作成できます',
+  'st.providers.duplicate_unavailable': 'このプロバイダーは複製できません',
+  'st.providers.duplicate_inactive': '複製する前にこのプロバイダーを保存してください',
+  'st.providers.remove_duplicate': '複製を削除',
+  'st.providers.remove_duplicate_confirm': 'この複製プロバイダーと保存済み設定を削除しますか？',
   'st.providers.set_active': '有効化',
   'st.providers.active': '有効',
   'st.providers.saved': '保存しました！',
@@ -575,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': 'スクラッチパッドをクリアしました。',
   'sp.scratchpad.error': 'スクラッチパッドを取得できませんでした: {msg}',
   'sp.perm.verb.schedule': 'での将来の作業のスケジュールを',
+  'sp.perm.verb.window': 'でのブラウザウィンドウのサイズ変更を',
   'tool.schedule_resume': '再開をスケジュール中',
   'tool.schedule_task': 'タスクをスケジュール中',
   'st.display.scheduled_tasks.label': 'スケジュールタスク',
@@ -668,6 +682,7 @@ export default {
   'st.display.search.empty': '一致する一般設定はありません。',
   'st.display.advanced': '詳細設定',
   ...getApocalypseModeCopy('ja'),
+  ...getEmergencyBoxCopy('ja'),
   'st.display.clarify_timeout.label': '確認のタイムアウト',
   'st.display.clarify_timeout.desc': 'clarify の返答を待つ時間。経過すると最初の選択肢を自動選択（選択肢がなければタイムアウト）。0 で即時（常に自動選択）。1200 秒超は無制限（オフ）。既定 60 秒。権限やフォーム送信確認には適用されません。',
   'st.display.clarify_timeout.off': 'オフ',

@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Geçerli sayfanın yerel yazdırma iletişim kutusunu aç',
   'sp.print.error': 'Yazdırma iletişim kutusu açılamadı: {msg}',
   ...chromeWebStoreLocale,
@@ -297,6 +304,12 @@ export default {
   'st.providers.webbrain_note.body': 'Ücretsiz günlük WebBrain Cloud kullanımı dahildir. İstekler api.webbrain.one üzerinden geçer; varsayılan olarak kota ve hata ayıklama için meta verileri kaydederiz; istem metnini, sayfa içeriğini, ekran görüntülerini veya model yanıtlarını kaydetmeyiz. {privacyLink}. Daha fazla kullanım için {subscribeLink} adresinden abone olun. Faturalandırmayı {accountLink} adresinden yönetin.',
   'st.providers.webbrain_note.privacy_link': 'Gizlilik politikası',
   'st.providers.test': 'Bağlantıyı sına',
+  'st.providers.duplicate': 'Çoğalt',
+  'st.providers.duplicate_limit': 'Yalnızca bir kopyaya izin verilir',
+  'st.providers.duplicate_unavailable': 'Bu sağlayıcı çoğaltılamaz',
+  'st.providers.duplicate_inactive': 'Çoğaltmadan önce bu sağlayıcıyı kaydedin',
+  'st.providers.remove_duplicate': 'Kopyayı kaldır',
+  'st.providers.remove_duplicate_confirm': 'Bu çoğaltılmış sağlayıcı ve kayıtlı yapılandırması kaldırılsın mı?',
   'st.providers.set_active': 'Etkinleştir',
   'st.providers.active': 'ETKİN',
   'st.providers.saved': 'Kaydedildi!',
@@ -614,6 +627,7 @@ export default {
   'sp.scratchpad.cleared': 'Not defteri temizlendi.',
   'sp.scratchpad.error': 'Not defterine erişilemiyor: {msg}',
   'sp.perm.verb.schedule': 'gelecekteki çalışmayı zamanlamak için',
+  'sp.perm.verb.window': 'tarayıcı penceresinin boyutunu değiştirmek',
   'tool.schedule_resume': 'Devam zamanlama',
   'tool.schedule_task': 'Görev zamanlama',
   'st.display.scheduled_tasks.label': 'Zamanlanmış görevler',
@@ -673,6 +687,7 @@ export default {
   'st.display.search.empty': 'Eşleşen Genel ayar yok.',
   'st.display.advanced': 'Gelişmiş',
   ...getApocalypseModeCopy('tr'),
+  ...getEmergencyBoxCopy('tr'),
   'st.display.clarify_timeout.label': 'Açıklama zaman aşımı',
   'st.display.clarify_timeout.desc': 'Açıklama sorusuna yanıt için ne kadar bekleneceği; süre dolunca ilk seçenek otomatik seçilir (seçenek yoksa zaman aşımı). 0 = Anında (her zaman otomatik seç). 1200 sn üzeri = süresiz bekle (Kapalı). Varsayılan 60 sn. İzin ve form gönderim onaylarına uygulanmaz.',
   'st.display.clarify_timeout.off': 'Kapalı',

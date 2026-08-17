@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'فتح مربع حوار الطباعة الأصلي للصفحة الحالية',
   'sp.print.error': 'تعذر فتح مربع حوار الطباعة: {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': 'يتضمّن الاستخدام اليومي المجاني لـ WebBrain Cloud. تمر الطلبات عبر api.webbrain.one؛ افتراضيًا نسجّل البيانات الوصفية للحصة وتصحيح الأخطاء، وليس نص المطالبات أو محتوى الصفحة أو لقطات الشاشة أو ردود النموذج. {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'سياسة الخصوصية',
   'st.providers.test': 'اختبار الاتصال',
+  'st.providers.duplicate': 'نسخ',
+  'st.providers.duplicate_limit': 'يُسمح بنسخة واحدة فقط',
+  'st.providers.duplicate_unavailable': 'لا يمكن نسخ مزود الخدمة هذا',
+  'st.providers.duplicate_inactive': 'احفظ مزود الخدمة هذا قبل نسخه',
+  'st.providers.remove_duplicate': 'حذف النسخة',
+  'st.providers.remove_duplicate_confirm': 'هل تريد حذف نسخة مزود الخدمة هذه وإعداداتها المحفوظة؟',
   'st.providers.set_active': 'تعيينه نشطًا',
   'st.providers.active': 'نشط',
   'st.providers.saved': 'تم الحفظ!',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'تم مسح المسودة.',
   'sp.scratchpad.error': 'منطقة المسودة غير متاحة: {msg}',
   'sp.perm.verb.schedule': 'جدولة عمل مستقبلي لـ',
+  'sp.perm.verb.window': 'تغيير حجم نافذة المتصفح على',
   'tool.schedule_resume': 'جدولة استئناف',
   'tool.schedule_task': 'جدولة مهمة',
   'st.display.scheduled_tasks.label': 'المهام المجدوَلة',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': 'لا توجد إعدادات عامة مطابقة.',
   'st.display.advanced': 'متقدم',
   ...getApocalypseModeCopy('ar'),
+  ...getEmergencyBoxCopy('ar'),
   'st.display.cloud_bridge.label': 'جسر السحابة',
   'st.display.cloud_bridge.desc': 'صِل وحدة تحكم محلية واحدة بملف Chromium هذا. استخدم المنفذ 17373 لـ WebBrain Cloud أو 17374 لعملاء MCP أو 17375 لـ LM Studio. يمكن تفعيل جسر واحد فقط؛ وتظل مطالبات الأذونات العادية سارية.',
   'st.display.cloud_bridge.url_label': 'عنوان WebSocket',

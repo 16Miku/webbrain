@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': '打开当前页面的原生打印对话框',
   'sp.print.error': '无法打开打印对话框：{msg}',
   ...chromeWebStoreLocale,
@@ -258,6 +265,12 @@ export default {
   'st.providers.webbrain_note.body': '免费的每日 WebBrain Cloud 用量已包含在内。请求通过 api.webbrain.one 处理；默认情况下，我们仅记录用于配额和调试的元数据，不记录提示文本、页面内容、屏幕截图或模型响应。{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。',
   'st.providers.webbrain_note.privacy_link': '隐私政策',
   'st.providers.test': '测试连接',
+  'st.providers.duplicate': '复制',
+  'st.providers.duplicate_limit': '最多只能创建一个副本',
+  'st.providers.duplicate_unavailable': '此服务商不可复制',
+  'st.providers.duplicate_inactive': '请先保存此服务商，然后再复制',
+  'st.providers.remove_duplicate': '删除副本',
+  'st.providers.remove_duplicate_confirm': '要删除此服务商副本及其已保存的配置吗？',
   'st.providers.set_active': '设为启用',
   'st.providers.active': '已启用',
   'st.providers.saved': '已保存！',
@@ -575,6 +588,7 @@ export default {
   'sp.scratchpad.cleared': '草稿板已清除。',
   'sp.scratchpad.error': '草稿板不可用：{msg}',
   'sp.perm.verb.schedule': '为以下对象安排后续任务',
+  'sp.perm.verb.window': '调整浏览器窗口大小于',
   'tool.schedule_resume': '正在安排恢复',
   'tool.schedule_task': '正在安排任务',
   'st.display.scheduled_tasks.label': '定时任务',
@@ -668,6 +682,7 @@ export default {
   'st.display.search.empty': '没有匹配的通用设置。',
   'st.display.advanced': '高级',
   ...getApocalypseModeCopy('zh'),
+  ...getEmergencyBoxCopy('zh'),
   'st.display.clarify_timeout.label': '澄清超时',
   'st.display.clarify_timeout.desc': '等待澄清问题回复的时长；超时后自动选择第一个选项（若无选项则记为超时）。0 = 立即（始终自动选择）。超过 1200 秒为无限等待（关闭）。默认 60 秒。不适用于权限或表单提交确认。',
   'st.display.clarify_timeout.off': '关闭',

@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Ouvrir la boîte de dialogue d’impression native de la page actuelle',
   'sp.print.error': 'Impossible d’ouvrir la boîte de dialogue d’impression : {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': 'Une utilisation quotidienne gratuite de WebBrain Cloud est incluse. Les requêtes passent par api.webbrain.one ; par défaut, nous enregistrons des métadonnées pour le quota et le débogage, pas le texte des invites, le contenu des pages, les captures d\'écran ni les réponses du modèle. {privacyLink}. Pour en faire plus, abonnez-vous sur {subscribeLink}. Gérez la facturation sur {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Politique de confidentialité',
   'st.providers.test': 'Tester la connexion',
+  'st.providers.duplicate': 'Dupliquer',
+  'st.providers.duplicate_limit': 'Un seul doublon est autorisé',
+  'st.providers.duplicate_unavailable': 'Ce fournisseur ne peut pas être dupliqué',
+  'st.providers.duplicate_inactive': 'Enregistrez ce fournisseur avant de le dupliquer',
+  'st.providers.remove_duplicate': 'Supprimer le doublon',
+  'st.providers.remove_duplicate_confirm': 'Supprimer ce fournisseur dupliqué et sa configuration enregistrée ?',
   'st.providers.set_active': 'Définir comme actif',
   'st.providers.active': 'ACTIF',
   'st.providers.saved': 'Enregistré !',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Bloc-notes effacé.',
   'sp.scratchpad.error': 'Bloc-notes indisponible : {msg}',
   'sp.perm.verb.schedule': 'planifier des tâches futures pour',
+  'sp.perm.verb.window': 'redimensionner la fenêtre du navigateur sur',
   'tool.schedule_resume': 'Planification de la reprise',
   'tool.schedule_task': 'Planification de la tâche',
   'st.display.scheduled_tasks.label': 'Tâches planifiées',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': 'Aucun paramètre général correspondant.',
   'st.display.advanced': 'Avancé',
   ...getApocalypseModeCopy('fr'),
+  ...getEmergencyBoxCopy('fr'),
   'st.display.cloud_bridge.label': 'Pont cloud',
   'st.display.cloud_bridge.desc': 'Connectez un contrôleur local à ce profil Chromium. Utilisez le port 17373 pour WebBrain Cloud, 17374 pour les clients MCP ou 17375 pour LM Studio. Un seul pont peut être actif ; les demandes d’autorisation restent applicables.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

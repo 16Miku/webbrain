@@ -1,7 +1,14 @@
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Abrir a caixa de diálogo de impressão nativa da página atual',
   'sp.print.error': 'Não foi possível abrir a caixa de diálogo de impressão: {msg}',
   'sp.streaming.fallback': 'A transmissão da resposta foi interrompida; tentando novamente esta interação Ask sem transmissão.',
@@ -329,6 +336,7 @@ export default {
   'sp.perm.verb.upload': "carregar um arquivo para",
   'sp.perm.verb.record': "grave a guia (e o microfone) em",
   'sp.perm.verb.schedule': "agendar trabalhos futuros para",
+  'sp.perm.verb.window': 'redimensionar a janela do navegador em',
 
   'sp.step.details': "detalhes",
   'sp.step.input_label': "Entrada",
@@ -523,6 +531,7 @@ export default {
   'st.display.search.empty': "Nenhuma configuração geral corresponde.",
   'st.display.advanced': "Avançado",
   ...getApocalypseModeCopy('pt'),
+  ...getEmergencyBoxCopy('pt'),
   'st.display.help_improve.label': "Ajude a melhorar WebBrain",
   'st.display.help_improve.desc_html': "Permitir que textos qualificados da nuvem WebBrain e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
   'st.display.clarify_timeout.label': "Esclarecer o tempo limite",
@@ -605,6 +614,12 @@ export default {
   'st.providers.search.empty': "Nenhum provedor corresponde a esta pesquisa e filtro.",
   'st.providers.save': "Salvar",
   'st.providers.test': "Conexão de teste",
+  'st.providers.duplicate': 'Duplicar',
+  'st.providers.duplicate_limit': 'Só é permitida uma duplicata',
+  'st.providers.duplicate_unavailable': 'Este provedor não pode ser duplicado',
+  'st.providers.duplicate_inactive': 'Salve este provedor antes de duplicá-lo',
+  'st.providers.remove_duplicate': 'Remover duplicata',
+  'st.providers.remove_duplicate_confirm': 'Remover este provedor duplicado e a configuração salva?',
   'st.providers.set_active': "Definir ativo",
   'st.providers.active': "ATIVO",
   'st.providers.saved': "Salvo!",

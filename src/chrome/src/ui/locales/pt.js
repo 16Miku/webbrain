@@ -1,7 +1,14 @@
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Abrir a caixa de diálogo de impressão nativa da página atual',
   'sp.print.error': 'Não foi possível abrir a caixa de diálogo de impressão: {msg}',
   'sp.streaming.fallback': 'A transmissão da resposta foi interrompida; tentando novamente esta interação Ask sem transmissão.',
@@ -331,6 +338,7 @@ export default {
   'sp.perm.verb.upload': "carregar um arquivo para",
   'sp.perm.verb.record': "grave a guia (e o microfone) em",
   'sp.perm.verb.schedule': "agendar trabalhos futuros para",
+  'sp.perm.verb.window': 'redimensionar a janela do navegador em',
 
   'sp.step.details': "detalhes",
   'sp.step.input_label': "Entrada",
@@ -526,6 +534,7 @@ export default {
   'st.display.search.empty': "Nenhuma configuração geral corresponde.",
   'st.display.advanced': "Avançado",
   ...getApocalypseModeCopy('pt'),
+  ...getEmergencyBoxCopy('pt'),
   'st.display.cloud_bridge.label': 'Ponte na nuvem',
   'st.display.cloud_bridge.desc': 'Conecte um controlador local a este perfil do Chromium. Use a porta 17373 para o WebBrain Cloud, 17374 para clientes MCP ou 17375 para o LM Studio. Apenas uma ponte pode ficar ativa; os pedidos normais de permissão continuam válidos.',
   'st.display.cloud_bridge.url_label': 'URL do WebSocket',
@@ -621,6 +630,12 @@ export default {
   'st.providers.search.empty': "Nenhum provedor corresponde a esta pesquisa e filtro.",
   'st.providers.save': "Salvar",
   'st.providers.test': "Conexão de teste",
+  'st.providers.duplicate': 'Duplicar',
+  'st.providers.duplicate_limit': 'Só é permitida uma duplicata',
+  'st.providers.duplicate_unavailable': 'Este provedor não pode ser duplicado',
+  'st.providers.duplicate_inactive': 'Salve este provedor antes de duplicá-lo',
+  'st.providers.remove_duplicate': 'Remover duplicata',
+  'st.providers.remove_duplicate_confirm': 'Remover este provedor duplicado e a configuração salva?',
   'st.providers.set_active': "Definir ativo",
   'st.providers.active': "ATIVO",
   'st.providers.saved': "Salvo!",

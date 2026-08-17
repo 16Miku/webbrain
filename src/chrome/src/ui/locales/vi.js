@@ -1,7 +1,14 @@
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Mở hộp thoại in gốc của trang hiện tại',
   'sp.print.error': 'Không thể mở hộp thoại in: {msg}',
   'sp.streaming.fallback': 'Luồng phản hồi bị gián đoạn; đang thử lại lượt Ask này mà không phát trực tuyến.',
@@ -331,6 +338,7 @@ export default {
   'sp.perm.verb.upload': "tải một tập tin lên",
   'sp.perm.verb.record': "ghi lại tab (và micrô) trên",
   'sp.perm.verb.schedule': "sắp xếp công việc trong tương lai cho",
+  'sp.perm.verb.window': 'thay đổi kích thước cửa sổ trình duyệt trên',
 
   'sp.step.details': "chi tiết",
   'sp.step.input_label': "đầu vào",
@@ -526,6 +534,7 @@ export default {
   'st.display.search.empty': "Không có cài đặt chung nào khớp.",
   'st.display.advanced': "Nâng cao",
   ...getApocalypseModeCopy('vi'),
+  ...getEmergencyBoxCopy('vi'),
   'st.display.cloud_bridge.label': 'Cầu nối đám mây',
   'st.display.cloud_bridge.desc': 'Kết nối một bộ điều khiển cục bộ với hồ sơ Chromium này. Dùng cổng 17373 cho WebBrain Cloud, 17374 cho ứng dụng MCP hoặc 17375 cho LM Studio. Chỉ một cầu nối có thể hoạt động; các lời nhắc cấp quyền thông thường vẫn được áp dụng.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',
@@ -621,6 +630,12 @@ export default {
   'st.providers.search.empty': "Không có nhà cung cấp nào phù hợp với tìm kiếm và bộ lọc này.",
   'st.providers.save': "Lưu",
   'st.providers.test': "Kiểm tra kết nối",
+  'st.providers.duplicate': 'Nhân bản',
+  'st.providers.duplicate_limit': 'Chỉ được phép có một bản sao',
+  'st.providers.duplicate_unavailable': 'Không thể nhân bản nhà cung cấp này',
+  'st.providers.duplicate_inactive': 'Lưu nhà cung cấp này trước khi nhân bản',
+  'st.providers.remove_duplicate': 'Xóa bản sao',
+  'st.providers.remove_duplicate_confirm': 'Xóa nhà cung cấp nhân bản này và cấu hình đã lưu?',
   'st.providers.set_active': "Đặt hoạt động",
   'st.providers.active': "HOẠT ĐỘNG",
   'st.providers.saved': "Đã lưu!",

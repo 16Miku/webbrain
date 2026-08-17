@@ -1,7 +1,14 @@
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'वर्तमान पृष्ठ का मूल प्रिंट संवाद खोलें',
   'sp.print.error': 'प्रिंट संवाद नहीं खुल सका: {msg}',
   'sp.streaming.fallback': 'प्रतिक्रिया स्ट्रीम बाधित हुई; इस Ask टर्न को बिना स्ट्रीमिंग के फिर से आज़माया जा रहा है।',
@@ -331,6 +338,7 @@ export default {
   'sp.perm.verb.upload': "पर एक फ़ाइल अपलोड करें",
   'sp.perm.verb.record': "टैब (और माइक्रोफ़ोन) को चालू रखें",
   'sp.perm.verb.schedule': "भविष्य के लिए कार्य शेड्यूल करें",
+  'sp.perm.verb.window': 'ब्राउज़र विंडो का आकार बदलें',
 
   'sp.step.details': "विवरण",
   'sp.step.input_label': "इनपुट",
@@ -526,6 +534,7 @@ export default {
   'st.display.search.empty': "कोई सामान्य सेटिंग मेल नहीं खाती.",
   'st.display.advanced': "उन्नत",
   ...getApocalypseModeCopy('hi'),
+  ...getEmergencyBoxCopy('hi'),
   'st.display.cloud_bridge.label': 'क्लाउड ब्रिज',
   'st.display.cloud_bridge.desc': 'एक स्थानीय कंट्रोलर को इस Chromium प्रोफ़ाइल से कनेक्ट करें। WebBrain Cloud के लिए पोर्ट 17373, MCP क्लाइंट के लिए 17374 या LM Studio के लिए 17375 इस्तेमाल करें। एक समय में केवल एक ब्रिज सक्रिय हो सकता है; सामान्य अनुमति संकेत लागू रहेंगे।',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',
@@ -621,6 +630,12 @@ export default {
   'st.providers.search.empty': "कोई भी प्रदाता इस खोज और फ़िल्टर से मेल नहीं खाता।",
   'st.providers.save': "सहेजें",
   'st.providers.test': "परीक्षण कनेक्शन",
+  'st.providers.duplicate': 'डुप्लिकेट करें',
+  'st.providers.duplicate_limit': 'केवल एक डुप्लिकेट की अनुमति है',
+  'st.providers.duplicate_unavailable': 'इस प्रदाता को डुप्लिकेट नहीं किया जा सकता',
+  'st.providers.duplicate_inactive': 'इस प्रदाता को डुप्लिकेट करने से पहले सहेजें',
+  'st.providers.remove_duplicate': 'डुप्लिकेट हटाएँ',
+  'st.providers.remove_duplicate_confirm': 'क्या इस डुप्लिकेट प्रदाता और इसकी सहेजी गई सेटिंग हटानी हैं?',
   'st.providers.set_active': "सक्रिय सेट करें",
   'st.providers.active': "सक्रिय",
   'st.providers.saved': "सहेजा गया!",

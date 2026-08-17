@@ -1,7 +1,14 @@
 // English — canonical locale. Other locales inherit key names from this file.
 import apocalypseModeCopy from './apocalypse-copy.mjs';
+import emergencyCopy from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Open the current page’s native print dialog',
   'sp.print.error': 'Could not open the print dialog: {msg}',
   'sp.streaming.fallback': 'Response streaming was interrupted; retrying this Ask turn without streaming.',
@@ -331,6 +338,7 @@ export default {
   'sp.perm.verb.upload': 'upload a file to',
   'sp.perm.verb.record': 'record the tab (and microphone) on',
   'sp.perm.verb.schedule': 'schedule future work for',
+  'sp.perm.verb.window': 'resize the browser window for',
 
   'sp.step.details': 'details',
   'sp.step.input_label': 'Input',
@@ -526,6 +534,7 @@ export default {
   'st.display.search.empty': 'No General settings match.',
   'st.display.advanced': 'Advanced',
   ...apocalypseModeCopy,
+  ...emergencyCopy,
   'st.display.cloud_bridge.label': 'Cloud bridge',
   'st.display.cloud_bridge.desc': 'Connect one local controller to this Chromium profile. Use port 17373 for WebBrain Cloud, 17374 for MCP clients, or 17375 for LM Studio. Only one bridge can be active; normal permission prompts still apply.',
   'st.display.cloud_bridge.url_label': 'WebSocket URL',
@@ -622,6 +631,12 @@ export default {
   'st.providers.search.empty': 'No providers match this search and filter.',
   'st.providers.save': 'Save',
   'st.providers.test': 'Test Connection',
+  'st.providers.duplicate': 'Duplicate',
+  'st.providers.duplicate_limit': 'Only one duplicate is allowed',
+  'st.providers.duplicate_unavailable': 'This provider cannot be duplicated',
+  'st.providers.duplicate_inactive': 'Save this provider before duplicating it',
+  'st.providers.remove_duplicate': 'Remove duplicate',
+  'st.providers.remove_duplicate_confirm': 'Remove this duplicate provider and its saved configuration?',
   'st.providers.set_active': 'Set Active',
   'st.providers.active': 'ACTIVE',
   'st.providers.saved': 'Saved!',

@@ -1,7 +1,14 @@
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'باز کردن گفت‌وگوی چاپ بومی صفحهٔ فعلی',
   'sp.print.error': 'گفت‌وگوی چاپ باز نشد: {msg}',
   'sp.streaming.fallback': 'جریان پاسخ قطع شد؛ این نوبت Ask بدون پخش جریانی دوباره امتحان می‌شود.',
@@ -331,6 +338,7 @@ export default {
   'sp.perm.verb.upload': "آپلود فایل به",
   'sp.perm.verb.record': "زبانه (و میکروفون) را روی آن ضبط کنید",
   'sp.perm.verb.schedule': "برای کارهای آینده برنامه ریزی کنید",
+  'sp.perm.verb.window': 'اندازه پنجره مرورگر را تغییر دهید در',
 
   'sp.step.details': "جزئیات",
   'sp.step.input_label': "ورودی",
@@ -526,6 +534,7 @@ export default {
   'st.display.search.empty': "تنظیمات عمومی مطابقت ندارد.",
   'st.display.advanced': "پیشرفته",
   ...getApocalypseModeCopy('fa'),
+  ...getEmergencyBoxCopy('fa'),
   'st.display.cloud_bridge.label': 'پل ابری',
   'st.display.cloud_bridge.desc': 'یک کنترل‌کننده محلی را به این نمایه Chromium متصل کنید. برای WebBrain Cloud از درگاه 17373، برای سرویس‌گیرنده‌های MCP از 17374 یا برای LM Studio از 17375 استفاده کنید. فقط یک پل می‌تواند فعال باشد؛ درخواست‌های معمول مجوز همچنان اعمال می‌شوند.',
   'st.display.cloud_bridge.url_label': 'نشانی WebSocket',
@@ -621,6 +630,12 @@ export default {
   'st.providers.search.empty': "هیچ ارائه دهنده ای با این جستجو و فیلتر مطابقت ندارد.",
   'st.providers.save': "ذخیره کنید",
   'st.providers.test': "تست اتصال",
+  'st.providers.duplicate': 'تکثیر',
+  'st.providers.duplicate_limit': 'فقط یک نسخهٔ تکراری مجاز است',
+  'st.providers.duplicate_unavailable': 'امکان تکثیر این ارائه‌دهنده وجود ندارد',
+  'st.providers.duplicate_inactive': 'پیش از تکثیر، این ارائه‌دهنده را ذخیره کنید',
+  'st.providers.remove_duplicate': 'حذف نسخهٔ تکراری',
+  'st.providers.remove_duplicate_confirm': 'این ارائه‌دهندهٔ تکراری و تنظیمات ذخیره‌شدهٔ آن حذف شود؟',
   'st.providers.set_active': "فعال را تنظیم کنید",
   'st.providers.active': "فعال",
   'st.providers.saved': "ذخیره شد!",

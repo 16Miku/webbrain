@@ -1,7 +1,14 @@
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'باز کردن گفت‌وگوی چاپ بومی صفحهٔ فعلی',
   'sp.print.error': 'گفت‌وگوی چاپ باز نشد: {msg}',
   'sp.streaming.fallback': 'جریان پاسخ قطع شد؛ این نوبت Ask بدون پخش جریانی دوباره امتحان می‌شود.',
@@ -329,6 +336,7 @@ export default {
   'sp.perm.verb.upload': "آپلود فایل به",
   'sp.perm.verb.record': "زبانه (و میکروفون) را روی آن ضبط کنید",
   'sp.perm.verb.schedule': "برای کارهای آینده برنامه ریزی کنید",
+  'sp.perm.verb.window': 'اندازه پنجره مرورگر را تغییر دهید در',
 
   'sp.step.details': "جزئیات",
   'sp.step.input_label': "ورودی",
@@ -523,6 +531,7 @@ export default {
   'st.display.search.empty': "تنظیمات عمومی مطابقت ندارد.",
   'st.display.advanced': "پیشرفته",
   ...getApocalypseModeCopy('fa'),
+  ...getEmergencyBoxCopy('fa'),
   'st.display.help_improve.label': "به بهبود WebBrain کمک کنید",
   'st.display.help_improve.desc_html': "اجازه دهید تا تعاملات متن و ابزار Cloud واجد شرایط WebBrain حفظ شود و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شود. به طور پیش فرض روشن است. با خاموش کردن این حالت به طور دائم از مکالمه فعلی انصراف داده می شود. روشن کردن مجدد آن برای مکالمه جدید بعدی اعمال می شود. عکس های صفحه و بایت های تصویر در پایگاه داده بهبود WebBrain حفظ نمی شوند. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سیاست حفظ حریم خصوصی →</a>",
   'st.display.clarify_timeout.label': "روشن کردن مهلت زمانی",
@@ -605,6 +614,12 @@ export default {
   'st.providers.search.empty': "هیچ ارائه دهنده ای با این جستجو و فیلتر مطابقت ندارد.",
   'st.providers.save': "ذخیره کنید",
   'st.providers.test': "تست اتصال",
+  'st.providers.duplicate': 'تکثیر',
+  'st.providers.duplicate_limit': 'فقط یک نسخهٔ تکراری مجاز است',
+  'st.providers.duplicate_unavailable': 'امکان تکثیر این ارائه‌دهنده وجود ندارد',
+  'st.providers.duplicate_inactive': 'پیش از تکثیر، این ارائه‌دهنده را ذخیره کنید',
+  'st.providers.remove_duplicate': 'حذف نسخهٔ تکراری',
+  'st.providers.remove_duplicate_confirm': 'این ارائه‌دهندهٔ تکراری و تنظیمات ذخیره‌شدهٔ آن حذف شود؟',
   'st.providers.set_active': "فعال را تنظیم کنید",
   'st.providers.active': "فعال",
   'st.providers.saved': "ذخیره شد!",

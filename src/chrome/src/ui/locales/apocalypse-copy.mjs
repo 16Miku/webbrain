@@ -2,7 +2,7 @@ import apocalypseModeTranslations from './apocalypse-translations.mjs';
 
 const englishApocalypseModeCopy = {
   'st.display.apocalypse_mode.label': 'Apocalypse Mode',
-  'st.display.apocalypse_mode.desc': 'Manage optional offline Wikipedia archives by language and size. Disabled by default; no archive is downloaded without confirmation.',
+  'st.display.apocalypse_mode.desc': 'Manage the required Simple English offline archive and optional Wikipedia archives by language and size. Enabling Apocalypse Mode starts the required basic downloads.',
   'st.display.apocalypse_mode.manage': 'Manage archives',
   'st.display.apocalypse_mode.status.loading': 'Loading archive status…',
   'st.display.apocalypse_mode.status.off': 'Off · no offline archive will be used.',
@@ -12,15 +12,37 @@ const englishApocalypseModeCopy = {
   'ap.title': 'Apocalypse Mode',
   'ap.subtitle': 'WebBrain, ready when the internet isn’t.',
   'ap.hero.title': 'Offline knowledge, under your control',
-  'ap.hero.desc': 'Download a copy of Wikipedia for offline search and factual answers, even without an internet connection. The local chat model is a separate download.',
-  'ap.hero.consent': 'Turning this on starts the local model downloads. Wikipedia is downloaded only after you choose a version and confirm its size.',
+  'ap.hero.desc': 'Set up the three essentials for private local chat: a Text Model, a Vision Model, and one offline Wikipedia edition.',
+  'ap.hero.consent': 'On supported browsers, turning this on automatically starts the Text Model, Vision Model, and smaller Simple English Wikipedia downloads. Choose other Wikipedia languages or editions with images later in Emergency Box.',
+  'ap.models.text.title': 'Text Model',
+  'ap.models.vision.title': 'Vision Model',
+  'ap.models.wikipedia.title': 'Wikipedia in Simple English',
+  'ap.models.wikipedia.desc': 'Required for basic offline setup. This smaller text-only archive starts automatically and gives local chat a compact factual reference.',
+  'ap.models.wikipedia.active_title': 'Wikipedia',
+  'ap.models.wikipedia.active_desc': 'Your selected offline Wikipedia edition supplies local facts and reader articles.',
+  'ap.models.wikipedia.finding': 'Finding the required download…',
+  'ap.models.wikipedia.starting': 'Preparing the required download…',
+  'ap.models.wikipedia.required': 'Required download',
+  'ap.models.wikipedia.stopped': 'Download removed · Start download to continue',
+  'ap.models.wikipedia.unavailable': 'Required archive unavailable · refresh archives to retry',
+  'ap.models.wikipedia.waiting': 'Starts after Apocalypse Mode is enabled',
+  'ap.models.wikipedia.started': 'Simple English Wikipedia is downloading automatically.',
+  'ap.models.status.ready': 'Ready',
+  'ap.models.status.downloading': 'Downloading',
+  'ap.models.status.paused': 'Paused',
+  'ap.models.status.incomplete': 'Not ready',
+  'ap.models.status.disabled': 'Disabled',
+  'ap.models.status.error': 'Error',
+  'ap.models.remove': 'Remove',
+  'ap.models.confirm_remove': 'Remove the {model} and its cached files? You will need to download it again to use it offline.',
   'ap.vision.auto': 'Enabling Apocalypse Mode also enables this local vision fallback and starts its background download automatically.',
   'ap.vision.waiting': 'Starts when Apocalypse Mode is enabled',
   'ap.enabled': 'Enabled',
   'ap.lifecycle': 'Your offline library',
-  'ap.metric.installed': 'Wikipedia downloads',
-  'ap.metric.archive_bytes': 'Wikipedia storage',
-  'ap.metric.storage': 'Extension storage',
+  'ap.metric.summary': 'Wikipedia archive statistics',
+  'ap.metric.installed': 'Wikipedia',
+  'ap.metric.archive_bytes': 'Archive size',
+  'ap.metric.storage': 'Extension storage used',
   'ap.metric.updates': 'Updates',
   'ap.metric.manual': 'Manual',
   'ap.metric.automatic': 'Automatic checks',
@@ -73,7 +95,7 @@ const englishApocalypseModeCopy = {
   'ap.import.license': 'Not declared by the archive metadata. Wikipedia text is generally CC BY-SA 4.0 unless otherwise noted; archive components may use additional licenses.',
   'ap.install_cancelled': 'Install cancelled.',
   'ap.queued': 'Archive queued. You can leave this page; progress is persisted.',
-  'ap.enabled_notice': 'Apocalypse Mode enabled. No archive is downloaded until you confirm one.',
+  'ap.enabled_notice': 'Apocalypse Mode setup started. Complete the three basic downloads above to reach Ready.',
   'ap.disabled_notice': 'Apocalypse Mode disabled. Incomplete jobs are paused; installed archives are retained.',
   'ap.loading_catalog': 'Loading archives…',
   'ap.loaded_catalog': '{count} archives available.',
@@ -100,7 +122,12 @@ const englishApocalypseModeCopy = {
 };
 
 export function getApocalypseModeCopy(locale = 'en') {
-  return { ...englishApocalypseModeCopy, ...(apocalypseModeTranslations[locale] || {}) };
+  const translated = apocalypseModeTranslations[locale] || {};
+  const copy = { ...englishApocalypseModeCopy, ...translated };
+  if (translated['ap.metric.installed']) {
+    copy['ap.metric.summary'] = [translated['ap.metric.installed'], translated['ap.metric.archive_bytes'], translated['ap.metric.storage']].join(', ');
+  }
+  return copy;
 }
 
 export default englishApocalypseModeCopy;

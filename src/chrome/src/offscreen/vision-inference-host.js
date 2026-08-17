@@ -10,6 +10,7 @@ let visionDownloadState = null;
 let visionDownloadStateTimer = null;
 let visionPreloadPromise = null;
 let visionPreloadKey = '';
+let visionPreloadLifecycle = null;
 
 function publishVisionDownloadState(state, immediate = false) {
   visionDownloadState = {
@@ -95,15 +96,36 @@ function startVisionPreload(message) {
   if (visionPreloadPromise && visionPreloadKey === key) return false;
   visionDownloadFiles.clear();
   publishVisionDownloadState({ modelId, status: 'starting', progress: 0 }, true);
+  const lifecycle = { cancelMode: '' };
   visionPreloadKey = key;
+  visionPreloadLifecycle = lifecycle;
   const operation = sendVisionWorkerMessage('preload', {
     modelId,
     device: message?.device,
     dtype: message?.dtype,
   }).then((response) => {
-    publishVisionDownloadState({ modelId, status: 'ready', progress: 100 }, true);
+    if (lifecycle.cancelMode === 'stop') return response;
+    const status = lifecycle.cancelMode === 'pause' ? 'paused' : response?.status || 'ready';
+    publishVisionDownloadState({
+      modelId,
+      status,
+      progress: status === 'ready' ? 100 : visionDownloadState?.progress || 0,
+      loaded: status === 'not-downloaded' ? 0 : visionDownloadState?.loaded || 0,
+      total: status === 'not-downloaded' ? 0 : visionDownloadState?.total || 0,
+    }, true);
     return response;
   }).catch((error) => {
+    if (lifecycle.cancelMode === 'stop') return;
+    if (lifecycle.cancelMode) {
+      publishVisionDownloadState({
+        modelId,
+        status: 'paused',
+        progress: visionDownloadState?.progress || 0,
+        loaded: visionDownloadState?.loaded || 0,
+        total: visionDownloadState?.total || 0,
+      }, true);
+      return;
+    }
     publishVisionDownloadState({
       modelId,
       status: 'error',
@@ -116,10 +138,18 @@ function startVisionPreload(message) {
     if (visionPreloadPromise === operation) {
       visionPreloadPromise = null;
       visionPreloadKey = '';
+      visionPreloadLifecycle = null;
     }
   });
   visionPreloadPromise = operation;
   return true;
+}
+
+function detachVisionPreload(cancelMode) {
+  if (visionPreloadLifecycle) visionPreloadLifecycle.cancelMode = cancelMode;
+  visionPreloadPromise = null;
+  visionPreloadKey = '';
+  visionPreloadLifecycle = null;
 }
 
 function sendVisionWorkerMessage(type, payload = {}) {
@@ -162,6 +192,8 @@ const WEBGPU_MESSAGE_TYPES = new Set([
   'webgpu-vision-chat',
   'webgpu-vision-probe',
   'webgpu-vision-preload',
+  'webgpu-vision-pause',
+  'webgpu-vision-stop',
   'webgpu-vision-dispose',
   'webgpu-vision-clear-cache',
 ]);
@@ -207,10 +239,49 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }));
         return;
       }
-      if (message.type === 'webgpu-vision-clear-cache') {
-        const response = await sendVisionWorkerMessage('clear-cache');
+      if (message.type === 'webgpu-vision-pause') {
+        detachVisionPreload('pause');
+        const response = await sendVisionWorkerMessage('pause-vision-download', {
+          modelId: message.model,
+        });
+        publishVisionDownloadState({
+          modelId: message.model,
+          status: 'paused',
+          progress: visionDownloadState?.progress || 0,
+          loaded: visionDownloadState?.loaded || 0,
+          total: visionDownloadState?.total || 0,
+        }, true);
+        sendResponse(response);
+        return;
+      }
+      if (message.type === 'webgpu-vision-stop') {
+        detachVisionPreload('stop');
+        publishVisionDownloadState({
+          modelId: message.model,
+          status: 'stopping',
+          progress: visionDownloadState?.progress || 0,
+          loaded: visionDownloadState?.loaded || 0,
+          total: visionDownloadState?.total || 0,
+        }, true);
+        const response = await sendVisionWorkerMessage('stop-vision-download', {
+          modelId: message.model,
+          dtype: message.dtype,
+        });
         visionDownloadFiles.clear();
-        publishVisionDownloadState({ modelId: message.model, status: 'idle', progress: 0 }, true);
+        publishVisionDownloadState({
+          modelId: message.model,
+          status: 'not-downloaded',
+          progress: 0,
+          loaded: 0,
+          total: 0,
+        }, true);
+        sendResponse(response);
+        return;
+      }
+      if (message.type === 'webgpu-vision-clear-cache') {
+        const response = await sendVisionWorkerMessage('clear-cache', { modelId: message.model });
+        visionDownloadFiles.clear();
+        publishVisionDownloadState({ modelId: message.model, status: 'not-downloaded', progress: 0 }, true);
         sendResponse(response);
         return;
       }

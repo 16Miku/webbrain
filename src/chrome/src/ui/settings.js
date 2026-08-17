@@ -62,7 +62,7 @@ const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '32.0.0';
+const EXT_VERSION = '32.1.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -325,6 +325,7 @@ let providersData = {};
 // including temporarily invalid JSON while the user is still editing it.
 // Keep the raw UI draft separate from the last valid provider config.
 const providerCompatibilityJsonDrafts = new Map();
+const dirtyProviderIds = new Set();
 let activeProviderId = '';
 let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
@@ -336,18 +337,15 @@ if (globalThis.chrome?.storage?.onChanged) {
     if (area !== 'local') return;
     if (changes[WEBGPU_VISION_ENABLED_KEY]) loadVisionConfig().catch(() => {});
     if (!changes.providers?.newValue) return;
-    const nextOllama = changes.providers?.newValue?.ollama;
-    if (nextOllama && providersData.ollama) {
-      providersData.ollama.visionDetection = nextOllama.visionDetection || null;
-      refreshOllamaVisionStatus();
-    }
-    for (const id of AUTO_VISION_PROVIDER_IDS) {
-      const next = changes.providers.newValue[id];
-      if (!next || !providersData[id]) continue;
+    for (const [id, next] of Object.entries(changes.providers.newValue)) {
+      if (!providersData[id] || next.visionDetection === undefined) continue;
       // Background detection may finish while the settings page contains
       // unsaved drafts. Refresh only the detected result.
       providersData[id].visionDetection = next.visionDetection || null;
-      refreshVisionStatus(id);
+      const definitionId = providerDefinitionId(id);
+      if (VISION_UI_PROVIDER_IDS.has(definitionId)) {
+        refreshVisionStatus(id);
+      }
     }
   });
 }
@@ -2154,6 +2152,10 @@ const VISION_MODE_FIELD = {
 };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 
+function providerDefinitionId(id, config = providersData[id]) {
+  return String(config?.sourceProviderId || config?.duplicateOf || id || '');
+}
+
 function visionStatusKey(id, config) {
   if (!providerVisionDetectionMatches(id, config)) return 'st.provider.field.vision_pending';
   return config.visionDetection.supportsVision
@@ -2162,9 +2164,10 @@ function visionStatusKey(id, config) {
 }
 
 function refreshVisionStatus(id) {
-  if (!VISION_UI_PROVIDER_IDS.has(id)) return;
-  const hint = id === 'ollama'
-    ? document.querySelector('[data-ollama-vision-status]')
+  const definitionId = providerDefinitionId(id);
+  if (!VISION_UI_PROVIDER_IDS.has(definitionId)) return;
+  const hint = definitionId === 'ollama'
+    ? document.querySelector(`[data-ollama-vision-status="${id}"]`)
     : document.querySelector(`[data-vision-status="${id}"]`);
   if (!hint) return;
   const mode = document.querySelector(`select[data-provider="${id}"][data-key="visionMode"]`)?.value || 'auto';
@@ -2184,7 +2187,8 @@ function refreshOllamaVisionStatus() {
 }
 
 function providerVisionDetectionMatches(id, config, detection = config?.visionDetection) {
-  if (id !== 'ollama') return visionDetectionMatches(id, config, detection, { allowTransient: true });
+  const definitionId = providerDefinitionId(id, config);
+  if (definitionId !== 'ollama') return visionDetectionMatches(definitionId, config, detection, { allowTransient: true });
   const model = String(config?.model || '').trim();
   const baseUrl = canonicalizeOllamaBaseUrl(config?.baseUrl);
   return !!model && !!baseUrl
@@ -2838,7 +2842,8 @@ function renderProviders() {
   for (const [id, config] of entries) {
     const isSelected = id === activeProviderId;
     const isConfigured = id !== 'webbrain_cloud' && config.configured === true;
-    const fieldDefs = providerConfigs[id]?.fields || [];
+    const definitionId = providerDefinitionId(id, config);
+    const fieldDefs = providerConfigs[definitionId]?.fields || [];
 
     // Active is a strict status filter. Category filters keep the selected
     // provider visible so users never lose track of the provider in use.
@@ -2865,8 +2870,8 @@ function renderProviders() {
             <select data-provider="${id}" data-key="${field.key}" data-type="select">${optionsHTML}</select>
           </div>
         `;
-        if (VISION_UI_PROVIDER_IDS.has(id) && field.key === 'visionMode') {
-          const statusAttribute = id === 'ollama' ? 'data-ollama-vision-status' : `data-vision-status="${id}"`;
+        if (VISION_UI_PROVIDER_IDS.has(definitionId) && field.key === 'visionMode') {
+          const statusAttribute = definitionId === 'ollama' ? `data-ollama-vision-status="${id}"` : `data-vision-status="${id}"`;
           fieldsHTML += `<div class="field-hint" ${statusAttribute}${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(visionStatusKey(id, config)))}</div>`;
         }
       } else if (field.type === 'checkbox') {
@@ -2882,9 +2887,10 @@ function renderProviders() {
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
-        const effectiveVal = rawVal || field.suggestions[0];
-        const selectVal = isCustom ? '__custom__' : effectiveVal;
-        const optionsHTML = field.suggestions
+        const isBlankDuplicate = config.isDuplicate && !rawVal;
+        const effectiveVal = rawVal || (isBlankDuplicate ? '' : field.suggestions[0]);
+        const selectVal = isBlankDuplicate ? '' : (isCustom ? '__custom__' : effectiveVal);
+        const optionsHTML = (isBlankDuplicate ? '<option value="" selected></option>' : '') + field.suggestions
           .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(field.suggestionLabels?.[s] || s)}</option>`)
           .join('') +
           `<option value="__custom__"${isCustom ? ' selected' : ''}>${escapeHtml(t('st.provider.field.model_custom'))}</option>`;
@@ -2899,7 +2905,7 @@ function renderProviders() {
         `;
       } else {
         const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy'];
-        const canLoadModels = localModelProviders.includes(id) && field.key === 'model';
+        const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
         const loadedModelsDialogHTML = canLoadModels
@@ -2962,11 +2968,12 @@ function renderProviders() {
          </div>`;
     }
     const extensionOrigin = chrome.runtime.getURL('').replace(/\/$/, '');
-    const ollamaWarning = id === 'ollama'
+    const ollamaWarningTitleId = `ollama-warning-title-${id}`;
+    const ollamaWarning = definitionId === 'ollama'
       ? `<aside class="provider-warning provider-ollama-warning" role="note"
-                aria-labelledby="ollama-warning-title">
+                aria-labelledby="${ollamaWarningTitleId}">
            <div class="provider-warning-label">${escapeHtml(t('st.providers.ollama_warning.label'))}</div>
-           <strong class="provider-warning-title" id="ollama-warning-title">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
+           <strong class="provider-warning-title" id="${ollamaWarningTitleId}">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
            <p>${escapeHtml(t('st.providers.ollama_warning.body'))}</p>
            <p>${escapeHtml(t('st.providers.ollama_warning.restart'))}</p>
            <pre><code>OLLAMA_ORIGINS="${escapeHtml(extensionOrigin)}" ollama serve</code></pre>
@@ -2976,6 +2983,11 @@ function renderProviders() {
          </aside>`
       : '';
     const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
+    const duplicateDisabledKey = config.hasDuplicate
+      ? 'st.providers.duplicate_limit'
+      : (!config.canDuplicate
+        ? 'st.providers.duplicate_unavailable'
+        : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : ''));
 
     const body = `
       ${fieldsHTML}
@@ -2987,6 +2999,9 @@ function renderProviders() {
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
         ${billingButton}
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
+        ${config.isDuplicate
+          ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
+          : `<button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>`}
       </div>
       <div class="test-result" id="test-${id}"></div>
     `;
@@ -3017,6 +3032,16 @@ function renderProviders() {
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
   });
+  document.querySelectorAll('.btn-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => duplicateProvider(btn.dataset.provider));
+  });
+  document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
+    const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
+    input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+  });
+  document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
+  });
   document.querySelectorAll('.btn-load-models').forEach(btn => {
     btn.addEventListener('click', () => loadProviderModels(btn.dataset.provider));
   });
@@ -3040,6 +3065,7 @@ function renderProviders() {
         input.style.display = 'none';
         input.value = sel.value;
       }
+      markProviderDirty(providerId);
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
     });
@@ -3061,7 +3087,7 @@ function renderProviders() {
     input.addEventListener('input', () => {
       refreshProviderCompatibilitySummary(input.dataset.provider);
       refreshVisionStatus(input.dataset.provider);
-      if (input.dataset.provider === 'ollama') refreshOllamaVisionStatus();
+      if (providerDefinitionId(input.dataset.provider) === 'ollama') refreshVisionStatus(input.dataset.provider);
     });
   });
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
@@ -3074,6 +3100,7 @@ function renderProviders() {
         textarea.value = '';
         providerCompatibilityJsonDrafts.set(id, '');
       }
+      markProviderDirty(id);
       refreshProviderCompatibilitySummary(id);
     });
   });
@@ -3220,7 +3247,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   header.innerHTML = `
     <div class="provider-header-left">
       <span class="provider-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
-      ${providerIconHtml(id, label)}
+      ${providerIconHtml(providerDefinitionId(id, config), label)}
       <span class="provider-name">${escapeHtml(label)}</span>
       <span class="provider-type">${escapeHtml(config.type)}</span>
       ${config.category ? `<span class="provider-category-badge provider-category-${escapeHtml(config.category)}">${escapeHtml(config.category)}</span>` : ''}
@@ -3254,6 +3281,12 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
 
 function providerIsActive(id, config) {
   return id !== 'webbrain_cloud' && config?.configured === true;
+}
+
+function markProviderDirty(id) {
+  if (!id || !providersData[id]) return;
+  dirtyProviderIds.add(id);
+  refreshProviderCardStatus(id);
 }
 
 function refreshActiveProviderFilterCount() {
@@ -3409,7 +3442,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
   if (providersData[id]) {
     const priorVisionDetection = providersData[id].visionDetection;
     Object.assign(providersData[id], config);
-    if (VISION_UI_PROVIDER_IDS.has(id) && (
+    if (VISION_UI_PROVIDER_IDS.has(providerDefinitionId(id, providersData[id])) && (
       providersData[id].visionMode !== 'auto'
       || !providerVisionDetectionMatches(id, providersData[id], priorVisionDetection)
     )) {
@@ -3417,6 +3450,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
     }
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
+  if (markConfigured) dirtyProviderIds.delete(id);
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);
 
@@ -3440,6 +3474,13 @@ function refreshProviderCardStatus(id) {
   const isSelected = id === activeProviderId;
   card.classList.toggle('configured', isConfigured);
   card.classList.toggle('selected', isSelected);
+  const duplicateButton = card.querySelector('.btn-duplicate');
+  if (duplicateButton && providersData[id]?.canDuplicate && !providersData[id]?.hasDuplicate) {
+    const requiresSave = !isConfigured || dirtyProviderIds.has(id);
+    duplicateButton.disabled = requiresSave;
+    if (!requiresSave) duplicateButton.removeAttribute('title');
+    else duplicateButton.title = t('st.providers.duplicate_inactive');
+  }
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
@@ -3499,6 +3540,65 @@ function syncInputsIntoProvidersData() {
     }
     setProviderConfigValue(providersData[id], key, providerInputValue(input));
   });
+}
+
+const PROVIDER_REFRESH_MANAGED_KEYS = new Set([
+  'id',
+  'type',
+  'category',
+  'configured',
+  'duplicateOf',
+  'sourceProviderId',
+  'isDuplicate',
+  'hasDuplicate',
+  'canDuplicate',
+  'visionDetection',
+]);
+
+function restoreProviderDrafts(drafts) {
+  for (const [providerId, draft] of Object.entries(drafts || {})) {
+    const refreshed = providersData[providerId];
+    if (!refreshed || !draft) continue;
+    for (const [key, value] of Object.entries(draft)) {
+      if (!PROVIDER_REFRESH_MANAGED_KEYS.has(key)) refreshed[key] = value;
+    }
+  }
+}
+
+async function duplicateProvider(id) {
+  if (!providerIsActive(id, providersData[id]) || dirtyProviderIds.has(id)) return;
+  try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
+    const created = await sendToBackground('duplicate_provider', { providerId: id });
+    const refreshed = await sendToBackground('get_providers');
+    providersData = refreshed.providers;
+    activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
+    expandedProviders.add(created.providerId);
+    renderProviders();
+  } catch (error) {
+    setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
+  }
+}
+
+async function removeDuplicateProvider(id) {
+  if (!window.confirm(t('st.providers.remove_duplicate_confirm'))) return;
+  try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
+    await sendToBackground('remove_duplicate_provider', { providerId: id });
+    const refreshed = await sendToBackground('get_providers');
+    providersData = refreshed.providers;
+    activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
+    expandedProviders.delete(id);
+    providerCompatibilityJsonDrafts.delete(id);
+    dirtyProviderIds.delete(id);
+    renderProviders();
+  } catch (error) {
+    setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
+  }
 }
 
 async function activateProvider(id) {

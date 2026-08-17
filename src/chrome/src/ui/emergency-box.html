@@ -4,11 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title data-i18n="eb.page_title"></title>
+  <script src="theme-bootstrap.js"></script>
   <link rel="stylesheet" href="emergency-box.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="back-button" href="apocalypse-mode.html" data-i18n-aria-label="eb.back" title="Apocalypse Mode">←</a>
+    <a class="back-button" href="apocalypse-mode.html" data-i18n-aria-label="eb.back" data-i18n-title="ap.title">←</a>
     <span class="apocalypse-icon" aria-hidden="true">☢</span>
     <div class="title-block">
       <h1 data-i18n="eb.title"></h1>
@@ -23,7 +24,7 @@
         <span data-i18n="eb.collections"></span>
         <span id="resource-count" class="count-badge">0</span>
       </div>
-      <nav id="category-nav" aria-label="Emergency Box collections">
+      <nav id="category-nav" data-i18n-aria-label="eb.nav_label">
         <button type="button" class="category-button active" data-filter="all">
           <span class="category-icon" aria-hidden="true">▦</span>
           <span data-i18n="eb.filter.all"></span>
@@ -33,6 +34,11 @@
           <span data-i18n="eb.filter.installed"></span>
           <span id="installed-rail-count" class="rail-count">0</span>
         </button>
+        <a class="category-button wikipedia-entry" href="wikipedia-library.html">
+          <span class="category-icon" aria-hidden="true">W</span>
+          <span data-i18n="eb.filter.wikipedia"></span>
+          <span aria-hidden="true">→</span>
+        </a>
         <button type="button" class="category-button" data-filter="education">
           <span class="category-icon" aria-hidden="true">▤</span>
           <span data-i18n="eb.filter.education"></span>

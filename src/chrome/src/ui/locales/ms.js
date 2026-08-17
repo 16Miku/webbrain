@@ -2,8 +2,15 @@
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
+import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.message_info.sent': 'sent {time}',
+  'sp.message_info.speed': '{rate} tok/sec',
+  'sp.message_info.tokens': '{count} tokens',
+  'sp.message_info.duration': '{seconds}s',
+  'sp.message_info.finish': 'Stop reason: {reason}',
+  'sp.message_info.hint': 'Click to show message info',
   'sp.slash.print': 'Buka dialog cetak asli halaman semasa',
   'sp.print.error': 'Tidak dapat membuka dialog cetak: {msg}',
   ...chromeWebStoreLocale,
@@ -266,6 +273,12 @@ export default {
   'st.providers.webbrain_note.body': 'Penggunaan harian percuma WebBrain Cloud disertakan. Permintaan melalui api.webbrain.one; secara lalai kami mencatat metadata untuk kuota dan penyahpepijatan, bukan teks gesaan, kandungan halaman, tangkapan skrin atau respons model. {privacyLink}. Untuk penggunaan lebih, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Dasar privasi',
   'st.providers.test': 'Uji sambungan',
+  'st.providers.duplicate': 'Duplikasi',
+  'st.providers.duplicate_limit': 'Hanya satu duplikasi dibenarkan',
+  'st.providers.duplicate_unavailable': 'Penyedia ini tidak boleh diduplikasi',
+  'st.providers.duplicate_inactive': 'Simpan penyedia ini sebelum menduplikasikannya',
+  'st.providers.remove_duplicate': 'Alih keluar duplikasi',
+  'st.providers.remove_duplicate_confirm': 'Alih keluar penyedia duplikasi ini dan konfigurasi tersimpannya?',
   'st.providers.set_active': 'Jadikan aktif',
   'st.providers.active': 'AKTIF',
   'st.providers.saved': 'Disimpan!',
@@ -591,6 +604,7 @@ export default {
   'sp.scratchpad.cleared': 'Pad nota dikosongkan.',
   'sp.scratchpad.error': 'Pad nota tidak tersedia: {msg}',
   'sp.perm.verb.schedule': 'menjadualkan kerja masa hadapan untuk',
+  'sp.perm.verb.window': 'menukar saiz tetingkap pelayar pada',
   'tool.schedule_resume': 'Menjadualkan sambungan semula',
   'tool.schedule_task': 'Menjadualkan tugas',
   'st.display.scheduled_tasks.label': 'Tugas berjadual',
@@ -684,6 +698,7 @@ export default {
   'st.display.search.empty': 'Tiada tetapan Umum yang sepadan.',
   'st.display.advanced': 'Lanjutan',
   ...getApocalypseModeCopy('ms'),
+  ...getEmergencyBoxCopy('ms'),
   'st.display.cloud_bridge.label': 'Jambatan awan',
   'st.display.cloud_bridge.desc': 'Sambungkan satu pengawal setempat ke profil Chromium ini. Gunakan port 17373 untuk WebBrain Cloud, 17374 untuk klien MCP atau 17375 untuk LM Studio. Hanya satu jambatan boleh aktif; gesaan kebenaran biasa masih digunakan.',
   'st.display.cloud_bridge.url_label': 'URL WebSocket',

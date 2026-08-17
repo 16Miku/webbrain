@@ -18,6 +18,7 @@ export function shouldRetrieveLocalWikipedia(value) {
   if (text.length < 3 || text.length > 500 || /^\//.test(text) || /```|<\/?(?:html|script|style)\b/i.test(text)) return false;
   const normalized = text.toLowerCase().replace(/\s+/g, ' ');
   if (/^(?:hi|hello|hey|thanks?|thank you|good (?:morning|afternoon|evening))[!. ]*$/.test(normalized)) return false;
+  if (/^(?:and|and then|so|okay|ok|really|go on|continue)[?!. ]*$/.test(normalized)) return false;
   if (/\b(?:today|currently|current|latest|right now|this week|breaking|live score|weather|forecast|stock price|exchange rate)\b/.test(normalized)) return false;
   if (/\b(?:write|rewrite|draft|compose|translate|proofread|summarize this|fix this|make this)\b/.test(normalized)) return false;
   if (/^(?:(?:are|am|do|did|can|could|would|will|have|has)\s+(?:you|i|we)|what\s+are\s+you)\b/.test(normalized)) return false;
@@ -26,14 +27,23 @@ export function shouldRetrieveLocalWikipedia(value) {
   if (/^(?:who|what|when|where|why|how|which|define|explain|describe|tell me (?:more )?about|history of|meaning of|overview of)\b/.test(normalized)) return true;
   const words = normalized.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   return words.length >= 1 && words.length <= 8
-    && !words.some(word => ['i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'our', 'ours', 'it', 'its'].includes(word));
+    && !words.some(word => [
+      'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'our', 'ours',
+      'he', 'him', 'his', 'she', 'her', 'hers', 'they', 'them', 'their', 'theirs',
+      'it', 'its', 'this', 'that',
+    ].includes(word));
 }
 
-export function localWikipediaSearchQuery(value) {
-  return String(value || '').trim()
+export function localWikipediaSearchQuery(value, options = {}) {
+  const source = String(value || '').trim();
+  const fallbackTopic = String(options.fallbackTopic || '').trim();
+  const contextualFollowUp = /\b(?:he|him|his|she|her|hers|they|them|their|theirs|it|its|this|that)\b/i.test(source);
+  if (contextualFollowUp && fallbackTopic) return fallbackTopic;
+  return source
     .replace(/[?？!！.]+$/g, '')
     .replace(/[,;:]+/g, ' ')
     .replace(/\s+/g, ' ')
+    .replace(/^(?:who|what|when|where|why|how|which)['’]s\s+/i, '')
     .replace(/^(?:tell me (?:more )?about|give me (?:an )?overview of|what is the history of|history of|meaning of|overview of)\s+/i, '')
     .replace(/\s+(?:and\s+)?when\s+(?:was|is)\s+(?:he|she|they|it)\s+born$/i, '')
     .replace(/^(?:who|what|when|where|why|how|which)\s+(?:is|was|are|were|does|did|do|can|could|would|will|has|have|had)\s+/i, '')
@@ -106,16 +116,34 @@ export function rankLocalWikipediaRagRecords(records, query, limit = LOCAL_RAG_R
     .map(item => item.record);
 }
 
-export async function retrieveLocalWikipediaForStandalone(query, options = {}) {
-  if (!shouldRetrieveLocalWikipedia(query)) return [];
-  const search = options.apocalypseSearch || searchApocalypseArchives;
-  const searchQuery = localWikipediaSearchQuery(query) || query;
-  try {
-    const records = await search(searchQuery, { limit: LOCAL_RAG_SEARCH_LIMIT });
-    return rankLocalWikipediaRagRecords(records, searchQuery, LOCAL_RAG_RESULT_LIMIT);
-  } catch {
-    return [];
+export async function retrieveLocalWikipediaResultForStandalone(query, options = {}) {
+  if (!shouldRetrieveLocalWikipedia(query)) {
+    return { status: 'skipped', records: [], searchQuery: '' };
   }
+  const search = options.apocalypseSearch || searchApocalypseArchives;
+  const searchQuery = String(options.searchQuery || localWikipediaSearchQuery(query) || query).trim();
+  let reportedStatus = '';
+  try {
+    const records = await search(searchQuery, {
+      limit: LOCAL_RAG_SEARCH_LIMIT,
+      onSearchStatus(value) {
+        const status = typeof value === 'string' ? value : value?.status;
+        if (status) reportedStatus = String(status);
+      },
+    });
+    const ranked = rankLocalWikipediaRagRecords(records, searchQuery, LOCAL_RAG_RESULT_LIMIT);
+    return {
+      status: ranked.length ? 'matched' : (reportedStatus && reportedStatus !== 'matched' ? reportedStatus : 'no_match'),
+      records: ranked,
+      searchQuery,
+    };
+  } catch {
+    return { status: 'read_error', records: [], searchQuery };
+  }
+}
+
+export async function retrieveLocalWikipediaForStandalone(query, options = {}) {
+  return (await retrieveLocalWikipediaResultForStandalone(query, options)).records;
 }
 
 export function formatLocalWikipediaRag(records) {
