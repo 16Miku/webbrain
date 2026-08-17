@@ -431,9 +431,45 @@ function safeResourceKey(value) {
   return `${key}.pdf`;
 }
 
-function contentRangeTotal(value) {
-  const match = String(value || '').match(/\/([0-9]+)$/);
-  return match ? Number(match[1]) : 0;
+function parseContentRange(value) {
+  const match = String(value || '').trim().match(/^bytes\s+([0-9]+)-([0-9]+)\/([0-9]+|\*)$/i);
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = match[3] === '*' ? null : Number(match[3]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) return null;
+  if (total !== null && (!Number.isSafeInteger(total) || total <= end)) return null;
+  return { start, end, total };
+}
+
+function normalizeIfRangeValidator(value) {
+  const normalized = String(value || '').trim();
+  if (/^"[^"\r\n]{0,252}"$/.test(normalized)) return normalized;
+  if (normalized.length <= 128 && Number.isFinite(Date.parse(normalized))) return normalized;
+  return '';
+}
+
+function responseIfRangeValidator(headers) {
+  return normalizeIfRangeValidator(headers?.get?.('etag'))
+    || normalizeIfRangeValidator(headers?.get?.('last-modified'));
+}
+
+function hasMismatchedIfRangeValidator(headers, validator) {
+  const isEntityTag = validator.startsWith('"');
+  const rawResponseValidator = String(headers?.get?.(isEntityTag ? 'etag' : 'last-modified') || '').trim();
+  if (!rawResponseValidator) return false;
+  const responseValidator = normalizeIfRangeValidator(rawResponseValidator);
+  if (!responseValidator) return true;
+  return isEntityTag
+    ? responseValidator !== validator
+    : Date.parse(responseValidator) !== Date.parse(validator);
+}
+
+function isCompleteContentRange(contentRange, start) {
+  return !!contentRange
+    && contentRange.start === start
+    && contentRange.total !== null
+    && contentRange.end + 1 === contentRange.total;
 }
 
 function normalizedRecord(resource, patch = {}) {
@@ -634,12 +670,25 @@ export async function downloadEmergencyResource(resource, options = {}) {
     ? existing.storageKey
     : '';
   let offset = await storage.size(storageKey);
+  const validatorMatchesStoredBytes = existing?.storageKey === storageKey
+    && existing?.url === resolved.url;
+  let committedIfRangeValidator = validatorMatchesStoredBytes
+    ? normalizeIfRangeValidator(existing?.ifRangeValidator)
+    : '';
+  if (offset > 0 && !committedIfRangeValidator) offset = 0;
+  let pendingIfRangeValidator = committedIfRangeValidator;
   let writer;
+  let response;
+  let reader;
+  let rollbackWriter = false;
+  let pendingRepresentationStarted = false;
   let lastPersistedAt = 0;
   const persist = async patch => {
     const record = normalizedRecord(resolved, {
       ...existing,
+      url: resolved.url,
       storageKey,
+      ifRangeValidator: committedIfRangeValidator,
       ...patch,
       updatedAt: Date.now(),
     });
@@ -650,21 +699,62 @@ export async function downloadEmergencyResource(resource, options = {}) {
 
   try {
     await persist({ status: 'downloading', error: '', bytesReceived: offset });
-    const headers = offset > 0 ? { Range: `bytes=${offset}-` } : undefined;
-    const response = await fetchImpl(resolved.url, { headers, signal });
-    if (!response.ok) throw new Error(`PDF download returned HTTP ${response.status}.`);
-    if (offset > 0 && response.status !== 206) offset = 0;
+    const headers = offset > 0
+      ? { Range: `bytes=${offset}-`, 'If-Range': committedIfRangeValidator }
+      : undefined;
+    const fetchResponse = async (requestHeaders, allowRangeNotSatisfiable = false) => {
+      const nextResponse = await fetchImpl(resolved.url, { headers: requestHeaders, signal });
+      if (!nextResponse.ok && !(allowRangeNotSatisfiable && nextResponse.status === 416)) {
+        try { await nextResponse.body?.cancel?.(); } catch { /* preserve the HTTP error */ }
+        throw new Error(`PDF download returned HTTP ${nextResponse.status}.`);
+      }
+      return nextResponse;
+    };
+    response = await fetchResponse(headers, offset > 0);
+    let contentRange = parseContentRange(response.headers?.get?.('content-range'));
+    if (offset > 0 && response.status !== 200 && (
+      response.status !== 206
+      || !isCompleteContentRange(contentRange, offset)
+      || hasMismatchedIfRangeValidator(response.headers, committedIfRangeValidator)
+    )) {
+      // An unusable range cannot be appended safely. Retry once without Range
+      // before opening the writer so the durable partial remains untouched.
+      try { await response.body?.cancel?.(); } catch { /* retry the full response */ }
+      response = await fetchResponse(undefined);
+      offset = 0;
+      contentRange = parseContentRange(response.headers?.get?.('content-range'));
+    } else if (offset > 0 && response.status === 200) {
+      offset = 0;
+    }
+    if (response.status !== 200 && response.status !== 206) {
+      try { await response.body?.cancel?.(); } catch { /* preserve the status error */ }
+      throw new Error(`PDF download returned unexpected HTTP ${response.status}.`);
+    }
+    if (response.status === 206 && !isCompleteContentRange(contentRange, offset)) {
+      try { await response.body?.cancel?.(); } catch { /* preserve the range error */ }
+      throw new Error('PDF download returned an incomplete or mismatched Content-Range.');
+    }
+    if (offset === 0) pendingIfRangeValidator = responseIfRangeValidator(response.headers);
+    const expectedTotalBytes = response.status === 206 ? contentRange?.total || 0 : 0;
     const contentLength = Number(response.headers?.get?.('content-length')) || 0;
-    const totalBytes = contentRangeTotal(response.headers?.get?.('content-range')) || (contentLength ? offset + contentLength : 0);
+    const totalBytes = expectedTotalBytes || (contentLength ? offset + contentLength : 0);
     writer = await storage.createWriter(storageKey);
-    if (offset === 0) await writer.truncate(0);
+    if (offset === 0) {
+      await writer.truncate(0);
+      pendingRepresentationStarted = true;
+    }
 
-    const reader = response.body?.getReader?.();
+    reader = response.body?.getReader?.();
     if (reader) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (signal?.aborted) throw new DOMException('Download paused.', 'AbortError');
+        if (expectedTotalBytes && offset + value.byteLength > expectedTotalBytes) {
+          rollbackWriter = true;
+          try { await reader.cancel(); } catch { /* preserve the range error */ }
+          throw new Error('PDF download exceeded the declared Content-Range.');
+        }
         await writer.write(offset, value);
         offset += value.byteLength;
         const now = Date.now();
@@ -677,15 +767,30 @@ export async function downloadEmergencyResource(resource, options = {}) {
       }
     } else {
       const bytes = new Uint8Array(await response.arrayBuffer());
+      if (expectedTotalBytes && offset + bytes.byteLength > expectedTotalBytes) {
+        rollbackWriter = true;
+        throw new Error('PDF download exceeded the declared Content-Range.');
+      }
       await writer.write(offset, bytes);
       offset += bytes.byteLength;
     }
+    if (expectedTotalBytes && offset !== expectedTotalBytes) {
+      rollbackWriter = true;
+      throw new Error('PDF download size did not match the declared Content-Range.');
+    }
     await writer.close();
     writer = null;
+    committedIfRangeValidator = pendingIfRangeValidator;
 
     const file = await storage.open(storageKey);
+    if (expectedTotalBytes && file.size !== expectedTotalBytes) {
+      committedIfRangeValidator = '';
+      await storage.delete(storageKey).catch(() => {});
+      throw new Error('PDF download size did not match the declared Content-Range.');
+    }
     if ((await file.slice(0, 5).text()) !== '%PDF-') {
       await storage.delete(storageKey);
+      committedIfRangeValidator = '';
       throw new Error('The downloaded file is not a valid PDF.');
     }
     if (replacedStorageKey) await storage.delete(replacedStorageKey).catch(() => {});
@@ -697,14 +802,22 @@ export async function downloadEmergencyResource(resource, options = {}) {
       error: '',
     });
   } catch (error) {
+    try {
+      if (reader) await reader.cancel(error);
+      else await response?.body?.cancel?.(error);
+    } catch { /* preserve the download or storage error */ }
     if (writer) {
-      try {
-        // OPFS writable streams are atomic: aborting rolls the file back to its
-        // pre-download size. Commit successfully written chunks so a pause or
-        // transient network failure can resume from durable progress.
-        await writer.close();
-      } catch {
-        try { await writer.abort?.(error); } catch { /* preserve the original failure */ }
+      if (rollbackWriter) {
+        try { await writer.abort?.(error); } catch { /* never commit invalid range bytes */ }
+      } else {
+        try {
+          // Commit valid chunks so a pause or transient network failure can
+          // resume; integrity failures instead abort the atomic OPFS writer.
+          await writer.close();
+          if (pendingRepresentationStarted) committedIfRangeValidator = pendingIfRangeValidator;
+        } catch {
+          try { await writer.abort?.(error); } catch { /* preserve the original failure */ }
+        }
       }
       writer = null;
     }
