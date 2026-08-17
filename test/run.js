@@ -9448,6 +9448,34 @@ test('coord click: 10px drift = different bucket', () => {
   assert.equal(d._checkCoordClickLoop(1, 115, 200).kind, 'none');
 });
 
+test('coord click: scaled dispatch keeps loop detection in screenshot image space', async () => {
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      resolverResponse: { success: true },
+      dispatchBinding: { token: `${label}-scaled-loop-target`, frameId: 0 },
+      throughBatch: true,
+    });
+    assert.equal(observed.mappingCalls, 1, `${label}: batch click must use the stored screenshot scale`);
+    assert.deepEqual(
+      observed.fallbackParams.map(({ x, y }) => ({ x, y })),
+      [{ x: 1280, y: 720 }],
+      `${label}: browser dispatch must receive converted CSS coordinates`,
+    );
+    assert.deepEqual(
+      observed.coordChecks,
+      [[observed.tabId, 784, 441]],
+      `${label}: loop detector must receive the model's original image coordinates`,
+    );
+    assert.deepEqual(observed.batchResult, { action: 'continue' }, `${label}: click batch should complete normally`);
+  }
+});
+
 test('coord click: survives interleaved noise (the failure mode this fixes)', () => {
   // Coord clicks accumulate across interleaved noise. Nudge at 5, stop at 8.
   const d = new ConfiguredLoopDetector();
@@ -11790,6 +11818,7 @@ async function runCoordinateSemanticCase({
   cachedAxScope = null,
   chromeAttachError = null,
   dispatchBinding = null,
+  throughBatch = false,
 }) {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
@@ -11821,12 +11850,18 @@ async function runCoordinateSemanticCase({
     ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
     : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
   try {
-    const agent = new AgentClass({});
+    const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = label === 'chrome' ? 8811 : 8812;
     agent._isPdfTab = async () => false;
     agent._richTextToolbarToolBlock = async () => null;
     agent._recentSubmitClicks = null;
     agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+    const coordChecks = [];
+    const checkCoordClickLoop = agent._checkCoordClickLoop.bind(agent);
+    agent._checkCoordClickLoop = (...args) => {
+      coordChecks.push(args);
+      return checkCoordClickLoop(...args);
+    };
     if (cachedAxScope) agent._lastAxScopes.set(tabId, cachedAxScope);
     if (label === 'chrome') {
       cdpClientCh.attach = async () => {
@@ -11847,12 +11882,45 @@ async function runCoordinateSemanticCase({
       return mapScreenshotCoords(...args);
     };
     agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
-    const result = await agent.executeTool(tabId, 'click', {
+    const clickArgs = {
       x: 784,
       y: 441,
       from_screenshot: true,
-    }, null, dispatchBinding ? { dispatchBinding } : undefined);
-    return { result, mappingCalls, resolveParams, clickAxParams, fallbackParams };
+    };
+    let result = null;
+    let batchResult = null;
+    if (throughBatch) {
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._isFormValidationCandidate = () => false;
+      agent._preflightRichTextToolbarTarget = async () => ({
+        block: null,
+        probe: dispatchBinding ? { dispatchBinding } : null,
+      });
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      batchResult = await agent._executeToolBatch(
+        tabId,
+        [{ id: `${label}_scaled_click`, function: { name: 'click', arguments: JSON.stringify(clickArgs) } }],
+        [],
+        () => {},
+        { supportsVision: false },
+        null,
+        new Set(['click']),
+        1,
+      );
+    } else {
+      result = await agent.executeTool(
+        tabId,
+        'click',
+        clickArgs,
+        null,
+        dispatchBinding ? { dispatchBinding } : undefined,
+      );
+    }
+    return { tabId, result, batchResult, coordChecks, mappingCalls, resolveParams, clickAxParams, fallbackParams };
   } finally {
     cdpClientCh.attach = originalCdpAttach;
     if (globalKey === 'chrome') {
