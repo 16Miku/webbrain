@@ -57930,10 +57930,145 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use rendered text`);
     assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
     assert.match(branch, /!el\.isConnected \|\| !rect \|\| rect\.w < 1 \|\| rect\.h < 1/, `${label}: stale or zero-sized targets must fail before typing`);
-    assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
+     assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
+     assert.match(branch, /addEventListener\('submit'/, `${label}: submit handling must observe actual submit events`);
+     assert.match(branch, /outcomeUnknown: submissionOutcomeUnknown/, `${label}: unproven submissions must be surfaced as unknown`);
     assert.match(branch, /if \(!verified\) \{[\s\S]*return failure\(/, `${label}: mismatched field values must be explicit failed actions`);
     assert.match(branch, /dispatched\s*\?\s*\{ dispatched: true \}/, `${label}: post-dispatch verification failures must preserve action evidence`);
     assert.doesNotMatch(branch, /actual\.includes\(text\)/, `${label}: substring matches must not count as verified field values`);
+  }
+});
+
+test('set_field submit chooses exactly one native or page-owned commit path', async () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+    // Pure boolean helper.
+    const helperStart = source.indexOf('function _setFieldUsesNativeSubmit(');
+    const helperEnd = source.indexOf('\n  }\n', helperStart) + 4;
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: submit helper should remain independently testable`);
+    const usesNativeSubmit = vm.runInNewContext(`(${source.slice(helperStart, helperEnd)})`);
+    const formWithSubmit = { requestSubmit() {} };
+    assert.equal(usesNativeSubmit(true, false, formWithSubmit), false, `${label}: combobox never uses native submit`);
+    assert.equal(usesNativeSubmit(false, true, formWithSubmit), false, `${label}: contenteditable never uses native submit`);
+    assert.equal(usesNativeSubmit(false, false, formWithSubmit), true, `${label}: plain field in a form uses native submit`);
+    assert.equal(usesNativeSubmit(false, false, null), false, `${label}: form-less field does not use native submit`);
+    assert.equal(usesNativeSubmit(false, false, {}), false, `${label}: form without requestSubmit does not use native submit`);
+
+    // Behavioral slice of the submit block, run against stubs.
+    const blockStart = source.indexOf("const form = el.form || (el.closest && el.closest('form'));");
+    const blockEnd = source.indexOf('\n            } catch {\n              submissionOutcomeUnknown = true;', blockStart);
+    assert.ok(blockStart >= 0 && blockEnd > blockStart, `${label}: submit block not found`);
+    const block = source.slice(blockStart, blockEnd);
+    const runner = vm.runInNewContext(`async (stubs) => {
+      const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, ref_id, rect } = stubs;
+      let nativeSubmitAttempted = false;
+      let submissionOutcomeUnknown = true;
+      ${block}
+      return { nativeSubmitAttempted, submissionOutcomeUnknown };
+    }`, { setTimeout: callback => callback() });
+
+    const exercise = async ({
+      keydownCancelled = false,
+      checkValidity = () => true,
+      isCombobox = false,
+      isContentEditable = false,
+      hasForm = true,
+      pageSubmitsOnKeydown = false,
+      pageUsesDirectSubmitOnKeydown = false,
+      submitCancelled = false,
+      noValidate = false,
+    } = {}) => {
+      const calls = [];
+      const submitListeners = [];
+      const emitSubmit = () => {
+        const event = { defaultPrevented: false };
+        for (const listener of submitListeners) listener(event);
+        if (submitCancelled) event.defaultPrevented = true;
+      };
+      const form = {
+        requestSubmit: () => { calls.push('requestSubmit'); emitSubmit(); },
+        checkValidity,
+        noValidate,
+        addEventListener: (type, listener) => { if (type === 'submit') submitListeners.push(listener); },
+        removeEventListener: (type, listener) => {
+          if (type === 'submit') {
+            const index = submitListeners.indexOf(listener);
+            if (index >= 0) submitListeners.splice(index, 1);
+          }
+        },
+      };
+      const el = {
+        dispatchEvent: event => !(keydownCancelled && event.type === 'keydown' && event.key === 'Enter'),
+        form: hasForm ? form : null,
+        closest: () => null,
+        isContentEditable,
+      };
+      const dispatchKey = (type, key) => {
+        calls.push(`${type}:${key}`);
+        if (type === 'keydown' && key === 'Enter' && pageSubmitsOnKeydown) emitSubmit();
+        if (type === 'keydown' && key === 'Enter' && pageUsesDirectSubmitOnKeydown) calls.push('form.submit');
+        return el.dispatchEvent({ type, key });
+      };
+      let failureResult = null;
+      const failure = (msg, data) => { failureResult = data; return { success: false, ...data }; };
+      const result = await runner({
+        dispatchKey, el,
+        msg: { params: {} },
+        failure,
+        isCombobox,
+        _setFieldUsesNativeSubmit: usesNativeSubmit,
+        _consumeMessageRecipientDispatchBinding: () => ({ success: true }),
+        ref_id: 'ref_1',
+        rect: { x: 0, y: 0, w: 1, h: 1 },
+      });
+      return { calls, result, failureResult };
+    };
+
+    const plain = await exercise();
+    assert.deepEqual(plain.calls, ['requestSubmit'], `${label}: plain form field must use only native submission`);
+    assert.deepEqual({ ...plain.result }, { nativeSubmitAttempted: true, submissionOutcomeUnknown: false });
+    assert.equal(plain.failureResult, null, `${label}: observed native submit must not fail`);
+
+    const combobox = await exercise({ isCombobox: true, pageSubmitsOnKeydown: true });
+    assert.deepEqual(combobox.calls, [
+      'keydown:ArrowDown',
+      'keyup:ArrowDown',
+      'keydown:Enter',
+      'keypress:Enter',
+      'keyup:Enter',
+    ], `${label}: combobox must use only its page-owned keyboard path`);
+    assert.deepEqual({ ...combobox.result }, { nativeSubmitAttempted: true, submissionOutcomeUnknown: false });
+
+    // form.submit() deliberately emits no submit event. The result remains
+    // unknown, but the native fallback must still not repeat the action.
+    const directSubmit = await exercise({ isCombobox: true, pageUsesDirectSubmitOnKeydown: true });
+    assert.equal(directSubmit.calls.includes('form.submit'), true, `${label}: direct page submit was not exercised`);
+    assert.equal(directSubmit.calls.includes('requestSubmit'), false, `${label}: unobserved page action must not trigger a second submit`);
+    assert.deepEqual({ ...directSubmit.result }, { nativeSubmitAttempted: false, submissionOutcomeUnknown: true });
+
+    const contenteditable = await exercise({ isContentEditable: true, keydownCancelled: true });
+    assert.deepEqual(contenteditable.calls, ['keydown:Enter', 'keypress:Enter', 'keyup:Enter'], `${label}: contenteditable must stay on the keyboard path`);
+    assert.deepEqual({ ...contenteditable.result }, { nativeSubmitAttempted: false, submissionOutcomeUnknown: true });
+
+    // A page can cancel a submit event after observing it; that is not proof
+    // that the consequential action reached the server.
+    const cancelledSubmit = await exercise({ submitCancelled: true });
+    assert.deepEqual(cancelledSubmit.calls, ['requestSubmit'], `${label}: cancelled native submit must not dispatch Enter`);
+    assert.deepEqual({ ...cancelledSubmit.result }, { nativeSubmitAttempted: false, submissionOutcomeUnknown: true });
+
+    const noValidate = await exercise({ noValidate: true, checkValidity: () => false });
+    assert.deepEqual(noValidate.calls, ['requestSubmit'], `${label}: novalidate forms must still use native submission`);
+    assert.deepEqual({ ...noValidate.result }, { nativeSubmitAttempted: true, submissionOutcomeUnknown: false });
+
+    // Invalid form: surface the silent requestSubmit abort.
+    const invalid = await exercise({ checkValidity: () => false });
+    assert.deepEqual(invalid.calls, [], `${label}: invalid form must dispatch neither Enter nor requestSubmit`);
+    assert.equal(invalid.failureResult?.submitted, false, `${label}: invalid form must fail with submitted:false`);
+    assert.equal(invalid.failureResult?.invalid, true, `${label}: invalid form must flag invalid:true`);
   }
 });
 
