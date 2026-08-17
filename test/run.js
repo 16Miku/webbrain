@@ -22352,6 +22352,286 @@ test('Emergency Box serializes competing PDF writers and reuses the verified win
   }
 });
 
+test('Emergency PDF ignores stale search and page operations', async () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const readerSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/emergency-pdf.js`), 'utf8');
+    assert.match(
+      readerSource,
+      /textSearch\.apply\(result, isCurrent => renderPage\(result\.page, isCurrent\)\)/,
+      `${browser}: PDF search navigation does not carry latest-query ownership`,
+    );
+    assert.match(readerSource,
+      /async function renderPage\(targetPageNumber = pageNumber, isCurrent = \(\) => true\)[\s\S]*?sequence !== renderSequence \|\| !isCurrent\(\)[\s\S]*?sequence !== renderSequence \|\| !isCurrent\(\)/,
+      `${browser}: PDF rendering can commit after its search loses ownership`);
+    assert.match(readerSource,
+      /const renderCanvas = document\.createElement\('canvas'\)[\s\S]*?page\.render\(\{ canvasContext: context[\s\S]*?if \(sequence !== renderSequence \|\| !isCurrent\(\)\) return false;[\s\S]*?drawImage\(renderCanvas, 0, 0\)/,
+      `${browser}: pending PDF renders can mutate the visible canvas before ownership is confirmed`);
+    assert.match(readerSource,
+      /function requestPage\(value\) \{\s*cancelPendingResize\(\);\s*textSearch\.cancel\(\);\s*return goToPage\(value\);\s*\}/,
+      `${browser}: manual PDF navigation does not supersede a pending text search`);
+    assert.match(readerSource,
+      /function rerenderRequestedPage\(\) \{\s*cancelPendingResize\(\);\s*return goToPage\(requestedPageNumber\);\s*\}[\s\S]*?resizeTimer = setTimeout\(rerenderRequestedPage, 120\)/,
+      `${browser}: PDF view changes can silently revert a pending page request`);
+    assert.match(readerSource,
+      /if \(result\.error\) \{[\s\S]*?textSearch\.apply\(result, isCurrent => renderPage\(pageNumber, isCurrent\)\)[\s\S]*?throw result\.error/,
+      `${browser}: PDF extraction errors do not restore the committed page after cancelling a render`);
+    const { createEmergencyPdfTextSearch } = await import(pathToFileURL(path.join(
+      ROOT, `src/${browser}/src/ui/emergency-pdf-search.js`,
+    )).href);
+    const search = createEmergencyPdfTextSearch();
+    let releaseOlder;
+    const olderPage = new Promise(resolve => { releaseOlder = resolve; });
+    const older = search.find('older result', {
+      pageNumber: 1,
+      numPages: 3,
+      pageText: async page => page === 2 ? await olderPage : '',
+    });
+    const latest = await search.find('latest result', {
+      pageNumber: 1,
+      numPages: 3,
+      pageText: async page => page === 3 ? 'latest result' : '',
+    });
+    assert.equal(latest.page, 3, `${browser}: latest PDF query did not find its page`);
+    assert.equal(search.isCurrent(latest), true, `${browser}: latest PDF query was treated as stale`);
+
+    releaseOlder('older result');
+    const stale = await older;
+    assert.equal(stale.page, 0, `${browser}: older PDF query remained actionable`);
+    assert.equal(search.isCurrent(stale), false, `${browser}: older PDF query could replace the latest result`);
+
+    let rejectOlder;
+    const olderFailure = search.find('older failure', {
+      pageNumber: 1,
+      numPages: 2,
+      pageText: async () => await new Promise((_resolve, reject) => { rejectOlder = reject; }),
+    });
+    const replacement = await search.find('replacement', {
+      pageNumber: 1,
+      numPages: 2,
+      pageText: async () => 'replacement',
+    });
+    rejectOlder(new Error('stale extraction failure'));
+    const staleFailure = await olderFailure;
+    assert.equal(search.isCurrent(replacement), true, `${browser}: replacement PDF query lost ownership`);
+    assert.equal(search.isCurrent(staleFailure), false, `${browser}: older PDF error could replace current status`);
+
+    const currentFailure = await search.find('current failure', {
+      pageNumber: 1,
+      numPages: 2,
+      pageText: async () => { throw new Error('current extraction failure'); },
+    });
+    assert.match(currentFailure.error?.message || '', /current extraction failure/,
+      `${browser}: current PDF extraction error was swallowed`);
+    assert.equal(search.isCurrent(currentFailure), true, `${browser}: current PDF error lost ownership`);
+
+    const navigationResult = await search.find('navigation result', {
+      pageNumber: 1,
+      numPages: 2,
+      pageText: async () => 'navigation result',
+    });
+    let releaseNavigation;
+    const navigationGate = new Promise(resolve => { releaseNavigation = resolve; });
+    let staleNavigationCommitted = false;
+    const oldNavigation = search.apply(navigationResult, async isCurrent => {
+      await navigationGate;
+      if (isCurrent()) staleNavigationCommitted = true;
+      throw new Error('stale navigation failure');
+    });
+    const currentResult = await search.find('current result', {
+      pageNumber: 1,
+      numPages: 2,
+      pageText: async () => 'current result',
+    });
+    releaseNavigation();
+    assert.equal(await oldNavigation, false, `${browser}: stale PDF navigation remained actionable`);
+    assert.equal(staleNavigationCommitted, false, `${browser}: stale PDF navigation committed UI state`);
+    assert.equal(search.isCurrent(currentResult), true, `${browser}: current query lost navigation ownership`);
+    assert.equal(await search.apply(currentResult, async () => false), false,
+      `${browser}: cancelled PDF render was reported as applied`);
+
+    let releaseCancelledSearch;
+    const cancelledSearch = search.find('cancelled by navigation', {
+      pageNumber: 1,
+      numPages: 2,
+      pageText: async () => await new Promise(resolve => { releaseCancelledSearch = resolve; }),
+    });
+    search.cancel();
+    releaseCancelledSearch('cancelled by navigation');
+    const cancelledResult = await cancelledSearch;
+    assert.equal(search.isCurrent(cancelledResult), false,
+      `${browser}: manual navigation did not invalidate the pending PDF search`);
+
+    const runtimeStart = readerSource.indexOf('function updatePageControls()');
+    const runtimeEnd = readerSource.indexOf('\n\nasync function initialize(', runtimeStart);
+    assert.notEqual(runtimeStart, -1, `${browser}: PDF page controls are missing`);
+    assert.notEqual(runtimeEnd, -1, `${browser}: PDF page runtime boundary is missing`);
+    const createPageRuntime = Function('state', `
+      const elements = state.elements;
+      const document = state.document;
+      const textSearch = state.textSearch;
+      const t = key => key;
+      let pdf = state.pdf;
+      let pageNumber = 1;
+      let requestedPageNumber = 1;
+      let scale = 1;
+      let fitWidth = false;
+      let renderTask = null;
+      let renderSequence = 0;
+      let pageRequestSequence = 0;
+      let resizeTimer = null;
+      const textCache = new Map();
+      function setStatus(message, kind = '') {
+        state.status = { message, kind };
+      }
+      ${readerSource.slice(runtimeStart, runtimeEnd)}
+      return {
+        requestPage,
+        rerenderRequestedPage,
+        findText,
+        snapshot() { return { pageNumber, requestedPageNumber, renderSequence, pageRequestSequence }; },
+      };
+    `);
+    const renderTasks = [];
+    const visibleCanvas = {
+      width: 111,
+      height: 222,
+      hidden: false,
+      marker: 'page 1',
+      style: {},
+      getContext() {
+        return { drawImage: source => { this.marker = source.marker; } };
+      },
+      setAttribute() {},
+    };
+    const elements = {
+      'page-number': { value: '1' },
+      'page-count': { textContent: '2' },
+      'previous-page': { disabled: true },
+      'next-page': { disabled: false },
+      'document-stage': { clientWidth: 800, scrollTo() {} },
+      'reader-message': { hidden: true },
+      'pdf-canvas': visibleCanvas,
+    };
+    const runtimeTextSearch = createEmergencyPdfTextSearch();
+    const pageRuntimeState = {
+      searchCancellations: 0,
+      elements,
+      textSearch: {
+        find: (...args) => runtimeTextSearch.find(...args),
+        apply: (...args) => runtimeTextSearch.apply(...args),
+        isCurrent: (...args) => runtimeTextSearch.isCurrent(...args),
+        cancel() {
+          pageRuntimeState.searchCancellations += 1;
+          runtimeTextSearch.cancel();
+        },
+      },
+      document: {
+        createElement(tagName) {
+          assert.equal(tagName, 'canvas', `${browser}: PDF renderer created an unexpected element`);
+          const canvas = {
+            width: 0,
+            height: 0,
+            marker: '',
+            getContext() { return { canvas }; },
+          };
+          return canvas;
+        },
+      },
+      pdf: {
+        numPages: 3,
+        async getPage(number) {
+          return {
+            getViewport: ({ scale: viewportScale }) => ({ width: 100 * viewportScale, height: 200 * viewportScale }),
+            async getTextContent() {
+              return { items: [{ str: number === 2 ? 'search needle' : '' }] };
+            },
+            render({ canvasContext }) {
+              let release;
+              let fail;
+              const promise = new Promise((resolve, reject) => {
+                release = () => {
+                  canvasContext.canvas.marker = `page ${number}`;
+                  resolve();
+                };
+                fail = reject;
+              });
+              const task = {
+                cancelled: false,
+                cancel() { this.cancelled = true; },
+                promise,
+                release,
+                fail,
+              };
+              renderTasks.push(task);
+              return task;
+            },
+          };
+        },
+      },
+    };
+    const pageRuntime = createPageRuntime(pageRuntimeState);
+    const forward = pageRuntime.requestPage(2);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(renderTasks.length, 1, `${browser}: deferred next-page render did not start`);
+    assert.equal(visibleCanvas.marker, 'page 1', `${browser}: pending render changed visible PDF pixels`);
+    assert.equal(visibleCanvas.width, 111, `${browser}: pending render resized the visible PDF canvas`);
+
+    const resized = pageRuntime.rerenderRequestedPage();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(renderTasks.length, 2, `${browser}: requested-page resize render did not start`);
+    assert.equal(renderTasks[0].cancelled, true, `${browser}: resize did not cancel the superseded page render`);
+    renderTasks[0].release();
+    assert.equal(await forward, false, `${browser}: pre-resize page render still committed`);
+    assert.equal(pageRuntime.snapshot().requestedPageNumber, 2,
+      `${browser}: pre-resize render reset the current requested page`);
+    assert.equal(visibleCanvas.marker, 'page 1', `${browser}: pre-resize render changed visible PDF pixels`);
+    renderTasks[1].release();
+    assert.equal(await resized, true, `${browser}: resize did not finish the pending page request`);
+    assert.equal(pageRuntime.snapshot().pageNumber, 2,
+      `${browser}: resize silently reverted the pending page request`);
+    assert.equal(visibleCanvas.marker, 'page 2', `${browser}: resized page request did not commit its pixels`);
+
+    const reset = pageRuntime.requestPage(1);
+    await new Promise(resolve => setImmediate(resolve));
+    renderTasks[2].release();
+    assert.equal(await reset, true, `${browser}: PDF runtime could not reset the committed page`);
+
+    const nextThenPrevious = pageRuntime.requestPage(2);
+    await new Promise(resolve => setImmediate(resolve));
+    const back = pageRuntime.requestPage(1);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(renderTasks.length, 5, `${browser}: committed-page restoration render did not start`);
+    assert.equal(renderTasks[3].cancelled, true,
+      `${browser}: returning to the current page did not cancel stale rendering`);
+    assert.equal(visibleCanvas.marker, 'page 1', `${browser}: restoration changed pixels before render completion`);
+    renderTasks[4].release();
+    assert.equal(await back, true, `${browser}: returning to the committed page was not accepted`);
+    renderTasks[3].release();
+    assert.equal(await nextThenPrevious, false, `${browser}: superseded next-page render still committed`);
+    assert.equal(pageRuntime.snapshot().pageNumber, 1,
+      `${browser}: quick next-then-previous navigation ended on the stale page`);
+    assert.equal(pageRuntime.snapshot().requestedPageNumber, 1,
+      `${browser}: requested PDF page reverted to the stale render`);
+    assert.equal(visibleCanvas.marker, 'page 1', `${browser}: stale render replaced the committed PDF pixels`);
+    assert.equal(visibleCanvas.width, 100, `${browser}: committed-page restoration used the wrong canvas size`);
+    assert.equal(pageRuntimeState.searchCancellations, 4,
+      `${browser}: manual PDF navigation did not cancel text-search ownership`);
+
+    const failedSearch = pageRuntime.findText('needle');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(renderTasks.length, 6, `${browser}: search-result render did not start`);
+    renderTasks[5].fail(new Error('search result render failed'));
+    await assert.rejects(failedSearch, /search result render failed/,
+      `${browser}: current search-result render failure was swallowed`);
+    assert.equal(pageRuntime.snapshot().pageNumber, 1,
+      `${browser}: failed search-result render changed the committed page`);
+    assert.equal(pageRuntime.snapshot().requestedPageNumber, 1,
+      `${browser}: failed search-result render left a stale requested page`);
+    assert.equal(visibleCanvas.marker, 'page 1',
+      `${browser}: failed search-result render changed the committed PDF pixels`);
+  }
+});
+
 test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
   const files = [
     'src/agent/apocalypse-mode.js',
@@ -22364,6 +22644,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/ui/emergency-pdf.html',
     'src/ui/emergency-pdf.css',
     'src/ui/emergency-pdf.js',
+    'src/ui/emergency-pdf-search.js',
     'src/ui/emergency-communication.html',
     'src/ui/emergency-communication.css',
     'src/ui/emergency-communication.js',
