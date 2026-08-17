@@ -34,7 +34,7 @@ import {
 } from '../agent/capsolver-config.js';
 import {
   detectedCompatibilityPreset,
-  isNewOpenAIContractModel,
+  isNewOpenAIContractConfig,
   normalizeOpenAICompatibleBaseUrl,
   normalizeProviderCompatibility,
   parseProviderExtraBodyJson,
@@ -1932,10 +1932,7 @@ function prettyCompatibilityValue(value) {
 
 function automaticTokenField(config) {
   if (shouldUseOpenAIResponsesApi(config)) return 'max_output_tokens';
-  const isNewOfficialContract = config.type === 'openai'
-    && config.category !== 'local'
-    && String(config.providerName || '').toLowerCase() !== 'lmstudio'
-    && isNewOpenAIContractModel(config.model);
+  const isNewOfficialContract = config.type === 'openai' && isNewOpenAIContractConfig(config);
   return isNewOfficialContract ? 'max_completion_tokens' : 'max_tokens';
 }
 

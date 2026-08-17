@@ -164,6 +164,15 @@ export function isNewOpenAIContractModel(model) {
   return /(?:^|\/)(?:gpt-5|o1|o3|o4)(?:$|[-_.\/])/.test(m);
 }
 
+export function isNewOpenAIContractConfig(config = {}) {
+  const providerName = String(config.providerName || '').trim().toLowerCase();
+  if (config.category === 'local' || providerName === 'lmstudio') return false;
+  // Only OpenRouter is covered by the routed-model contract table. Other
+  // compatible endpoints may use slash-prefixed ids with legacy fields.
+  if (String(config.model || '').includes('/') && providerName !== 'openrouter') return false;
+  return isNewOpenAIContractModel(config.model);
+}
+
 export function supportsOpenAIAskStreaming(config = {}) {
   if (!isOfficialOpenAIConfig(config)) return false;
 
