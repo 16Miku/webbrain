@@ -150,12 +150,17 @@ export function shouldUseOpenAIResponsesApi(config = {}) {
  * Whether a model id uses the newer OpenAI wire contract (max_completion_tokens,
  * no non-default temperature) — the gpt-5 line and the o-series. gpt-4.1 is
  * deliberately excluded: it accepts both parameter sets, so it stays on the
- * legacy contract and keeps explicit temperatures. Matches at the start or
- * after a router prefix (`openai/o1`), with a trailing boundary so look-alikes
- * like `gpt-4o`, `gpt-4.1`, or `o365-assistant` never match.
+ * legacy contract and keeps explicit temperatures. OpenAI's Responses-only
+ * Pro families also stay legacy when routed through a Chat Completions
+ * provider: those routed endpoints advertise `max_tokens`, while direct
+ * OpenAI calls are selected as Responses before this helper is consulted.
+ * Matches at the start or after a router prefix (`openai/o1`), with a trailing
+ * boundary so look-alikes like `gpt-4o`, `gpt-4.1`, or `o365-assistant` never
+ * match.
  */
 export function isNewOpenAIContractModel(model) {
   const m = String(model || '').toLowerCase();
+  if (/(?:^|\/)gpt-5(?:\.(?:2|4|5))?-pro(?:$|[-_.\/:])/.test(m)) return false;
   return /(?:^|\/)(?:gpt-5|o1|o3|o4)(?:$|[-_.\/])/.test(m);
 }
 
