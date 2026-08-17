@@ -2303,7 +2303,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'AIza...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemini-3.1-pro',
-          suggestions: ['gemini-3.1-pro', 'gemini-3-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'] },
+          suggestions: ['gemini-3.1-pro', 'gemini-3.1-flash', 'gemini-3-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://generativelanguage.googleapis.com/v1beta/openai' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2323,7 +2323,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'API key' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'mistral-medium-3.5',
-          suggestions: ['mistral-medium-3.5', 'mistral-small-4', 'codestral-25.08', 'devstral-medium'] },
+          suggestions: ['mistral-medium-3.5', 'mistral-large-latest', 'mistral-small-4', 'codestral-25.08', 'devstral-medium'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.mistral.ai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2350,7 +2350,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'nvapi-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'nvidia/llama-3.3-nemotron-super-49b',
-          suggestions: ['nvidia/llama-3.3-nemotron-super-49b', 'nvidia/llama-3.1-nemotron-70b-instruct', 'nvidia/nemotron-nano-9b-v2', 'meta/llama-3.3-70b-instruct', 'deepseek-ai/deepseek-r1'] },
+          suggestions: ['nvidia/llama-3.3-nemotron-super-49b', 'nvidia/llama-3.1-nemotron-70b-instruct', 'nvidia/nemotron-nano-9b-v2', 'meta/llama-3.3-70b-instruct', 'meta/llama-3.1-8b-instruct', 'deepseek-ai/deepseek-r1'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://integrate.api.nvidia.com/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
