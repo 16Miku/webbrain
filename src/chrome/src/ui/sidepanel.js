@@ -10708,10 +10708,7 @@ function dismissSelectionAskAction() {
 function positionSelectionAskAction(range) {
   if (!selectionAskActionEl || !range) return;
   const rect = range.getBoundingClientRect();
-  if (!rect.width && !rect.height) {
-    dismissSelectionAskAction();
-    return;
-  }
+  if (!rect.width && !rect.height) return;
   const gap = 6;
   const actionRect = selectionAskActionEl.getBoundingClientRect();
   const left = Math.min(
@@ -10719,9 +10716,13 @@ function positionSelectionAskAction(range) {
     Math.max(8, window.innerWidth - actionRect.width - 8),
   );
   const belowTop = rect.bottom + gap;
-  const top = belowTop + actionRect.height <= window.innerHeight - 8
+  const preferredTop = belowTop + actionRect.height <= window.innerHeight - 8
     ? belowTop
     : Math.max(8, rect.top - actionRect.height - gap);
+  const top = Math.min(
+    Math.max(8, window.innerHeight - actionRect.height - 8),
+    preferredTop,
+  );
   selectionAskActionEl.style.left = `${left}px`;
   selectionAskActionEl.style.top = `${top}px`;
 }
@@ -11761,6 +11762,11 @@ async function handleGlobalKeydown(e) {
   if (e.key === 'Escape') {
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
     if (slashMenuOpen) return;
+    if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {
+      e.preventDefault();
+      dismissSelectionAskAction();
+      return;
+    }
     if (isProcessing) {
       e.preventDefault();
       abortRun();

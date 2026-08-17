@@ -1178,6 +1178,8 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /document\.addEventListener\('selectionchange', refreshSelectionAskAction\)/);
     assert.match(source, /document\.addEventListener\('pointerdown', \(event\) => \{/);
     assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
+    assert.match(source, /if \(!rect\.width && !rect\.height\) return;/);
+    assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(source, /async function switchToTab\([\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(source, /async function renderClearedConversationForTab\([\s\S]*?dismissSelectionAskAction\(\);/);
   }
