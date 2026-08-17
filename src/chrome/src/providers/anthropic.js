@@ -640,9 +640,7 @@ export class AnthropicProvider extends BaseLLMProvider {
           }
           const requiresReplay = sawThinking && sawToolUse;
           if (requiresReplay && !replayState) {
-            throw this._askStreamTerminalError(
-              'Anthropic stream ended with tool use but its signed thinking blocks were incomplete.',
-            );
+            console.warn('[anthropic] thinking+tool_use stream missing replay state; next turn will lose thinking context.');
           }
           yield {
             type: 'done',

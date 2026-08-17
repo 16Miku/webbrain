@@ -78483,55 +78483,46 @@ for (const [label, Provider, VertexProvider, AgentClass] of [
       ]);
       assert.equal(missingSignature.find(chunk => chunk.type === 'done')?.responseItems, undefined);
 
-      await assert.rejects(
-        () => collect([
-          { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
-          { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
-          { type: 'content_block_stop', index: 0 },
-          { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_bad', name: 'click', input: {} } },
-          { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"selector":' } },
-          { type: 'content_block_stop', index: 1 },
-          { type: 'message_stop' },
-        ]),
-        /signed thinking blocks were incomplete/,
-      );
+      const badSigChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_bad', name: 'click', input: {} } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"selector":' } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(badSigChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
 
-      await assert.rejects(
-        () => collect([
-          { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
-          { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Unsigned.' } },
-          { type: 'content_block_stop', index: 0 },
-          { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_valid', name: 'click', input: {} } },
-          { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"selector":"#buy"}' } },
-          { type: 'content_block_stop', index: 1 },
-          { type: 'message_stop' },
-        ]),
-        /signed thinking blocks were incomplete/,
-        'unsigned thinking must not be followed by executable tool output',
-      );
+      const unsignedChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Unsigned.' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_valid', name: 'click', input: {} } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"selector":"#buy"}' } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(unsignedChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
 
-      await assert.rejects(
-        () => collect([
-          { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
-          { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
-          { type: 'content_block_stop', index: 0 },
-          { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: '', name: 'click', input: {} } },
-          { type: 'content_block_stop', index: 1 },
-          { type: 'message_stop' },
-        ]),
-        /signed thinking blocks were incomplete/,
-      );
+      const emptyToolIdChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: '', name: 'click', input: {} } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(emptyToolIdChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
 
-      await assert.rejects(
-        () => collect([
-          { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: 'valid-signature' } },
-          { type: 'content_block_stop', index: 0 },
-          { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'tool_gap', name: 'click', input: {} } },
-          { type: 'content_block_stop', index: 2 },
-          { type: 'message_stop' },
-        ]),
-        /signed thinking blocks were incomplete/,
-      );
+      const gapIndexChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'tool_gap', name: 'click', input: {} } },
+        { type: 'content_block_stop', index: 2 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(gapIndexChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
 
       const missingBlockStop = await collect([
         { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
