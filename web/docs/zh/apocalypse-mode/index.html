@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>末日模式 — WebBrain 用户指南</title><meta name="description" content="为 WebBrain 准备离线使用环境，包含本地 WebGPU 文本和视觉模型、维基百科存档，以及实用文档应急箱。"><link rel="canonical" href="https://webbrain.one/docs/zh/apocalypse-mode/"><link rel="alternate" hreflang="en" href="https://webbrain.one/docs/apocalypse-mode/"><link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/apocalypse-mode/"><link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/apocalypse-mode/"><link rel="icon" href="/favicon.png"><script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script><link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+</head>
+<body class="doc-page">
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><img src="/logo-github.png" alt=""><span>WebBrain</span><span class="brand-docs">用户指南</span></a><nav class="top-nav" aria-label="主导航"><a href="/">首页</a><a href="/docs/zh/" aria-current="page">文档</a><a href="/blog/">博客</a><a href="https://github.com/webbrain-one/webbrain">GitHub</a></nav><div class="header-tools"><a class="lang-switch" href="/docs/apocalypse-mode/" aria-label="Read in English"><span>EN</span><span class="active">中文</span></a><button class="icon-button" type="button" data-theme-toggle aria-label="切换主题">☀</button><button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="打开文档菜单">☰</button></div></div></header>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" aria-label="文档目录"><div class="sidebar-group"><div class="sidebar-label">从这里开始</div><nav><a href="/docs/zh/">概览</a><a href="/docs/zh/faq/">常见问题</a></nav></div><div class="sidebar-group"><div class="sidebar-label">使用 WebBrain</div><nav><a href="/docs/zh/settings/">设置说明</a><a href="/docs/zh/providers/">提供商与模型</a><a href="/docs/zh/safety/">模式、安全与隐私</a><a href="/docs/zh/apocalypse-mode/" aria-current="page">末日模式</a><a href="/docs/zh/formats/">导出与工作流</a></nav></div><div class="sidebar-group"><div class="sidebar-label">面向开发者</div><nav><a href="https://github.com/webbrain-one/webbrain">源代码 ↗</a></nav></div><div class="sidebar-group"><div class="sidebar-label">社区</div><nav><a href="https://discord.gg/cgC325ssfw">Discord 支持</a></nav></div></aside>
+    <main class="doc-main" id="main">
+      <div class="breadcrumb"><a href="/docs/zh/">文档</a> / 末日模式</div>
+      <section class="doc-hero"><div class="eyebrow">WebBrain，当互联网不可用时也能使用</div><h1>提前准备好本地智能和实用知识。</h1><p class="lede">末日模式在你的浏览器中组装一套离线就绪的工具包：在支持的 Chromium 系统上运行设备端文本和视觉模型，可搜索的维基百科存档，以及包含书籍和现场参考资料的应急箱。</p><div class="mode-strip" aria-label="Chromium 末日模式设置中的三个核心要素"><div class="mode ask"><strong>文本模型</strong><span>1.55 GB · 本地 WebGPU 推理</span></div><div class="mode act"><strong>视觉模型</strong><span>约 770 MB · 截图保留在本地</span></div><div class="mode dev"><strong>维基百科</strong><span>简易英语版 · 可离线搜索</span></div></div></section>
+
+      <section class="doc-section" id="meaning"><h2>"离线"的含义</h2><p>首次下载需要互联网连接。模型文件、维基百科存档和所选文档存储后，其核心推理、搜索和阅读路径从浏览器配置文件本地运行。WebGPU 在设备上执行模型推理；下载的截图不需要远程视觉服务。</p><div class="callout tip"><strong class="callout-title">在平常的日子里准备</strong><p>在电力、网络和时间都可预测时进行大文件下载和存储检查要容易得多。启用模式，让每个必要项目达到<strong>就绪</strong>状态，并在将工具包视为可用之前测试阅读器。</p></div><p>末日模式不会让每个网站或 WebBrain 任务都能离线工作。实时页面、托管模型提供商、当前新闻以及你未下载的任何资源仍需要网络。它准备了一个自包含的本地核心；它不是互联网的副本。</p></section>
+
+      <section class="doc-section" id="browsers"><h2>Chromium 和 Firefox 版本有所不同</h2><div class="table-wrap"><table><thead><tr><th>版本</th><th>启用模式后准备的内容</th><th>就绪与应急箱</th></tr></thead><tbody><tr><td>Chromium，具有兼容的 WebGPU 硬件</td><td>启动固定的本地文本模型、本地视觉模型和最新的简易英语纯文本维基百科存档。模型传输共享一个本地工作者并按顺序运行。</td><td><strong>就绪</strong>要求三个核心要素全部完成。应急箱在它们完成后解锁。</td></tr><tr><td>Firefox</td><td>提供离线维基百科库、阅读器和应急箱。不显示仅限 Chromium 的 WebGPU 文本和视觉下载栈。</td><td>在不假装 Firefox 拥有 Chromium WebGPU 运行时的情况下，存档和文档控件仍然可用。</td></tr></tbody></table></div><p>如果文本和视觉卡片没有显示，请首先确认你使用的是具有 WebGPU 支持的硬件和浏览器版本上的 Chromium 版本。</p></section>
+
+      <section class="doc-section" id="setup"><h2>构建基础工具包</h2><ol class="step-list"><li><strong>打开末日模式。</strong>使用设置标题中的核符号末日模式控件。</li><li><strong>检查存储和连接。</strong>Chromium 基础套件包括 1.55 GB 文本模型、约 770 MB 视觉模型和当前的简易英语维基百科存档。为临时下载状态和应急箱资源留出额外空间。</li><li><strong>开启模式。</strong>在支持的 Chromium 系统上，WebBrain 先启动文本模型，将视觉模型排队在其后，并自动启动所需的维基百科存档。</li><li><strong>保持浏览器打开以进行模型下载。</strong>你可以切换标签页或关闭设置，但在本地模型传输继续期间必须保持 Chrome 打开。跟踪每个项目的进度，不要仅依赖总存储数字。</li><li><strong>解决任何未就绪的项目。</strong>恢复暂停的项目、重试错误或释放存储空间。移除已完成的模型会删除其缓存文件，需要在离线使用前再次下载。</li><li><strong>测试工具包。</strong>使用视觉测试，打开维基百科阅读器，搜索一篇文章，并打开至少一个已安装的 PDF。下载不等于计划，除非你已证明可以阅读它。</li></ol></section>
+
+      <section class="doc-section" id="models"><h2>本地模型的功能</h2><div class="card-grid"><div class="card"><span class="tab-key">文本 · 1.55 GB</span><h3>LFM2.5 2.6B</h3><p>WebBrain 下载 <code>LiquidAI/LFM2.5-2.6B-ONNX</code> 的 <code>q4f16</code> 形式，用于通过 WebGPU 进行本地文本生成。就绪后在独立聊天中使用核控件。</p></div><div class="card"><span class="tab-key">视觉 · 约 770 MB</span><h3>LFM2.5-VL-450M</h3><p>本地视觉层在设备上解读截图，将视觉证据转化为上下文，无需将图像发送到远程视觉提供商。</p></div></div><div class="callout warning"><strong class="callout-title">末日模式不会替代你选择的提供商</strong><p>下载的文本模型是独立聊天的运行时选项。启用或下载它不会静默更改普通 WebBrain 对话使用的提供商。</p></div></section>
+
+      <section class="doc-section" id="wikipedia"><h2>保留你可以真正搜索的维基百科</h2><p>基础设置下载最新的紧凑型纯文本简易英语存档。当你需要其他语言、更完整版本或包含图像的版本时，打开<strong>管理存档</strong>。WebBrain 会在安装前解析存档的当前版本、日期和确切大小。</p><div class="table-wrap"><table><thead><tr><th>选项</th><th>权衡</th><th>适用场景</th></tr></thead><tbody><tr><td>纯文本</td><td>更小、下载更快；不含完整图像负载的文章文本。</td><td>紧凑参考、本地事实检索和广泛的语言覆盖。</td></tr><tr><td>包含图像</td><td>使用大量存储空间。</td><td>图表、地图和照片很重要的文章。</td></tr><tr><td>导入 <code>.zim</code> 文件</td><td>你管理源文件，重启后可能需要重新授权访问。</td><td>现有的 Kiwix 集合或在机器之间移动的存档。</td></tr></tbody></table></div><p>维基百科阅读器搜索文章标题并从本地存储打开匹配的文章。本地独立聊天可以从已安装的存档中检索紧凑的、有出处的段落。当你替换必需的简易英语存档时，WebBrain 会保留旧副本，直到替换下载并验证成功。</p></section>
+
+      <section class="doc-section" id="emergency-box"><h2>有目的地填充应急箱</h2><p>应急箱是一个精选的本地书架，而非自动声称每份文档都是必要的。它将离线维基百科版本、OpenStax 教科书、应急健康参考和现场手册分组。搜索或筛选目录，然后仅下载适合你可能需求和可用存储空间的内容。</p><ul><li>单个 PDF 可以下载、暂停、恢复、阅读和移除。</li><li><strong>下载全部</strong>一次处理一个资源，这样大传输不会相互竞争。</li><li>PDF 写入浏览器管理的存储。在 PDF 传输期间保持应急箱窗口打开；暂停的进度可以恢复。</li><li>检查发布日期。医疗指导会过时，专业护理应在可用时使用。</li></ul><div class="callout danger"><strong class="callout-title">图书馆不等于应急培训</strong><p>练习打开材料，保持普通应急物资，遵循当地主管部门和合格专业人员的指导。末日模式是信息工具，不能替代医疗、安全或疏散专业知识。</p></div></section>
+
+      <section class="doc-section" id="storage"><h2>了解工具包的存储位置</h2><p>下载的存档和 PDF 位于浏览器配置文件管理的存储中；模型权重位于浏览器的本地缓存中。清除站点或扩展存储、删除浏览器配置文件、卸载时删除数据或使用清理工具可能会擦除工具包。在末日模式内移除资源会有意释放该存储。</p><ul><li>禁用末日模式会暂停未完成的任务，但保留已安装的存档。</li><li>停止或移除必需的基本维基百科下载会阻止立即静默重新下载；在准备就绪时显式启动它。</li><li>保持浏览器配置文件可用，并定期打开工具包以验证数据仍可读。</li><li>为了在一台设备之外的弹性，将独立授权的源文件或 Kiwix 存档保存在你控制的存储上（如果实际可行）。</li></ul></section>
+
+      <section class="doc-section" id="troubleshoot"><h2>当工具包未就绪时</h2><div class="table-wrap"><table><thead><tr><th>你看到的</th><th>可能原因</th><th>处理方法</th></tr></thead><tbody><tr><td>没有文本或视觉卡片</td><td>Firefox、不支持的 Chromium 环境，或 WebGPU 硬件不可用。</td><td>使用显示的存档和应急箱功能，或在兼容的 Chromium 系统上重试。</td></tr><tr><td>总体状态显示未就绪</td><td>至少一个必需的 Chromium 项目处于等待、下载、暂停或失败状态。</td><td>检查三个核心要素中每个的状态；恢复或重试未完成的那个。</td></tr><tr><td>应急箱已锁定</td><td>Chromium 基础设置尚未达到总体就绪。</td><td>完成文本、视觉和简易英语维基百科下载。</td></tr><tr><td>下载失败或停滞</td><td>浏览器关闭、连接中断、源不可用或配额不足。</td><td>保持浏览器打开，释放空间，然后恢复或重试。现有的已验证进度设计为能承受重启。</td></tr><tr><td>导入的存档无法读取</td><td>浏览器失去了对用户拥有的文件的权限。</td><td>重新授权或重新导入 <code>.zim</code> 文件。</td></tr><tr><td>普通聊天仍使用旧提供商</td><td>这是预期行为。</td><td>在独立聊天中使用核 WebGPU 控件；本地下载不会更改全局提供商选择。</td></tr></tbody></table></div></section>
+
+      <section class="doc-section" id="checklist"><h2>值得重复的就绪检查</h2><ol><li>每个必需项目都显示就绪。</li><li>独立本地文本聊天无需网络即可回答。</li><li>视觉测试在设备上完成。</li><li>维基百科搜索打开完整的本地文章。</li><li>至少一个下载的 PDF 在阅读器中打开。</li><li>浏览器配置文件仍有充裕的可用存储空间。</li><li>你知道哪些功能仍依赖实时网站或托管提供商。</li></ol><p>在浏览器迁移、存储清理、大型更新或长时间未使用后重复此检查。</p></section>
+
+      <nav class="next-links" aria-label="后续指南"><a href="/blog/why-we-built-apocalypse-mode/"><span>为什么构建它</span>阅读末日模式文章 →</a><a href="/docs/zh/safety/"><span>保持边界清晰</span>模式、安全与隐私 →</a></nav>
+    </main>
+    <aside class="on-this-page" aria-label="本页内容"><h2>本页内容</h2><a href="#meaning">离线的含义</a><a href="#browsers">浏览器差异</a><a href="#setup">基础设置</a><a href="#models">本地模型</a><a href="#wikipedia">维基百科</a><a href="#emergency-box">应急箱</a><a href="#storage">存储</a><a href="#troubleshoot">排查问题</a><a href="#checklist">就绪检查</a></aside>
+  </div>
+  <footer class="site-footer"><div class="footer-inner"><span>WebBrain 用户指南</span><div class="footer-links"><a href="/privacy">隐私</a><a href="https://github.com/webbrain-one/webbrain/issues">报告问题</a></div></div></footer><script src="/docs/assets/docs.js?v=20260809"></script>
+</body></html>

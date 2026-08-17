@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>在 MCP 中使用 WebBrain — WebBrain 用户指南</title>
+  <meta name="description" content="将 Codex、Claude Code、Cursor、OpenClaw、OpenCode 或其他 stdio MCP 客户端连接到你已登录的 Chromium 浏览器中的 WebBrain，然后安全地运行、提取、监控、澄清和停止浏览器任务。">
+  <link rel="canonical" href="https://webbrain.one/docs/zh/mcp/">
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/docs/mcp/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/mcp/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/mcp/">
+  <link rel="icon" href="/favicon.png">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script>
+  <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+</head>
+<body class="doc-page">
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><img src="/logo-github.png" alt=""><span>WebBrain</span><span class="brand-docs">用户指南</span></a><nav class="top-nav" aria-label="主导航"><a href="/">首页</a><a href="/docs/zh/" aria-current="page">文档</a><a href="/blog/">博客</a><a href="https://github.com/webbrain-one/webbrain">GitHub</a></nav><div class="header-tools"><a class="lang-switch" href="/docs/mcp/" aria-label="Read in English"><span>EN</span><span class="active">中文</span></a><button class="icon-button" type="button" data-theme-toggle aria-label="切换主题">☀</button><button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="打开文档菜单">☰</button></div></div></header>
+
+  <div class="docs-shell">
+    <aside class="docs-sidebar" aria-label="文档目录"><div class="sidebar-group"><div class="sidebar-label">从这里开始</div><nav><a href="/docs/zh/">概览</a><a href="/docs/zh/faq/">常见问题</a></nav></div><div class="sidebar-group"><div class="sidebar-label">使用 WebBrain</div><nav><a href="/docs/zh/settings/">设置说明</a><a href="/docs/zh/providers/">提供商与模型</a><a href="/docs/zh/safety/">模式、安全与隐私</a><a href="/docs/zh/formats/">导出与工作流</a><a href="/docs/zh/mcp/" aria-current="page">MCP 服务器</a><a href="/docs/zh/lm-studio/">LM Studio 插件</a><a href="/docs/zh/ollama/">Ollama</a></nav></div><div class="sidebar-group"><div class="sidebar-label">MCP 源码</div><nav><a href="https://github.com/webbrain-one/webbrain/tree/main/mcp-server">服务端包 ↗</a><a href="https://www.npmjs.com/package/@webbrain/mcp-server">npm 包 ↗</a><a href="/blog/mcp-server-introduction">发布公告 ↗</a></nav></div><div class="sidebar-group"><div class="sidebar-label">社区</div><nav><a href="https://discord.gg/cgC325ssfw">Discord 支持</a></nav></div></aside>
+
+    <main class="doc-main" id="main">
+      <div class="breadcrumb"><a href="/docs/zh/">文档</a> / MCP 服务器</div>
+      <section class="doc-hero"><div class="eyebrow">真实会话，任务级控制</div><h1>让你的编程代理使用你已登录的浏览器。</h1><p class="lede">WebBrain MCP 将 Codex、Claude Code、Cursor、OpenClaw、OpenCode 和其他 stdio MCP 客户端连接到你的真实 Chromium 配置文件。完成一次性设置后，只需用自然语言描述浏览器任务。你的编程代理会选择并调用适当的 WebBrain 工具；WebBrain 在浏览器内执行目标，使用与侧边栏相同的模式、来源权限和可见停止控制。</p><div class="callout tip"><strong class="callout-title">你不需要手动输入 MCP 函数调用</strong><p>说"使用 WebBrain 总结我浏览器中已打开的仪表盘"或"使用 WebBrain 的 Act 模式更新此表单"。你的 MCP 客户端会将该请求翻译成工具调用，并在同一对话中返回结果。本指南后面以函数形式展示的示例主要供调试或客户端开发者参考。</p></div><div class="callout warning"><strong class="callout-title">仅限 Chromium</strong><p>桥接需要扩展的离屏文档，因此请使用 Chrome、Edge、Brave、Opera 或 Vivaldi。Firefox 扩展仍然可以独立使用，但无法连接到此 MCP 服务器。</p></div></section>
+
+      <section class="doc-section" id="architecture"><div class="eyebrow">完整路径</div><h2>从哪里启动</h2><p>你的 MCP 客户端通过 stdio 启动 npm 包作为本地子进程。该进程仅监听 <code>127.0.0.1:17374</code>。扩展拨号连接到它，然后在选定的浏览器标签页中通过 WebBrain 的代理循环执行每个任务。</p><div class="bridge-map" role="img" aria-label="编程代理通过 MCP stdio 连接到本地 WebBrain 服务器，通过本地回环 WebSocket 连接到已登录的 Chromium 扩展"><div class="bridge-node"><strong>Codex、Claude Code、Cursor、OpenClaw、OpenCode</strong><span>MCP 客户端 · 拥有子进程</span></div><div class="bridge-arrow" aria-hidden="true">→</div><div class="bridge-node local"><strong>@webbrain/mcp-server</strong><span>stdio · 127.0.0.1:17374</span></div><div class="bridge-arrow" aria-hidden="true">→</div><div class="bridge-node"><strong>浏览器中的 WebBrain</strong><span>已登录标签页 · 权限闸门</span></div></div><p>服务器不是第二个浏览器，也不复制 Cookie。它是 MCP 客户端和扩展之间的本地交接点。浏览器配置文件——因此已认证会话——始终不移动。</p></section>
+
+      <section class="doc-section" id="requirements"><h2>连接前的准备</h2><div class="table-wrap"><table><thead><tr><th>要求</th><th>检查内容</th></tr></thead><tbody><tr><td>Chromium 浏览器</td><td>安装了当前 WebBrain 扩展的 Chrome、Edge、Brave、Opera 或 Vivaldi。</td></tr><tr><td>Node.js</td><td>Node 20 或更新版本。<code>npx</code> 会下载并启动包。</td></tr><tr><td>MCP 客户端</td><td>支持本地 stdio 服务器的客户端，如 Codex、Claude Code、Cursor、OpenClaw 或 OpenCode。</td></tr><tr><td>一个空闲的本地端口</td><td><code>17374</code> 不能已被其他 WebBrain MCP 进程占用。</td></tr><tr><td>活跃的 WebBrain 提供商</td><td>扩展仍需要配置好的 WebBrain Cloud、本地或 API 支持的模型来执行委派任务。</td></tr></tbody></table></div></section>
+
+      <section class="doc-section" id="register"><div class="eyebrow">步骤 1 · 仅需一次</div><h2>向你的 MCP 客户端注册服务器</h2><p>使用以下客户端特定配置之一，仅需一次。这些是安装命令，不是你请求浏览器任务的方式。注册后，客户端会为你启动服务器，你继续正常聊天；不要在同端口上同时运行手动副本。</p><h3>Codex 应用、CLI 或 IDE 扩展</h3><pre class="code-block"><code>codex mcp add webbrain -- npx -y @webbrain/mcp-server</code></pre><p>Codex 将 MCP 服务器存储在 <code>~/.codex/config.toml</code> 中；同一 Codex 主机上的应用、CLI 和 IDE 扩展共享该配置。对于长时间的浏览器任务，打开该文件并为工具提供超过 Codex 默认单次调用预算的时间：</p><pre class="code-block"><code>[mcp_servers.webbrain]
+command = "npx"
+args = ["-y", "@webbrain/mcp-server"]
+tool_timeout_sec = 360</code></pre><p>更改文件后重启应用或 IDE 扩展。在 CLI 中，运行 <code>codex mcp list</code> 确认条目，并在 Codex 会话中使用 <code>/mcp</code> 检查已连接的服务器。参阅 <a href="https://learn.chatgpt.com/docs/extend/mcp">官方 Codex MCP 指南</a> 了解共享主机配置和所有支持选项。</p><h3>Claude Code</h3><pre class="code-block"><code>claude mcp add --transport stdio webbrain -- npx -y @webbrain/mcp-server</code></pre><p>显式传输匹配当前的 <a href="https://code.claude.com/docs/en/mcp">Claude Code MCP 配置</a>。添加后运行 <code>claude mcp list</code> 检查服务器健康状况。</p><h3>Cursor</h3><p>在 Cursor 的 MCP 设置中添加本地 stdio 服务器，或将此内容放入 Cursor 使用的 MCP JSON 文件。格式遵循 <a href="https://cursor.com/docs/context/mcp">Cursor 本地 MCP 服务器格式</a>：</p><pre class="code-block"><code>{
+  "mcpServers": {
+    "webbrain": {
+      "command": "npx",
+      "args": ["-y", "@webbrain/mcp-server"]
+    }
+  }
+}</code></pre><h3>OpenCode</h3><p>将此条目添加到 <code>~/.config/opencode/opencode.json</code>，使用 OpenCode 的 <a href="https://opencode.ai/docs/mcp-servers/">本地 MCP 服务器格式</a>：</p><pre class="code-block"><code>{
+  "mcp": {
+    "webbrain": {
+      "type": "local",
+      "command": ["npx", "-y", "@webbrain/mcp-server"]
+    }
+  }
+}</code></pre><h3>OpenClaw</h3><p>在 OpenClaw 中将 WebBrain 注册为出站 MCP 服务器。不要使用 <code>openclaw mcp serve</code> 进行此集成：该命令使 OpenClaw 本身充当服务器，方向相反。</p><pre class="code-block"><code>openclaw mcp add webbrain \
+  --command npx \
+  --arg -y \
+  --arg @webbrain/mcp-server \
+  --timeout 360</code></pre><p><code>mcp add</code> 会在保存前探测 stdio 服务器。运行 <code>openclaw mcp status --verbose</code> 检查已保存的定义。普通的 <code>coding</code> 和 <code>messaging</code> 工具配置文件包含已配置的 MCP 服务器；<code>minimal</code> 配置文件、显式 <code>bundle-mcp</code> 拒绝或沙箱工具策略可能会隐藏它们。参阅 <a href="https://docs.openclaw.ai/cli/mcp">OpenClaw MCP 指南</a> 了解当前注册表和策略详情。</p><h3>手动运行</h3><p>手动启动对于诊断监听器很有用，但在正常使用 MCP 时不需要：</p><pre class="code-block"><code>npx -y @webbrain/mcp-server</code></pre><p>保持该终端打开。关闭它会关闭桥接监听器。从源码检出时，在 <code>mcp-server/</code> 内运行 <code>npm install</code>、<code>npm run build</code>，然后 <code>npm start</code>。</p></section>
+
+      <section class="doc-section" id="browser"><div class="eyebrow">步骤 2</div><h2>将 WebBrain 指向本地监听器</h2><ol class="step-list"><li><strong>启动或重启你的 MCP 客户端。</strong>其 WebBrain 服务器必须在扩展连接之前运行。</li><li><strong>打开 WebBrain 设置。</strong>进入<strong>通用 → 高级 → 云桥接</strong>。</li><li><strong>设置精确的 URL。</strong>输入 <code>ws://127.0.0.1:17374/extension</code>。</li><li><strong>启用云桥接。</strong>状态应从"正在连接"变为"已连接"。名称是历史原因：此目标是本地的。</li><li><strong>验证端到端连接。</strong>要求 MCP 客户端调用 <code>webbrain_connection</code>。"Connected" 证明客户端、本地服务器、WebSocket 监听器和扩展握手均已就绪。</li></ol><div class="callout"><strong class="callout-title">同一时间只能连接一个桥接目标</strong><p>扩展持有一个出站桥接套接字：WebBrain Cloud 在 <code>17373</code>、此 MCP 服务器在 <code>17374</code>，或 LM Studio 插件在 <code>17375</code>。更改 URL 会切换目标，而不会多路复用。</p></div></section>
+
+      <section class="doc-section" id="first-task"><div class="eyebrow">步骤 3 · 直接提问</div><h2>用自然语言描述浏览器任务</h2><p>在 Codex、Claude Code、Cursor、OpenClaw 或 OpenCode 中，像给同事布置任务一样写出请求。提及 WebBrain 使你的意图明确无误；包括页面、期望结果、范围，以及是否允许更改。</p><h3>不改变页面的读取</h3><blockquote>使用 WebBrain 读取我浏览器中已打开的 Stripe 仪表盘。列出过去七天的失败支付，包含客户、金额、货币、日期和失败原因。不要更改任何内容。</blockquote><h3>返回可预测的 JSON</h3><blockquote>使用 WebBrain 从我浏览器中已打开的仪表盘提取所有逾期发票。返回包含客户、金额、货币、到期日和发票 URL 的 JSON。不要更改任何内容。</blockquote><h3>与页面交互</h3><blockquote>使用 WebBrain 的 Act 模式打开我浏览器中已显示的客户记录，将公司名称更新为 Acme Europe。在任何最终提交或确认之前停止。</blockquote><p>编程代理会选择 <code>webbrain_run</code> 进行一般读取或交互，当请求结构化数据时选择 <code>webbrain_extract</code>。它提供参数、监控运行，并将 WebBrain 的结果呈现回对话中。Ask 模式可以读取和提取；不能点击、输入、导航或提交。Act 模式可以交互，受 WebBrain 正常的浏览器端权限约束。</p><div class="callout"><strong class="callout-title">底层细节——你不需要输入这些</strong><p>对于上面的第一个提示，客户端会进行类似以下的调用。此表示在构建或调试 MCP 客户端时有用，普通用户可以忽略。</p></div><pre class="code-block"><code>webbrain_run(
+  task: "read the open Stripe dashboard and list failed payments from the last 7 days with customer, amount, currency, date, and failure reason",
+  mode: "ask"
+)</code></pre><p>对于需要交互的任务，明确说"使用 WebBrain 的 Act 模式"并保持浏览器可见。WebBrain 将应用其正常的按来源能力审批提示。</p></section>
+
+      <section class="doc-section" id="tools"><div class="eyebrow">六个工具，一个信任边界</div><h2>MCP 客户端为你使用的工具</h2><p>你通常选择结果，而不是工具。你的 MCP 客户端读取这些描述，选择适当的工具，根据你的请求填充其输入，并处理后续调用。此参考用于让你理解或调试该行为。</p><div class="table-wrap"><table><thead><tr><th>工具</th><th>用途</th><th>重要输入</th></tr></thead><tbody><tr><td><code>webbrain_run</code></td><td>任何浏览器目标，只读或交互式。</td><td><code>task</code>、<code>mode</code>、可选 <code>tab_id</code>、<code>wait</code>、<code>timeout_seconds</code>，以及仅限 Act 的 <code>allow_api_mutations</code>。</td></tr><tr><td><code>webbrain_extract</code></td><td>从已认证的页面数据中提取可预测的 JSON。始终为 Ask 模式。</td><td><code>task</code>、<code>output_schema</code>、可选 <code>tab_id</code>、<code>wait</code> 和 <code>timeout_seconds</code>。</td></tr><tr><td><code>webbrain_status</code></td><td>轮询一个后台运行或列出所有已知运行。</td><td>可选 <code>run_id</code>。省略以列出运行。</td></tr><tr><td><code>webbrain_respond</code></td><td>将用户的回答传递回暂停的运行。</td><td><code>run_id</code>、<code>clarify_id</code>、<code>answer</code>、可选 <code>timeout_seconds</code>。</td></tr><tr><td><code>webbrain_abort</code></td><td>停止错误或不再需要的运行。</td><td><code>run_id</code>。它不会撤销已执行的操作。</td></tr><tr><td><code>webbrain_connection</code></td><td>检查扩展握手并在断开连接时获取针对性修复。</td><td>无输入。</td></tr></tbody></table></div><div class="callout tip"><strong class="callout-title">为什么没有 MCP 点击或输入工具</strong><p>WebBrain 的权限检查位于扩展代理循环中。直接通过 MCP 暴露底层原语会绕过该边界。如果需要确定性的低级浏览器自动化（如 Playwright），请考虑其他 MCP 服务器。WebBrain 通过保持操作在扩展权限模型内来保护你的已登录会话。</p></div></section>
+
+      <section class="doc-section" id="structured"><h2>请求结构化 JSON</h2><p>正常使用时，说出要提取什么并命名所需字段："使用 WebBrain 从已打开的仪表盘提取所有逾期发票，返回包含客户、金额、货币、到期日和发票 URL 的 JSON。"一个有能力的 MCP 客户端可以将这些字段翻译成所需的 schema 并为你调用 <code>webbrain_extract</code>。</p><p>下面的函数形式示例展示了客户端开发者和调试等价的工具调用。在 <code>task</code> 中描述选择逻辑；仅在 <code>output_schema</code> 中描述输出形状。</p><pre class="code-block"><code>webbrain_extract(
+  task: "extract every overdue invoice visible in this account; preserve the displayed currency and use ISO dates where the page provides a full date",
+  output_schema: {
+    type: "object",
+    properties: {
+      invoices: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            customer: { type: "string" },
+            amount: { type: "number" },
+            currency: { type: "string" },
+            due_date: { type: "string" },
+            invoice_url: { type: "string" }
+          },
+          required: ["customer", "amount", "currency", "due_date"]
+        }
+      }
+    },
+    required: ["invoices"]
+  }
+)</code></pre><ul><li>使用带有显式 <code>properties</code> 和 <code>required</code> 字段的对象根。</li><li>请求你需要的最窄数据。Schema 不会授予浏览器会话不可见的数据访问权限。</li><li>该工具是只读的，但页面文本和结果仍会发送到 WebBrain 配置的 LLM 提供商。</li><li>如果结果对于运行的持久快照过大，状态可能报告存储结果被截断。缩小请求并重试。</li></ul></section>
+
+      <section class="doc-section" id="lifecycle"><h2>理解运行生命周期</h2><p>大多数 MCP 客户端会为你管理此生命周期：它们等待结果，在需要人工输入时显示 WebBrain 的澄清问题，并用你的回答继续。下面的显式调用对客户端开发者、排查问题或有意让客户端在后台启动长时间任务很有用。</p><p>前台调用默认等待。对于长时间工作，客户端可以设置 <code>wait: false</code> 并使用 <code>webbrain_status</code> 轮询。</p><div class="status-strip" aria-label="WebBrain MCP 运行状态"><div class="status-item"><code>running</code><span>浏览器中的工作继续进行</span></div><div class="status-item waiting"><code>needs_user_input</code><span>将问题中继给用户</span></div><div class="status-item done"><code>completed</code><span>结果已就绪</span></div><div class="status-item"><code>failed</code><span>查看错误和证据</span></div><div class="status-item"><code>aborted</code><span>已停止；之前的操作仍然有效</span></div></div><pre class="code-block"><code># 工具级参考
+# 启动时不等待
+webbrain_run(task: "compare the invoices across all visible pages", mode: "ask", wait: false)
+
+# 轮询返回的 ID
+webbrain_status(run_id: "mcp_…")</code></pre><p>WebBrain 运行超时会将控制权返回给 MCP 客户端，但故意不中止浏览器任务。轮询返回的 <code>run_id</code>。这可防止超时在任务可能已采取重要操作后静默终止它。</p><h3>当 WebBrain 提问时</h3><p>暂停的快照包含人类可读的问题和 <code>clarify_id</code>。向用户显示该问题。逐字发送他们的回答；不要推断。</p><pre class="code-block"><code>webbrain_respond(
+  run_id: "mcp_…",
+  clarify_id: "clarify_…",
+  answer: "Use the Acme EU account."
+)</code></pre></section>
+
+      <section class="doc-section" id="modes"><h2>选择最小权限</h2><div class="table-wrap"><table><thead><tr><th>选择</th><th>允许的操作</th><th>使用场景</th></tr></thead><tbody><tr><td><code>mode: "ask"</code></td><td>读取、总结、比较和提取。无页面交互。</td><td>你只需要信息。这是默认选项。</td></tr><tr><td><code>mode: "act"</code></td><td>通过 WebBrain 的权限闸门进行导航、点击、输入、下载和表单交互。</td><td>结果需要可见的浏览器操作。</td></tr><tr><td><code>allow_api_mutations: true</code></td><td>允许 Act 运行在 UI 路径不合适时使用修改型 HTTP 请求。</td><td>罕见的显式例外。在 Ask 模式下被拒绝，默认应保持关闭。</td></tr></tbody></table></div><p>MCP 客户端审批和 WebBrain 审批是独立的层级。你的客户端可能在调用 <code>webbrain_run</code> 之前询问；WebBrain 可能在某个来源上的重要操作之前询问。一个审批不会替代另一个。</p></section>
+
+      <section class="doc-section" id="security"><h2>你应该保持的安全边界</h2><ul><li><strong>保持监听器本地化。</strong>它绑定到 <code>127.0.0.1</code>。不要转发端口 <code>17374</code>、通过容器桥接发布，或代理到网络上。</li><li><strong>本地回环不是认证。</strong>扩展发送识别握手但没有共享密钥。以你本地用户身份运行的进程可能尝试冒充扩展或服务器。将本地代码和 MCP 包视为可信软件。</li><li><strong>先使用 Ask。</strong>只读工作更容易验证，爆炸半径更小。</li><li><strong>Act 模式保持浏览器可见。</strong>你可以在侧边栏中停止运行，意外的导航或输入应被视为停止的理由。</li><li><strong>记住提供商边界。</strong>MCP 桥接保持本地，但页面内容会发送到 WebBrain 中配置的模型提供商。当内容必须保留在本地设备上时，请使用本地模型。</li><li><strong>不要将超时误解为回滚。</strong>中止会停止后续步骤；它无法撤销已发送的邮件、已提交的表单、购买或其他已完成的操作。</li></ul><p>完整设计请参阅 <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/security-model.md">安全模型</a>、<a href="https://github.com/webbrain-one/webbrain/blob/main/docs/privacy-and-data-flow.md">隐私与数据流</a>，以及 <a href="/docs/zh/safety/">模式、安全与隐私指南</a>。</p></section>
+
+      <section class="doc-section" id="troubleshooting"><h2>按症状排查</h2><div class="table-wrap"><table><thead><tr><th>症状</th><th>通常含义</th><th>解决方法</th></tr></thead><tbody><tr><td><strong>连接错误：WebSocket 错误</strong></td><td>配置的 URL 上没有进程在监听。</td><td>启动或重启 MCP 客户端，确认端口 <code>17374</code>，并保持服务器进程运行。</td></tr><tr><td><code>webbrain_connection</code> 报告未连接</td><td>本地服务器存在，但扩展未完成握手。</td><td>使用 Chromium 浏览器，启用云桥接，并设置精确的 <code>/extension</code> URL。</td></tr><tr><td><code>EADDRINUSE</code> 或服务器立即退出</td><td>另一个 MCP 客户端或手动服务器已占用端口 <code>17374</code>。</td><td>停止其他进程。同一时间只有一个 WebBrain MCP 服务器可以占用默认端口。</td></tr><tr><td>MCP 工具没有出现</td><td>客户端未重新加载配置或 npm 进程启动失败。</td><td>重启客户端，检查其 MCP 服务器列表/日志，确认 Node 20+ 和 npm 访问权限。</td></tr><tr><td>工具返回 <code>running</code></td><td>服务器或客户端等待预算已用尽；浏览器运行被故意保持存活。</td><td>使用返回的 ID 轮询 <code>webbrain_status</code>，或使用 <code>wait: false</code> 启动未来的长时间任务。</td></tr><tr><td>运行显示 <code>needs_user_input</code></td><td>WebBrain 需要人工决策才能继续。</td><td>中继确切的问题，然后使用匹配的 ID 调用 <code>webbrain_respond</code>。</td></tr><tr><td>Firefox 始终无法连接</td><td>Firefox 没有离屏文档桥接运行时。</td><td>使用 Chrome、Edge、Brave、Opera 或 Vivaldi 进行 MCP。Firefox 仍支持直接侧边栏使用。</td></tr><tr><td>WebBrain Cloud 或 LM Studio 已断开连接</td><td>MCP URL 替换了扩展的单个桥接目标。</td><td>完成后将设置切换回端口 <code>17373</code>（Cloud）或 <code>17375</code>（LM Studio）。</td></tr></tbody></table></div></section>
+
+      <section class="doc-section" id="configuration"><h2>环境配置</h2><div class="table-wrap"><table><thead><tr><th>变量</th><th>默认值</th><th>含义</th></tr></thead><tbody><tr><td><code>WEBBRAIN_BRIDGE_PORT</code></td><td><code>17374</code></td><td>扩展连接的本地回环端口。</td></tr><tr><td><code>WEBBRAIN_BRIDGE_PATH</code></td><td><code>/extension</code></td><td>WebSocket 路径；必须与设置匹配。</td></tr><tr><td><code>WEBBRAIN_COMMAND_TIMEOUT_MS</code></td><td><code>30000</code></td><td>一个桥接命令和回复的超时预算。</td></tr><tr><td><code>WEBBRAIN_RUN_TIMEOUT_MS</code></td><td><code>300000</code></td><td>运行或提取的默认等待上限。</td></tr><tr><td><code>WEBBRAIN_POLL_INTERVAL_MS</code></td><td><code>1000</code></td><td>服务器轮询运行中任务的频率。</td></tr></tbody></table></div><p>对于 stdio 客户端，在该客户端的 MCP 配置中设置环境变量。如果你更改了端口或路径，请精确更新 WebBrain 设置中的云桥接 URL 以匹配。</p></section>
+
+      <section class="doc-section" id="lm-studio"><div class="eyebrow">相关集成</div><h2>使用 LM Studio？</h2><p>LM Studio 使用单独的 <strong>WebBrain Web Tools 插件</strong>，而非此 MCP 包。其 <code>fetch_url</code> 和 <code>research_url</code> 工具可以在不需要浏览器扩展的情况下读取公开页面；其浏览器工具可以通过端口 <code>17375</code> 将目标委派到你的已登录 Chromium 会话。</p><div class="callout"><strong class="callout-title">选择一个桥接目标</strong><p>不要在 LM Studio 内注册 <code>@webbrain/mcp-server</code> 仅为使用已发布的插件。请参阅 <a href="/docs/zh/lm-studio/">LM Studio 插件指南</a>，然后在需要该集成时将扩展的云桥接 URL 从 MCP 端口 <code>17374</code> 切换到插件端口 <code>17375</code>。</p></div></section>
+
+      <section class="doc-section" id="limits"><h2>此服务器故意不做的事</h2><ul><li>它不启动无头浏览器或创建全新的浏览器配置文件。</li><li>它不通过 Firefox 构建工作。</li><li>它不导出 Cookie、凭据或会话存储。</li><li>它不直接向 MCP 客户端暴露 WebBrain 大约五十个点击、输入、框架、截图、网络和 DOM 原语。</li><li>它不使桥接安全地暴露到远程。</li><li>它不排除在 WebBrain 内配置模型的需要。</li></ul><p>如果你需要在隔离配置文件中进行确定性的低级浏览器自动化，Playwright 风格的 MCP 服务器可能更适合。当决定性需求是你已有的已登录浏览器会话加上 WebBrain 的浏览器内安全模型时，请使用 WebBrain MCP。</p></section>
+
+      <nav class="next-links" aria-label="后续指南"><a href="/docs/zh/safety/"><span>相关</span>← 模式、安全与隐私</a><a href="/docs/zh/lm-studio/"><span>另一个本地集成</span>LM Studio 插件指南 →</a></nav>
+    </main>
+
+    <aside class="on-this-page" aria-label="本页内容"><h2>本页内容</h2><a href="#architecture">架构</a><a href="#requirements">安装要求</a><a href="#register">注册客户端</a><a href="#browser">连接浏览器</a><a href="#first-task">第一个任务</a><a href="#tools">工具参考</a><a href="#structured">结构化提取</a><a href="#lifecycle">运行生命周期</a><a href="#modes">权限控制</a><a href="#security">安全性</a><a href="#troubleshooting">排查问题</a><a href="#configuration">配置</a><a href="#lm-studio">LM Studio</a><a href="#limits">刻意限制</a></aside>
+  </div>
+
+  <footer class="site-footer"><div class="footer-inner"><span>WebBrain 用户指南</span><div class="footer-links"><a href="/privacy">隐私</a><a href="https://github.com/webbrain-one/webbrain/issues">报告问题</a></div></div></footer>
+  <script src="/docs/assets/docs.js?v=20260809"></script>
+</body>
+</html>

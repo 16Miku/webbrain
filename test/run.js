@@ -26262,6 +26262,39 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
     'web build: generated English homepage should contain the complete Apocalypse Mode showcase');
 });
 
+test('public Apocalypse Mode guide and launch essay document the offline boundary', () => {
+  const guide = fs.readFileSync(path.join(ROOT, 'web/docs/apocalypse-mode/index.html'), 'utf8');
+  const overview = fs.readFileSync(path.join(ROOT, 'web/docs/index.html'), 'utf8');
+  const blogSource = fs.readFileSync(path.join(ROOT, 'web/blog/posts/why-we-built-apocalypse-mode.md'), 'utf8');
+  const blogPage = fs.readFileSync(path.join(ROOT, 'web/blog/why-we-built-apocalypse-mode/index.html'), 'utf8');
+  const sitemap = fs.readFileSync(path.join(ROOT, 'web/sitemap.xml'), 'utf8');
+
+  assert.match(guide, /What “offline” means[\s\S]*?You need an internet connection for the first download[\s\S]*?run locally from the browser profile/,
+    'docs: the guide should distinguish preparation downloads from offline operation');
+  assert.match(guide, /Chromium, with compatible WebGPU hardware[\s\S]*?Firefox[\s\S]*?Chromium-only WebGPU text and vision download stack is not shown/,
+    'docs: the guide should state the browser-specific WebGPU boundary');
+  assert.match(guide, /LiquidAI\/LFM2\.5-2\.6B-ONNX[\s\S]*?does not silently change the provider/,
+    'docs: the local text model should be named without implying global provider selection');
+  assert.match(guide, /Wikipedia reader[\s\S]*?Emergency Box[\s\S]*?Medical guidance becomes outdated/,
+    'docs: the offline readers and medical-content warning should be covered');
+  assert.match(overview, /href="\/docs\/apocalypse-mode\/"[\s\S]*?Build your offline kit/,
+    'docs: the overview should link to the Apocalypse Mode guide');
+  for (const page of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html']) {
+    const html = fs.readFileSync(path.join(ROOT, 'web/docs', page), 'utf8');
+    assert.match(html, /<a href="\/docs\/apocalypse-mode\/"[^>]*>Apocalypse Mode<\/a>/,
+      `docs/${page}: shared guide navigation should expose Apocalypse Mode`);
+  }
+  assert.match(sitemap, /<loc>https:\/\/webbrain\.one\/docs\/apocalypse-mode\/<\/loc>/,
+    'web: the Apocalypse Mode guide should be in the generated sitemap');
+
+  assert.match(blogSource, /disaster[\s\S]*?war[\s\S]*?WebGPU[\s\S]*?Once those resources are downloaded, the core is self-contained/,
+    'blog: the essay should connect resilience to the self-contained local stack');
+  assert.match(blogSource, /Offline does not mean invulnerable[\s\S]*?Download it while you can[\s\S]*?Keep WebBrain in your browser\. Keep it ready\./,
+    'blog: the essay should pair its call to action with honest limitations');
+  assert.match(blogPage, /<link rel="canonical" href="https:\/\/webbrain\.one\/blog\/why-we-built-apocalypse-mode">/,
+    'blog: the generator should publish the Apocalypse Mode essay with canonical metadata');
+});
+
 test('homepage does not promote the unmerged Ollama launch handoff', () => {
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const build = fs.readFileSync(path.join(ROOT, 'web/build/build.mjs'), 'utf8');

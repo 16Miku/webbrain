@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Ensures every documentation page includes the shared site analytics partial
- * and a link to the generated FAQ in its guide navigation.
+ * and the shared links that belong in its guide navigation.
  *
  * This idempotent pass recursively covers new HTML pages added under web/docs,
  * so authors do not have to copy the analytics block page by page.
@@ -26,7 +26,7 @@ async function listHtmlFiles(dir) {
   return files.sort();
 }
 
-function withFaqNavigation(html, file) {
+function withGuideNavigation(html, file) {
   const normalized = file.replace(/\\/g, '/');
   // FAQ pages have a page-specific topic rail instead of the guide index.
   if (normalized.endsWith('/faq/index.html')) return html;
@@ -35,22 +35,38 @@ function withFaqNavigation(html, file) {
   const overviewHref = isChinese ? '/docs/zh/' : '/docs/';
   const faqHref = isChinese ? '/docs/zh/faq/' : '/docs/faq/';
   const faqLabel = isChinese ? '常见问题' : 'FAQ';
-  if (html.includes(`href="${faqHref}"`)) return html;
-
-  const escapedOverview = overviewHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const overviewLink = new RegExp(`(<nav><a href="${escapedOverview}"[^>]*>[^<]*<\\/a>)`);
-  const withLink = html.replace(overviewLink, `$1<a href="${faqHref}">${faqLabel}</a>`);
-  if (withLink === html) {
-    throw new Error(`${path.relative(REPO_ROOT, file)} is missing the docs overview navigation anchor`);
+  let generated = html;
+  if (!generated.includes(`href="${faqHref}"`)) {
+    const escapedOverview = overviewHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const overviewLink = new RegExp(`(<nav><a href="${escapedOverview}"[^>]*>[^<]*<\\/a>)`);
+    const withFaq = generated.replace(overviewLink, `$1<a href="${faqHref}">${faqLabel}</a>`);
+    if (withFaq === generated) {
+      throw new Error(`${path.relative(REPO_ROOT, file)} is missing the docs overview navigation anchor`);
+    }
+    generated = withFaq;
   }
-  return withLink;
+
+  const hasApocalypseModeNavigation = /<a href="\/docs\/apocalypse-mode\/"[^>]*>Apocalypse Mode<\/a>/.test(generated);
+  if (!isChinese && !hasApocalypseModeNavigation) {
+    const safetyLink = /(<a href="\/docs\/safety\/"[^>]*>[^<]*<\/a>)/;
+    const withApocalypseMode = generated.replace(
+      safetyLink,
+      '$1<a href="/docs/apocalypse-mode/">Apocalypse Mode</a>',
+    );
+    if (withApocalypseMode === generated) {
+      throw new Error(`${path.relative(REPO_ROOT, file)} is missing the safety guide navigation anchor`);
+    }
+    generated = withApocalypseMode;
+  }
+
+  return generated;
 }
 
 async function main() {
   const files = await listHtmlFiles(DOCS_DIR);
   for (const file of files) {
     const original = await readFile(file, 'utf8');
-    const generated = withFaqNavigation(withPlausibleAnalytics(original), file);
+    const generated = withGuideNavigation(withPlausibleAnalytics(original), file);
     const occurrences = generated.split(PLAUSIBLE_SCRIPT_URL).length - 1;
     if (occurrences !== 1) {
       throw new Error(`${path.relative(REPO_ROOT, file)} contains ${occurrences} Plausible scripts`);
