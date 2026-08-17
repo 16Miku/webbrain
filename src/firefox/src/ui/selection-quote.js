@@ -11,7 +11,8 @@ export function buildSelectionQuote(text) {
 export function buildSelectionComposerDraft(selectionText, draft = '') {
   const quote = buildSelectionQuote(selectionText);
   const existingDraft = String(draft == null ? '' : draft);
-  return quote ? `${quote}${existingDraft.trim() ? existingDraft : ''}` : existingDraft;
+  if (!quote || existingDraft.startsWith(quote)) return existingDraft;
+  return `${quote}${existingDraft}`;
 }
 
 export function selectionIsQuoteable({ startTextElement, endTextElement, text } = {}) {

@@ -1160,6 +1160,8 @@ test('buildSelectionQuote preserves multiline answer text as an editable quote',
   assert.equal(buildSelectionComposerDraft('A detail', 'Why?'), '> A detail\n\nWhy?');
   assert.equal(buildSelectionComposerDraftFx('A detail', 'Why?'), '> A detail\n\nWhy?', 'Firefox draft builder should match Chrome');
   assert.equal(buildSelectionComposerDraft('', 'draft'), 'draft');
+  assert.equal(buildSelectionComposerDraft('A detail', '> A detail\n\nWhy?'), '> A detail\n\nWhy?');
+  assert.equal(buildSelectionComposerDraft('A detail', ' '), '> A detail\n\n ');
 });
 
 test('selectionIsQuoteable requires one non-empty assistant answer element', () => {
@@ -1175,13 +1177,17 @@ test('selectionIsQuoteable requires one non-empty assistant answer element', () 
 
 test('selection answer action wiring covers show, dismiss, and tab/conversation changes in both sidepanels', () => {
   for (const source of sidepanelSources) {
+    const switchToTabSource = source.slice(source.indexOf('async function switchToTab'), source.indexOf('async function switchToTab') + 320);
+    const clearConversationSource = source.slice(source.indexOf('async function renderClearedConversationForTab'), source.indexOf('async function renderClearedConversationForTab') + 240);
+    const sendMessageSource = source.slice(source.indexOf('async function sendMessage'), source.indexOf('async function sendMessage') + 500);
     assert.match(source, /document\.addEventListener\('selectionchange', refreshSelectionAskAction\)/);
     assert.match(source, /document\.addEventListener\('pointerdown', \(event\) => \{/);
     assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
     assert.match(source, /if \(!rect\.width && !rect\.height\) return;/);
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
-    assert.match(source, /async function switchToTab\([\s\S]*?dismissSelectionAskAction\(\);/);
-    assert.match(source, /async function renderClearedConversationForTab\([\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
+    assert.match(clearConversationSource, /dismissSelectionAskAction\(\);/);
+    assert.match(sendMessageSource, /dismissSelectionAskAction\(\);/);
   }
 });
 

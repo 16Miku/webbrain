@@ -7535,6 +7535,7 @@ async function sendMessage(extraChatParams = {}) {
       ...(retryOptions ? { __retry: { ...retryOptions, mode: 'ask' } } : {}),
     };
   }
+  dismissSelectionAskAction();
   const retryOptions = extraChatParams?.__retry || null;
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
   const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
