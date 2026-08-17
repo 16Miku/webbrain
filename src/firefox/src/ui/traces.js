@@ -26,6 +26,7 @@ let compareMode = false;
 let compareIds = []; // length 0..2
 let timelineObjectUrls = new Set();
 let traceRenderRequestId = 0;
+let traceRefreshRequestId = 0;
 
 // conversationId → [runs, oldest first]. Rebuilt from allRuns on every refresh.
 let conversationMap = new Map();
@@ -64,7 +65,10 @@ function formatCost(value) {
 // ----- List -----------------------------------------------------------------
 
 async function refresh() {
-  allRuns = await listRuns({ limit: 500 });
+  const requestId = ++traceRefreshRequestId;
+  const runs = await listRuns({ limit: 500 });
+  if (requestId !== traceRefreshRequestId) return;
+  allRuns = runs;
   rebuildConversationMap();
   countPill.textContent = t(allRuns.length === 1 ? 'tr.run' : 'tr.runs', { n: allRuns.length });
   // Populate model filter.

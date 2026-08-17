@@ -29,6 +29,7 @@ let allRecords = [];
 let allRuns = [];
 let selectedRecordId = null;
 let historyRecordRenderRequestId = 0;
+let historyRefreshRequestId = 0;
 
 function traceRunsForRecord(record) {
   if (!record?.conversationId) return [];
@@ -75,10 +76,12 @@ function clearFilter({ focus = false } = {}) {
 }
 
 async function refresh() {
+  const requestId = ++historyRefreshRequestId;
   const [records, runs] = await Promise.all([
     listChatHistoryRecords({ limit: 1000 }),
     listRuns({ limit: 1000 }).catch(() => []),
   ]);
+  if (requestId !== historyRefreshRequestId) return;
   allRecords = records;
   allRuns = runs;
   const selectedRecordStillExists = selectedRecordId && allRecords.some((record) => record.id === selectedRecordId);
