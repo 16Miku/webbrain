@@ -7,16 +7,21 @@
   <script src="theme-bootstrap.js"></script>
   <link rel="stylesheet" href="emergency-pdf.css">
   <link rel="stylesheet" href="apocalypse-kit.css">
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
 </head>
 <body class="emergency-pdf-page">
   <header class="reader-header">
     <a class="back-button" href="emergency-box.html" data-i18n-aria-label="ep.back">←</a>
     <span class="pdf-mark" aria-hidden="true">PDF</span>
     <div class="document-heading">
-      <h1 id="document-title" data-i18n="ep.loading"></h1>
+      <div class="document-title-row">
+        <h1 id="document-title" data-i18n="ep.loading"></h1>
+        <span id="offline-badge" class="document-offline-badge" data-i18n="ep.available_offline" hidden></span>
+      </div>
       <a id="document-source" href="#" target="_blank" rel="noopener noreferrer" hidden><span data-i18n="ep.source"></span> ↗</a>
     </div>
-    <button type="button" id="save-copy" class="header-button" disabled data-i18n="ep.save_copy"></button>
+    <button type="button" id="save-copy" class="header-button" disabled data-i18n="ep.save_copy" data-i18n-title="ep.export_tooltip"></button>
   </header>
 
   <div class="reader-toolbar" role="toolbar" data-i18n-aria-label="ep.toolbar">
@@ -50,6 +55,8 @@
     <canvas id="pdf-canvas" data-i18n-aria-label="ep.canvas_label" hidden></canvas>
   </main>
   <footer id="reader-status" class="reader-status" role="status" aria-live="polite"></footer>
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
   <script type="module" src="emergency-pdf.js"></script>
 </body>
 </html>

@@ -1284,6 +1284,8 @@
     :root[data-theme="light"] .btn-sign-out:hover  { background: rgba(89,55,25,0.06); }
     :root[data-theme="light"] .info-box code       { background: rgba(89,55,25,0.08); }
   </style>
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
 </head>
 <body>
   <div class="header-row">
@@ -2036,6 +2038,8 @@
   <!-- Tab switcher must be an external script — Manifest V3's default
        CSP (`script-src 'self'`) blocks inline <script> execution. -->
   <script src="settings-tabs.js"></script>
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
   <script src="settings.js" type="module"></script>
 </body>
 </html>

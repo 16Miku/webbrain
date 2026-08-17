@@ -37,6 +37,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Todos los recursos",
     "eb.filter.installed": "Instalados",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Comunicación",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Salud de emergencia",
     "eb.filter.field": "Manuales de campo",
@@ -174,6 +175,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Toutes les ressources",
     "eb.filter.installed": "Installées",
     "eb.filter.wikipedia": "Wikipédia",
+    "eb.filter.communication": "Communication",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Santé d'urgence",
     "eb.filter.field": "Manuels de terrain",
@@ -311,6 +313,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Tüm kaynaklar",
     "eb.filter.installed": "Kurulu",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "İletişim",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Acil sağlık",
     "eb.filter.field": "Saha kılavuzları",
@@ -448,6 +451,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "全部资源",
     "eb.filter.installed": "已安装",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "沟通",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "应急健康",
     "eb.filter.field": "野外手册",
@@ -585,6 +589,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Все ресурсы",
     "eb.filter.installed": "Установлено",
     "eb.filter.wikipedia": "Википедия",
+    "eb.filter.communication": "Связь",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Экстренная медицина",
     "eb.filter.field": "Полевые руководства",
@@ -722,6 +727,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Усі ресурси",
     "eb.filter.installed": "Встановлено",
     "eb.filter.wikipedia": "Вікіпедія",
+    "eb.filter.communication": "Зв’язок",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Невідкладна медицина",
     "eb.filter.field": "Польові посібники",
@@ -859,6 +865,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "كل الموارد",
     "eb.filter.installed": "مثبت",
     "eb.filter.wikipedia": "ويكيبيديا",
+    "eb.filter.communication": "التواصل",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "الطوارئ الصحية",
     "eb.filter.field": "أدلة ميدانية",
@@ -996,6 +1003,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "すべてのリソース",
     "eb.filter.installed": "インストール済み",
     "eb.filter.wikipedia": "ウィキペディア",
+    "eb.filter.communication": "コミュニケーション",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "緊急医療",
     "eb.filter.field": "野外ガイド",
@@ -1133,6 +1141,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "모든 리소스",
     "eb.filter.installed": "설치됨",
     "eb.filter.wikipedia": "위키백과",
+    "eb.filter.communication": "의사소통",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "응급 건강",
     "eb.filter.field": "야전 안내서",
@@ -1270,6 +1279,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Semua sumber",
     "eb.filter.installed": "Terpasang",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Komunikasi",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Kesehatan darurat",
     "eb.filter.field": "Panduan lapangan",
@@ -1407,6 +1417,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "ทรัพยากรทั้งหมด",
     "eb.filter.installed": "ติดตั้งแล้ว",
     "eb.filter.wikipedia": "วิกิพีเดีย",
+    "eb.filter.communication": "การสื่อสาร",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "สุขภาพฉุกเฉิน",
     "eb.filter.field": "คู่มือภาคสนาม",
@@ -1544,6 +1555,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Semua sumber",
     "eb.filter.installed": "Dipasang",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Komunikasi",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Kesihatan kecemasan",
     "eb.filter.field": "Panduan lapangan",
@@ -1681,6 +1693,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Lahat ng mapagkukunan",
     "eb.filter.installed": "Naka-install",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Komunikasyon",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Emergency na kalusugan",
     "eb.filter.field": "Mga gabay sa field",
@@ -1818,6 +1831,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Wszystkie zasoby",
     "eb.filter.installed": "Zainstalowane",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Komunikacja",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Medycyna ratunkowa",
     "eb.filter.field": "Poradniki terenowe",
@@ -1955,6 +1969,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "כל המשאבים",
     "eb.filter.installed": "מותקן",
     "eb.filter.wikipedia": "ויקיפדיה",
+    "eb.filter.communication": "תקשורת",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "בריאות לשעת חירום",
     "eb.filter.field": "מדריכי שטח",
@@ -2092,6 +2107,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "सभी संसाधन",
     "eb.filter.installed": "इंस्टॉल है",
     "eb.filter.wikipedia": "विकिपीडिया",
+    "eb.filter.communication": "संचार",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "आपातकालीन स्वास्थ्य",
     "eb.filter.field": "फ़ील्ड गाइड",
@@ -2229,6 +2245,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Todos os recursos",
     "eb.filter.installed": "Instalado",
     "eb.filter.wikipedia": "Wikipédia",
+    "eb.filter.communication": "Comunicação",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Saúde de emergência",
     "eb.filter.field": "Guias de campo",
@@ -2366,6 +2383,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Tất cả tài nguyên",
     "eb.filter.installed": "Đã cài đặt",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Giao tiếp",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Y tế khẩn cấp",
     "eb.filter.field": "Sổ tay hiện trường",
@@ -2503,6 +2521,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "সব সম্পদ",
     "eb.filter.installed": "ইনস্টল করা",
     "eb.filter.wikipedia": "উইকিপিডিয়া",
+    "eb.filter.communication": "যোগাযোগ",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "জরুরি স্বাস্থ্য",
     "eb.filter.field": "ফিল্ড গাইড",
@@ -2640,6 +2659,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "همهٔ منابع",
     "eb.filter.installed": "نصب‌شده",
     "eb.filter.wikipedia": "ویکی‌پدیا",
+    "eb.filter.communication": "ارتباط",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "سلامت اضطراری",
     "eb.filter.field": "راهنمای میدانی",
@@ -2777,6 +2797,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Alle bronnen",
     "eb.filter.installed": "Geïnstalleerd",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Communicatie",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Spoedzorg",
     "eb.filter.field": "Veldgidsen",
@@ -2914,6 +2935,7 @@ const emergencyModeTranslations = {
     "eb.filter.all": "Alle Ressourcen",
     "eb.filter.installed": "Installiert",
     "eb.filter.wikipedia": "Wikipedia",
+    "eb.filter.communication": "Kommunikation",
     "eb.filter.education": "OpenStax",
     "eb.filter.health": "Notfallmedizin",
     "eb.filter.field": "Feldhandbücher",
@@ -3014,5 +3036,376 @@ const emergencyModeTranslations = {
     "ep.unavailable": "Dokument nicht verfügbar",
   },
 };
+
+const emergencyBasicTranslations = {
+  es: {
+    'eb.download_basic': 'Descargar lo básico',
+    'eb.confirm_download_basic': '¿Descargar los {count} recursos esenciales de salud y supervivencia?\n\nEl kit básico descarga un recurso a la vez. Los archivos completados permanecen disponibles si te detienes antes.',
+    'eb.download_basic_stopped': 'Se detuvo la descarga del kit básico. Se conservaron los recursos completados.',
+    'eb.size_estimate_note': 'Los tamaños de descarga son estimaciones basadas en los archivos actuales de los editores. Los tamaños reales pueden cambiar. «Descargar todo» refleja la vista actual y omite los recursos ya instalados.',
+  },
+  fr: {
+    'eb.download_basic': 'Télécharger l’essentiel',
+    'eb.confirm_download_basic': 'Télécharger les {count} ressources essentielles de santé et de survie ?\n\nLe kit de base télécharge une ressource à la fois. Les fichiers terminés restent disponibles si vous vous arrêtez avant la fin.',
+    'eb.download_basic_stopped': 'Téléchargement du kit de base arrêté. Les ressources terminées ont été conservées.',
+    'eb.size_estimate_note': 'Les tailles de téléchargement sont des estimations basées sur les fichiers actuels des éditeurs. Elles peuvent changer. « Tout télécharger » reflète la vue actuelle et ignore les ressources déjà installées.',
+  },
+  tr: {
+    'eb.download_basic': 'Temel paketi indir',
+    'eb.confirm_download_basic': 'En önemli {count} sağlık ve hayatta kalma kaynağı indirilsin mi?\n\nTemel paket kaynakları birer birer indirir. Erken durursanız tamamlanan dosyalar kullanılabilir kalır.',
+    'eb.download_basic_stopped': 'Temel paket indirmesi durduruldu. Tamamlanan kaynaklar korundu.',
+    'eb.size_estimate_note': 'İndirme boyutları yayıncıların güncel dosyalarına dayanan tahminlerdir ve değişebilir. “Tümünü indir” geçerli görünümü hesaplar ve kurulu kaynakları atlar.',
+  },
+  zh: {
+    'eb.download_basic': '下载基础包',
+    'eb.confirm_download_basic': '下载最重要的 {count} 项健康与生存资源？\n\n基础包一次下载一项资源。如果提前停止，已完成的文件仍可使用。',
+    'eb.download_basic_stopped': '基础包下载已停止。已完成的资源已保留。',
+    'eb.size_estimate_note': '下载大小是根据当前出版方文件估算的，实际大小可能变化。“下载全部”按当前视图计算，并跳过已安装的资源。',
+  },
+  ru: {
+    'eb.download_basic': 'Скачать базовый набор',
+    'eb.confirm_download_basic': 'Скачать {count} самых важных материалов по здоровью и выживанию?\n\nБазовый набор загружается по одному файлу. Завершённые файлы сохранятся, если остановить загрузку раньше.',
+    'eb.download_basic_stopped': 'Загрузка базового набора остановлена. Завершённые материалы сохранены.',
+    'eb.size_estimate_note': 'Размеры загрузок рассчитаны по текущим файлам издателей и могут измениться. «Скачать все» учитывает текущий вид и пропускает уже установленные материалы.',
+  },
+  uk: {
+    'eb.download_basic': 'Завантажити базовий набір',
+    'eb.confirm_download_basic': 'Завантажити {count} найважливіших матеріалів про здоров’я та виживання?\n\nБазовий набір завантажує по одному ресурсу. Завершені файли залишаться доступними, якщо зупинитися раніше.',
+    'eb.download_basic_stopped': 'Завантаження базового набору зупинено. Завершені ресурси збережено.',
+    'eb.size_estimate_note': 'Розміри завантажень приблизні й базуються на поточних файлах видавців. Вони можуть змінюватися. «Завантажити все» враховує поточний перегляд і пропускає встановлені ресурси.',
+  },
+  ar: {
+    'eb.download_basic': 'تنزيل الحزمة الأساسية',
+    'eb.confirm_download_basic': 'تنزيل أهم {count} من موارد الصحة والبقاء؟\n\nتنزّل الحزمة الأساسية مورداً واحداً في كل مرة. تبقى الملفات المكتملة متاحة إذا توقفت مبكراً.',
+    'eb.download_basic_stopped': 'تم إيقاف تنزيل الحزمة الأساسية. تم الاحتفاظ بالموارد المكتملة.',
+    'eb.size_estimate_note': 'أحجام التنزيل تقديرية وتعتمد على ملفات الناشرين الحالية وقد تتغير. يعكس «تنزيل الكل» العرض الحالي ويتجاوز الموارد المثبتة.',
+  },
+  ja: {
+    'eb.download_basic': '基本セットをダウンロード',
+    'eb.confirm_download_basic': '最も重要な健康・サバイバル資料 {count} 件をダウンロードしますか？\n\n基本セットは1件ずつダウンロードします。途中で停止しても完了済みのファイルは残ります。',
+    'eb.download_basic_stopped': '基本セットのダウンロードを停止しました。完了済みの資料は保持されています。',
+    'eb.size_estimate_note': 'ダウンロードサイズは現在の発行元ファイルに基づく推定値で、変更される場合があります。「すべてダウンロード」は現在の表示を対象とし、インストール済みの資料を除外します。',
+  },
+  ko: {
+    'eb.download_basic': '기본 키트 다운로드',
+    'eb.confirm_download_basic': '가장 중요한 건강 및 생존 자료 {count}개를 다운로드할까요?\n\n기본 키트는 한 번에 하나씩 다운로드합니다. 일찍 중지해도 완료된 파일은 남습니다.',
+    'eb.download_basic_stopped': '기본 키트 다운로드를 중지했습니다. 완료된 자료는 보존되었습니다.',
+    'eb.size_estimate_note': '다운로드 크기는 현재 게시자 파일을 기준으로 한 추정치이며 달라질 수 있습니다. “모두 다운로드”는 현재 보기를 반영하고 이미 설치된 자료는 건너뜁니다.',
+  },
+  id: {
+    'eb.download_basic': 'Unduh paket dasar',
+    'eb.confirm_download_basic': 'Unduh {count} sumber kesehatan dan bertahan hidup yang paling penting?\n\nPaket dasar mengunduh satu sumber dalam satu waktu. File yang selesai tetap tersedia jika Anda berhenti lebih awal.',
+    'eb.download_basic_stopped': 'Unduhan paket dasar dihentikan. Sumber yang selesai dipertahankan.',
+    'eb.size_estimate_note': 'Ukuran unduhan adalah perkiraan berdasarkan file penerbit saat ini dan dapat berubah. “Unduh semua” mengikuti tampilan saat ini dan melewati sumber yang sudah terpasang.',
+  },
+  th: {
+    'eb.download_basic': 'ดาวน์โหลดชุดพื้นฐาน',
+    'eb.confirm_download_basic': 'ดาวน์โหลดทรัพยากรด้านสุขภาพและการเอาตัวรอดที่สำคัญที่สุด {count} รายการหรือไม่?\n\nชุดพื้นฐานดาวน์โหลดครั้งละหนึ่งรายการ ไฟล์ที่เสร็จแล้วจะยังคงอยู่หากคุณหยุดก่อน',
+    'eb.download_basic_stopped': 'หยุดดาวน์โหลดชุดพื้นฐานแล้ว ทรัพยากรที่เสร็จแล้วถูกเก็บไว้',
+    'eb.size_estimate_note': 'ขนาดการดาวน์โหลดเป็นค่าประมาณจากไฟล์ปัจจุบันของผู้จัดพิมพ์และอาจเปลี่ยนแปลง “ดาวน์โหลดทั้งหมด” คำนวณตามมุมมองปัจจุบันและข้ามทรัพยากรที่ติดตั้งแล้ว',
+  },
+  ms: {
+    'eb.download_basic': 'Muat turun kit asas',
+    'eb.confirm_download_basic': 'Muat turun {count} sumber kesihatan dan ikhtiar hidup yang paling penting?\n\nKit asas memuat turun satu sumber pada satu masa. Fail yang selesai kekal tersedia jika anda berhenti awal.',
+    'eb.download_basic_stopped': 'Muat turun kit asas dihentikan. Sumber yang selesai dikekalkan.',
+    'eb.size_estimate_note': 'Saiz muat turun ialah anggaran berdasarkan fail penerbit semasa dan boleh berubah. “Muat turun semua” mengikut paparan semasa dan melangkau sumber yang sudah dipasang.',
+  },
+  tl: {
+    'eb.download_basic': 'I-download ang basic kit',
+    'eb.confirm_download_basic': 'I-download ang {count} pinakamahalagang mapagkukunan para sa kalusugan at kaligtasan?\n\nIsa-isang nagda-download ang basic kit. Mananatili ang mga natapos na file kung hihinto ka nang maaga.',
+    'eb.download_basic_stopped': 'Huminto ang pag-download ng basic kit. Napanatili ang mga natapos na mapagkukunan.',
+    'eb.size_estimate_note': 'Ang mga laki ng download ay mga pagtatantya batay sa kasalukuyang file ng publisher at maaaring magbago. Ang “I-download lahat” ay para sa kasalukuyang view at nilalaktawan ang mga naka-install na mapagkukunan.',
+  },
+  pl: {
+    'eb.download_basic': 'Pobierz zestaw podstawowy',
+    'eb.confirm_download_basic': 'Pobrać {count} najważniejszych materiałów o zdrowiu i przetrwaniu?\n\nZestaw podstawowy pobiera po jednym materiale. Ukończone pliki pozostaną dostępne, jeśli zatrzymasz pobieranie wcześniej.',
+    'eb.download_basic_stopped': 'Zatrzymano pobieranie zestawu podstawowego. Ukończone materiały zostały zachowane.',
+    'eb.size_estimate_note': 'Rozmiary pobierania są szacunkowe, oparte na bieżących plikach wydawców i mogą się zmieniać. „Pobierz wszystko” uwzględnia bieżący widok i pomija już zainstalowane materiały.',
+  },
+  he: {
+    'eb.download_basic': 'הורדת הערכה הבסיסית',
+    'eb.confirm_download_basic': 'להוריד את {count} משאבי הבריאות וההישרדות החיוניים ביותר?\n\nהערכה הבסיסית מורידה משאב אחד בכל פעם. קבצים שהושלמו יישארו זמינים אם תעצרו מוקדם.',
+    'eb.download_basic_stopped': 'הורדת הערכה הבסיסית הופסקה. המשאבים שהושלמו נשמרו.',
+    'eb.size_estimate_note': 'גדלי ההורדה הם הערכות המבוססות על קובצי המפרסמים הנוכחיים ועשויים להשתנות. „הורדת הכול” מתייחסת לתצוגה הנוכחית ומדלגת על משאבים שכבר הותקנו.',
+  },
+  hi: {
+    'eb.download_basic': 'बुनियादी किट डाउनलोड करें',
+    'eb.confirm_download_basic': 'स्वास्थ्य और जीवित रहने के {count} सबसे ज़रूरी संसाधन डाउनलोड करें?\n\nबुनियादी किट एक बार में एक संसाधन डाउनलोड करती है। जल्दी रुकने पर भी पूरे हुए फ़ाइलें उपलब्ध रहती हैं।',
+    'eb.download_basic_stopped': 'बुनियादी किट का डाउनलोड रोक दिया गया। पूरे हुए संसाधन सुरक्षित रखे गए।',
+    'eb.size_estimate_note': 'डाउनलोड आकार मौजूदा प्रकाशक फ़ाइलों पर आधारित अनुमान हैं और बदल सकते हैं। “सभी डाउनलोड करें” मौजूदा दृश्य के अनुसार है और पहले से इंस्टॉल संसाधनों को छोड़ देता है।',
+  },
+  pt: {
+    'eb.download_basic': 'Baixar kit básico',
+    'eb.confirm_download_basic': 'Baixar os {count} recursos mais essenciais de saúde e sobrevivência?\n\nO kit básico baixa um recurso de cada vez. Os arquivos concluídos permanecem disponíveis se você parar antes.',
+    'eb.download_basic_stopped': 'O download do kit básico foi interrompido. Os recursos concluídos foram preservados.',
+    'eb.size_estimate_note': 'Os tamanhos de download são estimativas baseadas nos arquivos atuais dos editores e podem mudar. “Baixar tudo” reflete a visualização atual e ignora recursos já instalados.',
+  },
+  vi: {
+    'eb.download_basic': 'Tải bộ cơ bản',
+    'eb.confirm_download_basic': 'Tải xuống {count} tài nguyên thiết yếu nhất về sức khỏe và sinh tồn?\n\nBộ cơ bản tải từng tài nguyên một. Các tệp đã hoàn tất vẫn có sẵn nếu bạn dừng sớm.',
+    'eb.download_basic_stopped': 'Đã dừng tải bộ cơ bản. Các tài nguyên hoàn tất được giữ lại.',
+    'eb.size_estimate_note': 'Dung lượng tải xuống là ước tính dựa trên các tệp hiện tại của nhà xuất bản và có thể thay đổi. “Tải xuống tất cả” theo chế độ xem hiện tại và bỏ qua tài nguyên đã cài đặt.',
+  },
+  bn: {
+    'eb.download_basic': 'মৌলিক কিট ডাউনলোড করুন',
+    'eb.confirm_download_basic': 'স্বাস্থ্য ও বেঁচে থাকার সবচেয়ে জরুরি {count}টি সম্পদ ডাউনলোড করবেন?\n\nমৌলিক কিট একবারে একটি করে সম্পদ ডাউনলোড করে। আগে থামলে সম্পন্ন ফাইলগুলো উপলব্ধ থাকবে।',
+    'eb.download_basic_stopped': 'মৌলিক কিটের ডাউনলোড বন্ধ হয়েছে। সম্পন্ন সম্পদগুলো সংরক্ষিত হয়েছে।',
+    'eb.size_estimate_note': 'ডাউনলোডের আকার বর্তমান প্রকাশক ফাইলের ভিত্তিতে আনুমানিক এবং পরিবর্তিত হতে পারে। “সব ডাউনলোড করুন” বর্তমান ভিউ অনুযায়ী হিসাব করে এবং ইনস্টল করা সম্পদ বাদ দেয়।',
+  },
+  fa: {
+    'eb.download_basic': 'دانلود بستهٔ پایه',
+    'eb.confirm_download_basic': 'مهم‌ترین {count} منبع سلامت و بقا دانلود شوند؟\n\nبستهٔ پایه هر بار یک منبع را دانلود می‌کند. اگر زودتر متوقف شوید، فایل‌های تکمیل‌شده باقی می‌مانند.',
+    'eb.download_basic_stopped': 'دانلود بستهٔ پایه متوقف شد. منابع تکمیل‌شده حفظ شدند.',
+    'eb.size_estimate_note': 'اندازه‌های دانلود برآوردی و بر اساس فایل‌های فعلی ناشران هستند و ممکن است تغییر کنند. «دانلود همه» نمای فعلی را در نظر می‌گیرد و منابع نصب‌شده را رد می‌کند.',
+  },
+  nl: {
+    'eb.download_basic': 'Basispakket downloaden',
+    'eb.confirm_download_basic': 'De {count} belangrijkste bronnen voor gezondheid en overleven downloaden?\n\nHet basispakket downloadt één bron tegelijk. Voltooide bestanden blijven beschikbaar als je eerder stopt.',
+    'eb.download_basic_stopped': 'Download van het basispakket gestopt. Voltooide bronnen zijn bewaard.',
+    'eb.size_estimate_note': 'Downloadgroottes zijn schattingen op basis van de huidige uitgeversbestanden en kunnen veranderen. “Alles downloaden” volgt de huidige weergave en slaat reeds geïnstalleerde bronnen over.',
+  },
+  de: {
+    'eb.download_basic': 'Basispaket herunterladen',
+    'eb.confirm_download_basic': 'Die {count} wichtigsten Gesundheits- und Überlebensressourcen herunterladen?\n\nDas Basispaket lädt jeweils eine Ressource herunter. Fertige Dateien bleiben verfügbar, wenn du früher stoppst.',
+    'eb.download_basic_stopped': 'Download des Basispakets gestoppt. Fertige Ressourcen wurden beibehalten.',
+    'eb.size_estimate_note': 'Downloadgrößen sind Schätzungen anhand der aktuellen Verlagsdateien und können sich ändern. „Alles herunterladen“ bezieht sich auf die aktuelle Ansicht und überspringt bereits installierte Ressourcen.',
+  },
+};
+
+const emergencySizeTranslations = {
+  es: {
+    'eb.download_current_view': 'Descargar la vista actual',
+    'eb.remaining_of_total': '≈ {remaining} restantes · ≈ {total} en total',
+  },
+  fr: {
+    'eb.download_current_view': 'Télécharger la vue actuelle',
+    'eb.remaining_of_total': '≈ {remaining} restants · ≈ {total} au total',
+  },
+  tr: {
+    'eb.download_current_view': 'Geçerli görünümü indir',
+    'eb.remaining_of_total': '≈ {remaining} kaldı · toplam ≈ {total}',
+  },
+  zh: {
+    'eb.download_current_view': '下载当前视图',
+    'eb.remaining_of_total': '剩余约 {remaining} · 总计约 {total}',
+  },
+  ru: {
+    'eb.download_current_view': 'Скачать текущий вид',
+    'eb.remaining_of_total': 'Осталось ≈ {remaining} · всего ≈ {total}',
+  },
+  uk: {
+    'eb.download_current_view': 'Завантажити поточний перегляд',
+    'eb.remaining_of_total': 'Залишилося ≈ {remaining} · усього ≈ {total}',
+  },
+  ar: {
+    'eb.download_current_view': 'تنزيل العرض الحالي',
+    'eb.remaining_of_total': 'متبقٍّ ≈ {remaining} · الإجمالي ≈ {total}',
+  },
+  ja: {
+    'eb.download_current_view': '現在の表示をダウンロード',
+    'eb.remaining_of_total': '残り約 {remaining} · 合計約 {total}',
+  },
+  ko: {
+    'eb.download_current_view': '현재 보기 다운로드',
+    'eb.remaining_of_total': '약 {remaining} 남음 · 총 약 {total}',
+  },
+  id: {
+    'eb.download_current_view': 'Unduh tampilan saat ini',
+    'eb.remaining_of_total': '≈ {remaining} tersisa · total ≈ {total}',
+  },
+  th: {
+    'eb.download_current_view': 'ดาวน์โหลดมุมมองปัจจุบัน',
+    'eb.remaining_of_total': 'เหลือประมาณ {remaining} · รวมประมาณ {total}',
+  },
+  ms: {
+    'eb.download_current_view': 'Muat turun paparan semasa',
+    'eb.remaining_of_total': '≈ {remaining} berbaki · jumlah ≈ {total}',
+  },
+  tl: {
+    'eb.download_current_view': 'I-download ang kasalukuyang view',
+    'eb.remaining_of_total': '≈ {remaining} ang natitira · ≈ {total} lahat',
+  },
+  pl: {
+    'eb.download_current_view': 'Pobierz bieżący widok',
+    'eb.remaining_of_total': 'Pozostało ≈ {remaining} · łącznie ≈ {total}',
+  },
+  he: {
+    'eb.download_current_view': 'הורדת התצוגה הנוכחית',
+    'eb.remaining_of_total': 'נותרו כ־{remaining} · סך הכול כ־{total}',
+  },
+  hi: {
+    'eb.download_current_view': 'मौजूदा दृश्य डाउनलोड करें',
+    'eb.remaining_of_total': 'लगभग {remaining} शेष · कुल लगभग {total}',
+  },
+  pt: {
+    'eb.download_current_view': 'Baixar a visualização atual',
+    'eb.remaining_of_total': '≈ {remaining} restantes · ≈ {total} no total',
+  },
+  vi: {
+    'eb.download_current_view': 'Tải chế độ xem hiện tại',
+    'eb.remaining_of_total': 'Còn khoảng {remaining} · tổng khoảng {total}',
+  },
+  bn: {
+    'eb.download_current_view': 'বর্তমান ভিউ ডাউনলোড করুন',
+    'eb.remaining_of_total': 'প্রায় {remaining} বাকি · মোট প্রায় {total}',
+  },
+  fa: {
+    'eb.download_current_view': 'دانلود نمای فعلی',
+    'eb.remaining_of_total': 'حدود {remaining} باقی‌مانده · مجموع حدود {total}',
+  },
+  nl: {
+    'eb.download_current_view': 'Huidige weergave downloaden',
+    'eb.remaining_of_total': '≈ {remaining} resterend · ≈ {total} totaal',
+  },
+  de: {
+    'eb.download_current_view': 'Aktuelle Ansicht herunterladen',
+    'eb.remaining_of_total': '≈ {remaining} verbleibend · ≈ {total} insgesamt',
+  },
+};
+
+const emergencyPdfExportTranslations = {
+  es: {
+    'ep.save_copy': 'Exportar PDF',
+    'ep.available_offline': '✓ Disponible sin conexión',
+    'ep.export_tooltip': 'Exporta este PDF sin conexión para compartirlo o usarlo fuera de WebBrain.',
+    'ep.exported': 'Exportado a Descargas.',
+  },
+  fr: {
+    'ep.save_copy': 'Exporter le PDF',
+    'ep.available_offline': '✓ Disponible hors connexion',
+    'ep.export_tooltip': 'Exportez ce PDF hors connexion pour le partager ou l’utiliser en dehors de WebBrain.',
+    'ep.exported': 'Exporté dans Téléchargements.',
+  },
+  tr: {
+    'ep.save_copy': 'PDF’yi dışa aktar',
+    'ep.available_offline': '✓ Çevrimdışı kullanılabilir',
+    'ep.export_tooltip': 'Bu çevrimdışı PDF’yi paylaşmak veya WebBrain dışında kullanmak için dışa aktarın.',
+    'ep.exported': 'İndirilenler’e aktarıldı.',
+  },
+  zh: {
+    'ep.save_copy': '导出 PDF',
+    'ep.available_offline': '✓ 可离线使用',
+    'ep.export_tooltip': '导出此离线 PDF，以便分享或在 WebBrain 之外使用。',
+    'ep.exported': '已导出到“下载”。',
+  },
+  ru: {
+    'ep.save_copy': 'Экспорт PDF',
+    'ep.available_offline': '✓ Доступно офлайн',
+    'ep.export_tooltip': 'Экспортируйте этот офлайн-PDF для обмена или использования вне WebBrain.',
+    'ep.exported': 'Экспортировано в «Загрузки».',
+  },
+  uk: {
+    'ep.save_copy': 'Експортувати PDF',
+    'ep.available_offline': '✓ Доступно офлайн',
+    'ep.export_tooltip': 'Експортуйте цей офлайн-PDF для поширення або використання поза WebBrain.',
+    'ep.exported': 'Експортовано до «Завантажень».',
+  },
+  ar: {
+    'ep.save_copy': 'تصدير PDF',
+    'ep.available_offline': '✓ متاح دون اتصال',
+    'ep.export_tooltip': 'صدّر ملف PDF المتاح دون اتصال لمشاركته أو استخدامه خارج WebBrain.',
+    'ep.exported': 'تم التصدير إلى التنزيلات.',
+  },
+  ja: {
+    'ep.save_copy': 'PDFを書き出す',
+    'ep.available_offline': '✓ オフラインで利用可能',
+    'ep.export_tooltip': 'このオフラインPDFを共有したり、WebBrain以外で使用したりするために書き出します。',
+    'ep.exported': 'ダウンロードに書き出しました。',
+  },
+  ko: {
+    'ep.save_copy': 'PDF 내보내기',
+    'ep.available_offline': '✓ 오프라인에서 사용 가능',
+    'ep.export_tooltip': '이 오프라인 PDF를 공유하거나 WebBrain 외부에서 사용할 수 있도록 내보냅니다.',
+    'ep.exported': '다운로드 폴더로 내보냈습니다.',
+  },
+  id: {
+    'ep.save_copy': 'Ekspor PDF',
+    'ep.available_offline': '✓ Tersedia offline',
+    'ep.export_tooltip': 'Ekspor PDF offline ini untuk dibagikan atau digunakan di luar WebBrain.',
+    'ep.exported': 'Diekspor ke Unduhan.',
+  },
+  th: {
+    'ep.save_copy': 'ส่งออก PDF',
+    'ep.available_offline': '✓ ใช้งานแบบออฟไลน์ได้',
+    'ep.export_tooltip': 'ส่งออก PDF ออฟไลน์นี้เพื่อแชร์หรือใช้งานนอก WebBrain',
+    'ep.exported': 'ส่งออกไปยังดาวน์โหลดแล้ว',
+  },
+  ms: {
+    'ep.save_copy': 'Eksport PDF',
+    'ep.available_offline': '✓ Tersedia di luar talian',
+    'ep.export_tooltip': 'Eksport PDF luar talian ini untuk dikongsi atau digunakan di luar WebBrain.',
+    'ep.exported': 'Dieksport ke Muat Turun.',
+  },
+  tl: {
+    'ep.save_copy': 'I-export ang PDF',
+    'ep.available_offline': '✓ Magagamit offline',
+    'ep.export_tooltip': 'I-export ang offline PDF na ito para ibahagi o gamitin sa labas ng WebBrain.',
+    'ep.exported': 'Na-export sa Mga Download.',
+  },
+  pl: {
+    'ep.save_copy': 'Eksportuj PDF',
+    'ep.available_offline': '✓ Dostępny offline',
+    'ep.export_tooltip': 'Wyeksportuj ten plik PDF offline, aby go udostępnić lub używać poza WebBrain.',
+    'ep.exported': 'Wyeksportowano do Pobranych.',
+  },
+  he: {
+    'ep.save_copy': 'ייצוא PDF',
+    'ep.available_offline': '✓ זמין במצב לא מקוון',
+    'ep.export_tooltip': 'ייצוא ה-PDF הלא מקוון הזה לשיתוף או לשימוש מחוץ ל-WebBrain.',
+    'ep.exported': 'יוצא לתיקיית ההורדות.',
+  },
+  hi: {
+    'ep.save_copy': 'PDF निर्यात करें',
+    'ep.available_offline': '✓ ऑफ़लाइन उपलब्ध',
+    'ep.export_tooltip': 'इस ऑफ़लाइन PDF को साझा करने या WebBrain के बाहर उपयोग करने के लिए निर्यात करें।',
+    'ep.exported': 'डाउनलोड में निर्यात किया गया।',
+  },
+  pt: {
+    'ep.save_copy': 'Exportar PDF',
+    'ep.available_offline': '✓ Disponível offline',
+    'ep.export_tooltip': 'Exporte este PDF offline para compartilhar ou usar fora do WebBrain.',
+    'ep.exported': 'Exportado para Downloads.',
+  },
+  vi: {
+    'ep.save_copy': 'Xuất PDF',
+    'ep.available_offline': '✓ Có sẵn ngoại tuyến',
+    'ep.export_tooltip': 'Xuất tệp PDF ngoại tuyến này để chia sẻ hoặc sử dụng bên ngoài WebBrain.',
+    'ep.exported': 'Đã xuất vào Tệp tải xuống.',
+  },
+  bn: {
+    'ep.save_copy': 'PDF রপ্তানি করুন',
+    'ep.available_offline': '✓ অফলাইনে উপলভ্য',
+    'ep.export_tooltip': 'এই অফলাইন PDF-টি শেয়ার করতে বা WebBrain-এর বাইরে ব্যবহার করতে রপ্তানি করুন।',
+    'ep.exported': 'ডাউনলোডসে রপ্তানি করা হয়েছে।',
+  },
+  fa: {
+    'ep.save_copy': 'خروجی PDF',
+    'ep.available_offline': '✓ به‌صورت آفلاین در دسترس است',
+    'ep.export_tooltip': 'این PDF آفلاین را برای اشتراک‌گذاری یا استفاده خارج از WebBrain خروجی بگیرید.',
+    'ep.exported': 'به پوشهٔ دانلودها صادر شد.',
+  },
+  nl: {
+    'ep.save_copy': 'PDF exporteren',
+    'ep.available_offline': '✓ Offline beschikbaar',
+    'ep.export_tooltip': 'Exporteer deze offline-PDF om hem te delen of buiten WebBrain te gebruiken.',
+    'ep.exported': 'Geëxporteerd naar Downloads.',
+  },
+  de: {
+    'ep.save_copy': 'PDF exportieren',
+    'ep.available_offline': '✓ Offline verfügbar',
+    'ep.export_tooltip': 'Exportiere diese Offline-PDF zum Teilen oder zur Verwendung außerhalb von WebBrain.',
+    'ep.exported': 'In Downloads exportiert.',
+  },
+};
+
+for (const [locale, copy] of Object.entries(emergencyBasicTranslations)) {
+  Object.assign(emergencyModeTranslations[locale], copy);
+}
+for (const [locale, copy] of Object.entries(emergencySizeTranslations)) {
+  Object.assign(emergencyModeTranslations[locale], copy);
+}
+for (const [locale, copy] of Object.entries(emergencyPdfExportTranslations)) {
+  Object.assign(emergencyModeTranslations[locale], copy);
+}
 
 export default emergencyModeTranslations;

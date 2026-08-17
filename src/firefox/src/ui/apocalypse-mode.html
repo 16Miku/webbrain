@@ -40,6 +40,8 @@
     @media(max-width:700px){header{align-items:flex-start;flex-wrap:wrap}.header-stats{width:100%;margin-inline-start:64px}.header-stat{flex:1}.hero,.library-callout,.emergency-callout{grid-template-columns:1fr}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start}}
   </style>
   <link rel="stylesheet" href="apocalypse-kit.css">
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
 </head>
 <body class="ap-page">
   <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div><div class="header-stats" data-i18n-aria-label="ap.metric.summary"><span class="header-stat"><strong id="installed-count">0</strong><small data-i18n="ap.metric.installed"></small></span><span class="header-stat"><strong id="archive-bytes">0 B</strong><small data-i18n="ap.metric.archive_bytes"></small></span><span class="header-stat"><strong id="storage-usage"></strong><small data-i18n="ap.metric.storage"></small></span></div></header>
@@ -48,7 +50,7 @@
       <div><h2 data-i18n="ap.hero.title"></h2><p class="muted" data-i18n="ap.hero.desc"></p><p class="warning" data-i18n="ap.hero.consent"></p></div>
       <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
     </section>
-    <section id="wikipedia-library-callout" class="card library-callout">
+    <section id="wikipedia-library-callout" class="card library-callout" hidden>
       <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
       <div><h2 data-i18n="wl.title"></h2><p class="muted" data-i18n="wl.choose_desc"></p></div>
       <a id="wikipedia-library-link" class="button-link" href="wikipedia-library.html" data-i18n="st.display.apocalypse_mode.manage"></a>
@@ -60,6 +62,8 @@
     </section>
     <div id="notice" role="status" aria-live="polite"></div>
   </main>
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
   <script type="module" src="apocalypse-mode.js"></script>
 </body>
 </html>

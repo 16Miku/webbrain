@@ -4,11 +4,13 @@ import {
   createOpfsArchiveStorage,
   importKiwixArchive,
   isBasicWikipediaArchive,
+  isSimpleEnglishWikipediaArchive,
   normalizeStorageEstimate,
   openKiwixZim,
   registerKiwixArchiveHandle,
   selectWikipediaArchiveVariant,
   wikipediaArchiveIncludesImages,
+  wikipediaArchiveMatchesSelection,
 } from '../agent/apocalypse-mode.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
@@ -131,8 +133,10 @@ function selectedIncludesImages() {
 function matchingReadyRecord() {
   const includeImages = selectedIncludesImages();
   return customWikipediaRecords().find(record => record.status === 'ready'
-    && record.language === elements.language.value
-    && wikipediaArchiveIncludesImages(record) === includeImages) || null;
+    && wikipediaArchiveMatchesSelection(record, {
+      language: elements.language.value,
+      includeImages,
+    })) || null;
 }
 
 function openReader(id) {
@@ -216,7 +220,7 @@ function render() {
   elements.download.textContent = t(busy ? 'wl.preparing_button' : alreadyReady ? 'wl.already_ready' : 'wl.download');
   elements['import-button'].disabled = !enabled || busy || importBusy;
   elements['import-file'].disabled = !enabled || busy || importBusy;
-  elements['replacement-note'].hidden = wikipediaRecords().every(recordItem => !isBasicWikipediaArchive(recordItem));
+  elements['replacement-note'].hidden = wikipediaRecords().every(recordItem => !isSimpleEnglishWikipediaArchive(recordItem));
   renderCurrentRecords(records);
 }
 
@@ -231,7 +235,10 @@ async function downloadSelected() {
   try {
     const includeImages = selectedIncludesImages();
     const result = await command('catalog', { language: elements.language.value });
-    const item = selectWikipediaArchiveVariant(result.items, { includeImages });
+    const item = selectWikipediaArchiveVariant(result.items, {
+      language: elements.language.value,
+      includeImages,
+    });
     if (!item) throw new Error(t('wl.unavailable'));
     const { download } = await command('resolve', { item });
     const replacementArchiveIds = wikipediaRecords()

@@ -4,6 +4,10 @@
  * Page-specific styles still own layout and behavior; this layer gives the suite
  * one recognizable material, type, color, focus, and motion language.
  */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   --bg:#0d1412;
   --panel:#151e1a;
@@ -651,9 +655,18 @@ button:active:not(:disabled),
 .emergency-box-page .search-field,
 .emergency-box-page .primary-button,
 .emergency-box-page .secondary-button,
+.emergency-box-page .basic-kit-button,
 .emergency-box-page .resource-action {
   border-radius:2px;
 }
+
+.emergency-box-page .basic-kit-button {
+  border-color:var(--health);
+  background:var(--health-bg);
+  box-shadow:inset 3px 0 0 var(--health);
+}
+
+.emergency-box-page .basic-kit-mark { border-radius:1px; }
 
 .emergency-box-page .primary-button,
 .emergency-box-page .resource-action.primary {
@@ -713,9 +726,7 @@ button:active:not(:disabled),
   overflow:hidden;
   border-radius:2px;
   border-top:3px solid var(--accent);
-  background:
-    linear-gradient(115deg,transparent 0 68%,var(--accent-soft) 68% 68.2%,transparent 68.2%),
-    var(--panel);
+  background:var(--panel);
   box-shadow:0 30px 78px var(--shadow);
   clip-path:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,0 100%);
 }

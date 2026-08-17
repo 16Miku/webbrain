@@ -55,10 +55,14 @@ function classifyArchiveTier(name, flavour) {
   return 'full';
 }
 
-export function isBasicWikipediaArchive(item = {}) {
+export function isSimpleEnglishWikipediaArchive(item = {}) {
   const name = String(item.name || '').toLowerCase();
+  return name === 'wikipedia_en-simple_all' || name === 'wikipedia_en_simple_all';
+}
+
+export function isBasicWikipediaArchive(item = {}) {
   return String(item.language || '').toLowerCase() === 'eng'
-    && (name === 'wikipedia_en-simple_all' || name === 'wikipedia_en_simple_all')
+    && isSimpleEnglishWikipediaArchive(item)
     && String(item.flavour || '').toLowerCase() === 'nopic';
 }
 
@@ -70,10 +74,12 @@ export function selectBasicWikipediaArchive(items = []) {
 
 export function selectWikipediaArchiveVariant(items = [], options = {}) {
   const includeImages = options.includeImages === true;
+  const language = String(options.language || '').toLowerCase();
   return items
     .filter(item => {
       const name = String(item?.name || '').toLowerCase();
-      if (!/(?:^|_)all(?:_|$)/.test(name) || isBasicWikipediaArchive(item)) return false;
+      if (!/(?:^|_)all(?:_|$)/.test(name) || isSimpleEnglishWikipediaArchive(item)) return false;
+      if (language && String(item?.language || '').toLowerCase() !== language) return false;
       if (!includeImages) return String(item?.flavour || '').toLowerCase() === 'nopic';
       return wikipediaArchiveIncludesImages(item);
     })
@@ -388,6 +394,15 @@ export function wikipediaArchiveIncludesImages(metadata = {}, embedded = {}) {
   ].map(tag => String(tag || '').trim().toLowerCase()).filter(Boolean);
   if (flavour === 'nopic' || tags.includes('_pictures:no')) return false;
   return flavour === 'maxi' || tags.includes('_pictures:yes');
+}
+
+export function wikipediaArchiveMatchesSelection(item = {}, options = {}) {
+  const language = String(options.language || '').toLowerCase();
+  if (!language || String(item.language || '').toLowerCase() !== language) return false;
+  if (isSimpleEnglishWikipediaArchive(item)) return false;
+  const name = String(item.name || '').toLowerCase();
+  if (name && !/(?:^|_)all(?:_|$)/.test(name)) return false;
+  return wikipediaArchiveIncludesImages(item) === (options.includeImages === true);
 }
 
 export function isSupportedWikipediaImageMimeType(value) {
@@ -1599,7 +1614,21 @@ export function createApocalypseController(api, options = {}) {
   }));
   const replacementCleanupInFlight = new Map();
   async function cleanupArchiveReplacements(record) {
-    if (!record?.id || record.status !== 'ready' || isBasicWikipediaArchive(record)) return {};
+    if (!record?.id || record.status !== 'ready') return {};
+    if (isSimpleEnglishWikipediaArchive(record)) {
+      if (Array.isArray(record.replacementArchiveIds) && record.replacementArchiveIds.length) {
+        const current = await store.getArchive(record.id);
+        if (current?.status === 'ready') {
+          await putArchiveIfCurrent(store, {
+            ...current,
+            replacementArchiveIds: [],
+            replacementCleanupError: '',
+            updatedAt: Date.now(),
+          }, { status: current.status, generation: current.generation, updatedAt: current.updatedAt });
+        }
+      }
+      return {};
+    }
     if (replacementCleanupInFlight.has(record.id)) return await replacementCleanupInFlight.get(record.id);
     const cleanup = (async () => {
       const pending = [...new Set((Array.isArray(record.replacementArchiveIds) ? record.replacementArchiveIds : [])
@@ -1848,7 +1877,9 @@ export function createApocalypseController(api, options = {}) {
         if (!/^wikipedia(?:_|$)/i.test(String(payload.download?.name || ''))) {
           throw new Error('Apocalypse Mode currently supports Wikipedia catalog archives only.');
         }
-        const requestedReplacementIds = new Set((Array.isArray(payload.replacementArchiveIds)
+        const replacementEligible = /(?:^|_)all(?:_|$)/i.test(String(payload.download?.name || ''))
+          && !isSimpleEnglishWikipediaArchive(payload.download);
+        const requestedReplacementIds = new Set((replacementEligible && Array.isArray(payload.replacementArchiveIds)
           ? payload.replacementArchiveIds : []).slice(0, 16).map(value => String(value || '')));
         const replacementArchiveIds = (await store.listArchives())
           .filter(record => requestedReplacementIds.has(record.id)

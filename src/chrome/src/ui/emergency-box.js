@@ -1,14 +1,17 @@
 import { createApocalypseStore } from '../agent/apocalypse-mode.js';
 import {
+  EMERGENCY_BOX_COMMUNICATION_RESOURCES,
   EMERGENCY_BOX_HEALTH_RESOURCES,
   compareEmergencyBoxResources,
   createEmergencyBoxStorage,
   createEmergencyBoxStore,
   deleteEmergencyResource,
   downloadEmergencyResource,
+  estimateEmergencyBoxResourceBytes,
   loadOpenStaxCatalog,
   OPENSTAX_CATALOG_SNAPSHOT_DATE,
   PREFETCHED_OPENSTAX_CATALOG,
+  selectEmergencyBoxBasicResources,
 } from '../agent/emergency-box.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
@@ -31,16 +34,21 @@ const resourceStore = createEmergencyBoxStore();
 const resourceStorage = createEmergencyBoxStorage();
 const elements = Object.fromEntries([
   'mode-status', 'resource-count', 'installed-rail-count', 'installed-count', 'installed-bytes',
-  'category-nav', 'resource-search', 'load-openstax', 'download-all', 'notice', 'resource-list',
+  'category-nav', 'resource-search', 'load-openstax', 'download-basic', 'download-all', 'notice', 'resource-list',
 ].map(id => [id, document.getElementById(id)]));
 
 const OPENSTAX_CACHE_KEY = 'webbrainEmergencyOpenStaxCatalog';
+const EMERGENCY_READER_PAGES = new Set(['emergency-pdf.html', 'emergency-communication.html']);
+const downloadControlChannel = typeof BroadcastChannel === 'function'
+  ? new BroadcastChannel('webbrain-emergency-download-control')
+  : null;
 let apocalypseEnabled = false;
 let activeFilter = 'all';
 let openStaxResources = cachedOpenStaxCatalog();
 let records = new Map();
 let loadingOpenStax = false;
 let bulkDownloading = false;
+let bulkDownloadKind = '';
 let stopBulkDownload = false;
 const downloads = new Map();
 
@@ -77,6 +85,28 @@ function formatBytes(value) {
   return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unit]}`;
 }
 
+function formatEstimatedSize(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1_000_000_000) {
+    const megabytes = bytes / 1_000_000;
+    if (megabytes === 0) return '0 MB';
+    return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`;
+  }
+  const gigabytes = bytes / 1_000_000_000;
+  return `${gigabytes.toFixed(gigabytes >= 10 ? 1 : 2)} GB`;
+}
+
+function estimatedDownloadBytes(resources) {
+  return resources.reduce((sum, resource) => sum + estimateEmergencyBoxResourceBytes(resource), 0);
+}
+
+function remainingOfTotal(resources, pending) {
+  return t('eb.remaining_of_total', {
+    remaining: formatEstimatedSize(estimatedDownloadBytes(pending)),
+    total: formatEstimatedSize(estimatedDownloadBytes(resources)),
+  });
+}
+
 function setNotice(message = '', kind = '') {
   elements.notice.textContent = message;
   elements.notice.dataset.kind = kind;
@@ -84,8 +114,26 @@ function setNotice(message = '', kind = '') {
 
 function catalogResources() {
   const resources = new Map();
-  for (const item of [...EMERGENCY_BOX_HEALTH_RESOURCES, ...openStaxResources]) resources.set(item.id, item);
-  for (const record of records.values()) resources.set(record.id, { ...(resources.get(record.id) || {}), ...record });
+  for (const item of [...EMERGENCY_BOX_COMMUNICATION_RESOURCES, ...EMERGENCY_BOX_HEALTH_RESOURCES, ...openStaxResources]) {
+    resources.set(item.id, item.builtIn ? {
+      ...item,
+      status: 'ready',
+      bytesReceived: item.totalBytes,
+    } : item);
+  }
+  for (const record of records.values()) {
+    const catalogResource = resources.get(record.id);
+    const merged = { ...(catalogResource || {}), ...record };
+    if (catalogResource && record.status !== 'ready') {
+      if (catalogResource.url) {
+        merged.url = catalogResource.url;
+        merged.sourceUrl = catalogResource.sourceUrl || catalogResource.url;
+      }
+      if (catalogResource.storageKey) merged.storageKey = catalogResource.storageKey;
+      if (Number(catalogResource.totalBytes) > 0) merged.totalBytes = catalogResource.totalBytes;
+    }
+    resources.set(record.id, merged);
+  }
   return [...resources.values()];
 }
 
@@ -93,7 +141,7 @@ function filteredResources() {
   const query = elements['resource-search'].value.trim().toLocaleLowerCase();
   return catalogResources()
     .filter(resource => {
-      if (activeFilter === 'installed') return records.has(resource.id);
+      if (activeFilter === 'installed') return resource.status === 'ready';
       return activeFilter === 'all' || resource.category === activeFilter;
     })
     .filter(resource => !query || [resource.title, resource.description, resource.publisher, resource.collection]
@@ -113,6 +161,9 @@ function resourceActions(resource) {
   const status = resource.status || '';
   const disabled = apocalypseEnabled ? '' : ` disabled title="${escapeHtml(t('eb.enable_downloads_tooltip'))}"`;
   if (status === 'ready') {
+    if (resource.builtIn) {
+      return `<button type="button" class="resource-action read" data-action="read" data-id="${escapeHtml(resource.id)}">${escapeHtml(t('eb.read'))}</button>`;
+    }
     return `
       <button type="button" class="resource-action read" data-action="read" data-id="${escapeHtml(resource.id)}">${escapeHtml(t('eb.read'))}</button>
       <button type="button" class="resource-action danger" data-action="delete" data-id="${escapeHtml(resource.id)}">${escapeHtml(t('eb.delete'))}</button>`;
@@ -156,6 +207,8 @@ function renderResource(resource) {
           <span>${escapeHtml(resource.collection || '')}</span>
           <span>${escapeHtml(resource.publisher || '')}</span>
           ${resource.published ? `<span>${escapeHtml(resource.published)}</span>` : ''}
+          ${resource.language ? `<span>${escapeHtml(resource.language)}</span>` : ''}
+          ${resource.builtIn ? '<span>Built in</span>' : ''}
           ${status === 'ready' ? `<span>${escapeHtml(formatBytes(received || total))}</span>` : ''}
           ${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('eb.source'))} ↗</a>` : ''}
         </div>
@@ -167,7 +220,7 @@ function renderResource(resource) {
 
 function render() {
   const all = catalogResources();
-  const installed = [...records.values()].filter(record => record.status === 'ready');
+  const installed = all.filter(resource => resource.status === 'ready');
   const installedBytes = installed.reduce((sum, record) => sum + (Number(record.bytesReceived) || Number(record.totalBytes) || 0), 0);
   elements['resource-count'].textContent = String(all.length);
   elements['installed-rail-count'].textContent = String(installed.length);
@@ -178,9 +231,28 @@ function render() {
   elements['load-openstax'].disabled = loadingOpenStax;
 
   const filtered = filteredResources();
-  const pendingCount = filtered.filter(resource => resource.status !== 'ready').length;
-  elements['download-all'].disabled = bulkDownloading ? false : (!apocalypseEnabled || pendingCount === 0);
-  elements['download-all'].querySelector('[data-download-all-label]').textContent = t(bulkDownloading ? 'eb.stop_all' : 'eb.download_all');
+  const downloadable = filtered.filter(resource => !resource.builtIn);
+  const pending = downloadable.filter(resource => resource.status !== 'ready');
+  const basicResources = selectEmergencyBoxBasicResources(all).filter(resource => !resource.builtIn);
+  const basicPending = basicResources
+    .filter(resource => resource.status !== 'ready');
+  const pendingCount = pending.length;
+  const basicPendingCount = basicPending.length;
+  const basicActive = bulkDownloading && bulkDownloadKind === 'basic';
+  const allActive = bulkDownloading && bulkDownloadKind === 'all';
+  elements['download-basic'].disabled = bulkDownloading ? !basicActive : (!apocalypseEnabled || basicPendingCount === 0);
+  elements['download-basic'].querySelector('[data-download-basic-label]').textContent = t(basicActive ? 'eb.stop_all' : 'eb.download_basic');
+  elements['download-basic'].querySelector('[data-download-basic-size]').textContent = basicActive
+    ? ''
+    : remainingOfTotal(basicResources, basicPending);
+  elements['download-all'].disabled = bulkDownloading ? !allActive : (!apocalypseEnabled || pendingCount === 0);
+  const currentView = activeFilter !== 'all' || elements['resource-search'].value.trim() !== '';
+  elements['download-all'].querySelector('[data-download-all-label]').textContent = t(allActive
+    ? 'eb.stop_all'
+    : (currentView ? 'eb.download_current_view' : 'eb.download_all'));
+  elements['download-all'].querySelector('[data-download-all-size]').textContent = allActive
+    ? ''
+    : remainingOfTotal(downloadable, pending);
 
   elements['resource-list'].innerHTML = filtered.length
     ? filtered.map(renderResource).join('')
@@ -237,57 +309,104 @@ async function startDownload(resource, options = {}) {
     if (!confirmed) return;
   }
   const controller = new AbortController();
-  downloads.set(resource.id, controller);
+  const entry = {
+    controller,
+    kind: String(options.bulkKind || ''),
+    promise: null,
+  };
+  downloads.set(resource.id, entry);
   if (options.quiet !== true) setNotice(t('eb.keep_open'));
-  try {
-    const record = await downloadEmergencyResource(resource, {
-      store: resourceStore,
-      storage: resourceStorage,
-      signal: controller.signal,
-      onProgress: next => {
-        records.set(next.id, next);
-        render();
-      },
-    });
-    records.set(record.id, record);
-    if (record.status === 'ready' && options.quiet !== true) setNotice(t('eb.download_complete', { title: record.title }), 'success');
-  } catch (error) {
-    if (options.quiet !== true) setNotice(error.message, 'error');
-  } finally {
-    downloads.delete(resource.id);
-    await refreshState();
-  }
+  entry.promise = (async () => {
+    try {
+      const record = await downloadEmergencyResource(resource, {
+        store: resourceStore,
+        storage: resourceStorage,
+        signal: controller.signal,
+        onProgress: next => {
+          records.set(next.id, next);
+          render();
+        },
+      });
+      records.set(record.id, record);
+      if (record.status === 'ready' && options.quiet !== true) setNotice(t('eb.download_complete', { title: record.title }), 'success');
+    } catch (error) {
+      if (options.quiet !== true) setNotice(error.message, 'error');
+    } finally {
+      if (downloads.get(resource.id) === entry) downloads.delete(resource.id);
+      await refreshState();
+    }
+  })();
+  return await entry.promise;
 }
 
-async function downloadAllVisible() {
+async function stopAndDeleteDownload(id) {
+  const entry = downloads.get(id);
+  entry?.controller.abort();
+  if (entry?.promise) await entry.promise.catch(() => {});
+  await deleteEmergencyResource(id, { store: resourceStore, storage: resourceStorage });
+  records.delete(id);
+  setNotice(t('eb.deleted'), 'success');
+  render();
+}
+
+async function handleDownloadControl(detail = {}) {
+  const id = String(detail.id || '');
+  const action = String(detail.action || '');
+  const resource = resourceById(id);
+  if (!id || !resource) return;
+  if (action === 'pause') downloads.get(id)?.controller.abort();
+  if (action === 'resume') await startDownload(resource, { confirm: false });
+  if (action === 'stop') await stopAndDeleteDownload(id);
+}
+
+async function downloadResources(resources, kind) {
   if (bulkDownloading) {
-    stopBulkDownload = true;
-    for (const controller of downloads.values()) controller.abort();
+    if (bulkDownloadKind === kind) {
+      stopBulkDownload = true;
+      for (const entry of downloads.values()) {
+        if (entry.kind === kind) entry.controller.abort();
+      }
+    }
     return;
   }
   if (!apocalypseEnabled) return;
-  const pending = filteredResources().filter(resource => resource.status !== 'ready');
+  const pending = resources.filter(resource => resource.status !== 'ready');
   if (!pending.length) return;
-  if (!globalThis.confirm(t('eb.confirm_download_all', { count: pending.length }))) return;
+  const confirmationKey = kind === 'basic' ? 'eb.confirm_download_basic' : 'eb.confirm_download_all';
+  if (!globalThis.confirm(t(confirmationKey, { count: pending.length }))) return;
   bulkDownloading = true;
+  bulkDownloadKind = kind;
   stopBulkDownload = false;
   render();
   let completed = 0;
   for (const resource of pending) {
     if (stopBulkDownload) break;
     setNotice(t('eb.downloading_all', { current: completed + 1, count: pending.length, title: resource.title }));
-    await startDownload(resource, { confirm: false, quiet: true });
+    await startDownload(resource, { confirm: false, quiet: true, bulkKind: kind });
     if (records.get(resource.id)?.status === 'ready') completed += 1;
   }
   const stopped = stopBulkDownload;
   bulkDownloading = false;
+  bulkDownloadKind = '';
   stopBulkDownload = false;
-  setNotice(t(stopped ? 'eb.download_all_stopped' : 'eb.download_all_complete', { count: completed }), stopped ? '' : 'success');
+  const stoppedKey = kind === 'basic' ? 'eb.download_basic_stopped' : 'eb.download_all_stopped';
+  setNotice(t(stopped ? stoppedKey : 'eb.download_all_complete', { count: completed }), stopped ? '' : 'success');
   render();
 }
 
-function openReader(id) {
-  const url = runtimeApi.runtime.getURL(`src/ui/emergency-pdf.html?id=${encodeURIComponent(id)}`);
+async function downloadBasicKit() {
+  return downloadResources(selectEmergencyBoxBasicResources(catalogResources()), 'basic');
+}
+
+async function downloadAllVisible() {
+  return downloadResources(filteredResources(), 'all');
+}
+
+function openReader(resource) {
+  const requestedReader = String(resource?.reader || 'emergency-pdf.html');
+  const reader = EMERGENCY_READER_PAGES.has(requestedReader) ? requestedReader : 'emergency-pdf.html';
+  const params = reader === 'emergency-pdf.html' ? `?id=${encodeURIComponent(resource?.id || '')}` : '';
+  const url = runtimeApi.runtime.getURL(`src/ui/${reader}${params}`);
   const createData = { url, type: 'popup', width: 1120, height: 820 };
   try {
     if (globalThis.browser?.windows?.create) {
@@ -316,6 +435,7 @@ elements['category-nav'].addEventListener('click', event => {
 
 elements['resource-search'].addEventListener('input', render);
 elements['load-openstax'].addEventListener('click', loadOpenStax);
+elements['download-basic'].addEventListener('click', downloadBasicKit);
 elements['download-all'].addEventListener('click', downloadAllVisible);
 elements['resource-list'].addEventListener('click', async event => {
   const button = event.target.closest('[data-action][data-id]');
@@ -323,30 +443,44 @@ elements['resource-list'].addEventListener('click', async event => {
   const { action, id } = button.dataset;
   const resource = resourceById(id);
   if (action === 'download') await startDownload(resource);
-  if (action === 'pause') downloads.get(id)?.abort();
-  if (action === 'read') openReader(id);
+  if (action === 'pause') downloads.get(id)?.controller.abort();
+  if (action === 'read') openReader(resource);
   if (action === 'delete' && globalThis.confirm(t('eb.confirm_delete', { title: resource?.title || id }))) {
-    downloads.get(id)?.abort();
     try {
-      await deleteEmergencyResource(id, { store: resourceStore, storage: resourceStorage });
-      records.delete(id);
-      setNotice(t('eb.deleted'), 'success');
-      render();
+      await stopAndDeleteDownload(id);
     } catch (error) {
       setNotice(error.message, 'error');
     }
   }
 });
 
+globalThis.addEventListener('wb-emergency-download-control', event => {
+  void handleDownloadControl(event.detail).catch(error => setNotice(error.message, 'error'));
+});
+if (downloadControlChannel) {
+  downloadControlChannel.addEventListener('message', event => {
+    void handleDownloadControl(event.data).catch(error => setNotice(error.message, 'error'));
+  });
+}
+
 globalThis.addEventListener('beforeunload', () => {
   stopBulkDownload = true;
-  for (const controller of downloads.values()) controller.abort();
+  for (const entry of downloads.values()) entry.controller.abort();
+  downloadControlChannel?.close();
 });
 globalThis.addEventListener('focus', () => refreshState().catch(error => setNotice(error.message, 'error')));
 document.addEventListener('wb-locale-changed', render);
 
-refreshState({ recoverInterrupted: true }).then(() => {
+refreshState({ recoverInterrupted: true }).then(async () => {
   if (!elements.notice.textContent) {
     setNotice(t('eb.openstax_prefetched', { count: openStaxResources.length, date: OPENSTAX_CATALOG_SNAPSHOT_DATE }));
+  }
+  const params = new URLSearchParams(globalThis.location.search);
+  const resumeId = params.get('resume');
+  if (!resumeId) return;
+  globalThis.history.replaceState({}, '', globalThis.location.pathname);
+  const resource = resourceById(resumeId);
+  if (resource && ['paused', 'error'].includes(resource.status)) {
+    await startDownload(resource, { confirm: false });
   }
 }).catch(error => setNotice(error.message, 'error'));

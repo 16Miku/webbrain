@@ -7,7 +7,123 @@ const EMERGENCY_BOX_DB_VERSION = 1;
 const RESOURCE_STORE = 'resources';
 const RESOURCE_DIRECTORY = 'webbrain-emergency-box';
 const OPENSTAX_API = 'https://openstax.org/apps/cms/api/v2';
-const ALL_RESOURCE_CATEGORY_PRIORITY = Object.freeze({ health: 0, field: 1, education: 2 });
+const ALL_RESOURCE_CATEGORY_PRIORITY = Object.freeze({ communication: 0, health: 1, field: 2, education: 3 });
+export const EMERGENCY_BOX_SIZE_ESTIMATES = Object.freeze({
+  measuredAt: '2026-08-17',
+  basicBytes: 59_937_724,
+  catalogBytes: 12_063_912_733,
+  hesperianBytesPerResource: 436_315,
+  curatedBytesPerResource: 6_453_444,
+  openStaxBytesPerResource: 91_871_600,
+});
+const HESPERIAN_ENGLISH_PDFS_URL = 'https://languages.hesperian.org/pages/en/pdf.html';
+
+export const EMERGENCY_BOX_COMMUNICATION_RESOURCES = Object.freeze([
+  Object.freeze({
+    id: 'communication-panlex-basic-lexicon',
+    title: 'Universal Basic Lexicon',
+    description: 'A built-in word board with 110 everyday concepts across 1,756 languages and 2,064 language varieties.',
+    category: 'communication',
+    collection: 'Communication & languages',
+    publisher: 'PanLex / The Long Now Foundation',
+    published: '2017',
+    language: '1,756 languages',
+    sourceUrl: 'https://dev.panlex.org/panlex-swadesh-corpus/',
+    rights: 'CC0 1.0 Universal',
+    totalBytes: 3_597_069,
+    builtIn: true,
+    basic: true,
+    format: 'lexicon',
+    reader: 'emergency-communication.html',
+  }),
+]);
+
+const HESPERIAN_WTND_BASIC_SECTIONS = new Set(['03', '04', '10', '13', '14', '23', 'gp']);
+const HESPERIAN_WTND_SECTIONS = Object.freeze([
+  ['fm', 'Front matter and copyright'],
+  ['toc', 'Contents, introduction and edition notes'],
+  ['int', 'Words to the village health worker'],
+  ['01', 'Home cures and popular beliefs'],
+  ['02', 'Sicknesses that are often confused'],
+  ['03', 'How to examine a sick person'],
+  ['04', 'How to take care of a sick person'],
+  ['05', 'Healing without medicines'],
+  ['06', 'Right and wrong uses of modern medicines'],
+  ['07', 'Antibiotics: what they are and how to use them'],
+  ['08', 'How to measure and give medicine'],
+  ['09', 'Instructions and precautions for injections'],
+  ['10', 'First aid'],
+  ['11', 'Nutrition: what to eat to be healthy'],
+  ['12', 'Prevention: how to avoid many sicknesses'],
+  ['13', 'Some very common sicknesses'],
+  ['14', 'Serious illnesses that need special medical attention'],
+  ['15', 'Skin problems'],
+  ['16', 'The eyes'],
+  ['17', 'The teeth, gums and mouth'],
+  ['18', 'The urinary system and the genitals'],
+  ['19', 'Information for mothers and midwives'],
+  ['20', 'Family planning'],
+  ['21', 'Health and sicknesses of children'],
+  ['22', 'Health and sicknesses of older people'],
+  ['23', 'The medicine kit'],
+  ['gp', 'Medicine uses, dosage and precautions'],
+  ['info', 'Additional information'],
+  ['gloss', 'Vocabulary'],
+  ['resc', 'Teaching-material resources'],
+  ['indx', 'Index'],
+  ['bm', 'Dosage blanks and patient reports'],
+]);
+
+const HESPERIAN_DENTIST_SECTIONS = Object.freeze([
+  ['fm', 'Front matter, contents and introduction'],
+  ['01', 'Your own teeth and gums'],
+  ['02', 'Teaching family and friends in your community'],
+  ['03', 'Teaching children at school'],
+  ['04', 'School activities for learning about teeth and gums'],
+  ['05', 'Taking care of teeth and gums'],
+  ['06', 'Examination and diagnosis'],
+  ['07', 'Treating some common problems'],
+  ['08', 'Scaling teeth'],
+  ['09', 'Injecting inside the mouth'],
+  ['10', 'How to treat a cavity'],
+  ['11', 'Taking out a tooth'],
+  ['12', 'HIV and care of the teeth and gums'],
+  ['bm', 'Appendices'],
+]);
+
+function hesperianResources({ idPrefix, title, published, path, sections, basicSections = new Set() }) {
+  return sections.map(([section, sectionTitle]) => Object.freeze({
+    id: `health-hesperian-${idPrefix}-${section}`,
+    title: `${title} — ${sectionTitle}`,
+    description: `Official ${title} chapter for community health care in low-resource settings.`,
+    category: 'health',
+    collection: `Hesperian — ${title}`,
+    publisher: 'Hesperian Health Guides',
+    published,
+    language: 'en',
+    url: `https://hesperian.org/wp-content/uploads/pdf/${path}/${path}_${section}.pdf`,
+    sourceUrl: HESPERIAN_ENGLISH_PDFS_URL,
+    basic: basicSections.has(section),
+  }));
+}
+
+const HESPERIAN_RESOURCES = Object.freeze([
+  ...hesperianResources({
+    idPrefix: 'wtnd',
+    title: 'Where There Is No Doctor',
+    published: '2025',
+    path: 'en_wtnd_2025',
+    sections: HESPERIAN_WTND_SECTIONS,
+    basicSections: HESPERIAN_WTND_BASIC_SECTIONS,
+  }),
+  ...hesperianResources({
+    idPrefix: 'dentist',
+    title: 'Where There Is No Dentist',
+    published: '2024',
+    path: 'en_dent_2024',
+    sections: HESPERIAN_DENTIST_SECTIONS,
+  }),
+]);
 
 export function compareEmergencyBoxResources(left = {}, right = {}, options = {}) {
   if (options.groupCategories === true) {
@@ -17,6 +133,15 @@ export function compareEmergencyBoxResources(left = {}, right = {}, options = {}
   }
   const readyDifference = Number(right.status === 'ready') - Number(left.status === 'ready');
   return readyDifference || String(left.title || '').localeCompare(String(right.title || ''));
+}
+
+export function estimateEmergencyBoxResourceBytes(resource = {}) {
+  const knownTotal = Number(resource.totalBytes);
+  if (Number.isFinite(knownTotal) && knownTotal > 0) return knownTotal;
+  const id = String(resource.id || '');
+  if (id.startsWith('openstax-')) return EMERGENCY_BOX_SIZE_ESTIMATES.openStaxBytesPerResource;
+  if (id.startsWith('health-hesperian-')) return EMERGENCY_BOX_SIZE_ESTIMATES.hesperianBytesPerResource;
+  return EMERGENCY_BOX_SIZE_ESTIMATES.curatedBytesPerResource;
 }
 
 export const EMERGENCY_BOX_HEALTH_RESOURCES = Object.freeze([
@@ -31,6 +156,7 @@ export const EMERGENCY_BOX_HEALTH_RESOURCES = Object.freeze([
     language: 'en',
     url: 'https://hlh.who.int/docs/librariesprovider4/hlh-documents/who-icrc-basic-emergency-care.pdf?sfvrsn=4460e22e_5',
     sourceUrl: 'https://www.who.int/publications-detail-redirect/basic-emergency-care-approach-to-the-acutely-ill-and-injured',
+    basic: true,
   },
   {
     id: 'health-ifrc-first-aid-guidelines-2020',
@@ -43,6 +169,7 @@ export const EMERGENCY_BOX_HEALTH_RESOURCES = Object.freeze([
     language: 'en',
     url: 'https://www.ifrc.org/sites/default/files/2022-02/EN_GFARC_GUIDELINES_2020.pdf',
     sourceUrl: 'https://www.ifrc.org/document/international-first-aid-resuscitation-and-education-guidelines',
+    basic: true,
   },
   {
     id: 'health-who-essential-medicines-2023',
@@ -55,6 +182,7 @@ export const EMERGENCY_BOX_HEALTH_RESOURCES = Object.freeze([
     language: 'en',
     whoHandle: '10665/371090',
     sourceUrl: 'https://www.who.int/publications/i/item/WHO-MHP-HPS-EML-2023.02',
+    basic: true,
   },
   {
     id: 'health-who-surgical-care-district-hospital',
@@ -104,7 +232,183 @@ export const EMERGENCY_BOX_HEALTH_RESOURCES = Object.freeze([
     archiveIdentifier: 'fm-4-25.11-first-aid',
     sourceUrl: 'https://archive.org/details/fm-4-25.11-first-aid',
   },
+  ...HESPERIAN_RESOURCES,
+  {
+    id: 'health-who-pocket-hospital-care-children',
+    title: 'Pocket Book of Hospital Care for Children',
+    description: 'WHO guidance for common and serious childhood illnesses in first-referral hospitals.',
+    category: 'health', collection: 'WHO clinical care', publisher: 'World Health Organization',
+    published: '2013', language: 'en', whoHandle: '10665/81170',
+    sourceUrl: 'https://www.who.int/publications/i/item/978-92-4-154837-3',
+  },
+  {
+    id: 'health-who-antenatal-care-positive-pregnancy',
+    title: 'WHO Recommendations on Antenatal Care',
+    description: 'Evidence-based routine antenatal care recommendations for a positive pregnancy experience.',
+    category: 'health', collection: 'Maternal care', publisher: 'World Health Organization',
+    published: '2016', language: 'en', whoHandle: '10665/250796',
+    sourceUrl: 'https://iris.who.int/handle/10665/250796',
+  },
+  {
+    id: 'health-who-pregnancy-childbirth-postpartum-newborn-care',
+    title: 'Pregnancy, Childbirth, Postpartum and Newborn Care',
+    description: 'A WHO guide for essential practice across pregnancy, birth, postpartum and newborn care.',
+    category: 'health', collection: 'Maternal care', publisher: 'World Health Organization',
+    published: '2015', language: 'en', whoHandle: '10665/249580',
+    sourceUrl: 'https://iris.who.int/handle/10665/249580',
+  },
+  {
+    id: 'health-who-managing-pregnancy-childbirth-complications',
+    title: 'Managing Complications in Pregnancy and Childbirth',
+    description: 'WHO guidance for midwives and doctors managing urgent maternal and childbirth complications.',
+    category: 'health', collection: 'Maternal care', publisher: 'World Health Organization',
+    published: '2017', language: 'en', whoHandle: '10665/255760',
+    sourceUrl: 'https://iris.who.int/handle/10665/255760',
+  },
+  {
+    id: 'health-who-imci-chart-booklet',
+    title: 'Integrated Management of Childhood Illness — Chart Booklet',
+    description: 'IMCI assessment, classification and treatment charts for sick children in first-level facilities.',
+    category: 'health', collection: 'WHO clinical care', publisher: 'World Health Organization',
+    published: '2014', language: 'en', whoHandle: '10665/104772',
+    sourceUrl: 'https://iris.who.int/handle/10665/104772',
+  },
+  {
+    id: 'health-who-imai-district-clinician',
+    title: 'IMAI District Clinician Manual',
+    description: 'Hospital care for adolescents and adults with limited medicines, tests and equipment.',
+    category: 'health', collection: 'WHO clinical care', publisher: 'World Health Organization',
+    published: '2011', language: 'en', whoHandle: '10665/77751',
+    sourceUrl: 'https://www.who.int/publications/i/item/9789241548281',
+  },
+  {
+    id: 'health-msf-clinical-guidelines',
+    title: 'MSF Clinical Guidelines — Diagnosis and Treatment',
+    description: 'Diagnosis and treatment guidance for curative programmes in hospitals and dispensaries.',
+    category: 'health', collection: 'MSF medical guidelines', publisher: 'Médecins Sans Frontières',
+    published: '2026', language: 'en', basic: true,
+    url: 'https://medicalguidelines.msf.org/sites/default/files/2026-05/guideline-170-en.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en',
+  },
+  {
+    id: 'health-msf-essential-drugs',
+    title: 'MSF Essential Drugs',
+    description: 'Practical medicine selection, dosing and administration guidance for low-resource care.',
+    category: 'health', collection: 'MSF medical guidelines', publisher: 'Médecins Sans Frontières',
+    published: '2026', language: 'en', basic: true,
+    url: 'https://medicalguidelines.msf.org/sites/default/files/pdf/guideline-339-en.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en/viewport/EssDr/english/essential-drugs-16682376.html',
+  },
+  {
+    id: 'health-msf-obstetric-newborn-care',
+    title: 'MSF Essential Obstetric and Newborn Care',
+    description: 'Practical guidance for routine and emergency obstetric and newborn care.',
+    category: 'health', collection: 'MSF medical guidelines', publisher: 'Médecins Sans Frontières',
+    language: 'en', url: 'https://medicalguidelines.msf.org/sites/default/files/pdf/guideline-449-en.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en',
+  },
+  {
+    id: 'health-msf-cholera-epidemic',
+    title: 'MSF Management of a Cholera Epidemic',
+    description: 'Field guidance for cholera preparation, treatment centres, surveillance and outbreak control.',
+    category: 'health', collection: 'MSF medical guidelines', publisher: 'Médecins Sans Frontières',
+    language: 'en', url: 'https://medicalguidelines.msf.org/sites/default/files/pdf/guideline-800-en.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en',
+  },
+  {
+    id: 'health-msf-measles-epidemic',
+    title: 'MSF Management of a Measles Epidemic',
+    description: 'Vaccination, surveillance and clinical response guidance for measles outbreaks.',
+    category: 'health', collection: 'MSF medical guidelines', publisher: 'Médecins Sans Frontières',
+    published: '2025', language: 'en',
+    url: 'https://medicalguidelines.msf.org/sites/default/files/2026-05/Measles_2025_EN.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en',
+  },
+  {
+    id: 'health-msf-tuberculosis',
+    title: 'MSF Tuberculosis Guidelines',
+    description: 'Clinical and programme guidance for tuberculosis diagnosis, treatment and follow-up.',
+    category: 'health', collection: 'MSF medical guidelines', publisher: 'Médecins Sans Frontières',
+    published: '2025', language: 'en',
+    url: 'https://medicalguidelines.msf.org/sites/default/files/2025-06/Tuberculosis%202025_EN.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en',
+  },
+  {
+    id: 'field-msf-public-health-engineering',
+    title: 'MSF Public Health Engineering',
+    description: 'Water, sanitation, shelter and vector-control engineering for humanitarian field operations.',
+    category: 'field', collection: 'Field sanitation', publisher: 'Médecins Sans Frontières',
+    published: '2010', language: 'en',
+    url: 'https://medicalguidelines.msf.org/sites/default/files/2022-06/Public_health_engineering_2010.pdf',
+    sourceUrl: 'https://medicalguidelines.msf.org/en',
+  },
+  {
+    id: 'health-icrc-first-aid-armed-conflict',
+    title: 'ICRC First Aid in Armed Conflicts',
+    description: 'Life-saving and stabilizing first aid for armed conflict and other situations of violence.',
+    category: 'health', collection: 'Conflict medicine', publisher: 'International Committee of the Red Cross',
+    published: '2006', language: 'en',
+    url: 'https://www.icrc.org/sites/default/files/external/doc/en/assets/files/other/icrc-002-0870.pdf',
+    sourceUrl: 'https://www.icrc.org/en/publication/0870-first-aid-armed-conflicts-and-other-situations-violence',
+  },
+  {
+    id: 'health-icrc-war-surgery-volume-1',
+    title: 'ICRC War Surgery — Volume 1',
+    description: 'Surgical care for war injuries when staff, equipment and evacuation options are limited.',
+    category: 'health', collection: 'Conflict medicine', publisher: 'International Committee of the Red Cross',
+    published: '2009', language: 'en',
+    url: 'https://www.icrc.org/sites/default/files/external/doc/en/assets/files/other/icrc-002-0973.pdf',
+    sourceUrl: 'https://www.icrc.org/en/publication/0973-war-surgery-working-limited-resources-armed-conflict-and-other-situations-violence',
+  },
+  {
+    id: 'field-army-special-forces-medical-handbook',
+    title: 'Special Forces Medical Handbook — ST 31-91B',
+    description: 'Field assessment and treatment reference for austere and isolated medical operations.',
+    category: 'field', collection: 'Field manuals', publisher: 'U.S. Department of the Army',
+    language: 'en', archiveIdentifier: 'ST_31-91B_Special_Forces_Medical_Handbook',
+    sourceUrl: 'https://archive.org/details/ST_31-91B_Special_Forces_Medical_Handbook',
+  },
+  {
+    id: 'field-army-survival-fm-21-76',
+    title: 'Survival — FM 21-76',
+    description: 'Shelter, water, food, fire, navigation, signaling and survival in hostile environments.',
+    category: 'field', collection: 'Survival manuals', publisher: 'U.S. Department of the Army',
+    language: 'en', archiveIdentifier: 'Fm21-76SurvivalManual',
+    sourceUrl: 'https://archive.org/details/Fm21-76SurvivalManual',
+  },
+  {
+    id: 'field-army-survival-fm-3-05-70',
+    title: 'Survival — FM 3-05.70',
+    description: 'Updated U.S. Army survival guidance for shelter, water, food, navigation and recovery.',
+    category: 'field', collection: 'Survival manuals', publisher: 'U.S. Department of the Army',
+    published: '2002', language: 'en', basic: true, totalBytes: 21_019_230,
+    storageKey: 'field-army-survival-fm-3-05-70-wikimedia-v1',
+    url: 'https://upload.wikimedia.org/wikipedia/commons/7/70/FM_3-05.70_%28FM_21-76%29_Survival_-_May_2002.pdf',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:FM_3-05.70_(FM_21-76)_Survival_-_May_2002.pdf',
+  },
+  {
+    id: 'field-army-radio-fm-24-18',
+    title: 'Tactical Radio Communications — FM 24-18',
+    description: 'Planning and operating single-channel tactical radio communications.',
+    category: 'field', collection: 'Communications manuals', publisher: 'U.S. Department of the Army',
+    published: '1987', language: 'en', archiveIdentifier: 'FM2418TacticalSingleChannelRadioCommunicationsTechniques',
+    sourceUrl: 'https://archive.org/details/FM2418TacticalSingleChannelRadioCommunicationsTechniques',
+  },
+  {
+    id: 'health-army-emergency-war-surgery-5e',
+    title: 'Emergency War Surgery — 5th Edition',
+    description: 'Definitive U.S. military guidance for surgical care of combat casualties.',
+    category: 'health', collection: 'Conflict medicine', publisher: 'U.S. Army / Borden Institute',
+    published: '2018', language: 'en', archiveIdentifier: 'emergency-war-surgery-5th-edition',
+    sourceUrl: 'https://jts.health.mil/index.cfm/education/resources',
+  },
 ]);
+
+export function selectEmergencyBoxBasicResources(
+  resources = [...EMERGENCY_BOX_COMMUNICATION_RESOURCES, ...EMERGENCY_BOX_HEALTH_RESOURCES],
+) {
+  return (Array.isArray(resources) ? resources : []).filter(resource => resource?.basic === true);
+}
 
 function idbRequest(request) {
   return new Promise((resolve, reject) => {
@@ -326,6 +630,9 @@ export async function downloadEmergencyResource(resource, options = {}) {
   const resolved = await resolveEmergencyResource(resource, fetchImpl);
   const storageKey = resolved.storageKey || resolved.id;
   const existing = await store.get(resolved.id);
+  const replacedStorageKey = existing?.storageKey && existing.storageKey !== storageKey
+    ? existing.storageKey
+    : '';
   let offset = await storage.size(storageKey);
   let writer;
   let lastPersistedAt = 0;
@@ -381,6 +688,7 @@ export async function downloadEmergencyResource(resource, options = {}) {
       await storage.delete(storageKey);
       throw new Error('The downloaded file is not a valid PDF.');
     }
+    if (replacedStorageKey) await storage.delete(replacedStorageKey).catch(() => {});
     return await persist({
       status: 'ready',
       bytesReceived: file.size,
