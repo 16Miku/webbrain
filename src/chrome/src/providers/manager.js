@@ -849,6 +849,9 @@ export class ProviderManager {
         'vertex_anthropic',
       ].includes(config.type),
     };
+    // Runtime-only identity for provider-specific conversation state. Keep it
+    // non-enumerable so it never leaks into storage, exports, or the settings UI.
+    Object.defineProperty(normalizedConfig, '_providerId', { value: String(id || '') });
     if (definitionId === 'ollama') {
       normalizedConfig.visionMode = OLLAMA_VISION_MODES.has(normalizedConfig.visionMode)
         ? normalizedConfig.visionMode
