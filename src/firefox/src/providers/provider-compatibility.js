@@ -154,9 +154,9 @@ export function shouldUseOpenAIResponsesApi(config = {}) {
  * Pro families also stay legacy when routed through a Chat Completions
  * provider: those routed endpoints advertise `max_tokens`, while direct
  * OpenAI calls are selected as Responses before this helper is consulted.
- * Matches at the start or after a router prefix (`openai/o1`), with a trailing
- * boundary so look-alikes like `gpt-4o`, `gpt-4.1`, or `o365-assistant` never
- * match.
+ * OpenRouter's routed allowlist is intentionally narrow: only GPT-5.6 Terra
+ * variants use max_completion_tokens there; o-series, Pro, batch, and image
+ * routes remain on max_tokens.
  */
 export function isNewOpenAIContractModel(model) {
   const m = String(model || '').toLowerCase();
@@ -167,6 +167,9 @@ export function isNewOpenAIContractModel(model) {
 export function isNewOpenAIContractConfig(config = {}) {
   const providerName = String(config.providerName || '').trim().toLowerCase();
   if (config.category === 'local' || providerName === 'lmstudio') return false;
+  if (providerName === 'openrouter') {
+    return /(?:^|\/)gpt-5\.6-terra(?:$|[-_.\/:])/.test(String(config.model || '').toLowerCase());
+  }
   // Only OpenRouter is covered by the routed-model contract table. Other
   // compatible endpoints may use slash-prefixed ids with legacy fields.
   if (String(config.model || '').includes('/') && providerName !== 'openrouter') return false;

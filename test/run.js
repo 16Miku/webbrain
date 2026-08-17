@@ -50200,8 +50200,11 @@ test('OpenAI-compatible local providers always use legacy request token fields',
 
 test('router-prefixed OpenAI reasoning ids use the advertised Chat Completions contract', () => {
   const messages = [{ role: 'user', content: 'hello' }];
-  const newContractModels = ['openai/o1', 'openai/o3-mini', 'openai/gpt-5.6-terra'];
+  const newContractModels = ['openai/gpt-5.6-terra', 'openai/gpt-5.6-terra:batch', 'openai/gpt-5.6-terra:image'];
   const legacyContractModels = [
+    'openai/o1',
+    'openai/o3-mini',
+    'openai/o4-mini:image',
     'openai/gpt-5-pro',
     'openai/gpt-5.2-pro',
     'openai/gpt-5.4-pro',
@@ -50216,10 +50219,10 @@ test('router-prefixed OpenAI reasoning ids use the advertised Chat Completions c
   ];
   for (const compatibility of [ProviderCompatibilityCh, ProviderCompatibilityFx]) {
     for (const model of newContractModels) {
-      assert.equal(compatibility.isNewOpenAIContractModel(model), true, `${model} should use the new contract`);
+      assert.equal(compatibility.isNewOpenAIContractConfig({ providerName: 'openrouter', model }), true, `${model} should use the new contract`);
     }
     for (const model of legacyContractModels) {
-      assert.equal(compatibility.isNewOpenAIContractModel(model), false, `${model} should keep the legacy contract`);
+      assert.equal(compatibility.isNewOpenAIContractConfig({ providerName: 'openrouter', model }), false, `${model} should keep the legacy contract`);
     }
   }
 
@@ -50301,10 +50304,17 @@ test('OpenAI contract config keeps non-OpenRouter slash ids on legacy fields', (
     ['firefox', ProviderCompatibilityFx, 'src/firefox/src/ui/settings.js'],
   ]) {
     assert.equal(
-      compatibility.isNewOpenAIContractConfig({ providerName: 'openrouter', model: 'openai/o3-mini' }),
+      compatibility.isNewOpenAIContractConfig({ providerName: 'openrouter', model: 'openai/gpt-5.6-terra' }),
       true,
-      `${label}: OpenRouter routed reasoning ids should use the new contract`,
+      `${label}: OpenRouter GPT-5.6 Terra should use the new contract`,
     );
+    for (const model of ['openai/o1', 'openai/o3-mini', 'openai/gpt-5.5-pro', 'openai/gpt-5.2-pro']) {
+      assert.equal(
+        compatibility.isNewOpenAIContractConfig({ providerName: 'openrouter', model }),
+        false,
+        `${label}: ${model} should keep OpenRouter's legacy contract`,
+      );
+    }
     assert.equal(
       compatibility.isNewOpenAIContractConfig({ providerName: 'custom-proxy', model: 'vendor/o3-mini' }),
       false,
