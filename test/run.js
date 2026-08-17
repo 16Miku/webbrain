@@ -9428,35 +9428,39 @@ test('coord click: 5px drift collapses to same bucket', () => {
   assert.equal(d._checkCoordClickLoop(1, 102, 199).kind, 'nudge');
 });
 
- test('coord click: 10px drift = different bucket', () => {
+test('coord click: 10px drift = different bucket', () => {
   const d = new ConfiguredLoopDetector();
   d._checkCoordClickLoop(1, 100, 200);
   // (115, 200) rounds to (115, 200) — different bucket
   assert.equal(d._checkCoordClickLoop(1, 115, 200).kind, 'none');
 });
 
-test('coord click: buckets in image space even when a downscale factor is stored', () => {
-  // The detector must measure the coordinates the model actually reasoned
-  // in — the image pixels of the screenshot it was shown. Screenshot
-  // click scales are always >= 1 (they are cssW / shrunk.width, set only
-  // when a resize happened), so converting to CSS pixels first would
-  // magnify 2-4px image nudges out of the fixed 5px bucket and let a dead
-  // button burn the whole step budget.
-  const d = new ConfiguredLoopDetector();
-  const taps = [[500, 300], [501, 301], [502, 302], [499, 299], [501, 300]];
-  for (const [x, y] of taps.slice(0, 4)) {
-    assert.equal(d._checkCoordClickLoop(1, x, y).kind, 'none');
+test('coord click: scaled dispatch keeps loop detection in screenshot image space', async () => {
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      resolverResponse: { success: true },
+      dispatchBinding: { token: `${label}-scaled-loop-target`, frameId: 0 },
+      throughBatch: true,
+    });
+    assert.equal(observed.mappingCalls, 1, `${label}: batch click must use the stored screenshot scale`);
+    assert.deepEqual(
+      observed.fallbackParams.map(({ x, y }) => ({ x, y })),
+      [{ x: 1280, y: 720 }],
+      `${label}: browser dispatch must receive converted CSS coordinates`,
+    );
+    assert.deepEqual(
+      observed.coordChecks,
+      [[observed.tabId, 784, 441]],
+      `${label}: loop detector must receive the model's original image coordinates`,
+    );
+    assert.deepEqual(observed.batchResult, { action: 'continue' }, `${label}: click batch should complete normally`);
   }
-  assert.equal(d._checkCoordClickLoop(1, 501, 300).kind, 'nudge', '5th image-space tap must nudge');
-  // A 3840x2160 viewport downscaled to 1568x882 stores scale ~2.449. The
-  // same taps converted to CSS pixels spread across three 5px buckets, so
-  // converting first would let the count never reach 5:
-  const converted = taps.map(([x, y]) => [
-    Math.round(x * 2.449),
-    Math.round(y * 2.449),
-  ]);
-  const cssBuckets = new Set(converted.map(([x, y]) => `${Math.round(x / 5) * 5},${Math.round(y / 5) * 5}`));
-  assert.ok(cssBuckets.size > 1, 'converted CSS taps must NOT collapse to one bucket');
 });
 
 test('coord click: survives interleaved noise (the failure mode this fixes)', () => {
@@ -11801,6 +11805,7 @@ async function runCoordinateSemanticCase({
   cachedAxScope = null,
   chromeAttachError = null,
   dispatchBinding = null,
+  throughBatch = false,
 }) {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
@@ -11832,12 +11837,18 @@ async function runCoordinateSemanticCase({
     ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
     : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
   try {
-    const agent = new AgentClass({});
+    const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = label === 'chrome' ? 8811 : 8812;
     agent._isPdfTab = async () => false;
     agent._richTextToolbarToolBlock = async () => null;
     agent._recentSubmitClicks = null;
     agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+    const coordChecks = [];
+    const checkCoordClickLoop = agent._checkCoordClickLoop.bind(agent);
+    agent._checkCoordClickLoop = (...args) => {
+      coordChecks.push(args);
+      return checkCoordClickLoop(...args);
+    };
     if (cachedAxScope) agent._lastAxScopes.set(tabId, cachedAxScope);
     if (label === 'chrome') {
       cdpClientCh.attach = async () => {
@@ -11858,12 +11869,45 @@ async function runCoordinateSemanticCase({
       return mapScreenshotCoords(...args);
     };
     agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
-    const result = await agent.executeTool(tabId, 'click', {
+    const clickArgs = {
       x: 784,
       y: 441,
       from_screenshot: true,
-    }, null, dispatchBinding ? { dispatchBinding } : undefined);
-    return { result, mappingCalls, resolveParams, clickAxParams, fallbackParams };
+    };
+    let result = null;
+    let batchResult = null;
+    if (throughBatch) {
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._isFormValidationCandidate = () => false;
+      agent._preflightRichTextToolbarTarget = async () => ({
+        block: null,
+        probe: dispatchBinding ? { dispatchBinding } : null,
+      });
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      batchResult = await agent._executeToolBatch(
+        tabId,
+        [{ id: `${label}_scaled_click`, function: { name: 'click', arguments: JSON.stringify(clickArgs) } }],
+        [],
+        () => {},
+        { supportsVision: false },
+        null,
+        new Set(['click']),
+        1,
+      );
+    } else {
+      result = await agent.executeTool(
+        tabId,
+        'click',
+        clickArgs,
+        null,
+        dispatchBinding ? { dispatchBinding } : undefined,
+      );
+    }
+    return { tabId, result, batchResult, coordChecks, mappingCalls, resolveParams, clickAxParams, fallbackParams };
   } finally {
     cdpClientCh.attach = originalCdpAttach;
     if (globalKey === 'chrome') {
