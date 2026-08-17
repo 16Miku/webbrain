@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'ขั้นสูง',
   ...getApocalypseModeCopy('th'),
   ...getEmergencyBoxCopy('th'),
+  'st.providers.webgpu_download.stopping': 'กำลังหยุดและลบไฟล์…',
+  'st.providers.webgpu_download.stop': 'หยุดและลบ',
   'st.display.clarify_timeout.label': 'หมดเวลา clarify',
   'st.display.clarify_timeout.desc': 'ระยะเวลารอคำตอบ clarify ก่อนเลือกตัวเลือกแรกอัตโนมัติ (หรือหมดเวลาหากไม่มีตัวเลือก) 0 = ทันที (เลือกอัตโนมัติเสมอ) เกิน 1200 วินาที = รอไม่จำกัด (ปิด) ค่าเริ่มต้น 60 วินาที ไม่ใช้กับสิทธิ์หรือการยืนยันส่งฟอร์ม',
   'st.display.clarify_timeout.off': 'ปิด',

@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'Avancé',
   ...getApocalypseModeCopy('fr'),
   ...getEmergencyBoxCopy('fr'),
+  'st.providers.webgpu_download.stopping': 'Arrêt et suppression des fichiers…',
+  'st.providers.webgpu_download.stop': 'Arrêter et supprimer',
   'st.display.clarify_timeout.label': 'Délai des questions de clarification',
   'st.display.clarify_timeout.desc': 'Durée d’attente d’une réponse à une question de clarification avant de sélectionner automatiquement la première option (ou d’expirer s’il n’y a pas d’options). 0 = Immédiat (auto-sélection). Au-delà de 1200s = attendre indéfiniment (Désactivé). Par défaut 60s. Ne s’applique pas aux permissions ni aux confirmations d’envoi de formulaire.',
   'st.display.clarify_timeout.off': 'Désactivé',

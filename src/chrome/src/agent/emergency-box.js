@@ -621,15 +621,23 @@ export async function resolveEmergencyResource(resource, fetchImpl = globalThis.
   return normalizedRecord(resource, { url });
 }
 
-export async function downloadEmergencyResource(resource, options = {}) {
-  const store = options.store || createEmergencyBoxStore();
-  const storage = options.storage || createEmergencyBoxStorage();
-  const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const signal = options.signal;
-  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
-  const resolved = await resolveEmergencyResource(resource, fetchImpl);
+export async function withEmergencyResourceLock(resourceId, task, options = {}) {
+  const lockManager = options.lockManager ?? globalThis.navigator?.locks;
+  if (typeof lockManager?.request !== 'function') return await task();
+  const lockName = `webbrain-emergency-pdf:${safeResourceKey(resourceId)}`;
+  const lockOptions = { mode: 'exclusive' };
+  if (options.signal) lockOptions.signal = options.signal;
+  return await lockManager.request(lockName, lockOptions, task);
+}
+
+async function downloadResolvedEmergencyResource(resolved, options) {
+  const { store, storage, fetchImpl, signal, onProgress } = options;
   const storageKey = resolved.storageKey || resolved.id;
   const existing = await store.get(resolved.id);
+  if (existing?.status === 'ready' && (existing.storageKey || existing.id) === storageKey) {
+    onProgress(existing);
+    return existing;
+  }
   const replacedStorageKey = existing?.storageKey && existing.storageKey !== storageKey
     ? existing.storageKey
     : '';
@@ -717,6 +725,33 @@ export async function downloadEmergencyResource(resource, options = {}) {
     });
     if (!paused) throw error;
     return await store.get(resolved.id);
+  }
+}
+
+export async function downloadEmergencyResource(resource, options = {}) {
+  const store = options.store || createEmergencyBoxStore();
+  const storage = options.storage || createEmergencyBoxStorage();
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const signal = options.signal;
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
+  const resolved = await resolveEmergencyResource(resource, fetchImpl);
+  try {
+    return await withEmergencyResourceLock(resolved.id, () => downloadResolvedEmergencyResource(resolved, {
+      store,
+      storage,
+      fetchImpl,
+      signal,
+      onProgress,
+    }), { lockManager: options.lockManager, signal });
+  } catch (error) {
+    if (error?.name !== 'AbortError' && !signal?.aborted) throw error;
+    return await store.get(resolved.id) || normalizedRecord(resolved, {
+      storageKey: resolved.storageKey || resolved.id,
+      status: 'paused',
+      bytesReceived: 0,
+      error: '',
+      updatedAt: Date.now(),
+    });
   }
 }
 

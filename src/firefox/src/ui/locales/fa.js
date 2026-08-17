@@ -532,6 +532,8 @@ export default {
   'st.display.advanced': "پیشرفته",
   ...getApocalypseModeCopy('fa'),
   ...getEmergencyBoxCopy('fa'),
+  'st.providers.webgpu_download.stopping': 'در حال توقف و حذف فایل‌ها…',
+  'st.providers.webgpu_download.stop': 'توقف و حذف',
   'st.display.help_improve.label': "به بهبود WebBrain کمک کنید",
   'st.display.help_improve.desc_html': "اجازه دهید تا تعاملات متن و ابزار Cloud واجد شرایط WebBrain حفظ شود و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شود. به طور پیش فرض روشن است. با خاموش کردن این حالت به طور دائم از مکالمه فعلی انصراف داده می شود. روشن کردن مجدد آن برای مکالمه جدید بعدی اعمال می شود. عکس های صفحه و بایت های تصویر در پایگاه داده بهبود WebBrain حفظ نمی شوند. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سیاست حفظ حریم خصوصی →</a>",
   'st.display.clarify_timeout.label': "روشن کردن مهلت زمانی",

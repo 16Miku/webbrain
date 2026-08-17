@@ -532,6 +532,8 @@ export default {
   'st.display.advanced': 'Advanced',
   ...apocalypseModeCopy,
   ...emergencyCopy,
+  'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
+  'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.display.help_improve.label': 'Help Improve WebBrain',
   'st.display.help_improve.desc_html': 'Allow eligible WebBrain Cloud text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
   'st.display.clarify_timeout.label': 'Clarify timeout',

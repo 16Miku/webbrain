@@ -532,6 +532,8 @@ export default {
   'st.display.advanced': "উন্নত",
   ...getApocalypseModeCopy('bn'),
   ...getEmergencyBoxCopy('bn'),
+  'st.providers.webgpu_download.stopping': 'থামানো হচ্ছে এবং ফাইল সরানো হচ্ছে…',
+  'st.providers.webgpu_download.stop': 'থামান ও সরান',
   'st.display.help_improve.label': "WebBrain উন্নত করতে সাহায্য করুন",
   'st.display.help_improve.desc_html': "যোগ্য WebBrain ক্লাউড টেক্সট এবং টুল ইন্টারঅ্যাকশনগুলিকে ধরে রাখার এবং মূল্যায়ন, উন্নতি, ফাইন-টিউনিং এবং প্রশিক্ষণের জন্য ব্যবহার করার অনুমতি দিন। ডিফল্টরূপে চালু এটি স্থায়ীভাবে বন্ধ করা বর্তমান কথোপকথন অপ্ট আউট করে; এটিকে আবার চালু করা পরবর্তী নতুন কথোপকথনের ক্ষেত্রে প্রযোজ্য। WebBrain উন্নতি ডাটাবেসে স্ক্রিনশট এবং ইমেজ বাইট রাখা হয় না। <u>স্থানীয়-মডেল এবং আন-আপনার-নিজের API অনুরোধগুলি WebBrain দ্বারা সংগ্রহ করা হয় না।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">গোপনীয়তা নীতি →</a>",
   'st.display.clarify_timeout.label': "সময়সীমা পরিষ্কার করুন",

@@ -532,6 +532,8 @@ export default {
   'st.display.advanced': "Nâng cao",
   ...getApocalypseModeCopy('vi'),
   ...getEmergencyBoxCopy('vi'),
+  'st.providers.webgpu_download.stopping': 'Đang dừng và xóa tệp…',
+  'st.providers.webgpu_download.stop': 'Dừng và xóa',
   'st.display.help_improve.label': "Giúp cải thiện WebBrain",
   'st.display.help_improve.desc_html': "Cho phép giữ lại và sử dụng các tương tác văn bản và công cụ trên Đám mây WebBrain đủ điều kiện để đánh giá, cải tiến, tinh chỉnh và đào tạo. Bật theo mặc định. Tắt tính năng này vĩnh viễn sẽ chọn không tham gia cuộc trò chuyện hiện tại; việc bật lại sẽ áp dụng cho cuộc trò chuyện mới tiếp theo. Ảnh chụp màn hình và byte hình ảnh không được giữ lại trong cơ sở dữ liệu cải tiến WebBrain. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Chính sách bảo mật →</a>",
   'st.display.clarify_timeout.label': "Làm rõ thời gian chờ",

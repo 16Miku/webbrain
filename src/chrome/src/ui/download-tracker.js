@@ -384,6 +384,7 @@ async function runItemAction(item, action) {
       if (item.modelKind === 'text' && state) textModelState = state;
     } else if (item.kind === 'pdf') {
       if (action === 'resume' && !/\/emergency-box\.html$/.test(globalThis.location?.pathname || '')) {
+        signalEmergencyBox('pause', item);
         globalThis.location.href = `${item.href}?resume=${encodeURIComponent(item.sourceId)}`;
         return;
       }
