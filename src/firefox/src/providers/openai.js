@@ -161,16 +161,17 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   /**
-   * Newer OpenAI models reject `max_tokens` and non-default `temperature`, but
-   * routed providers can expose different wire contracts for the same model
-   * family. The shared provider-aware helper keeps OpenRouter's Terra allowlist
-   * aligned with the Settings Compatibility panel. Local OpenAI-compatible
-   * servers and LM Studio keep the legacy contract.
+   * Newer OpenAI models (gpt-5 and the o-series) reject `max_tokens` and any
+   * non-default `temperature`, requiring `max_completion_tokens`. Detected by
+   * model id via the shared `isNewOpenAIContractModel` helper (also used by
+   * the settings Compatibility panel so the display and the wire contract
+   * stay in sync). Local OpenAI-compatible servers and LM Studio keep the
+   * legacy contract.
    */
   _isNewOpenAIContract() {
     if (this.config.category === 'local') return false;
     if (String(this.config.providerName || '').toLowerCase() === 'lmstudio') return false;
-    return isNewOpenAIContractModel(this.config.model, this.config);
+    return isNewOpenAIContractModel(this.config.model);
   }
 
   _addMaxTokens(body, options) {

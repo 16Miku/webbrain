@@ -50198,37 +50198,33 @@ test('OpenAI-compatible local providers always use legacy request token fields',
   }
 });
 
-test('provider-aware OpenAI contract detection keeps OpenRouter model families distinct', () => {
-  for (const compatibility of [ProviderCompatibilityCh, ProviderCompatibilityFx]) {
-    assert.equal(
-      compatibility.isNewOpenAIContractModel('openai/gpt-5.6-terra', { providerName: 'openrouter' }),
-      true,
-      'OpenRouter GPT-5.6 Terra should use max_completion_tokens',
-    );
-    assert.equal(
-      compatibility.isNewOpenAIContractModel('openai/gpt-5.6-terra:free', { providerName: 'OpenRouter' }),
-      true,
-      'OpenRouter Terra variants should preserve the new contract',
-    );
-    for (const model of ['openai/gpt-5.5-pro', 'openai/gpt-5.2-pro', 'openai/o1', 'openai/o3-mini', 'openai/o4-mini']) {
-      assert.equal(
-        compatibility.isNewOpenAIContractModel(model, { providerName: 'openrouter' }),
-        false,
-        `${model} should use OpenRouter's max_tokens contract`,
-      );
-    }
-    assert.equal(
-      compatibility.isNewOpenAIContractModel('gpt-5.5-pro', { providerName: 'openai' }),
-      true,
-      'official OpenAI GPT-5.5 Pro should retain the native new contract',
-    );
-  }
-});
-
-test('router-prefixed OpenAI reasoning model ids use the new contract while routed legacy models keep the legacy one', () => {
+test('router-prefixed OpenAI reasoning ids use the advertised Chat Completions contract', () => {
   const messages = [{ role: 'user', content: 'hello' }];
+  const newContractModels = ['openai/o1', 'openai/o3-mini', 'openai/gpt-5.6-terra'];
+  const legacyContractModels = [
+    'openai/gpt-5-pro',
+    'openai/gpt-5.2-pro',
+    'openai/gpt-5.4-pro',
+    'openai/gpt-5.5-pro',
+    'openai/gpt-5.5-pro:batch',
+    'openai/gpt-4o',
+    'openai/gpt-4.1',
+    'gpt-4.1',
+    'openrouter/deepseek-v3',
+    'openrouter/mistral-large',
+    'o365-assistant',
+  ];
+  for (const compatibility of [ProviderCompatibilityCh, ProviderCompatibilityFx]) {
+    for (const model of newContractModels) {
+      assert.equal(compatibility.isNewOpenAIContractModel(model), true, `${model} should use the new contract`);
+    }
+    for (const model of legacyContractModels) {
+      assert.equal(compatibility.isNewOpenAIContractModel(model), false, `${model} should keep the legacy contract`);
+    }
+  }
+
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const model of ['openai/gpt-5.6-terra']) {
+    for (const model of newContractModels) {
       const provider = new Provider({
         providerName: 'openrouter',
         baseUrl: 'https://openrouter.ai/api/v1',
@@ -50241,19 +50237,7 @@ test('router-prefixed OpenAI reasoning model ids use the new contract while rout
       assert.equal(body.temperature, undefined, `${model} must omit temperature`);
     }
 
-    for (const model of [
-      'openai/gpt-5.5-pro',
-      'openai/gpt-5.2-pro',
-      'openai/o1',
-      'openai/o3-mini',
-      'openai/o4-mini',
-      'openai/gpt-4o',
-      'openai/gpt-4.1',
-      'gpt-4.1',
-      'openrouter/deepseek-v3',
-      'openrouter/mistral-large',
-      'o365-assistant',
-    ]) {
+    for (const model of legacyContractModels) {
       const provider = new Provider({
         providerName: 'openrouter',
         baseUrl: 'https://openrouter.ai/api/v1',
