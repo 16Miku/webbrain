@@ -1205,7 +1205,7 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
     assert.match(clearConversationSource, /dismissSelectionAskAction\(\);/);
     assert.match(sendMessageSource, /dismissSelectionAskAction\(\);/);
-    assert.match(source, /if \(!isProcessing\) return;/);
+    assert.match(source, /dismissSelectionAskAction\(\);\s*return;/);
   }
 });
 

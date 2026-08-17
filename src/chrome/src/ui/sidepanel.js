@@ -11789,7 +11789,7 @@ async function handleGlobalKeydown(e) {
     if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {
       e.preventDefault();
       dismissSelectionAskAction();
-      if (!isProcessing) return;
+      return;
     }
     if (isProcessing) {
       e.preventDefault();

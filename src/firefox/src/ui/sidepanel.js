@@ -11376,7 +11376,7 @@ async function handleGlobalKeydown(e) {
     if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {
       e.preventDefault();
       dismissSelectionAskAction();
-      if (!isProcessing) return;
+      return;
     }
     // Provider/language pickers close on Escape in bubble/target handlers; do not
     // abort the active run while those listboxes are open.
