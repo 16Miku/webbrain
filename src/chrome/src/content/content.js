@@ -3815,7 +3815,7 @@
   }
 
   // Pick the single commit path for set_field({submit:true}). Synthetic
-  // Synthetic (isTrusted:false) Enter events never trigger native submission —
+  // (isTrusted:false) Enter events never trigger native submission —
   // they only reach the page's own keydown listeners. A non-combobox field
   // inside a form that has requestSubmit therefore needs a native submit as
   // its only reliable commit path; comboboxes are committed by page JS
@@ -5766,12 +5766,13 @@
               const form = el.form || (el.closest && el.closest('form'));
               let submissionObserved = false;
               let submissionCancelled = false;
+              let submitEvent = null;
               let submissionOutcomeUnknown = false;
               let removeSubmitObserver = () => {};
               if (form && typeof form.addEventListener === 'function') {
                 const onSubmit = event => {
                   submissionObserved = true;
-                  submissionCancelled = event.defaultPrevented === true;
+                  submitEvent = event;
                 };
                 form.addEventListener('submit', onSubmit, true);
                 removeSubmitObserver = () => form.removeEventListener?.('submit', onSubmit, true);
@@ -5796,12 +5797,13 @@
                 dispatchKey('keypress', 'Enter', 13);
                 dispatchKey('keyup', 'Enter', 13);
                 if (submissionObserved) {
+                  submissionCancelled = submitEvent?.defaultPrevented === true;
                   submissionOutcomeUnknown = submissionCancelled;
                 } else if (!enterCancelled && _setFieldUsesNativeSubmit(isCombobox, form)) {
                   // requestSubmit performs interactive constraint validation and
                   // silently aborts on an invalid form; surface that instead of
                   // reporting a successful submission.
-                  if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+                  if (form.noValidate !== true && typeof form.checkValidity === 'function' && !form.checkValidity()) {
                     return failure(
                       'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
                       { verified: true, submitted: false, invalid: true, ref_id, rect },
@@ -5812,6 +5814,7 @@
                   } catch {
                     submissionOutcomeUnknown = true;
                   }
+                  submissionCancelled = submitEvent?.defaultPrevented === true;
                   if (!submissionObserved) submissionOutcomeUnknown = true;
                 } else {
                   // preventDefault, combobox handling, contenteditable custom

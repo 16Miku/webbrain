@@ -55065,16 +55065,18 @@ test('set_field submit dispatches Enter once and submits natively only when unha
       return nativeSubmitAttempted;
     }`);
 
-    const exercise = ({ keydownCancelled, checkValidity = () => true, isCombobox = false, pageSubmitsOnKeydown = false, submitCancelled = false }) => {
+    const exercise = ({ keydownCancelled, checkValidity = () => true, isCombobox = false, pageSubmitsOnKeydown = false, submitCancelled = false, noValidate = false }) => {
       const calls = [];
       const submitListeners = [];
       const emitSubmit = () => {
-        const event = { defaultPrevented: submitCancelled };
+        const event = { defaultPrevented: false };
         for (const listener of submitListeners) listener(event);
+        if (submitCancelled) event.defaultPrevented = true;
       };
       const form = {
         requestSubmit: () => { calls.push('requestSubmit'); emitSubmit(); },
         checkValidity,
+        noValidate,
         addEventListener: (type, listener) => { if (type === 'submit') submitListeners.push(listener); },
         removeEventListener: (type, listener) => {
           if (type === 'submit') {
@@ -55132,6 +55134,10 @@ test('set_field submit dispatches Enter once and submits natively only when unha
     const cancelledSubmit = exercise({ submitCancelled: true });
     assert.deepEqual(cancelledSubmit.calls, ['keydown', 'keypress', 'keyup', 'requestSubmit'], `${label}: cancelled submit still has one native attempt`);
     assert.equal(cancelledSubmit.submitted, false, `${label}: cancelled submit must not be reported as submitted`);
+
+    const noValidate = exercise({ noValidate: true, checkValidity: () => false });
+    assert.deepEqual(noValidate.calls, ['keydown', 'keypress', 'keyup', 'requestSubmit'], `${label}: novalidate forms must still attempt native submit`);
+    assert.equal(noValidate.submitted, true, `${label}: novalidate submit should rely on the observed submit event`);
 
     // Invalid form: surface the silent requestSubmit abort.
     const invalid = exercise({ checkValidity: () => false });
