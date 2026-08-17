@@ -2174,6 +2174,44 @@ body {
   opacity: 0.48;
 }
 
+.selection-ask-action {
+  position: fixed;
+  z-index: 30;
+  max-width: calc(100vw - 16px);
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--text-primary) 18%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.selection-ask-action.hidden {
+  display: none;
+}
+
+.selection-ask-action:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.selection-ask-action:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selection-ask-action {
+    transition: none;
+  }
+}
+
 
 
 /* Context-aware recommendations — inline centered pill row in the chat body */

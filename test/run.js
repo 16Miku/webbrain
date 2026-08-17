@@ -1124,12 +1124,49 @@ const {
   'file://' + path.join(ROOT, 'src/firefox/src/agent/sheets-tools.js').replace(/\\/g, '/')
 );
 
+const {
+  buildSelectionQuote,
+  buildSelectionComposerDraft,
+  selectionIsQuoteable,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/selection-quote.js').replace(/\\/g, '/')
+);
+const {
+  buildSelectionQuote: buildSelectionQuoteFx,
+  buildSelectionComposerDraft: buildSelectionComposerDraftFx,
+  selectionIsQuoteable: selectionIsQuoteableFx,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/selection-quote.js').replace(/\\/g, '/')
+);
+
 // ────────────────────────────────────────────────────────────────────────
 // Test framework (one function, no deps)
 // ────────────────────────────────────────────────────────────────────────
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+console.log('\nselection quote');
+
+test('buildSelectionQuote preserves multiline answer text as an editable quote', () => {
+  const selected = 'First line\n\n<script>alert("x")</script>';
+  const expected = '> First line\n> \n> <script>alert("x")</script>\n\n';
+  assert.equal(buildSelectionQuote(selected), expected);
+  assert.equal(buildSelectionQuoteFx(selected), expected, 'Firefox quote builder should match Chrome');
+  assert.equal(buildSelectionComposerDraft('A detail', 'Why?'), '> A detail\n\nWhy?');
+  assert.equal(buildSelectionComposerDraftFx('A detail', 'Why?'), '> A detail\n\nWhy?', 'Firefox draft builder should match Chrome');
+});
+
+test('selectionIsQuoteable requires one non-empty assistant answer element', () => {
+  const answer = {};
+  const otherAnswer = {};
+  const valid = { startTextElement: answer, endTextElement: answer, text: 'A detail' };
+  assert.equal(selectionIsQuoteable(valid), true);
+  assert.equal(selectionIsQuoteable({ ...valid, endTextElement: otherAnswer }), false);
+  assert.equal(selectionIsQuoteable({ ...valid, text: ' \n ' }), false);
+  assert.equal(selectionIsQuoteableFx(valid), true, 'Firefox eligibility should match Chrome');
+  assert.equal(selectionIsQuoteableFx({ ...valid, endTextElement: otherAnswer }), false);
+});
 
 console.log('\nscreenshot redaction');
 

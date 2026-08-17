@@ -29,6 +29,8 @@ import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
+import { buildSelectionComposerDraft, selectionIsQuoteable } from './selection-quote.js';
+import { getSelectionShortcutLocalization } from '../selection-shortcut-i18n.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -414,6 +416,7 @@ const selectionScopeBannerEl = document.getElementById('selection-scope-banner')
 const selectionScopeTitleEl = document.getElementById('selection-scope-title');
 const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
+const selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
 const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
@@ -465,6 +468,7 @@ const ASK_PLACEHOLDER_KEYS = [
   'sp.input.placeholder_tip.help',
 ];
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
+let pendingAnswerSelection = null;
 const SLASH_COMMANDS = [
   { value: '/help', usage: '/help', descriptionKey: 'sp.slash.help', action: 'show', outOfBand: true },
   {
@@ -10299,6 +10303,81 @@ function refreshOpenMessageInfoRows() {
   });
 }
 
+function assistantTextElementForSelectionNode(node) {
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  return element?.closest?.('.message.assistant .message-text') || null;
+}
+
+function selectedAssistantAnswer() {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const startTextElement = assistantTextElementForSelectionNode(range.startContainer);
+  const endTextElement = assistantTextElementForSelectionNode(range.endContainer);
+  const text = selection.toString();
+  if (!selectionIsQuoteable({ startTextElement, endTextElement, text })) return null;
+  return { range, text };
+}
+
+function dismissSelectionAskAction() {
+  pendingAnswerSelection = null;
+  selectionAskActionEl?.classList.add('hidden');
+}
+
+function positionSelectionAskAction(range) {
+  if (!selectionAskActionEl || !range) return;
+  const rect = range.getBoundingClientRect();
+  if (!rect.width && !rect.height) {
+    dismissSelectionAskAction();
+    return;
+  }
+  const gap = 6;
+  const actionRect = selectionAskActionEl.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(8, rect.left),
+    Math.max(8, window.innerWidth - actionRect.width - 8),
+  );
+  const belowTop = rect.bottom + gap;
+  const top = belowTop + actionRect.height <= window.innerHeight - 8
+    ? belowTop
+    : Math.max(8, rect.top - actionRect.height - gap);
+  selectionAskActionEl.style.left = `${left}px`;
+  selectionAskActionEl.style.top = `${top}px`;
+}
+
+function refreshSelectionAskAction() {
+  const selected = selectedAssistantAnswer();
+  if (!selected || !selectionAskActionEl) {
+    dismissSelectionAskAction();
+    return;
+  }
+  pendingAnswerSelection = selected;
+  const label = getSelectionShortcutLocalization(getLocale()).askQuestion || 'Ask WebBrain a question';
+  selectionAskActionEl.textContent = label;
+  selectionAskActionEl.title = label;
+  selectionAskActionEl.setAttribute('aria-label', label);
+  selectionAskActionEl.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    if (pendingAnswerSelection === selected) positionSelectionAskAction(selected.range);
+  });
+}
+
+function askAboutSelectedAnswer() {
+  const selection = pendingAnswerSelection;
+  if (!selection) return;
+  const nextDraft = buildSelectionComposerDraft(selection.text, inputEl.value);
+  if (nextDraft === inputEl.value) {
+    dismissSelectionAskAction();
+    return;
+  }
+  inputEl.value = nextDraft;
+  dismissSelectionAskAction();
+  window.getSelection?.()?.removeAllRanges();
+  handleInput();
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+}
+
 function addMessage(role, content, options = {}) {
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
@@ -12167,6 +12246,21 @@ if (attachBtn && fileAttachInput) {
 }
 
 // --- Event Listeners ---
+
+if (selectionAskActionEl) {
+  selectionAskActionEl.addEventListener('mousedown', (event) => event.preventDefault());
+  selectionAskActionEl.addEventListener('click', (event) => {
+    event.stopPropagation();
+    askAboutSelectedAnswer();
+  });
+  document.addEventListener('selectionchange', refreshSelectionAskAction);
+  document.addEventListener('pointerdown', (event) => {
+    if (!selectionAskActionEl.contains(event.target)) dismissSelectionAskAction();
+  });
+  chatContainerEl?.addEventListener('scroll', dismissSelectionAskAction, { passive: true });
+  window.addEventListener('resize', dismissSelectionAskAction);
+  document.addEventListener('wb-locale-changed', refreshSelectionAskAction);
+}
 
 sendBtn.addEventListener('click', sendMessage);
 
