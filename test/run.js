@@ -24672,6 +24672,7 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const pageHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.html'), 'utf8');
+    const emergencyBoxHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/emergency-box.html'), 'utf8');
     const pageScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/apocalypse-mode.js'), 'utf8');
     const backgroundScript = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const apocalypseCopy = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/apocalypse-copy.mjs'), 'utf8');
@@ -24701,15 +24702,15 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
       wikipediaLibraryCalloutStart,
       pageHtml.indexOf('</section>', wikipediaLibraryCalloutStart) + 10,
     );
-    assert.match(wikipediaLibraryCallout, /id="wikipedia-library-link"[^>]*href="wikipedia-library\.html"/,
-      `${prefix}: Offline Wikipedia library is not directly reachable during basic setup`);
-    assert.doesNotMatch(wikipediaLibraryCallout, /(?:\shidden(?:\s|>)|aria-disabled="true"|data-locked="true")/,
-      `${prefix}: Offline Wikipedia library is incorrectly gated by basic setup readiness`);
-    const emergencyBoxCalloutStart = pageHtml.indexOf('id="emergency-box-callout"');
-    if (emergencyBoxCalloutStart >= 0) {
-      assert.ok(wikipediaLibraryCalloutStart < emergencyBoxCalloutStart,
-        `${prefix}: independent Wikipedia library route must appear before the gated Emergency Box`);
-    }
+    assert.match(wikipediaLibraryCallout, /\shidden(?:\s|>)/,
+      `${prefix}: retired Offline Wikipedia callout is still visible during basic setup`);
+    const wikipediaEntry = emergencyBoxHtml.match(
+      /<a\b(?=[^>]*\bclass="[^"]*\bwikipedia-entry\b[^"]*")(?=[^>]*\bhref="wikipedia-library\.html")[^>]*>/,
+    )?.[0] || '';
+    assert.notEqual(wikipediaEntry, '',
+      `${prefix}: optional Offline Wikipedia library is not reachable from Emergency Box`);
+    assert.doesNotMatch(wikipediaEntry, /(?:\shidden(?:\s|=|>)|aria-disabled="true"|data-locked="true"|tabindex="-1")/,
+      `${prefix}: optional Offline Wikipedia library is hidden or disabled in Emergency Box`);
     assert.doesNotMatch(pageScript, /await command\('process'\)/,
       `${prefix}: status polling blocks behind the long-running download loop`);
     assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?(?:await refresh\(\)|Promise\.all\(\[refresh\(\))/,
