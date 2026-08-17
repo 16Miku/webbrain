@@ -21892,6 +21892,11 @@ test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF 
       bytes() { return new TextDecoder().decode(committed); },
     };
   }
+  const encoder = new TextEncoder();
+  const rangedResponse = (body, start, end, total) => new Response(body, {
+    status: 206,
+    headers: { 'content-range': `bytes ${start}-${end}/${total}` },
+  });
 
   for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
     const adapters = memoryAdapters();
@@ -21906,7 +21911,7 @@ test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF 
     });
     assert.equal(ready.status, 'ready', `${label}: valid PDF did not become readable`);
     assert.equal(adapters.bytes(), pdf, `${label}: streamed PDF bytes were not preserved`);
-    assert.equal(ready.bytesReceived, new TextEncoder().encode(pdf).byteLength, `${label}: installed byte count is wrong`);
+    assert.equal(ready.bytesReceived, encoder.encode(pdf).byteLength, `${label}: installed byte count is wrong`);
 
     const invalid = memoryAdapters();
     await assert.rejects(
@@ -21919,6 +21924,223 @@ test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF 
     );
     assert.equal(invalid.records.get('fixture-html')?.status, 'error', `${label}: invalid PDF failure was not actionable`);
     assert.equal(invalid.bytes(), '', `${label}: invalid PDF bytes were retained`);
+
+    const partialPdf = '%PDF-resumable-';
+    const tail = 'complete';
+    const partialBytes = encoder.encode(partialPdf).byteLength;
+    const completeBytes = partialBytes + encoder.encode(tail).byteLength;
+    const ifRangeValidator = '"fixture-v1"';
+    const resumableRecord = id => ({
+      id, storageKey: id, url: resource.url, ifRangeValidator,
+    });
+
+    const unvalidated = memoryAdapters(encoder.encode(partialPdf));
+    const unvalidatedHeaders = [];
+    const replacementPdf = '%PDF-restarted-complete';
+    const replacementBytes = encoder.encode(replacementPdf).byteLength;
+    await runtime.downloadEmergencyResource({ ...resource, id: 'fixture-unvalidated' }, {
+      ...unvalidated,
+      fetchImpl: async (_url, options) => {
+        unvalidatedHeaders.push(options.headers);
+        return new Response(replacementPdf, { status: 200, headers: { etag: '"fixture-v2"' } });
+      },
+    });
+    assert.deepEqual(unvalidatedHeaders, [undefined],
+      `${label}: an unvalidated partial was resumed without If-Range`);
+    assert.equal(unvalidated.bytes(), replacementPdf,
+      `${label}: an unvalidated partial was not replaced by the full response`);
+
+    const changedUrl = memoryAdapters(encoder.encode(partialPdf));
+    changedUrl.records.set('fixture-changed-url', {
+      ...resumableRecord('fixture-changed-url'),
+      url: 'https://old.example.test/fixture.pdf',
+    });
+    const changedUrlHeaders = [];
+    await runtime.downloadEmergencyResource({ ...resource, id: 'fixture-changed-url' }, {
+      ...changedUrl,
+      fetchImpl: async (_url, options) => {
+        changedUrlHeaders.push(options.headers);
+        return new Response(replacementPdf, { status: 200 });
+      },
+    });
+    assert.deepEqual(changedUrlHeaders, [undefined],
+      `${label}: a validator from another PDF URL authorized a range request`);
+    assert.equal(changedUrl.bytes(), replacementPdf,
+      `${label}: bytes from another PDF URL were retained`);
+
+    const resumed = memoryAdapters(encoder.encode(partialPdf));
+    resumed.records.set('fixture-resume', resumableRecord('fixture-resume'));
+    const resumeHeaders = [];
+    const resumedReady = await runtime.downloadEmergencyResource({ ...resource, id: 'fixture-resume' }, {
+      ...resumed,
+      fetchImpl: async (_url, options) => {
+        resumeHeaders.push(options.headers);
+        return rangedResponse(tail, partialBytes, completeBytes - 1, completeBytes);
+      },
+    });
+    assert.deepEqual(resumeHeaders, [{ Range: `bytes=${partialBytes}-`, 'If-Range': ifRangeValidator }],
+      `${label}: valid PDF resume did not bind its byte range to the original representation`);
+    assert.equal(resumed.bytes(), partialPdf + tail, `${label}: valid PDF range was not appended at its declared offset`);
+    assert.equal(resumedReady.status, 'ready', `${label}: valid PDF range did not become ready`);
+
+    const failedReplacement = memoryAdapters(encoder.encode(partialPdf));
+    failedReplacement.records.set('fixture-failed-replacement', resumableRecord('fixture-failed-replacement'));
+    let failedReplacementCancelled = false;
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-failed-replacement' }, {
+        ...failedReplacement,
+        storage: {
+          ...failedReplacement.storage,
+          async createWriter() { return {
+            async write() {},
+            async truncate() { throw new Error('fixture truncate failed'); },
+            async close() {},
+            async abort() {},
+          }; },
+        },
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          headers: { get(name) { return name.toLowerCase() === 'etag' ? '"fixture-v2"' : null; } },
+          body: { async cancel() { failedReplacementCancelled = true; } },
+        }),
+      }),
+      /truncate failed/i,
+      `${label}: a failed full replacement did not surface its truncate error`,
+    );
+    assert.equal(failedReplacement.records.get('fixture-failed-replacement')?.ifRangeValidator, ifRangeValidator,
+      `${label}: a failed full replacement bound stale bytes to the new validator`);
+    assert.equal(failedReplacement.bytes(), partialPdf,
+      `${label}: a failed full replacement changed the durable partial`);
+    assert.equal(failedReplacementCancelled, true,
+      `${label}: a failed full replacement kept downloading after its storage error`);
+
+    const restarted = memoryAdapters(encoder.encode(partialPdf));
+    restarted.records.set('fixture-restart', resumableRecord('fixture-restart'));
+    const restartRanges = [];
+    const restartedReady = await runtime.downloadEmergencyResource({ ...resource, id: 'fixture-restart' }, {
+      ...restarted,
+      fetchImpl: async (_url, options) => {
+        restartRanges.push(options.headers?.Range || null);
+        if (restartRanges.length === 1) {
+          return new Response(tail, {
+            status: 206,
+            headers: {
+              'content-range': `bytes ${partialBytes}-${completeBytes - 1}/${completeBytes}`,
+              etag: 'W/"fixture-v2"',
+            },
+          });
+        }
+        return new Response(replacementPdf, { status: 200 });
+      },
+    });
+    assert.deepEqual(restartRanges, [`bytes=${partialBytes}-`, null],
+      `${label}: a PDF range with a changed validator was not retried without Range`);
+    assert.equal(restarted.bytes(), replacementPdf, `${label}: a changed PDF version was appended to stale bytes`);
+    assert.equal(restartedReady.status, 'ready', `${label}: full PDF retry did not become ready`);
+
+    const rejectedRetry = memoryAdapters(encoder.encode(partialPdf));
+    rejectedRetry.records.set('fixture-rejected-retry', resumableRecord('fixture-rejected-retry'));
+    let rejectedRequests = 0;
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-rejected-retry' }, {
+        ...rejectedRetry,
+        fetchImpl: async () => {
+          rejectedRequests += 1;
+          if (rejectedRequests === 1) {
+            return rangedResponse(replacementPdf, 0, replacementBytes - 1, replacementBytes);
+          }
+          return rangedResponse('misaligned', 1, 10, replacementBytes);
+        },
+      }),
+      /Content-Range/i,
+      `${label}: a second mismatched PDF range was accepted`,
+    );
+    assert.equal(rejectedRequests, 2, `${label}: mismatched PDF range retried more than once`);
+    assert.equal(rejectedRetry.bytes(), partialPdf, `${label}: rejected PDF ranges changed the durable partial`);
+    assert.equal(rejectedRetry.records.get('fixture-rejected-retry')?.status, 'error',
+      `${label}: rejected PDF range did not leave an actionable error`);
+
+    const shortRange = memoryAdapters(encoder.encode(partialPdf));
+    shortRange.records.set('fixture-short-range', resumableRecord('fixture-short-range'));
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-short-range' }, {
+        ...shortRange,
+        fetchImpl: async () => rangedResponse('short', partialBytes, completeBytes - 1, completeBytes),
+      }),
+      /size.*Content-Range/i,
+      `${label}: a truncated PDF range was marked ready`,
+    );
+    assert.equal(shortRange.records.get('fixture-short-range')?.status, 'error',
+      `${label}: truncated PDF range did not leave an actionable error`);
+    assert.equal(shortRange.bytes(), partialPdf,
+      `${label}: truncated PDF range changed the durable partial`);
+
+    const exhaustedRange = memoryAdapters(encoder.encode(partialPdf));
+    exhaustedRange.records.set('fixture-exhausted-range', resumableRecord('fixture-exhausted-range'));
+    const exhaustedRanges = [];
+    await runtime.downloadEmergencyResource({ ...resource, id: 'fixture-exhausted-range' }, {
+      ...exhaustedRange,
+      fetchImpl: async (_url, options) => {
+        exhaustedRanges.push(options.headers?.Range || null);
+        if (exhaustedRanges.length === 1) {
+          return new Response(null, {
+            status: 416,
+            headers: { 'content-range': `bytes */${partialBytes}` },
+          });
+        }
+        return new Response(replacementPdf, { status: 200 });
+      },
+    });
+    assert.deepEqual(exhaustedRanges, [`bytes=${partialBytes}-`, null],
+      `${label}: exhausted PDF range did not retry as a full download`);
+    assert.equal(exhaustedRange.bytes(), replacementPdf,
+      `${label}: exhausted PDF range did not recover with the full response`);
+
+    const unexpectedStatus = memoryAdapters(encoder.encode(partialPdf));
+    unexpectedStatus.records.set('fixture-unexpected-status', resumableRecord('fixture-unexpected-status'));
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-unexpected-status' }, {
+        ...unexpectedStatus,
+        fetchImpl: async () => new Response(null, { status: 204 }),
+      }),
+      /unexpected HTTP 204/i,
+      `${label}: an empty successful response was accepted as a PDF`,
+    );
+    assert.equal(unexpectedStatus.bytes(), partialPdf,
+      `${label}: an unexpected successful status erased the durable partial`);
+
+    const overlongRange = memoryAdapters(encoder.encode(partialPdf));
+    overlongRange.records.set('fixture-overlong-range', resumableRecord('fixture-overlong-range'));
+    let rangeReaderCancelled = false;
+    const overlongChunks = [encoder.encode('XXXX'), encoder.encode('far-too-long-tail')];
+    let overlongChunkIndex = 0;
+    await assert.rejects(
+      runtime.downloadEmergencyResource({ ...resource, id: 'fixture-overlong-range' }, {
+        ...overlongRange,
+        fetchImpl: async () => ({
+          ok: true,
+          status: 206,
+          headers: { get(name) {
+            return name.toLowerCase() === 'content-range'
+              ? `bytes ${partialBytes}-${completeBytes - 1}/${completeBytes}`
+              : null;
+          } },
+          body: { getReader() { return {
+            async read() {
+              if (overlongChunkIndex >= overlongChunks.length) return { done: true };
+              return { done: false, value: overlongChunks[overlongChunkIndex++] };
+            },
+            async cancel() { rangeReaderCancelled = true; },
+          }; } },
+        }),
+      }),
+      /exceeded.*Content-Range/i,
+      `${label}: an overlong PDF range was accepted`,
+    );
+    assert.equal(rangeReaderCancelled, true, `${label}: an overlong PDF response kept streaming`);
+    assert.equal(overlongRange.bytes(), partialPdf,
+      `${label}: an overlong PDF range changed the durable partial`);
   }
 });
 
