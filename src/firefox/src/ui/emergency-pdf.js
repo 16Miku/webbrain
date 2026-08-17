@@ -1,4 +1,5 @@
 import { createEmergencyBoxStorage, createEmergencyBoxStore } from '../agent/emergency-box.js';
+import { createEmergencyPdfTextSearch } from './emergency-pdf-search.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
@@ -27,12 +28,15 @@ let record = null;
 let file = null;
 let pdf = null;
 let pageNumber = 1;
+let requestedPageNumber = 1;
 let scale = 1.15;
 let fitWidth = true;
 let renderTask = null;
 let renderSequence = 0;
+let pageRequestSequence = 0;
 let resizeTimer = null;
 const textCache = new Map();
+const textSearch = createEmergencyPdfTextSearch();
 
 function setMessage(message, kind = '') {
   elements['reader-message'].hidden = false;
@@ -75,47 +79,98 @@ function updatePageControls() {
   elements['next-page'].disabled = pageNumber >= pdf.numPages;
 }
 
-async function renderPage() {
-  if (!pdf) return;
-  const sequence = ++renderSequence;
-  try { renderTask?.cancel?.(); } catch { /* a completed render cannot be cancelled */ }
-  const page = await pdf.getPage(pageNumber);
-  if (sequence !== renderSequence) return;
-  if (fitWidth) {
-    const natural = page.getViewport({ scale: 1 });
-    scale = Math.max(.5, Math.min(3, (elements['document-stage'].clientWidth - 56) / natural.width));
-  }
-  const pixelRatio = Math.min(2, globalThis.devicePixelRatio || 1);
-  const cssViewport = page.getViewport({ scale });
-  const renderViewport = page.getViewport({ scale: scale * pixelRatio });
-  const canvas = elements['pdf-canvas'];
-  canvas.width = Math.floor(renderViewport.width);
-  canvas.height = Math.floor(renderViewport.height);
-  canvas.style.width = `${Math.floor(cssViewport.width)}px`;
-  canvas.style.height = `${Math.floor(cssViewport.height)}px`;
-  const context = canvas.getContext('2d', { alpha: false });
-  renderTask = page.render({ canvasContext: context, viewport: renderViewport });
+function cancelRender() {
+  renderSequence += 1;
+  const pendingTask = renderTask;
+  renderTask = null;
+  try { pendingTask?.cancel?.(); } catch { /* a completed render cannot be cancelled */ }
+}
+
+function cancelPendingResize() {
+  clearTimeout(resizeTimer);
+  resizeTimer = null;
+}
+
+async function renderPage(targetPageNumber = pageNumber, isCurrent = () => true) {
+  if (!pdf || !isCurrent()) return false;
+  const targetPage = Math.max(1, Math.min(pdf.numPages, Math.floor(Number(targetPageNumber) || 1)));
+  cancelRender();
+  const sequence = renderSequence;
+  let page;
   try {
-    await renderTask.promise;
+    page = await pdf.getPage(targetPage);
   } catch (error) {
-    if (error?.name === 'RenderingCancelledException') return;
+    if (sequence !== renderSequence || !isCurrent()) return false;
     throw error;
   }
-  if (sequence !== renderSequence) return;
+  if (sequence !== renderSequence || !isCurrent()) return false;
+  let renderScale = scale;
+  if (fitWidth) {
+    const natural = page.getViewport({ scale: 1 });
+    renderScale = Math.max(.5, Math.min(3, (elements['document-stage'].clientWidth - 56) / natural.width));
+  }
+  const pixelRatio = Math.min(2, globalThis.devicePixelRatio || 1);
+  const cssViewport = page.getViewport({ scale: renderScale });
+  const renderViewport = page.getViewport({ scale: renderScale * pixelRatio });
+  // Keep superseded renders from clearing or partially painting the committed page.
+  const renderCanvas = document.createElement('canvas');
+  renderCanvas.width = Math.floor(renderViewport.width);
+  renderCanvas.height = Math.floor(renderViewport.height);
+  const context = renderCanvas.getContext('2d', { alpha: false });
+  const task = page.render({ canvasContext: context, viewport: renderViewport });
+  renderTask = task;
+  try {
+    await task.promise;
+  } catch (error) {
+    if (error?.name === 'RenderingCancelledException' || sequence !== renderSequence || !isCurrent()) return false;
+    throw error;
+  } finally {
+    if (renderTask === task) renderTask = null;
+  }
+  if (sequence !== renderSequence || !isCurrent()) return false;
+  const canvas = elements['pdf-canvas'];
+  canvas.width = renderCanvas.width;
+  canvas.height = renderCanvas.height;
+  canvas.style.width = `${Math.floor(cssViewport.width)}px`;
+  canvas.style.height = `${Math.floor(cssViewport.height)}px`;
+  canvas.getContext('2d', { alpha: false }).drawImage(renderCanvas, 0, 0);
+  pageNumber = targetPage;
+  requestedPageNumber = targetPage;
+  scale = renderScale;
   elements['reader-message'].hidden = true;
   canvas.hidden = false;
-  canvas.setAttribute('aria-label', t('ep.page_aria', { page: pageNumber, total: pdf.numPages }));
+  canvas.setAttribute('aria-label', t('ep.page_aria', { page: targetPage, total: pdf.numPages }));
   updatePageControls();
-  setStatus(t('ep.page_status', { page: pageNumber, total: pdf.numPages, zoom: Math.round(scale * 100) }));
+  setStatus(t('ep.page_status', { page: targetPage, total: pdf.numPages, zoom: Math.round(scale * 100) }));
   elements['document-stage'].scrollTo({ top: 0, left: 0 });
+  return true;
 }
 
 async function goToPage(value) {
-  if (!pdf) return;
+  if (!pdf) return false;
+  const request = ++pageRequestSequence;
+  const isCurrent = () => request === pageRequestSequence;
   const next = Math.max(1, Math.min(pdf.numPages, Math.floor(Number(value) || 1)));
-  if (next === pageNumber && !elements['pdf-canvas'].hidden) return;
-  pageNumber = next;
-  await renderPage();
+  requestedPageNumber = next;
+  try {
+    const rendered = await renderPage(next, isCurrent);
+    if (!rendered && isCurrent() && requestedPageNumber === next) requestedPageNumber = pageNumber;
+    return rendered;
+  } catch (error) {
+    if (isCurrent() && requestedPageNumber === next) requestedPageNumber = pageNumber;
+    throw error;
+  }
+}
+
+function requestPage(value) {
+  cancelPendingResize();
+  textSearch.cancel();
+  return goToPage(value);
+}
+
+function rerenderRequestedPage() {
+  cancelPendingResize();
+  return goToPage(requestedPageNumber);
 }
 
 async function pageText(number) {
@@ -128,20 +183,47 @@ async function pageText(number) {
 }
 
 async function findText(query) {
+  cancelPendingResize();
   const needle = String(query || '').trim().toLocaleLowerCase();
-  if (!pdf || !needle) return;
-  setStatus(t('ep.searching', { query: needle }));
-  const order = [];
-  for (let number = pageNumber + 1; number <= pdf.numPages; number += 1) order.push(number);
-  for (let number = 1; number <= pageNumber; number += 1) order.push(number);
-  for (const number of order) {
-    const text = await pageText(number);
-    if (!text.toLocaleLowerCase().includes(needle)) continue;
-    await goToPage(number);
-    setStatus(t('ep.found', { query: needle, page: number }), 'success');
+  const pendingSearch = textSearch.find(needle, {
+    pageNumber,
+    numPages: pdf?.numPages || 0,
+    pageText,
+  });
+  pageRequestSequence += 1;
+  requestedPageNumber = pageNumber;
+  cancelRender();
+  if (pdf && needle) setStatus(t('ep.searching', { query: needle }));
+  else if (pdf) setStatus(t('ep.page_status', {
+    page: pageNumber, total: pdf.numPages, zoom: Math.round(scale * 100),
+  }));
+  const result = await pendingSearch;
+  if (!pdf || !textSearch.isCurrent(result)) return;
+  if (!needle) {
+    await textSearch.apply(result, isCurrent => renderPage(pageNumber, isCurrent));
     return;
   }
-  setStatus(t('ep.not_found', { query: needle }), 'error');
+  if (result.error) {
+    const applied = await textSearch.apply(result, isCurrent => renderPage(pageNumber, isCurrent));
+    if (!applied) return;
+    throw result.error;
+  }
+  if (result.page) {
+    requestedPageNumber = result.page;
+    let applied;
+    try {
+      applied = await textSearch.apply(result, isCurrent => renderPage(result.page, isCurrent));
+    } catch (error) {
+      if (textSearch.isCurrent(result) && requestedPageNumber === result.page) requestedPageNumber = pageNumber;
+      throw error;
+    }
+    if (!applied) return;
+    setStatus(t('ep.found', { query: result.query, page: result.page }), 'success');
+    return;
+  }
+  const applied = await textSearch.apply(result, isCurrent => renderPage(pageNumber, isCurrent));
+  if (!applied) return;
+  setStatus(t('ep.not_found', { query: result.query }), 'error');
 }
 
 async function initialize() {
@@ -165,22 +247,22 @@ async function initialize() {
   await renderPage();
 }
 
-elements['previous-page'].addEventListener('click', () => goToPage(pageNumber - 1));
-elements['next-page'].addEventListener('click', () => goToPage(pageNumber + 1));
-elements['page-number'].addEventListener('change', event => goToPage(event.target.value));
+elements['previous-page'].addEventListener('click', () => requestPage(requestedPageNumber - 1));
+elements['next-page'].addEventListener('click', () => requestPage(requestedPageNumber + 1));
+elements['page-number'].addEventListener('change', event => requestPage(event.target.value));
 elements['zoom-out'].addEventListener('click', () => {
   fitWidth = false;
   scale = Math.max(.5, scale - .15);
-  renderPage();
+  rerenderRequestedPage();
 });
 elements['zoom-in'].addEventListener('click', () => {
   fitWidth = false;
   scale = Math.min(3, scale + .15);
-  renderPage();
+  rerenderRequestedPage();
 });
 elements['fit-width'].addEventListener('click', () => {
   fitWidth = true;
-  renderPage();
+  rerenderRequestedPage();
 });
 elements['search-form'].addEventListener('submit', event => {
   event.preventDefault();
@@ -202,15 +284,15 @@ elements['save-copy'].addEventListener('click', () => {
 });
 globalThis.addEventListener('keydown', event => {
   if (event.target instanceof HTMLInputElement) return;
-  if (event.key === 'ArrowLeft') goToPage(pageNumber - 1);
-  if (event.key === 'ArrowRight') goToPage(pageNumber + 1);
+  if (event.key === 'ArrowLeft') requestPage(requestedPageNumber - 1);
+  if (event.key === 'ArrowRight') requestPage(requestedPageNumber + 1);
   if (event.key === '+' || event.key === '=') elements['zoom-in'].click();
   if (event.key === '-') elements['zoom-out'].click();
 });
 globalThis.addEventListener('resize', () => {
   if (!fitWidth || !pdf) return;
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(renderPage, 120);
+  cancelPendingResize();
+  resizeTimer = setTimeout(rerenderRequestedPage, 120);
 });
 
 initialize().catch(error => {
