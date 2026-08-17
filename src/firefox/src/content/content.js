@@ -4890,6 +4890,18 @@
                 await new Promise(r => setTimeout(r, 30));
               }
               const form = el.form || (el.closest && el.closest('form'));
+              let submissionObserved = false;
+              let submissionCancelled = false;
+              let submissionOutcomeUnknown = false;
+              let removeSubmitObserver = () => {};
+              if (form && typeof form.addEventListener === 'function') {
+                const onSubmit = event => {
+                  submissionObserved = true;
+                  submissionCancelled = event.defaultPrevented === true;
+                };
+                form.addEventListener('submit', onSubmit, true);
+                removeSubmitObserver = () => form.removeEventListener?.('submit', onSubmit, true);
+              }
               if (msg.params?.messageRecipientGuardRequired === true) {
                 const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
@@ -4902,26 +4914,39 @@
                   });
                 }
               }
-              // Always dispatch the Enter trio: bare forms, tag-chip / email
-              // inputs that transform the value on Enter, and contenteditable
-              // composers only commit through their own keydown listener. If
-              // the page cancelled the keydown it already handled Enter, so a
-              // second submit would double-send.
-              const enterHandled = !dispatchKey('keydown', 'Enter', 13);
-              dispatchKey('keypress', 'Enter', 13);
-              dispatchKey('keyup', 'Enter', 13);
-              if (!enterHandled && _setFieldUsesNativeSubmit(isCombobox, form)) {
-                // requestSubmit performs interactive constraint validation and
-                // silently aborts on an invalid form; surface that instead of
-                // reporting a successful submission.
-                if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
-                  return failure(
-                    'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
-                    { verified: true, submitted: false, invalid: true, ref_id, rect },
-                  );
+              try {
+                // Always dispatch the Enter trio: bare forms, tag-chip / email
+                // inputs that transform the value on Enter, and contenteditable
+                // composers only commit through their own keydown listener.
+                const enterCancelled = !dispatchKey('keydown', 'Enter', 13);
+                dispatchKey('keypress', 'Enter', 13);
+                dispatchKey('keyup', 'Enter', 13);
+                if (submissionObserved) {
+                  submissionOutcomeUnknown = submissionCancelled;
+                } else if (!enterCancelled && _setFieldUsesNativeSubmit(isCombobox, form)) {
+                  // requestSubmit performs interactive constraint validation and
+                  // silently aborts on an invalid form; surface that instead of
+                  // reporting a successful submission.
+                  if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+                    return failure(
+                      'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
+                      { verified: true, submitted: false, invalid: true, ref_id, rect },
+                    );
+                  }
+                  try {
+                    form.requestSubmit();
+                  } catch {
+                    submissionOutcomeUnknown = true;
+                  }
+                  if (!submissionObserved) submissionOutcomeUnknown = true;
+                } else {
+                  // preventDefault, combobox handling, contenteditable custom
+                  // handlers, and form-less widgets do not prove submission.
+                  submissionOutcomeUnknown = true;
                 }
-                form.requestSubmit();
-                nativeSubmitAttempted = true;
+                nativeSubmitAttempted = submissionObserved && !submissionCancelled;
+              } finally {
+                removeSubmitObserver();
               }
             } catch {}
           }
@@ -4951,6 +4976,7 @@
             fieldMeta,
             fallbackAttempted,
             submitted: nativeSubmitAttempted || undefined,
+            outcomeUnknown: submissionOutcomeUnknown || undefined,
           };
         } catch (e) {
           return failure(e && e.message || String(e));

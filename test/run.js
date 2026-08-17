@@ -55026,7 +55026,9 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use rendered text`);
     assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
     assert.match(branch, /!el\.isConnected \|\| !rect \|\| rect\.w < 1 \|\| rect\.h < 1/, `${label}: stale or zero-sized targets must fail before typing`);
-    assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
+     assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
+     assert.match(branch, /addEventListener\('submit'/, `${label}: submit handling must observe actual submit events`);
+     assert.match(branch, /outcomeUnknown: submissionOutcomeUnknown/, `${label}: unproven submissions must be surfaced as unknown`);
     assert.match(branch, /if \(!verified\) \{[\s\S]*return failure\(/, `${label}: mismatched field values must be explicit failed actions`);
     assert.match(branch, /dispatched\s*\?\s*\{ dispatched: true \}/, `${label}: post-dispatch verification failures must preserve action evidence`);
     assert.doesNotMatch(branch, /actual\.includes\(text\)/, `${label}: substring matches must not count as verified field values`);
@@ -55063,11 +55065,30 @@ test('set_field submit dispatches Enter once and submits natively only when unha
       return nativeSubmitAttempted;
     }`);
 
-    const exercise = ({ keydownCancelled, checkValidity = () => true, isCombobox = false }) => {
+    const exercise = ({ keydownCancelled, checkValidity = () => true, isCombobox = false, pageSubmitsOnKeydown = false, submitCancelled = false }) => {
       const calls = [];
-      const form = { requestSubmit: () => calls.push('requestSubmit'), checkValidity };
+      const submitListeners = [];
+      const emitSubmit = () => {
+        const event = { defaultPrevented: submitCancelled };
+        for (const listener of submitListeners) listener(event);
+      };
+      const form = {
+        requestSubmit: () => { calls.push('requestSubmit'); emitSubmit(); },
+        checkValidity,
+        addEventListener: (type, listener) => { if (type === 'submit') submitListeners.push(listener); },
+        removeEventListener: (type, listener) => {
+          if (type === 'submit') {
+            const index = submitListeners.indexOf(listener);
+            if (index >= 0) submitListeners.splice(index, 1);
+          }
+        },
+      };
       const el = { dispatchEvent: (ev) => (keydownCancelled && ev.type === 'keydown' ? false : true), form, closest: () => null };
-      const dispatchKey = (type) => { calls.push(type); return el.dispatchEvent({ type }); };
+      const dispatchKey = (type) => {
+        calls.push(type);
+        if (type === 'keydown' && pageSubmitsOnKeydown) emitSubmit();
+        return el.dispatchEvent({ type });
+      };
       let failureResult = null;
       const failure = (msg, data) => { failureResult = data; return { success: false, ...data }; };
       const submitted = runner({
@@ -55086,17 +55107,31 @@ test('set_field submit dispatches Enter once and submits natively only when unha
     // Plain field + valid form + unhandled keydown: Enter trio + one submit.
     const plain = exercise({});
     assert.deepEqual(plain.calls, ['keydown', 'keypress', 'keyup', 'requestSubmit'], `${label}: plain field must dispatch Enter then submit natively once`);
-    assert.equal(plain.submitted, true, `${label}: native submit must be reported`);
+    assert.equal(plain.submitted, true, `${label}: observed native submit must be reported`);
+    assert.equal(plain.failureResult, null, `${label}: observed native submit must not fail`);
+
+    // A page listener may submit without cancelling Enter; the fallback must
+    // see the submit event and avoid a second requestSubmit call.
+    const pageSubmitted = exercise({ pageSubmitsOnKeydown: true });
+    assert.deepEqual(pageSubmitted.calls, ['keydown', 'keypress', 'keyup'], `${label}: page-handled submit must not be submitted twice`);
+    assert.equal(pageSubmitted.submitted, true, `${label}: page-handled submit should be reported from the observed event`);
 
     // Page already handled Enter (keydown cancelled): no second submit.
     const handled = exercise({ keydownCancelled: true });
     assert.deepEqual(handled.calls, ['keydown', 'keypress', 'keyup'], `${label}: handled Enter must not double-submit`);
     assert.equal(handled.submitted, false, `${label}: handled Enter reports no native submit`);
+    assert.equal(handled.failureResult, null, `${label}: handled Enter should preserve a non-failing unknown result`);
 
     // Combobox: never native-submits (the Enter trio reaches page JS).
     const combobox = exercise({ isCombobox: true });
     assert.deepEqual(combobox.calls, ['keydown', 'keypress', 'keyup'], `${label}: combobox must commit via synthetic keys only`);
     assert.equal(combobox.submitted, false, `${label}: combobox reports no native submit`);
+
+    // A page can cancel a submit event after observing it; that is not proof
+    // that the consequential action reached the server.
+    const cancelledSubmit = exercise({ submitCancelled: true });
+    assert.deepEqual(cancelledSubmit.calls, ['keydown', 'keypress', 'keyup', 'requestSubmit'], `${label}: cancelled submit still has one native attempt`);
+    assert.equal(cancelledSubmit.submitted, false, `${label}: cancelled submit must not be reported as submitted`);
 
     // Invalid form: surface the silent requestSubmit abort.
     const invalid = exercise({ checkValidity: () => false });
