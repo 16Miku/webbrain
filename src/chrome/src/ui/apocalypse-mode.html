@@ -110,8 +110,9 @@
     @media(max-width:920px){.header-stats .header-stat:last-child{display:none}}
     @media(max-width:700px){ header{align-items:flex-start}.header-right{width:100%;margin-inline-start:64px;justify-content:space-between}.header-stat{min-width:74px}.hero-overview,.item,.library-callout,.emergency-callout{grid-template-columns:1fr}.local-models{grid-column:1}.actions{justify-content:flex-start}.local-model-head{align-items:flex-start;flex-direction:column;gap:2px}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start} }
   </style>
+  <link rel="stylesheet" href="apocalypse-kit.css">
 </head>
-<body>
+<body class="ap-page">
   <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div><div class="header-right"><div class="header-stats" data-i18n-aria-label="ap.metric.summary"><span class="header-stat"><strong id="installed-count">0</strong><small data-i18n="ap.metric.installed"></small></span><span class="header-stat"><strong id="archive-bytes">0 B</strong><small data-i18n="ap.metric.archive_bytes"></small></span><span class="header-stat"><strong id="storage-usage"></strong><small data-i18n="ap.metric.storage"></small></span></div><span id="models-readiness" class="models-readiness" data-kind="disabled" role="status" aria-live="polite"><span class="models-readiness-dot" aria-hidden="true"></span><span id="models-readiness-label"></span></span></div></header>
   <main>
     <section class="card hero">

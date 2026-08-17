@@ -21871,6 +21871,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/ui/emergency-box.html',
     'src/ui/emergency-box.css',
     'src/ui/emergency-box.js',
+    'src/ui/apocalypse-kit.css',
     'src/ui/emergency-pdf.html',
     'src/ui/emergency-pdf.css',
     'src/ui/emergency-pdf.js',
@@ -21917,14 +21918,18 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     const wikipediaLibrary = fs.readFileSync(path.join(uiDir, 'wikipedia-library.html'), 'utf8');
     const wikipediaLibraryCss = fs.readFileSync(path.join(uiDir, 'wikipedia-library.css'), 'utf8');
     const wikipediaLibraryScript = fs.readFileSync(path.join(uiDir, 'wikipedia-library.js'), 'utf8');
-    for (const [pageName, pageHtml, pageCss, pageScript, stylesheet] of [
-      ['Emergency Box', box, boxCss, boxScript, 'emergency-box.css'],
-      ['PDF Reader', reader, readerCss, readerScript, 'emergency-pdf.css'],
-      ['Wikipedia Reader', wikipediaReader, wikipediaReaderCss, wikipediaReaderScript, 'wikipedia-reader.css'],
-      ['Wikipedia Library', wikipediaLibrary, wikipediaLibraryCss, wikipediaLibraryScript, 'wikipedia-library.css'],
+    for (const [pageName, pageHtml, pageCss, pageScript, stylesheet, pageClass] of [
+      ['Emergency Box', box, boxCss, boxScript, 'emergency-box.css', 'emergency-box-page'],
+      ['PDF Reader', reader, readerCss, readerScript, 'emergency-pdf.css', 'emergency-pdf-page'],
+      ['Wikipedia Reader', wikipediaReader, wikipediaReaderCss, wikipediaReaderScript, 'wikipedia-reader.css', 'wikipedia-reader-page'],
+      ['Wikipedia Library', wikipediaLibrary, wikipediaLibraryCss, wikipediaLibraryScript, 'wikipedia-library.css', 'wikipedia-library-page'],
     ]) {
       assert.match(pageHtml, new RegExp(`<script src="theme-bootstrap\\.js"><\\/script>[\\s\\S]*?<link rel="stylesheet" href="${stylesheet.replace('.', '\\.')}"`),
         `${browser}: ${pageName} does not apply the saved theme before first paint`);
+      assert.match(pageHtml, /<link rel="stylesheet" href="apocalypse-kit\.css">/,
+        `${browser}: ${pageName} does not use the shared Apocalypse visual system`);
+      assert.match(pageHtml, new RegExp(`<body class="${pageClass}">`),
+        `${browser}: ${pageName} does not expose its Apocalypse page identity`);
       assert.match(pageCss, /:root\[data-theme="light"\]\s*\{[\s\S]*?color-scheme:\s*light/,
         `${browser}: ${pageName} does not define the Settings light palette`);
       assert.match(pageCss, /:root\s*\{[\s\S]*?color-scheme:\s*dark/,
@@ -24270,6 +24275,8 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     const pageHeader = pageHtml.slice(pageHtml.indexOf('<header>'), pageHtml.indexOf('</header>') + 9);
     assert.match(pageHtml, /<script src="theme-bootstrap\.js"><\/script>[\s\S]*?<style>/,
       `${prefix}: Apocalypse Mode does not apply the saved theme before first paint`);
+    assert.match(pageHtml, /<link rel="stylesheet" href="apocalypse-kit\.css">[\s\S]*?<\/head>\s*<body class="ap-page">/,
+      `${prefix}: Apocalypse Mode does not use the shared Apocalypse visual system`);
     assert.match(pageHtml, /:root\[data-theme="light"\]\s*\{[\s\S]*?color-scheme:light/,
       `${prefix}: Apocalypse Mode does not define the Settings light palette`);
     assert.match(pageHtml, /:root\s*\{[\s\S]*?color-scheme:dark/,
