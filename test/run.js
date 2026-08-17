@@ -29577,6 +29577,104 @@ test('trace viewer drops stale async render completions', () => {
   }
 });
 
+test('history and trace pages ignore stale list refreshes', async () => {
+  function refreshSource(source, label) {
+    const match = source.match(/async function refresh\(\) \{[\s\S]*?\n\}/);
+    assert.ok(match, `${label}: refresh function missing`);
+    return match[0];
+  }
+
+  function historyHarness(source, recordReads, runReads) {
+    return Function('recordReads', 'runReads', `
+      let allRecords = [];
+      let allRuns = [];
+      let selectedRecordId = null;
+      let historyRefreshRequestId = 0;
+      let renderCount = 0;
+      const listChatHistoryRecords = () => recordReads.shift().promise;
+      const listRuns = () => runReads.shift().promise;
+      function renderEmpty() {}
+      function renderList() { renderCount += 1; }
+      function refreshButtons() {}
+      async function renderRecord() {}
+      ${refreshSource(source, 'history')}
+      return {
+        refresh,
+        snapshot: () => ({ allRecords, allRuns, renderCount }),
+      };
+    `)(recordReads, runReads);
+  }
+
+  function traceHarness(source, runReads) {
+    return Function('runReads', `
+      let allRuns = [];
+      let traceRefreshRequestId = 0;
+      let renderCount = 0;
+      const countPill = { textContent: '' };
+      const filterModel = { value: '', innerHTML: '' };
+      const listRuns = () => runReads.shift().promise;
+      const t = (_key, params) => String(params?.n ?? '');
+      const escapeHtml = String;
+      function rebuildConversationMap() {}
+      function renderList() { renderCount += 1; }
+      ${refreshSource(source, 'traces')}
+      return {
+        refresh,
+        snapshot: () => ({ allRuns, renderCount }),
+      };
+    `)(runReads);
+  }
+
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const history = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.js'), 'utf8');
+    assert.match(history, /let historyRefreshRequestId = 0;/, `${label}: history refreshes should be sequenced`);
+
+    const oldRecords = deferred();
+    const newRecords = deferred();
+    const oldHistoryRuns = deferred();
+    const newHistoryRuns = deferred();
+    const historyRuntime = historyHarness(
+      history,
+      [oldRecords, newRecords],
+      [oldHistoryRuns, newHistoryRuns],
+    );
+    const oldHistoryRefresh = historyRuntime.refresh();
+    const newHistoryRefresh = historyRuntime.refresh();
+    newRecords.resolve([]);
+    newHistoryRuns.resolve([]);
+    await newHistoryRefresh;
+    oldRecords.resolve([{ id: 'deleted-record' }]);
+    oldHistoryRuns.resolve([{ runId: 'deleted-run' }]);
+    await oldHistoryRefresh;
+    assert.deepEqual(
+      historyRuntime.snapshot(),
+      { allRecords: [], allRuns: [], renderCount: 1 },
+      `${label}: a late history read restored stale records`,
+    );
+
+    const traces = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/traces.js'), 'utf8');
+    assert.match(traces, /let traceRefreshRequestId = 0;/, `${label}: trace refreshes should be sequenced`);
+
+    const oldTraceRuns = deferred();
+    const newTraceRuns = deferred();
+    const traceRuntime = traceHarness(traces, [oldTraceRuns, newTraceRuns]);
+    const oldTraceRefresh = traceRuntime.refresh();
+    const newTraceRefresh = traceRuntime.refresh();
+    newTraceRuns.resolve([]);
+    await newTraceRefresh;
+    oldTraceRuns.resolve([{ runId: 'deleted-run' }]);
+    await oldTraceRefresh;
+    assert.deepEqual(
+      traceRuntime.snapshot(),
+      { allRuns: [], renderCount: 1 },
+      `${label}: a late trace read restored stale runs`,
+    );
+  }
+});
+
 test('trace viewer escapes attribute data from stored trace records', () => {
   for (const [label, tracesRel] of [
     ['chrome', 'src/chrome/src/ui/traces.js'],
