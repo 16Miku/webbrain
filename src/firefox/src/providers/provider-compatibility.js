@@ -148,14 +148,17 @@ export function shouldUseOpenAIResponsesApi(config = {}) {
 
 /**
  * Whether a model id uses the newer OpenAI wire contract (max_completion_tokens,
- * no non-default temperature) — the gpt-5 line and the o-series. gpt-4.1 is
- * deliberately excluded: it accepts both parameter sets, so it stays on the
- * legacy contract and keeps explicit temperatures. Matches at the start or
- * after a router prefix (`openai/o1`), with a trailing boundary so look-alikes
- * like `gpt-4o`, `gpt-4.1`, or `o365-assistant` never match.
+ * no non-default temperature). OpenRouter has a provider-specific contract:
+ * its current GPT-5.6 Terra route accepts max_completion_tokens, while routed
+ * GPT-5 Pro and o-series models use max_tokens. Keep that distinction here so
+ * provider request bodies and the Settings compatibility panel cannot drift.
  */
-export function isNewOpenAIContractModel(model) {
+export function isNewOpenAIContractModel(model, config = {}) {
   const m = String(model || '').toLowerCase();
+  const providerName = String(config.providerName || '').trim().toLowerCase();
+  if (providerName === 'openrouter') {
+    return /(?:^|\/)gpt-5\.6-terra(?:$|[-_.:\/])/.test(m);
+  }
   return /(?:^|\/)(?:gpt-5|o1|o3|o4)(?:$|[-_.\/])/.test(m);
 }
 
