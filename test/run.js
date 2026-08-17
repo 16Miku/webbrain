@@ -1138,6 +1138,10 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/selection-quote.js').replace(/\\/g, '/')
 );
+const sidepanelSources = [
+  fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8'),
+];
 
 // ────────────────────────────────────────────────────────────────────────
 // Test framework (one function, no deps)
@@ -1155,6 +1159,7 @@ test('buildSelectionQuote preserves multiline answer text as an editable quote',
   assert.equal(buildSelectionQuoteFx(selected), expected, 'Firefox quote builder should match Chrome');
   assert.equal(buildSelectionComposerDraft('A detail', 'Why?'), '> A detail\n\nWhy?');
   assert.equal(buildSelectionComposerDraftFx('A detail', 'Why?'), '> A detail\n\nWhy?', 'Firefox draft builder should match Chrome');
+  assert.equal(buildSelectionComposerDraft('', 'draft'), 'draft');
 });
 
 test('selectionIsQuoteable requires one non-empty assistant answer element', () => {
@@ -1166,6 +1171,16 @@ test('selectionIsQuoteable requires one non-empty assistant answer element', () 
   assert.equal(selectionIsQuoteable({ ...valid, text: ' \n ' }), false);
   assert.equal(selectionIsQuoteableFx(valid), true, 'Firefox eligibility should match Chrome');
   assert.equal(selectionIsQuoteableFx({ ...valid, endTextElement: otherAnswer }), false);
+});
+
+test('selection answer action wiring covers show, dismiss, and tab/conversation changes in both sidepanels', () => {
+  for (const source of sidepanelSources) {
+    assert.match(source, /document\.addEventListener\('selectionchange', refreshSelectionAskAction\)/);
+    assert.match(source, /document\.addEventListener\('pointerdown', \(event\) => \{/);
+    assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
+    assert.match(source, /async function switchToTab\([\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /async function renderClearedConversationForTab\([\s\S]*?dismissSelectionAskAction\(\);/);
+  }
 });
 
 console.log('\nscreenshot redaction');

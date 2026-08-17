@@ -15,6 +15,7 @@ export function buildSelectionComposerDraft(selectionText, draft = '') {
 }
 
 export function selectionIsQuoteable({ startTextElement, endTextElement, text } = {}) {
+  // A range spanning two bubbles has no unambiguous answer boundary.
   return Boolean(
     startTextElement
       && startTextElement === endTextElement

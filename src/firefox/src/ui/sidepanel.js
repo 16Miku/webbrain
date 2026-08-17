@@ -2419,6 +2419,7 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
+  dismissSelectionAskAction();
   setSelectionGroundedForTab(tabId, false);
   const clearResult = await clearCachedTabChat(tabId);
   if (!clearResult?.ok || clearResult?.skipped) {
@@ -4058,6 +4059,7 @@ if (verboseBtn) {
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  dismissSelectionAskAction();
   if (newConversationConfirmationState
       && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
     settleNewConversationConfirmation(false, { restoreFocus: false });
@@ -10352,11 +10354,13 @@ function refreshSelectionAskAction() {
     return;
   }
   pendingAnswerSelection = selected;
-  const label = getSelectionShortcutLocalization(getLocale()).askQuestion || 'Ask WebBrain a question';
+  const label = getSelectionShortcutLocalization(getLocale()).strings.askQuestion;
   selectionAskActionEl.textContent = label;
   selectionAskActionEl.title = label;
   selectionAskActionEl.setAttribute('aria-label', label);
   selectionAskActionEl.classList.remove('hidden');
+  // selectionchange can be followed by a click before the next paint; correct
+  // the first position synchronously, then remeasure after layout settles.
   positionSelectionAskAction(selected.range);
   requestAnimationFrame(() => {
     if (pendingAnswerSelection === selected) positionSelectionAskAction(selected.range);

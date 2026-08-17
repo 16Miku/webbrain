@@ -2369,12 +2369,6 @@ body {
   outline-offset: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .selection-ask-action {
-    transition: none;
-  }
-}
-
 
 
 /* Context-aware recommendations — inline centered pill row in the chat body */
