@@ -79,10 +79,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   get model() {
     if (this.config.model) return this.config.model;
     if (this.config.requiresModel) throw new Error(`${this.config.label || this.name} model is required.`);
-    // Local servers (Ollama, LM Studio, vLLM, …) must never receive a model
-    // id the user never configured: most 404 on unknown ids and none serves
-    // a model named after OpenAI's default. Omit the field entirely so the
-    // server applies its own default. Mirrors LlamaCppProvider.
+    // Some local servers apply their own default when no model is configured.
+    // Others carry `requiresModel: true` and throw above. Treat the category as
+    // the durable boundary so older/custom local entries never inherit a
+    // fabricated cloud model id merely because their provider name is unknown.
     if (this.config.category === 'local') return null;
     return String(this.config.providerName || '').toLowerCase() === 'openai'
       && this._isOfficialOpenAIBaseUrl()

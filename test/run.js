@@ -9448,6 +9448,34 @@ test('coord click: 10px drift = different bucket', () => {
   assert.equal(d._checkCoordClickLoop(1, 115, 200).kind, 'none');
 });
 
+test('coord click: scaled dispatch keeps loop detection in screenshot image space', async () => {
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      resolverResponse: { success: true },
+      dispatchBinding: { token: `${label}-scaled-loop-target`, frameId: 0 },
+      throughBatch: true,
+    });
+    assert.equal(observed.mappingCalls, 1, `${label}: batch click must use the stored screenshot scale`);
+    assert.deepEqual(
+      observed.fallbackParams.map(({ x, y }) => ({ x, y })),
+      [{ x: 1280, y: 720 }],
+      `${label}: browser dispatch must receive converted CSS coordinates`,
+    );
+    assert.deepEqual(
+      observed.coordChecks,
+      [[observed.tabId, 784, 441]],
+      `${label}: loop detector must receive the model's original image coordinates`,
+    );
+    assert.deepEqual(observed.batchResult, { action: 'continue' }, `${label}: click batch should complete normally`);
+  }
+});
+
 test('coord click: survives interleaved noise (the failure mode this fixes)', () => {
   // Coord clicks accumulate across interleaved noise. Nudge at 5, stop at 8.
   const d = new ConfiguredLoopDetector();
@@ -11790,6 +11818,7 @@ async function runCoordinateSemanticCase({
   cachedAxScope = null,
   chromeAttachError = null,
   dispatchBinding = null,
+  throughBatch = false,
 }) {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
@@ -11821,12 +11850,18 @@ async function runCoordinateSemanticCase({
     ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
     : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
   try {
-    const agent = new AgentClass({});
+    const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = label === 'chrome' ? 8811 : 8812;
     agent._isPdfTab = async () => false;
     agent._richTextToolbarToolBlock = async () => null;
     agent._recentSubmitClicks = null;
     agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+    const coordChecks = [];
+    const checkCoordClickLoop = agent._checkCoordClickLoop.bind(agent);
+    agent._checkCoordClickLoop = (...args) => {
+      coordChecks.push(args);
+      return checkCoordClickLoop(...args);
+    };
     if (cachedAxScope) agent._lastAxScopes.set(tabId, cachedAxScope);
     if (label === 'chrome') {
       cdpClientCh.attach = async () => {
@@ -11847,12 +11882,45 @@ async function runCoordinateSemanticCase({
       return mapScreenshotCoords(...args);
     };
     agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
-    const result = await agent.executeTool(tabId, 'click', {
+    const clickArgs = {
       x: 784,
       y: 441,
       from_screenshot: true,
-    }, null, dispatchBinding ? { dispatchBinding } : undefined);
-    return { result, mappingCalls, resolveParams, clickAxParams, fallbackParams };
+    };
+    let result = null;
+    let batchResult = null;
+    if (throughBatch) {
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._isFormValidationCandidate = () => false;
+      agent._preflightRichTextToolbarTarget = async () => ({
+        block: null,
+        probe: dispatchBinding ? { dispatchBinding } : null,
+      });
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      batchResult = await agent._executeToolBatch(
+        tabId,
+        [{ id: `${label}_scaled_click`, function: { name: 'click', arguments: JSON.stringify(clickArgs) } }],
+        [],
+        () => {},
+        { supportsVision: false },
+        null,
+        new Set(['click']),
+        1,
+      );
+    } else {
+      result = await agent.executeTool(
+        tabId,
+        'click',
+        clickArgs,
+        null,
+        dispatchBinding ? { dispatchBinding } : undefined,
+      );
+    }
+    return { tabId, result, batchResult, coordChecks, mappingCalls, resolveParams, clickAxParams, fallbackParams };
   } finally {
     cdpClientCh.attach = originalCdpAttach;
     if (globalKey === 'chrome') {
@@ -49690,6 +49758,66 @@ test('official OpenAI GPT-5.6 and Responses-only GPT-5 Pro variants route to Res
     ]) {
       assert.equal(new Provider(config)._usesResponsesApi(), false, `${config.providerName}/${config.model} should keep Chat Completions`);
     }
+  }
+});
+
+test('local OpenAI-compatible servers that require a model throw a clear error when unset', () => {
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    for (const providerName of ['ollama', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
+      const provider = new Provider({
+        providerName,
+        category: 'local',
+        baseUrl: 'http://localhost:1234/v1',
+        requiresModel: true,
+      });
+      assert.throws(
+        () => provider._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {}),
+        /model is required/,
+        `${providerName}: empty model must fail loudly instead of sending a fabricated id`,
+      );
+    }
+  }
+});
+
+test('every optional-model local provider omits the model field when unset', () => {
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    for (const providerName of ['lmstudio', 'privatemode-ai', 'persisted-custom-local']) {
+      const empty = new Provider({
+        providerName,
+        category: 'local',
+        baseUrl: 'http://localhost:1234/v1',
+      });
+      assert.equal(empty.model, null, `${providerName}: local providers must not fabricate a model id`);
+      const chatBody = empty._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {});
+      assert.equal('model' in chatBody, false, `${providerName}: Chat Completions must omit an unset model`);
+      const responsesBody = empty._responsesBody([{ role: 'user', content: 'hello' }], {}, false);
+      assert.equal('model' in responsesBody, false, `${providerName}: Responses must omit an unset model`);
+    }
+
+    const configured = new Provider({
+      providerName: 'persisted-custom-local',
+      category: 'local',
+      baseUrl: 'http://localhost:1234/v1',
+      model: 'llama-3.2-3b',
+    });
+    assert.equal(
+      configured._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {}).model,
+      'llama-3.2-3b',
+      'configured local model must be sent',
+    );
+  }
+});
+
+test('non-local OpenAI-compatible providers keep the legacy model fallback', () => {
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    assert.equal(new Provider({ providerName: 'openrouter' }).model, 'gpt-4o');
+    assert.equal(new Provider({ providerName: 'openai', baseUrl: 'https://proxy.example.test/v1' }).model, 'gpt-4o');
+    assert.equal(new Provider({ providerName: 'openai' }).model, 'gpt-5.6-terra');
+    const body = new Provider({ providerName: 'openrouter' })._buildChatCompletionsBody(
+      [{ role: 'user', content: 'hello' }],
+      {},
+    );
+    assert.equal(body.model, 'gpt-4o', 'non-local fallback model must stay on the wire');
   }
 });
 
