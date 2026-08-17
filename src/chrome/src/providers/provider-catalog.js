@@ -1,9 +1,10 @@
 /**
  * Additional built-in providers.
  *
- * The catalog is a curated, checked-in snapshot of OpenCode's provider data at
- * commit 62e4641235d7847dadc60da37cca8a023dd54fc1. Keeping it local makes the
- * extension deterministic and avoids loading provider metadata at runtime.
+ * The catalog is curated and checked in so the extension stays deterministic
+ * without loading provider metadata at runtime. Most entries come from
+ * OpenCode's provider data at commit 62e4641235d7847dadc60da37cca8a023dd54fc1;
+ * provider-specific additions use their official API documentation.
  */
 
 const DEFAULT_API_KEY_PLACEHOLDER = 'API key';
@@ -107,6 +108,7 @@ const PROVIDERS = [
   provider('ollama-cloud', 'Ollama Cloud', 'https://ollama.com/v1', 'deepseek-v4-flash', 1048576, { category: 'cloud', apiKeyUrl: 'https://docs.ollama.com/cloud' }),
   provider('opencode', 'OpenCode Zen', 'https://opencode.ai/zen/v1', 'ring-2.6-1t-free', 262000, { apiKeyUrl: 'https://opencode.ai/docs/zen' }),
   provider('opencode-go', 'OpenCode Go', 'https://opencode.ai/zen/go/v1', 'deepseek-v4-flash', 1000000, { apiKeyUrl: 'https://opencode.ai/docs/zen', inputCostPerMillionUsd: 0.14, cacheReadCostPerMillionUsd: 0.0028, outputCostPerMillionUsd: 0.28 }),
+  provider('orcarouter', 'OrcaRouter', 'https://api.orcarouter.ai/v1', 'orcarouter/auto', 128000, { apiKeyUrl: 'https://www.orcarouter.ai/console', supportsVision: true }),
   provider('ovhcloud', 'OVHcloud AI Endpoints', 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', 'qwen3-coder-30b-a3b-instruct', 262144, { apiKeyUrl: 'https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog/', inputCostPerMillionUsd: 0.07, outputCostPerMillionUsd: 0.26 }),
   provider('perplexity', 'Perplexity Sonar', 'https://api.perplexity.ai', 'sonar-reasoning-pro', 128000, { category: 'cloud', apiKeyUrl: 'https://www.perplexity.ai/settings/api', supportsVision: true, supportsTools: false, inputCostPerMillionUsd: 2, outputCostPerMillionUsd: 8 }),
   provider('perplexity-agent', 'Perplexity Agent', 'https://api.perplexity.ai/v1', 'xai/grok-4-1-fast-non-reasoning', 2000000, { category: 'cloud', apiKeyUrl: 'https://www.perplexity.ai/settings/api', supportsVision: true, apiFormat: 'responses', inputCostPerMillionUsd: 0.2, cacheReadCostPerMillionUsd: 0.05, outputCostPerMillionUsd: 0.5 }),

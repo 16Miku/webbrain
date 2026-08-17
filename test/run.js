@@ -49053,15 +49053,15 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
     minimax-coding-plan moark modelscope morph nano-gpt nebius nova novita-ai
-    ollama-cloud opencode opencode-go ovhcloud perplexity perplexity-agent poe
-    privatemode-ai qihang-ai qiniu-ai requesty scaleway siliconflow
+    ollama-cloud opencode opencode-go orcarouter ovhcloud perplexity
+    perplexity-agent poe privatemode-ai qihang-ai qiniu-ai requesty scaleway siliconflow
     siliconflow-cn stackit stepfun submodel synthetic tencent-coding-plan
     upstage v0 venice vercel vivgrid vultr wandb xiaomi zai-coding-plan zenmux
     zhipuai zhipuai-coding-plan
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 76);
+  assert.equal(expectedIds.length, 77);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -49075,7 +49075,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 106 : 105;
+    const expectedDefaultCount = label === 'chrome' ? 107 : 106;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -49152,6 +49152,24 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['perplexity-agent'].apiFormat, 'responses');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['azure-cognitive-services'].model, '');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['kimi-for-coding'].model, 'kimi-for-coding');
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.orcarouter.baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.orcarouter.model,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.orcarouter.supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.orcarouter.supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.orcarouter.supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.orcarouter.apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://api.orcarouter.ai/v1',
+      model: 'orcarouter/auto',
+      supportsVision: true,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://www.orcarouter.ai/console',
+    },
+  );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
     ['kimi-for-coding', 'kimi-for-coding-highspeed', 'k3'],
