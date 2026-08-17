@@ -69,17 +69,18 @@ class BaseLLMProvider {
 
 ### Extended provider catalog
 
-WebBrain also ships 76 disabled-by-default provider cards sourced from the
-OpenCode provider catalog snapshot at commit
-`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the original
-cards, Settings contains **106 built-in providers on Chromium** and **105 on
-Firefox**; the difference is the Chromium-only in-browser WebGPU runtime.
+WebBrain also ships 77 disabled-by-default provider cards. Most are sourced
+from the OpenCode provider catalog snapshot at commit
+`62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
+their official API documentation. Together with the original cards, Settings
+contains **107 built-in providers on Chromium** and **106 on Firefox**; the
+difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs |
 |---|
 | `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
 | `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph` |
-| `nano-gpt`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit` |
+| `nano-gpt`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit` |
 | `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan` |
 
 Most use the OpenAI-compatible Chat Completions contract and bearer API keys.
