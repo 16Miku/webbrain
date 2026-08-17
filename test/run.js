@@ -1142,6 +1142,17 @@ const sidepanelSources = [
   fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8'),
   fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8'),
 ];
+const selectionQuoteSources = [
+  fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/selection-quote.js'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/selection-quote.js'), 'utf8'),
+];
+
+function sourceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `source markers missing: ${startMarker}`);
+  return source.slice(start, end);
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // Test framework (one function, no deps)
@@ -1175,19 +1186,26 @@ test('selectionIsQuoteable requires one non-empty assistant answer element', () 
   assert.equal(selectionIsQuoteableFx({ ...valid, endTextElement: otherAnswer }), false);
 });
 
+test('selection quote helper stays byte-identical across browser builds', () => {
+  assert.equal(selectionQuoteSources[0], selectionQuoteSources[1]);
+});
+
 test('selection answer action wiring covers show, dismiss, and tab/conversation changes in both sidepanels', () => {
   for (const source of sidepanelSources) {
-    const switchToTabSource = source.slice(source.indexOf('async function switchToTab'), source.indexOf('async function switchToTab') + 320);
-    const clearConversationSource = source.slice(source.indexOf('async function renderClearedConversationForTab'), source.indexOf('async function renderClearedConversationForTab') + 240);
-    const sendMessageSource = source.slice(source.indexOf('async function sendMessage'), source.indexOf('async function sendMessage') + 500);
-    assert.match(source, /document\.addEventListener\('selectionchange', refreshSelectionAskAction\)/);
+    const switchToTabSource = sourceBetween(source, 'async function switchToTab', '\n}\n\nasync function refreshVisibleSidePanelState');
+    const clearConversationSource = sourceBetween(source, 'async function renderClearedConversationForTab', '\nconst TOOL_KEYS =');
+    const sendMessageSource = sourceBetween(source, 'async function sendMessage', '\nasync function continueAgent');
+    assert.match(source, /document\.addEventListener\('selectionchange', scheduleSelectionAskActionRefresh\)/);
     assert.match(source, /document\.addEventListener\('pointerdown', \(event\) => \{/);
     assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
-    assert.match(source, /if \(!rect\.width && !rect\.height\) return;/);
+    assert.match(source, /if \(!rect\.width && !rect\.height\) \{[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /if \(!range\.startContainer\.isConnected \|\| !range\.endContainer\.isConnected\) return null;/);
+    assert.match(source, /const liveSelection = selectedAssistantAnswer\(\);/);
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
     assert.match(clearConversationSource, /dismissSelectionAskAction\(\);/);
     assert.match(sendMessageSource, /dismissSelectionAskAction\(\);/);
+    assert.match(source, /if \(!isProcessing\) return;/);
   }
 });
 

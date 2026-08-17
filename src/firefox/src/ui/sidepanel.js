@@ -469,6 +469,9 @@ const ASK_PLACEHOLDER_KEYS = [
 ];
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
 let pendingAnswerSelection = null;
+let selectionAskActionRefreshFrame = null;
+let selectionAskActionLocale = '';
+let selectionAskActionLabel = '';
 const SLASH_COMMANDS = [
   { value: '/help', usage: '/help', descriptionKey: 'sp.slash.help', action: 'show', outOfBand: true },
   {
@@ -10315,6 +10318,7 @@ function selectedAssistantAnswer() {
   const selection = window.getSelection?.();
   if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
   const range = selection.getRangeAt(0);
+  if (!range.startContainer.isConnected || !range.endContainer.isConnected) return null;
   const startTextElement = assistantTextElementForSelectionNode(range.startContainer);
   const endTextElement = assistantTextElementForSelectionNode(range.endContainer);
   const text = selection.toString();
@@ -10323,6 +10327,10 @@ function selectedAssistantAnswer() {
 }
 
 function dismissSelectionAskAction() {
+  if (selectionAskActionRefreshFrame != null) {
+    cancelAnimationFrame(selectionAskActionRefreshFrame);
+    selectionAskActionRefreshFrame = null;
+  }
   pendingAnswerSelection = null;
   selectionAskActionEl?.classList.add('hidden');
 }
@@ -10330,7 +10338,10 @@ function dismissSelectionAskAction() {
 function positionSelectionAskAction(range) {
   if (!selectionAskActionEl || !range) return;
   const rect = range.getBoundingClientRect();
-  if (!rect.width && !rect.height) return;
+  if (!rect.width && !rect.height) {
+    dismissSelectionAskAction();
+    return;
+  }
   const gap = 6;
   const actionRect = selectionAskActionEl.getBoundingClientRect();
   const left = Math.min(
@@ -10356,23 +10367,35 @@ function refreshSelectionAskAction() {
     return;
   }
   pendingAnswerSelection = selected;
-  const label = getSelectionShortcutLocalization(getLocale()).strings.askQuestion;
-  selectionAskActionEl.textContent = label;
-  selectionAskActionEl.title = label;
-  selectionAskActionEl.setAttribute('aria-label', label);
+  const locale = getLocale();
+  if (selectionAskActionLocale !== locale) {
+    selectionAskActionLocale = locale;
+    selectionAskActionLabel = getSelectionShortcutLocalization(locale).strings.askQuestion;
+  }
+  selectionAskActionEl.textContent = selectionAskActionLabel;
+  selectionAskActionEl.title = selectionAskActionLabel;
+  selectionAskActionEl.setAttribute('aria-label', selectionAskActionLabel);
   selectionAskActionEl.classList.remove('hidden');
-  // selectionchange can be followed by a click before the next paint; correct
-  // the first position synchronously, then remeasure after layout settles.
   positionSelectionAskAction(selected.range);
-  requestAnimationFrame(() => {
-    if (pendingAnswerSelection === selected) positionSelectionAskAction(selected.range);
+}
+
+function scheduleSelectionAskActionRefresh() {
+  if (selectionAskActionRefreshFrame != null) return;
+  selectionAskActionRefreshFrame = requestAnimationFrame(() => {
+    selectionAskActionRefreshFrame = null;
+    refreshSelectionAskAction();
   });
 }
 
 function askAboutSelectedAnswer() {
   const selection = pendingAnswerSelection;
   if (!selection) return;
-  const nextDraft = buildSelectionComposerDraft(selection.text, inputEl.value);
+  const liveSelection = selectedAssistantAnswer();
+  if (!liveSelection) {
+    dismissSelectionAskAction();
+    return;
+  }
+  const nextDraft = buildSelectionComposerDraft(liveSelection.text, inputEl.value);
   if (nextDraft === inputEl.value) {
     dismissSelectionAskAction();
     return;
@@ -11353,7 +11376,7 @@ async function handleGlobalKeydown(e) {
     if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {
       e.preventDefault();
       dismissSelectionAskAction();
-      return;
+      if (!isProcessing) return;
     }
     // Provider/language pickers close on Escape in bubble/target handlers; do not
     // abort the active run while those listboxes are open.
@@ -12265,13 +12288,13 @@ if (selectionAskActionEl) {
     event.stopPropagation();
     askAboutSelectedAnswer();
   });
-  document.addEventListener('selectionchange', refreshSelectionAskAction);
+  document.addEventListener('selectionchange', scheduleSelectionAskActionRefresh);
   document.addEventListener('pointerdown', (event) => {
     if (!selectionAskActionEl.contains(event.target)) dismissSelectionAskAction();
   });
   chatContainerEl?.addEventListener('scroll', dismissSelectionAskAction, { passive: true });
   window.addEventListener('resize', dismissSelectionAskAction);
-  document.addEventListener('wb-locale-changed', refreshSelectionAskAction);
+  document.addEventListener('wb-locale-changed', scheduleSelectionAskActionRefresh);
 }
 
 sendBtn.addEventListener('click', sendMessage);
