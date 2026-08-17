@@ -1,6 +1,7 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
+  isNewOpenAIContractConfig,
   isOfficialOpenAIConfig,
   shouldUseOpenAIResponsesApi,
   supportsOpenAIAskStreaming,
@@ -165,18 +166,15 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   /**
-   * Newer OpenAI models (gpt-5, gpt-4.1+, o1, o3, o4) have a different API
-   * contract from the gpt-4o-and-earlier line:
-   *   - reject `max_tokens`, require `max_completion_tokens` instead
-   *   - reject any `temperature` other than the default (1)
-   * Local OpenAI-compatible servers and OpenRouter still use
-   * the legacy contract. Detect by model name + provider type.
+   * Newer OpenAI models (gpt-5 and the o-series) reject `max_tokens` and any
+   * non-default `temperature`, requiring `max_completion_tokens`. Detected by
+   * model id via the shared `isNewOpenAIContractModel` helper (also used by
+   * the settings Compatibility panel so the display and the wire contract
+   * stay in sync). Local OpenAI-compatible servers and LM Studio keep the
+   * legacy contract.
    */
   _isNewOpenAIContract() {
-    const m = (this.config.model || '').toLowerCase();
-    if (this.config.category === 'local') return false;
-    if (this.config.providerName === 'lmstudio') return false;
-    return /^(gpt-5|gpt-4\.1|o1|o3|o4)/.test(m);
+    return isNewOpenAIContractConfig(this.config);
   }
 
   _addMaxTokens(body, options) {
