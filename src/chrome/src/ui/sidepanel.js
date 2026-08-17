@@ -10736,6 +10736,7 @@ function refreshSelectionAskAction() {
   selectionAskActionEl.title = label;
   selectionAskActionEl.setAttribute('aria-label', label);
   selectionAskActionEl.classList.remove('hidden');
+  positionSelectionAskAction(selected.range);
   requestAnimationFrame(() => {
     if (pendingAnswerSelection === selected) positionSelectionAskAction(selected.range);
   });
