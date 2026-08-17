@@ -299,6 +299,9 @@ export const AGENT_TOOLS = [
           x: { type: 'number', description: 'X coordinate to click' },
           y: { type: 'number', description: 'Y coordinate to click' },
           from_screenshot: { type: 'boolean', description: 'Set true when x/y were read off the most recent screenshot image. If that screenshot was downscaled, coordinates are converted from image pixels to CSS pixels automatically; harmless otherwise.' },
+          capture_id: { type: 'string', description: 'Required with from_screenshot:true. Opaque captureId returned with the exact screenshot used for x/y.' },
+          expected_name: { type: 'string', description: 'Optional safety assertion for a coordinate click. The resolved accessible name must match before dispatch.' },
+          expected_role: { type: 'string', description: 'Optional safety assertion for a coordinate click. The resolved accessibility role must match before dispatch.' },
         },
       },
     },
@@ -368,6 +371,20 @@ export const AGENT_TOOLS = [
           force: { type: 'boolean', description: 'Set true to navigate even when the current page has unsaved changes (attached files / filled form fields). Default false: navigation is blocked to protect in-progress work.' },
         },
         required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'carousel_navigate',
+      description: 'Navigate directly to an absolute slide index using the active site adapter. On Instagram /p/<id>/ posts this uses ?img_index=N and verifies the resolved URL and visible media. Prefer this over carousel arrows, press_keys, or coordinate clicks. Indices must increase monotonically unless the latest user request explicitly asks for reverse traversal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          index: { type: 'integer', minimum: 1, description: '1-based absolute carousel slide index.' },
+        },
+        required: ['index'],
       },
     },
   },
@@ -1517,6 +1534,9 @@ export function getToolsForMode(mode, opts = {}) {
   if (opts.webMcpAvailable !== true) {
     base = base.filter(tool => !WEBMCP_TOOL_NAMES.has(tool.function?.name));
   }
+  if (opts.carouselNavigation !== true) {
+    base = base.filter(tool => tool.function?.name !== 'carousel_navigate');
+  }
   if (opts.watchBeep === true && normalizedMode === 'act') {
     base = [...base, WATCH_BEEP_TOOL];
   }
@@ -1934,7 +1954,7 @@ export const COMPACT_TOOL_NAMES = new Set([
   'extract_data', 'get_selection', 'find_text',
   'click_ax', 'set_checked', 'type_ax', 'set_field',
   'click', 'type_text', 'press_keys',
-  'navigate', 'new_tab', 'wait_for_element',
+  'navigate', 'carousel_navigate', 'new_tab', 'wait_for_element',
   'fetch_url',
   'upload_file',
   'scratchpad_write', 'progress_update', 'progress_read', 'clarify', 'done',
@@ -2008,7 +2028,7 @@ export const MID_TOOL_NAMES = new Set([
   'get_accessibility_tree', 'inspect_viewport', 'click_ax', 'set_checked', 'type_ax', 'set_field',
   'list_webmcp_tools', 'execute_webmcp_tool',
   'read_page', 'read_pdf', 'get_window_info', 'get_interactive_elements',
-  'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'go_back', 'go_forward',
+  'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'carousel_navigate', 'go_back', 'go_forward',
   'extract_data', 'wait_for_element', 'wait_for_stable', 'get_selection', 'find_text',
   'new_tab', 'promote_iframe', 'done', 'clarify', 'schedule_resume', 'schedule_task',
   'iframe_read', 'iframe_click', 'iframe_type',

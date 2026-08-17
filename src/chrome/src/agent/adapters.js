@@ -17032,12 +17032,24 @@ const ADAPTERS = [
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?instagram\.com\//.test(url),
     fullPageCapture: { infiniteScroll: isInstagramInfiniteScrollUrl },
+    carousel: {
+      kind: 'indexed-query',
+      indexParam: 'img_index',
+      matches: (url) => {
+        try {
+          const parsed = new URL(url);
+          return /^(?:www\.)?instagram\.com$/i.test(parsed.hostname)
+            && /^\/p\/[^/]+\/?$/.test(parsed.pathname);
+        } catch { return false; }
+      },
+    },
     notes: `
 - Login wall pops mid-scroll on the home feed (/), Explore (/explore), and Reels (/reels). Without sign-in, beyond a handful of posts the user can't view anything — surface that, don't loop trying to scroll past.
 - Story bar at top of profile / feed is keyboard-driven: left/right arrows advance, Esc closes. Clicking is unreliable.
 - Profile grid (/<user>) lazy-loads via IntersectionObserver — scroll the page (not a sub-container) to load more posts.
 - DMs at /direct/inbox — sign-in required.
 - Hashtag pages: /explore/tags/<tag>. Location pages: /explore/locations/<id>.
+- Post carousels at /p/<id>/ expose deterministic ?img_index=N routes. Use carousel_navigate({index:N}) to visit slides directly and monotonically; decrease only for a fresh user-requested reverse scan. Never use ArrowLeft/ArrowRight, coordinate clicks, or alternate Next/Go back while enumerating a carousel.
 - "Add to story / Add to post" actions require the mobile app for most content types — surface the limitation.
 - Saving images / videos directly is blocked by the UI. If the user asks to download, use an enabled media download skill tool such as \`download_public_media\` first; otherwise use \`download_social_media\`.`,
   },
@@ -17219,6 +17231,39 @@ export function getActiveAdapter(url) {
     } catch (e) { /* malformed URL or broken matcher — skip */ }
   }
   return null;
+}
+
+/** Return deterministic indexed-carousel metadata for the active URL. */
+export function getCarouselNavigationPolicy(url) {
+  const adapter = getActiveAdapter(url);
+  const carousel = adapter?.carousel;
+  if (!carousel || carousel.kind !== 'indexed-query') return null;
+  try {
+    if (typeof carousel.matches === 'function' && !carousel.matches(url)) return null;
+    const parsed = new URL(url);
+    const rawIndex = Number(parsed.searchParams.get(carousel.indexParam));
+    const currentIndex = Number.isInteger(rawIndex) && rawIndex >= 1 ? rawIndex : 1;
+    parsed.search = '';
+    parsed.hash = '';
+    return {
+      adapterName: adapter.name,
+      kind: carousel.kind,
+      indexParam: carousel.indexParam,
+      currentIndex,
+      canonicalPostUrl: parsed.href,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getCarouselNavigationTarget(url, index) {
+  const policy = getCarouselNavigationPolicy(url);
+  const targetIndex = Number(index);
+  if (!policy || !Number.isInteger(targetIndex) || targetIndex < 1) return null;
+  const target = new URL(policy.canonicalPostUrl);
+  target.searchParams.set(policy.indexParam, String(targetIndex));
+  return { ...policy, requestedIndex: targetIndex, targetUrl: target.href };
 }
 
 /**
