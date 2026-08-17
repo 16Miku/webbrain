@@ -593,6 +593,7 @@ async function main() {
     { loc: `${SITE_ORIGIN}/docs/settings/` },
     { loc: `${SITE_ORIGIN}/docs/providers/` },
     { loc: `${SITE_ORIGIN}/docs/safety/` },
+    { loc: `${SITE_ORIGIN}/docs/apocalypse-mode/` },
     { loc: `${SITE_ORIGIN}/docs/mcp/` },
     { loc: `${SITE_ORIGIN}/docs/lm-studio/` },
     { loc: `${SITE_ORIGIN}/docs/ollama/` },

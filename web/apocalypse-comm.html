@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Apocalypse Mode field bulletin</title>
+  <style>
+    :root {
+      --paper: #f4eddc;
+      --paper-deep: #e8d9b7;
+      --ink: #17221e;
+      --muted: #5f6c65;
+      --signal: #bd7d08;
+      --verified: #177f69;
+      color-scheme: light dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 14px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .bulletin {
+      min-height: 118px;
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr) auto;
+      align-items: stretch;
+      overflow: hidden;
+      border: 1px solid rgba(23, 34, 30, .16);
+      background:
+        linear-gradient(90deg, transparent 49.7%, rgba(23, 34, 30, .035) 50%, transparent 50.3%) 0 0 / 34px 34px,
+        var(--paper);
+    }
+    .frequency {
+      display: grid;
+      align-content: center;
+      gap: 8px;
+      padding: 18px 20px;
+      color: #fff8e7;
+      background: var(--signal);
+      font: 800 10px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    .frequency strong { font-size: 22px; letter-spacing: -.04em; }
+    .copy { align-self: center; min-width: 0; padding: 16px 24px; }
+    .copy h1 { margin: 0; font-size: clamp(18px, 2.3vw, 25px); line-height: 1.1; letter-spacing: -.035em; }
+    .copy p { max-width: 720px; margin: 7px 0 0; color: var(--muted); }
+    .action {
+      align-self: center;
+      display: grid;
+      gap: 8px;
+      min-width: 190px;
+      padding: 16px 22px;
+      border-inline-start: 1px solid rgba(23, 34, 30, .14);
+    }
+    .action small { color: var(--verified); font: 800 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .action a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 9px 11px;
+      color: var(--ink);
+      text-decoration: none;
+      border: 1px solid rgba(23, 34, 30, .28);
+      background: rgba(255, 255, 255, .32);
+      font-weight: 800;
+    }
+    .action a:hover, .action a:focus-visible { color: #fff; border-color: var(--verified); background: var(--verified); outline: none; }
+    @media (prefers-color-scheme: dark) {
+      :root { --paper: #171e1b; --paper-deep: #202a26; --ink: #edf2ee; --muted: #aab5ae; --signal: #9d6704; --verified: #56b89d; }
+      .bulletin { border-color: rgba(255,255,255,.13); background-color: var(--paper); }
+      .action { border-color: rgba(255,255,255,.12); }
+      .action a { border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.04); }
+    }
+    @media (max-width: 620px) {
+      .bulletin { min-height: 164px; grid-template-columns: 82px minmax(0, 1fr); }
+      .frequency { padding: 14px 11px; }
+      .frequency strong { font-size: 17px; }
+      .copy { padding: 14px; }
+      .copy h1 { font-size: 18px; }
+      .action { grid-column: 1 / -1; grid-template-columns: 1fr auto; align-items: center; min-width: 0; padding: 9px 11px; border-inline-start: 0; border-top: 1px solid rgba(23, 34, 30, .14); }
+      .action a { padding: 7px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <article class="bulletin" aria-labelledby="bulletin-title">
+    <div class="frequency"><span>Field bulletin</span><strong>001</strong><span>Offline ready</span></div>
+    <div class="copy">
+      <h1 id="bulletin-title">Prepare before the network becomes the problem.</h1>
+      <p>Download local models, Wikipedia, emergency references, and the basic communication lexicon while your connection is reliable.</p>
+    </div>
+    <div class="action">
+      <small>Local · private · self-contained</small>
+      <a href="/docs/apocalypse-mode/" target="_blank" rel="noopener noreferrer"><span>Open the guide</span><span aria-hidden="true">→</span></a>
+    </div>
+  </article>
+</body>
+</html>
