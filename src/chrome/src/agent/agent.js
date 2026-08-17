@@ -19309,51 +19309,148 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (blocked) return blocked;
       }
 
+      // A URL comparison alone cannot prove same-document history movement:
+      // SPAs may push several entries with an identical URL and keep their
+      // route solely in history.state. Listen before dispatch so those entries
+      // can be verified by the browser's navigation events.
+      let navigationTerminalResult = null;
+      let resolveNavigationTerminal;
+      let navigationLoadingObserved = false;
+      let historyDispatchArmed = false;
+      const navigationTerminal = new Promise(resolve => { resolveNavigationTerminal = resolve; });
+      const finishNavigationTerminal = (result) => {
+        if (navigationTerminalResult) return;
+        navigationTerminalResult = result;
+        resolveNavigationTerminal(result);
+      };
+      const waitForNavigationTerminal = (timeoutMs, timeoutType) => {
+        if (navigationTerminalResult) return Promise.resolve(navigationTerminalResult);
+        return new Promise(resolve => {
+          const timer = setTimeout(() => resolve({ type: timeoutType }), timeoutMs);
+          navigationTerminal.then(result => {
+            clearTimeout(timer);
+            resolve(result);
+          });
+        });
+      };
+      const listenerRecords = [];
+      const addNavigationListener = (event, listener) => {
+        if (!event?.addListener || !event?.removeListener) return;
+        try {
+          event.addListener(listener);
+          listenerRecords.push([event, listener]);
+        } catch {}
+      };
+      const isCurrentTopFrameNavigation = (details = {}) => {
+        return historyDispatchArmed && details.tabId === tabId && details.frameId === 0;
+      };
+      const observeNavigation = type => (details = {}) => {
+        if (!isCurrentTopFrameNavigation(details)) return;
+        // pushState/replaceState also emit onHistoryStateUpdated. Only an
+        // actual session-history traversal carries the forward_back qualifier.
+        if (!details.transitionQualifiers?.includes('forward_back')) return;
+        finishNavigationTerminal({ type: 'navigated', navigationType: type, url: details.url || '' });
+      };
+      addNavigationListener(chrome.webNavigation?.onHistoryStateUpdated, observeNavigation('history_state'));
+      addNavigationListener(chrome.webNavigation?.onCommitted, observeNavigation('committed'));
+      addNavigationListener(chrome.tabs?.onUpdated, (updatedTabId, changeInfo = {}) => {
+        if (!historyDispatchArmed || updatedTabId !== tabId) return;
+        if (changeInfo.status === 'loading') navigationLoadingObserved = true;
+      });
+      const removeNavigationListeners = () => {
+        for (const [event, listener] of listenerRecords.splice(0)) {
+          try { event.removeListener(listener); } catch {}
+        }
+      };
+
       // Drive history from the page's own context via scripting.executeScript
       // (the extension's injected function, NOT page eval) so it works even
       // where execute_js is CSP-blocked.
       let probe = null;
       let dispatched = false;
       try {
-        const delta = direction === 'back' ? -steps : steps;
-        dispatched = true;
-        const results = await chrome.scripting.executeScript({
-          target: { tabId },
-          args: [delta],
-          func: (d) => {
-            const before = location.href;
-            history.go(d);
-            return { before };
-          },
-        });
-        probe = results?.[0]?.result || null;
-      } catch (e) {
-        return { success: false, dispatched, error: `${name}: cannot navigate history on this page (${e.message}).` };
-      }
-      if (!probe) {
-        return { success: false, dispatched, error: `${name}: history navigation did not run on this page.` };
-      }
+        try {
+          const delta = direction === 'back' ? -steps : steps;
+          historyDispatchArmed = true;
+          dispatched = true;
+          const results = await chrome.scripting.executeScript({
+            target: { tabId },
+            args: [delta],
+            func: (d) => {
+              const before = location.href;
+              history.go(d);
+              return { before };
+            },
+          });
+          probe = results?.[0]?.result || null;
+        } catch (e) {
+          return { success: false, dispatched, error: `${name}: cannot navigate history on this page (${e.message}).` };
+        }
+        if (!probe) {
+          return { success: false, dispatched, error: `${name}: history navigation did not run on this page.` };
+        }
 
-      // history.go() commits asynchronously (including bfcache restores), so
-      // wait briefly, then confirm the URL actually changed. If it didn't,
-      // there was no entry in that direction — report failure rather than a
-      // misleading success the model would build on.
-      await new Promise(r => setTimeout(r, 1500));
-      let afterUrl = probe.before;
-      try {
-        const tab = await chrome.tabs.get(tabId);
-        if (tab?.url) afterUrl = tab.url;
-      } catch {}
+        // Preserve the existing 1.5s no-entry decision for idle tabs, while
+        // allowing a real cross-document traversal up to the navigate tool's
+        // 10s deadline when the tab reports that it is still loading.
+        let navigationWaitResult = await waitForNavigationTerminal(1500, 'probe_timeout');
+        if (navigationWaitResult.type === 'probe_timeout') {
+          let interimStatus = '';
+          try { interimStatus = (await chrome.tabs.get(tabId))?.status || ''; } catch {}
+          if (interimStatus === 'loading' || (!interimStatus && navigationLoadingObserved)) {
+            navigationWaitResult = await waitForNavigationTerminal(8500, 'deadline');
+          }
+        }
 
-      if (this._normalizeUrl(afterUrl) === this._normalizeUrl(probe.before)) {
+        let afterUrl = navigationWaitResult.url || probe.before;
+        let finalStatus = '';
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          if (tab?.url) afterUrl = tab.url;
+          finalStatus = tab?.status || '';
+        } catch {}
+
+        const urlChanged = this._normalizeUrl(afterUrl) !== this._normalizeUrl(probe.before);
+        if (navigationWaitResult.type === 'navigated' || urlChanged) {
+          return {
+            success: true,
+            dispatched: true,
+            verified: true,
+            url: afterUrl,
+            previousUrl: probe.before,
+            direction,
+            steps,
+            ...(navigationWaitResult.navigationType ? { navigationType: navigationWaitResult.navigationType } : {}),
+          };
+        }
+
+        if (
+          navigationWaitResult.type === 'deadline'
+          && (finalStatus === 'loading' || (!finalStatus && navigationLoadingObserved))
+        ) {
+          return {
+            success: false,
+            dispatched: true,
+            navigationPending: true,
+            confirmationPossible: false,
+            recoveryRequired: 'wait_for_stable',
+            url: afterUrl,
+            previousUrl: probe.before,
+            direction,
+            steps,
+            error: `${name}: history navigation was dispatched and the tab is still loading. Call wait_for_stable, then inspect the current page.`,
+          };
+        }
+
         const dirWord = direction === 'back' ? 'earlier' : 'later';
         return {
           success: false,
           dispatched: true,
           error: `${name}: no ${dirWord} entry in this tab's history (the page did not change).`,
         };
+      } finally {
+        removeNavigationListeners();
       }
-      return { success: true, dispatched: true, url: afterUrl, previousUrl: probe.before, direction, steps };
     }
 
     if (name === 'new_tab') {

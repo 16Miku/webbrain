@@ -375,7 +375,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'go_back',
-      description: 'Go back one entry in the current tab\'s session history, like the browser Back button. Use this for "go back" / "return to the previous page" rather than trying to run history.back() yourself (page scripts are CSP-blocked on many sites). Returns {success, url} on success, or {success:false, error} when there is no earlier entry or the page is internal (the URL is verified to actually change). Leaving a page with unsaved changes is blocked unless force:true.',
+      description: 'Go back one entry in the current tab\'s session history, like the browser Back button. Use this for "go back" / "return to the previous page" rather than trying to run history.back() yourself (page scripts are CSP-blocked on many sites). Returns {success, url} on success, or {success:false, error} when there is no earlier entry or the page is internal. Movement is verified from browser history events or a changed URL, including SPA entries whose URL stays identical. Leaving a page with unsaved changes is blocked unless force:true.',
       parameters: {
         type: 'object',
         properties: {
@@ -389,7 +389,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'go_forward',
-      description: 'Go forward one entry in the current tab\'s session history, like the browser Forward button — reverses a previous go_back. Returns {success, url} on success, or {success:false, error} when there is no later entry or the page is internal. Leaving a page with unsaved changes is blocked unless force:true.',
+      description: 'Go forward one entry in the current tab\'s session history, like the browser Forward button — reverses a previous go_back. Returns {success, url} on success, or {success:false, error} when there is no later entry or the page is internal. Movement is verified from browser history events or a changed URL, including SPA entries whose URL stays identical. Leaving a page with unsaved changes is blocked unless force:true.',
       parameters: {
         type: 'object',
         properties: {

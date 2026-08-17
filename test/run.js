@@ -68837,6 +68837,220 @@ test('navigate rejects non-web schemes and contains browser API failures', async
   }
 });
 
+test('history tools verify same-URL SPA traversal from browser navigation events', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const originalSetTimeout = globalThis.setTimeout;
+  const tabId = 6410;
+  const sameUrl = 'https://app.example.test/workspace';
+
+  const createEvent = () => {
+    const listeners = new Set();
+    return {
+      addListener(listener) { listeners.add(listener); },
+      removeListener(listener) { listeners.delete(listener); },
+      emit(...args) {
+        for (const listener of [...listeners]) listener(...args);
+      },
+      get listenerCount() { return listeners.size; },
+    };
+  };
+
+  try {
+    // Keep the no-entry and pending branches deterministic without spending
+    // the production 1.5s/10s navigation budgets in the unit suite.
+    globalThis.setTimeout = (fn, delay, ...args) => {
+      return originalSetTimeout(fn, delay >= 8000 ? 20 : 0, ...args);
+    };
+
+    for (const [label, AgentClass] of [
+      ['chrome', AgentCh],
+      ['firefox', AgentFx],
+    ]) {
+      const events = {
+        history: createEvent(),
+        committed: createEvent(),
+        updated: createEvent(),
+      };
+      const allEvents = Object.values(events);
+      let currentUrl = sameUrl;
+      let status = 'complete';
+      let mode = 'same_history';
+      let expectedDelta = -1;
+
+      const runInjectedHistory = async (delta) => {
+        assert.equal(delta, expectedDelta, `${label}: history.go delta mismatch`);
+        const before = currentUrl;
+        if (mode === 'same_history') {
+          const now = Date.now();
+          // Ordinary History API updates lack forward_back and must not be
+          // mistaken for the traversal this tool dispatched. Qualified
+          // events from another tab or a child frame are unrelated too.
+          events.history.emit({ tabId, frameId: 0, url: sameUrl, timeStamp: now, transitionQualifiers: [] });
+          events.committed.emit({ tabId: tabId + 1, frameId: 0, url: sameUrl, timeStamp: now, transitionQualifiers: ['forward_back'] });
+          events.committed.emit({ tabId, frameId: 2, url: sameUrl, timeStamp: now, transitionQualifiers: ['forward_back'] });
+          events.history.emit({
+            tabId,
+            frameId: 0,
+            url: sameUrl,
+            timeStamp: now,
+            transitionQualifiers: ['forward_back'],
+          });
+        } else if (mode === 'unqualified_history') {
+          events.history.emit({
+            tabId,
+            frameId: 0,
+            url: sameUrl,
+            timeStamp: Date.now(),
+            transitionQualifiers: [],
+          });
+        } else if (mode === 'slow_commit') {
+          status = 'loading';
+          events.updated.emit(tabId, { status: 'loading' }, { id: tabId, url: currentUrl, status });
+          originalSetTimeout(() => {
+            status = 'complete';
+            events.committed.emit({
+              tabId,
+              frameId: 0,
+              url: sameUrl,
+              timeStamp: Date.now(),
+              transitionQualifiers: ['forward_back'],
+            });
+          }, 5);
+        } else if (mode === 'url_fallback') {
+          currentUrl = `${sameUrl}?entry=2`;
+        } else if (mode === 'loading') {
+          status = 'loading';
+          events.updated.emit(tabId, { status: 'loading' }, { id: tabId, url: currentUrl, status });
+        } else if (mode === 'throw') {
+          throw new Error(`${label}-injection-failed`);
+        }
+        return before;
+      };
+
+      const tabs = {
+        onUpdated: events.updated,
+        async get() {
+          return { id: tabId, url: currentUrl, status };
+        },
+      };
+      const api = {
+        webNavigation: {
+          onHistoryStateUpdated: events.history,
+          onCommitted: events.committed,
+        },
+        tabs,
+      };
+
+      if (label === 'chrome') {
+        delete globalThis.browser;
+        api.scripting = {
+          async executeScript({ args }) {
+            const before = await runInjectedHistory(args[0]);
+            return [{ result: { before } }];
+          },
+        };
+        globalThis.chrome = api;
+      } else {
+        delete globalThis.chrome;
+        tabs.executeScript = async (_tabId, { code }) => {
+          const match = /history\.go\((-?\d+)\)/.exec(code);
+          assert.ok(match, 'firefox: injected history.go call missing');
+          const before = await runInjectedHistory(Number(match[1]));
+          return [{ before }];
+        };
+        globalThis.browser = api;
+      }
+
+      const agent = new AgentClass({});
+      const assertListenersRemoved = (scenario) => {
+        assert.equal(
+          allEvents.reduce((sum, event) => sum + event.listenerCount, 0),
+          0,
+          `${label}: ${scenario} leaked a navigation listener`,
+        );
+      };
+
+      for (const [toolName, delta] of [['go_back', -2], ['go_forward', 2]]) {
+        currentUrl = sameUrl;
+        status = 'complete';
+        mode = 'same_history';
+        expectedDelta = delta;
+        const result = await agent.executeTool(tabId, toolName, { force: true, steps: 2 });
+        assert.equal(result.success, true, `${label}: ${toolName} rejected a same-URL SPA traversal`);
+        assert.equal(result.verified, true);
+        assert.equal(result.navigationType, 'history_state');
+        assert.equal(result.url, sameUrl);
+        assert.equal(result.previousUrl, sameUrl);
+        assert.equal(result.steps, 2);
+        assertListenersRemoved(`${toolName} same-URL success`);
+      }
+
+      mode = 'slow_commit';
+      expectedDelta = -1;
+      status = 'complete';
+      const slowCommit = await agent.executeTool(tabId, 'go_back', { force: true });
+      assert.equal(slowCommit.success, true, `${label}: a slow history commit should outlive the 1.5s probe`);
+      assert.equal(slowCommit.verified, true);
+      assert.equal(slowCommit.navigationType, 'committed');
+      assertListenersRemoved('slow commit');
+
+      mode = 'none';
+      const noEntry = await agent.executeTool(tabId, 'go_back', { force: true });
+      assert.equal(noEntry.success, false, `${label}: an idle same-URL tab should still report no history entry`);
+      assert.match(noEntry.error, /no earlier entry/);
+      assertListenersRemoved('no-entry failure');
+
+      mode = 'unqualified_history';
+      const unqualifiedHistory = await agent.executeTool(tabId, 'go_back', { force: true });
+      assert.equal(
+        unqualifiedHistory.success,
+        false,
+        `${label}: ordinary pushState/replaceState events must not verify history.go`,
+      );
+      assert.match(unqualifiedHistory.error, /no earlier entry/);
+      assertListenersRemoved('unqualified history event');
+
+      mode = 'url_fallback';
+      currentUrl = sameUrl;
+      const urlFallback = await agent.executeTool(tabId, 'go_back', { force: true });
+      assert.equal(urlFallback.success, true, `${label}: URL readback fallback regressed`);
+      assert.equal(urlFallback.verified, true);
+      assert.equal(urlFallback.url, `${sameUrl}?entry=2`);
+      assert.equal(urlFallback.navigationType, undefined);
+      assertListenersRemoved('URL fallback');
+
+      mode = 'loading';
+      currentUrl = sameUrl;
+      status = 'complete';
+      expectedDelta = 1;
+      const pending = await agent.executeTool(tabId, 'go_forward', { force: true });
+      assert.equal(pending.success, false, `${label}: loading traversal should not be called complete`);
+      assert.equal(pending.navigationPending, true);
+      assert.equal(pending.confirmationPossible, false);
+      assert.equal(pending.recoveryRequired, 'wait_for_stable');
+      assert.match(pending.error, /still loading/);
+      assertListenersRemoved('loading timeout');
+
+      mode = 'throw';
+      currentUrl = sameUrl;
+      status = 'complete';
+      expectedDelta = -1;
+      const injectionFailure = await agent.executeTool(tabId, 'go_back', { force: true });
+      assert.equal(injectionFailure.success, false);
+      assert.equal(injectionFailure.dispatched, true);
+      assert.match(injectionFailure.error, new RegExp(`${label}-injection-failed`));
+      assertListenersRemoved('injection error');
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('navigation host resolves relative / protocol-relative against current page', () => {
   const base = 'https://trusted.com/page';
   // protocol-relative → the host the browser will actually load, NOT current
