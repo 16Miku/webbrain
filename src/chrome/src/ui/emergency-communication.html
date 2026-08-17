@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebBrain — Emergency Communication</title>
+  <script src="theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="emergency-communication.css">
+  <link rel="stylesheet" href="apocalypse-kit.css">
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
+</head>
+<body class="emergency-communication-page">
+  <header class="topbar">
+    <a class="back-button" href="emergency-box.html" aria-label="Back to Emergency Box" title="Emergency Box">←</a>
+    <span class="language-mark" aria-hidden="true">言</span>
+    <div class="title-block">
+      <h1 data-copy="header">Emergency Communication</h1>
+      <p data-copy="headerSubtitle">A basic word board that works without the internet</p>
+    </div>
+    <span class="offline-badge" data-copy="builtIn">Built in · offline</span>
+  </header>
+
+  <main class="communication-shell">
+    <section class="hero-panel" aria-labelledby="page-title">
+      <div class="hero-copy">
+        <p class="eyebrow" data-copy="eyebrow">Universal Basic Lexicon</p>
+        <h2 id="page-title" data-copy="title">Find a shared word when you do not share a language.</h2>
+        <p data-copy="lede">Choose a language or variety, search 110 everyday concepts, then show the word at full size.</p>
+      </div>
+      <dl class="coverage-board" aria-label="Lexicon coverage">
+        <div><dt data-copy="concepts">Concepts</dt><dd id="concept-count">110</dd></div>
+        <div><dt data-copy="languages">Languages</dt><dd id="language-count">1,756</dd></div>
+        <div><dt data-copy="varieties">Varieties</dt><dd id="variety-count">2,064</dd></div>
+      </dl>
+    </section>
+
+    <section class="control-panel" aria-label="Communication word board controls">
+      <div class="control language-control">
+        <label for="language-input" data-copy="chooseLanguage">Language or variety</label>
+        <div class="language-combobox">
+          <input id="language-input" type="search" role="combobox" aria-autocomplete="list" aria-controls="language-options" aria-expanded="false" autocomplete="off" placeholder="Search name, code, script, or PanLex ID">
+          <button id="language-toggle" class="language-toggle" type="button" aria-controls="language-options" aria-expanded="false" aria-label="Show all languages"><span aria-hidden="true">▾</span></button>
+          <div id="language-menu" class="language-menu" hidden>
+            <div id="language-results" class="language-results" role="status" aria-live="polite"></div>
+            <div id="language-options" class="language-options" role="listbox" aria-label="Languages and varieties"></div>
+          </div>
+        </div>
+      </div>
+      <label class="control search-control">
+        <span data-copy="search">Search this word board</span>
+        <input id="concept-search" type="search" autocomplete="off" placeholder="Water, fire, person…">
+      </label>
+      <div class="language-summary" aria-live="polite">
+        <span id="language-name">—</span>
+        <span id="language-meta">—</span>
+        <strong id="coverage-count">—</strong>
+      </div>
+    </section>
+
+    <nav id="group-nav" class="group-nav" aria-label="Concept groups">
+      <button type="button" class="active" data-group="all" data-copy="groupAll">All</button>
+      <button type="button" data-group="essential" data-copy="groupEssential">Essentials</button>
+      <button type="button" data-group="body" data-copy="groupBody">Body</button>
+      <button type="button" data-group="people" data-copy="groupPeople">People</button>
+      <button type="button" data-group="surroundings" data-copy="groupSurroundings">Surroundings</button>
+    </nav>
+
+    <section id="concept-list" class="concept-list" aria-live="polite"></section>
+
+    <section class="source-strip">
+      <div>
+        <p class="eyebrow" data-copy="sourceEyebrow">Source and limits</p>
+        <h2 data-copy="sourceTitle">Useful vocabulary, not an interpreter.</h2>
+        <p data-copy="sourceWarning">Terms come from the January 2017 PanLex Swadesh Corpus. They can be incomplete, ambiguous, dialect-specific, or outdated. Use a trained interpreter whenever accuracy is critical.</p>
+      </div>
+      <a href="https://dev.panlex.org/panlex-swadesh-corpus/" target="_blank" rel="noopener noreferrer">PanLex · CC0 ↗</a>
+    </section>
+
+    <section class="deeper-panel">
+      <div class="deeper-heading">
+        <p class="eyebrow" data-copy="deeperEyebrow">Optional deeper sources</p>
+        <h2 data-copy="deeperTitle">When 110 concepts are not enough</h2>
+        <p data-copy="deeperDescription">These projects provide broader offline dictionaries. They are not included in the built-in pack yet.</p>
+      </div>
+      <div class="source-cards">
+        <a href="https://download.kiwix.org/zim/wiktionary/" target="_blank" rel="noopener noreferrer">
+          <strong>Kiwix Wiktionary</strong>
+          <span data-copy="wiktionaryDescription">Broad definitions and translations in ZIM archives.</span>
+          <small data-copy="wiktionarySize">Full English text-only archive: about 8.5 GB as of May 2026.</small>
+        </a>
+        <a href="https://freedict.org/downloads/" target="_blank" rel="noopener noreferrer">
+          <strong>FreeDict</strong>
+          <span data-copy="freedictDescription">Deeper bilingual dictionaries for about 45 languages.</span>
+          <small data-copy="freedictSize">Sizes and licenses vary by language pair.</small>
+        </a>
+      </div>
+      <p class="estimate-note" data-copy="estimateNote">External archive sizes are estimates and can change when publishers replace a snapshot.</p>
+    </section>
+  </main>
+
+  <dialog id="word-dialog" class="word-dialog">
+    <button type="button" class="dialog-close" data-dialog-close aria-label="Close">×</button>
+    <p id="dialog-language" class="dialog-language"></p>
+    <div id="dialog-term" class="dialog-term" dir="auto"></div>
+    <p id="dialog-english" class="dialog-english"></p>
+    <p class="dialog-note" data-copy="dialogNote">Point to the word and confirm meaning with gestures or context.</p>
+    <button type="button" class="dialog-done" data-dialog-close data-copy="close">Close</button>
+  </dialog>
+
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
+  <script type="module" src="emergency-communication.js"></script>
+</body>
+</html>

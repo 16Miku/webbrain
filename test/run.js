@@ -21698,6 +21698,10 @@ test('Emergency Box maps the OpenStax catalog and resolves compact PDFs on deman
     assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.length >= 100, `${label}: bundled OpenStax catalog is unexpectedly incomplete`);
     assert.ok(runtime.PREFETCHED_OPENSTAX_CATALOG.some(item => item.id === 'openstax-38'), `${label}: bundled OpenStax catalog lost a stable book`);
     assert.match(runtime.OPENSTAX_CATALOG_SNAPSHOT_DATE, /^\d{4}-\d{2}-\d{2}$/, `${label}: bundled OpenStax catalog has no snapshot date`);
+    assert.equal(runtime.PREFETCHED_OPENSTAX_CATALOG.filter(item => item.language === 'en').length, 118,
+      `${label}: bundled OpenStax English count drifted`);
+    assert.equal(runtime.PREFETCHED_OPENSTAX_CATALOG.filter(item => item.language === 'es').length, 11,
+      `${label}: bundled OpenStax Spanish collection is incomplete`);
 
     const who = await runtime.resolveEmergencyResource({
       id: 'who-fixture', title: 'WHO Fixture', whoHandle: '10665/371090', sourceUrl: 'https://iris.who.int/handle/10665/371090',
@@ -21726,8 +21730,113 @@ test('Emergency Box maps the OpenStax catalog and resolves compact PDFs on deman
   }
 });
 
-test('Emergency Box All Resources groups health, field manuals, then OpenStax', () => {
+test('Emergency communication reader ships a pinned PanLex lexicon across 1,756 languages', () => {
+  const generator = fs.readFileSync(path.join(ROOT, 'scripts/build-panlex-emergency-lexicon.mjs'), 'utf8');
+  assert.match(generator, /dc028da016ba7d5f9bcc39263b0c3dc27bd56025672b18ccaec4578833fe4dff/,
+    'PanLex generator does not pin the verified corpus checksum');
+  assert.match(generator, /\['i', 'm'\]\.includes\(type\)/,
+    'PanLex generator should exclude concepticons and language families');
+
+  for (const browser of ['chrome', 'firefox']) {
+    const dataPath = path.join(ROOT, `src/${browser}/src/ui/data/panlex-swadesh-110.json`);
+    const lexicon = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+    assert.equal(lexicon.source.license, 'CC0 1.0 Universal', `${browser}: PanLex license missing from bundled data`);
+    assert.equal(lexicon.source.archiveSha256,
+      'dc028da016ba7d5f9bcc39263b0c3dc27bd56025672b18ccaec4578833fe4dff',
+      `${browser}: PanLex provenance checksum drifted`);
+    assert.equal(lexicon.conceptCount, 110, `${browser}: basic lexicon concept count drifted`);
+    assert.equal(lexicon.languageCount, 1756, `${browser}: basic lexicon ISO language count drifted`);
+    assert.equal(lexicon.varietyCount, 2064, `${browser}: basic lexicon variety count drifted`);
+    assert.equal(lexicon.languages.length, 2064, `${browser}: basic lexicon lost language rows`);
+    assert.ok(lexicon.languages.every(language => language.terms.length === 110),
+      `${browser}: a PanLex variety no longer aligns with the canonical concept list`);
+    const waterIndex = lexicon.concepts.indexOf('water');
+    const turkish = lexicon.languages.find(language => language.uid === 'tur-000');
+    assert.ok(waterIndex >= 0 && turkish?.terms[waterIndex]?.includes('su'),
+      `${browser}: Turkish water lookup does not survive generation`);
+  }
+});
+
+test('Emergency Box bundles the expanded field library and a stable basic health, survival, and communication kit', () => {
+  const expectedBasicIds = [
+    'communication-panlex-basic-lexicon',
+    'health-who-icrc-basic-emergency-care',
+    'health-ifrc-first-aid-guidelines-2020',
+    'health-who-essential-medicines-2023',
+    'health-hesperian-wtnd-03',
+    'health-hesperian-wtnd-04',
+    'health-hesperian-wtnd-10',
+    'health-hesperian-wtnd-13',
+    'health-hesperian-wtnd-14',
+    'health-hesperian-wtnd-23',
+    'health-hesperian-wtnd-gp',
+    'health-msf-clinical-guidelines',
+    'health-msf-essential-drugs',
+    'field-army-survival-fm-3-05-70',
+  ];
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const resources = runtime.EMERGENCY_BOX_HEALTH_RESOURCES;
+    const communication = runtime.EMERGENCY_BOX_COMMUNICATION_RESOURCES;
+    assert.equal(communication.length, 1, `${label}: built-in communication catalog is incomplete`);
+    assert.equal(communication[0].id, 'communication-panlex-basic-lexicon', `${label}: universal lexicon identity drifted`);
+    assert.equal(communication[0].builtIn, true, `${label}: universal lexicon should ship with WebBrain`);
+    assert.equal(communication[0].rights, 'CC0 1.0 Universal', `${label}: universal lexicon license is not disclosed`);
+    assert.equal(resources.length, 73, `${label}: curated emergency catalog is incomplete`);
+    assert.equal(new Set(resources.map(resource => resource.id)).size, resources.length,
+      `${label}: curated emergency catalog has duplicate identities`);
+    assert.equal(resources.filter(resource => resource.id.startsWith('health-hesperian-')).length, 46,
+      `${label}: official Hesperian chapter set is incomplete`);
+    for (const id of [
+      'health-who-pocket-hospital-care-children',
+      'health-msf-obstetric-newborn-care',
+      'health-icrc-war-surgery-volume-1',
+      'field-who-medical-guide-for-ships',
+      'field-army-special-forces-medical-handbook',
+      'field-army-radio-fm-24-18',
+    ]) {
+      assert.ok(resources.some(resource => resource.id === id), `${label}: expanded catalog lost ${id}`);
+    }
+    const basic = runtime.selectEmergencyBoxBasicResources();
+    assert.deepEqual(basic.map(resource => resource.id), expectedBasicIds,
+      `${label}: the default basic kit no longer represents the agreed communication, health, and survival set`);
+    assert.deepEqual(
+      runtime.selectEmergencyBoxBasicResources([...communication, ...resources]).map(resource => resource.id),
+      expectedBasicIds,
+      `${label}: the explicit catalog basic kit diverged from the default selector`,
+    );
+    assert.ok(basic.every(resource => resource.basic === true), `${label}: basic selector admitted an optional resource`);
+    assert.ok(basic.every(resource => resource.builtIn || resource.url || resource.whoHandle || resource.archiveIdentifier),
+      `${label}: basic kit contains a resource that is neither built in nor a downloadable PDF`);
+    assert.equal(runtime.selectEmergencyBoxBasicResources(runtime.PREFETCHED_OPENSTAX_CATALOG).length, 0,
+      `${label}: the basic kit unexpectedly depends on the current OpenStax catalog`);
+    const survivalManual = resources.find(resource => resource.id === 'field-army-survival-fm-3-05-70');
+    assert.equal(survivalManual.totalBytes, 21_019_230,
+      `${label}: the Basic survival manual lost its measured size`);
+    assert.equal(survivalManual.storageKey, 'field-army-survival-fm-3-05-70-wikimedia-v1',
+      `${label}: the replacement survival manual can resume stale Internet Archive bytes`);
+    assert.match(survivalManual.url, /^https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\//,
+      `${label}: the Basic survival manual still depends on the unreliable Internet Archive resolver`);
+    assert.equal(survivalManual.archiveIdentifier, undefined,
+      `${label}: the Basic survival manual can still be redirected through Internet Archive metadata`);
+    assert.equal(runtime.EMERGENCY_BOX_SIZE_ESTIMATES.basicBytes, 59_937_724,
+      `${label}: measured basic-kit estimate drifted`);
+    assert.equal(runtime.EMERGENCY_BOX_SIZE_ESTIMATES.catalogBytes, 12_063_912_733,
+      `${label}: measured full-catalog estimate drifted`);
+    const estimatedCatalogBytes = [...communication, ...resources, ...runtime.PREFETCHED_OPENSTAX_CATALOG]
+      .reduce((sum, resource) => sum + runtime.estimateEmergencyBoxResourceBytes(resource), 0);
+    assert.ok(Math.abs(estimatedCatalogBytes - runtime.EMERGENCY_BOX_SIZE_ESTIMATES.catalogBytes) < 1_000,
+      `${label}: per-resource estimates no longer add up to the documented full-catalog estimate`);
+    const estimatedBasicBytes = basic.reduce(
+      (sum, resource) => sum + runtime.estimateEmergencyBoxResourceBytes(resource), 0,
+    );
+    assert.ok(estimatedBasicBytes >= 59_000_000 && estimatedBasicBytes <= 60_000_000,
+      `${label}: complete basic-kit estimate no longer includes the built-in communication pack`);
+  }
+});
+
+test('Emergency Box All Resources groups communication, health, field manuals, then OpenStax', () => {
   const resources = [
+    { id: 'communication', category: 'communication', title: 'Universal Basic Lexicon', status: 'ready' },
     { id: 'education', category: 'education', title: 'OpenStax Biology', status: 'ready' },
     { id: 'field-b', category: 'field', title: 'Zulu Field Manual' },
     { id: 'health-b', category: 'health', title: 'Zulu Emergency Health' },
@@ -21739,8 +21848,8 @@ test('Emergency Box All Resources groups health, field manuals, then OpenStax', 
       groupCategories: true,
     }));
     assert.deepEqual(allResources.map(resource => resource.id), [
-      'health-a', 'health-b', 'field-a', 'field-b', 'education',
-    ], `${label}: All Resources is not grouped as Emergency Health, Field Manuals, then OpenStax`);
+      'communication', 'health-a', 'health-b', 'field-a', 'field-b', 'education',
+    ], `${label}: All Resources is not grouped as Communication, Emergency Health, Field Manuals, then OpenStax`);
 
     const categoryView = [...resources].sort(runtime.compareEmergencyBoxResources);
     assert.equal(categoryView[0].status, 'ready', `${label}: category filters no longer keep installed resources first`);
@@ -21813,6 +21922,77 @@ test('Emergency Box streams PDFs to resumable local storage and rejects non-PDF 
   }
 });
 
+test('Emergency Box verifies replacement PDFs before removing stale source bytes', async () => {
+  const encoder = new TextEncoder();
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const records = new Map([['replacement-pdf', {
+      id: 'replacement-pdf', title: 'Replacement PDF', status: 'error',
+      storageKey: 'old-source', url: 'https://old.example.test/file.pdf',
+    }]]);
+    const files = new Map([['old-source', encoder.encode('%PDF-old-partial')]]);
+    const deleted = [];
+    const storage = {
+      async size(key) { return files.get(key)?.byteLength || 0; },
+      async open(key) { return new Blob([files.get(key) || new Uint8Array()], { type: 'application/pdf' }); },
+      async createWriter(key) {
+        let working = (files.get(key) || new Uint8Array()).slice();
+        return {
+          async write(position, bytes) {
+            const needed = position + bytes.byteLength;
+            if (working.byteLength < needed) {
+              const expanded = new Uint8Array(needed);
+              expanded.set(working);
+              working = expanded;
+            }
+            working.set(bytes, position);
+          },
+          async truncate(size) { working = working.slice(0, size); },
+          async close() { files.set(key, working); },
+          async abort() {},
+        };
+      },
+      async delete(key) {
+        deleted.push({ key, replacementVerified: new TextDecoder().decode(files.get('new-source') || new Uint8Array()).startsWith('%PDF-') });
+        files.delete(key);
+      },
+    };
+    const store = {
+      async get(id) { return records.get(id); },
+      async put(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const resource = {
+      id: 'replacement-pdf', title: 'Replacement PDF', storageKey: 'new-source',
+      url: 'https://new.example.test/file.pdf', sourceUrl: 'https://new.example.test/source',
+    };
+    const ready = await runtime.downloadEmergencyResource(resource, {
+      store,
+      storage,
+      fetchImpl: async () => new Response('%PDF-new-complete', { status: 200 }),
+    });
+    assert.equal(ready.status, 'ready', `${label}: verified replacement PDF did not become ready`);
+    assert.equal(files.has('old-source'), false, `${label}: stale source bytes survived a verified replacement`);
+    assert.deepEqual(deleted, [{ key: 'old-source', replacementVerified: true }],
+      `${label}: stale source bytes were removed before the replacement verified`);
+
+    records.set('replacement-pdf', {
+      id: 'replacement-pdf', title: 'Replacement PDF', status: 'error',
+      storageKey: 'old-source', url: 'https://old.example.test/file.pdf',
+    });
+    files.set('old-source', encoder.encode('%PDF-old-partial'));
+    await assert.rejects(
+      runtime.downloadEmergencyResource(resource, {
+        store,
+        storage,
+        fetchImpl: async () => new Response('<html>blocked</html>', { status: 200 }),
+      }),
+      /not a valid PDF/i,
+      `${label}: invalid replacement response was accepted`,
+    );
+    assert.equal(files.has('old-source'), true,
+      `${label}: stale source bytes were removed after a failed replacement`);
+  }
+});
+
 test('Emergency Box commits partial PDF bytes before recording a paused download', async () => {
   for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
     let committed = new Uint8Array();
@@ -21866,6 +22046,7 @@ test('Emergency Box commits partial PDF bytes before recording a paused download
 
 test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
   const files = [
+    'src/agent/apocalypse-mode.js',
     'src/agent/emergency-box.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
@@ -21875,6 +22056,14 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/ui/emergency-pdf.html',
     'src/ui/emergency-pdf.css',
     'src/ui/emergency-pdf.js',
+    'src/ui/emergency-communication.html',
+    'src/ui/emergency-communication.css',
+    'src/ui/emergency-communication.js',
+    'src/ui/apocalypse-comm.css',
+    'src/ui/apocalypse-comm.js',
+    'src/ui/download-tracker.css',
+    'src/ui/download-tracker.js',
+    'src/ui/data/panlex-swadesh-110.json',
     'src/ui/locales/emergency-copy.mjs',
     'src/ui/locales/emergency-translations.mjs',
     'src/ui/wikipedia-reader.html',
@@ -21900,14 +22089,31 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     const reader = fs.readFileSync(path.join(uiDir, 'emergency-pdf.html'), 'utf8');
     const readerCss = fs.readFileSync(path.join(uiDir, 'emergency-pdf.css'), 'utf8');
     const readerScript = fs.readFileSync(path.join(uiDir, 'emergency-pdf.js'), 'utf8');
+    const communicationReader = fs.readFileSync(path.join(uiDir, 'emergency-communication.html'), 'utf8');
+    const communicationReaderCss = fs.readFileSync(path.join(uiDir, 'emergency-communication.css'), 'utf8');
+    const communicationReaderScript = fs.readFileSync(path.join(uiDir, 'emergency-communication.js'), 'utf8');
     assert.match(apocalypse, /(?:href|data-href)="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
     assert.match(box, /id="load-openstax"/, `${browser}: OpenStax catalog control missing`);
+    assert.match(box, /id="download-basic"/, `${browser}: basic emergency download control missing`);
+    assert.match(box, /data-download-basic-size/, `${browser}: basic emergency download size is not displayed`);
     assert.match(box, /id="download-all"/, `${browser}: bulk emergency download control missing`);
+    assert.match(box, /data-download-all-size/, `${browser}: bulk emergency download size is not displayed`);
+    assert.match(box, /<footer class="catalog-footer">[\s\S]*?data-i18n="eb\.size_estimate_note"/,
+      `${browser}: estimated-size caveat is not present in the Emergency Box footer`);
     assert.match(box, /id="resource-list"/, `${browser}: resource browser missing`);
+    assert.match(box, /data-filter="communication"[\s\S]*?data-i18n="eb\.filter\.communication"/,
+      `${browser}: communication collection filter is missing or hard-coded English`);
     assert.match(box, /data-i18n-aria-label="eb\.nav_label"/, `${browser}: Emergency Box collection navigation is not localized`);
     assert.match(box, /data-i18n-title="ap\.title"/, `${browser}: Emergency Box back-button title is not localized`);
     assert.match(reader, /id="pdf-canvas"/, `${browser}: internal PDF renderer missing`);
-    assert.match(reader, /id="save-copy"/, `${browser}: PDF export control missing`);
+    assert.match(reader, /id="offline-badge"[\s\S]*?data-i18n="ep\.available_offline"[\s\S]*?hidden/,
+      `${browser}: the PDF reader does not identify verified local documents as available offline`);
+    assert.match(reader, /id="save-copy"[\s\S]*?data-i18n="ep\.save_copy"[\s\S]*?data-i18n-title="ep\.export_tooltip"/,
+      `${browser}: PDF export control does not explain that it exports an already-offline file`);
+    assert.match(readerScript, /elements\['offline-badge'\]\.hidden = false;/,
+      `${browser}: the offline badge is shown before stored PDF access is verified`);
+    assert.match(readerScript, /anchor\.click\(\);\s*setStatus\(t\('ep\.exported'\), 'success'\);/,
+      `${browser}: PDF export does not confirm the destination after starting the save`);
     assert.match(reader, /data-i18n-aria-label="ep\.toolbar"/, `${browser}: PDF toolbar is not localized`);
     assert.match(reader, /data-i18n-aria-label="ep\.canvas_label"/, `${browser}: PDF canvas is not localized`);
     assert.match(readerCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important/, `${browser}: reader hidden states can expose a stale canvas`);
@@ -21921,6 +22127,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     for (const [pageName, pageHtml, pageCss, pageScript, stylesheet, pageClass] of [
       ['Emergency Box', box, boxCss, boxScript, 'emergency-box.css', 'emergency-box-page'],
       ['PDF Reader', reader, readerCss, readerScript, 'emergency-pdf.css', 'emergency-pdf-page'],
+      ['Communication Reader', communicationReader, communicationReaderCss, communicationReaderScript, 'emergency-communication.css', 'emergency-communication-page'],
       ['Wikipedia Reader', wikipediaReader, wikipediaReaderCss, wikipediaReaderScript, 'wikipedia-reader.css', 'wikipedia-reader-page'],
       ['Wikipedia Library', wikipediaLibrary, wikipediaLibraryCss, wikipediaLibraryScript, 'wikipedia-library.css', 'wikipedia-library-page'],
     ]) {
@@ -21940,6 +22147,25 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
         `${browser}: ${pageName} does not track live Appearance changes`);
     }
     assert.match(box, /href="wikipedia-library\.html"/, `${browser}: Emergency Box has no Wikipedia edition entry point`);
+    assert.match(boxScript, /EMERGENCY_BOX_COMMUNICATION_RESOURCES/, `${browser}: built-in communication resources are absent from the catalog`);
+    assert.match(boxScript, /const EMERGENCY_READER_PAGES = new Set\(\['emergency-pdf\.html', 'emergency-communication\.html'\]\)[\s\S]*?EMERGENCY_READER_PAGES\.has\(requestedReader\) \? requestedReader : 'emergency-pdf\.html'/,
+      `${browser}: persisted Emergency Box records can select an unapproved extension reader`);
+    assert.match(communicationReader, /id="language-input"[^>]*role="combobox"[^>]*aria-controls="language-options"[\s\S]*?id="language-toggle"[\s\S]*?id="language-options"[^>]*role="listbox"[\s\S]*?id="concept-list"[\s\S]*?id="word-dialog"/,
+      `${browser}: communication reader is missing its accessible language picker, concepts, or show-card mode`);
+    assert.doesNotMatch(communicationReader, /<datalist\b/,
+      `${browser}: communication reader still relies on a native datalist that hides every option except the selected language`);
+    assert.match(communicationReaderScript, /function openLanguagePicker\([\s\S]*?const query = showAll \|\| elements\['language-input'\]\.value === selectedLabel \? ''/,
+      `${browser}: opening the selected language does not reveal the complete language catalog`);
+    assert.match(communicationReaderScript, /Intl\.DisplayNames[\s\S]*?function languageAliases\([\s\S]*?function filterLanguageRows\([\s\S]*?languageMatchScore/,
+      `${browser}: language search does not rank names and ISO or PanLex codes`);
+    assert.match(communicationReaderScript, /function setLanguageHighlight\([\s\S]*?aria-activedescendant[\s\S]*?event\.key === 'ArrowDown'[\s\S]*?setLanguageHighlight/,
+      `${browser}: language picker is not keyboard navigable`);
+    assert.match(communicationReaderCss, /\.language-menu\s*\{[\s\S]*?z-index:[\s\S]*?\.language-options\s*\{[\s\S]*?overflow-y:\s*auto/,
+      `${browser}: language picker does not expose a readable scrollable catalog`);
+    assert.match(communicationReaderScript, /panlex-swadesh-110\.json/,
+      `${browser}: communication reader does not load the bundled PanLex data`);
+    assert.match(communicationReaderScript, /No recorded PanLex term/,
+      `${browser}: missing translations are not disclosed explicitly`);
     assert.match(wikipediaLibrary, /id="language"/, `${browser}: Wikipedia edition screen has no language choice`);
     assert.match(wikipediaLibrary, /name="edition" value="text"/, `${browser}: text-only Wikipedia choice is missing`);
     assert.match(wikipediaLibrary, /name="edition" value="images"/, `${browser}: Wikipedia image choice is missing`);
@@ -21948,8 +22174,10 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: the Wikipedia library cannot select an existing local ZIM archive`);
     assert.doesNotMatch(wikipediaLibrary, /audio|\.svg/i,
       `${browser}: focused Wikipedia edition screen exposes an unsupported archive format`);
-    assert.match(wikipediaLibraryScript, /selectWikipediaArchiveVariant\(result\.items, \{ includeImages \}\)/,
+    assert.match(wikipediaLibraryScript, /selectWikipediaArchiveVariant\(result\.items, \{\s*language: elements\.language\.value,\s*includeImages,\s*\}\)/,
       `${browser}: language and image choices do not select a catalog edition`);
+    assert.match(wikipediaLibraryScript, /function matchingReadyRecord\(\)[\s\S]*?wikipediaArchiveMatchesSelection\(record, \{[\s\S]*?language: elements\.language\.value,[\s\S]*?includeImages/,
+      `${browser}: the ready label does not require the exact selected Wikipedia edition`);
     assert.match(wikipediaLibraryScript, /replacementArchiveIds/,
       `${browser}: downloading a new Wikipedia edition does not schedule replacement cleanup`);
     assert.match(wikipediaLibraryScript, /function managedWikipediaRecords\(\)[\s\S]*?return \[\.\.\.wikipediaRecords\(\)\]\.sort/,
@@ -21976,8 +22204,151 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: Wikipedia history navigation does not invalidate and supersede an in-flight article read`);
     assert.match(boxScript, /t\('eb\.enable_downloads_tooltip'\)/,
       `${browser}: disabled download tooltip is not localized`);
+    assert.match(boxScript, /function downloadBasicKit\(\)[\s\S]*?selectEmergencyBoxBasicResources\(catalogResources\(\)\)[\s\S]*?'basic'/,
+      `${browser}: basic download does not use the global essential kit independently of the current view`);
+    assert.match(boxScript, /function formatEstimatedSize\([\s\S]*?MB[\s\S]*?GB[\s\S]*?function remainingOfTotal\([\s\S]*?remaining:[\s\S]*?total:/,
+      `${browser}: bulk size estimates do not distinguish readable MB values, remaining bytes, and total bytes`);
+    assert.match(boxScript, /const basicResources = selectEmergencyBoxBasicResources\(all\)\.filter\(resource => !resource\.builtIn\)[\s\S]*?remainingOfTotal\(basicResources, basicPending\)/,
+      `${browser}: basic-kit size does not show the remaining and complete downloadable pack`);
+    assert.match(boxScript, /if \(catalogResource && record\.status !== 'ready'\)[\s\S]*?merged\.url = catalogResource\.url;[\s\S]*?merged\.storageKey = catalogResource\.storageKey;/,
+      `${browser}: unfinished downloads can keep retrying an obsolete catalog source and stale partial file`);
+    assert.match(boxScript, /const currentView = activeFilter !== 'all' \|\| elements\['resource-search'\]\.value\.trim\(\) !== ''[\s\S]*?'eb\.download_current_view'[\s\S]*?remainingOfTotal\(downloadable, pending\)/,
+      `${browser}: filtered downloads are not identified as the current view with remaining and total sizes`);
+    assert.match(boxScript, /entry\.promise = \(async \(\) =>[\s\S]*?if \(downloads\.get\(resource\.id\) === entry\) downloads\.delete\(resource\.id\)[\s\S]*?async function stopAndDeleteDownload\(id\)[\s\S]*?await entry\.promise\.catch/,
+      `${browser}: stop-and-delete does not await the exact active download before removing its record and bytes`);
+    assert.doesNotMatch(boxScript, /attempts\s*<\s*200|setTimeout\(resolve,\s*25\)/,
+      `${browser}: stop-and-delete still relies on a time-limited busy-wait`);
+    assert.match(boxScript, /if \(bulkDownloadKind === kind\)[\s\S]*?for \(const entry of downloads\.values\(\)\)[\s\S]*?entry\.kind === kind[\s\S]*?entry\.controller\.abort\(\)[\s\S]*?bulkKind: kind/,
+      `${browser}: stopping a bulk kit can still abort downloads owned by another operation`);
     assert.doesNotMatch(boxScript, /title="Enable Apocalypse Mode to download resources"/,
       `${browser}: disabled download tooltip remains hard-coded English`);
+  }
+});
+
+test('Apocalypse download tracker follows every offline transfer from its pages and Settings', () => {
+  const pages = [
+    'apocalypse-mode.html',
+    'wikipedia-library.html',
+    'wikipedia-reader.html',
+    'emergency-box.html',
+    'emergency-pdf.html',
+    'emergency-communication.html',
+    'settings.html',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+    for (const page of pages) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, /<link rel="stylesheet" href="download-tracker\.css">/,
+        `${browser}: ${page} does not load the shared download tracker styles`);
+      assert.match(html, /<script type="module" src="download-tracker\.js"><\/script>/,
+        `${browser}: ${page} does not load the shared download tracker`);
+    }
+
+    const script = fs.readFileSync(path.join(uiDir, 'download-tracker.js'), 'utf8');
+    const css = fs.readFileSync(path.join(uiDir, 'download-tracker.css'), 'utf8');
+    assert.match(script, /webgpu-text-download-state/,
+      `${browser}: download tracker does not observe the local text model`);
+    assert.match(script, /webgpuVisionDownloadState/,
+      `${browser}: download tracker does not observe the local vision model`);
+    assert.match(script, /action:\s*'apocalypse_mode',\s*command:\s*'status'/,
+      `${browser}: download tracker does not observe Wikipedia archives`);
+    assert.match(script, /webbrain_emergency_box/,
+      `${browser}: download tracker does not observe Emergency Box PDFs`);
+    assert.match(script, /PDF_STALE_AFTER_MS[\s\S]*?status = 'paused'/,
+      `${browser}: stale page-owned PDF downloads are presented as if they were still active`);
+    assert.match(script, /formatBytes\(item\.loaded\)[\s\S]*?formatBytes\(item\.total\)[\s\S]*?ETA/,
+      `${browser}: large downloads do not show transferred bytes, speed, and estimated time remaining`);
+    assert.match(script, /data-liveness="\$\{livenessFor\(item\)\}"[\s\S]*?wb-dl-state/,
+      `${browser}: download rows have no visible recent-progress signal`);
+    assert.match(script, /data-download-action="\$\{action\}"[\s\S]*?actions\.push\(actionButton\('pause'[\s\S]*?actions\.push\(actionButton\('resume'[\s\S]*?actions\.push\(actionButton\('stop'/,
+      `${browser}: tracker does not expose Pause, Resume, and Stop controls`);
+    assert.match(script, /action === 'stop' && !globalThis\.confirm\(t\('wl\.confirm_stop'\)\)/,
+      `${browser}: destructive tracker Stop action is not confirmed`);
+    assert.match(script, /start_webgpu\$\{suffix\}_download[\s\S]*?\$\{action\}_webgpu\$\{suffix\}_download/,
+      `${browser}: tracker controls do not route text and vision model actions to the background host`);
+    assert.match(script, /action:\s*'apocalypse_mode',[\s\S]*?command,[\s\S]*?id:\s*item\.sourceId/,
+      `${browser}: tracker controls do not route Wikipedia actions to the background archive manager`);
+    assert.match(script, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?\?resume=/,
+      `${browser}: page-owned PDF controls cannot hand off safely to Emergency Box`);
+    assert.match(script, /tracker\.hidden = items\.length === 0/,
+      `${browser}: the tracker does not leave the page when there is nothing actionable`);
+    assert.match(css, /position:\s*fixed[\s\S]*?right:\s*max\([^;]*safe-area-inset-right[\s\S]*?bottom:\s*max\([^;]*safe-area-inset-bottom/,
+      `${browser}: download tracker is not implemented as a safe-area-aware lower-right tray`);
+    assert.doesNotMatch(css, /inset-inline-start:\s*50%|translateX\(-50%\)/,
+      `${browser}: download tracker is still centered instead of anchored in the lower-right corner`);
+    assert.match(css, /\.wb-dl-item\s*\{[\s\S]*?grid-template-columns:\s*38px minmax\(0,\s*1fr\) 34px[\s\S]*?\.wb-dl-progress\s*\{[\s\S]*?grid-column:\s*2\s*\/\s*3[\s\S]*?\.wb-dl-actions\s*\{[\s\S]*?grid-column:\s*2\s*\/\s*3/,
+      `${browser}: download details do not stack cleanly in the compact corner tray`);
+    assert.match(css, /prefers-reduced-motion:\s*reduce/,
+      `${browser}: download tracker ignores reduced-motion preferences`);
+    assert.match(css, /@keyframes wb-dl-heartbeat[\s\S]*?\.wb-dl-actions[\s\S]*?\.wb-dl-action\.danger/,
+      `${browser}: tracker lacks its activity beacon or compact destructive-control treatment`);
+    const emergencyScript = fs.readFileSync(path.join(uiDir, 'emergency-box.js'), 'utf8');
+    assert.match(emergencyScript, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?handleDownloadControl/,
+      `${browser}: Emergency Box cannot receive tracker controls from another Apocalypse page`);
+    assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false \}\)/,
+      `${browser}: tracker Resume handoff does not restart a paused PDF`);
+  }
+});
+
+test('Apocalypse communication slot renders only a bounded fetched bulletin', async () => {
+  const productionPath = path.join(ROOT, 'web/apocalypse-comm.html');
+  const placeholderPath = path.join(ROOT, 'web/apocalypse-comm-placeholder.html');
+  const production = fs.readFileSync(productionPath, 'utf8');
+  const placeholder = fs.readFileSync(placeholderPath, 'utf8');
+  assert.ok(Buffer.byteLength(production) <= 128_000,
+    'the published Apocalypse communication exceeds its bounded iframe payload');
+  assert.match(placeholder, /Field bulletin[\s\S]*?Prepare before the network becomes the problem/,
+    'the preview bulletin does not demonstrate the communication surface');
+  assert.doesNotMatch(placeholder, /<script|https?:\/\//i,
+    'the preview bulletin should remain self-contained and script-free');
+
+  const pages = [
+    'apocalypse-mode.html',
+    'wikipedia-library.html',
+    'wikipedia-reader.html',
+    'emergency-box.html',
+    'emergency-pdf.html',
+    'emergency-communication.html',
+    'settings.html',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+    const runtime = await import(`${pathToFileURL(path.join(uiDir, 'apocalypse-comm.js')).href}?test=${browser}`);
+    assert.equal(runtime.communicationUrl().href, 'https://webbrain.one/apocalypse-comm.html',
+      `${browser}: communication slot does not use the published WebBrain endpoint`);
+    assert.equal(runtime.isRenderableMarkup(''), false, `${browser}: empty bulletin is treated as visible`);
+    assert.equal(runtime.isRenderableMarkup(' \n<!-- reserved -->\n<!doctype html>'), false,
+      `${browser}: placeholder-only bulletin is treated as visible`);
+    assert.equal(runtime.isRenderableMarkup(placeholder), true,
+      `${browser}: the sample bulletin cannot pass the publication check`);
+    assert.equal(runtime.isRenderableMarkup('x'.repeat(128_001)), false,
+      `${browser}: oversized remote bulletin is accepted`);
+
+    const script = fs.readFileSync(path.join(uiDir, 'apocalypse-comm.js'), 'utf8');
+    assert.match(script, /params\.get\('apocalypse-comm'\) === 'placeholder'/,
+      `${browser}: the placeholder cannot be selected for an integration preview`);
+    assert.match(script, /cache:\s*'no-store'[\s\S]*?credentials:\s*'omit'[\s\S]*?referrerPolicy:\s*'no-referrer'/,
+      `${browser}: bulletin probe is not private and fresh`);
+    assert.match(script, /sandbox', 'allow-popups allow-popups-to-escape-sandbox'/,
+      `${browser}: remote bulletin iframe is not sandboxed`);
+    const framed = runtime.communicationDocument(placeholder, new URL('https://www.webbrain.one/apocalypse-comm-placeholder.html'));
+    assert.match(framed, /<head><base href="https:\/\/www\.webbrain\.one\/apocalypse-comm-placeholder\.html" target="_blank"><meta name="referrer" content="no-referrer">/,
+      `${browser}: srcdoc bulletin does not preserve safe relative links and no-referrer navigation`);
+    assert.match(script, /frame\.srcdoc = communicationDocument\(markup, url\)/,
+      `${browser}: bulletin still navigates its iframe into the anti-framing response`);
+    assert.doesNotMatch(script, /frame\.src\s*=\s*url\.href/,
+      `${browser}: bulletin still depends on framing webbrain.one directly`);
+    assert.match(script, /\['webbrain\.one', 'www\.webbrain\.one'\]\.includes\(responseUrl\.hostname\)[\s\S]*?if \(!isRenderableMarkup\(markup\)\) return;[\s\S]*?insertAdjacentElement\('afterend', createSlot\(responseUrl, markup\)\)/,
+      `${browser}: communication slot can render before content is checked`);
+
+    for (const page of pages) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, /<link rel="stylesheet" href="apocalypse-comm\.css">/,
+        `${browser}: ${page} does not load the bulletin slot styles`);
+      assert.match(html, /<script type="module" src="apocalypse-comm\.js"><\/script>/,
+        `${browser}: ${page} does not check for a published bulletin`);
+    }
   }
 });
 
@@ -21990,7 +22361,7 @@ test('Emergency Box localization keeps every canonical key translated with match
   )).default;
   const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
   const canonicalKeys = Object.keys(emergencyCopy);
-  assert.equal(canonicalKeys.length, 135, 'English emergency copy drifted from the 135-key canonical surface');
+  assert.equal(canonicalKeys.length, 145, 'English emergency copy drifted from the 145-key canonical surface');
   const placeholdersIn = (value) => [...new Set(String(value).match(/\{[a-z]+\}/g) || [])].sort();
 
   for (const locale of localeCodes) {
@@ -22696,33 +23067,45 @@ test('Apocalypse Mode basic setup requires the newest Simple English text-only W
       `${label}: full English Wikipedia incorrectly satisfied the Simple English prerequisite`);
     assert.equal(runtime.isBasicWikipediaArchive(items[1]), false,
       `${label}: an image archive incorrectly satisfied the text-only prerequisite`);
+    assert.equal(runtime.isSimpleEnglishWikipediaArchive(items[1]), true,
+      `${label}: Simple English with images was not recognized as a Simple English archive`);
     assert.equal(runtime.isBasicWikipediaArchive(items[4]), true,
       `${label}: the Simple English text-only archive did not satisfy basic setup`);
     assert.equal(runtime.isBasicWikipediaArchive({ ...items[4], name: 'wikipedia_en_simple_all' }), true,
       `${label}: a legacy Simple English archive identity did not satisfy basic setup`);
+    assert.equal(runtime.isSimpleEnglishWikipediaArchive({ ...items[1], name: 'wikipedia_en_simple_all' }), true,
+      `${label}: a legacy Simple English image archive identity was not recognized`);
   }
 });
 
 test('Emergency Box selects the newest full Wikipedia edition with or without images', () => {
   const items = [
     { id: 'simple', language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'nopic', archiveDate: '2026-08-01', articleCount: 500_000 },
+    { id: 'simple-images-newest', language: 'eng', name: 'wikipedia_en-simple_all', flavour: 'maxi', archiveDate: '2026-10-01', articleCount: 500_000 },
     { id: 'text-older', language: 'eng', name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-06-01', articleCount: 6_000_000 },
     { id: 'text-current', language: 'eng', name: 'wikipedia_en_all', flavour: 'nopic', archiveDate: '2026-08-01', articleCount: 6_100_000 },
     { id: 'images', language: 'eng', name: 'wikipedia_en_all', flavour: 'maxi', archiveDate: '2026-07-01', articleCount: 6_000_000 },
+    { id: 'foreign-images-newer', language: 'fra', name: 'wikipedia_fr_all', flavour: 'maxi', archiveDate: '2026-11-01', articleCount: 2_700_000 },
     { id: 'introductions-newer', language: 'eng', name: 'wikipedia_en_all', flavour: 'mini', archiveDate: '2026-09-01', articleCount: 6_200_000 },
     { id: 'mini', language: 'eng', name: 'wikipedia_en_100', flavour: 'mini', archiveDate: '2026-09-01', articleCount: 100 },
   ];
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
-    assert.equal(runtime.selectWikipediaArchiveVariant(items, { includeImages: false })?.id, 'text-current',
+    assert.equal(runtime.selectWikipediaArchiveVariant(items, { language: 'eng', includeImages: false })?.id, 'text-current',
       `${label}: text-only choice did not select the newest complete edition`);
-    assert.equal(runtime.selectWikipediaArchiveVariant(items, { includeImages: true })?.id, 'images',
+    assert.equal(runtime.selectWikipediaArchiveVariant(items, { language: 'eng', includeImages: true })?.id, 'images',
       `${label}: image choice did not select the complete edition with images`);
+    assert.equal(runtime.wikipediaArchiveMatchesSelection(items[1], { language: 'eng', includeImages: true }), false,
+      `${label}: Simple English with images counted as full English with images`);
+    assert.equal(runtime.wikipediaArchiveMatchesSelection(items[4], { language: 'eng', includeImages: true }), true,
+      `${label}: the exact full English image edition did not count as ready`);
+    assert.equal(runtime.wikipediaArchiveMatchesSelection(items[4], { language: 'eng', includeImages: false }), false,
+      `${label}: the full English image edition counted as the text-only edition`);
   }
 });
 
-test('A replacement Wikipedia archive deletes the old edition only after it is ready', async () => {
+test('A replacement Wikipedia archive deletes the old edition only after it verifies ready', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
-    async function exercise(replacementStatus) {
+    async function exercise(replacementStatus, replacementOverrides = {}, action = 'status') {
       const records = new Map([
         ['simple', {
           id: 'simple', archiveKind: 'wikipedia', status: 'ready', generation: 1, updatedAt: 10,
@@ -22731,8 +23114,9 @@ test('A replacement Wikipedia archive deletes the old edition only after it is r
         }],
         ['replacement', {
           id: 'replacement', archiveKind: 'wikipedia', status: replacementStatus, generation: 1, updatedAt: 20,
-          language: 'tur', name: 'wikipedia_tr_all', flavour: 'nopic', size: 200,
+          language: 'eng', name: 'wikipedia_en_all', flavour: 'maxi', size: 200,
           target: { kind: 'opfs', key: 'replacement.zim' }, replacementArchiveIds: ['simple'],
+          ...replacementOverrides,
         }],
       ]);
       const removed = [];
@@ -22749,14 +23133,33 @@ test('A replacement Wikipedia archive deletes the old edition only after it is r
         async exists() { return false; },
       };
       const controller = runtime.createApocalypseController({ alarms: {} }, { store, storage, now: () => 1_000 });
-      const status = await controller.handle('status');
+      const status = await controller.handle(action, action === 'delete' ? { id: 'replacement' } : {});
       return { records, removed, status };
     }
 
-    const downloading = await exercise('downloading');
-    assert.equal(downloading.records.has('simple'), true,
-      `${label}: existing Simple English archive was deleted before its replacement became ready`);
-    assert.deepEqual(downloading.removed, [], `${label}: replacement cleanup touched storage before readiness`);
+    for (const replacementStatus of ['queued', 'downloading', 'retrying', 'paused', 'error']) {
+      const incomplete = await exercise(replacementStatus);
+      assert.equal(incomplete.records.has('simple'), true,
+        `${label}: ${replacementStatus} replacement deleted the existing Simple English archive`);
+      assert.deepEqual(incomplete.removed, [],
+        `${label}: ${replacementStatus} replacement cleanup touched existing storage before readiness`);
+    }
+
+    const cancelled = await exercise('queued', {}, 'delete');
+    assert.equal(cancelled.records.has('simple'), true,
+      `${label}: cancelling a replacement deleted the existing Simple English archive`);
+    assert.equal(cancelled.records.has('replacement'), false,
+      `${label}: cancelled replacement metadata was retained`);
+    assert.deepEqual(cancelled.removed, ['replacement.zim'],
+      `${label}: cancellation removed the wrong archive bytes`);
+
+    const wrongSimpleEdition = await exercise('ready', { name: 'wikipedia_en-simple_all', flavour: 'maxi' });
+    assert.equal(wrongSimpleEdition.records.has('simple'), true,
+      `${label}: Simple English with images was allowed to replace the existing archive`);
+    assert.deepEqual(wrongSimpleEdition.removed, [],
+      `${label}: Simple English with images removed verified existing storage`);
+    assert.deepEqual(wrongSimpleEdition.records.get('replacement').replacementArchiveIds, [],
+      `${label}: rejected Simple English replacement cleanup remained pending`);
 
     const ready = await exercise('ready');
     assert.equal(ready.records.has('simple'), false,
@@ -26264,6 +26667,7 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
 
 test('public Apocalypse Mode guide and launch essay document the offline boundary', () => {
   const guide = fs.readFileSync(path.join(ROOT, 'web/docs/apocalypse-mode/index.html'), 'utf8');
+  const chineseGuide = fs.readFileSync(path.join(ROOT, 'web/docs/zh/apocalypse-mode/index.html'), 'utf8');
   const overview = fs.readFileSync(path.join(ROOT, 'web/docs/index.html'), 'utf8');
   const blogSource = fs.readFileSync(path.join(ROOT, 'web/blog/posts/why-we-built-apocalypse-mode.md'), 'utf8');
   const blogPage = fs.readFileSync(path.join(ROOT, 'web/blog/why-we-built-apocalypse-mode/index.html'), 'utf8');
@@ -26277,6 +26681,14 @@ test('public Apocalypse Mode guide and launch essay document the offline boundar
     'docs: the local text model should be named without implying global provider selection');
   assert.match(guide, /Wikipedia reader[\s\S]*?Emergency Box[\s\S]*?Medical guidance becomes outdated/,
     'docs: the offline readers and medical-content warning should be covered');
+  assert.match(guide, /Universal Basic Lexicon[\s\S]*?13 essential health[\s\S]*?0\.004 GB built in \+ ≈ 0\.06 GB download[\s\S]*?203-resource catalog[\s\S]*?≈ 12\.1 GB download[\s\S]*?storage figures are estimates/i,
+    'docs: the English Emergency Box guide should document basic and full estimated sizes');
+  assert.match(chineseGuide, /通用基础词汇表[\s\S]*?13 份最重要[\s\S]*?内置 0\.004 GB \+ 下载约 0\.06 GB[\s\S]*?203 项资源[\s\S]*?下载约 12\.1 GB[\s\S]*?存储数字是估算值/,
+    'docs: the Chinese Emergency Box guide should document basic and full estimated sizes');
+  assert.match(guide, /1,756 ISO languages[\s\S]*?2,064 language varieties[\s\S]*?Kiwix Wiktionary[\s\S]*?FreeDict[\s\S]*?118 English and 11 Spanish textbooks/,
+    'docs: the English guide should document communication coverage, multilingual OpenStax, and deeper sources');
+  assert.match(chineseGuide, /1,756 种 ISO 语言[\s\S]*?2,064 个语言变体[\s\S]*?Kiwix Wiktionary[\s\S]*?FreeDict[\s\S]*?118 本英文和 11 本西班牙文/,
+    'docs: the Chinese guide should document communication coverage, multilingual OpenStax, and deeper sources');
   assert.match(overview, /href="\/docs\/apocalypse-mode\/"[\s\S]*?Build your offline kit/,
     'docs: the overview should link to the Apocalypse Mode guide');
   for (const page of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html']) {

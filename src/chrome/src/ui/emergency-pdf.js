@@ -18,7 +18,7 @@ runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
 const store = createEmergencyBoxStore();
 const storage = createEmergencyBoxStorage();
 const elements = Object.fromEntries([
-  'document-title', 'document-source', 'save-copy', 'previous-page', 'page-number', 'page-count',
+  'document-title', 'offline-badge', 'document-source', 'save-copy', 'previous-page', 'page-number', 'page-count',
   'next-page', 'zoom-out', 'fit-width', 'zoom-in', 'search-form', 'document-search', 'fullscreen',
   'document-stage', 'reader-message', 'pdf-canvas', 'reader-status',
 ].map(id => [id, document.getElementById(id)]));
@@ -151,6 +151,7 @@ async function initialize() {
   if (!record || record.status !== 'ready') throw new Error(t('ep.not_installed'));
   file = await storage.open(record.storageKey || record.id);
   elements['document-title'].textContent = record.title || file.name || t('ep.document');
+  elements['offline-badge'].hidden = false;
   document.title = `${record.title || t('ep.document')} — WebBrain`;
   const sourceUrl = safeExternalUrl(record.sourceUrl);
   if (sourceUrl) {
@@ -196,6 +197,7 @@ elements['save-copy'].addEventListener('click', () => {
   anchor.href = url;
   anchor.download = safeFilename(record?.title);
   anchor.click();
+  setStatus(t('ep.exported'), 'success');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 globalThis.addEventListener('keydown', event => {

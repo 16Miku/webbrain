@@ -7,6 +7,8 @@
   <script src="theme-bootstrap.js"></script>
   <link rel="stylesheet" href="emergency-box.css">
   <link rel="stylesheet" href="apocalypse-kit.css">
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
 </head>
 <body class="emergency-box-page">
   <header class="topbar">
@@ -40,6 +42,10 @@
           <span data-i18n="eb.filter.wikipedia"></span>
           <span aria-hidden="true">→</span>
         </a>
+        <button type="button" class="category-button communication-entry" data-filter="communication">
+          <span class="category-icon" aria-hidden="true">言</span>
+          <span data-i18n="eb.filter.communication"></span>
+        </button>
         <button type="button" class="category-button" data-filter="education">
           <span class="category-icon" aria-hidden="true">▤</span>
           <span data-i18n="eb.filter.education"></span>
@@ -84,17 +90,33 @@
             <span aria-hidden="true">↻</span>
             <span data-i18n="eb.update_openstax"></span>
           </button>
+          <button type="button" id="download-basic" class="basic-kit-button">
+            <span class="basic-kit-mark" aria-hidden="true">✚</span>
+            <span class="bulk-button-copy">
+              <span data-download-basic-label data-i18n="eb.download_basic"></span>
+              <span class="bulk-size" data-download-basic-size></span>
+            </span>
+          </button>
           <button type="button" id="download-all" class="primary-button">
             <span aria-hidden="true">⇩</span>
-            <span data-download-all-label data-i18n="eb.download_all"></span>
+            <span class="bulk-button-copy">
+              <span data-download-all-label data-i18n="eb.download_all"></span>
+              <span class="bulk-size" data-download-all-size></span>
+            </span>
           </button>
         </div>
       </div>
 
       <div id="notice" class="notice" role="status" aria-live="polite"></div>
       <div id="resource-list" class="resource-list" aria-live="polite"></div>
+      <footer class="catalog-footer">
+        <span class="catalog-footer-mark" aria-hidden="true">≈</span>
+        <p data-i18n="eb.size_estimate_note"></p>
+      </footer>
     </section>
   </main>
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
   <script type="module" src="emergency-box.js"></script>
 </body>
 </html>

@@ -9,8 +9,10 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .reader-header { min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 10px 15px; border-bottom: 1px solid var(--border); background: var(--header-bg); }
 .back-button { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 36px; color: var(--muted); text-decoration: none; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 19px; }
 .pdf-mark { width: 34px; height: 40px; display: grid; place-items: center; flex: 0 0 34px; color: var(--mark-text); border: 1px solid var(--mark-border); border-radius: 6px 6px 8px 6px; background: var(--mark-bg); font: 800 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.document-heading { min-width: 0; }
-.document-heading h1 { margin: 0; overflow: hidden; font-size: 15px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.document-heading { min-width: 0; flex: 1 1 auto; }
+.document-title-row { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.document-heading h1 { min-width: 0; margin: 0; overflow: hidden; font-size: 15px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.document-offline-badge { flex: 0 0 auto; padding: 3px 7px; color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 42%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--good) 10%, transparent); font: 750 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 .document-heading a { color: var(--link); font-size: 11px; text-decoration: none; }
 .document-heading a:hover { text-decoration: underline; }
 .header-button, .reader-toolbar button { color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--panel2); cursor: pointer; font-weight: 700; }
