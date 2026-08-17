@@ -124,6 +124,32 @@ function reduceToBudget(messages, maxBytes, state) {
     state.compacted = true;
     out[index] = { ...message, content: `${message.content.slice(0, 3_900)}\n[content truncated for session recovery]` };
   }
+  // Signed provider state is opaque. If the snapshot is still oversized,
+  // remove whole replay/tool pairs instead of truncating a signature.
+  let droppedReplay = false;
+  for (let index = 0; index < out.length && byteLength(out) > maxBytes; index++) {
+    const message = out[index];
+    if (!message?._reasoning_replay?.providerState) continue;
+    const rest = { ...message };
+    delete rest._reasoning_replay;
+    delete rest.tool_calls;
+    out[index] = typeof rest.content !== 'string' || !rest.content.trim()
+      ? { ...rest, content: '[Provider reasoning omitted from session recovery.]' }
+      : rest;
+    state.compacted = true;
+    droppedReplay = true;
+  }
+  if (droppedReplay) {
+    const presentCallIds = new Set(out.flatMap(message => (
+      message?.role === 'assistant' && Array.isArray(message.tool_calls)
+        ? message.tool_calls.map(call => call?.id).filter(Boolean)
+        : []
+    )));
+    for (let index = out.length - 1; index >= 0; index--) {
+      const message = out[index];
+      if (message?.role === 'tool' && !presentCallIds.has(message.tool_call_id)) out.splice(index, 1);
+    }
+  }
   return out;
 }
 

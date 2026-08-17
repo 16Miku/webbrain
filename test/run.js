@@ -31690,7 +31690,7 @@ test('Ollama vision settings copy is translated and mirrored in every locale', a
   }
 });
 
-test('settings exposes collapsed compatibility controls only for compatible provider types', () => {
+test('settings exposes compatibility controls and native Anthropic custom request bodies', () => {
   for (const [label, settingsRel, htmlRel, PM] of [
     ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', ProviderManagerCh],
     ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html', ProviderManagerFx],
@@ -31700,8 +31700,14 @@ test('settings exposes collapsed compatibility controls only for compatible prov
     assert.match(
       settings,
       /id !== 'webbrain_cloud' && \['openai', 'llamacpp', 'azure_openai'\]\.includes\(config\.type\)/,
-      `${label}: compatibility controls should exclude Cloud, Anthropic, and Bedrock`,
+      `${label}: OpenAI compatibility controls should remain protocol-scoped`,
     );
+    assert.match(
+      settings,
+      /\['anthropic', 'anthropic_oauth', 'vertex_anthropic'\]\.includes\(config\.type\)/,
+      `${label}: native Anthropic providers should expose Custom request body JSON`,
+    );
+    assert.match(settings, /showCompatibilityControls \? `/, `${label}: Anthropic should not render OpenAI-only selectors`);
     for (const key of [
       'st.providers.compat.title',
       'st.providers.compat.preset',
@@ -49268,14 +49274,27 @@ test('new provider auth, endpoint, protocol, and capability contracts are determ
       location: 'us-east5',
       apiKey: 'google-key',
       model: 'claude-haiku-4-5@20251001',
+      extraBody: { thinking: { type: 'adaptive' } },
     });
     assert.match(vertexAnthropic._messagesUrl(false), /publishers\/anthropic\/models\/claude-haiku-4-5%4020251001:rawPredict$/);
     assert.match(vertexAnthropic._messagesUrl(true), /:streamRawPredict$/);
     assert.match(vertexAnthropic._messagesUrl(false), /^https:\/\/us-east5-aiplatform\.googleapis\.com\//);
     assert.equal(vertexAnthropic._headers()['x-goog-api-key'], 'google-key');
-    const vertexBody = vertexAnthropic._prepareRequestBody({ model: 'ignored', messages: [], max_tokens: 16 }, {}, false);
+    const vertexBody = vertexAnthropic._prepareRequestBody(
+      { model: 'ignored', messages: [], max_tokens: 16, temperature: 0.3 },
+      {
+        extraBody: {
+          thinking: { display: 'summarized' },
+          anthropic_version: 'must-not-win',
+          model: 'override',
+        },
+      },
+      false,
+    );
     assert.equal(vertexBody.model, undefined);
+    assert.equal(vertexBody.temperature, undefined);
     assert.equal(vertexBody.anthropic_version, 'vertex-2023-10-16');
+    assert.deepEqual(vertexBody.thinking, { type: 'adaptive', display: 'summarized' });
     assert.match(
       new VertexProvider({
         project: 'sample-project',
@@ -78434,7 +78453,533 @@ test('planner input: runtime context does not consume prior user-turn history bu
 // One assistant turn emitting parallel tool_use calls must have ALL its
 // tool_result blocks combined into a SINGLE user message — otherwise the
 // Messages API rejects the consecutive user roles with a 400.
-for (const [label, Provider] of [['chrome', AnthropicProviderCh], ['firefox', AnthropicProviderFx]]) {
+for (const [label, Provider, VertexProvider, AgentClass] of [
+  ['chrome', AnthropicProviderCh, VertexAnthropicProviderCh, AgentCh],
+  ['firefox', AnthropicProviderFx, VertexAnthropicProviderFx, AgentFx],
+]) {
+  test(`anthropic (${label}): thinking request options stay protocol-compatible`, () => {
+    const provider = new Provider({ model: 'claude-sonnet-4-6' });
+    const forcedTool = provider._prepareRequestBody({
+      thinking: { type: 'enabled', budget_tokens: 2048 },
+      tool_choice: { type: 'tool', name: 'done' },
+      temperature: 0.4,
+    });
+    assert.equal(forcedTool.thinking, undefined, 'manual thinking must yield to an explicit tool contract');
+    assert.deepEqual(forcedTool.tool_choice, { type: 'tool', name: 'done' });
+    assert.equal(forcedTool.temperature, 0.4, 'sampling is valid after manual thinking is disabled for the call');
+
+    const adaptive = provider._prepareRequestBody({
+      thinking: { type: 'adaptive', budget_tokens: 2048 },
+      temperature: 0.4,
+      top_k: 20,
+      top_p: 0.5,
+    });
+    assert.deepEqual(adaptive.thinking, { type: 'adaptive' });
+    assert.equal(adaptive.temperature, undefined);
+    assert.equal(adaptive.top_k, undefined);
+    assert.equal(adaptive.top_p, undefined);
+
+    const disabled = new Provider({
+      model: 'claude-sonnet-4-6',
+      extraBody: { thinking: { type: 'adaptive', budget_tokens: 4096 } },
+    })._prepareRequestBody({}, { extraBody: { thinking: { type: 'disabled' } } });
+    assert.deepEqual(disabled.thinking, { type: 'disabled' });
+
+    for (const model of [
+      'claude-opus-5',
+      'claude-opus-4-8@20260801',
+      'claude-sonnet-5@20260801',
+      'claude-mythos-preview',
+    ]) {
+      const newer = new Provider({ model })._prepareRequestBody({
+        temperature: 0.2,
+        top_k: 10,
+        top_p: 0.99,
+      });
+      assert.equal(newer.temperature, undefined, `${model}: temperature should be omitted`);
+      assert.equal(newer.top_k, undefined, `${model}: top_k should be omitted`);
+      assert.equal(newer.top_p, undefined, `${model}: top_p should be omitted`);
+    }
+    const vertex = new VertexProvider({
+      model: 'claude-opus-4-8@20260801',
+      project: 'sample-project',
+      location: 'us-east5',
+      apiKey: 'google-key',
+    })._prepareRequestBody({ model: 'ignored', temperature: 0.2 }, {}, false);
+    assert.equal(vertex.temperature, undefined, 'Vertex date-suffixed models must apply sampling restrictions');
+  });
+
+  test(`anthropic (${label}): custom request body enables thinking and non-streaming preserves it`, async () => {
+    const originalFetch = globalThis.fetch;
+    const responseContent = [
+      { type: 'thinking', thinking: 'Inspect the page first.', signature: 'sig-nonstream' },
+      { type: 'redacted_thinking', data: 'encrypted-nonstream' },
+      { type: 'text', text: 'I will inspect it.' },
+      { type: 'tool_use', id: 'tool_1', name: 'read_page', input: { depth: 2 } },
+    ];
+    let requestBody = null;
+    try {
+      globalThis.fetch = async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          content: responseContent,
+          usage: { input_tokens: 12, output_tokens: 7 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+
+      const provider = new Provider({
+        apiKey: 'test-key',
+        model: 'claude-sonnet-4-6',
+        extraBody: {
+          thinking: { type: 'adaptive' },
+          model: 'must-not-win',
+          stream: true,
+        },
+      });
+      const tools = [{
+        type: 'function',
+        function: {
+          name: 'read_page',
+          description: 'Read the page.',
+          parameters: { type: 'object', properties: {} },
+        },
+      }];
+      const result = await provider.chat(
+        [{ role: 'user', content: 'Inspect it.' }],
+        {
+          maxTokens: 321,
+          temperature: 0.3,
+          tools,
+          extraBody: {
+            thinking: { display: 'summarized' },
+            metadata: { user_id: 'webbrain-test' },
+            messages: [{ role: 'user', content: 'must not win' }],
+            tools: [],
+            max_tokens: 999,
+          },
+        },
+      );
+
+      assert.equal(requestBody.model, 'claude-sonnet-4-6');
+      assert.equal(requestBody.max_tokens, 321);
+      assert.equal(requestBody.stream, undefined);
+      assert.equal(requestBody.temperature, undefined, 'thinking requests must omit incompatible sampling parameters');
+      assert.deepEqual(requestBody.messages, [{ role: 'user', content: 'Inspect it.' }]);
+      assert.equal(requestBody.tools[0].name, 'read_page');
+      assert.deepEqual(requestBody.thinking, { type: 'adaptive', display: 'summarized' });
+      assert.deepEqual(requestBody.metadata, { user_id: 'webbrain-test' });
+      assert.equal(result.content, 'I will inspect it.');
+      assert.equal(result.reasoningContent, 'Inspect the page first.');
+      assert.equal(result.toolCalls[0].function.arguments, '{"depth":2}');
+      assert.deepEqual(result.responseItems, [{
+        type: 'webbrain_provider_replay',
+        version: 1,
+        provider: provider.name,
+        model: provider.model,
+        providerIdentity: provider._reasoningReplayIdentity(),
+        content: responseContent,
+      }]);
+
+      const agent = new AgentClass({});
+      const assistant = agent._withResponseItems({
+        role: 'assistant',
+        content: result.content,
+        tool_calls: result.toolCalls,
+      }, result.responseItems, result.reasoningContent, provider);
+      assert.equal(assistant.response_items, undefined, 'Anthropic replay state must not enter OpenAI response_items');
+      assert.deepEqual(assistant._reasoning_replay?.providerState, result.responseItems[0]);
+      assert.equal(assistant._reasoning_replay?.currentToolLoop, true);
+      assert.equal(assistant._reasoning_replay?.preserveAcrossTurns, true);
+      assert.equal(agent._containsProviderReplayState(result.responseItems), true);
+      const agentSource = fs.readFileSync(path.join(ROOT, `src/${label}/src/agent/agent.js`), 'utf8');
+      assert.equal(
+        (agentSource.match(/!this\._containsProviderReplayState\(/g) || []).length,
+        2,
+        'both streaming and non-streaming text tool-call fallbacks must preserve native signed state',
+      );
+
+      const converted = provider._convertMessages([
+        assistant,
+        { role: 'tool', tool_call_id: 'tool_1', content: 'page text' },
+      ]).messages;
+      assert.deepEqual(converted[0].content, responseContent, 'signed blocks must be replayed unchanged and in order');
+      assert.equal(converted[1].content[0].type, 'tool_result');
+
+      let continuationBody = null;
+      globalThis.fetch = async (_url, init) => {
+        continuationBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          content: [{ type: 'text', text: 'Continuation complete.' }],
+          usage: { input_tokens: 10, output_tokens: 2 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      await provider.chat([
+        assistant,
+        { role: 'tool', tool_call_id: 'tool_1', content: 'page text' },
+      ]);
+      assert.deepEqual(
+        continuationBody.messages[0].content,
+        responseContent,
+        'the next wire request must echo every signed block byte-for-byte',
+      );
+
+      const switched = new Provider({ model: 'claude-opus-4-8' })._convertMessages([assistant]).messages[0];
+      assert.equal(
+        Array.isArray(switched.content) && switched.content.some(block => block.type === 'thinking'),
+        false,
+        'signed thinking must not cross model switches',
+      );
+      const switchedProvider = new VertexProvider({ model: provider.model })._convertMessages([assistant]).messages[0];
+      assert.equal(
+        Array.isArray(switchedProvider.content) && switchedProvider.content.some(block => block.type === 'thinking'),
+        false,
+        'signed thinking must not cross provider switches',
+      );
+      for (const isolatedProvider of [
+        new Provider({ model: provider.model, baseUrl: 'https://other-anthropic.example' }),
+        new Provider({ model: provider.model, _providerId: 'anthropic_duplicate' }),
+      ]) {
+        const isolated = isolatedProvider._convertMessages([assistant]).messages[0];
+        assert.equal(
+          Array.isArray(isolated.content) && isolated.content.some(block => block.type === 'thinking'),
+          false,
+          'signed thinking must not cross provider instances or endpoints',
+        );
+      }
+      const vertexProvider = new VertexProvider({ model: provider.model });
+      const vertexState = vertexProvider._replayState(responseContent);
+      const vertexAssistant = agent._withResponseItems({
+        role: 'assistant',
+        content: result.content,
+        tool_calls: result.toolCalls,
+      }, [vertexState], result.reasoningContent, vertexProvider);
+      assert.deepEqual(
+        vertexProvider._convertMessages([vertexAssistant]).messages[0].content,
+        responseContent,
+        'Vertex Anthropic must inherit signed replay with its own provider identity',
+      );
+      const invalidVersion = {
+        ...assistant,
+        _reasoning_replay: {
+          ...assistant._reasoning_replay,
+          providerState: { ...assistant._reasoning_replay.providerState, version: 2 },
+        },
+      };
+      assert.equal(
+        provider._convertMessages([invalidVersion]).messages[0].content.some(block => block.type === 'thinking'),
+        false,
+        'unknown replay versions must fall back to ordinary message conversion',
+      );
+      const syntheticToolCall = agent._withResponseItems({
+        role: 'assistant',
+        content: '{"tool":"click"}',
+        tool_calls: [{ id: 'synthetic', function: { name: 'click', arguments: '{}' } }],
+      }, result.responseItems, result.reasoningContent, provider);
+      assert.equal(
+        syntheticToolCall._reasoning_replay,
+        undefined,
+        'provider state must be discarded when fallback tool calls do not match native tool_use blocks',
+      );
+      const withoutProviderState = {
+        ...assistant,
+        _reasoning_replay: { ...assistant._reasoning_replay, providerState: null },
+      };
+      const normalizedChars = agent._estimateContextChars([withoutProviderState]);
+      assert.equal(
+        agent._estimateContextChars([assistant]),
+        Math.max(normalizedChars, JSON.stringify(responseContent).length),
+        'native replay and normalized content must not be counted twice',
+      );
+      const persistence = await import(pathToFileURL(
+        path.join(ROOT, `src/${label}/src/agent/conversation-persistence.js`),
+      ).href);
+      const recovered = persistence.serializeConversationForSession([assistant]).messages[0];
+      assert.deepEqual(
+        recovered._reasoning_replay?.providerState,
+        result.responseItems[0],
+        'session recovery must not truncate or rewrite provider signatures',
+      );
+      const largeThinking = 'private-reasoning-'.repeat(3000);
+      const oversizedRecovery = persistence.serializeConversationForSession(
+        Array.from({ length: 15 }, (_, index) => ({
+          role: 'assistant',
+          content: `answer ${index}`,
+          _reasoning_replay: {
+            preserveAcrossTurns: true,
+            providerState: provider._replayState([{
+              type: 'thinking',
+              thinking: largeThinking,
+              signature: `complete-signature-${index}`,
+            }]),
+          },
+        })),
+        { maxBytes: 100_000 },
+      );
+      assert.equal(oversizedRecovery.compacted, true);
+      assert.ok(oversizedRecovery.bytes <= 100_000, 'opaque replay states must respect the session byte budget');
+      for (const message of oversizedRecovery.messages) {
+        const block = message._reasoning_replay?.providerState?.content?.[0];
+        if (block) assert.equal(block.thinking, largeThinking, 'opaque thinking must be kept whole or dropped whole');
+      }
+      const toolLoopRecovery = persistence.serializeConversationForSession([
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'oversized_tool',
+            type: 'function',
+            function: { name: 'click', arguments: '{"selector":"#buy"}' },
+          }],
+          _reasoning_replay: {
+            currentToolLoop: true,
+            preserveAcrossTurns: true,
+            providerState: provider._replayState([
+              { type: 'thinking', thinking: 'x'.repeat(120_000), signature: 'complete-oversized-signature' },
+              { type: 'tool_use', id: 'oversized_tool', name: 'click', input: { selector: '#buy' } },
+            ]),
+          },
+        },
+        { role: 'tool', tool_call_id: 'oversized_tool', content: 'clicked' },
+      ], { maxBytes: 100_000 });
+      assert.ok(toolLoopRecovery.bytes <= 100_000);
+      assert.match(toolLoopRecovery.messages[0].content, /reasoning omitted/);
+      assert.equal(toolLoopRecovery.messages[0].tool_calls, undefined);
+      assert.equal(toolLoopRecovery.messages.some(message => message.role === 'tool'), false);
+      agent._expireCurrentToolReasoning([assistant]);
+      assert.equal(assistant._reasoning_replay?.currentToolLoop, undefined);
+      assert.deepEqual(assistant._reasoning_replay?.providerState?.content, responseContent);
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        content: [
+          { type: 'thinking', thinking: 'Unsafe continuation.', signature: 'valid-signature' },
+          { type: 'tool_use', id: '', name: 'click', input: { selector: '#buy' } },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      await assert.rejects(
+        () => provider.chat([{ role: 'user', content: 'Do not execute an unbound tool.' }]),
+        /incomplete signed thinking blocks/,
+      );
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        content: [{ type: 'text', text: 'Plain response.' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const plain = await new Provider({ apiKey: 'test-key', model: provider.model }).chat([
+        { role: 'user', content: 'No thinking.' },
+      ]);
+      assert.equal(plain.reasoningContent, '');
+      assert.equal(plain.responseItems, undefined, 'ordinary Anthropic responses should not create replay state');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test(`anthropic (${label}): streaming separates reasoning from signatures and rebuilds replay blocks`, async () => {
+    const originalFetch = globalThis.fetch;
+    const events = [
+      { type: 'message_start', message: { usage: { input_tokens: 20, output_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Check ' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'carefully.' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig-stream' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: { type: 'redacted_thinking', data: 'encrypted-redacted' } },
+      { type: 'content_block_stop', index: 1 },
+      { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '', citations: [] } },
+      { type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'Ready.' } },
+      {
+        type: 'content_block_delta',
+        index: 2,
+        delta: {
+          type: 'citations_delta',
+          citation: { type: 'page_location', cited_text: 'Ready.', document_index: 0, start_page_number: 1, end_page_number: 1 },
+        },
+      },
+      { type: 'content_block_stop', index: 2 },
+      { type: 'content_block_start', index: 3, content_block: { type: 'tool_use', id: 'tool_2', name: 'click', input: {} } },
+      { type: 'content_block_delta', index: 3, delta: { type: 'input_json_delta', partial_json: '{"selector":"#go"}' } },
+      { type: 'content_block_stop', index: 3 },
+      { type: 'content_block_start', index: 4, content_block: { type: 'thinking', thinking: '', signature: '' } },
+      { type: 'content_block_delta', index: 4, delta: { type: 'thinking_delta', thinking: 'After the tool.' } },
+      { type: 'content_block_delta', index: 4, delta: { type: 'signature_delta', signature: 'sig-after-tool' } },
+      { type: 'content_block_stop', index: 4 },
+      { type: 'content_block_start', index: 5, content_block: { type: 'thinking', thinking: '', signature: '' } },
+      { type: 'content_block_delta', index: 5, delta: { type: 'signature_delta', signature: 'sig-omitted-display' } },
+      { type: 'content_block_stop', index: 5 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 15 } },
+      { type: 'message_stop' },
+    ];
+    const sse = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('');
+    let requestBody = null;
+    try {
+      globalThis.fetch = async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return new Response(sse, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      };
+      const provider = new Provider({
+        apiKey: 'test-key',
+        model: 'claude-sonnet-4-6',
+        extraBody: { thinking: { type: 'adaptive', display: 'summarized' } },
+      });
+      const chunks = [];
+      for await (const chunk of provider.chatStream([{ role: 'user', content: 'Inspect it.' }], {
+        extraBody: { model: 'must-not-win', stream: false },
+      })) {
+        chunks.push(chunk);
+      }
+
+      assert.equal(requestBody.model, 'claude-sonnet-4-6');
+      assert.equal(requestBody.stream, true);
+      assert.deepEqual(requestBody.thinking, { type: 'adaptive', display: 'summarized' });
+      assert.deepEqual(
+        chunks.filter(chunk => chunk.type === 'reasoning').map(chunk => chunk.content),
+        ['Check ', 'carefully.', 'After the tool.'],
+      );
+      assert.deepEqual(
+        chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.content),
+        ['Ready.'],
+      );
+      assert.equal(
+        chunks.some(chunk => JSON.stringify(chunk).includes('sig-stream')),
+        true,
+        'signature should survive only inside the opaque replay envelope',
+      );
+      assert.equal(
+        chunks.some(chunk => chunk.type === 'reasoning' && String(chunk.content).includes('sig-stream')),
+        false,
+        'signature must never leak as visible reasoning',
+      );
+      const done = chunks.find(chunk => chunk.type === 'done');
+      assert.equal(done.finishReason, 'tool_use');
+      assert.deepEqual(done.responseItems, [{
+        type: 'webbrain_provider_replay',
+        version: 1,
+        provider: provider.name,
+        model: provider.model,
+        providerIdentity: provider._reasoningReplayIdentity(),
+        content: [
+          { type: 'thinking', thinking: 'Check carefully.', signature: 'sig-stream' },
+          { type: 'redacted_thinking', data: 'encrypted-redacted' },
+          {
+            type: 'text',
+            text: 'Ready.',
+            citations: [{
+              type: 'page_location',
+              cited_text: 'Ready.',
+              document_index: 0,
+              start_page_number: 1,
+              end_page_number: 1,
+            }],
+          },
+          { type: 'tool_use', id: 'tool_2', name: 'click', input: { selector: '#go' } },
+          { type: 'thinking', thinking: 'After the tool.', signature: 'sig-after-tool' },
+          { type: 'thinking', thinking: '', signature: 'sig-omitted-display' },
+        ],
+      }]);
+      assert.deepEqual(chunks.find(chunk => chunk.type === 'usage')?.usage, {
+        prompt_tokens: 20,
+        completion_tokens: 15,
+        total_tokens: 35,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test(`anthropic (${label}): incomplete signed tool streams fail before execution`, async () => {
+    const originalFetch = globalThis.fetch;
+    const provider = new Provider({ apiKey: 'test-key', model: 'claude-sonnet-4-6' });
+    const collect = async (events) => {
+      const sse = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('');
+      globalThis.fetch = async () => new Response(sse, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+      const chunks = [];
+      for await (const chunk of provider.chatStream([{ role: 'user', content: 'Inspect it.' }])) {
+        chunks.push(chunk);
+      }
+      return chunks;
+    };
+    try {
+      const missingSignature = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Unsigned.' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(missingSignature.find(chunk => chunk.type === 'done')?.responseItems, undefined);
+
+      const badSigChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_bad', name: 'click', input: {} } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"selector":' } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(badSigChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
+
+      const unsignedChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Unsigned.' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_valid', name: 'click', input: {} } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"selector":"#buy"}' } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(unsignedChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
+
+      const emptyToolIdChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: '', name: 'click', input: {} } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(emptyToolIdChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
+
+      const gapIndexChunks = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'tool_gap', name: 'click', input: {} } },
+        { type: 'content_block_stop', index: 2 },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(gapIndexChunks.find(chunk => chunk.type === 'done')?.responseItems, undefined);
+
+      const missingBlockStop = await collect([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
+        { type: 'message_stop' },
+      ]);
+      assert.equal(missingBlockStop.find(chunk => chunk.type === 'done')?.responseItems, undefined);
+
+      globalThis.fetch = async () => new Response([
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'valid-signature' } },
+        { type: 'content_block_stop', index: 0 },
+      ].map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+      await assert.rejects(
+        async () => {
+          for await (const _chunk of provider.chatStream([{ role: 'user', content: 'Inspect it.' }])) {}
+        },
+        /ended before the message_stop event/,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test(`anthropic (${label}): cache usage survives normalization`, () => {
     const provider = new Provider({});
     const usage = provider._normalizeUsage({

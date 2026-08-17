@@ -6,6 +6,9 @@ import {
   CLAUDE_CODE_SYSTEM_PREAMBLE,
 } from './oauth-claude.js';
 
+const ANTHROPIC_REPLAY_TYPE = 'webbrain_provider_replay';
+const ANTHROPIC_REPLAY_VERSION = 1;
+
 /**
  * Provider for Anthropic Claude API (native, not OpenAI-compatible).
  */
@@ -39,8 +42,40 @@ export class AnthropicProvider extends BaseLLMProvider {
     return `${String(this.baseUrl).replace(/\/+$/, '')}/v1/messages`;
   }
 
-  _prepareRequestBody(body, _options = {}, _stream = false) {
-    return body;
+  _prepareRequestBody(body, options = {}, _stream = false) {
+    const prepared = this._mergeConfiguredRequestBody(body, options);
+    const thinkingType = prepared.thinking?.type;
+    if (thinkingType === 'disabled') {
+      // A per-call disable must fully replace configured adaptive/manual fields.
+      prepared.thinking = { type: 'disabled' };
+    } else if (thinkingType === 'adaptive') {
+      delete prepared.thinking.budget_tokens;
+    }
+
+    const forcedToolChoice = ['any', 'tool'].includes(prepared.tool_choice?.type);
+    if (thinkingType === 'enabled' && forcedToolChoice) {
+      // Manual extended thinking rejects forced tool choice. Preserve the
+      // agent's explicit tool contract and disable thinking for this call.
+      delete prepared.thinking;
+    }
+
+    if (!this._supportsTemperatureParameter()) {
+      // Current Opus/Sonnet/Fable/Mythos models reject every non-default
+      // sampling override, even when thinking is omitted or disabled.
+      delete prepared.temperature;
+      delete prepared.top_p;
+      delete prepared.top_k;
+    } else if (prepared.thinking && prepared.thinking.type !== 'disabled') {
+      // Older models reject temperature/top_k while thinking is active and
+      // only accept top_p in the documented 0.95..1 range.
+      delete prepared.temperature;
+      delete prepared.top_k;
+      const topP = Number(prepared.top_p);
+      if (prepared.top_p != null && (!Number.isFinite(topP) || topP < 0.95 || topP > 1)) {
+        delete prepared.top_p;
+      }
+    }
+    return prepared;
   }
 
   _headers() {
@@ -76,6 +111,94 @@ export class AnthropicProvider extends BaseLLMProvider {
     return undefined;
   }
 
+  _reasoningReplayIdentity() {
+    const rawBaseUrl = String(this.baseUrl || '').trim().replace(/\/+$/, '');
+    let endpoint = rawBaseUrl;
+    try {
+      const url = new URL(rawBaseUrl);
+      url.username = '';
+      url.password = '';
+      url.search = '';
+      url.hash = '';
+      endpoint = url.toString().replace(/\/+$/, '');
+    } catch {}
+    return [
+      String(this.name || '').trim().toLowerCase(),
+      String(this.config._providerId || '').trim().toLowerCase(),
+      endpoint,
+      String(this.config.project || '').trim().toLowerCase(),
+      String(this.config.location || '').trim().toLowerCase(),
+    ].join('\n');
+  }
+
+  _isValidReplayContent(content) {
+    if (!Array.isArray(content) || content.length === 0) return false;
+    let hasThinking = false;
+    for (const block of content) {
+      if (!block || typeof block !== 'object' || typeof block.type !== 'string' || !block.type) {
+        return false;
+      }
+      if (block.type === 'thinking') {
+        if (typeof block.thinking !== 'string' || typeof block.signature !== 'string' || !block.signature) {
+          return false;
+        }
+        hasThinking = true;
+      } else if (block.type === 'redacted_thinking') {
+        if (typeof block.data !== 'string' || !block.data) return false;
+        hasThinking = true;
+      } else if (block.type === 'text') {
+        if (typeof block.text !== 'string') return false;
+      } else if (block.type === 'tool_use' && (
+        typeof block.id !== 'string'
+        || !block.id.trim()
+        || typeof block.name !== 'string'
+        || !block.name.trim()
+        || !block.input
+        || typeof block.input !== 'object'
+        || Array.isArray(block.input)
+      )) {
+        return false;
+      }
+    }
+    return hasThinking;
+  }
+
+  _replayState(content) {
+    if (!this._isValidReplayContent(content)) return null;
+    return {
+      type: ANTHROPIC_REPLAY_TYPE,
+      version: ANTHROPIC_REPLAY_VERSION,
+      provider: this.name,
+      model: this.model,
+      providerIdentity: this._reasoningReplayIdentity(),
+      content,
+    };
+  }
+
+  _replayContent(message) {
+    const state = message?._reasoning_replay?.providerState;
+    const replayToolIds = Array.isArray(state?.content)
+      ? state.content.filter(block => block?.type === 'tool_use').map(block => block.id)
+      : [];
+    const messageToolIds = Array.isArray(message?.tool_calls)
+      ? message.tool_calls.map(call => call?.id)
+      : [];
+    const toolCallsMatch = replayToolIds.length === messageToolIds.length
+      && replayToolIds.every((id, index) => id && id === messageToolIds[index]);
+    if (
+      state?.type !== ANTHROPIC_REPLAY_TYPE
+      || state.version !== ANTHROPIC_REPLAY_VERSION
+      || String(state.provider || '').trim().toLowerCase() !== String(this.name).trim().toLowerCase()
+      || String(state.model || '').trim().toLowerCase() !== String(this.model).trim().toLowerCase()
+      || state.providerIdentity !== this._reasoningReplayIdentity()
+      || !this._isValidReplayContent(state.content)
+      || !toolCallsMatch
+    ) {
+      return null;
+    }
+    return state.content;
+  }
+
   /**
    * Convert OpenAI-style messages to Anthropic format.
    * Extracts system message, converts tool_calls/tool results.
@@ -87,6 +210,14 @@ export class AnthropicProvider extends BaseLLMProvider {
     for (const msg of messages) {
       if (msg.role === 'system') {
         system += (system ? '\n\n' : '') + msg.content;
+        continue;
+      }
+
+      const replayContent = msg.role === 'assistant' ? this._replayContent(msg) : null;
+      if (replayContent) {
+        // Signatures and redacted blocks are opaque. Anthropic requires the
+        // complete original block sequence on subsequent tool/user turns.
+        converted.push({ role: 'assistant', content: replayContent });
         continue;
       }
 
@@ -235,13 +366,16 @@ export class AnthropicProvider extends BaseLLMProvider {
       throw new Error('Anthropic returned invalid JSON in chat response.');
     }
 
-    // Extract text content and tool use blocks
+    const responseContent = Array.isArray(data.content) ? data.content : [];
     let content = '';
+    let reasoningContent = '';
     let toolCalls = null;
 
-    for (const block of data.content || []) {
+    for (const block of responseContent) {
       if (block.type === 'text') {
         content += block.text || '';
+      } else if (block.type === 'thinking') {
+        reasoningContent += block.thinking || '';
       } else if (block.type === 'tool_use') {
         if (!toolCalls) toolCalls = [];
         toolCalls.push({
@@ -255,10 +389,19 @@ export class AnthropicProvider extends BaseLLMProvider {
       }
     }
 
+    const replayState = this._replayState(responseContent);
+    const requiresReplay = responseContent.some(block => block?.type === 'tool_use')
+      && responseContent.some(block => block?.type === 'thinking' || block?.type === 'redacted_thinking');
+    if (requiresReplay && !replayState) {
+      throw new Error('Anthropic returned tool use with incomplete signed thinking blocks.');
+    }
+
     return {
       content,
+      reasoningContent,
       toolCalls,
       usage: this._normalizeUsage(data.usage),
+      ...(replayState ? { responseItems: [replayState] } : {}),
       raw: data,
     };
   }
@@ -318,6 +461,10 @@ export class AnthropicProvider extends BaseLLMProvider {
     let sawUsage = false;
     let stopReason = '';
     const accumulatedUsage = {};
+    const streamedBlocks = new Map();
+    let replayValid = true;
+    let sawThinking = false;
+    let sawToolUse = false;
     const updateUsage = (usage) => {
       if (!usage || typeof usage !== 'object') return;
       sawUsage = true;
@@ -373,6 +520,7 @@ export class AnthropicProvider extends BaseLLMProvider {
         try {
           event = JSON.parse(payload);
         } catch (error) {
+          replayValid = false;
           if (this._supportsInteractiveAskStreaming()) {
             throw this._askStreamTransportError(
               `Anthropic stream returned malformed JSON (${error?.message || 'parse failed'}).`,
@@ -391,12 +539,68 @@ export class AnthropicProvider extends BaseLLMProvider {
           updateUsage(event.usage);
           if (event.delta?.stop_reason != null) stopReason = String(event.delta.stop_reason);
         } else if (event.type === 'content_block_delta') {
+          const record = streamedBlocks.get(event.index);
+          const deltaType = event.delta?.type;
+          if (!record || record.stopped) {
+            replayValid = false;
+          } else if (deltaType === 'thinking_delta' && record.block.type === 'thinking') {
+            record.block.thinking += String(event.delta.thinking || '');
+          } else if (deltaType === 'signature_delta' && record.block.type === 'thinking') {
+            record.block.signature += String(event.delta.signature || '');
+          } else if (deltaType === 'text_delta' && record.block.type === 'text') {
+            record.block.text += String(event.delta.text || '');
+          } else if (
+            deltaType === 'citations_delta'
+            && record.block.type === 'text'
+            && event.delta.citation
+            && typeof event.delta.citation === 'object'
+          ) {
+            if (!Array.isArray(record.block.citations)) record.block.citations = [];
+            record.block.citations.push(JSON.parse(JSON.stringify(event.delta.citation)));
+          } else if (deltaType === 'input_json_delta' && record.block.type === 'tool_use') {
+            record.inputJson += String(event.delta.partial_json || '');
+          } else {
+            replayValid = false;
+          }
           if (event.delta?.type === 'text_delta') {
             yield { type: 'text', content: event.delta.text };
+          } else if (event.delta?.type === 'thinking_delta') {
+            yield { type: 'reasoning', content: event.delta.thinking };
           } else if (event.delta?.type === 'input_json_delta') {
             yield { type: 'tool_call_delta', content: event.delta.partial_json };
           }
         } else if (event.type === 'content_block_start') {
+          const index = event.index;
+          const source = event.content_block;
+          if (source?.type === 'thinking' || source?.type === 'redacted_thinking') sawThinking = true;
+          if (source?.type === 'tool_use') sawToolUse = true;
+          if (
+            !Number.isInteger(index)
+            || index !== streamedBlocks.size
+            || streamedBlocks.has(index)
+            || !source
+            || typeof source !== 'object'
+            || typeof source.type !== 'string'
+            || !source.type
+          ) {
+            replayValid = false;
+          } else {
+            let block;
+            try {
+              block = JSON.parse(JSON.stringify(source));
+            } catch {
+              replayValid = false;
+            }
+            if (block) {
+              if (block.type === 'thinking') {
+                block.thinking = typeof block.thinking === 'string' ? block.thinking : '';
+                block.signature = typeof block.signature === 'string' ? block.signature : '';
+              } else if (block.type === 'text') {
+                block.text = typeof block.text === 'string' ? block.text : '';
+              }
+              streamedBlocks.set(index, { block, inputJson: '', stopped: false });
+            }
+          }
           if (event.content_block?.type === 'tool_use') {
             yield {
               type: 'tool_call_start',
@@ -406,13 +610,41 @@ export class AnthropicProvider extends BaseLLMProvider {
               },
             };
           }
+        } else if (event.type === 'content_block_stop') {
+          const record = streamedBlocks.get(event.index);
+          if (!record || record.stopped) {
+            replayValid = false;
+          } else {
+            record.stopped = true;
+            if (record.block.type === 'tool_use' && record.inputJson) {
+              try {
+                const input = JSON.parse(record.inputJson);
+                if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid tool input');
+                record.block.input = input;
+              } catch {
+                replayValid = false;
+              }
+            }
+          }
         } else if (event.type === 'message_stop') {
           const usage = usageChunk();
           if (usage) yield { type: 'usage', usage };
+          let replayState = null;
+          if (replayValid && [...streamedBlocks.values()].every(record => record.stopped)) {
+            const content = [...streamedBlocks.entries()]
+              .sort(([left], [right]) => left - right)
+              .map(([, record]) => record.block);
+            replayState = this._replayState(content);
+          }
+          const requiresReplay = sawThinking && sawToolUse;
+          if (requiresReplay && !replayState) {
+            console.warn('[anthropic] thinking+tool_use stream missing replay state; next turn will lose thinking context.');
+          }
           yield {
             type: 'done',
             content: '',
             ...(stopReason ? { finishReason: stopReason } : {}),
+            ...(replayState ? { responseItems: [replayState] } : {}),
           };
           return;
         }
@@ -425,8 +657,9 @@ export class AnthropicProvider extends BaseLLMProvider {
 
   _supportsTemperatureParameter() {
     const model = String(this.model || '').toLowerCase();
-    if (/^claude-opus-4-(?:[7-9]|[1-9]\d)(?:$|[-_.])/.test(model)) return false;
-    if (/^claude-(?:sonnet|fable|mythos)-5(?:$|[-_.])/.test(model)) return false;
+    if (/^claude-opus-4-(?:[7-9]|[1-9]\d)(?:$|[-_.@])/.test(model)) return false;
+    if (/^claude-(?:opus|sonnet|fable|mythos)-5(?:$|[-_.@])/.test(model)) return false;
+    if (/^claude-mythos-preview(?:$|[-_.@])/.test(model)) return false;
     return true;
   }
 

@@ -52,8 +52,9 @@ export class VertexAnthropicProvider extends AnthropicProvider {
     return `https://${endpointHost}/v1/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(location)}/publishers/anthropic/models/${encodeURIComponent(this.model)}:${action}`;
   }
 
-  _prepareRequestBody(body, _options = {}, stream = false) {
-    const { model: _model, stream: _stream, ...payload } = body;
+  _prepareRequestBody(body, options = {}, stream = false) {
+    const prepared = super._prepareRequestBody(body, options, stream);
+    const { model: _model, stream: _stream, ...payload } = prepared;
     return {
       ...payload,
       anthropic_version: 'vertex-2023-10-16',

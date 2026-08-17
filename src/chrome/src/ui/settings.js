@@ -2290,8 +2290,13 @@ function restoreProviderApiKeyWarnings() {
   }
 }
 
-function supportsProviderCompatibilitySettings(id, config = {}) {
+function supportsProviderCompatibilityControls(id, config = {}) {
   return id !== 'webbrain_cloud' && ['openai', 'llamacpp', 'azure_openai'].includes(config.type);
+}
+
+function supportsProviderCompatibilitySettings(id, config = {}) {
+  return supportsProviderCompatibilityControls(id, config)
+    || ['anthropic', 'anthropic_oauth', 'vertex_anthropic'].includes(config.type);
 }
 
 function providerExtraBodyText(value) {
@@ -2317,6 +2322,14 @@ function automaticTokenField(config) {
 }
 
 function compatibilitySummary(config) {
+  const extraCount = config.extraBody && typeof config.extraBody === 'object' && !Array.isArray(config.extraBody)
+    ? Object.keys(config.extraBody).length
+    : 0;
+  if (['anthropic', 'anthropic_oauth', 'vertex_anthropic'].includes(config.type)) {
+    return extraCount
+      ? t(extraCount === 1 ? 'st.providers.compat.summary_extra' : 'st.providers.compat.summary_extra_plural', { count: extraCount })
+      : t('st.providers.compat.provider_default');
+  }
   const compat = normalizeProviderCompatibility(config);
   const detected = detectedCompatibilityPreset(config);
   const preset = compat.preset === 'auto'
@@ -2329,9 +2342,6 @@ function compatibilitySummary(config) {
     ? prettyCompatibilityValue('system')
     : prettyCompatibilityValue(compat.systemPromptRole);
   const tokens = compat.maxTokensField === 'auto' ? automaticTokenField(config) : compat.maxTokensField;
-  const extraCount = config.extraBody && typeof config.extraBody === 'object' && !Array.isArray(config.extraBody)
-    ? Object.keys(config.extraBody).length
-    : 0;
   const extra = extraCount
     ? t(extraCount === 1 ? 'st.providers.compat.summary_extra' : 'st.providers.compat.summary_extra_plural', { count: extraCount })
     : '';
@@ -2372,6 +2382,7 @@ function refreshProviderCompatibilitySummary(id) {
 
 function renderProviderCompatibilitySettings(id, config) {
   if (!supportsProviderCompatibilitySettings(id, config)) return '';
+  const showCompatibilityControls = supportsProviderCompatibilityControls(id, config);
   const compat = normalizeProviderCompatibility(config);
   const extraBody = providerCompatibilityJsonDrafts.has(id)
     ? providerCompatibilityJsonDrafts.get(id)
@@ -2387,8 +2398,9 @@ function renderProviderCompatibilitySettings(id, config) {
         <span class="provider-compatibility-summary">${escapeHtml(compatibilitySummary(config))}</span>
       </summary>
       <div class="provider-compatibility-body">
-        <p>${escapeHtml(t('st.providers.compat.blurb'))}</p>
-        <div class="provider-compatibility-grid">
+        ${showCompatibilityControls ? `
+          <p>${escapeHtml(t('st.providers.compat.blurb'))}</p>
+          <div class="provider-compatibility-grid">
           <div class="field">
             <label>${escapeHtml(t('st.providers.compat.preset'))}</label>
             <select data-provider="${id}" data-key="compat.preset" data-type="select">
@@ -2413,7 +2425,8 @@ function renderProviderCompatibilitySettings(id, config) {
               ${options([['auto', valueLabel('auto')], ['max_tokens', 'max_tokens'], ['max_completion_tokens', 'max_completion_tokens']], compat.maxTokensField)}
             </select>
           </div>
-        </div>
+          </div>
+        ` : ''}
         <div class="field provider-compatibility-json">
           <label>${escapeHtml(t('st.providers.compat.extra_body'))}</label>
           <textarea data-provider="${id}" data-key="extraBody" data-type="json" spellcheck="false"

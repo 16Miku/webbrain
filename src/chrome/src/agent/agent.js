@@ -2109,8 +2109,49 @@ export class Agent extends LoopDetector {
     return result;
   }
 
+  _containsProviderReplayState(responseItems) {
+    return Array.isArray(responseItems)
+      && responseItems.some(item => item?.type === 'webbrain_provider_replay');
+  }
+
   _withResponseItems(message, responseItems, reasoningContent = '', provider = null) {
     if (Array.isArray(responseItems) && responseItems.length) {
+      const taggedItems = responseItems.filter(item => item?.type === 'webbrain_provider_replay');
+      if (taggedItems.length) {
+        const providerState = responseItems.length === 1 ? taggedItems[0] : null;
+        const providerName = String(provider?.name || '').trim().toLowerCase();
+        const model = String(provider?.model || provider?.config?.model || '').trim().toLowerCase();
+        const providerIdentity = provider?._reasoningReplayIdentity?.();
+        const replayToolIds = Array.isArray(providerState?.content)
+          ? providerState.content.filter(block => block?.type === 'tool_use').map(block => block.id)
+          : [];
+        const messageToolIds = Array.isArray(message?.tool_calls)
+          ? message.tool_calls.map(call => call?.id)
+          : [];
+        const toolCallsMatch = replayToolIds.length === messageToolIds.length
+          && replayToolIds.every((id, index) => id && id === messageToolIds[index]);
+        if (
+          !providerState
+          || providerState.version !== 1
+          || !Array.isArray(providerState.content)
+          || String(providerState.provider || '').trim().toLowerCase() !== providerName
+          || String(providerState.model || '').trim().toLowerCase() !== model
+          || providerState.providerIdentity !== providerIdentity
+          || !toolCallsMatch
+        ) {
+          return message;
+        }
+        return {
+          ...message,
+          _reasoning_replay: {
+            provider: providerName,
+            model,
+            providerState,
+            preserveAcrossTurns: true,
+            ...(messageToolIds.length ? { currentToolLoop: true } : {}),
+          },
+        };
+      }
       return { ...message, response_items: responseItems };
     }
     if (typeof reasoningContent !== 'string' || !reasoningContent) return message;
@@ -16265,6 +16306,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let totalChars = 0;
     let hasImage = false;
     for (const msg of messages) {
+      const messageStartChars = totalChars;
       if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block && (block.type === 'image_url' || block.type === 'image')) {
@@ -16288,6 +16330,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (msg.tool_calls) totalChars += JSON.stringify(msg.tool_calls).length;
       if (msg.response_items) totalChars += JSON.stringify(msg.response_items).length;
       if (typeof msg.reasoning_content === 'string') totalChars += msg.reasoning_content.length;
+      const replayContent = msg._reasoning_replay?.providerState?.content;
+      if (Array.isArray(replayContent)) {
+        // Anthropic sends the native content blocks instead of normalized
+        // content/tool_calls. Count the larger representation, never both.
+        const normalizedChars = totalChars - messageStartChars;
+        totalChars = messageStartChars + Math.max(normalizedChars, JSON.stringify(replayContent).length);
+      }
     }
     if (hasImage) totalChars += Agent.IMAGE_CHAR_COST;
     return totalChars;
@@ -25659,7 +25708,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       // Fallback: if the LLM emitted tool calls as raw text instead of
       // using the structured tool_calls field, try to parse them out.
-      if ((!result.toolCalls || result.toolCalls.length === 0) && result.content) {
+      if (
+        (!result.toolCalls || result.toolCalls.length === 0)
+        && result.content
+        && !this._containsProviderReplayState(result.responseItems)
+      ) {
         const fallback = this._tryParseToolCallsFromText(result.content, allowedToolNames);
         if (fallback.length > 0) {
           this._logDebug({ type: 'llm_text_fallback_parse', step: steps, parsed: fallback.map(tc => tc.function.name) });
@@ -26435,7 +26488,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         // Fallback: parse tool calls from streamed text if structured calls are missing.
-        if (!hasToolCalls && fullText) {
+        if (!hasToolCalls && fullText && !this._containsProviderReplayState(responseItems)) {
           const fallback = this._tryParseToolCallsFromText(fullText, allowedToolNames);
           if (fallback.length > 0) {
             this._logDebug({ type: 'llm_text_fallback_parse', step: steps, parsed: fallback.map(tc => tc.function.name) });
