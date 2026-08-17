@@ -4899,10 +4899,11 @@
                 }
               }
               let removeSubmitObserver = () => {};
+              let submitEvent = null;
               if (form && typeof form.addEventListener === 'function') {
                 const onSubmit = event => {
                   submissionObserved = true;
-                  submissionCancelled = event.defaultPrevented === true;
+                  submitEvent = event;
                 };
                 form.addEventListener('submit', onSubmit, true);
                 removeSubmitObserver = () => form.removeEventListener?.('submit', onSubmit, true);
@@ -4915,7 +4916,7 @@
                   // requestSubmit performs interactive constraint validation and
                   // silently aborts on an invalid form; surface that instead of
                   // reporting a successful submission.
-                  if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+                  if (form.noValidate !== true && typeof form.checkValidity === 'function' && !form.checkValidity()) {
                     return failure(
                       'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
                       { verified: true, submitted: false, invalid: true, ref_id, rect },
@@ -4939,6 +4940,7 @@
                   dispatchKey('keypress', 'Enter', 13);
                   dispatchKey('keyup', 'Enter', 13);
                 }
+                submissionCancelled = submitEvent?.defaultPrevented === true;
                 nativeSubmitAttempted = submissionObserved && !submissionCancelled;
                 submissionOutcomeUnknown = !nativeSubmitAttempted;
               } finally {

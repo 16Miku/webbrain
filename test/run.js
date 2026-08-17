@@ -55076,16 +55076,19 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
       pageSubmitsOnKeydown = false,
       pageUsesDirectSubmitOnKeydown = false,
       submitCancelled = false,
+      noValidate = false,
     } = {}) => {
       const calls = [];
       const submitListeners = [];
       const emitSubmit = () => {
-        const event = { defaultPrevented: submitCancelled };
+        const event = { defaultPrevented: false };
         for (const listener of submitListeners) listener(event);
+        if (submitCancelled) event.defaultPrevented = true;
       };
       const form = {
         requestSubmit: () => { calls.push('requestSubmit'); emitSubmit(); },
         checkValidity,
+        noValidate,
         addEventListener: (type, listener) => { if (type === 'submit') submitListeners.push(listener); },
         removeEventListener: (type, listener) => {
           if (type === 'submit') {
@@ -55152,6 +55155,10 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
     const cancelledSubmit = await exercise({ submitCancelled: true });
     assert.deepEqual(cancelledSubmit.calls, ['requestSubmit'], `${label}: cancelled native submit must not dispatch Enter`);
     assert.deepEqual({ ...cancelledSubmit.result }, { nativeSubmitAttempted: false, submissionOutcomeUnknown: true });
+
+    const noValidate = await exercise({ noValidate: true, checkValidity: () => false });
+    assert.deepEqual(noValidate.calls, ['requestSubmit'], `${label}: novalidate forms must still use native submission`);
+    assert.deepEqual({ ...noValidate.result }, { nativeSubmitAttempted: true, submissionOutcomeUnknown: false });
 
     // Invalid form: surface the silent requestSubmit abort.
     const invalid = await exercise({ checkValidity: () => false });
