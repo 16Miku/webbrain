@@ -48226,19 +48226,23 @@ test('local OpenAI-compatible servers that require a model throw a clear error w
   }
 });
 
-test('LM Studio omits the model field when unset and sends it when configured', () => {
+test('every optional-model local provider omits the model field when unset', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    const empty = new Provider({
-      providerName: 'lmstudio',
-      category: 'local',
-      baseUrl: 'http://localhost:1234/v1',
-    });
-    assert.equal(empty.model, null, 'lmstudio must not fabricate a model id');
-    const body = empty._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {});
-    assert.equal('model' in body, false, 'lmstudio request body must omit model when unset');
+    for (const providerName of ['lmstudio', 'privatemode-ai', 'persisted-custom-local']) {
+      const empty = new Provider({
+        providerName,
+        category: 'local',
+        baseUrl: 'http://localhost:1234/v1',
+      });
+      assert.equal(empty.model, null, `${providerName}: local providers must not fabricate a model id`);
+      const chatBody = empty._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {});
+      assert.equal('model' in chatBody, false, `${providerName}: Chat Completions must omit an unset model`);
+      const responsesBody = empty._responsesBody([{ role: 'user', content: 'hello' }], {}, false);
+      assert.equal('model' in responsesBody, false, `${providerName}: Responses must omit an unset model`);
+    }
 
     const configured = new Provider({
-      providerName: 'lmstudio',
+      providerName: 'persisted-custom-local',
       category: 'local',
       baseUrl: 'http://localhost:1234/v1',
       model: 'llama-3.2-3b',

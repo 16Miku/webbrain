@@ -79,15 +79,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   get model() {
     if (this.config.model) return this.config.model;
     if (this.config.requiresModel) throw new Error(`${this.config.label || this.name} model is required.`);
-    // LM Studio applies the server's own default model when none is
-    // configured (as does llama.cpp, handled by its own provider class).
-    // Local servers that reject an empty model instead carry
-    // `requiresModel: true` in the catalog and throw above, so no local
-    // server ever receives a fabricated model id.
-    if (this.config.category === 'local'
-      && String(this.config.providerName || '').toLowerCase() === 'lmstudio') {
-      return null;
-    }
+    // Some local servers apply their own default when no model is configured.
+    // Others carry `requiresModel: true` and throw above. Treat the category as
+    // the durable boundary so older/custom local entries never inherit a
+    // fabricated cloud model id merely because their provider name is unknown.
+    if (this.config.category === 'local') return null;
     return String(this.config.providerName || '').toLowerCase() === 'openai'
       && this._isOfficialOpenAIBaseUrl()
       ? 'gpt-5.6-terra'
