@@ -49028,6 +49028,46 @@ test('duplicate provider controls are wired through background and settings in b
   }
 });
 
+test('curated core provider model selectors include their built-in defaults', () => {
+  const expectedCuratedProviders = [
+    'alibaba', 'anthropic', 'cloudflare', 'deepseek', 'fireworks', 'gemini', 'groq',
+    'huggingface', 'kimi', 'minimax', 'mistral', 'nvidia', 'openai', 'openrouter',
+    'together', 'xai', 'z_ai',
+  ];
+
+  for (const [label, PM, settingsRel] of [
+    ['chrome', ProviderManagerCh, 'src/chrome/src/ui/settings.js'],
+    ['firefox', ProviderManagerFx, 'src/firefox/src/ui/settings.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const catalogMatch = source.match(/const providerConfigs = \{([\s\S]*?)^  \};\r?$/m);
+    assert.ok(catalogMatch, `${label}: provider config catalog was not found`);
+    const catalog = catalogMatch[1];
+    const blocks = [...catalog.matchAll(/^    ([a-z0-9_]+): \{([\s\S]*?)^    \},/gm)];
+    const defaults = new PM()._defaultConfigs();
+    const curatedProviderIds = [];
+
+    for (const [, id, body] of blocks) {
+      const modelField = body.match(/\{ key: 'model'[\s\S]*?suggestions: \[([\s\S]*?)\] \}/);
+      if (!modelField) continue;
+      curatedProviderIds.push(id);
+      const suggestions = [...modelField[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
+      const defaultModel = defaults[id]?.model;
+      assert.ok(defaultModel, `${label}: curated provider ${id} has no built-in default model`);
+      assert.ok(
+        suggestions.includes(defaultModel),
+        `${label}: ${id} default model ${JSON.stringify(defaultModel)} is shown as Custom`,
+      );
+    }
+
+    assert.deepEqual(
+      curatedProviderIds.sort(),
+      expectedCuratedProviders,
+      `${label}: curated provider model selector coverage changed`,
+    );
+  }
+});
+
 test('_defaultConfigs: every entry carries an explicit category', () => {
   // Walk the actual default config table on each platform and assert
   // each entry has a category field. Catches "I added a provider but
