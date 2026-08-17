@@ -3086,8 +3086,8 @@
   // its only reliable commit path; comboboxes are committed by page JS
   // listeners instead, because submitting the enclosing form while a picker
   // popup is open is usually wrong.
-  function _setFieldUsesNativeSubmit(isCombobox, form) {
-    return !isCombobox && !!form && typeof form.requestSubmit === 'function';
+  function _setFieldUsesNativeSubmit(isCombobox, isContentEditable, form) {
+    return !isCombobox && !isContentEditable && !!form && typeof form.requestSubmit === 'function';
   }
 
   // Above this length the per-candidate rescan below stops being worth its
@@ -4851,6 +4851,7 @@
           let verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
           let fallbackAttempted = false;
           let nativeSubmitAttempted = false;
+          let submissionOutcomeUnknown = false;
           if (!verified) {
             fallbackAttempted = true;
             await _retryFieldWithExecCommand(el, (clear ? '' : prevValue) + text);
@@ -4859,6 +4860,7 @@
           }
 
           if (submit && verified) {
+            submissionOutcomeUnknown = true;
             try {
               const roleAttr = (el.getAttribute && el.getAttribute('role') || '').toLowerCase();
               const controls = el.getAttribute && el.getAttribute('aria-controls');
@@ -4878,30 +4880,12 @@
                 } catch {}
               }
               const dispatchKey = (type, key, keyCode) => {
-                // Return the dispatch result: `false` means the page cancelled
-                // the event (preventDefault), which is how we detect that a
-                // keydown listener already handled Enter.
                 return el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
               };
-              if (isCombobox) {
-                await new Promise(r => setTimeout(r, 80));
-                dispatchKey('keydown', 'ArrowDown', 40);
-                dispatchKey('keyup', 'ArrowDown', 40);
-                await new Promise(r => setTimeout(r, 30));
-              }
               const form = el.form || (el.closest && el.closest('form'));
+              const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
               let submissionObserved = false;
               let submissionCancelled = false;
-              let submissionOutcomeUnknown = false;
-              let removeSubmitObserver = () => {};
-              if (form && typeof form.addEventListener === 'function') {
-                const onSubmit = event => {
-                  submissionObserved = true;
-                  submissionCancelled = event.defaultPrevented === true;
-                };
-                form.addEventListener('submit', onSubmit, true);
-                removeSubmitObserver = () => form.removeEventListener?.('submit', onSubmit, true);
-              }
               if (msg.params?.messageRecipientGuardRequired === true) {
                 const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
@@ -4914,16 +4898,20 @@
                   });
                 }
               }
+              let removeSubmitObserver = () => {};
+              if (form && typeof form.addEventListener === 'function') {
+                const onSubmit = event => {
+                  submissionObserved = true;
+                  submissionCancelled = event.defaultPrevented === true;
+                };
+                form.addEventListener('submit', onSubmit, true);
+                removeSubmitObserver = () => form.removeEventListener?.('submit', onSubmit, true);
+              }
               try {
-                // Always dispatch the Enter trio: bare forms, tag-chip / email
-                // inputs that transform the value on Enter, and contenteditable
-                // composers only commit through their own keydown listener.
-                const enterCancelled = !dispatchKey('keydown', 'Enter', 13);
-                dispatchKey('keypress', 'Enter', 13);
-                dispatchKey('keyup', 'Enter', 13);
-                if (submissionObserved) {
-                  submissionOutcomeUnknown = submissionCancelled;
-                } else if (!enterCancelled && _setFieldUsesNativeSubmit(isCombobox, form)) {
+                if (usesNativeSubmit) {
+                  // Ordinary form controls use one native path. Dispatching a
+                  // synthetic Enter first could make page code act and then
+                  // make this fallback repeat the consequential action.
                   // requestSubmit performs interactive constraint validation and
                   // silently aborts on an invalid form; surface that instead of
                   // reporting a successful submission.
@@ -4935,20 +4923,30 @@
                   }
                   try {
                     form.requestSubmit();
-                  } catch {
-                    submissionOutcomeUnknown = true;
-                  }
-                  if (!submissionObserved) submissionOutcomeUnknown = true;
+                  } catch {}
                 } else {
-                  // preventDefault, combobox handling, contenteditable custom
-                  // handlers, and form-less widgets do not prove submission.
-                  submissionOutcomeUnknown = true;
+                  // Comboboxes, contenteditables, and form-less widgets are
+                  // committed by page-owned keyboard handlers. Never follow
+                  // this path with requestSubmit: cancellation is not proof of
+                  // submission, and an unobserved handler may already have acted.
+                  if (isCombobox) {
+                    await new Promise(r => setTimeout(r, 80));
+                    dispatchKey('keydown', 'ArrowDown', 40);
+                    dispatchKey('keyup', 'ArrowDown', 40);
+                    await new Promise(r => setTimeout(r, 30));
+                  }
+                  dispatchKey('keydown', 'Enter', 13);
+                  dispatchKey('keypress', 'Enter', 13);
+                  dispatchKey('keyup', 'Enter', 13);
                 }
                 nativeSubmitAttempted = submissionObserved && !submissionCancelled;
+                submissionOutcomeUnknown = !nativeSubmitAttempted;
               } finally {
                 removeSubmitObserver();
               }
-            } catch {}
+            } catch {
+              submissionOutcomeUnknown = true;
+            }
           }
           if (!verified) {
             return failure(
