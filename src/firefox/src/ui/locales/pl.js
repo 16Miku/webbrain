@@ -674,6 +674,8 @@ export default {
   'st.display.advanced': 'Zaawansowane',
   ...getApocalypseModeCopy('pl'),
   ...getEmergencyBoxCopy('pl'),
+  'st.providers.webgpu_download.stopping': 'Zatrzymywanie i usuwanie plików…',
+  'st.providers.webgpu_download.stop': 'Zatrzymaj i usuń',
   'st.display.clarify_timeout.label': 'Limit czasu dopytania',
   'st.display.clarify_timeout.desc': 'Jak długo czekać na odpowiedź na dopytanie, zanim automatycznie wybrana zostanie pierwsza opcja (lub upłynie limit, gdy brak opcji). 0 = Natychmiast (zawsze auto-wybór). Powyżej 1200s czekaj bez limitu (Wył.). Domyślnie 60s. Nie dotyczy uprawnień ani potwierdzeń wysyłki formularza.',
   'st.display.clarify_timeout.off': 'Wył.',

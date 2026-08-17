@@ -300,7 +300,15 @@ function resourceById(id) {
 }
 
 async function startDownload(resource, options = {}) {
-  if (!resource || downloads.has(resource.id) || !apocalypseEnabled) return;
+  if (!resource || !apocalypseEnabled) return;
+  const activeEntry = downloads.get(resource.id);
+  if (activeEntry) {
+    if (options.resume !== true) return;
+    activeEntry.controller.abort();
+    if (activeEntry.promise) await activeEntry.promise.catch(() => {});
+    resource = resourceById(resource.id) || resource;
+    if (resource.status === 'ready') return resource;
+  }
   if (options.confirm !== false) {
     const confirmed = globalThis.confirm(t('eb.confirm_download', {
       title: resource.title,
@@ -355,7 +363,7 @@ async function handleDownloadControl(detail = {}) {
   const resource = resourceById(id);
   if (!id || !resource) return;
   if (action === 'pause') downloads.get(id)?.controller.abort();
-  if (action === 'resume') await startDownload(resource, { confirm: false });
+  if (action === 'resume') await startDownload(resource, { confirm: false, resume: true });
   if (action === 'stop') await stopAndDeleteDownload(id);
 }
 
@@ -442,7 +450,9 @@ elements['resource-list'].addEventListener('click', async event => {
   if (!button) return;
   const { action, id } = button.dataset;
   const resource = resourceById(id);
-  if (action === 'download') await startDownload(resource);
+  if (action === 'download') await startDownload(resource, {
+    resume: ['paused', 'error'].includes(resource?.status),
+  });
   if (action === 'pause') downloads.get(id)?.controller.abort();
   if (action === 'read') openReader(resource);
   if (action === 'delete' && globalThis.confirm(t('eb.confirm_delete', { title: resource?.title || id }))) {
@@ -481,6 +491,6 @@ refreshState({ recoverInterrupted: true }).then(async () => {
   globalThis.history.replaceState({}, '', globalThis.location.pathname);
   const resource = resourceById(resumeId);
   if (resource && ['paused', 'error'].includes(resource.status)) {
-    await startDownload(resource, { confirm: false });
+    await startDownload(resource, { confirm: false, resume: true });
   }
 }).catch(error => setNotice(error.message, 'error'));

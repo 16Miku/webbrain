@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'Lanjutan',
   ...getApocalypseModeCopy('ms'),
   ...getEmergencyBoxCopy('ms'),
+  'st.providers.webgpu_download.stopping': 'Menghentikan dan memadam fail…',
+  'st.providers.webgpu_download.stop': 'Hentikan & padam',
   'st.display.clarify_timeout.label': 'Tamat masa penjelasan',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan soalan penjelasan sebelum memilih pilihan pertama secara automatik (atau tamat masa jika tiada pilihan). 0 = Segera (sentiasa auto-pilih). Melebihi 1200s tunggu tanpa had (Mati). Lalai 60s. Tidak digunakan untuk kebenaran atau pengesahan hantar borang.',
   'st.display.clarify_timeout.off': 'Mati',

@@ -22044,6 +22044,92 @@ test('Emergency Box commits partial PDF bytes before recording a paused download
   }
 });
 
+test('Emergency Box serializes competing PDF writers and reuses the verified winner', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyBoxCh], ['firefox', EmergencyBoxFx]]) {
+    const records = new Map();
+    let committed = new Uint8Array();
+    let writerCount = 0;
+    let fetchCount = 0;
+    let firstReadStarted;
+    let allowFirstFinish;
+    const firstReadStartedPromise = new Promise(resolve => { firstReadStarted = resolve; });
+    const allowFirstFinishPromise = new Promise(resolve => { allowFirstFinish = resolve; });
+    const lockQueues = new Map();
+    const lockManager = {
+      async request(name, options, task) {
+        assert.equal(options.mode, 'exclusive', `${label}: PDF writer lock is not exclusive`);
+        const previous = lockQueues.get(name) || Promise.resolve();
+        let release;
+        const held = new Promise(resolve => { release = resolve; });
+        lockQueues.set(name, previous.then(() => held));
+        await previous;
+        try {
+          return await task();
+        } finally {
+          release();
+        }
+      },
+    };
+    const store = {
+      async get(id) { return records.get(id); },
+      async put(record) { records.set(record.id, { ...record }); return record; },
+    };
+    const storage = {
+      async size() { return committed.byteLength; },
+      async open() { return new Blob([committed], { type: 'application/pdf' }); },
+      async createWriter() {
+        writerCount += 1;
+        let working = committed.slice();
+        return {
+          async write(position, bytes) {
+            const expanded = new Uint8Array(Math.max(working.byteLength, position + bytes.byteLength));
+            expanded.set(working);
+            expanded.set(bytes, position);
+            working = expanded;
+          },
+          async truncate(size) { working = working.slice(0, size); },
+          async close() { committed = working; },
+          async abort() {},
+        };
+      },
+      async delete() { committed = new Uint8Array(); },
+    };
+    const pdfBytes = new TextEncoder().encode('%PDF-exclusive-writer');
+    let readCount = 0;
+    const fetchImpl = async () => {
+      fetchCount += 1;
+      if (fetchCount > 1) throw new Error('A verified PDF was downloaded twice.');
+      return {
+        ok: true,
+        status: 200,
+        headers: { get() { return null; } },
+        body: { getReader() { return { async read() {
+          if (readCount === 0) {
+            readCount += 1;
+            firstReadStarted();
+            return { done: false, value: pdfBytes };
+          }
+          await allowFirstFinishPromise;
+          return { done: true };
+        } }; } },
+      };
+    };
+    const resource = { id: 'exclusive-pdf', title: 'Exclusive PDF', url: 'https://example.test/exclusive.pdf' };
+    const first = runtime.downloadEmergencyResource(resource, { store, storage, fetchImpl, lockManager });
+    await firstReadStartedPromise;
+    const second = runtime.downloadEmergencyResource(resource, { store, storage, fetchImpl, lockManager });
+    await Promise.resolve();
+    assert.equal(writerCount, 1, `${label}: a competing download opened a second writer`);
+    assert.equal(fetchCount, 1, `${label}: a competing download fetched while the writer lock was held`);
+    allowFirstFinish();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.equal(firstResult.status, 'ready', `${label}: the lock owner did not finish`);
+    assert.equal(secondResult.status, 'ready', `${label}: the waiting download did not reuse the verified PDF`);
+    assert.equal(writerCount, 1, `${label}: the verified winner was opened for writing again`);
+    assert.equal(fetchCount, 1, `${label}: the verified winner was downloaded again`);
+  }
+});
+
 test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
   const files = [
     'src/agent/apocalypse-mode.js',
@@ -22158,6 +22244,8 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: opening the selected language does not reveal the complete language catalog`);
     assert.match(communicationReaderScript, /Intl\.DisplayNames[\s\S]*?function languageAliases\([\s\S]*?function filterLanguageRows\([\s\S]*?languageMatchScore/,
       `${browser}: language search does not rank names and ISO or PanLex codes`);
+    assert.match(communicationReaderScript, /document\.addEventListener\('wb-locale-changed',[\s\S]*?currentCopy = copyForLocale\(\)[\s\S]*?languageDisplayNameFormatters = createLanguageDisplayNameFormatters\(\)[\s\S]*?rebuildLanguageIndex\(\)[\s\S]*?render\(\)/,
+      `${browser}: communication reader does not rebuild its localized copy and language index after a live locale change`);
     assert.match(communicationReaderScript, /function setLanguageHighlight\([\s\S]*?aria-activedescendant[\s\S]*?event\.key === 'ArrowDown'[\s\S]*?setLanguageHighlight/,
       `${browser}: language picker is not keyboard navigable`);
     assert.match(communicationReaderCss, /\.language-menu\s*\{[\s\S]*?z-index:[\s\S]*?\.language-options\s*\{[\s\S]*?overflow-y:\s*auto/,
@@ -22216,6 +22304,8 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: filtered downloads are not identified as the current view with remaining and total sizes`);
     assert.match(boxScript, /entry\.promise = \(async \(\) =>[\s\S]*?if \(downloads\.get\(resource\.id\) === entry\) downloads\.delete\(resource\.id\)[\s\S]*?async function stopAndDeleteDownload\(id\)[\s\S]*?await entry\.promise\.catch/,
       `${browser}: stop-and-delete does not await the exact active download before removing its record and bytes`);
+    assert.match(boxScript, /const activeEntry = downloads\.get\(resource\.id\)[\s\S]*?options\.resume !== true[\s\S]*?activeEntry\.controller\.abort\(\)[\s\S]*?await activeEntry\.promise\.catch/,
+      `${browser}: Resume can still be silently dropped while an earlier abort is settling`);
     assert.doesNotMatch(boxScript, /attempts\s*<\s*200|setTimeout\(resolve,\s*25\)/,
       `${browser}: stop-and-delete still relies on a time-limited busy-wait`);
     assert.match(boxScript, /if \(bulkDownloadKind === kind\)[\s\S]*?for \(const entry of downloads\.values\(\)\)[\s\S]*?entry\.kind === kind[\s\S]*?entry\.controller\.abort\(\)[\s\S]*?bulkKind: kind/,
@@ -22271,6 +22361,11 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: tracker controls do not route Wikipedia actions to the background archive manager`);
     assert.match(script, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?\?resume=/,
       `${browser}: page-owned PDF controls cannot hand off safely to Emergency Box`);
+    assert.match(script, /action === 'resume'[\s\S]*?signalEmergencyBox\('pause', item\)[\s\S]*?location\.href = `\$\{item\.href\}\?resume=/,
+      `${browser}: cross-page PDF Resume navigates before pausing the old owner`);
+    const emergencyRuntime = fs.readFileSync(path.join(uiDir, '../agent/emergency-box.js'), 'utf8');
+    assert.match(emergencyRuntime, /withEmergencyResourceLock[\s\S]*?navigator\?\.locks[\s\S]*?mode: 'exclusive'[\s\S]*?downloadResolvedEmergencyResource/,
+      `${browser}: PDF downloads do not serialize access to their OPFS writer`);
     assert.match(script, /tracker\.hidden = items\.length === 0/,
       `${browser}: the tracker does not leave the page when there is nothing actionable`);
     assert.match(css, /position:\s*fixed[\s\S]*?right:\s*max\([^;]*safe-area-inset-right[\s\S]*?bottom:\s*max\([^;]*safe-area-inset-bottom/,
@@ -22286,9 +22381,14 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
     const emergencyScript = fs.readFileSync(path.join(uiDir, 'emergency-box.js'), 'utf8');
     assert.match(emergencyScript, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?handleDownloadControl/,
       `${browser}: Emergency Box cannot receive tracker controls from another Apocalypse page`);
-    assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false \}\)/,
+    assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false, resume: true \}\)/,
       `${browser}: tracker Resume handoff does not restart a paused PDF`);
   }
+  const firefoxEnglish = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
+  assert.match(firefoxEnglish, /'st\.providers\.webgpu_download\.stopping': 'Stopping and removing files…'/,
+    'firefox: tracker stopping state is not localized');
+  assert.match(firefoxEnglish, /'st\.providers\.webgpu_download\.stop': 'Stop & remove'/,
+    'firefox: tracker Stop action is not localized');
 });
 
 test('Apocalypse communication slot renders only a bounded fetched bulletin', async () => {
@@ -26639,11 +26739,11 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
     'web: Apocalypse Mode should be a named homepage section');
   assert.match(template, /\{\{t:apocalypse\.label\}\}[\s\S]*?id="apocalypse-title">\{\{t:apocalypse\.title\}\}[\s\S]*?\{\{t:apocalypse\.heading\}\}[\s\S]*?\{\{t:apocalypse\.description\}\}/,
     'web: Apocalypse Mode marketing copy should come from locale sources');
-  assert.match(template, /WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Vision Model[\s\S]*?Wikipedia/,
-    'web: the offline readiness stack should show text, vision, and knowledge layers');
+  assert.match(template, /WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Vision Model[\s\S]*?Wikipedia[\s\S]*?First Aid — U\.S\. Army Field Manual[\s\S]*?EMERGENCY BOX · PDF/,
+    'web: the offline readiness stack should show text, vision, Wikipedia, and first-aid layers');
   assert.doesNotMatch(template, /LFM2\.5 2\.6B|TEXT · WEBGPU · Q4F16/,
     'web: homepage readiness copy should describe the capability without model-build jargon');
-  assert.match(template, /\.apocalypse-shell \{[\s\S]*?grid-template-columns:[\s\S]*?\.apocalypse-module\.is-vision[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-knowledge[\s\S]*?margin-inline-start:/,
+  assert.match(template, /\.apocalypse-shell \{[\s\S]*?grid-template-columns:[\s\S]*?\.apocalypse-module\.is-vision[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-knowledge[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-first-aid[\s\S]*?margin-inline-start:/,
     'web: the readiness stack should keep its asymmetric stepped composition');
   assert.match(template, /\[dir="rtl"\] \.apocalypse-copy[\s\S]*?\[dir="rtl"\] \.apocalypse-module::before/,
     'web: Apocalypse Mode spacing and accents should adapt to RTL locales');
@@ -26662,7 +26762,7 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
       assert.ok(locale[key].trim(), `web/${file}: empty ${key}`);
     }
   }
-  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE/,
+  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Wikipedia[\s\S]*?First Aid — U\.S\. Army Field Manual/,
     'web build: generated English homepage should contain the complete Apocalypse Mode showcase');
 });
 

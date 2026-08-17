@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'Расширенные',
   ...getApocalypseModeCopy('ru'),
   ...getEmergencyBoxCopy('ru'),
+  'st.providers.webgpu_download.stopping': 'Остановка и удаление файлов…',
+  'st.providers.webgpu_download.stop': 'Остановить и удалить',
   'st.display.clarify_timeout.label': 'Таймаут уточнения',
   'st.display.clarify_timeout.desc': 'Сколько ждать ответа на уточняющий вопрос, прежде чем автоматически выбрать первый вариант (или зафиксировать таймаут без вариантов). 0 — сразу (всегда автовыбор). Больше 1200 с — ждать бесконечно (Выкл.). По умолчанию 60 с. Не применяется к разрешениям и подтверждениям отправки форм.',
   'st.display.clarify_timeout.off': 'Выкл.',

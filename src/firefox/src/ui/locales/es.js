@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'Avanzado',
   ...getApocalypseModeCopy('es'),
   ...getEmergencyBoxCopy('es'),
+  'st.providers.webgpu_download.stopping': 'Deteniendo y eliminando archivos…',
+  'st.providers.webgpu_download.stop': 'Detener y eliminar',
   'st.display.clarify_timeout.label': 'Tiempo de espera de aclaración',
   'st.display.clarify_timeout.desc': 'Cuánto esperar una respuesta a una pregunta de aclaración antes de elegir automáticamente la primera opción (o agotar el tiempo si no hay opciones). 0 = Instantáneo (autoelegir siempre). Valores por encima de 1200s esperan indefinidamente (Desactivado). Predeterminado 60s. No se aplica a permisos ni confirmaciones de envío de formularios.',
   'st.display.clarify_timeout.off': 'Desactivado',

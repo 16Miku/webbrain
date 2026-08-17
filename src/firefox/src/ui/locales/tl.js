@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'Advanced',
   ...getApocalypseModeCopy('tl'),
   ...getEmergencyBoxCopy('tl'),
+  'st.providers.webgpu_download.stopping': 'Hinihinto at inaalis ang mga file…',
+  'st.providers.webgpu_download.stop': 'Ihinto at alisin',
   'st.display.clarify_timeout.label': 'Timeout ng clarify',
   'st.display.clarify_timeout.desc': 'Gaano katagal maghintay ng sagot sa clarify bago awtomatikong piliin ang unang opsyon (o mag-timeout kung walang opsyon). 0 = Agad (palaging auto-select). Higit sa 1200s ay walang hangganan (Naka-off). Default 60s. Hindi para sa permission o form-submit confirmations.',
   'st.display.clarify_timeout.off': 'Naka-off',

@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'Lanjutan',
   ...getApocalypseModeCopy('id'),
   ...getEmergencyBoxCopy('id'),
+  'st.providers.webgpu_download.stopping': 'Menghentikan dan menghapus file…',
+  'st.providers.webgpu_download.stop': 'Hentikan & hapus',
   'st.display.clarify_timeout.label': 'Batas waktu klarifikasi',
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan pada prompt klarifikasi sebelum memilih opsi pertama secara otomatis (atau timeout jika tidak ada opsi). 0 = Instan (selalu pilih otomatis). Di atas 1200 detik menunggu tanpa batas (Nonaktif). Default 60 detik. Tidak berlaku untuk izin atau konfirmasi kirim formulir.',
   'st.display.clarify_timeout.off': 'Nonaktif',

@@ -58,10 +58,18 @@ const ESSENTIALS = new Set(['cold', 'come', 'die', 'drink', 'eat', 'fire', 'good
 const BODY = new Set(['belly', 'blood', 'bone', 'breast', 'ear', 'eye', 'fat', 'foot', 'hair', 'hand', 'head', 'hear', 'heart', 'knee', 'liver', 'mouth', 'neck', 'nose', 'skin', 'tongue', 'tooth']);
 const PEOPLE = new Set(['I', 'man', 'many', 'one', 'person', 'that', 'this', 'two', 'we', 'what', 'who', 'woman', 'you']);
 
-const currentCopy = COPY[getLocale()] || COPY.en;
-const languageDisplayNameFormatters = [...new Set(['en', getLocale()])].flatMap(locale => {
-  try { return [new Intl.DisplayNames([locale], { type: 'language' })]; } catch { return []; }
-});
+function copyForLocale() {
+  return COPY[getLocale()] || COPY.en;
+}
+
+function createLanguageDisplayNameFormatters() {
+  return [...new Set(['en', getLocale()])].flatMap(locale => {
+    try { return [new Intl.DisplayNames([locale], { type: 'language' })]; } catch { return []; }
+  });
+}
+
+let currentCopy = copyForLocale();
+let languageDisplayNameFormatters = createLanguageDisplayNameFormatters();
 let currentThemeMode = 'system';
 loadMode().then(mode => { currentThemeMode = mode; applyMode(mode, { syncStorage: false }); });
 watch(() => currentThemeMode);
@@ -126,6 +134,15 @@ function languageAliases(language) {
     } catch {}
   }
   return [...new Set(aliases.filter(Boolean).map(normalizeSearch))];
+}
+
+function rebuildLanguageIndex() {
+  if (!lexicon) return;
+  languageLabels = new Map(lexicon.languages.map(language => [languageLabel(language), language]));
+  languageRows = lexicon.languages.map((language, index) => {
+    const aliases = languageAliases(language);
+    return { language, index, aliases, searchText: aliases.join(' ') };
+  });
 }
 
 function languageMatchScore(row, query) {
@@ -341,6 +358,24 @@ elements['word-dialog'].addEventListener('click', event => {
   if (event.target === elements['word-dialog']) elements['word-dialog'].close();
 });
 
+document.addEventListener('wb-locale-changed', () => {
+  const selectedLabel = selectedLanguage ? languageLabel(selectedLanguage) : '';
+  const pickerQuery = languagePickerOpen && elements['language-input'].value !== selectedLabel
+    ? elements['language-input'].value
+    : '';
+  currentCopy = copyForLocale();
+  languageDisplayNameFormatters = createLanguageDisplayNameFormatters();
+  applyCopy();
+  if (!lexicon) return;
+  rebuildLanguageIndex();
+  elements['concept-count'].textContent = lexicon.conceptCount.toLocaleString(getLocale());
+  elements['language-count'].textContent = lexicon.languageCount.toLocaleString(getLocale());
+  elements['variety-count'].textContent = lexicon.varietyCount.toLocaleString(getLocale());
+  if (languagePickerOpen) renderLanguageOptions(pickerQuery);
+  else if (selectedLanguage) elements['language-input'].value = languageLabel(selectedLanguage);
+  render();
+});
+
 applyCopy();
 try {
   const response = await fetch('./data/panlex-swadesh-110.json');
@@ -349,11 +384,7 @@ try {
   elements['concept-count'].textContent = lexicon.conceptCount.toLocaleString();
   elements['language-count'].textContent = lexicon.languageCount.toLocaleString();
   elements['variety-count'].textContent = lexicon.varietyCount.toLocaleString();
-  languageLabels = new Map(lexicon.languages.map(language => [languageLabel(language), language]));
-  languageRows = lexicon.languages.map((language, index) => {
-    const aliases = languageAliases(language);
-    return { language, index, aliases, searchText: aliases.join(' ') };
-  });
+  rebuildLanguageIndex();
   const preferredUid = DEFAULT_UID[getLocale()] || 'eng-000';
   selectLanguage(lexicon.languages.find(language => language.uid === preferredUid)
     || lexicon.languages.find(language => language.uid === 'eng-000') || lexicon.languages[0], { closePicker: false });

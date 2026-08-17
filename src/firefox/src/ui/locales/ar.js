@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': 'متقدم',
   ...getApocalypseModeCopy('ar'),
   ...getEmergencyBoxCopy('ar'),
+  'st.providers.webgpu_download.stopping': 'جارٍ الإيقاف وحذف الملفات…',
+  'st.providers.webgpu_download.stop': 'إيقاف وحذف',
   'st.display.clarify_timeout.label': 'مهلة التوضيح',
   'st.display.clarify_timeout.desc': 'مدة انتظار الرد على سؤال التوضيح قبل اختيار الخيار الأول تلقائيًا (أو انتهاء المهلة إن لم توجد خيارات). 0 = فوري (اختيار تلقائي دائمًا). أعلى من 1200 ثانية = انتظار بلا حدود (إيقاف). الافتراضي 60 ثانية. لا ينطبق على أذونات أو تأكيدات إرسال النماذج.',
   'st.display.clarify_timeout.off': 'إيقاف',

@@ -683,6 +683,8 @@ export default {
   'st.display.advanced': '詳細設定',
   ...getApocalypseModeCopy('ja'),
   ...getEmergencyBoxCopy('ja'),
+  'st.providers.webgpu_download.stopping': '停止してファイルを削除しています…',
+  'st.providers.webgpu_download.stop': '停止して削除',
   'st.display.clarify_timeout.label': '確認のタイムアウト',
   'st.display.clarify_timeout.desc': 'clarify の返答を待つ時間。経過すると最初の選択肢を自動選択（選択肢がなければタイムアウト）。0 で即時（常に自動選択）。1200 秒超は無制限（オフ）。既定 60 秒。権限やフォーム送信確認には適用されません。',
   'st.display.clarify_timeout.off': 'オフ',
