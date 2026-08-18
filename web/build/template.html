@@ -2240,6 +2240,7 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .download-card {
+      position: relative;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
@@ -2309,6 +2310,38 @@
       background: #2a2a2a;
       border-color: #6f6f6f;
       box-shadow: none;
+    }
+    .edge-unavailable-tip {
+      position: absolute;
+      top: -36px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1;
+      padding: 7px 12px;
+      border-radius: 6px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 10;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .edge-unavailable-tip::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: #1a1a1a;
+    }
+    .download-card-edge.is-disabled:hover .edge-unavailable-tip {
+      opacity: 1;
     }
     .download-row-current .download-card {
       padding: 38px 32px;
@@ -3728,6 +3761,7 @@
         </div>
       </div>
       <div class="download-card download-card-edge is-disabled" data-browser-card="edge" aria-disabled="true">
+        <div class="edge-unavailable-tip" data-edge-tip>Microsoft Edge does not work with Mac/Linux</div>
         <div class="browser-icon"><img src="/assets/browser-edge.svg" alt="" aria-hidden="true"></div>
         <h3>{{t:download.edge.name}}</h3>
         <p>{{t-html:download.edge.desc_html}}</p>
