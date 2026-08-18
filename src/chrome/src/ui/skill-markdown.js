@@ -5,7 +5,7 @@
 
 import { escapeHtml } from './utils.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { renderMarkdownHeadings } from './markdown-render.js';
+import { renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
 
 function renderEmphasis(text) {
   return text
@@ -51,6 +51,8 @@ export function renderSkillMarkdown(content) {
   });
 
   text = escapeHtml(text);
+
+  text = renderMarkdownTables(text);
 
   const quoteBlocks = [];
   text = text.replace(/(?:^[ \t]*&gt;[^\r\n]*(?:\r?\n|$))+/gm, (block) => {
