@@ -326,6 +326,27 @@
       font-size: 0.95em;
     }
     .message-text pre code { padding: 0; background: transparent; }
+    .message-text .markdown-table-wrapper {
+      max-width: 100%;
+      margin: 8px 0;
+      overflow-x: auto;
+    }
+    .message-text table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .message-text th,
+    .message-text td {
+      padding: 5px 7px;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    .message-text th {
+      background: var(--bg3);
+      font-weight: 600;
+    }
     .message-attachments {
       display: flex;
       flex-direction: column;
