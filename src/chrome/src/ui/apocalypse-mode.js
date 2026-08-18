@@ -628,7 +628,18 @@ function renderEmergencyCorpusDownload() {
   const record = corpusRecord;
   const status = record?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
   const active = ['downloading', 'verifying', 'extracting', 'indexing'].includes(status);
-  const progress = Math.max(0, Math.min(100, Math.round(Number(corpusProgress.percent) || 0)));
+  const received = Number(corpusProgress.bytesReceived)
+    || Number(corpusProgress.loaded)
+    || Number(record?.staging?.bytesReceived)
+    || 0;
+  const total = Number(corpusProgress.totalBytes)
+    || Number(corpusProgress.total)
+    || Number(record?.staging?.totalBytes)
+    || Number(EMERGENCY_CORPUS_RELEASE?.downloadBytes)
+    || 0;
+  const progress = total > 0
+    ? Math.max(0, Math.min(100, Math.round((received / total) * 100)))
+    : Math.max(0, Math.min(100, Math.round(Number(corpusProgress.percent) || Number(corpusProgress.progress) || 0)));
 
   elements['emergency-corpus-status'].dataset.kind = status === 'ready' || status === 'error'
     ? status
@@ -676,7 +687,11 @@ function renderSemanticDownload() {
   const state = semanticState || {};
   const status = state.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
   const active = status === 'downloading';
-  const progress = Math.max(0, Math.min(100, Math.round(Number(state.progress) || 0)));
+  const received = Number(state.loaded) || 0;
+  const total = Number(state.total) || 134 * 1024 * 1024;
+  const progress = Number(state.progress) > 0
+    ? Math.max(0, Math.min(100, Math.round(Number(state.progress) * (Number(state.progress) <= 1 ? 100 : 1))))
+    : (total > 0 ? Math.max(0, Math.min(100, Math.round((received / total) * 100))) : 0);
 
   elements['semantic-model-status'].dataset.kind = status === 'ready' || status === 'error'
     ? status
@@ -784,7 +799,12 @@ async function startEmergencyCorpusDownload({ automatic = false } = {}) {
       buildIndex: request => indexClient().buildEmergencyIndex(request),
       deleteIndex: path => indexClient().deleteIndex(path),
       onProgress: (progress) => {
-        corpusProgress = progress || {};
+        if (progress?.staging) {
+          corpusRecord = progress;
+          corpusProgress = progress.staging;
+        } else if (progress) {
+          corpusProgress = progress;
+        }
         renderEmergencyCorpusDownload();
         void ragReadiness.refresh();
       },
