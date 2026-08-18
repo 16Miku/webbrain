@@ -70,13 +70,47 @@ export function validateOfflineRagIndexPath(value) {
   return path;
 }
 
+// A person typing during an emergency misspells words, uses the wrong number or
+// tense, and writes in a language that glues suffixes onto stems. Truncating a
+// token to a prefix covers all three without a language-specific stemmer:
+// "bleedng" and "bleeding" share "blee", "rehydrate" reaches "rehydration", and
+// Turkish "turnike" reaches "turnikeyi". Kept deliberately crude, because it is
+// only ever a second pass after exact matching has come up short.
+const RELAXED_MINIMUM_TOKEN_LENGTH = 5;
+const RELAXED_MINIMUM_PREFIX_LENGTH = 4;
+
+function quoteFts5Token(token) {
+  return `"${token.replace(/"/g, '""')}"`;
+}
+
+export function relaxedFts5Prefix(token) {
+  const value = String(token || '');
+  if (value.length < RELAXED_MINIMUM_TOKEN_LENGTH) return '';
+  const stem = value.slice(0, Math.max(RELAXED_MINIMUM_PREFIX_LENGTH, Math.ceil(value.length / 2)));
+  return stem === value ? '' : stem;
+}
+
 export function buildFts5Query(value, options = {}) {
   const maximumTerms = Math.min(32, Math.max(1, Number(options.maximumTerms) || 24));
-  return tokenizeForLexicalSearch(value, { language: options.language })
+  const tokens = tokenizeForLexicalSearch(value, { language: options.language })
     .filter(token => token.length <= 80)
-    .slice(0, maximumTerms)
-    .map(token => `"${token.replace(/"/g, '""')}"`)
-    .join(' OR ');
+    .slice(0, maximumTerms);
+  if (!tokens.length) return '';
+  if (options.relax !== true) return tokens.map(quoteFts5Token).join(' OR ');
+
+  const terms = [];
+  const seen = new Set();
+  const push = term => {
+    if (seen.has(term)) return;
+    seen.add(term);
+    terms.push(term);
+  };
+  for (const token of tokens) {
+    push(quoteFts5Token(token));
+    const stem = relaxedFts5Prefix(token);
+    if (stem) push(`${quoteFts5Token(stem)}*`);
+  }
+  return terms.join(' OR ');
 }
 
 export function normalizeEmergencyLexicalHits(rows, sourceVersion) {
@@ -269,8 +303,8 @@ export function createOfflineRagIndexClient(options = {}) {
         indexPath: validateOfflineRagIndexPath(indexPath),
       }, { signal, onProgress });
     },
-    async searchEmergency({ indexPath, sourceVersion, query, limit, signal }) {
-      const ftsQuery = buildFts5Query(query);
+    async searchEmergency({ indexPath, sourceVersion, query, limit, signal, relax }) {
+      const ftsQuery = buildFts5Query(query, { relax: relax === true });
       if (!ftsQuery) return [];
       const safeLimit = Math.min(
         MAX_LEXICAL_CANDIDATES_PER_SOURCE,

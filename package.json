@@ -1,11 +1,11 @@
 {
   "name": "webbrain",
   "version": "32.2.1",
-  "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
+  "description": "Open-source AI browser agent \u2014 chat with pages, automate tasks, multi-provider LLM support.",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:toolbar-guard && node test/run.js && npm run test:security",
+    "test": "npm run test:toolbar-guard && node test/run.js && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
     "test:security": "node test/security/injection-corpus.mjs",
     "test:toolbar-guard": "node test/rich-text-toolbar-guard.mjs",
     "test:injection-bench": "node test/llm/run-scenarios.mjs --category prompt-injection",
@@ -25,7 +25,8 @@
     "update:coupon-domains": "node scripts/update-coupon-domains.mjs",
     "sync:logo": "python3 scripts/sync-logo-assets.py && python3 scripts/gen-store-promos.py && node assets/webstore-explainer-2026/render.mjs && node assets/brand-assets-2026-2/render.mjs",
     "bump": "node scripts/bump-version.mjs",
-    "release": "node scripts/bump-version.mjs --release"
+    "release": "node scripts/bump-version.mjs --release",
+    "benchmark:relevance": "node scripts/benchmark-offline-relevance.mjs --verbose"
   },
   "devDependencies": {
     "playwright": "^1.48.0",

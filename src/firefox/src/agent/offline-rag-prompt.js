@@ -130,6 +130,7 @@ export async function retrieveOfflineRagForPrompt(queryValue, options = {}) {
     });
   }
   const retrieval = await options.service.search(query, {
+    semanticQuery: options.semanticQuery,
     sources: options.sources,
     languages: options.languages,
     limit: options.limit,

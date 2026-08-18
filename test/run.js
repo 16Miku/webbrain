@@ -28427,6 +28427,58 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: standalone WebGPU RAG still reserves the old 512-token generation budget');
 });
 
+test('lexical retrieval relaxes only after exact matching comes up short', async () => {
+  for (const [label, indexRuntime, retrievalRuntime] of [
+    ['chrome', OfflineRagIndexCh, OfflineRetrievalCh],
+    ['firefox', OfflineRagIndexFx, OfflineRetrievalFx],
+  ]) {
+    const { buildFts5Query, relaxedFts5Prefix } = indexRuntime;
+
+    assert.equal(relaxedFts5Prefix('burn'), '', `${label}: a short token was truncated into a broad prefix`);
+    assert.equal(relaxedFts5Prefix('bleedng'), 'blee', `${label}: a misspelling did not reduce to a shared prefix`);
+    assert.equal(relaxedFts5Prefix('hypothermai'), 'hypoth', `${label}: a long misspelling truncated too far`);
+    assert.equal(relaxedFts5Prefix('turnike'), 'turn', `${label}: a suffixing language lost its stem`);
+
+    const exact = buildFts5Query('tourniquet bleeding');
+    assert.equal(exact, '"tourniquet" OR "bleeding"', `${label}: exact matching changed shape`);
+    assert.doesNotMatch(exact, /\*/, `${label}: exact matching leaked a prefix wildcard`);
+
+    const relaxed = buildFts5Query('tourniquet bleeding', { relax: true });
+    assert.match(relaxed, /"tourniquet"/, `${label}: the relaxed pass dropped the exact term`);
+    assert.match(relaxed, /"tourn"\*/, `${label}: the relaxed pass did not add a prefix variant`);
+    assert.ok(relaxed.indexOf('"tourniquet"') < relaxed.indexOf('"tourn"*'),
+      `${label}: the relaxed variant was ordered ahead of its exact term`);
+    assert.equal(buildFts5Query('', { relax: true }), '', `${label}: an empty query produced a match expression`);
+
+    // Exact hits must stay ahead of relaxed ones, so a query that already works
+    // cannot be reordered by the retry.
+    const calls = [];
+    const hitsFor = ids => ids.map(id => ({ passageId: id, documentId: id, sourceKind: 'emergency-box' }));
+    const store = { async get() { return { active: { indexPath: 'sqlite/x.sqlite3', version: '1', installId: 'i' }, status: 'ready' }; } };
+    const client = {
+      async searchEmergency({ relax }) {
+        calls.push(relax === true ? 'relaxed' : 'exact');
+        return relax === true ? hitsFor(['relaxed-a', 'exact-1']) : hitsFor(['exact-1', 'exact-2']);
+      },
+    };
+    const thin = await retrievalRuntime.searchEmergencyLexical('anything', { store, indexClient: client });
+    assert.deepEqual(calls, ['exact', 'relaxed'], `${label}: a thin exact result did not trigger the relaxed retry`);
+    assert.deepEqual(thin.hits.map(hit => hit.passageId), ['exact-1', 'exact-2', 'relaxed-a'],
+      `${label}: relaxed hits were not appended after exact hits, or a duplicate survived`);
+
+    calls.length = 0;
+    const wideClient = {
+      async searchEmergency({ relax }) {
+        calls.push(relax === true ? 'relaxed' : 'exact');
+        return hitsFor(['a', 'b', 'c', 'd', 'e', 'f']);
+      },
+    };
+    const wide = await retrievalRuntime.searchEmergencyLexical('anything', { store, indexClient: wideClient });
+    assert.deepEqual(calls, ['exact'], `${label}: a healthy exact result still paid for a relaxed retry`);
+    assert.equal(wide.hits.length, 6, `${label}: a healthy exact result was altered`);
+  }
+});
+
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const statusFor = async (enabled, archives) => {
