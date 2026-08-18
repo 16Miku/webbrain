@@ -22591,6 +22591,114 @@ test('Emergency Box bundles the expanded field library and a stable basic health
   }
 });
 
+test('Emergency Box RAG citations map corpus hits to installed PDF readers', async () => {
+  for (const [label, runtime, prompt, core] of [
+    ['chrome', EmergencyBoxCh, OfflineRagPromptCh, OfflineRagCh],
+    ['firefox', EmergencyBoxFx, OfflineRagPromptFx, OfflineRagFx],
+  ]) {
+    const catalog = runtime.emergencyBoxPdfCatalog();
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-hesperian-en-wtnd-2025-01',
+        title: 'Hesperian EN Wtnd 2025 01',
+      }, catalog)?.id,
+      'health-hesperian-wtnd-01',
+      `${label}: Hesperian corpus chapter did not map to its installed PDF`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-hesperian-en-dent-2024-01',
+        title: 'Hesperian EN Dent 2024 01',
+      }, catalog)?.id,
+      'health-hesperian-dentist-01',
+      `${label}: dentist corpus chapter did not map onto the catalog dentist prefix`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-hesperian-en-hhwl-2012-07',
+        title: 'Hesperian EN Hhwl 2012 07',
+      }, catalog),
+      null,
+      `${label}: a Hesperian chapter not in the PDF catalog still produced a PDF link`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-who-iris-pocket-book-hospital-care-children',
+        title: 'WHO Iris WHO Pocket Book Hospital Care Children',
+        source: 'https://iris.who.int/handle/10665/81170',
+      }, catalog)?.id,
+      'health-who-pocket-hospital-care-children',
+      `${label}: WHO IRIS handle did not map to the installed pocket-book PDF`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-openstax-maternal-newborn-nursing',
+        title: 'Openstax Maternal Newborn Nursing',
+      }, catalog)?.id,
+      'openstax-813',
+      `${label}: OpenStax slug did not map to the catalog PDF`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'first-aid',
+        title: 'First Aid',
+        source: 'https://example.test/first-aid',
+      }, catalog),
+      null,
+      `${label}: a generic first-aid corpus title was over-matched onto an IFRC PDF`,
+    );
+
+    const hit = {
+      sourceKind: 'emergency-box', sourceId: 'v1',
+      documentId: 'offline-hesperian-en-wtnd-2025-01',
+      passageId: 'offline-hesperian-en-wtnd-2025-01:passage-one',
+      title: 'Hesperian EN Wtnd 2025 01', language: 'eng',
+      collection: 'health', locator: 'Home cures',
+      text: 'A cough lasting 14 days or more may be caused by tuberculosis.',
+      passageSha256: 'a'.repeat(64), lexicalRank: 1,
+      readerUrl: core.createEmergencyReaderUrl(
+        'offline-hesperian-en-wtnd-2025-01',
+        'offline-hesperian-en-wtnd-2025-01:passage-one',
+      ),
+    };
+    const missingPdf = await prompt.retrieveOfflineRagForPrompt('cough', {
+      service: {
+        async search() {
+          return {
+            hits: [hit],
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {}, rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+      installedEmergencyPdfIds: [],
+      getExtensionUrl: path => `/${path}`,
+    });
+    assert.equal(missingPdf.references[0].pdfUrl, undefined,
+      `${label}: an uninstalled PDF still received an Open PDF citation`);
+    const installedPdf = await prompt.retrieveOfflineRagForPrompt('cough', {
+      service: {
+        async search() {
+          return {
+            hits: [hit],
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {}, rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+      installedEmergencyPdfIds: ['health-hesperian-wtnd-01'],
+      getExtensionUrl: path => `/${path}`,
+    });
+    assert.equal(installedPdf.references[0].pdfResourceId, 'health-hesperian-wtnd-01',
+      `${label}: installed PDF identity was not attached to the citation`);
+    assert.equal(
+      installedPdf.references[0].pdfUrl,
+      '/src/ui/emergency-pdf.html?id=health-hesperian-wtnd-01',
+      `${label}: installed PDF citation did not open the local PDF reader`,
+    );
+  }
+});
+
 test('Emergency Box All Resources groups communication, health, field manuals, then OpenStax', () => {
   const resources = [
     { id: 'communication', category: 'communication', title: 'Universal Basic Lexicon', status: 'ready' },
@@ -26582,6 +26690,11 @@ test('offline RAG reader targets stay opaque until validated and resolve to loca
       'src/ui/wikipedia-reader.html?id=archive-1&article=Airway_management',
       `${label}: Wikipedia citation did not resolve to its local reader`,
     );
+    assert.equal(
+      runtime.createEmergencyPdfExtensionPath('health-hesperian-wtnd-01'),
+      'src/ui/emergency-pdf.html?id=health-hesperian-wtnd-01',
+      `${label}: Emergency PDF citation did not resolve to its local reader`,
+    );
     assert.throws(
       () => runtime.validateRagReaderUrl('webbrain-reader://emergency-box/%E0%A4%A?passage=valid'),
       error => error?.code === 'invalid-reader-target',
@@ -28008,6 +28121,22 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     );
     assert.equal(runtime.localWikipediaSearchQuery('i have asthma what can i do to help?'), 'asthma',
       `${label}: first-person health question kept stopwords instead of the condition`);
+    assert.match(
+      runtime.localWikipediaSearchQuery(
+        'i have asthma, what should i do using natural remedies to fix it',
+        { fallbackTopic: 'ottoman empire' },
+      ),
+      /asthma/i,
+      `${label}: leftover it reused the prior encyclopedia topic instead of Asthma`,
+    );
+    assert.doesNotMatch(
+      runtime.localWikipediaSearchQuery(
+        'i have asthma, what should i do using natural remedies to fix it',
+        { fallbackTopic: 'ottoman empire' },
+      ),
+      /ottoman/i,
+      `${label}: a new health question stayed pinned to the previous Wikipedia subject`,
+    );
     assert.equal(runtime.localWikipediaSearchQuery('my teeth are decaying what can i do?'), 'teeth decaying',
       `${label}: dental how-to kept leftover function words`);
     assert.equal(runtime.localWikipediaSearchQuery('Who was Ada Lovelace?'), 'Ada Lovelace',
@@ -28096,6 +28225,10 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: a factual Wikipedia failure does not fail closed on both agent entry paths');
   assert.equal((agentSource.match(/standaloneIncompleteAnswerRecoveryAttempted = true;/g) || []).length, 2,
     'chrome: incomplete local answers do not receive one bounded recovery on both agent entry paths');
+  assert.equal((agentSource.match(/standaloneWebgpuBudgetRecoveryAttempted = true;/g) || []).length, 2,
+    'chrome: exhausted WebGPU reasoning budgets do not retry once with a shorter prompt');
+  assert.match(agentSource, /const STANDALONE_WEBGPU_RAG_GENERATION_TOKENS = 2048/,
+    'chrome: standalone WebGPU RAG still reserves the old 512-token generation budget');
 });
 
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
@@ -28254,6 +28387,36 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     'first-person asthma question searched leftover stopwords instead of Asthma');
   assert.deepEqual(healthSources, ['wikipedia', 'emergency-box'],
     'personal health question did not include the Emergency Box pack');
+  let followOnHealthQuery = '';
+  let followOnHealthSources = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'i have asthma, what should i do using natural remedies to fix it' },
+    'i have asthma, what should i do using natural remedies to fix it',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [
+        { role: 'user', content: 'who founded ottoman empire?', webbrainStandaloneChat: true },
+        { role: 'assistant', content: 'Osman I founded the Ottoman Empire.' },
+      ],
+      offlineRetrievalService: {
+        async search(query, options) {
+          followOnHealthQuery = query;
+          followOnHealthSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.match(followOnHealthQuery, /asthma/i,
+    'a new health question after an encyclopedia turn reused the Ottoman search topic');
+  assert.doesNotMatch(followOnHealthQuery, /ottoman/i,
+    'a new health question after an encyclopedia turn stayed on Wikipedia-only Ottoman lookup');
+  assert.deepEqual(followOnHealthSources, ['wikipedia', 'emergency-box'],
+    'a new health question after an encyclopedia turn did not switch into Emergency Box');
   let dentalSources = null;
   let dentalSearchQuery = '';
   await agent._applyStandaloneWikipediaRag(
@@ -28355,6 +28518,25 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     'Emergency Box attribution did not name the local source and locator');
   assert.match(multiSourceAttributed, /\[Open source\]\(\/src\/ui\/emergency-text\.html\?/,
     'Emergency Box attribution did not render a clickable local reader link');
+  const attributedWithPdf = agent._withStandaloneWikipediaAttribution(
+    'Keep the airway open. ' + offlineReferences[0].citationToken,
+    [{
+      ...offlineReferences[0],
+      pdfResourceId: 'health-ifrc-first-aid-guidelines-2020',
+      pdfUrl: '/src/ui/emergency-pdf.html?id=health-ifrc-first-aid-guidelines-2020',
+    }],
+    { standaloneChat: true, providerId: 'webgpu' },
+  );
+  assert.match(
+    attributedWithPdf,
+    /\[Open source\]\(\/src\/ui\/emergency-text\.html\?.*\) · \[Open PDF\]\(\/src\/ui\/emergency-pdf\.html\?id=health-ifrc-first-aid-guidelines-2020\)/,
+    'Emergency Box attribution did not add a clickable installed PDF link',
+  );
+  assert.match(
+    sanitizeMarkdownLinks(attributedWithPdf),
+    /<a href="\/src\/ui\/emergency-pdf\.html\?id=health-ifrc-first-aid-guidelines-2020"/,
+    'the sidepanel sanitizer did not preserve the installed PDF as a clickable link',
+  );
   assert.match(sanitizeMarkdownLinks(multiSourceAttributed), /<a href="\/src\/ui\/emergency-text\.html\?[^\"]+"/,
     'the sidepanel sanitizer did not preserve the local reader as a clickable link');
   assert.match(
@@ -49609,7 +49791,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /function textDtypeKey\(dtype\)/);
   assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
-  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 512/);
+  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
@@ -50147,7 +50329,7 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       temperature: 0.1,
       top_k: 50,
       repetition_penalty: 1.1,
-      max_new_tokens: 512,
+      max_new_tokens: 2048,
       tools: undefined,
       tokenizer_encode_kwargs: { preserve_thinking: false },
     }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');

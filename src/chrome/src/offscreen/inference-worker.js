@@ -24,7 +24,7 @@ const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 const TEXT_DOWNLOAD_EVENT = 'text-download-state';
 const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
 const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
-const WEBGPU_LFM25_MAX_NEW_TOKENS = 512;
+const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048;
 function createWebGpuTextSessionOptions() {
   return {
     extra: {

@@ -1,6 +1,15 @@
 /** Trusted prompt policy and structured citation bridge for offline retrieval. */
 
-import { assembleRagEvidence, ragReaderExtensionPath } from './offline-rag.js';
+import {
+  createEmergencyBoxStore,
+  emergencyBoxPdfCatalog,
+  matchEmergencyBoxPdfResource,
+} from './emergency-box.js';
+import {
+  assembleRagEvidence,
+  createEmergencyPdfExtensionPath,
+  ragReaderExtensionPath,
+} from './offline-rag.js';
 
 function retrievalStatus(statuses, hasEvidence) {
   if (hasEvidence) return 'matched';
@@ -20,12 +29,59 @@ function retrievalStatus(statuses, hasEvidence) {
   return 'no_match';
 }
 
-function readerHref(readerUrl, options) {
-  const relativePath = ragReaderExtensionPath(readerUrl);
+function extensionHref(relativePath, options) {
+  const path = String(relativePath || '').replace(/^\/+/, '');
   const getExtensionUrl = options.getExtensionUrl;
   return typeof getExtensionUrl === 'function'
-    ? getExtensionUrl(relativePath)
-    : `/${relativePath.replace(/^\/+/, '')}`;
+    ? getExtensionUrl(path)
+    : `/${path}`;
+}
+
+function readerHref(readerUrl, options) {
+  return extensionHref(ragReaderExtensionPath(readerUrl), options);
+}
+
+function installedEmergencyPdfIdSet(value) {
+  if (value instanceof Set) return value;
+  return new Set(Array.isArray(value) ? value : []);
+}
+
+export async function attachInstalledEmergencyPdfLinks(references, options = {}) {
+  const hits = Array.isArray(references) ? references : [];
+  const emergency = hits.filter(hit => hit?.sourceKind === 'emergency-box');
+  if (!emergency.length) return hits;
+
+  let installed = options.installedEmergencyPdfIds;
+  if (!installed) {
+    try {
+      const records = await (options.emergencyBoxStore || createEmergencyBoxStore()).list();
+      installed = (Array.isArray(records) ? records : [])
+        .filter(record => record?.status === 'ready' && record?.id)
+        .map(record => record.id);
+    } catch {
+      return hits;
+    }
+  }
+  const installedIds = installedEmergencyPdfIdSet(installed);
+  if (!installedIds.size) return hits;
+
+  const catalog = options.emergencyPdfCatalog || emergencyBoxPdfCatalog();
+  return hits.map(reference => {
+    if (reference?.sourceKind !== 'emergency-box') return reference;
+    const resource = matchEmergencyBoxPdfResource(reference, catalog);
+    if (!resource?.id || !installedIds.has(resource.id)) return reference;
+    let pdfPath;
+    try {
+      pdfPath = createEmergencyPdfExtensionPath(resource.id);
+    } catch {
+      return reference;
+    }
+    return Object.freeze({
+      ...reference,
+      pdfResourceId: resource.id,
+      pdfUrl: extensionHref(pdfPath, options),
+    });
+  });
 }
 
 export function offlineRagReferences(assembled, options = {}) {
@@ -90,7 +146,10 @@ export async function retrieveOfflineRagForPrompt(queryValue, options = {}) {
     otherReservedTokens: options.otherReservedTokens,
     maximumEvidenceTokens: options.maximumEvidenceTokens,
   });
-  const references = offlineRagReferences(assembled, options);
+  const references = Object.freeze(await attachInstalledEmergencyPdfLinks(
+    offlineRagReferences(assembled, options),
+    options,
+  ));
   return Object.freeze({
     attempted: true,
     status: retrievalStatus(retrieval.statuses, references.length > 0),

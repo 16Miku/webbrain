@@ -515,6 +515,11 @@ export function createEmergencyReaderUrl(documentId, passageId) {
     + '?passage=' + encodeURIComponent(passage);
 }
 
+export function createEmergencyPdfExtensionPath(resourceId) {
+  const id = safePart(resourceId, 'pdf resource id');
+  return 'src/ui/emergency-pdf.html?id=' + encodeURIComponent(id);
+}
+
 export function createWikipediaReaderUrl(archiveId, articlePath) {
   const archive = safePart(archiveId, 'archive id');
   const path = String(articlePath || '').replace(/^\/+/, '');

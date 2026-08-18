@@ -44,11 +44,25 @@ function stripOfflineQueryStopWords(value, query) {
   return kept.join(' ').trim();
 }
 
+const FOLLOW_UP_GENERIC_TERMS = new Set([
+  'age', 'birth', 'born', 'date', 'death', 'died', 'husband', 'lifespan', 'name', 'sign', 'wife', 'zodiac',
+]);
+
+function distinctiveFollowUpTerms(extractedTopic, fallbackTopic) {
+  const fallbackTerms = new Set(
+    tokenizeOfflineQuery(fallbackTopic).map(term => foldOfflineQueryToken(term)).filter(term => term.length >= 2),
+  );
+  return tokenizeOfflineQuery(extractedTopic)
+    .map(term => foldOfflineQueryToken(term))
+    .filter(term => term.length >= 4
+      && !fallbackTerms.has(term)
+      && !FOLLOW_UP_GENERIC_TERMS.has(term)
+      && !isOfflineQueryStopWord(term, extractedTopic));
+}
+
 export function localWikipediaSearchQuery(value, options = {}) {
   const source = String(value || '').trim();
   const fallbackTopic = String(options.fallbackTopic || '').trim();
-  const contextualFollowUp = /\b(?:he|him|his|she|her|hers|they|them|their|theirs|it|its|this|that)\b/i.test(source);
-  if (contextualFollowUp && fallbackTopic) return fallbackTopic;
   const reduced = source
     .replace(/[?？!！.]+$/g, '')
     .replace(/[,;:]+/g, ' ')
@@ -65,7 +79,12 @@ export function localWikipediaSearchQuery(value, options = {}) {
     .replace(/\s+born$/i, '')
     .replace(/\s+(?:work|mean)$/i, '')
     .trim();
-  return stripOfflineQueryStopWords(reduced, source) || fallbackTopic;
+  const topic = stripOfflineQueryStopWords(reduced, source);
+  const contextualFollowUp = /\b(?:he|him|his|she|her|hers|they|them|their|theirs|it|its|this|that)\b/i.test(source);
+  if (contextualFollowUp && fallbackTopic && distinctiveFollowUpTerms(topic, fallbackTopic).length === 0) {
+    return fallbackTopic;
+  }
+  return topic || fallbackTopic;
 }
 
 function localRagTerms(value) {

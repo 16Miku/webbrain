@@ -15,7 +15,7 @@ Model weights are not bundled. Transformers.js downloads each WebGPU model on
 first use and stores it in the browser cache. LFM2.5 2.6B uses the standard
 `q4f16` graph (about 1.55 GB). It is available only through the nuclear control
 in standalone chat and does not replace the user's globally selected provider.
-The LFM2.5 text model uses its official reasoning template and a 512-token generation budget;
+The LFM2.5 text model uses its official reasoning template and a 2048-token generation budget;
 reasoning before `</think>` is kept out of visible answers. LFM2.5-VL uses:
 
 - `embed_tokens`: FP16

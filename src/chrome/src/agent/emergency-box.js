@@ -411,6 +411,179 @@ export function selectEmergencyBoxBasicResources(
   return (Array.isArray(resources) ? resources : []).filter(resource => resource?.basic === true);
 }
 
+const HESPERIAN_CORPUS_PREFIX_TO_CATALOG = Object.freeze({
+  dent: 'dentist',
+  dentist: 'dentist',
+  wtnd: 'wtnd',
+});
+const PDF_TITLE_STOPWORDS = new Set([
+  'and', 'book', 'box', 'emergency', 'en', 'english', 'for', 'guide', 'guides',
+  'hesperian', 'iris', 'of', 'open', 'openstax', 'pdf', 'source', 'the', 'who',
+]);
+
+export function emergencyBoxPdfCatalog(extra = []) {
+  return [...EMERGENCY_BOX_HEALTH_RESOURCES, ...PREFETCHED_OPENSTAX_CATALOG, ...(Array.isArray(extra) ? extra : [])];
+}
+
+function isEmergencyPdfCatalogResource(resource) {
+  return !!resource?.id
+    && resource.format !== 'lexicon'
+    && resource.reader !== 'emergency-communication.html'
+    && resource.builtIn !== true;
+}
+
+function canonicalEmergencyUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (!/^https?:$/i.test(url.protocol)) return '';
+    url.hash = '';
+    url.search = '';
+    url.hostname = url.hostname.toLowerCase();
+    url.pathname = decodeURIComponent(url.pathname).replace(/\/+$/, '') || '/';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+function irisHandleFromValue(value) {
+  const match = String(value || '').match(/10665\/(\d+)/);
+  return match ? `10665/${match[1]}` : '';
+}
+
+function archiveIdentifierFromValue(value) {
+  const match = String(value || '').match(/archive\.org\/(?:details|download)\/([^/?#]+)/i);
+  try {
+    return match ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return match ? match[1] : '';
+  }
+}
+
+function openstaxSlugFromValue(value) {
+  const match = String(value || '').toLowerCase().match(/(?:^|\/)(?:books|details\/books)\/([^/?#]+)/);
+  try {
+    return match ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return match ? match[1] : '';
+  }
+}
+
+function openstaxSlugsFromDocumentId(documentId) {
+  const raw = String(documentId || '').toLowerCase();
+  if (!raw.startsWith('offline-openstax-')) return [];
+  const rest = raw.slice('offline-openstax-'.length);
+  const slugs = [rest];
+  const languagePrefixed = rest.match(/^(?:en|eng|es|spa|fr|fra|de|deu|pt|por)-(.+)$/);
+  if (languagePrefixed) slugs.push(languagePrefixed[1]);
+  return slugs;
+}
+
+function slugifyEmergencyTitle(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function emergencyTitleTokens(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length >= 3 && !/^\d+$/.test(token) && !PDF_TITLE_STOPWORDS.has(token));
+}
+
+function hyphenParts(value) {
+  return String(value || '').toLowerCase().split(/[-_]+/).filter(Boolean);
+}
+
+function documentIdHasCatalogParts(documentId, parts) {
+  const haystack = `-${String(documentId || '').toLowerCase()}-`;
+  return parts.length >= 2 && parts.every(part => haystack.includes(`-${part}-`));
+}
+
+function pickUniquePdfMatch(matches) {
+  const ranked = [...matches].sort((left, right) => (Number(right.score) || 0) - (Number(left.score) || 0));
+  if (!ranked.length) return null;
+  if (ranked.length > 1 && ranked[0].score === ranked[1].score) return null;
+  return ranked[0].resource;
+}
+
+export function matchEmergencyBoxPdfResource(citation = {}, catalog = emergencyBoxPdfCatalog()) {
+  const resources = (Array.isArray(catalog) ? catalog : []).filter(isEmergencyPdfCatalogResource);
+  if (!resources.length) return null;
+  const documentId = String(citation?.documentId || '').trim().toLowerCase();
+  const source = String(citation?.source || citation?.sourceUrl || '').trim();
+  const title = String(citation?.title || '').trim();
+  const canonicalSource = canonicalEmergencyUrl(source);
+  const handle = irisHandleFromValue(source) || irisHandleFromValue(documentId);
+  const archiveId = archiveIdentifierFromValue(source);
+  const openstaxSlugs = new Set([
+    ...openstaxSlugsFromDocumentId(documentId),
+    openstaxSlugFromValue(source),
+    slugifyEmergencyTitle(title.replace(/^openstax\s+/i, '')),
+  ].filter(Boolean));
+
+  if (canonicalSource) {
+    const byUrl = resources.find(resource => (
+      canonicalEmergencyUrl(resource.url) === canonicalSource
+      || canonicalEmergencyUrl(resource.sourceUrl) === canonicalSource
+    ));
+    if (byUrl) return byUrl;
+  }
+  if (handle) {
+    const byHandle = resources.find(resource => String(resource.whoHandle || '') === handle);
+    if (byHandle) return byHandle;
+  }
+  if (archiveId) {
+    const byArchive = resources.find(resource => String(resource.archiveIdentifier || '') === archiveId);
+    if (byArchive) return byArchive;
+  }
+
+  const hesperian = documentId.match(/^offline-hesperian-[a-z]{2,3}-([a-z]+)(?:-\d{4})?-([a-z0-9]+)$/);
+  if (hesperian) {
+    const prefix = HESPERIAN_CORPUS_PREFIX_TO_CATALOG[hesperian[1]] || hesperian[1];
+    const id = `health-hesperian-${prefix}-${hesperian[2]}`;
+    const byHesperian = resources.find(resource => resource.id === id);
+    if (byHesperian) return byHesperian;
+  }
+
+  if (documentId.startsWith('offline-openstax-') || /^openstax /i.test(title) || openstaxSlugFromValue(source)) {
+    const bySlug = resources.find(resource => {
+      if (!String(resource.id || '').startsWith('openstax-')) return false;
+      const resourceSlug = openstaxSlugFromValue(resource.sourceUrl) || slugifyEmergencyTitle(resource.title);
+      return resourceSlug && openstaxSlugs.has(resourceSlug);
+    });
+    if (bySlug) return bySlug;
+  }
+
+  if (documentId) {
+    const idMatches = [];
+    for (const resource of resources) {
+      const parts = hyphenParts(String(resource.id || '').replace(/^(?:health|field|openstax)-/, ''));
+      if (!documentIdHasCatalogParts(documentId, parts)) continue;
+      idMatches.push({ resource, score: parts.length });
+    }
+    const unique = pickUniquePdfMatch(idMatches);
+    if (unique) return unique;
+  }
+
+  const citationTokens = emergencyTitleTokens(title);
+  if (citationTokens.length >= 3) {
+    const citationSet = new Set(citationTokens);
+    const titleMatches = [];
+    for (const resource of resources) {
+      const catalogTokens = emergencyTitleTokens(resource.title);
+      if (catalogTokens.length < 3) continue;
+      const overlap = catalogTokens.filter(token => citationSet.has(token)).length;
+      const coverage = overlap / catalogTokens.length;
+      if (overlap < 3 || coverage < 0.8) continue;
+      titleMatches.push({ resource, score: coverage + (overlap / citationTokens.length) });
+    }
+    const unique = pickUniquePdfMatch(titleMatches);
+    if (unique) return unique;
+  }
+  return null;
+}
+
 function idbRequest(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);

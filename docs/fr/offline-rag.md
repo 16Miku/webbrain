@@ -8,44 +8,83 @@ corpus de textes Emergency Box — une collection de documents de référence
 publics couvrant des domaines médicaux, de survie, d'éducation et de
 communication.
 
+Le chat WebGPU autonome n'a aucun outil. Les passages récupérés sont d'abord
+injectés dans le prompt ; le modèle répond à partir de ces preuves ou
+indique qu'il ne peut pas.
+
 ## Nouveautés
 
 - **Corpus de textes Emergency Box.** Un ZIP vérifié d'environ 502 Mo contenant
   environ 570 documents en texte brut du domaine public (environ 304 Mo de
   texte source) distribué depuis le dépôt `webbrain-one/emergency-box-corpus`.
-  Les documents sont des références dérivées de PDF dans plusieurs langues.
-- **Recherche full-text hors ligne.** Recherche BM25 SQLite FTS5 couvrant les
-  archives Wikipedia et le corpus d'urgence. La base de données FTS5 est
-  pré-construite et livrée dans le ZIP du corpus, de sorte que le navigateur
-  n'a jamais à la construire.
-- **Recherche vectorielle sémantique.** Un modèle E5 multilingue quantifié en
-  int8 (`Xenova/multilingual-e5-small`, téléchargement d'environ 140 Mo) offre
-  une recherche vectorielle par cosinus sur des embeddings de passages également
-  pré-calculés et livrés dans le ZIP.
-- **Reclassement E5.** Lorsque l'index vectoriel pré-construit n'est pas
+  Les documents sont des références dérivées de PDF dans plusieurs langues. Les
+  PDF Emergency Box installés forment une étagère de lecture séparée et **ne
+  sont pas** recherchés par ce chemin RAG.
+- **Deux moteurs de récupération, pas un.** Wikipedia utilise l'index de
+  **titres** Kiwix/ZIM installé (`title-only`). Emergency Box utilise un index
+  SQLite **FTS5 BM25** préconstruit livré dans le ZIP du corpus. Wikipedia n'est
+  pas FTS5, et le runtime Xapian de recherche full-text ZIM reste sous licence
+  GPL et n'est pas empaqueté.
+- **Recherche vectorielle sémantique (Emergency Box uniquement).** Un modèle E5
+  multilingue quantifié en int8 (`Xenova/multilingual-e5-small`, téléchargement
+  d'environ 140 Mo) offre une recherche par similarité cosinus sur des
+  embeddings de passages également précalculés et livrés dans le ZIP.
+- **Reclassement E5.** Lorsque l'index vectoriel préconstruit n'est pas
   disponible pour une source, les candidats BM25 peuvent être reclassés sur
-  l'appareil en utilisant le même modèle E5.
+  l'appareil avec le même modèle E5. Un E5 absent ou en timeout retombe sur
+  BM25 et est signalé comme `lexical-fallback` (affiché dans le chat comme
+  « keyword fallback »).
 - **Fusion réciproque des classements.** Les résultats lexicaux et sémantiques
-  sont combinés par fusion réciproque des classements, puis diversifiés pour
-  limiter la redondance (max 8 passages, max 2 par document).
-- **Lecteur de citations local.** Chaque citation ouvre une page de lecture
-  locale qui re-hache le document source pour vérifier l'intégrité avant
-  d'afficher le passage. Les citations Emergency Box utilisent
-  `emergency-text.html` ; les citations Wikipedia utilisent
-  `wikipedia-reader.html`. Aucune citation ne navigue vers une page web en
-  direct.
-- **Tableau de bord de disponibilité RAG.** Une nouvelle grille de statut à 4
-  cellules dans le mode Apocalypse et le panneau latéral affiche la
-  disponibilité de la recherche Wikipedia, de la recherche de la bibliothèque
-  d'urgence, du classement sémantique et de la génération de réponses locales
-  de manière indépendante.
-- **Filtres par source et par langue.** Des cases à cocher permettent de
-  limiter la récupération à des sources et langues spécifiques installées. Les
-  filtres persistent entre les sessions.
+  sont combinés par fusion réciproque, puis diversifiés pour limiter la
+  redondance (max 8 passages, max 2 par document). Le chat WebGPU sur
+  l'appareil plafonne aussi les preuves injectées à environ 900 jetons pour que
+  le modèle local puisse terminer sa réponse.
+- **Lecteurs de citations locaux.** Les citations Wikipedia ouvrent
+  `wikipedia-reader.html`. Les citations de passages Emergency Box ouvrent
+  `emergency-text.html` après revérification du document en texte brut. Lorsque
+  le PDF Emergency Box correspondant est installé, la même citation pointe
+  aussi vers `emergency-pdf.html`. Aucune citation ne navigue vers une page web
+  en direct.
+- **Tableau de bord de disponibilité RAG.** Une grille à 4 cellules dans le
+  mode Apocalypse et le panneau latéral affiche indépendamment la recherche
+  Wikipedia, la recherche de la bibliothèque d'urgence, le classement
+  sémantique et la génération de réponses locales.
+- **Filtres par source et par langue.** Des cases à cocher limitent la
+  récupération aux sources et langues installées. Les filtres persistent entre
+  les sessions. Le chat autonome route aussi par requête : les questions
+  encyclopédiques restent sur Wikipedia lorsque les deux sources sont
+  sélectionnées ; les questions de santé personnelle et de premiers secours
+  peuvent utiliser les deux.
 - **Mises à jour transactionnelles du corpus.** Le corpus précédent reste
   actif jusqu'à ce que chaque somme de contrôle de document et l'index soient
   vérifiés. L'activation atomique signifie qu'une mise à jour échouée ne vous
   laisse jamais sans corpus fonctionnel.
+
+## Comment une requête autonome est répondue
+
+1. **Normaliser la requête.** Les préfixes de question sont retirés, puis les
+   mots vides multilingues (listes [ranks.nl](https://www.ranks.nl/stopwords),
+   empaquetées dans `offline-query-stopwords.js`) sont supprimés. Une requête
+   réduite à des mots vides ne retombe pas sur la phrase brute.
+2. **Choisir les sources pour ce tour.** Le routage n'est pas collant. Avec
+   Wikipedia et Emergency Box sélectionnés, les questions encyclopédiques
+   cherchent uniquement Wikipedia. Les questions de santé personnelle et de
+   premiers secours cherchent les deux lorsqu'ils sont prêts. Un suivi par
+   pronom tel que « fix it » après un article d'histoire ne réutilise pas le
+   sujet précédent lorsque le nouveau message a ses propres termes distinctifs.
+3. **Chercher.** Les résultats Wikipedia viennent de l'index de titres ZIM. Les
+   résultats Emergency Box utilisent toujours FTS5 lorsque le pack texte est
+   `ready` ; les vecteurs E5 sont utilisés lorsque le modèle et l'index sont
+   disponibles.
+4. **Fusionner et budgéter.** Les résultats sont fusionnés, diversifiés et
+   encapsulés comme preuves non fiables. La génération WebGPU est plafonnée
+   (actuellement 2048 nouveaux jetons). Si le modèle épuise ce budget dans son
+   raisonnement, WebBrain réessaie avec un prompt de preuves plus court plutôt
+   que d'inventer une réponse.
+5. **Citer localement.** Chaque passage conservé reçoit un jeton stable
+   (`[WB-E-…]` ou équivalent Wikipedia) et une URL de lecteur local. Les
+   citations Emergency Box ajoutent un lien **Open PDF** seulement lorsque ce
+   PDF du catalogue est installé.
 
 ## Sous le capot
 
@@ -59,6 +98,9 @@ agent.js (service worker)
         → offline-rag-worker.js (Web Worker dédié, possède SQLite Wasm + pool SAH OPFS)
 ```
 
+La recherche par titre Wikipedia ne passe pas par SQLite. Elle utilise l'index
+de titres ZIM du mode Apocalypse, puis le même pont de fusion et de citation.
+
 Le document offscreen héberge également le worker de reclassement E5
 (`offline-reranker-worker.js`). Le motif de proxy en couches existe parce que
 les service workers Chrome MV3 ne peuvent pas détenir des handles d'accès
@@ -71,10 +113,11 @@ synchrone OPFS.
 | `offline-rag.js` | Primitives indépendantes du navigateur : découpage, tokenisation, jetons de citation, assemblage de preuves, fusion réciproque des classements, sélection de diversité |
 | `offline-rag-index.js` | Définition du schéma FTS5, format binaire de l'index vectoriel (`WBVE5Q8`), constructeurs de requêtes, normalisation des résultats |
 | `offline-rag-worker.js` | Web Worker dédié possédant le runtime SQLite Wasm et le pool SAH OPFS. Gère la construction d'index, la recherche FTS5, la similarité cosinus par force brute sur les vecteurs int8 |
-| `offline-rag-prompt.js` | Pont de politique de prompt de confiance : assemble les preuves, construit les objets de référence de citation avec `readerUrl` |
-| `offline-retrieval.js` | Orchestre la récupération lexicale Wikipedia + lexicale d'urgence + vectorielle d'urgence + reclassement sémantique, puis la fusion et la diversification |
-| `offline-reranker.js` | Client pour le worker de reclassement E5. Téléchargement/pause/arrêt du modèle, embedding de requête, re classement des candidats |
-| `emergency-corpus.js` | Cycle de vie transactionnel : téléchargements HTTP Range résomables, vérification SHA-256, extraction pilotée par manifeste, stockage OPFS, coordination Web Lock |
+| `offline-rag-prompt.js` | Pont de politique de prompt de confiance : assemble les preuves, construit les objets de référence de citation avec `readerUrl`, et attache une URL de lecteur PDF installé lorsqu'une correspondance existe |
+| `offline-retrieval.js` | Orchestre la recherche par titre Wikipedia + lexicale d'urgence + vectorielle d'urgence + reclassement sémantique, puis la fusion et la diversification |
+| `offline-reranker.js` | Client pour le worker de reclassement E5. Téléchargement/pause/arrêt du modèle, embedding de requête, reclassement des candidats |
+| `offline-query-stopwords.js` | Listes de mots vides ranks.nl utilisées avant la recherche Wikipedia et Emergency |
+| `emergency-corpus.js` | Cycle de vie transactionnel : téléchargements HTTP Range résumables, vérification SHA-256, extraction pilotée par manifeste, stockage OPFS, coordination Web Lock |
 | `emergency-corpus-release.js` | Pointeur de version : URL épinglée, SHA-256, nombre d'octets, nombre de passages pour le corpus actuel |
 | `zim-xapian.js` | Adaptateur sous licence pour la recherche full-text Wikipedia ZIM (actuellement bloqué en attendant la décision GPL) |
 
@@ -84,9 +127,12 @@ synchrone OPFS.
   - `.webbrain-offline-rag-sahpool-v1/` — répertoire du pool SAH SQLite
   - `webbrain-offline-rag/emergency-box-text/downloads/` et `installs/` — fichiers du corpus d'urgence
 - **IndexedDB** (`webbrain_offline_rag`) : état du cycle de vie du corpus, version active, manifeste, ID d'installation, chemin d'index, déclaration d'index vectoriel
+- **IndexedDB** (`webbrain_emergency_box`) : enregistrements PDF/ressources installés utilisés pour les liens **Open PDF**
 - **Cache hérité passage-vector** : plafonné à 256 Mo
 
 ### Schéma FTS5
+
+FTS5 indexe **uniquement les passages Emergency Box**.
 
 ```sql
 CREATE VIRTUAL TABLE passages USING fts5(
@@ -121,18 +167,21 @@ Les documents sont découpés en passages de 180 à 700 jetons (cible ~420) :
 
 ### Modes de récupération
 
+Ces modes s'appliquent au classement Emergency Box. Wikipedia reste title-only.
+
 | Mode | Description |
 | --- | --- |
-| `hybrid-full-vector` | Vecteurs E5 pré-construits utilisés directement (Emergency Box) |
+| `hybrid-full-vector` | Vecteurs E5 préconstruits utilisés directement (Emergency Box) |
 | `semantic-reranked` | Reclassement E5 sur les candidats BM25 |
-| `lexical-fallback` | BM25 uniquement (pas de modèle E5 disponible) |
+| `lexical-fallback` | BM25 uniquement (pas de modèle E5 disponible ou E5 en timeout) |
 
 ### Dégradation gracieuse
 
-- Sans E5 : retour à la recherche lexicale BM25
+- Sans E5 : Emergency Box retombe sur la recherche lexicale BM25
 - Sans Emergency Box : recherche uniquement dans les sources Wikipedia
 - Sans les deux : signalisation de recherche hors ligne indisponible
 - Recherche full-text Wikipedia Xapian : bloquée en attendant la décision de licence GPL ; la recherche par titre uniquement reste disponible
+- Récupération vide : le modèle local ne doit pas inventer de conseil médical
 
 ## Bibliothèques vendored
 
@@ -143,7 +192,7 @@ les données de corpus sont téléchargés par l'utilisateur.
 | Bibliothèque | Version | Licence | Rôle |
 | --- | --- | --- | --- |
 | fflate | 0,8,3 | MIT | Décompression ZIP en streaming |
-| SQLite Wasm | 3,53,0-build1 | Apache-2.0 | Moteur de recherche full-text FTS5 |
+| SQLite Wasm | 3,53,0-build1 | Apache-2.0 | Recherche full-text FTS5 pour le corpus Emergency Box |
 | Transformers.js | 4,2,0 | Apache-2.0 | Runtime d'inférence E5 |
 | ONNX Runtime Web | 1,27,0 | MIT | Backend d'inférence WASM/GPU |
 | Modèle E5 | multilingual-e5-small q8 | Apache-2.0 | Embeddings sémantiques (téléchargé séparément) |
