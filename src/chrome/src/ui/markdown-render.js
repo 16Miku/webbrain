@@ -216,3 +216,73 @@ export function renderMarkdownHeadings(text) {
     }
   );
 }
+
+function splitMarkdownTableRow(line) {
+  let source = String(line || '').trim();
+  if (!source.includes('|')) return null;
+  if (source.startsWith('|')) source = source.slice(1);
+  // A trailing escaped pipe belongs to the cell instead of closing the row.
+  if (source.endsWith('|') && !source.endsWith('\\|')) source = source.slice(0, -1);
+
+  const cells = [];
+  let cell = '';
+  for (let i = 0; i < source.length; i += 1) {
+    const character = source[i];
+    if (character === '\\' && source[i + 1] === '|') {
+      cell += '|';
+      i += 1;
+    } else if (character === '|') {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += character;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function markdownTableSeparator(cell) {
+  return /^:?-{3,}:?$/.test(cell);
+}
+
+function renderMarkdownTableRow(cells, tag) {
+  return `<tr>${cells.map((cell) => `<${tag}>${cell}</${tag}>`).join('')}</tr>`;
+}
+
+/** Convert GitHub-style pipe tables after the caller has escaped source HTML. */
+export function renderMarkdownTables(text) {
+  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  const rendered = [];
+
+  for (let index = 0; index < lines.length;) {
+    const header = splitMarkdownTableRow(lines[index]);
+    const separator = splitMarkdownTableRow(lines[index + 1]);
+    const isTable = header?.length > 0
+      && separator?.length === header.length
+      && separator.every(markdownTableSeparator);
+    if (!isTable) {
+      rendered.push(lines[index]);
+      index += 1;
+      continue;
+    }
+
+    const body = [];
+    let next = index + 2;
+    while (next < lines.length) {
+      const row = splitMarkdownTableRow(lines[next]);
+      if (!row) break;
+      body.push(row.length < header.length
+        ? [...row, ...Array(header.length - row.length).fill('')]
+        : row.slice(0, header.length));
+      next += 1;
+    }
+
+    const headerRow = renderMarkdownTableRow(header, 'th');
+    const bodyRows = body.map((row) => renderMarkdownTableRow(row, 'td'));
+    rendered.push(`<div class="markdown-table-wrapper"><table><thead>${headerRow}</thead><tbody>${bodyRows.join('')}</tbody></table></div>`);
+    index = next;
+  }
+
+  return rendered.join('\n');
+}
