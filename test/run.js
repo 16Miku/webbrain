@@ -249,6 +249,9 @@ function binaryResponse(status, body = 'media-bytes', contentType = 'video/mp4',
 // adapters.js is pure ESM with no chrome.* deps — import directly.
 const {
   getActiveAdapter,
+  getCarouselNavigationPolicy,
+  getCarouselNavigationTarget,
+  parseCarouselSlideCount,
   getFullPageCapturePolicy,
   getMessageRecipientGuardPolicy,
   listAdapters,
@@ -258,6 +261,9 @@ const {
 );
 const {
   getActiveAdapter: getActiveAdapterFx,
+  getCarouselNavigationPolicy: getCarouselNavigationPolicyFx,
+  getCarouselNavigationTarget: getCarouselNavigationTargetFx,
+  parseCarouselSlideCount: parseCarouselSlideCountFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
   getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
   listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
@@ -517,6 +523,7 @@ const {
   parseReadScopeFromContent: parseReadScopeFromContentFx,
   fallbackResponseLanguagePolicy: fallbackResponseLanguagePolicyFx,
   normalizeResponseLanguagePolicy: normalizeResponseLanguagePolicyFx,
+  normalizePlan: normalizePlanFx,
   formatResponseLanguagePolicyInstruction: formatResponseLanguagePolicyInstructionFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/planner.js').replace(/\\/g, '/')
@@ -2649,6 +2656,78 @@ test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async (
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
+  }
+});
+
+test('ineffective ArrowRight dispatches are provisional and stop after three no-progress attempts', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 421 : 422;
+    agent._keyProgressSnapshot = async () => 'same-url|same-focus|same-media|same-controls';
+    const loopKinds = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await agent._verifyProvisionalKeyProgress(
+        tabId,
+        'ArrowRight',
+        { success: true, dispatched: true, method: 'test-key' },
+        'same-url|same-focus|same-media|same-controls',
+      );
+      assert.equal(result.success, false, `${label}: ineffective arrow was reported successful`);
+      assert.equal(result.noProgress, true, `${label}: ineffective arrow omitted noProgress`);
+      assert.equal(result.verified, false, `${label}: ineffective arrow was verified`);
+      assert.equal(result.failureScope, 'carousel-forward|keyboard');
+      loopKinds.push(agent._checkLoop(tabId, 'press_keys', { key: 'ArrowRight' }, result).kind);
+    }
+    assert.deepEqual(loopKinds, ['none', 'nudge', 'stop'], `${label}: ineffective arrows did not escalate deterministically`);
+  }
+});
+
+test('arrow keys in an editable field are not treated as failed carousel motion', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 423 : 424;
+    const snapshot = JSON.stringify({
+      page: 'same-url|same-focus|same-media|same-controls',
+      editable: true,
+      caret: '12:12',
+    });
+    agent._keyProgressSnapshot = async () => snapshot;
+    const result = await agent._verifyProvisionalKeyProgress(
+      tabId,
+      'ArrowRight',
+      { success: true, dispatched: true, method: 'test-key' },
+      snapshot,
+    );
+    assert.equal(result.success, true, `${label}: editor caret arrows were failed closed`);
+    assert.notEqual(result.noProgress, true, `${label}: editor caret arrows were marked noProgress`);
+    assert.equal(agent._checkLoop(tabId, 'press_keys', { key: 'ArrowRight' }, result).kind, 'none');
+  }
+});
+
+test('arrow-key caret and scroll changes count as progress', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 425 : 426;
+    agent._keyProgressSnapshot = async () => JSON.stringify({
+      page: 'same-url|same-focus|same-media|same-controls',
+      editable: false,
+      caret: '13:13',
+      scroll: '0:80:0:0',
+    });
+    const result = await agent._verifyProvisionalKeyProgress(
+      tabId,
+      'ArrowRight',
+      { success: true, dispatched: true, method: 'test-key' },
+      JSON.stringify({
+        page: 'same-url|same-focus|same-media|same-controls',
+        editable: false,
+        caret: '12:12',
+        scroll: '0:0:0:0',
+      }),
+    );
+    assert.equal(result.success, true, `${label}: caret/scroll change was ignored`);
+    assert.equal(result.verified, true, `${label}: caret/scroll change was not verified`);
+    assert.equal(result.noProgress, false);
   }
 });
 
@@ -5473,6 +5552,219 @@ test('handles missing url gracefully', () => {
   assert.equal(getActiveAdapter(undefined), null);
 });
 
+test('Instagram carousel adapter exposes deterministic indexed navigation only on post permalinks', () => {
+  for (const [label, getPolicy, getTarget, getTools] of [
+    ['chrome', getCarouselNavigationPolicy, getCarouselNavigationTarget, getToolsForModeCh],
+    ['firefox', getCarouselNavigationPolicyFx, getCarouselNavigationTargetFx, getToolsForModeFx],
+  ]) {
+    const postUrl = 'https://www.instagram.com/p/ABC123/?utm_source=share&img_index=7';
+    const policy = getPolicy(postUrl);
+    assert.equal(policy?.adapterName, 'instagram', `${label}: Instagram adapter policy missing`);
+    assert.equal(policy?.currentIndex, 7, `${label}: current carousel index was not parsed`);
+    assert.equal(policy?.indexParam, 'img_index');
+    assert.equal(policy.canonicalPostUrl, 'https://www.instagram.com/p/ABC123/');
+    const target = getTarget(postUrl, 8);
+    assert.equal(new URL(target.targetUrl).searchParams.get('img_index'), '8');
+    assert.equal(getPolicy('https://www.instagram.com/reel/ABC123/'), null, `${label}: reel incorrectly gained carousel routing`);
+    assert.equal(getTarget(postUrl, 0), null, `${label}: invalid index was accepted`);
+    assert.equal(getTools('act').some(tool => tool.function.name === 'carousel_navigate'), false);
+    assert.equal(getTools('act', { carouselNavigation: true }).some(tool => tool.function.name === 'carousel_navigate'), true);
+  }
+});
+
+test('carousel slide count prefers an explicit total over the current index', () => {
+  for (const [label, parse] of [['chrome', parseCarouselSlideCount], ['firefox', parseCarouselSlideCountFx]]) {
+    assert.equal(parse(['Next', 'Slide 3 of 16', 'Go back']), 16, `${label}: "Slide 3 of 16" used the current index`);
+    assert.equal(parse(['Image 2 / 10']), 10, `${label}: "Image 2 / 10" used the current index`);
+    assert.equal(parse(['Slide 3']), null, `${label}: a lone current-position label was treated as the total`);
+    assert.equal(parse(['Go to slide 1', 'Go to slide 2', 'Go to slide 16']), 16, `${label}: indexed dots did not yield the max`);
+    assert.equal(parse([]), null);
+    assert.equal(parse(null), null);
+  }
+});
+
+test('Instagram carousel navigation enumerates 16 slides monotonically and records 15 hotel rows', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 551 : 552;
+    let currentUrl = 'https://www.instagram.com/p/ABC123/';
+    const recordedRows = [];
+    agent._currentUrl = async () => currentUrl;
+    agent._carouselPageState = async () => {
+      const index = Number(new URL(currentUrl).searchParams.get('img_index')) || 1;
+      return {
+        discoveredSlideCount: 16,
+        visibleMediaFingerprint: `slide-${index}`,
+      };
+    };
+    agent._getVisibleInteractiveElements = async () => [];
+    agent.progressExpectedItems.set(tabId, {
+      count: 15,
+      item_type: 'hotel',
+      ordered: true,
+      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
+    });
+    agent._currentProgressSession = () => ({
+      sessionId: 'hotel-session',
+      allowedActions: ['process_item'],
+      pageScope: 'https://www.instagram.com/p/ABC123/',
+    });
+    agent._progressUpdate = (_tabId, payload) => {
+      recordedRows.push(...(payload.items || []));
+      return { success: true };
+    };
+    agent.executeTool = async (_tabId, name, args) => {
+      if (name === 'wait_for_stable') return { success: true, stable: true };
+      assert.equal(name, 'navigate', `${label}: carousel attempted a non-navigation compatibility action`);
+      currentUrl = args.url;
+      return { success: true, dispatched: true, verified: true, url: currentUrl };
+    };
+
+    const results = [];
+    for (let index = 2; index <= 16; index += 1) {
+      results.push(await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index }));
+    }
+    assert.equal(results.every(result => result.success === true && result.verified === true), true, `${label}: monotonic scan failed`);
+    assert.deepEqual(results.map(result => result.resolvedIndex), Array.from({ length: 15 }, (_, index) => index + 2));
+    assert.equal(results.at(-1).terminal, true, `${label}: last slide was not terminal`);
+    assert.equal(results.at(-1).outOfRange, false);
+    assert.deepEqual(recordedRows.map(row => row.id), Array.from({ length: 15 }, (_, index) => `expected:${index + 1}`));
+    assert.deepEqual(recordedRows.map(row => row.fields.carousel_position), Array.from({ length: 15 }, (_, index) => index + 2));
+    assert.equal(recordedRows.every(row => /img_index=/.test(row.fields.evidence_source)), true);
+
+    const reverse = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 15 });
+    assert.equal(reverse.success, false, `${label}: reverse movement was allowed`);
+    assert.equal(reverse.nonMonotonic, true);
+    const outOfRange = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 17 });
+    assert.equal(outOfRange.success, false, `${label}: out-of-range index was accepted`);
+    assert.equal(outOfRange.outOfRange, true);
+    assert.equal(outOfRange.terminal, true);
+
+    agent._latestTaskText = () => 'Traverse this carousel in reverse order.';
+    const reverseStart = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 16 });
+    const reverseNext = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 15 });
+    assert.equal(reverseStart.success, true, `${label}: fresh explicit reverse traversal did not reset monotonic state`);
+    assert.equal(reverseNext.success, true, `${label}: decreasing reverse traversal was rejected`);
+    assert.equal(reverseNext.traversalDirection, 'reverse');
+    const reverseRevisit = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 16 });
+    assert.equal(reverseRevisit.success, false, `${label}: reverse traversal revisited a processed slide`);
+    assert.equal(reverseRevisit.nonMonotonic, true);
+  }
+});
+
+test('Instagram carousel navigation does not invent a cover when slide count equals expected items', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 553 : 554;
+    let currentUrl = 'https://www.instagram.com/p/NO_COVER/';
+    const recordedRows = [];
+    agent._currentUrl = async () => currentUrl;
+    agent._carouselPageState = async () => {
+      const index = Number(new URL(currentUrl).searchParams.get('img_index')) || 1;
+      return {
+        discoveredSlideCount: 15,
+        visibleMediaFingerprint: `slide-${index}`,
+      };
+    };
+    agent._getVisibleInteractiveElements = async () => [];
+    agent.progressExpectedItems.set(tabId, {
+      count: 15,
+      item_type: 'hotel',
+      ordered: true,
+      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
+    });
+    agent._currentProgressSession = () => ({
+      sessionId: 'no-cover-hotel-session',
+      allowedActions: ['process_item'],
+      pageScope: 'https://www.instagram.com/p/NO_COVER/',
+    });
+    agent._progressUpdate = (_tabId, payload) => {
+      recordedRows.push(...(payload.items || []));
+      return { success: true };
+    };
+    agent.executeTool = async (_tabId, name, args) => {
+      if (name === 'wait_for_stable') return { success: true, stable: true };
+      assert.equal(name, 'navigate', `${label}: no-cover scan attempted a compatibility action`);
+      currentUrl = args.url;
+      return { success: true, dispatched: true, verified: true, url: currentUrl };
+    };
+
+    const results = [];
+    for (let index = 1; index <= 15; index += 1) {
+      results.push(await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index }));
+    }
+    assert.equal(results.every(result => result.success === true && result.verified === true), true, `${label}: no-cover scan failed`);
+    assert.deepEqual(recordedRows.map(row => row.id), Array.from({ length: 15 }, (_, index) => `expected:${index + 1}`));
+    assert.deepEqual(recordedRows.map(row => row.fields.carousel_position), Array.from({ length: 15 }, (_, index) => index + 1));
+    assert.equal(recordedRows.some(row => row.id === 'expected:0'), false, `${label}: slide one was still mapped to ordinal zero`);
+  }
+});
+
+test('Instagram carousel navigation fails closed on duplicate media and a stripped img_index contract', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const tabId = label === 'chrome' ? 561 : 562;
+    const makeAgent = () => {
+      const agent = new AgentClass({});
+      agent._getVisibleInteractiveElements = async () => [];
+      return agent;
+    };
+
+    const duplicate = makeAgent();
+    let duplicateUrl = 'https://www.instagram.com/p/DUP/';
+    duplicate._currentUrl = async () => duplicateUrl;
+    duplicate._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: 'same-media' });
+    duplicate.executeTool = async (_tabId, name, args) => {
+      if (name === 'wait_for_stable') return { success: true, stable: true };
+      assert.equal(name, 'navigate');
+      duplicateUrl = args.url;
+      return { success: true, dispatched: true, verified: true };
+    };
+    const duplicateResult = await AgentClass.prototype.executeTool.call(duplicate, tabId, 'carousel_navigate', { index: 2 });
+    assert.equal(duplicateResult.success, false, `${label}: duplicate media was accepted`);
+    assert.equal(duplicateResult.duplicateMedia, true);
+
+    const stripped = makeAgent();
+    let strippedUrl = 'https://www.instagram.com/p/STRIPPED/';
+    stripped._currentUrl = async () => strippedUrl;
+    stripped._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: 'slide-1' });
+    stripped.executeTool = async (_tabId, name) => {
+      if (name === 'wait_for_stable') return { success: true, stable: true };
+      assert.equal(name, 'navigate');
+      strippedUrl = 'https://www.instagram.com/p/STRIPPED/';
+      return { success: true, dispatched: true, verified: true };
+    };
+    const strippedResult = await AgentClass.prototype.executeTool.call(stripped, tabId + 10, 'carousel_navigate', { index: 2 });
+    assert.equal(strippedResult.success, false, `${label}: stripped img_index contract was accepted`);
+    assert.equal(strippedResult.adapterFailure, true);
+    assert.match(strippedResult.error, /did not honor.*img_index/i);
+
+    const compatible = makeAgent();
+    let compatibleUrl = 'https://www.instagram.com/p/COMPAT/';
+    let compatibleFingerprint = 'slide-1';
+    compatible._currentUrl = async () => compatibleUrl;
+    compatible._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: compatibleFingerprint });
+    compatible._getVisibleInteractiveElements = async () => [{ name: 'Next', role: 'button' }];
+    compatible.executeTool = async (_tabId, name) => {
+      if (name === 'wait_for_stable') return { success: true, stable: true };
+      if (name === 'navigate') {
+        compatibleUrl = 'https://www.instagram.com/p/COMPAT/';
+        return { success: true, dispatched: true, verified: true };
+      }
+      assert.equal(name, 'click');
+      compatibleFingerprint = 'slide-2';
+      return { success: true, dispatched: true, verified: true };
+    };
+    const compatibilityResult = await AgentClass.prototype.executeTool.call(compatible, tabId + 20, 'carousel_navigate', { index: 2 });
+    assert.equal(compatibilityResult.success, true, `${label}: one semantic Next compatibility fallback was rejected`);
+    assert.equal(compatibilityResult.compatibilityFallback, true);
+    assert.equal(compatibilityResult.queryContractHonored, false);
+    assert.equal(compatibilityResult.resolvedIndex, 2);
+    const repeatedFallback = await AgentClass.prototype.executeTool.call(compatible, tabId + 20, 'carousel_navigate', { index: 3 });
+    assert.equal(repeatedFallback.success, false, `${label}: compatibility fallback was reused`);
+    assert.equal(repeatedFallback.adapterFailure, true);
+  }
+});
+
 test('every adapter has the required fields', () => {
   for (const a of listAdapters()) {
     assert.ok(a.name, 'name missing');
@@ -6039,7 +6331,10 @@ test('trace export: proves visual delivery without exporting pixels or OCR text'
         runId: 'visual-proof', seq: 2, kind: 'vision_sub_call',
         data: {
           context: 'inspect_viewport',
+          visionRoute: 'local_fallback',
           model: 'vision-sidecar',
+          captureId: 'capture-7',
+          fallbackReason: 'image_payload_rejected',
           latencyMs: 42,
           description: 'PRIVATE OCR DESCRIPTION',
         },
@@ -6048,13 +6343,23 @@ test('trace export: proves visual delivery without exporting pixels or OCR text'
         runId: 'visual-proof', seq: 3, kind: 'llm_request',
         data: { messageCount: 4, toolsCount: 12, imageBlockCount: 1, documentBlockCount: 0 },
       },
+      {
+        runId: 'visual-proof', seq: 4, kind: 'vision_route',
+        data: {
+          context: 'initial_user_message',
+          visionRoute: 'active_raw',
+          model: 'webbrain-cloud',
+          captureId: 'capture-7',
+        },
+      },
     ],
   }];
   for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
     const { markdown } = serialize(runs);
     assert.match(markdown, /User attachments: image "example-screenshot\.png" \(slash screenshot, 2\.0kb\)/, `${label}: attachment metadata missing`);
     assert.match(markdown, /Visual capture: inspect_viewport capture/, `${label}: capture status missing`);
-    assert.match(markdown, /Vision sub-call \(inspect_viewport · vision-sidecar · 42 ms\): succeeded/, `${label}: vision outcome missing`);
+    assert.match(markdown, /Vision sub-call \(inspect_viewport · local_fallback · vision-sidecar · capture-7 · 42 ms\): succeeded · fallback=image_payload_rejected/, `${label}: fallback route evidence missing`);
+    assert.match(markdown, /Vision route: initial_user_message · active_raw · webbrain-cloud · capture-7/, `${label}: raw active-provider route evidence missing`);
     assert.match(markdown, /Model request: 4 messages · 12 tools · 1 image block · 0 document blocks/, `${label}: model media counts missing`);
     assert.doesNotMatch(markdown, /PRIVATE_PIXELS|PRIVATE OCR DESCRIPTION/, `${label}: private visual content leaked`);
   }
@@ -8600,6 +8905,35 @@ test('ABAB oscillation triggers nudge', () => {
   assert.equal(result.kind, 'nudge');
 });
 
+test('carousel oscillation is detected across mixed forward and backward tools', () => {
+  for (const [label, Detector] of [['chrome', LoopDetectorCh], ['firefox', LoopDetectorFx]]) {
+    const d = new Detector();
+    const tab = label === 'chrome' ? 501 : 502;
+    const canonicalPostUrl = 'https://www.instagram.com/p/ABC123/';
+    const resultAt = index => ({
+      success: true,
+      verified: true,
+      resolvedIndex: index,
+      resolvedUrl: `${canonicalPostUrl}?img_index=${index}`,
+      canonicalPostUrl,
+      visibleMediaFingerprint: `media-${index}`,
+    });
+    assert.equal(d._checkLoop(tab, 'carousel_navigate', { index: 7 }, resultAt(7)).kind, 'none');
+    assert.equal(d._checkLoop(tab, 'click_ax', { expected_name: 'Next', ref_id: 'ref_10' }, resultAt(8)).kind, 'none');
+    assert.equal(d._checkLoop(tab, 'press_keys', { key: 'ArrowLeft' }, resultAt(7)).kind, 'none');
+    assert.equal(
+      d._checkLoop(tab, 'click', { expected_name: 'Next', x: 1280, y: 720 }, resultAt(8)).kind,
+      'nudge',
+      `${label}: first mixed-tool 7→8→7→8 cycle was not detected`,
+    );
+    assert.equal(
+      d._checkLoop(tab, 'press_keys', { key: 'ArrowLeft' }, resultAt(7)).kind,
+      'stop',
+      `${label}: second overlapping carousel cycle did not stop`,
+    );
+  }
+});
+
 test('eighth consecutive loop triggers stop', () => {
   const d = new ConfiguredLoopDetector();
   const tab = 6;
@@ -9448,7 +9782,7 @@ test('coord click: 10px drift = different bucket', () => {
   assert.equal(d._checkCoordClickLoop(1, 115, 200).kind, 'none');
 });
 
-test('coord click: scaled dispatch keeps loop detection in screenshot image space', async () => {
+test('coord click: scaled dispatch keeps loop detection in canonical CSS space', async () => {
   for (const [label, AgentClass, globalKey] of [
     ['chrome', AgentCh, 'chrome'],
     ['firefox', AgentFx, 'browser'],
@@ -9469,8 +9803,8 @@ test('coord click: scaled dispatch keeps loop detection in screenshot image spac
     );
     assert.deepEqual(
       observed.coordChecks,
-      [[observed.tabId, 784, 441]],
-      `${label}: loop detector must receive the model's original image coordinates`,
+      [[observed.tabId, 1280, 720]],
+      `${label}: loop detector must receive the converted canonical CSS coordinates`,
     );
     assert.deepEqual(observed.batchResult, { action: 'continue' }, `${label}: click batch should complete normally`);
   }
@@ -11747,11 +12081,26 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
     const agent = new AgentClass({});
     const tabId = 9;
     // 2560×1440 CSS viewport downscaled to 1568×882 (default cap).
-    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+    const scaledCapture = agent._registerScreenshotCapture(tabId, {
+      imageWidth: 1568,
+      imageHeight: 882,
+      cssWidth: 2560,
+      cssHeight: 1440,
+    });
 
     // Model reads (784, 441) — the image center — off the screenshot.
-    const converted = agent._screenshotClickCoords(tabId, { x: 784, y: 441, from_screenshot: true });
-    assert.deepEqual(converted, { x: 1280, y: 720, converted: true }, `${AgentClass.name}: center maps to CSS center`);
+    const converted = agent._screenshotClickCoords(tabId, {
+      x: 784,
+      y: 441,
+      from_screenshot: true,
+      capture_id: scaledCapture.captureId,
+    });
+    assert.deepEqual(converted, {
+      x: 1280,
+      y: 720,
+      converted: true,
+      captureId: scaledCapture.captureId,
+    }, `${AgentClass.name}: center maps to CSS center`);
 
     // Without the flag, coords pass through untouched (CSS-sourced coords,
     // e.g. from get_interactive_elements, must never be rescaled).
@@ -11760,12 +12109,29 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
 
     // Flag set but no stored scale (last capture was 1:1): no conversion —
     // image pixels already are CSS pixels, so the flag is harmless.
-    agent._setScreenshotClickScale(tabId, 1, 1);
-    const aligned = agent._screenshotClickCoords(tabId, { x: 784, y: 441, from_screenshot: true });
-    assert.deepEqual(aligned, { x: 784, y: 441, converted: false }, `${AgentClass.name}: aligned capture passes through`);
+    const alignedCapture = agent._registerScreenshotCapture(tabId, {
+      imageWidth: 1568,
+      imageHeight: 882,
+      cssWidth: 1568,
+      cssHeight: 882,
+    });
+    const aligned = agent._screenshotClickCoords(tabId, {
+      x: 784,
+      y: 441,
+      from_screenshot: true,
+      capture_id: alignedCapture.captureId,
+    });
+    assert.deepEqual(aligned, {
+      x: 784,
+      y: 441,
+      converted: true,
+      captureId: alignedCapture.captureId,
+    }, `${AgentClass.name}: aligned capture passes through`);
 
     // Non-numeric coords resolve to null so callers skip conversion.
-    assert.equal(agent._screenshotClickCoords(tabId, { x: 'a', y: 1, from_screenshot: true }), null);
+    assert.equal(agent._screenshotClickCoords(tabId, {
+      x: 'a', y: 1, from_screenshot: true, capture_id: alignedCapture.captureId,
+    }), null);
 
     // Tab cleanup drops the entry.
     agent._setScreenshotClickScale(tabId, 2, 2);
@@ -11819,6 +12185,9 @@ async function runCoordinateSemanticCase({
   chromeAttachError = null,
   dispatchBinding = null,
   throughBatch = false,
+  expectedName = '',
+  expectedRole = '',
+  captureIdOverride = '',
 }) {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
@@ -11881,11 +12250,19 @@ async function runCoordinateSemanticCase({
       mappingCalls += 1;
       return mapScreenshotCoords(...args);
     };
-    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+    const capture = agent._registerScreenshotCapture(tabId, {
+      imageWidth: 1568,
+      imageHeight: 882,
+      cssWidth: 2560,
+      cssHeight: 1440,
+    });
     const clickArgs = {
       x: 784,
       y: 441,
       from_screenshot: true,
+      capture_id: captureIdOverride || capture.captureId,
+      ...(expectedName ? { expected_name: expectedName } : {}),
+      ...(expectedRole ? { expected_role: expectedRole } : {}),
     };
     let result = null;
     let batchResult = null;
@@ -12076,6 +12453,55 @@ test('coordinate semantic reconciliation: coordinate-only semantic targets prese
     fallbackReason: 'coordinate-only-target',
   });
   assert.equal(JSON.stringify(observed.result.coordinateReconciliation).includes('ref_902'), false);
+});
+
+test('screenshot coordinate assertions reject an unrelated language selector without dispatch', async () => {
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      expectedName: 'Next',
+      expectedRole: 'button',
+      resolverResponse: {
+        success: true,
+        semanticTarget: {
+          ref_id: 'ref_language',
+          role: 'button',
+          name: 'English',
+          eligibility: 'semantic-button',
+        },
+      },
+    });
+    assert.equal(observed.result.success, false, `${label}: mismatched screenshot target was accepted`);
+    assert.equal(observed.result.noDispatch, true, `${label}: mismatched screenshot target dispatched`);
+    assert.equal(observed.result.targetMismatch, true);
+    assert.deepEqual(observed.clickAxParams, []);
+    assert.deepEqual(observed.fallbackParams, []);
+  }
+});
+
+test('stale screenshot capture IDs fail before coordinate dispatch', async () => {
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      captureIdOverride: 'capture_stale_previous_viewport',
+      resolverResponse: { success: true },
+    });
+    assert.equal(observed.result.success, false, `${label}: stale capture was accepted`);
+    assert.equal(observed.result.noDispatch, true, `${label}: stale capture dispatched`);
+    assert.equal(observed.result.staleCapture, true);
+    assert.deepEqual(observed.resolveParams, []);
+    assert.deepEqual(observed.fallbackParams, []);
+  }
 });
 
 test('coordinate semantic reconciliation: plain legacy coordinates never invoke the resolver or emit diagnostics', async () => {
@@ -12403,8 +12829,18 @@ test('coordinate semantic reconciliation: Chrome label fallback keeps the existi
     agent._annotateClickProgress = async (_tabId, _name, _args, response) => response;
     agent._redirectTargetBlankClick = async () => ({ redirected: false });
     agent._showAgentTarget = () => {};
-    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
-    const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441, from_screenshot: true });
+    const capture = agent._registerScreenshotCapture(tabId, {
+      imageWidth: 1568,
+      imageHeight: 882,
+      cssWidth: 2560,
+      cssHeight: 1440,
+    });
+    const result = await agent.executeTool(tabId, 'click', {
+      x: 784,
+      y: 441,
+      from_screenshot: true,
+      capture_id: capture.captureId,
+    });
 
     assert.equal(result.success, true);
     assert.deepEqual(clickAxParams, []);
@@ -12510,8 +12946,18 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
     agent._annotateClickProgress = async (_tabId, _name, _args, response) => response;
     agent._redirectTargetBlankClick = async () => ({ redirected: false });
     agent._showAgentTarget = () => {};
-    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
-    const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441, from_screenshot: true });
+    const capture = agent._registerScreenshotCapture(tabId, {
+      imageWidth: 1568,
+      imageHeight: 882,
+      cssWidth: 2560,
+      cssHeight: 1440,
+    });
+    const result = await agent.executeTool(tabId, 'click', {
+      x: 784,
+      y: 441,
+      from_screenshot: true,
+      capture_id: capture.captureId,
+    });
 
     assert.equal(inputFocusCalls, 1, 'canvas fallback must preserve the old nearby-input focus heuristic');
     assert.deepEqual(dispatched, [
@@ -18450,12 +18896,19 @@ test('getToolsForMode: compact mode restricts act tools in both browsers', () =>
   ]) {
     const fullNames = getTools('act').map(t => t.function.name);
     const compactNamesActual = getTools('act', { compact: true }).map(t => t.function.name);
-    const unknownCompactNames = [...compactNames].filter(name => !fullNames.includes(name));
+    const fullNamesWithDynamicAdapter = getTools('act', { carouselNavigation: true }).map(t => t.function.name);
+    const unknownCompactNames = [...compactNames].filter(name => !fullNamesWithDynamicAdapter.includes(name));
     assert.deepEqual(unknownCompactNames, [], `[${label}] compact set must only name real tools`);
     assert.ok(compactNamesActual.length < fullNames.length, `[${label}] compact should be smaller than full act tools`);
     assert.deepEqual(
       compactNamesActual.slice().sort(),
-      [...compactNames].sort(),
+      [...compactNames].filter(name => name !== 'carousel_navigate').sort(),
+    );
+    assert.equal(
+      getTools('act', { compact: true, carouselNavigation: true })
+        .some(tool => tool.function.name === 'carousel_navigate'),
+      true,
+      `[${label}] compact mode must expose carousel navigation only for a supporting adapter`,
     );
     assert.ok(compactNamesActual.includes('done'), `[${label}] compact mode must keep done`);
     assert.ok(compactNamesActual.includes('upload_file'), `[${label}] compact mode must expose upload_file`);
@@ -34544,7 +34997,7 @@ test('selection shortcut grounding metadata suppresses competing page images', a
     assert.ok(Array.isArray(ordinary.content), `${label}: ordinary first-turn Ask should retain visual context`);
     assert.equal(ordinary.content.some(block => block?.type === 'image_url'), true, `${label}: ordinary first-turn Ask should attach its screenshot`);
     assert.equal(activeProviderCalls, 1, `${label}: ordinary Ask should inspect main vision capability`);
-    assert.equal(visionProviderCalls, 1, `${label}: ordinary Ask should inspect the dedicated vision provider`);
+    assert.equal(visionProviderCalls, 0, `${label}: active raw vision must not be masked by a fallback provider`);
     assert.equal(screenshotCalls, 1, `${label}: ordinary Ask should capture one screenshot`);
   }
 });
@@ -40673,7 +41126,12 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
     try {
       const agent = new AgentClass({});
       const tabId = label === 'chrome' ? 4301 : 4302;
-      agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+      const capture = agent._registerScreenshotCapture(tabId, {
+        imageWidth: 1568,
+        imageHeight: 882,
+        cssWidth: 2560,
+        cssHeight: 1440,
+      });
       agent._richTextToolbarGuard.restore(tabId, {
         recoveryObligations: [{
           toolName: 'set_field',
@@ -40719,7 +41177,7 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
       };
 
       const screenshotClick = await executeCase({
-        args: { ...imagePoint, from_screenshot: true },
+        args: { ...imagePoint, from_screenshot: true, capture_id: capture.captureId },
       });
       assert.equal(screenshotClick.success, true, `${label}: stable canonical target should dispatch`);
       assert.equal(screenshotClick.target, 'intended-editor');
@@ -40731,7 +41189,7 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
       assert.equal(activeCase.boundTarget, 'intended-editor');
 
       const changedTarget = await executeCase({
-        args: { ...imagePoint, from_screenshot: true },
+        args: { ...imagePoint, from_screenshot: true, capture_id: capture.captureId },
         replaceBeforeDispatch: true,
       });
       assert.equal(changedTarget.success, false, `${label}: a genuinely changed canonical target must fail closed`);
@@ -46400,7 +46858,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.deepEqual(textDisposed, { ok: true, disposed: true });
     assert.deepEqual(sentMessages[3], { type: 'webgpu-dispose' });
 
-    const provider = await manager.getVisionProvider();
+    const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
     assert.equal(provider.name, 'webgpu-vision');
     assert.equal(provider.supportsVision, true);
@@ -46476,6 +46934,104 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
+  }
+});
+
+test('vision routing keeps LiquidAI behind explicit overrides and active raw vision', async () => {
+  const manager = new ProviderManagerCh();
+  const activeVision = { name: 'webbrain-cloud', model: 'cloud-vision', supportsVision: true };
+  const activeText = { name: 'text-only', supportsVision: false };
+  const local = { name: 'liquidai', config: { model: WEBGPU_VISION_MODEL_ID }, supportsVision: true };
+  const override = { name: 'external-vision', config: { model: 'explicit-vision' }, supportsVision: true };
+  let localLookups = 0;
+  manager.getVisionOverrideProvider = async () => null;
+  manager.getLocalVisionFallbackProvider = async () => {
+    localLookups += 1;
+    return local;
+  };
+  assert.equal(await manager.getVisionProvider(), null, 'legacy dedicated lookup exposed the Apocalypse fallback');
+  assert.equal(localLookups, 0, 'getVisionProvider consulted LiquidAI instead of the explicit override API');
+
+  const raw = await manager.resolveVisionRoute(activeVision);
+  assert.equal(raw.route, 'active_raw');
+  assert.equal(raw.provider, activeVision);
+  assert.equal(raw.rawImage, true);
+  assert.equal(localLookups, 0, 'LiquidAI was consulted even though the active provider supports images');
+
+  const fallback = await manager.resolveVisionRoute(activeText);
+  assert.equal(fallback.route, 'local_fallback');
+  assert.equal(fallback.provider, local);
+  assert.equal(localLookups, 1);
+
+  manager.getVisionOverrideProvider = async () => override;
+  const explicit = await manager.resolveVisionRoute(activeVision);
+  assert.equal(explicit.route, 'explicit_override');
+  assert.equal(explicit.provider, override);
+  assert.equal(localLookups, 1, 'explicit vision override should not consult LiquidAI');
+});
+
+test('initial vision-route evidence is buffered until the trace run starts', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 769 : 770;
+    agent._recordVisionRouteTrace(
+      tabId,
+      { route: 'active_raw', provider: { name: 'webbrain-cloud', model: 'cloud-vision' } },
+      { captureId: 'capture-initial' },
+      'initial_user_message',
+    );
+    assert.deepEqual(agent.pendingVisionRouteTraces.get(tabId), [{
+      context: 'initial_user_message',
+      visionRoute: 'active_raw',
+      captureId: 'capture-initial',
+      model: 'cloud-vision',
+      fallbackReason: null,
+    }]);
+  }
+});
+
+test('image-specific active-provider rejection converts the retained capture once and excludes unrelated failures', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const active = { name: 'cloud', supportsVision: true };
+    let localCalls = 0;
+    const local = {
+      name: 'liquidai',
+      config: { model: 'LiquidAI-vision', baseUrl: '' },
+      async chat() {
+        localCalls += 1;
+        return { content: 'A hotel name is visible on the current carousel slide.' };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => active,
+      resolveVisionRoute: async provider => ({ provider, route: 'active_raw', rawImage: true }),
+      getLocalVisionFallbackProvider: async () => local,
+    });
+    const messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Read the slide.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+      ],
+    }];
+    const converted = await agent._visionFallbackMessages(
+      label === 'chrome' ? 771 : 772,
+      messages,
+      null,
+      Object.assign(new Error('image_url content type is unsupported'), { status: 415 }),
+    );
+    assert.equal(localCalls, 1, `${label}: retained image was described more than once`);
+    assert.equal(converted[0].content.some(block => block.type === 'image_url'), false);
+    assert.match(JSON.stringify(converted), /UNTRUSTED page data/);
+    assert.match(JSON.stringify(converted), /hotel name is visible/i);
+    for (const error of [
+      Object.assign(new Error('authentication failed for image request'), { status: 401 }),
+      Object.assign(new Error('rate limit for vision request'), { status: 429 }),
+      Object.assign(new Error('network fetch failed'), { status: 503 }),
+    ]) {
+      assert.equal(await agent._visionFallbackMessages(773, messages, null, error), null, `${label}: unrelated failure triggered vision fallback`);
+    }
+    assert.equal(localCalls, 1, `${label}: unrelated failures invoked LiquidAI`);
   }
 });
 
@@ -46573,7 +47129,7 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
     assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined,
       'a user-started Vision Model download must not be marked as an automatic selection');
-    const selectedLocalProvider = await manager.getVisionProvider();
+    const selectedLocalProvider = await manager.getLocalVisionFallbackProvider();
     assert.ok(selectedLocalProvider instanceof WebGPUVisionProvider);
     const paused = await manager.pauseWebgpuVisionDownload();
     assert.equal(paused.ok, true);
@@ -59925,6 +60481,162 @@ test('progress done blocks claimed success when rows are skipped or failed', () 
   }
 });
 
+test('narrow hotel-name plans carry only the current deliverable and a strict ordered item contract', () => {
+  for (const [label, normalize] of [['chrome', normalizePlan], ['firefox', normalizePlanFx]]) {
+    const plan = normalize({
+      request_kind: 'execute',
+      scope_relation: 'narrow',
+      deliverables: ['15 hotel names'],
+      expected_items: {
+        count: 15,
+        item_type: 'hotel',
+        ordered: true,
+        required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
+      },
+      requires_state_change: false,
+      requires_submission: false,
+      read_scope: 'visible_page',
+      summary: 'List the 15 hotel names.',
+      confidence: 0.95,
+      steps: [{ id: '1', action: 'Read each carousel slide and record only its hotel name.', tools: ['carousel_navigate'] }],
+      memory: { use_scratchpad: true, use_progress_ledger: true, progress_action: 'process_item' },
+      localized: { locale: 'en', summary: 'List the 15 hotel names.', steps: [], risks: [] },
+    }, { requireIntent: true, locale: 'en' });
+    assert.equal(plan.scope_relation, 'narrow', `${label}: narrowing relation was lost`);
+    assert.deepEqual(plan.deliverables, ['15 hotel names']);
+    assert.deepEqual(plan.expected_items, {
+      count: 15,
+      item_type: 'hotel',
+      ordered: true,
+      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
+    });
+    assert.equal(plan.memory.progress_action, 'process_item');
+    assert.doesNotMatch(JSON.stringify(plan), /price|availability|booking condition/i, `${label}: narrowed plan retained stale deliverables`);
+  }
+});
+
+test('latest hotel-name narrowing deterministically strips stale planner deliverables', () => {
+  for (const [label, normalize] of [['chrome', normalizePlan], ['firefox', normalizePlanFx]]) {
+    const plan = normalize({
+      request_kind: 'execute',
+      scope_relation: 'continue',
+      deliverables: ['hotel names', 'prices', 'availability', 'booking conditions'],
+      requires_state_change: true,
+      requires_submission: true,
+      completion_requirements: { download: true },
+      read_scope: 'visible_page',
+      summary: 'Collect hotel names, prices, availability, and booking conditions.',
+      confidence: 0.8,
+      steps: [
+        { id: '1', action: 'Collect names and prices.', tools: ['press_keys'] },
+        { id: '2', action: 'Check availability and booking terms.', tools: ['click'] },
+      ],
+      memory: { use_scratchpad: true, use_progress_ledger: false, progress_action: null },
+      scheduling: { tool: 'schedule_resume', hint: 'Wait for availability.' },
+      risks: ['Rates may change.'],
+      localized: { locale: 'en', summary: 'Collect names and prices.', steps: [], risks: ['Rates may change.'] },
+    }, {
+      requireIntent: true,
+      locale: 'en',
+      latestUserTask: 'Just give me the 15 hotel names.',
+    });
+    assert.equal(plan.scope_relation, 'narrow', `${label}: latest narrowing did not override stale relation`);
+    assert.deepEqual(plan.deliverables, ['15 hotel names']);
+    assert.equal(plan.requires_state_change, false);
+    assert.equal(plan.requires_submission, false);
+    assert.equal(plan.completion_requirements.download, false);
+    assert.equal(plan.scheduling, null);
+    assert.deepEqual(plan.steps[0].tools, ['carousel_navigate', 'progress_update']);
+    assert.deepEqual(plan.expected_items?.required_fields, ['hotel_name', 'carousel_position', 'evidence_source']);
+    assert.doesNotMatch(JSON.stringify(plan), /prices|availability|booking conditions|press_keys/i, `${label}: stale planner scope survived deterministic normalization`);
+  }
+});
+
+test('reviewed hotel-name edits regenerate expected-item metadata without stale planner fields', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const expected = agent._plannerExpectedItemsFromApprovedPlanText('Just give me the 15 hotel names.');
+    assert.deepEqual(expected, {
+      count: 15,
+      item_type: 'hotel',
+      ordered: true,
+      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
+    }, `${label}: edited hotel scope did not regenerate execution metadata`);
+    assert.deepEqual(
+      agent._plannerProgressLedgerGateFieldsFromApprovedPlanText('Just give me the 15 hotel names.'),
+      { progressLedgerPolicy: 'disabled', progressAction: null },
+      `${label}: stale progress action survived before expected-item enforcement`,
+    );
+  }
+});
+
+test('expected-item completion blocks 14 of 15, missing fields, and duplicate hotel names', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 7801 : 7802;
+    agent.progressExpectedItems.set(tabId, {
+      count: 15,
+      item_type: 'hotel',
+      ordered: true,
+      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
+    });
+    const rows = Array.from({ length: 15 }, (_, index) => ({
+      id: `expected:${index + 1}`,
+      status: 'processed',
+      fields: {
+        hotel_name: `Hotel ${index + 1}`,
+        carousel_position: index + 2,
+        evidence_source: `https://www.instagram.com/p/ABC/?img_index=${index + 2}`,
+      },
+    }));
+    agent._currentTaskLedgerRows = () => rows.slice(0, 14);
+    assert.match(agent._expectedItemsDoneBlock(tabId, 'success')?.error || '', /contains 14/i, `${label}: 14/15 rows passed`);
+    agent._currentTaskLedgerRows = () => rows.map((row, index) => index === 4
+      ? { ...row, fields: { ...row.fields, hotel_name: '' } }
+      : row);
+    assert.match(agent._expectedItemsDoneBlock(tabId, 'success')?.error || '', /missing required fields/i, `${label}: missing name passed`);
+    agent._currentTaskLedgerRows = () => rows.map((row, index) => index === 14
+      ? { ...row, fields: { ...row.fields, hotel_name: 'Hotel 1' } }
+      : row);
+    assert.match(agent._expectedItemsDoneBlock(tabId, 'success')?.error || '', /duplicate/i, `${label}: duplicate name passed`);
+    agent._currentTaskLedgerRows = () => rows;
+    assert.equal(agent._expectedItemsDoneBlock(tabId, 'success'), null, `${label}: valid 15-row ledger was blocked`);
+  }
+});
+
+test('read-only Instagram extraction ignores the comment composer but submission tasks do not', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 7811 : 7812;
+    const pageState = {
+      url: 'https://www.instagram.com/p/ABC/',
+      openDialogCount: 1,
+      dialogTitles: ['Post'],
+      visibleFormCount: 1,
+      relevantFormCount: 1,
+      formDescriptors: [{ label: 'Add a comment…', relevant: true, utility: false, editableCount: 1, submitCount: 1 }],
+      liveRegionMessages: [],
+      successMessages: [],
+    };
+    agent._planExecutionGuards.set(tabId, {
+      enabled: true, requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
+    });
+    assert.equal(
+      agent._completionPageWarning(tabId, 'Collected all 15 hotel names.', 'success', pageState, pageState.url),
+      null,
+      `${label}: Instagram comment UI blocked read-only extraction`,
+    );
+    agent._planExecutionGuards.set(tabId, {
+      enabled: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+    });
+    assert.match(
+      agent._completionPageWarning(tabId, 'Posted.', 'success', pageState, pageState.url)?.warning || '',
+      /modal\/dialog|task-relevant form/i,
+      `${label}: submit task ignored pending comment UI`,
+    );
+  }
+});
+
 test('agent rejects invalid tool JSON and repairs narrow get_accessibility_tree args', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({
@@ -62212,6 +62924,11 @@ test('submit-aware completion accepts the observed AMO finish document and rejec
     );
 
     agent._completionSubmitStates.delete(tabId);
+    agent._planExecutionGuards.set(tabId, {
+      enabled: true,
+      requestKind: 'execute',
+      requiresStateChange: true,
+    });
     assert.match(
       agent._completionPageWarning(tabId, 'Done.', 'success', {
         ...finishState,
@@ -73030,8 +73747,8 @@ test('reviewed plan edits preserve only explicitly approved scheduling metadata'
       };
 
       const compact = await runReviewedPlan(label === 'chrome' ? 9210 : 9211, 'compact', () => 'Custom approved monitor plan.');
-      assert.equal(compact.requiredSchedulingTool, 'schedule_task', `${label}: compact edit lost hidden scheduling metadata`);
-      assert.match(compact.approvedScratchpadText, /-\s*schedule_task:/, `${label}: compact edit did not pin scheduling metadata`);
+      assert.equal(compact.requiredSchedulingTool, null, `${label}: compact edit inherited hidden scheduling metadata`);
+      assert.doesNotMatch(compact.approvedScratchpadText, /-\s*schedule_task:/, `${label}: compact edit re-pinned hidden scheduling metadata`);
 
       const removed = await runReviewedPlan(
         label === 'chrome' ? 9212 : 9213,
@@ -73173,9 +73890,9 @@ test('reviewed plan edits preserve only explicitly approved submission metadata'
       };
 
       const compact = await runReviewedPlan(label === 'chrome' ? 9230 : 9231, 'compact', () => 'Custom approved submit plan.');
-      assert.equal(compact.requiresSubmission, true, `${label}: compact edit lost hidden submission metadata`);
-      assert.match(compact.approvedScratchpadText, /Submission required:\s*yes/i,
-        `${label}: compact edit did not pin submission metadata`);
+      assert.equal(compact.requiresSubmission, false, `${label}: compact edit inherited hidden submission metadata`);
+      assert.doesNotMatch(compact.approvedScratchpadText, /Submission required:\s*yes/i,
+        `${label}: compact edit re-pinned hidden submission metadata`);
 
       const unchanged = await runReviewedPlan(label === 'chrome' ? 9232 : 9233, 'verbose', text => text);
       assert.equal(unchanged.requiresSubmission, true, `${label}: unchanged verbose plan lost submission metadata`);
@@ -75776,9 +76493,8 @@ test('planner gate: review exposes compact markdown plus verbose markdown', asyn
       );
       assert.equal(gate.proceed, true, `${label} should proceed after approval`);
       assert.doesNotMatch(gate.approvedScratchpadText, /read_page/, `${label} compact edits should not re-pin stale hidden tool detail`);
-      assert.match(gate.approvedScratchpadText, /Scratchpad: yes/, `${label} scratchpad handoff should keep verbose memory strategy`);
       assert.match(gate.approvedScratchpadText, /Edited compact plan/, `${label} scratchpad handoff should preserve compact edits`);
-      assert.match(gate.approvedScratchpadText, /Planner execution metadata/, `${label} compact edits should keep non-step execution metadata`);
+      assert.doesNotMatch(gate.approvedScratchpadText, /Scratchpad: yes|Planner execution metadata/, `${label} edited scope must not inherit stale execution metadata`);
     }
   });
 });
@@ -85916,6 +86632,15 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
     assert.equal(rejectedLang.result.noDispatch, true, `${label}: rejected lang argument did not fail closed`);
     assert.equal(rejectedLang.result.errorCode, 'invalid_tool_arguments', `${label}: unstable invalid-argument code`);
 
+    const carouselNavigate = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'carousel_navigate');
+    const rejectedStringIndex = argumentModule.validateToolArguments(
+      'carousel_navigate',
+      { index: '1' },
+      carouselNavigate.function.parameters,
+    );
+    assert.equal(rejectedStringIndex.ok, false, `${label}: string carousel index bypassed integer validation`);
+    assert.equal(rejectedStringIndex.result.noDispatch, true, `${label}: invalid carousel index did not fail closed`);
+
     const fetchUrl = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'fetch_url');
     const acceptedHeaders = argumentModule.validateToolArguments(
       'fetch_url',
@@ -85953,7 +86678,6 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
 
     const click = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'click');
     for (const args of [
-      { index: 3, x: 0, y: 0 },
       { text: 'Save', selector: '#save' },
       { x: 10 },
     ]) {
@@ -85961,6 +86685,13 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
       assert.equal(rejectedClick.ok, false, `${label}: mixed/incomplete click target was accepted`);
       assert.equal(rejectedClick.result.noDispatch, true, `${label}: invalid click target did not fail closed`);
     }
+    const normalizedInertClick = argumentModule.validateToolArguments(
+      'click',
+      { index: 3, x: 0, y: 0, text: '', selector: '' },
+      click.function.parameters,
+    );
+    assert.equal(normalizedInertClick.ok, true, `${label}: inert provider click defaults conflicted with the real index target`);
+    assert.deepEqual(normalizedInertClick.args, { index: 3 }, `${label}: inert provider click defaults were not removed`);
     assert.equal(
       argumentModule.validateToolArguments('click', { index: 3 }, click.function.parameters).ok,
       true,
@@ -86428,7 +87159,7 @@ test('multimodal connection tests exercise image and audio routes instead of onl
 
       const visionCalls = [];
       const visionManager = new ProviderManager();
-      visionManager.getVisionProvider = async () => ({
+      visionManager.getVisionOverrideProvider = async () => ({
         model: 'qwen/qwen3.5-9b',
         baseUrl: 'http://127.0.0.1:1234/v1',
         chat: async (messages, options) => {
@@ -86444,7 +87175,8 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       assert.equal(visionCalls[0].options.webbrainVisionProbe, true);
 
       if (label === 'chrome') {
-        visionManager.getVisionProvider = async () => ({
+        visionManager.getVisionOverrideProvider = async () => null;
+        visionManager.getLocalVisionFallbackProvider = async () => ({
           name: 'webgpu-vision',
           model: WEBGPU_VISION_MODEL_ID,
           baseUrl: 'local://webgpu',
@@ -86458,7 +87190,7 @@ test('multimodal connection tests exercise image and audio routes instead of onl
         assert.equal(localVisionResult.ok, true, 'chrome: local color-panel vision probe should pass');
       }
 
-      visionManager.getVisionProvider = async () => ({
+      visionManager.getVisionOverrideProvider = async () => ({
         model: 'text-only-model',
         baseUrl: 'http://127.0.0.1:1234/v1',
         chat: async () => ({ content: 'I can respond without reading the image.' }),

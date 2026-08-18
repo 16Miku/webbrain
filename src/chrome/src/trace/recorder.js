@@ -295,15 +295,34 @@ export function recordStreaming(runId, step, payload = {}) {
  * of pixels. Captured for debugging and quality inspection — description
  * quality is the main failure mode of the split-provider design.
  */
-export function recordVisionSubCall(runId, { step, context, model, baseUrl, description, latencyMs, error }) {
+export function recordVisionSubCall(runId, {
+  step, context, visionRoute, captureId, fallbackReason,
+  model, baseUrl, description, latencyMs, error,
+}) {
   return _appendEvent(runId, 'vision_sub_call', {
     step: step || null,
     context: context || null, // 'initial_user_message' | 'auto_screenshot' | ...
+    visionRoute: visionRoute || null,
+    captureId: captureId || null,
+    fallbackReason: fallbackReason || null,
     model: model || null,
     baseUrl: baseUrl || null,
     description: description || null,
     latencyMs: latencyMs || null,
     error: error || null,
+  });
+}
+
+export function recordVisionRoute(runId, {
+  step, context, visionRoute, captureId, model, fallbackReason,
+}) {
+  return _appendEvent(runId, 'vision_route', {
+    step: step || null,
+    context: context || null,
+    visionRoute: visionRoute || null,
+    captureId: captureId || null,
+    model: model || null,
+    fallbackReason: fallbackReason || null,
   });
 }
 

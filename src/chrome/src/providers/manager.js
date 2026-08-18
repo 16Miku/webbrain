@@ -1134,21 +1134,14 @@ export class ProviderManager {
     return { ok: true, skipped: true };
   }
 
-  /**
-   * Get a dedicated vision provider. `visionModel` remains the portable,
-   * synced OpenAI-compatible endpoint; the Chrome-only WebGPU selection is a
-   * separate local preference so toggling it never destroys that endpoint.
-   */
-  async getVisionProvider() {
+  /** Return the explicitly configured portable vision override, if any. */
+  async getVisionOverrideProvider() {
     try {
-      const stored = await chrome.storage.local.get(['visionModel', WEBGPU_VISION_ENABLED_KEY]);
-      const { visionModel } = stored;
-      // Accept the short-lived legacy shape written by early PR builds. The
-      // settings page migrates it to the dedicated flag when opened.
-      if (stored[WEBGPU_VISION_ENABLED_KEY] === true || visionModel?.type === 'webgpu') {
-        return new WebGPUVisionProvider();
-      }
+      const { visionModel } = await chrome.storage.local.get(['visionModel']);
       if (!visionModel) return null;
+      // The short-lived WebGPU storage shape is a fallback preference, never an
+      // explicit override. Keep accepting it through getLocalVisionFallbackProvider.
+      if (visionModel.type === 'webgpu') return null;
       if (!visionModel.baseUrl || !visionModel.model) return null;
       return new OpenAICompatibleProvider({
         type: 'openai',
@@ -1167,6 +1160,39 @@ export class ProviderManager {
       console.warn('[providers] getVisionProvider failed:', e);
       return null;
     }
+  }
+
+  /** Return the Chrome-only Apocalypse/LiquidAI fallback, if enabled. */
+  async getLocalVisionFallbackProvider() {
+    try {
+      const stored = await chrome.storage.local.get(['visionModel', WEBGPU_VISION_ENABLED_KEY]);
+      if (stored[WEBGPU_VISION_ENABLED_KEY] === true || stored.visionModel?.type === 'webgpu') {
+        return new WebGPUVisionProvider();
+      }
+    } catch (e) {
+      console.warn('[providers] getLocalVisionFallbackProvider failed:', e);
+    }
+    return null;
+  }
+
+  /**
+   * Resolve screenshot routing without letting an enabled local fallback mask
+   * a vision-capable active provider.
+   */
+  async resolveVisionRoute(activeProvider = null) {
+    const override = await this.getVisionOverrideProvider();
+    if (override) return { provider: override, route: 'explicit_override', rawImage: false };
+    if (activeProvider?.supportsVision) {
+      return { provider: activeProvider, route: 'active_raw', rawImage: true };
+    }
+    const fallback = await this.getLocalVisionFallbackProvider();
+    if (fallback) return { provider: fallback, route: 'local_fallback', rawImage: false };
+    return { provider: null, route: 'none', rawImage: false };
+  }
+
+  /** Backward-compatible name for the intentional external override only. */
+  async getVisionProvider() {
+    return this.getVisionOverrideProvider();
   }
 
   /** Release local vision memory without deleting the browser's model cache. */
@@ -1526,7 +1552,8 @@ export class ProviderManager {
    * Test the optional dedicated vision provider's connection.
    */
   async testVisionProvider() {
-    const provider = await this.getVisionProvider();
+    const provider = await this.getVisionOverrideProvider()
+      || await this.getLocalVisionFallbackProvider();
     if (!provider) return { ok: false, error: 'Vision model not configured' };
     let imageDataUrl;
     try {
