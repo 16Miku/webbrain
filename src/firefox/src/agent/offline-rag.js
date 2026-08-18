@@ -754,6 +754,14 @@ export function assembleRagEvidence(hits = [], options = {}) {
       : MAX_EVIDENCE_TOKENS,
     availableTokens,
   );
+  // A single long passage can swallow a small budget whole. Callers that would
+  // rather see several sources than one article intro cap each passage here.
+  const passageBudget = Math.max(1, Math.min(
+    MAX_PASSAGE_TOKENS,
+    Number.isSafeInteger(options.maximumPassageTokens)
+      ? options.maximumPassageTokens
+      : MAX_PASSAGE_TOKENS,
+  ));
   const candidates = selectDiverseRagHits(hits, options);
   const selected = [];
   const citations = [];
@@ -768,12 +776,12 @@ export function assembleRagEvidence(hits = [], options = {}) {
     }
     const bounded = completePassageWithinBudget(
       hit.text,
-      Math.min(MAX_PASSAGE_TOKENS, evidenceBudget - usedTokens),
+      Math.min(passageBudget, evidenceBudget - usedTokens),
       estimateTokens,
     );
     if (!bounded.text) continue;
     const passageTokens = estimateTokens(bounded.text);
-    if (passageTokens > MAX_PASSAGE_TOKENS || usedTokens + passageTokens > evidenceBudget) continue;
+    if (passageTokens > passageBudget || usedTokens + passageTokens > evidenceBudget) continue;
     const citationToken = citationTokenForHit(hit);
     const selectedHit = { ...hit, text: bounded.text, citationToken, readerUrl };
     selected.push(selectedHit);
@@ -814,7 +822,8 @@ export function assembleRagEvidence(hits = [], options = {}) {
     instructions: [
       'Answer only from the supplied offline evidence.',
       'Cite supported claims with the exact citation tokens shown.',
-      'If the evidence is insufficient, say so plainly instead of using unstated knowledge.',
+      'Answer whatever part of the question the evidence does support, then state plainly which part it does not cover.',
+      'A partial sourced answer is better than none, but never close a gap with unstated knowledge.',
     ].join(' '),
     evidence,
     citations: Object.freeze(citations),

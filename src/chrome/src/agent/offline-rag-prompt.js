@@ -145,6 +145,7 @@ export async function retrieveOfflineRagForPrompt(queryValue, options = {}) {
     generationTokens: options.generationTokens,
     otherReservedTokens: options.otherReservedTokens,
     maximumEvidenceTokens: options.maximumEvidenceTokens,
+    maximumPassageTokens: options.maximumPassageTokens,
   });
   const references = Object.freeze(await attachInstalledEmergencyPdfLinks(
     offlineRagReferences(assembled, options),

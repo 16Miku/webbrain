@@ -353,6 +353,18 @@ const WikipediaOfflineFx = await import(
 const ApocalypseModeCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
 );
+const OfflineAnswerCopyCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-answer-copy.js').replace(/\\/g, '/')
+);
+const {
+  getOfflineAnswerCopy: getOfflineAnswerCopyCh,
+  OFFLINE_ANSWER_LOCALES: OfflineAnswerLocalesCh,
+  OFFLINE_ANSWER_COPY_KEYS: OfflineAnswerKeysCh,
+} = OfflineAnswerCopyCh;
+const { LANGUAGES: LanguagesCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/i18n.js').replace(/\\/g, '/')
+);
+
 const ApocalypseModeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
 );
@@ -28236,8 +28248,12 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: local Wikipedia RAG passages are not marked as untrusted data');
   assert.equal((agentSource.match(/_applyStandaloneWikipediaRag\(enriched, userMessage, runOptions,/g) || []).length, 2,
     'chrome: local Wikipedia RAG is not applied to both standalone message entry paths');
-  assert.equal((agentSource.match(/const standaloneWikipediaFailure = this\._standaloneWikipediaFailureMessage\(localWikipediaRag, runOptions\)/g) || []).length, 2,
-    'chrome: a factual Wikipedia failure does not fail closed on both agent entry paths');
+  assert.equal((agentSource.match(/let standaloneGroundingGap = this\._standaloneOfflineGroundingGap\(localWikipediaRag, runOptions\)/g) || []).length, 2,
+    'chrome: a retrieval miss does not reach the unverified-answer fallback on both agent entry paths');
+  assert.equal((agentSource.match(/this\._appendStandaloneUngroundedPolicy\(enriched, standaloneGroundingGap\)/g) || []).length, 4,
+    'chrome: the ungrounded answer policy is not attached on both entry gates and both model-search retries');
+  assert.equal((agentSource.match(/this\._withStandaloneUnverifiedNotice\(/g) || []).length, 2,
+    'chrome: the unverified label is not applied on both agent entry paths');
   assert.equal((agentSource.match(/standaloneIncompleteAnswerRecoveryAttempted = true;/g) || []).length, 2,
     'chrome: incomplete local answers do not receive one bounded recovery on both agent entry paths');
   assert.equal((agentSource.match(/standaloneWebgpuBudgetRecoveryAttempted = true;/g) || []).length, 2,
@@ -28263,6 +28279,39 @@ test('Apocalypse archive search reports disabled, missing, and not-ready states 
     assert.equal(await statusFor(false, []), 'disabled', `${label}: disabled Apocalypse Mode was mislabeled`);
     assert.equal(await statusFor(true, []), 'not_installed', `${label}: missing Wikipedia archive was mislabeled`);
     assert.equal(await statusFor(true, [{ id: 'wiki', status: 'downloading' }]), 'not_ready', `${label}: downloading archive was mislabeled`);
+  }
+});
+
+test('archive passages come from the densest query window, not the first term hit', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const lead = 'Water is a chemical substance found across the planet. '.repeat(30);
+    const filler = 'Rivers and lakes cover much of the surface in many regions. '.repeat(80);
+    const answer = 'Chlorine dosing for drinking water requires 0.2 to 0.5 mg per litre of free residual chlorine. ';
+    const tail = 'Unrelated closing material about geography and climate history. '.repeat(60);
+    const article = lead + filler + answer + tail;
+
+    assert.match(
+      runtime.relevantPassage(article, 'chlorine dosing drinking water'),
+      /0\.2 to 0\.5 mg per litre/,
+      `${label}: a deep answer was passed over for the first place a query word appeared`,
+    );
+    assert.ok(
+      runtime.relevantPassage(article, 'water').startsWith('Water is a chemical'),
+      `${label}: a definitional query stopped favouring the lead paragraph`,
+    );
+    assert.ok(
+      runtime.relevantPassage(article, 'zzzznotpresent').startsWith('Water is a chemical'),
+      `${label}: a query with no archive terms did not fall back to the article opening`,
+    );
+    assert.equal(
+      runtime.relevantPassage('a short article', 'short'),
+      'a short article',
+      `${label}: a passage shorter than the window was rewritten`,
+    );
+    const windowed = runtime.relevantPassage(article, 'chlorine dosing drinking water');
+    assert.ok(windowed.length <= 2600, `${label}: the selected passage overran the excerpt window`);
+    assert.doesNotMatch(windowed.replace(/^…/, ''), /^[a-z]{2,} /,
+      `${label}: the excerpt opened mid-sentence instead of snapping to a boundary`);
   }
 });
 
@@ -28554,11 +28603,92 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   );
   assert.match(sanitizeMarkdownLinks(multiSourceAttributed), /<a href="\/src\/ui\/emergency-text\.html\?[^\"]+"/,
     'the sidepanel sanitizer did not preserve the local reader as a clickable link');
-  assert.match(
-    agent._standaloneWikipediaFailureMessage({ attempted: true, status: 'no_match' }, { standaloneChat: true, providerId: 'webgpu' }),
-    /will not guess/,
-    'a factual no-match did not fail closed',
+  const standaloneWebgpuOptions = { standaloneChat: true, providerId: 'webgpu' };
+  const noMatchGap = agent._standaloneOfflineGroundingGap({ attempted: true, status: 'no_match' }, standaloneWebgpuOptions);
+  assert.equal(noMatchGap?.health, false, 'a plain factual no-match was treated as a health question');
+  assert.match(noMatchGap.reason, /No matching entry/, 'a factual no-match did not explain the missing archive entry');
+  assert.equal(
+    agent._standaloneOfflineGroundingGap({ attempted: true, status: 'matched' }, standaloneWebgpuOptions),
+    null,
+    'a matched retrieval was mislabeled as a grounding gap',
   );
+  assert.equal(
+    agent._standaloneOfflineGroundingGap({ attempted: true, status: 'no_match' }, { standaloneChat: true, providerId: 'openai' }),
+    null,
+    'the unverified fallback escaped the standalone WebGPU profile',
+  );
+  const notice = agent._withStandaloneUnverifiedNotice('Boil water for one minute.', noMatchGap, standaloneWebgpuOptions);
+  assert.match(notice, /^\*\*Unverified answer, not from your offline sources\.\*\*/, 'the unverified answer was not labeled');
+  assert.match(notice, /Boil water for one minute\./, 'the unverified label discarded the model answer');
+  assert.doesNotMatch(notice, /will not guess/, 'the refusal wording survived the unverified fallback');
+  const healthGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'no_match', healthContext: true, multiSource: true },
+    standaloneWebgpuOptions,
+  );
+  assert.equal(healthGap.health, true, 'a health question did not carry the stronger warning flag');
+  assert.match(
+    agent._withStandaloneUnverifiedNotice('Apply firm pressure.', healthGap, standaloneWebgpuOptions),
+    /not checked medical guidance.*trained help/s,
+    'a health question did not get the stronger unverified warning',
+  );
+  assert.equal(
+    agent._withStandaloneUnverifiedNotice('Anything.', null, standaloneWebgpuOptions),
+    'Anything.',
+    'a grounded answer was labeled unverified',
+  );
+  const ungroundedEnriched = { content: [{ type: 'text', text: 'question' }] };
+  agent._appendStandaloneUngroundedPolicy(ungroundedEnriched, healthGap);
+  const ungroundedPolicy = ungroundedEnriched.content.at(-1);
+  assert.equal(ungroundedPolicy.webbrainEphemeralLocalWikipedia, true,
+    'the ungrounded answer policy would persist into stored history');
+  assert.match(ungroundedPolicy.text, /Do not emit citation tokens/,
+    'the ungrounded answer policy did not forbid invented citations');
+  assert.match(ungroundedPolicy.text, /health or emergency question/,
+    'the ungrounded answer policy dropped the health caution for a health question');
+  const turkishGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'not_installed', multiSource: true },
+    { standaloneChat: true, providerId: 'webgpu', locale: 'tr' },
+  );
+  assert.equal(turkishGap.locale, 'tr', 'the grounding gap dropped the interface locale');
+  assert.match(turkishGap.reason, /Acil Durum Kutusu/,
+    'a Turkish session got an English reason instead of the localized Emergency Box name');
+  const turkishNotice = agent._withStandaloneUnverifiedNotice(
+    'Suyu bir dakika kaynatın.',
+    turkishGap,
+    { standaloneChat: true, providerId: 'webgpu', locale: 'tr' },
+  );
+  assert.match(turkishNotice, /^\*\*Doğrulanmamış yanıt/, 'the unverified label stayed English in a Turkish session');
+  assert.doesNotMatch(turkishNotice, /Unverified answer/, 'the English label leaked into a localized notice');
+  assert.match(turkishNotice, /Suyu bir dakika kaynatın\./, 'the localized label discarded the model answer');
+  const unknownLocaleGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'no_match' },
+    { standaloneChat: true, providerId: 'webgpu', locale: 'xx' },
+  );
+  assert.match(unknownLocaleGap.reason, /No matching entry/, 'an unshipped locale did not fall back to English');
+  const unknownStatusGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'something-new' },
+    standaloneWebgpuOptions,
+  );
+  assert.equal(unknownStatusGap.status, 'no_match', 'an unmapped retrieval status did not collapse to a plain miss');
+  assert.ok(unknownStatusGap.reason, 'an unmapped retrieval status produced an empty reason');
+
+  const shippedLocales = LanguagesCh.map(language => language.code).filter(code => code !== 'en');
+  assert.deepEqual(
+    [...OfflineAnswerLocalesCh].sort(),
+    [...shippedLocales].sort(),
+    'the offline answer copy does not cover exactly the shipped interface locales',
+  );
+  for (const code of OfflineAnswerLocalesCh) {
+    for (const key of OfflineAnswerKeysCh) {
+      const value = getOfflineAnswerCopyCh(code)[key];
+      assert.ok(typeof value === 'string' && value.trim(), `${code}: offline answer copy is missing ${key}`);
+    }
+  }
+
+  assert.match(agent._standaloneIncompleteAnswerNudge(noMatchGap), /do not cite or name any source/,
+    'the mid-sentence recovery nudge still points an ungrounded turn at references');
+  assert.match(agent._standaloneIncompleteAnswerNudge(null), /use only the Offline Wikipedia references/,
+    'the mid-sentence recovery nudge dropped the grounded citation rule');
   assert.equal(
     agent._isClearlyIncompleteStandaloneAnswer('Based on Offline Wikipedia, Sokollu Mehmed Pasha was a', { standaloneChat: true, providerId: 'webgpu' }),
     true,

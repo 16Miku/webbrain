@@ -285,16 +285,80 @@ function decodeHtmlArticleText(html) {
     .trim();
 }
 
-function relevantPassage(text, query, maxChars = 2400) {
+const PASSAGE_SNAP_CHARS = 220;
+const MAX_PASSAGE_TERM_OFFSETS = 4000;
+
+// Nudge a window start back onto a sentence or paragraph edge so the excerpt does
+// not open mid-clause. Only looks a short way back; a long run without a break
+// keeps the original offset.
+function snapPassageStart(text, index) {
+  if (index <= 0) return 0;
+  const lookBehind = Math.max(0, index - PASSAGE_SNAP_CHARS);
+  const window = text.slice(lookBehind, index);
+  const breakAt = Math.max(
+    window.lastIndexOf('\n'),
+    window.lastIndexOf('. '),
+    window.lastIndexOf('。'),
+    window.lastIndexOf('! '),
+    window.lastIndexOf('? '),
+  );
+  return breakAt < 0 ? index : lookBehind + breakAt + 1;
+}
+
+// Every offset where a query term appears, capped so a pathological article
+// cannot make scoring unbounded.
+function queryTermOffsets(lowerText, terms) {
+  const offsets = [];
+  for (const term of terms) {
+    for (let index = lowerText.indexOf(term); index >= 0; index = lowerText.indexOf(term, index + term.length)) {
+      offsets.push({ term, offset: index });
+      if (offsets.length >= MAX_PASSAGE_TERM_OFFSETS) return offsets.sort((left, right) => left.offset - right.offset);
+    }
+  }
+  return offsets.sort((left, right) => left.offset - right.offset);
+}
+
+// The answer to a question is often several sections into an article, so take the
+// densest window of query terms rather than the first place any one of them
+// appears. A two-pointer sweep over term offsets finds it in one pass; coverage of
+// distinct terms dominates raw frequency, and the lead paragraph wins ties because
+// definitional questions are usually answered there.
+export function relevantPassage(text, query, maxChars = 2400) {
   if (text.length <= maxChars) return text;
   const lower = text.toLowerCase();
-  const offsets = String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
-    .filter(token => token.length >= 3)
-    .map(token => lower.indexOf(token))
-    .filter(offset => offset >= 0)
-    .sort((left, right) => left - right);
-  const start = Math.max(0, (offsets[0] || 0) - Math.floor(maxChars / 4));
-  return `${start ? '…' : ''}${text.slice(start, start + maxChars).trim()}${start + maxChars < text.length ? '…' : ''}`;
+  const terms = [...new Set(String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
+    .filter(token => token.length >= 3))];
+  const offsets = terms.length ? queryTermOffsets(lower, terms) : [];
+  let bestScore = -1;
+  let bestOffset = 0;
+  const counts = new Map();
+  let distinct = 0;
+  let left = 0;
+  for (let right = 0; right < offsets.length; right += 1) {
+    const term = offsets[right].term;
+    counts.set(term, (counts.get(term) || 0) + 1);
+    if (counts.get(term) === 1) distinct += 1;
+    while (offsets[right].offset - offsets[left].offset > maxChars - 1) {
+      const leaving = offsets[left].term;
+      const remaining = counts.get(leaving) - 1;
+      counts.set(leaving, remaining);
+      if (remaining === 0) distinct -= 1;
+      left += 1;
+    }
+    const anchor = offsets[left].offset;
+    const score = distinct * 1000
+      + Math.min(right - left + 1, 40)
+      - (anchor / text.length) * 12;
+    if (score > bestScore) {
+      bestScore = score;
+      bestOffset = anchor;
+    }
+  }
+  const start = bestScore < 0
+    ? 0
+    : snapPassageStart(text, Math.max(0, bestOffset - Math.floor(maxChars / 6)));
+  const end = start + maxChars;
+  return `${start ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
 }
 
 function queryPaths(query) {
