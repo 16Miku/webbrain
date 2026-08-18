@@ -3176,6 +3176,31 @@ html[data-standalone="true"] #mode-toggle {
 .message-content h5,
 .message-content h6 { font-size: 13px; }
 
+.markdown-table-wrapper {
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.message-content th,
+.message-content td {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-content th {
+  background: var(--overlay-bg);
+  font-weight: 600;
+}
+
 .message-content code {
   background: var(--overlay-bg);
   padding: 1px 4px;

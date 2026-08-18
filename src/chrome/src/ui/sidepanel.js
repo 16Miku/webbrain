@@ -6,7 +6,7 @@
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './markdown-render.js';
+import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
@@ -11488,10 +11488,11 @@ function formatMarkdown(text, options = {}) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // 4. Block headings, inline formatting, markdown link sanitization, then
-  // newline → <br>. Code and inline-code placeholders were extracted above,
-  // so Markdown-looking source inside them is not interpreted here.
+  // 4. Block headings, tables, inline formatting, markdown link sanitization,
+  // then newline → <br>. Code and inline-code placeholders were extracted
+  // above, so Markdown-looking source inside them is not interpreted here.
   text = renderMarkdownHeadings(text);
+  text = renderMarkdownTables(text);
   text = text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>');
