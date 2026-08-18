@@ -5,6 +5,7 @@
  * and the set of `reasons` declared at createDocument time is fixed — you
  * cannot add reasons later. So both consumers of the offscreen document
  * (the localhost-fetch proxy in offscreen.js, local WebGPU inference worker,
+ * offline SQLite/E5 retrieval workers,
  * large-file staging in
  * skill-download.js, the tab-recorder in recorder.js, and the cloud bridge in
  * cloud-bridge.js) must agree on a single
@@ -44,7 +45,7 @@ const OFFSCREEN_REASONS = [
   'AUDIO_PLAYBACK',
 ];
 const OFFSCREEN_JUSTIFICATION =
-  'Proxy localhost requests; run local WebGPU models; stage validated large downloads; capture active tab and mic; maintain a localhost cloud bridge WebSocket; play conditional watch alerts.';
+  'Proxy localhost requests; run local WebGPU models and offline reference search; stage validated large downloads; capture active tab and mic; maintain a localhost cloud bridge WebSocket; play conditional watch alerts.';
 
 let ready = false;
 let inflight = null;

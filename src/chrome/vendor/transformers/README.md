@@ -1,12 +1,15 @@
 # Vendored Transformers.js WebGPU runtime
 
 This directory packages the JavaScript and WASM runtime used by two local
-WebGPU paths in Chrome:
+WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
 
 - **Apocalypse Mode -> LFM2.5 2.6B local chat** downloads the fixed text/tool
   model used by the standalone-chat nuclear override.
 - **Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback** runs
   `LiquidAI/LFM2.5-VL-450M-ONNX` as the dedicated screenshot sidecar.
+- **Apocalypse Mode -> Offline RAG** runs the explicitly downloaded, pinned
+  `Xenova/multilingual-e5-small` q8 model in a separate CPU/WASM worker. Model
+  weights remain optional and are never bundled or downloaded by a question.
 
 Model weights are not bundled. Transformers.js downloads each WebGPU model on
 first use and stores it in the browser cache. LFM2.5 2.6B uses the standard

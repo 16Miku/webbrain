@@ -41,6 +41,7 @@ import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
+import { createOffscreenOfflineRetrievalService } from './agent/offline-retrieval-offscreen.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
@@ -183,6 +184,7 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
   .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
@@ -1846,6 +1848,22 @@ async function standaloneRunProviderId(msg) {
   return providerId;
 }
 
+function standaloneRagFilterOptions(msg) {
+  if (msg?.standaloneChat !== true || msg?.providerId !== 'webgpu') return {};
+  const allowedSources = new Set(['wikipedia', 'emergency-box']);
+  const offlineRagSources = [...new Set((Array.isArray(msg.offlineRagSources) ? msg.offlineRagSources : [])
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(value => allowedSources.has(value)))];
+  const offlineRagLanguages = [...new Set((Array.isArray(msg.offlineRagLanguages) ? msg.offlineRagLanguages : [])
+    .slice(0, 64)
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(value => /^[a-z]{3}$/.test(value)))];
+  return {
+    offlineRagSources: offlineRagSources.length ? offlineRagSources : [...allowedSources],
+    offlineRagLanguages,
+  };
+}
+
 async function sendAgentRunComplete(tabId, snapshot = null) {
   if (tabId == null || !snapshot) return;
   const submittedTurnDurable = snapshot.kind === 'continue'
@@ -2244,6 +2262,7 @@ async function handleMessage(msg, sender) {
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
+    'ensure_offscreen_offline_rag_host',
   ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
@@ -2261,6 +2280,9 @@ async function handleMessage(msg, sender) {
   }
 
   switch (msg.action) {
+    case 'ensure_offscreen_offline_rag_host':
+      await ensureOffscreen();
+      return { ready: true };
     case 'apocalypse_mode': {
       const snapshot = await apocalypseController.handle(msg.command, msg);
       if (msg.command === 'enable') {
@@ -2691,6 +2713,7 @@ async function handleMessage(msg, sender) {
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
           ...(runProviderId ? { providerId: runProviderId } : {}),
+          ...standaloneRagFilterOptions(msg),
           ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
               sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
@@ -2834,6 +2857,7 @@ async function handleMessage(msg, sender) {
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
           ...(runProviderId ? { providerId: runProviderId } : {}),
+          ...standaloneRagFilterOptions(msg),
           ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
               sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
@@ -2908,6 +2932,7 @@ async function handleMessage(msg, sender) {
         }, mode, {
           ...(msg.foreground ? { foreground: true } : {}),
           ...(runProviderId ? { providerId: runProviderId } : {}),
+          ...standaloneRagFilterOptions(msg),
           detachedRequestId: runUi.requestId,
           isDetachedStartCancelled: () => isDetachedRunStartCancelled(tabId, msg),
           beforeConsequentialTool: () => flushRunUiSnapshot(tabId, runUi.requestId),

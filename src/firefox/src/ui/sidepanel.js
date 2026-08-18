@@ -29,6 +29,7 @@ import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
+import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -892,6 +893,15 @@ let recommendationsRequestId = 0;
 let providerSelectionRequestId = 0;
 let providerTestRequestId = 0;
 let selectedProviderId = 'webbrain_cloud';
+const standaloneRagReadinessRoot = document.getElementById('standalone-rag-readiness');
+const standaloneRagReadiness = isStandaloneWindow && standaloneRagReadinessRoot
+  ? createOfflineRagReadinessController({
+    root: standaloneRagReadinessRoot,
+    manageHref: 'emergency-box.html',
+    getGenerationStatus: () => 'unavailable',
+  })
+  : null;
+standaloneRagReadinessRoot?.classList.add('hidden');
 let recommendedActionsCollapsed = false;
 let webbrainPromotionHasAnimated = false;
 let slashCommandMatches = [];
@@ -12507,5 +12517,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 // --- Start ---
+document.addEventListener('wb-locale-changed', () => standaloneRagReadiness?.render());
+globalThis.addEventListener('pagehide', () => standaloneRagReadiness?.close(), { once: true });
 startInputPlaceholderRotation();
 init();

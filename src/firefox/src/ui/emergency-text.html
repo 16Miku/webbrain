@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="et.page_title"></title>
+  <script src="theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="emergency-text.css">
+  <link rel="stylesheet" href="apocalypse-kit.css">
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
+</head>
+<body class="emergency-text-page">
+  <header class="text-reader-header">
+    <a class="back-button" href="emergency-box.html" data-i18n-aria-label="et.back">←</a>
+    <span class="text-mark" aria-hidden="true">TXT</span>
+    <div class="document-heading">
+      <h1 id="document-title" data-i18n="et.loading"></h1>
+      <p id="document-meta"></p>
+    </div>
+    <span id="offline-badge" class="offline-badge" data-i18n="et.available_offline" hidden></span>
+  </header>
+  <main class="text-reader-shell">
+    <div id="reader-message" class="reader-message" role="status" aria-live="polite">
+      <span class="loading-ring" aria-hidden="true"></span>
+      <span data-i18n="et.preparing"></span>
+    </div>
+    <article id="document-view" hidden>
+      <div class="document-provenance">
+        <span id="document-license"></span>
+        <a id="document-source" target="_blank" rel="noopener noreferrer" data-i18n="et.source"></a>
+      </div>
+      <div id="document-passages"></div>
+    </article>
+  </main>
+  <footer id="reader-status" class="reader-status" role="status" aria-live="polite"></footer>
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
+  <script type="module" src="emergency-text.js"></script>
+</body>
+</html>
+

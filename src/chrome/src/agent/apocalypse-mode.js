@@ -387,6 +387,8 @@ export function mergeZimProvenance(metadata = {}, embedded = {}) {
 }
 
 export function wikipediaArchiveIncludesImages(metadata = {}, embedded = {}) {
+  metadata = metadata || {};
+  embedded = embedded || {};
   const flavour = String(metadata.flavour || '').toLowerCase();
   const tags = [
     ...(Array.isArray(metadata.tags) ? metadata.tags : String(metadata.tags || '').split(/[;,]/)),
@@ -1369,8 +1371,12 @@ export async function searchApocalypseArchives(query, options = {}) {
     try {
       const provider = providers.find(candidate => candidate.supports(record));
       if (!provider) continue;
-      results.push(...await provider.search(record, query, { limit: options.limit || 3 }));
-      if (results.length >= (options.limit || 3)) break;
+      results.push(...await provider.search(record, query, {
+        limit: options.searchAllArchives
+          ? Math.min(10, Number(options.perArchiveLimit) || 10)
+          : options.limit || 3,
+      }));
+      if (!options.searchAllArchives && results.length >= (options.limit || 3)) break;
     } catch (error) {
       const permissionRequired = isFilePermissionError(error, record.target);
       const message = permissionRequired
@@ -1391,7 +1397,8 @@ export async function searchApocalypseArchives(query, options = {}) {
   }
   if (!results.length && archiveErrors.length) throw new Error(archiveErrors[0]);
   reportStatus(results.length ? 'matched' : 'no_match');
-  return results.slice(0, Math.max(1, Math.min(10, Number(options.limit) || 3)));
+  const maximumResults = options.searchAllArchives ? 40 : 10;
+  return results.slice(0, Math.max(1, Math.min(maximumResults, Number(options.limit) || 3)));
 }
 
 function cachedKiwixArchive(record, storage, cache) {
@@ -1429,6 +1436,7 @@ export function createKiwixZimProvider(options = {}) {
         ...result,
         archiveId: record.id,
         archiveTitle: record.title || record.filename,
+        retrievalMode: 'title-only',
       }));
     },
     async read(record, path, readOptions = {}) {

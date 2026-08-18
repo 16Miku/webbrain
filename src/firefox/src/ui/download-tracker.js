@@ -6,11 +6,21 @@ const EMERGENCY_DB_VERSION = 1;
 const EMERGENCY_STORE = 'resources';
 const VISION_STATE_KEY = 'webgpuVisionDownloadState';
 const EXPANDED_KEY = 'wbDownloadTrackerExpanded';
-const ACTIVE_STATUSES = new Set(['starting', 'queued', 'downloading', 'retrying', 'stopping']);
-const ATTENTION_STATUSES = new Set(['paused', 'error']);
+const EMERGENCY_COMPONENT_STATE_EVENT = 'wb-emergency-component-download-state';
+const EMERGENCY_COMPONENT_STATE_CHANNEL = 'webbrain-emergency-download-state';
+const CORPUS_DOWNLOAD_ID = 'rag-emergency-corpus';
+const SEMANTIC_DOWNLOAD_ID = 'rag-semantic-model';
+const ACTIVE_STATUSES = new Set([
+  'starting', 'queued', 'downloading', 'retrying', 'verifying', 'extracting', 'indexing', 'stopping',
+]);
+const ATTENTION_STATUSES = new Set(['downloaded', 'paused', 'error']);
 const PDF_STALE_AFTER_MS = 8_000;
 const telemetry = new Map();
 const activeActions = new Set();
+const componentDownloadItems = new Map();
+const componentDownloadStateChannel = typeof BroadcastChannel === 'function'
+  ? new BroadcastChannel(EMERGENCY_COMPONENT_STATE_CHANNEL)
+  : null;
 
 const DOWNLOAD_LABELS = Object.freeze({
   en: 'Downloads', zh: '下载', ar: 'التنزيلات', bn: 'ডাউনলোড', nl: 'Downloads',
@@ -102,6 +112,11 @@ function addTelemetry(items) {
 function statusText(status) {
   if (status === 'starting') return t('ap.status.queued');
   if (status === 'stopping') return t('st.providers.webgpu_download.stopping');
+  if (['verifying', 'downloaded', 'extracting', 'indexing'].includes(status)) {
+    const componentKey = `eb.rag.status.${status}`;
+    const componentTranslation = t(componentKey);
+    if (componentTranslation !== componentKey) return componentTranslation;
+  }
   const key = `ap.status.${status}`;
   const translated = t(key);
   return translated === key ? status : translated;
@@ -178,10 +193,7 @@ async function requestTextModelState(enabled) {
 
 function normalizedStatus(value) {
   const status = String(value || '').toLowerCase();
-  return status === 'retrying' || status === 'queued' || status === 'starting'
-    || status === 'downloading' || status === 'stopping' || status === 'paused' || status === 'error'
-    ? status
-    : '';
+  return ACTIVE_STATUSES.has(status) || ATTENTION_STATUSES.has(status) ? status : '';
 }
 
 function modelItem(state, kind) {
@@ -246,6 +258,36 @@ function pdfItems(records) {
   });
 }
 
+function observeEmergencyComponentState(value = {}) {
+  const sourceId = String(value.id || '');
+  if (sourceId !== CORPUS_DOWNLOAD_ID && sourceId !== SEMANTIC_DOWNLOAD_ID) return;
+  const status = normalizedStatus(value.status);
+  if (!ACTIVE_STATUSES.has(status) && !ATTENTION_STATUSES.has(status)) {
+    componentDownloadItems.delete(sourceId);
+    return;
+  }
+  componentDownloadItems.set(sourceId, {
+    sourceId,
+    componentKind: sourceId === CORPUS_DOWNLOAD_ID ? 'corpus' : 'semantic',
+    status,
+    progress: clampProgress(Number(value.progress) * (Number(value.progress) <= 1 ? 100 : 1)),
+    loaded: Math.max(0, Number(value.loaded) || 0),
+    total: Math.max(0, Number(value.total) || 0),
+    updatedAt: Number(value.updatedAt) || Date.now(),
+    detail: String(value.detail || '').slice(0, 500),
+  });
+}
+
+function emergencyComponentItems() {
+  return [...componentDownloadItems.values()].map(record => ({
+    ...record,
+    id: `component-${record.sourceId}`,
+    title: t(record.componentKind === 'corpus' ? 'eb.rag.corpus_title' : 'eb.rag.semantic_title'),
+    href: pageUrl('emergency-box.html'),
+    kind: 'component',
+  }));
+}
+
 function priority(item) {
   if (item.status === 'error') return 0;
   if (ACTIVE_STATUSES.has(item.status)) return 1;
@@ -262,6 +304,7 @@ async function collectItems() {
     modelItem(vision, 'vision'),
     ...archiveItems(snapshot),
     ...pdfItems(pdfs),
+    ...emergencyComponentItems(),
   ].filter(Boolean).sort((left, right) => priority(left) - priority(right)
     || String(left.title).localeCompare(String(right.title))));
 }
@@ -269,6 +312,7 @@ async function collectItems() {
 function glyphFor(item) {
   if (item.kind === 'model') return 'GPU';
   if (item.kind === 'archive') return 'ZIM';
+  if (item.kind === 'component') return item.componentKind === 'corpus' ? 'TXT' : 'E5';
   return 'PDF';
 }
 
@@ -315,7 +359,7 @@ function summaryText(items) {
     const status = ACTIVE_STATUSES.has(item.status) ? 'downloading' : item.status;
     counts.set(status, (counts.get(status) || 0) + 1);
   }
-  return ['downloading', 'paused', 'error']
+  return ['downloading', 'downloaded', 'paused', 'error']
     .filter(status => counts.has(status))
     .map(status => `${statusText(status)} ${counts.get(status)}`)
     .join(' · ');
@@ -382,6 +426,13 @@ async function runItemAction(item, action) {
       const command = action === 'resume' ? `start_webgpu${suffix}_download` : `${action}_webgpu${suffix}_download`;
       const state = await send({ target: 'background', action: command });
       if (item.modelKind === 'text' && state) textModelState = state;
+    } else if (item.kind === 'component') {
+      if (action === 'resume' && !/\/emergency-box\.html$/.test(globalThis.location?.pathname || '')) {
+        signalEmergencyBox('pause', item);
+        globalThis.location.href = `${item.href}?resumeComponent=${encodeURIComponent(item.sourceId)}`;
+        return;
+      }
+      signalEmergencyBox(action, item);
     } else if (item.kind === 'pdf') {
       if (action === 'resume' && !/\/emergency-box\.html$/.test(globalThis.location?.pathname || '')) {
         signalEmergencyBox('pause', item);
@@ -472,9 +523,22 @@ runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
   if (area === 'local' && changes[VISION_STATE_KEY]) void refresh();
 });
 
+globalThis.addEventListener(EMERGENCY_COMPONENT_STATE_EVENT, event => {
+  observeEmergencyComponentState(event.detail);
+  void refresh();
+});
+componentDownloadStateChannel?.addEventListener('message', event => {
+  observeEmergencyComponentState(event.data);
+  void refresh();
+});
+try { componentDownloadStateChannel?.postMessage({ type: 'request' }); } catch {}
+
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
 document.addEventListener('wb-locale-changed', () => void refresh());
 
 void refresh();
 timer = globalThis.setInterval(() => void refresh(), 2_000);
-globalThis.addEventListener('pagehide', () => globalThis.clearInterval(timer), { once: true });
+globalThis.addEventListener('pagehide', () => {
+  globalThis.clearInterval(timer);
+  componentDownloadStateChannel?.close();
+}, { once: true });

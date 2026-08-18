@@ -8,6 +8,7 @@ import {
   WEBGPU_MODEL_ID,
 } from '../providers/webgpu.js';
 import { t } from './i18n.js';
+import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
@@ -35,6 +36,7 @@ const elements = Object.fromEntries([
   'basic-wikipedia-card', 'basic-wikipedia-title', 'basic-wikipedia-description', 'basic-wikipedia-meta',
   'basic-wikipedia-status', 'basic-wikipedia-progress', 'basic-wikipedia-start',
   'emergency-box-callout', 'emergency-gate-reason', 'emergency-box-link',
+  'offline-rag-readiness',
 ].map(id => [id, document.getElementById(id)]));
 elements['vision-model-card'].hidden = !supportsWebgpuVision;
 elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
@@ -65,6 +67,17 @@ let webgpuDownloadState = {
   progress: 0,
   error: '',
 };
+const ragReadiness = createOfflineRagReadinessController({
+  root: elements['offline-rag-readiness'],
+  manageHref: 'emergency-box.html',
+  getGenerationStatus: () => webgpuDownloadState.status === 'ready'
+    ? 'ready'
+    : webgpuDownloadState.status === 'error'
+      ? 'error'
+      : ['downloading', 'paused'].includes(webgpuDownloadState.status)
+        ? webgpuDownloadState.status
+        : 'model-missing',
+});
 
 function bytes(value) {
   const number = Number(value) || 0;
@@ -406,7 +419,8 @@ function renderBasicWikipediaDownload() {
   const customEdition = Boolean(record && !isBasicWikipediaArchive(record));
   elements['basic-wikipedia-title'].textContent = t(customEdition ? 'ap.models.wikipedia.active_title' : 'ap.models.wikipedia.title');
   elements['basic-wikipedia-description'].textContent = t(customEdition ? 'ap.models.wikipedia.active_desc' : 'ap.models.wikipedia.desc');
-  const tier = wikipediaArchiveIncludesImages(displayItem) ? 'full' : 'text';
+  elements['basic-wikipedia-meta'].hidden = !displayItem;
+  const tier = displayItem && wikipediaArchiveIncludesImages(displayItem) ? 'full' : 'text';
   elements['basic-wikipedia-meta'].textContent = `${displayItem?.language || 'eng'} · ${String(displayItem?.archiveDate || t('ap.date_unknown')).slice(0, 10)} · ${t(`ap.tier.${tier}`)}`;
   elements['basic-wikipedia-progress'].hidden = !record || ['ready', 'deleting'].includes(status);
   elements['basic-wikipedia-progress'].value = progress;
@@ -523,6 +537,7 @@ async function refresh() {
   elements.enabled.checked = snapshot.enabled === true;
   renderInstalled();
   await refreshVisionDownload().catch(() => {});
+  await ragReadiness.refresh({ archives: snapshot.archives }).catch(() => {});
 }
 
 async function loadBasicWikipediaAutoStartPreference() {
@@ -658,6 +673,7 @@ document.addEventListener('wb-locale-changed', () => {
   updateWebgpuDownloadPanel();
   renderBasicWikipediaDownload();
   updateOverallModelsReadiness();
+  ragReadiness.render();
 });
 runtimeApi.storage?.onChanged?.addListener?.((changes, area) => {
   if (!supportsWebgpuVision || area !== 'local' || !changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) return;
@@ -690,3 +706,4 @@ await Promise.all([
 ]);
 if (snapshot?.enabled === true) void loadBasicWikipediaCatalog();
 setInterval(poll, 2000);
+globalThis.addEventListener('pagehide', () => ragReadiness.close(), { once: true });

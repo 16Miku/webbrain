@@ -1,5 +1,17 @@
 import { createApocalypseStore } from '../agent/apocalypse-mode.js';
 import {
+  cancelEmergencyCorpusInstall,
+  createEmergencyCorpusStorage,
+  createEmergencyCorpusStore,
+  deleteEmergencyCorpus,
+  downloadAndInstallEmergencyCorpus,
+  recoverEmergencyCorpusLifecycle,
+} from '../agent/emergency-corpus.js';
+import {
+  EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS,
+  EMERGENCY_CORPUS_RELEASE,
+} from '../agent/emergency-corpus-release.js';
+import {
   EMERGENCY_BOX_COMMUNICATION_RESOURCES,
   EMERGENCY_BOX_HEALTH_RESOURCES,
   compareEmergencyBoxResources,
@@ -13,6 +25,11 @@ import {
   PREFETCHED_OPENSTAX_CATALOG,
   selectEmergencyBoxBasicResources,
 } from '../agent/emergency-box.js';
+import { createHostedOfflineRagIndexClient } from '../agent/offline-rag-index-host.js';
+import {
+  E5_MODEL_DOWNLOAD_BYTES,
+  createOfflineSemanticReranker,
+} from '../agent/offline-reranker.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
@@ -32,25 +49,48 @@ runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
 const apocalypseStore = createApocalypseStore();
 const resourceStore = createEmergencyBoxStore();
 const resourceStorage = createEmergencyBoxStorage();
+const corpusStore = createEmergencyCorpusStore();
+const corpusStorage = createEmergencyCorpusStorage();
+let ragIndexClient = null;
+const indexClient = () => {
+  if (!ragIndexClient) ragIndexClient = createHostedOfflineRagIndexClient();
+  return ragIndexClient;
+};
+const semanticReranker = createOfflineSemanticReranker();
 const elements = Object.fromEntries([
   'mode-status', 'resource-count', 'installed-rail-count', 'installed-count', 'installed-bytes',
   'category-nav', 'resource-search', 'load-openstax', 'download-basic', 'download-all', 'notice', 'resource-list',
+  'rag-wikipedia-status', 'rag-corpus-status', 'rag-semantic-status', 'rag-generation-status', 'rag-components',
 ].map(id => [id, document.getElementById(id)]));
 
 const OPENSTAX_CACHE_KEY = 'webbrainEmergencyOpenStaxCatalog';
+const CORPUS_DOWNLOAD_ID = 'rag-emergency-corpus';
+const SEMANTIC_DOWNLOAD_ID = 'rag-semantic-model';
+const EMERGENCY_COMPONENT_STATE_EVENT = 'wb-emergency-component-download-state';
+const EMERGENCY_COMPONENT_STATE_CHANNEL = 'webbrain-emergency-download-state';
 const EMERGENCY_READER_PAGES = new Set(['emergency-pdf.html', 'emergency-communication.html']);
 const downloadControlChannel = typeof BroadcastChannel === 'function'
   ? new BroadcastChannel('webbrain-emergency-download-control')
+  : null;
+const downloadStateChannel = typeof BroadcastChannel === 'function'
+  ? new BroadcastChannel(EMERGENCY_COMPONENT_STATE_CHANNEL)
   : null;
 let apocalypseEnabled = false;
 let activeFilter = 'all';
 let openStaxResources = cachedOpenStaxCatalog();
 let records = new Map();
+let corpusRecord = null;
+let semanticState = semanticReranker.snapshot();
+let wikipediaRagStatus = 'unavailable';
 let loadingOpenStax = false;
 let bulkDownloading = false;
 let bulkDownloadKind = '';
 let stopBulkDownload = false;
 const downloads = new Map();
+semanticReranker.subscribe(state => {
+  semanticState = state;
+  render();
+});
 
 function cachedOpenStaxCatalog() {
   try {
@@ -104,6 +144,22 @@ function remainingOfTotal(resources, pending) {
   return t('eb.remaining_of_total', {
     remaining: formatEstimatedSize(estimatedDownloadBytes(pending)),
     total: formatEstimatedSize(estimatedDownloadBytes(resources)),
+  });
+}
+
+function ragComponentNetworkBytes({ includeInstalled = false } = {}) {
+  let bytes = 0;
+  if (semanticState.status !== 'ready') bytes += E5_MODEL_DOWNLOAD_BYTES;
+  if (corpusUiStatus() !== 'ready' && EMERGENCY_CORPUS_RELEASE) bytes += Number(EMERGENCY_CORPUS_RELEASE.downloadBytes) || 0;
+  if (includeInstalled) return bytes;
+  return bytes;
+}
+
+function kitRemainingLabel(resources, pending) {
+  const componentBytes = ragComponentNetworkBytes();
+  return t('eb.remaining_of_total', {
+    remaining: formatEstimatedSize(estimatedDownloadBytes(pending) + componentBytes),
+    total: formatEstimatedSize(estimatedDownloadBytes(resources) + componentBytes),
   });
 }
 
@@ -218,6 +274,180 @@ function renderResource(resource) {
     </article>`;
 }
 
+function ragStatusLabel(status) {
+  const key = `eb.rag.status.${String(status || 'unavailable')}`;
+  const translated = t(key);
+  return translated === key ? String(status || '') : translated;
+}
+
+function corpusUiStatus() {
+  if (corpusRecord?.status === 'ready' && corpusRecord.active) return 'ready';
+  if (corpusRecord?.status && corpusRecord.status !== 'not-installed') return corpusRecord.status;
+  return EMERGENCY_CORPUS_RELEASE ? 'not-installed' : 'unavailable';
+}
+
+function publishComponentDownloadState(detail) {
+  try {
+    globalThis.dispatchEvent(new CustomEvent(EMERGENCY_COMPONENT_STATE_EVENT, { detail }));
+  } catch { /* Another extension page can still observe the broadcast below. */ }
+  try {
+    downloadStateChannel?.postMessage(detail);
+  } catch { /* The footer tracker is optional and must never interrupt a download. */ }
+}
+
+function publishComponentDownloadStates({
+  corpusStatus, corpusReceived, corpusTotal, corpusDetail,
+  semanticStatus, semanticReceived, semanticTotal, semanticDetail,
+}) {
+  publishComponentDownloadState({
+    id: CORPUS_DOWNLOAD_ID,
+    status: corpusStatus,
+    loaded: corpusReceived,
+    total: corpusTotal,
+    progress: corpusTotal > 0 ? corpusReceived / corpusTotal : 0,
+    updatedAt: Number(corpusRecord?.updatedAt) || Date.now(),
+    detail: corpusDetail,
+  });
+  publishComponentDownloadState({
+    id: SEMANTIC_DOWNLOAD_ID,
+    status: semanticStatus,
+    loaded: semanticReceived,
+    total: semanticTotal,
+    progress: Number(semanticState.progress) || (semanticTotal > 0 ? semanticReceived / semanticTotal : 0),
+    updatedAt: Date.now(),
+    detail: semanticDetail,
+  });
+}
+
+function publishPausedComponentTransfers() {
+  if (downloads.has(CORPUS_DOWNLOAD_ID)) {
+    publishComponentDownloadState({
+      id: CORPUS_DOWNLOAD_ID,
+      status: 'paused',
+      loaded: Number(corpusRecord?.staging?.bytesReceived) || 0,
+      total: Number(corpusRecord?.staging?.totalBytes) || Number(EMERGENCY_CORPUS_RELEASE?.downloadBytes) || 0,
+      updatedAt: Date.now(),
+    });
+  }
+  if (downloads.has(SEMANTIC_DOWNLOAD_ID)) {
+    publishComponentDownloadState({
+      id: SEMANTIC_DOWNLOAD_ID,
+      status: 'paused',
+      loaded: Number(semanticState.loaded) || 0,
+      total: Number(semanticState.total) || E5_MODEL_DOWNLOAD_BYTES,
+      updatedAt: Date.now(),
+    });
+  }
+}
+
+function componentAction(component, action, label, options = {}) {
+  const disabled = options.disabled ? ' disabled' : '';
+  const danger = options.danger ? ' danger' : '';
+  const primary = options.primary ? ' primary' : '';
+  return `<button type="button" class="resource-action${danger}${primary}" data-rag-action="${escapeHtml(action)}" data-rag-component="${escapeHtml(component)}"${disabled}>${escapeHtml(label)}</button>`;
+}
+
+function corpusActions(status) {
+  if (status === 'ready') return componentAction('corpus', 'delete', t('eb.delete'), { danger: true });
+  if (['downloading', 'verifying', 'extracting', 'indexing'].includes(status)) {
+    return componentAction('corpus', 'pause', t('eb.pause'));
+  }
+  if (status === 'downloaded') return componentAction('corpus', 'download', t('eb.rag.install'), { primary: true });
+  if (status === 'paused' || status === 'error') {
+    return [
+      componentAction('corpus', 'download', t('eb.retry'), { primary: true, disabled: !apocalypseEnabled || !EMERGENCY_CORPUS_RELEASE }),
+      componentAction('corpus', 'cancel', t('eb.rag.cancel_install'), { danger: true }),
+    ].join('');
+  }
+  return componentAction('corpus', 'download', t('eb.download'), {
+    primary: true,
+    disabled: !apocalypseEnabled || !EMERGENCY_CORPUS_RELEASE,
+  });
+}
+
+function semanticActions(status) {
+  if (status === 'ready') return componentAction('semantic', 'delete', t('eb.delete'), { danger: true });
+  if (status === 'downloading') return componentAction('semantic', 'pause', t('eb.pause'));
+  if (status === 'paused' || status === 'error') {
+    return [
+      componentAction('semantic', 'download', t('eb.retry'), { primary: true, disabled: !apocalypseEnabled }),
+      componentAction('semantic', 'delete', t('eb.rag.clear_partial'), { danger: true }),
+    ].join('');
+  }
+  return componentAction('semantic', 'download', t('eb.download'), { primary: true, disabled: !apocalypseEnabled });
+}
+
+function componentProgress(status, received, total, detail = '') {
+  if (!['downloading', 'verifying', 'extracting', 'indexing', 'paused', 'error'].includes(status)) return '';
+  const percent = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0;
+  return `<div class="rag-component-progress">
+    <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><div class="progress-fill" style="width:${percent}%"></div></div>
+    <div class="progress-detail">${escapeHtml(detail || `${formatBytes(received)}${total ? ` / ${formatBytes(total)}` : ''}`)}</div>
+  </div>`;
+}
+
+function setReadinessStatus(element, status) {
+  element.textContent = ragStatusLabel(status);
+  element.dataset.status = status;
+}
+
+function renderRagComponents() {
+  const corpusStatus = corpusUiStatus();
+  const corpusReceived = Number(corpusRecord?.staging?.bytesReceived) || 0;
+  const corpusTotal = Number(corpusRecord?.staging?.totalBytes)
+    || Number(EMERGENCY_CORPUS_RELEASE?.downloadBytes)
+    || 0;
+  const activeCorpusBytes = Number(corpusRecord?.active?.extractedBytes || 0)
+    + Number(corpusRecord?.active?.indexBytes || 0);
+  const provisional = EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS;
+  const corpusMeta = corpusStatus === 'ready'
+    ? `${corpusRecord.active.documentCount} ${t('eb.rag.documents')} · ${formatBytes(activeCorpusBytes)}`
+    : EMERGENCY_CORPUS_RELEASE
+      ? `${formatBytes(EMERGENCY_CORPUS_RELEASE.downloadBytes)} ${t('eb.rag.network')}`
+      : t('eb.rag.corpus_pending_meta', {
+        count: provisional.sourceDocumentCount,
+        size: formatBytes(provisional.sourceTextBytes),
+      });
+  const corpusDetail = corpusRecord?.error
+    || (corpusStatus === 'extracting' ? t('eb.rag.extracting_detail') : '')
+    || (corpusStatus === 'indexing' ? t('eb.rag.indexing_detail') : '');
+  const corpusDescriptionKey = !EMERGENCY_CORPUS_RELEASE
+    ? 'eb.rag.corpus_pending'
+    : (EMERGENCY_CORPUS_RELEASE.preview ? 'eb.rag.corpus_preview' : 'eb.rag.corpus_description');
+
+  const semanticStatus = semanticState.status === 'unknown' ? 'model-missing' : semanticState.status;
+  const semanticReceived = Number(semanticState.loaded) || 0;
+  const semanticTotal = Number(semanticState.total) || E5_MODEL_DOWNLOAD_BYTES;
+  const semanticDetail = semanticState.error || semanticState.file || '';
+  elements['rag-components'].innerHTML = `
+    <article class="rag-component" data-status="${escapeHtml(corpusStatus)}">
+      <div class="rag-component-copy">
+        <h3 class="rag-component-title">${escapeHtml(t('eb.rag.corpus_title'))}<span class="status-label" data-status="${escapeHtml(corpusStatus)}">${escapeHtml(ragStatusLabel(corpusStatus))}</span></h3>
+        <p>${escapeHtml(t(corpusDescriptionKey))}</p>
+        <div class="rag-component-meta"><span>${escapeHtml(corpusMeta)}</span></div>
+      </div>
+      <div class="rag-component-actions">${corpusActions(corpusStatus)}</div>
+      ${componentProgress(corpusStatus, corpusReceived, corpusTotal, corpusDetail)}
+    </article>
+    <article class="rag-component" data-status="${escapeHtml(semanticStatus)}">
+      <div class="rag-component-copy">
+        <h3 class="rag-component-title">${escapeHtml(t('eb.rag.semantic_title'))}<span class="status-label" data-status="${escapeHtml(semanticStatus)}">${escapeHtml(ragStatusLabel(semanticStatus))}</span></h3>
+        <p>${escapeHtml(t('eb.rag.semantic_description'))}</p>
+        <div class="rag-component-meta"><span>${escapeHtml(formatBytes(E5_MODEL_DOWNLOAD_BYTES))} ${escapeHtml(t('eb.rag.network'))}</span><span>CPU / WASM</span></div>
+      </div>
+      <div class="rag-component-actions">${semanticActions(semanticStatus)}</div>
+      ${componentProgress(semanticStatus, semanticReceived, semanticTotal, semanticDetail)}
+    </article>`;
+  setReadinessStatus(elements['rag-wikipedia-status'], wikipediaRagStatus);
+  setReadinessStatus(elements['rag-corpus-status'], corpusStatus === 'ready' ? 'ready' : corpusStatus);
+  setReadinessStatus(elements['rag-semantic-status'], semanticStatus);
+  setReadinessStatus(elements['rag-generation-status'], apocalypseEnabled ? 'separate' : 'unavailable');
+  publishComponentDownloadStates({
+    corpusStatus, corpusReceived, corpusTotal, corpusDetail,
+    semanticStatus, semanticReceived, semanticTotal, semanticDetail,
+  });
+}
+
 function render() {
   const all = catalogResources();
   const installed = all.filter(resource => resource.status === 'ready');
@@ -229,6 +459,7 @@ function render() {
   elements['mode-status'].textContent = t(apocalypseEnabled ? 'eb.mode_on' : 'eb.mode_off');
   elements['mode-status'].dataset.enabled = String(apocalypseEnabled);
   elements['load-openstax'].disabled = loadingOpenStax;
+  renderRagComponents();
 
   const filtered = filteredResources();
   const downloadable = filtered.filter(resource => !resource.builtIn);
@@ -236,23 +467,29 @@ function render() {
   const basicResources = selectEmergencyBoxBasicResources(all).filter(resource => !resource.builtIn);
   const basicPending = basicResources
     .filter(resource => resource.status !== 'ready');
-  const pendingCount = pending.length;
-  const basicPendingCount = basicPending.length;
+  const ragPendingCount = Number(corpusUiStatus() !== 'ready' && !!EMERGENCY_CORPUS_RELEASE)
+    + Number(semanticState.status !== 'ready');
+  const pendingCount = pending.length + ragPendingCount;
+  const basicPendingCount = basicPending.length + ragPendingCount;
   const basicActive = bulkDownloading && bulkDownloadKind === 'basic';
   const allActive = bulkDownloading && bulkDownloadKind === 'all';
-  elements['download-basic'].disabled = bulkDownloading ? !basicActive : (!apocalypseEnabled || basicPendingCount === 0);
+  elements['download-basic'].disabled = bulkDownloading
+    ? !basicActive
+    : (!apocalypseEnabled || basicPendingCount === 0);
   elements['download-basic'].querySelector('[data-download-basic-label]').textContent = t(basicActive ? 'eb.stop_all' : 'eb.download_basic');
   elements['download-basic'].querySelector('[data-download-basic-size]').textContent = basicActive
     ? ''
-    : remainingOfTotal(basicResources, basicPending);
-  elements['download-all'].disabled = bulkDownloading ? !allActive : (!apocalypseEnabled || pendingCount === 0);
+    : kitRemainingLabel(basicResources, basicPending);
+  elements['download-all'].disabled = bulkDownloading
+    ? !allActive
+    : (!apocalypseEnabled || pendingCount === 0);
   const currentView = activeFilter !== 'all' || elements['resource-search'].value.trim() !== '';
   elements['download-all'].querySelector('[data-download-all-label]').textContent = t(allActive
     ? 'eb.stop_all'
     : (currentView ? 'eb.download_current_view' : 'eb.download_all'));
   elements['download-all'].querySelector('[data-download-all-size]').textContent = allActive
     ? ''
-    : remainingOfTotal(downloadable, pending);
+    : kitRemainingLabel(downloadable, pending);
 
   elements['resource-list'].innerHTML = filtered.length
     ? filtered.map(renderResource).join('')
@@ -261,6 +498,20 @@ function render() {
 
 async function refreshState({ recoverInterrupted = false } = {}) {
   apocalypseEnabled = (await apocalypseStore.getConfig()).enabled === true;
+  if (recoverInterrupted) {
+    corpusRecord = await recoverEmergencyCorpusLifecycle({
+      store: corpusStore,
+      storage: corpusStorage,
+    });
+  } else {
+    corpusRecord = await corpusStore.get();
+  }
+  const wikipediaArchives = await apocalypseStore.listArchives();
+  wikipediaRagStatus = wikipediaArchives.some(record => record.status === 'ready')
+    ? 'title-only-fallback'
+    : (wikipediaArchives.length ? 'unavailable' : 'not-installed');
+  await semanticReranker.status().catch(() => 'error');
+  semanticState = semanticReranker.snapshot();
   const stored = await resourceStore.list();
   if (recoverInterrupted) {
     for (const record of stored) {
@@ -347,6 +598,110 @@ async function startDownload(resource, options = {}) {
   return await entry.promise;
 }
 
+async function startCorpusDownload(options = {}) {
+  if (!apocalypseEnabled || !EMERGENCY_CORPUS_RELEASE) {
+    setNotice(t('eb.rag.corpus_pending'), 'error');
+    return null;
+  }
+  if (downloads.has(CORPUS_DOWNLOAD_ID)) return await downloads.get(CORPUS_DOWNLOAD_ID).promise;
+  if (options.confirm !== false) {
+    const installedEstimate = Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0)
+      + Number(EMERGENCY_CORPUS_RELEASE.installedIndexBytes
+        || Math.round(Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0) * 0.65));
+    const confirmKey = EMERGENCY_CORPUS_RELEASE.preview
+      ? 'eb.rag.confirm_corpus_preview'
+      : 'eb.rag.confirm_corpus';
+    if (!globalThis.confirm(t(confirmKey, {
+      network: formatBytes(EMERGENCY_CORPUS_RELEASE.downloadBytes),
+      installed: formatBytes(installedEstimate),
+    }))) return null;
+  }
+  const controller = new AbortController();
+  const entry = { controller, kind: String(options.bulkKind || ''), promise: null };
+  downloads.set(CORPUS_DOWNLOAD_ID, entry);
+  entry.promise = (async () => {
+    try {
+      corpusRecord = await downloadAndInstallEmergencyCorpus(EMERGENCY_CORPUS_RELEASE, {
+        store: corpusStore,
+        storage: corpusStorage,
+        signal: controller.signal,
+        buildIndex: request => indexClient().buildEmergencyIndex(request),
+        deleteIndex: path => indexClient().deleteIndex(path),
+        onProgress: next => {
+          if (next?.id) corpusRecord = next;
+          render();
+        },
+      });
+      if (corpusRecord?.status === 'ready' && options.quiet !== true) {
+        setNotice(t(EMERGENCY_CORPUS_RELEASE.preview ? 'eb.rag.corpus_preview_ready' : 'eb.rag.corpus_ready'), 'success');
+      }
+      return corpusRecord;
+    } catch (error) {
+      if (options.quiet !== true) setNotice(error.message, 'error');
+      return null;
+    } finally {
+      if (downloads.get(CORPUS_DOWNLOAD_ID) === entry) downloads.delete(CORPUS_DOWNLOAD_ID);
+      await refreshState();
+    }
+  })();
+  return await entry.promise;
+}
+
+async function startSemanticDownload(options = {}) {
+  if (!apocalypseEnabled) return null;
+  if (downloads.has(SEMANTIC_DOWNLOAD_ID)) return await downloads.get(SEMANTIC_DOWNLOAD_ID).promise;
+  if (semanticState.status === 'ready') return semanticState;
+  if (options.confirm !== false && !globalThis.confirm(t('eb.rag.confirm_semantic', {
+    network: formatBytes(E5_MODEL_DOWNLOAD_BYTES),
+    installed: formatBytes(E5_MODEL_DOWNLOAD_BYTES),
+  }))) return null;
+  const controller = new AbortController();
+  const entry = { controller, kind: String(options.bulkKind || ''), promise: null };
+  downloads.set(SEMANTIC_DOWNLOAD_ID, entry);
+  entry.promise = (async () => {
+    try {
+      semanticState = await semanticReranker.download({ signal: controller.signal });
+      if (semanticState.status === 'ready' && options.quiet !== true) {
+        setNotice(t('eb.rag.semantic_ready'), 'success');
+      }
+      return semanticState;
+    } catch (error) {
+      if (options.quiet !== true) setNotice(error.message, 'error');
+      return null;
+    } finally {
+      if (downloads.get(SEMANTIC_DOWNLOAD_ID) === entry) downloads.delete(SEMANTIC_DOWNLOAD_ID);
+      semanticState = semanticReranker.snapshot();
+      render();
+    }
+  })();
+  return await entry.promise;
+}
+
+async function removeCorpusComponent({ cancelOnly = false } = {}) {
+  const entry = downloads.get(CORPUS_DOWNLOAD_ID);
+  entry?.controller.abort();
+  if (entry?.promise) await entry.promise.catch(() => {});
+  if (cancelOnly) {
+    corpusRecord = await cancelEmergencyCorpusInstall({ store: corpusStore, storage: corpusStorage });
+  } else {
+    await deleteEmergencyCorpus({
+      store: corpusStore,
+      storage: corpusStorage,
+      deleteIndex: path => indexClient().deleteIndex(path),
+    });
+    corpusRecord = null;
+  }
+  render();
+}
+
+async function removeSemanticComponent() {
+  const entry = downloads.get(SEMANTIC_DOWNLOAD_ID);
+  entry?.controller.abort();
+  if (entry?.promise) await entry.promise.catch(() => {});
+  semanticState = await semanticReranker.stop();
+  render();
+}
+
 async function stopAndDeleteDownload(id) {
   const entry = downloads.get(id);
   entry?.controller.abort();
@@ -360,6 +715,18 @@ async function stopAndDeleteDownload(id) {
 async function handleDownloadControl(detail = {}) {
   const id = String(detail.id || '');
   const action = String(detail.action || '');
+  if (id === CORPUS_DOWNLOAD_ID) {
+    if (action === 'pause') downloads.get(id)?.controller.abort();
+    if (action === 'resume') await startCorpusDownload({ confirm: false });
+    if (action === 'stop') await removeCorpusComponent({ cancelOnly: true });
+    return;
+  }
+  if (id === SEMANTIC_DOWNLOAD_ID) {
+    if (action === 'pause') downloads.get(id)?.controller.abort();
+    if (action === 'resume') await startSemanticDownload({ confirm: false });
+    if (action === 'stop') await removeSemanticComponent();
+    return;
+  }
   const resource = resourceById(id);
   if (!id || !resource) return;
   if (action === 'pause') downloads.get(id)?.controller.abort();
@@ -379,17 +746,49 @@ async function downloadResources(resources, kind) {
   }
   if (!apocalypseEnabled) return;
   const pending = resources.filter(resource => resource.status !== 'ready');
-  if (!pending.length) return;
-  const confirmationKey = kind === 'basic' ? 'eb.confirm_download_basic' : 'eb.confirm_download_all';
-  if (!globalThis.confirm(t(confirmationKey, { count: pending.length }))) return;
+  const corpusNeedsDownload = corpusUiStatus() !== 'ready' && !!EMERGENCY_CORPUS_RELEASE;
+  const semanticNeedsDownload = semanticState.status !== 'ready';
+  if (!pending.length && !corpusNeedsDownload && !semanticNeedsDownload) return;
+  const componentCount = Number(corpusNeedsDownload) + Number(semanticNeedsDownload);
+  const networkBytes = estimatedDownloadBytes(pending)
+    + (corpusNeedsDownload ? Number(EMERGENCY_CORPUS_RELEASE.downloadBytes) || 0 : 0)
+    + (semanticNeedsDownload ? E5_MODEL_DOWNLOAD_BYTES : 0);
+  const corpusInstalledEstimate = corpusNeedsDownload
+    ? Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0)
+      + Number(EMERGENCY_CORPUS_RELEASE.installedIndexBytes
+        || Math.round(Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0) * 0.65))
+    : 0;
+  const installedBytes = estimatedDownloadBytes(pending)
+    + corpusInstalledEstimate
+    + (semanticNeedsDownload ? E5_MODEL_DOWNLOAD_BYTES : 0);
+  if (!globalThis.confirm(t('eb.rag.confirm_kit', {
+    kit: t(kind === 'basic' ? 'eb.download_basic' : 'eb.download_all'),
+    count: pending.length + componentCount,
+    network: formatBytes(networkBytes),
+    installed: formatBytes(installedBytes),
+  }))) return;
   bulkDownloading = true;
   bulkDownloadKind = kind;
   stopBulkDownload = false;
   render();
   let completed = 0;
+  if (corpusNeedsDownload && !stopBulkDownload) {
+    setNotice(t('eb.rag.downloading_corpus'));
+    await startCorpusDownload({ confirm: false, quiet: true, bulkKind: kind });
+    if (corpusRecord?.status === 'ready') completed += 1;
+  }
+  if (semanticNeedsDownload && !stopBulkDownload) {
+    setNotice(t('eb.rag.downloading_semantic'));
+    await startSemanticDownload({ confirm: false, quiet: true, bulkKind: kind });
+    if (semanticState.status === 'ready') completed += 1;
+  }
   for (const resource of pending) {
     if (stopBulkDownload) break;
-    setNotice(t('eb.downloading_all', { current: completed + 1, count: pending.length, title: resource.title }));
+    setNotice(t('eb.downloading_all', {
+      current: completed + 1,
+      count: pending.length + componentCount,
+      title: resource.title,
+    }));
     await startDownload(resource, { confirm: false, quiet: true, bulkKind: kind });
     if (records.get(resource.id)?.status === 'ready') completed += 1;
   }
@@ -463,6 +862,30 @@ elements['resource-list'].addEventListener('click', async event => {
     }
   }
 });
+elements['rag-components'].addEventListener('click', async event => {
+  const button = event.target.closest('[data-rag-action][data-rag-component]');
+  if (!button) return;
+  const { ragAction: action, ragComponent: component } = button.dataset;
+  try {
+    if (component === 'corpus') {
+      if (action === 'download') await startCorpusDownload({ confirm: corpusUiStatus() === 'not-installed' });
+      if (action === 'pause') downloads.get(CORPUS_DOWNLOAD_ID)?.controller.abort();
+      if (action === 'cancel') await removeCorpusComponent({ cancelOnly: true });
+      if (action === 'delete' && globalThis.confirm(t('eb.rag.confirm_delete_corpus'))) {
+        await removeCorpusComponent();
+      }
+    }
+    if (component === 'semantic') {
+      if (action === 'download') await startSemanticDownload();
+      if (action === 'pause') downloads.get(SEMANTIC_DOWNLOAD_ID)?.controller.abort();
+      if (action === 'delete' && globalThis.confirm(t('eb.rag.confirm_delete_semantic'))) {
+        await removeSemanticComponent();
+      }
+    }
+  } catch (error) {
+    setNotice(error.message, 'error');
+  }
+});
 
 globalThis.addEventListener('wb-emergency-download-control', event => {
   void handleDownloadControl(event.detail).catch(error => setNotice(error.message, 'error'));
@@ -472,11 +895,18 @@ if (downloadControlChannel) {
     void handleDownloadControl(event.data).catch(error => setNotice(error.message, 'error'));
   });
 }
+downloadStateChannel?.addEventListener('message', event => {
+  if (event.data?.type === 'request') renderRagComponents();
+});
 
 globalThis.addEventListener('beforeunload', () => {
   stopBulkDownload = true;
+  publishPausedComponentTransfers();
   for (const entry of downloads.values()) entry.controller.abort();
+  ragIndexClient?.close?.();
+  semanticReranker.close();
   downloadControlChannel?.close();
+  downloadStateChannel?.close();
 });
 globalThis.addEventListener('focus', () => refreshState().catch(error => setNotice(error.message, 'error')));
 document.addEventListener('wb-locale-changed', render);
@@ -486,6 +916,13 @@ refreshState({ recoverInterrupted: true }).then(async () => {
     setNotice(t('eb.openstax_prefetched', { count: openStaxResources.length, date: OPENSTAX_CATALOG_SNAPSHOT_DATE }));
   }
   const params = new URLSearchParams(globalThis.location.search);
+  const resumeComponent = params.get('resumeComponent');
+  if (resumeComponent) {
+    globalThis.history.replaceState({}, '', globalThis.location.pathname);
+    if (resumeComponent === CORPUS_DOWNLOAD_ID) await startCorpusDownload({ confirm: false });
+    if (resumeComponent === SEMANTIC_DOWNLOAD_ID) await startSemanticDownload({ confirm: false });
+    return;
+  }
   const resumeId = params.get('resume');
   if (!resumeId) return;
   globalThis.history.replaceState({}, '', globalThis.location.pathname);

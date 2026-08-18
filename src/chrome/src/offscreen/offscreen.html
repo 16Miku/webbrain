@@ -4,6 +4,7 @@
   <!--
     Single offscreen document hosting:
       • offscreen.js — fetch proxy for localhost LLM servers (existing)
+      • offline-rag-host.js — worker-capable SQLite and semantic retrieval
       • vision-inference-host.js — local WebGPU model worker bridge
       • skill-download.js — validated large-file staging through OPFS + blob URLs
       • recorder.js  — tab/display capture + mic mix + MediaRecorder
@@ -20,6 +21,7 @@
     AUDIO_PLAYBACK (watch alerts).
   -->
   <script src="offscreen.js"></script>
+  <script type="module" src="offline-rag-host.js"></script>
   <script src="vision-inference-host.js"></script>
   <script src="skill-download.js"></script>
   <script src="recorder.js"></script>

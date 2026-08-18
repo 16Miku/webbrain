@@ -1,4 +1,5 @@
 import { t } from './i18n.js';
+import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
@@ -16,7 +17,13 @@ runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
 
 const elements = Object.fromEntries([
   'enabled', 'installed-count', 'archive-bytes', 'storage-usage', 'notice',
+  'offline-rag-readiness',
 ].map(id => [id, document.getElementById(id)]));
+const ragReadiness = createOfflineRagReadinessController({
+  root: elements['offline-rag-readiness'],
+  manageHref: 'emergency-box.html',
+  getGenerationStatus: () => 'unavailable',
+});
 let snapshot = null;
 let polling = false;
 let processingDownload = false;
@@ -56,6 +63,7 @@ function render() {
 async function refresh() {
   snapshot = await command('status');
   render();
+  await ragReadiness.refresh({ archives: snapshot.archives }).catch(() => {});
 }
 
 elements.enabled.addEventListener('change', async () => {
@@ -69,7 +77,7 @@ elements.enabled.addEventListener('change', async () => {
   }
 });
 
-document.addEventListener('wb-locale-changed', render);
+document.addEventListener('wb-locale-changed', () => { render(); ragReadiness.render(); });
 
 async function poll() {
   if (polling) return;
@@ -86,3 +94,4 @@ async function poll() {
 
 await refresh().catch(error => notice(error.message, 'error'));
 setInterval(poll, 2_000);
+globalThis.addEventListener('pagehide', () => ragReadiness.close(), { once: true });
