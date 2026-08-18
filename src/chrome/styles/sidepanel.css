@@ -2348,6 +2348,7 @@ body {
   position: fixed;
   z-index: 10000;
   display: block;
+  opacity: 0.8;
   max-width: calc(100vw - 16px);
   padding: 6px 10px;
   border: 1px solid var(--accent);
@@ -2372,6 +2373,7 @@ body {
 .selection-ask-action:hover {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
+  opacity: 1;
 }
 
 .selection-ask-action:focus-visible {

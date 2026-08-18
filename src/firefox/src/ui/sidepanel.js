@@ -477,7 +477,6 @@ const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permi
 let pendingAnswerSelection = null;
 let selectionAskActionRefreshFrame = null;
 let selectionAskActionRefreshTimer = null;
-let keepSelectionAskActionUntil = 0;
 let selectionAskActionLocale = '';
 let selectionAskActionLabel = '';
 const SLASH_COMMANDS = [
@@ -10262,12 +10261,7 @@ function messageInfoClickIsInteractive(target) {
 
 function messageInfoClickHasTextSelection() {
   const selection = globalThis.getSelection?.();
-  if (selection && !selection.isCollapsed) return true;
-  return Boolean(
-    pendingAnswerSelection
-      && selectionAskActionEl
-      && !selectionAskActionEl.classList.contains('hidden'),
-  );
+  return Boolean(selection && !selection.isCollapsed);
 }
 
 function toggleMessageInfo(msgEl) {
@@ -10376,7 +10370,6 @@ function dismissSelectionAskAction() {
     cancelAnimationFrame(selectionAskActionRefreshFrame);
     selectionAskActionRefreshFrame = null;
   }
-  keepSelectionAskActionUntil = 0;
   pendingAnswerSelection = null;
   selectionAskActionEl?.classList.add('hidden');
 }
@@ -10426,12 +10419,6 @@ function refreshSelectionAskAction() {
     showSelectionAskAction(selected);
     return;
   }
-  const selection = window.getSelection?.();
-  if (selection && !selection.isCollapsed && selection.rangeCount >= 1) {
-    dismissSelectionAskAction();
-    return;
-  }
-  if (pendingAnswerSelection) return;
   dismissSelectionAskAction();
 }
 
@@ -10443,7 +10430,6 @@ function showSelectionAskAction(selected) {
       ? selected.range.cloneRange()
       : selected.range,
   };
-  keepSelectionAskActionUntil = Date.now() + 2000;
   applySelectionAskActionLabel();
   selectionAskActionEl.classList.remove('hidden');
   positionSelectionAskAction(pendingAnswerSelection.range);
@@ -10463,12 +10449,12 @@ function scheduleSelectionAskActionRefresh() {
 
 function handleSelectionAskPointerDown(event) {
   if (selectionAskActionEl?.contains(event.target)) return;
-  if (!event.target?.closest?.('.message.assistant')) dismissSelectionAskAction();
+  dismissSelectionAskAction();
 }
 
 function handleSelectionAskPointerUp() {
-  const selected = selectedAssistantAnswer() || pendingAnswerSelection;
-  if (selected?.text) {
+  const selected = selectedAssistantAnswer();
+  if (selected) {
     showSelectionAskAction(selected);
     return;
   }
