@@ -418,22 +418,31 @@ export function rankZimTitleCandidates(candidates, query, limit = 3) {
   const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
   const queryTerms = normalizedTitleTerms(query);
   const minimumMatches = queryTerms.length > 1 ? 2 : 1;
-  const unique = new Map();
+  // Requiring two title-term matches used to discard the answer outright: asking
+  // how to treat a burn threw away the "Burn" article because the query also
+  // carried the word "treat". Single-term matches are held back and used only
+  // when nothing clears the bar, so a query with real matches is never diluted
+  // by loose ones, and a query that would have returned an empty archive gets
+  // the closest article instead.
+  const strong = new Map();
+  const partial = new Map();
   for (const candidate of candidates || []) {
-    if (!candidate || unique.has(candidate.index)) continue;
+    if (!candidate || strong.has(candidate.index) || partial.has(candidate.index)) continue;
     const normalizedTitle = String(candidate.searchTitle || candidate.searchUrl || candidate.title || candidate.url || '').replace(/\s+/g, '_').toLowerCase();
     const titleTerms = new Set(normalizedTitleTerms(normalizedTitle));
     const matches = queryTerms.filter(term => titleTerms.has(term)).length;
     const fullPrefix = normalizedTitle.startsWith(normalizedQuery);
-    if (!fullPrefix && matches < minimumMatches) continue;
+    if (!fullPrefix && matches < 1) continue;
     const exact = normalizedTitle === normalizedQuery;
-    unique.set(candidate.index, {
+    const entry = {
       candidate,
       score: (exact ? 1000 : 0) + (fullPrefix ? 400 : 0) + matches * 100
         - Math.abs(titleTerms.size - queryTerms.length) - (candidate.searchRedirectAlias ? 1100 : 0),
-    });
+    };
+    (fullPrefix || matches >= minimumMatches ? strong : partial).set(candidate.index, entry);
   }
-  return Array.from(unique.values())
+  const selected = strong.size ? strong : partial;
+  return Array.from(selected.values())
     .sort((left, right) => right.score - left.score || left.candidate.index - right.candidate.index)
     .slice(0, Math.max(1, Math.min(10, Number(limit) || 3)))
     .map(item => item.candidate);

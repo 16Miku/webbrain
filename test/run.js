@@ -28427,6 +28427,51 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: standalone WebGPU RAG still reserves the old 512-token generation budget');
 });
 
+test('ZIM title ranking falls back to one-token matches instead of an empty archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const candidate = (index, title) => ({ index, title, url: title.replace(/ /g, '_'), namespace: 'C' });
+    const titles = (candidates, query, limit = 3) =>
+      runtime.rankZimTitleCandidates(candidates, query, limit).map(item => item.title);
+
+    // A real match must never be diluted by loose ones.
+    assert.deepEqual(
+      titles([candidate(1, 'World War II'), candidate(2, 'World Heritage Site'), candidate(3, 'War')], 'world war'),
+      ['World War II'],
+      `${label}: one-token title matches displaced or diluted the relevant article`,
+    );
+    assert.deepEqual(
+      titles([candidate(1, 'Water purification'), candidate(2, 'Water')], 'water purification'),
+      ['Water purification'],
+      `${label}: an exact multi-term title stopped ranking alone`,
+    );
+
+    // With nothing clearing the bar, the closest article beats reporting an
+    // empty archive: "treat burn" used to discard the Burn article outright.
+    assert.deepEqual(
+      titles([candidate(1, 'Burn'), candidate(2, 'Sunburn')], 'treat burn'),
+      ['Burn'],
+      `${label}: a two-word query threw away the article that answers it`,
+    );
+    assert.deepEqual(
+      titles([candidate(1, 'Bleeding'), candidate(2, 'Hemostasis')], 'stop bleeding'),
+      ['Bleeding'],
+      `${label}: a first-aid phrasing returned nothing from a stocked archive`,
+    );
+    assert.deepEqual(
+      titles([candidate(1, 'Chlorine'), candidate(2, 'Water purification'), candidate(3, 'Water')], 'much chlorine purify water'),
+      ['Water purification', 'Chlorine', 'Water'],
+      `${label}: partial matches were not ranked by how well they cover the query`,
+    );
+
+    // A candidate sharing no term with the query stays out either way.
+    assert.deepEqual(
+      titles([candidate(1, 'Photosynthesis')], 'treat burn'),
+      [],
+      `${label}: an unrelated article was admitted by the fallback`,
+    );
+  }
+});
+
 test('lexical retrieval relaxes only after exact matching comes up short', async () => {
   for (const [label, indexRuntime, retrievalRuntime] of [
     ['chrome', OfflineRagIndexCh, OfflineRetrievalCh],
