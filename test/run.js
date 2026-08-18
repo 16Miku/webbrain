@@ -28427,6 +28427,40 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: standalone WebGPU RAG still reserves the old 512-token generation budget');
 });
 
+test('every contributing source keeps an evidence slot', async () => {
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const hit = (sourceKind, documentId, ordinal) => ({
+      sourceKind, sourceId: sourceKind, documentId,
+      passageId: `${documentId}:${ordinal}`, text: `passage ${documentId} ${ordinal}`,
+    });
+    const mixed = [
+      hit('wikipedia', 'Bleeding', 1), hit('wikipedia', 'Hemostasis', 2),
+      hit('wikipedia', 'Blood', 3), hit('wikipedia', 'Wound', 4),
+      hit('emergency-box', 'ifrc-first-aid', 5),
+    ];
+    const selected = runtime.selectDiverseRagHits(mixed, { maximum: 4 });
+    assert.equal(selected.length, 4, `${label}: source balancing changed how many passages are selected`);
+    assert.ok(selected.some(item => item.sourceKind === 'emergency-box'),
+      `${label}: a first-aid guide was crowded out by encyclopedia passages`);
+    assert.deepEqual(
+      selected.slice(0, 3).map(item => item.documentId),
+      ['Bleeding', 'Hemostasis', 'Blood'],
+      `${label}: balancing disturbed the top-ranked passages instead of the last one`,
+    );
+
+    const singleSource = [hit('wikipedia', 'A', 1), hit('wikipedia', 'B', 2), hit('wikipedia', 'C', 3)];
+    assert.deepEqual(
+      runtime.selectDiverseRagHits(singleSource, { maximum: 2 }).map(item => item.documentId),
+      ['A', 'B'],
+      `${label}: a single-source result was altered by balancing`,
+    );
+    assert.equal(
+      runtime.selectDiverseRagHits(mixed, { maximum: 8 }).length, 5,
+      `${label}: balancing dropped a passage when there was room for every candidate`,
+    );
+  }
+});
+
 test('ZIM title ranking falls back to one-token matches instead of an empty archive', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const candidate = (index, title) => ({ index, title, url: title.replace(/ /g, '_'), namespace: 'C' });
