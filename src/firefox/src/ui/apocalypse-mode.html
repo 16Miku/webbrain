@@ -9,7 +9,7 @@
     :root { --bg:#1a1a2e;--panel:#16213e;--panel2:#1e2746;--text:#e8e8e8;--muted:#a0a0b8;--border:rgba(255,255,255,.08);--accent:#6c63ff;--accent2:#5a52d5;--good:#4caf50;--warn:#ffc870;--bad:#f44336;--header-bg:rgba(26,26,46,.96);--stats-bg:rgba(22,33,62,.76);--link:#9e97ff;--good-link:#d5ffe6;--accent-soft:#a9a3ff;--teal:#60d3b2;color-scheme:dark; }
     :root[data-theme="light"] { --bg:#f7f1e6;--panel:#fffdf8;--panel2:#fdf6e0;--text:#2c1810;--muted:#6b5b47;--border:rgba(89,55,25,.15);--accent:#5b52e8;--accent2:#4a42c4;--good:#2d8866;--warn:#a85f00;--bad:#c5363c;--header-bg:rgba(247,241,230,.96);--stats-bg:rgba(255,253,248,.82);--link:#4a42c4;--good-link:#1f6f4a;--accent-soft:#4a42c4;--teal:#177f69;color-scheme:light; }
     * { box-sizing:border-box; }
-    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif; }
+    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--font-text, system-ui,-apple-system,sans-serif); }
     header { border-bottom:1px solid var(--border);padding:20px max(24px,calc((100vw - 1120px)/2));display:flex;align-items:center;gap:16px;position:sticky;top:0;background:var(--header-bg);z-index:2; }
     .apocalypse-icon { color:var(--warn);font-size:48px;line-height:1; }
     .header-copy { display:grid;gap:1px; }
