@@ -2,15 +2,23 @@ import {
   isBasicWikipediaArchive,
   selectBasicWikipediaArchive,
   wikipediaArchiveIncludesImages,
+  createApocalypseStore,
 } from '../agent/apocalypse-mode.js';
 import {
   createEmergencyCorpusStore,
 } from '../agent/emergency-corpus.js';
-import { EMERGENCY_CORPUS_RELEASE } from '../agent/emergency-corpus-release.js';
+import {
+  EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS,
+  EMERGENCY_CORPUS_RELEASE,
+} from '../agent/emergency-corpus-release.js';
+import {
+  E5_MODEL_DOWNLOAD_BYTES,
+} from '../agent/offline-reranker.js';
 import {
   EMERGENCY_DOWNLOAD_STATE_MESSAGE,
   sendEmergencyDownloadCommand,
 } from './emergency-download-client.js';
+import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
@@ -42,17 +50,12 @@ const elements = Object.fromEntries([
   'models-readiness', 'models-readiness-label',
   'basic-wikipedia-card', 'basic-wikipedia-title', 'basic-wikipedia-description', 'basic-wikipedia-meta',
   'basic-wikipedia-status', 'basic-wikipedia-progress', 'basic-wikipedia-start',
-  'emergency-corpus-card', 'emergency-corpus-title', 'emergency-corpus-description', 'emergency-corpus-meta',
-  'emergency-corpus-status', 'emergency-corpus-progress', 'emergency-corpus-start',
-  'semantic-model-card', 'semantic-model-title', 'semantic-model-description', 'semantic-model-meta',
-  'semantic-model-status', 'semantic-model-progress', 'semantic-model-start',
   'emergency-box-callout', 'emergency-gate-reason', 'emergency-box-link',
+  'offline-answer-engine', 'offline-rag-readiness', 'rag-components',
 ].map(id => [id, document.getElementById(id)]));
-elements['vision-model-card'].hidden = !supportsWebgpuVision;
-elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
-elements['basic-wikipedia-card'].hidden = !supportsWebgpuVision;
-if (elements['emergency-corpus-card']) elements['emergency-corpus-card'].hidden = !supportsWebgpuVision;
-if (elements['semantic-model-card']) elements['semantic-model-card'].hidden = !supportsWebgpuVision;
+if (elements['vision-model-card']) elements['vision-model-card'].hidden = !supportsWebgpuVision;
+if (elements['webgpu-provider-card']) elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
+if (elements['basic-wikipedia-card']) elements['basic-wikipedia-card'].hidden = !supportsWebgpuVision;
 let snapshot = null;
 let basicWikipediaCatalogItem = null;
 let basicWikipediaCatalogError = '';
@@ -85,6 +88,7 @@ let webgpuDownloadState = {
   error: '',
 };
 const corpusStore = createEmergencyCorpusStore();
+const apocalypseStore = createApocalypseStore();
 const CORPUS_DOWNLOAD_ID = 'rag-emergency-corpus';
 const SEMANTIC_DOWNLOAD_ID = 'rag-semantic-model';
 const EMERGENCY_COMPONENT_STATE_EVENT = 'wb-emergency-component-download-state';
@@ -131,10 +135,46 @@ function publishComponentDownloadStates() {
 }
 
 downloadStateChannel?.addEventListener('message', (event) => {
-  if (event.data?.type === 'request') {
-    publishComponentDownloadStates();
-  }
+  if (event.data?.type === 'request') renderRagComponents();
 });
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[character]));
+}
+
+function localGenerationStatus() {
+  if (!supportsWebgpuVision) return snapshot?.enabled === true ? 'separate' : 'unavailable';
+  const status = String(webgpuDownloadState?.status || '');
+  if (status === 'ready') return 'ready';
+  if (status === 'error') return 'error';
+  if (status === 'downloading' || status === 'paused') return status;
+  if (status === 'stopping') return 'downloading';
+  if (status && status !== 'checking') return 'model-missing';
+  return snapshot?.enabled === true ? 'separate' : 'unavailable';
+}
+
+const ragReadiness = elements['offline-rag-readiness']
+  ? createOfflineRagReadinessController({
+    root: elements['offline-rag-readiness'],
+    apocalypseStore,
+    corpusStore,
+    semanticReranker: {
+      async status() {
+        return !semanticState?.status || semanticState.status === 'unknown'
+          ? 'model-missing'
+          : semanticState.status;
+      },
+      close() {},
+    },
+    getGenerationStatus: localGenerationStatus,
+  })
+  : { async refresh() {}, render() {}, close() {} };
+
+function expandOfflineAnswerEngine() {
+  if (elements['offline-answer-engine']) elements['offline-answer-engine'].open = true;
+}
 
 function bytes(value) {
   const number = Number(value) || 0;
@@ -598,106 +638,120 @@ async function refreshVisionDownload() {
   renderVisionDownload();
 }
 
-function renderEmergencyCorpusDownload() {
-  if (!supportsWebgpuVision || !elements['emergency-corpus-card']) return;
-  const record = corpusRecord;
-  const status = record?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
-  const active = ['downloading', 'verifying', 'extracting', 'indexing'].includes(status);
-  const received = Number(corpusProgress.bytesReceived)
-    || Number(corpusProgress.loaded)
-    || Number(record?.staging?.bytesReceived)
-    || 0;
-  const total = Number(corpusProgress.totalBytes)
-    || Number(corpusProgress.total)
-    || Number(record?.staging?.totalBytes)
-    || Number(EMERGENCY_CORPUS_RELEASE?.downloadBytes)
-    || 0;
-  const progress = total > 0
-    ? Math.max(0, Math.min(100, Math.round((received / total) * 100)))
-    : Math.max(0, Math.min(100, Math.round(Number(corpusProgress.percent) || Number(corpusProgress.progress) || 0)));
-
-  elements['emergency-corpus-status'].dataset.kind = status === 'ready' || status === 'error'
-    ? status
-    : (active ? 'loading' : '');
-  elements['emergency-corpus-progress'].hidden = !active;
-  elements['emergency-corpus-progress'].value = progress;
-
-  const actions = Object.fromEntries(['retry', 'stop'].map(action => [
-    action,
-    elements['emergency-corpus-card'].querySelector(`[data-emergency-corpus-action="${action}"]`),
-  ]));
-  elements['emergency-corpus-start'].hidden = snapshot?.enabled !== true || status === 'ready' || active;
-  actions.retry.hidden = status !== 'error';
-  actions.stop.hidden = status !== 'ready' && !active;
-  actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
-
-  for (const button of [elements['emergency-corpus-start'], ...Object.values(actions)]) {
-    if (button) button.disabled = corpusDownloadInFlight && status !== 'downloading';
-  }
-
-  if (status === 'ready') {
-    elements['emergency-corpus-status'].textContent = t('ap.status.ready');
-  } else if (status === 'error') {
-    const msg = record?.error || '';
-    elements['emergency-corpus-status'].textContent = `${t('ap.status.error')}${msg ? ` · ${msg}` : ''}`;
-  } else if (status === 'downloading') {
-    elements['emergency-corpus-status'].textContent = `${t('ap.status.downloading')} · ${progress}%`;
-  } else if (status === 'verifying') {
-    elements['emergency-corpus-status'].textContent = t('eb.rag.status.verifying');
-  } else if (status === 'extracting') {
-    elements['emergency-corpus-status'].textContent = t('eb.rag.status.extracting');
-  } else if (status === 'indexing') {
-    elements['emergency-corpus-status'].textContent = t('eb.rag.status.indexing');
-  } else if (snapshot?.enabled) {
-    elements['emergency-corpus-status'].textContent = t('st.providers.webgpu_download.not_downloaded');
-  } else {
-    elements['emergency-corpus-status'].textContent = t('ap.vision.waiting');
-  }
-  updateOverallModelsReadiness();
-  publishComponentDownloadStates();
+function ragStatusLabel(status) {
+  const key = `eb.rag.status.${String(status || 'unavailable')}`;
+  const translated = t(key);
+  return translated === key ? String(status || '') : translated;
 }
 
-function renderSemanticDownload() {
-  if (!supportsWebgpuVision || !elements['semantic-model-card']) return;
-  const state = semanticState || {};
-  const status = state.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
-  const active = status === 'downloading';
-  const received = Number(state.loaded) || 0;
-  const total = Number(state.total) || 134 * 1024 * 1024;
-  const progress = Number(state.progress) > 0
-    ? Math.max(0, Math.min(100, Math.round(Number(state.progress) * (Number(state.progress) <= 1 ? 100 : 1))))
-    : (total > 0 ? Math.max(0, Math.min(100, Math.round((received / total) * 100))) : 0);
+function corpusUiStatus() {
+  if (corpusRecord?.status === 'ready' && corpusRecord.active) return 'ready';
+  if (corpusDownloadInFlight) return corpusRecord?.status || 'downloading';
+  if (corpusRecord?.status && corpusRecord.status !== 'not-installed') return corpusRecord.status;
+  return EMERGENCY_CORPUS_RELEASE ? 'not-installed' : 'unavailable';
+}
 
-  elements['semantic-model-status'].dataset.kind = status === 'ready' || status === 'error'
-    ? status
-    : (active ? 'loading' : '');
-  elements['semantic-model-progress'].hidden = !active;
-  elements['semantic-model-progress'].value = progress;
+function componentAction(component, action, label, options = {}) {
+  const disabled = options.disabled ? ' disabled' : '';
+  const danger = options.danger ? ' danger' : '';
+  const primary = options.primary ? ' primary' : '';
+  return `<button type="button" class="${`${primary}${danger}`.trim()}" data-rag-action="${escapeHtml(action)}" data-rag-component="${escapeHtml(component)}"${disabled}>${escapeHtml(label)}</button>`;
+}
 
-  const actions = Object.fromEntries(['retry', 'stop'].map(action => [
-    action,
-    elements['semantic-model-card'].querySelector(`[data-semantic-model-action="${action}"]`),
-  ]));
-  elements['semantic-model-start'].hidden = snapshot?.enabled !== true || status === 'ready' || active;
-  actions.retry.hidden = status !== 'error';
-  actions.stop.hidden = status !== 'ready' && !active;
-  actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
-
-  for (const button of [elements['semantic-model-start'], ...Object.values(actions)]) {
-    if (button) button.disabled = semanticDownloadInFlight && status !== 'downloading';
+function corpusActions(status) {
+  const enabled = snapshot?.enabled === true;
+  if (status === 'ready') return componentAction('corpus', 'delete', t('eb.delete'), { danger: true });
+  if (['downloading', 'verifying', 'extracting', 'indexing'].includes(status)) {
+    return componentAction('corpus', 'pause', t('eb.pause'));
   }
+  if (status === 'downloaded') return componentAction('corpus', 'download', t('eb.rag.install'), { primary: true });
+  if (status === 'paused' || status === 'error') {
+    return [
+      componentAction('corpus', 'download', t('eb.retry'), { primary: true, disabled: !enabled || !EMERGENCY_CORPUS_RELEASE }),
+      componentAction('corpus', 'cancel', t('eb.rag.cancel_install'), { danger: true }),
+    ].join('');
+  }
+  return componentAction('corpus', 'download', t('eb.download'), {
+    primary: true,
+    disabled: !enabled || !EMERGENCY_CORPUS_RELEASE,
+  });
+}
 
-  if (status === 'ready') {
-    elements['semantic-model-status'].textContent = t('ap.status.ready');
-  } else if (status === 'error') {
-    const msg = state.error || '';
-    elements['semantic-model-status'].textContent = `${t('ap.status.error')}${msg ? ` · ${msg}` : ''}`;
-  } else if (status === 'downloading') {
-    elements['semantic-model-status'].textContent = `${t('ap.status.downloading')} · ${progress}%`;
-  } else if (snapshot?.enabled) {
-    elements['semantic-model-status'].textContent = t('st.providers.webgpu_download.not_downloaded');
-  } else {
-    elements['semantic-model-status'].textContent = t('ap.vision.waiting');
+function semanticActions(status) {
+  const enabled = snapshot?.enabled === true;
+  if (status === 'ready') return componentAction('semantic', 'delete', t('eb.delete'), { danger: true });
+  if (status === 'downloading') return componentAction('semantic', 'pause', t('eb.pause'));
+  if (status === 'paused' || status === 'error') {
+    return [
+      componentAction('semantic', 'download', t('eb.retry'), { primary: true, disabled: !enabled }),
+      componentAction('semantic', 'delete', t('eb.rag.clear_partial'), { danger: true }),
+    ].join('');
+  }
+  return componentAction('semantic', 'download', t('eb.download'), { primary: true, disabled: !enabled });
+}
+
+function componentProgress(status, received, total, detail = '') {
+  if (!['downloading', 'verifying', 'extracting', 'indexing', 'paused', 'error'].includes(status)) return '';
+  const percent = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0;
+  return `<div class="rag-component-progress">
+    <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><div class="progress-fill" style="width:${percent}%"></div></div>
+    <div class="progress-detail">${escapeHtml(detail || `${bytes(received)}${total ? ` / ${bytes(total)}` : ''}`)}</div>
+  </div>`;
+}
+
+function renderRagComponents() {
+  const corpusStatus = corpusUiStatus();
+  const corpusReceived = Number(corpusProgress.bytesReceived)
+    || Number(corpusRecord?.staging?.bytesReceived)
+    || 0;
+  const corpusTotal = Number(corpusProgress.totalBytes)
+    || Number(corpusRecord?.staging?.totalBytes)
+    || Number(EMERGENCY_CORPUS_RELEASE?.downloadBytes)
+    || 0;
+  const activeCorpusBytes = Number(corpusRecord?.active?.extractedBytes || 0)
+    + Number(corpusRecord?.active?.indexBytes || 0);
+  const provisional = EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS;
+  const corpusMeta = corpusStatus === 'ready'
+    ? `${corpusRecord.active.documentCount} ${t('eb.rag.documents')} · ${bytes(activeCorpusBytes)}`
+    : EMERGENCY_CORPUS_RELEASE
+      ? `${bytes(EMERGENCY_CORPUS_RELEASE.downloadBytes)} ${t('eb.rag.network')}`
+      : t('eb.rag.corpus_pending_meta', {
+        count: provisional.sourceDocumentCount,
+        size: bytes(provisional.sourceTextBytes),
+      });
+  const corpusDetail = corpusRecord?.error
+    || (corpusStatus === 'extracting' ? t('eb.rag.extracting_detail') : '')
+    || (corpusStatus === 'indexing' ? t('eb.rag.indexing_detail') : '');
+  const corpusDescriptionKey = !EMERGENCY_CORPUS_RELEASE
+    ? 'eb.rag.corpus_pending'
+    : (EMERGENCY_CORPUS_RELEASE.preview ? 'eb.rag.corpus_preview' : 'eb.rag.corpus_description');
+
+  const semanticStatus = !semanticState?.status || semanticState.status === 'unknown'
+    ? (semanticDownloadInFlight ? 'downloading' : 'model-missing')
+    : semanticState.status;
+  const semanticReceived = Number(semanticState?.loaded) || 0;
+  const semanticTotal = Number(semanticState?.total) || E5_MODEL_DOWNLOAD_BYTES;
+  const semanticDetail = semanticState?.error || semanticState?.file || '';
+  if (elements['rag-components']) {
+    elements['rag-components'].innerHTML = `
+    <article class="rag-component" data-status="${escapeHtml(corpusStatus)}">
+      <div class="rag-component-copy">
+        <h3 class="rag-component-title">${escapeHtml(t('eb.rag.corpus_title'))}<span class="status-label" data-status="${escapeHtml(corpusStatus)}">${escapeHtml(ragStatusLabel(corpusStatus))}</span></h3>
+        <p>${escapeHtml(t(corpusDescriptionKey))}</p>
+        <div class="rag-component-meta"><span>${escapeHtml(corpusMeta)}</span></div>
+      </div>
+      <div class="rag-component-actions">${corpusActions(corpusStatus)}</div>
+      ${componentProgress(corpusStatus, corpusReceived, corpusTotal, corpusDetail)}
+    </article>
+    <article class="rag-component" data-status="${escapeHtml(semanticStatus)}">
+      <div class="rag-component-copy">
+        <h3 class="rag-component-title">${escapeHtml(t('eb.rag.semantic_title'))}<span class="status-label" data-status="${escapeHtml(semanticStatus)}">${escapeHtml(ragStatusLabel(semanticStatus))}</span></h3>
+        <p>${escapeHtml(t('eb.rag.semantic_description'))}</p>
+        <div class="rag-component-meta"><span>${escapeHtml(bytes(E5_MODEL_DOWNLOAD_BYTES))} ${escapeHtml(t('eb.rag.network'))}</span><span>CPU / WASM</span></div>
+      </div>
+      <div class="rag-component-actions">${semanticActions(semanticStatus)}</div>
+      ${componentProgress(semanticStatus, semanticReceived, semanticTotal, semanticDetail)}
+    </article>`;
   }
   updateOverallModelsReadiness();
   publishComponentDownloadStates();
@@ -717,8 +771,8 @@ async function refresh() {
   renderInstalled();
   await refreshVisionDownload().catch(() => {});
   await readEmergencyHostState();
-  renderEmergencyCorpusDownload();
-  renderSemanticDownload();
+  renderRagComponents();
+  void ragReadiness.refresh().catch(() => {});
 }
 
 async function loadBasicWikipediaAutoStartPreference() {
@@ -766,10 +820,22 @@ function maybeAutoStartBasicWikipediaDownload() {
   void startBasicWikipediaDownload({ automatic: true });
 }
 
-async function startEmergencyCorpusDownload({ automatic = false } = {}) {
+async function startEmergencyCorpusDownload({ automatic = false, confirm = !automatic } = {}) {
   if (snapshot?.enabled !== true || corpusDownloadInFlight || !EMERGENCY_CORPUS_RELEASE) return;
+  if (confirm) {
+    const installedEstimate = Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0)
+      + Number(EMERGENCY_CORPUS_RELEASE.installedIndexBytes
+        || Math.round(Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0) * 0.65));
+    const confirmKey = EMERGENCY_CORPUS_RELEASE.preview
+      ? 'eb.rag.confirm_corpus_preview'
+      : 'eb.rag.confirm_corpus';
+    if (!globalThis.confirm(t(confirmKey, {
+      network: bytes(EMERGENCY_CORPUS_RELEASE.downloadBytes),
+      installed: bytes(installedEstimate),
+    }))) return;
+  }
   corpusDownloadInFlight = true;
-  renderEmergencyCorpusDownload();
+  renderRagComponents();
   try {
     await sendEmergencyDownloadCommand('start_corpus');
     notice(t(automatic ? 'ap.models.wikipedia.started' : 'ap.queued'), 'success');
@@ -780,7 +846,7 @@ async function startEmergencyCorpusDownload({ automatic = false } = {}) {
   } finally {
     corpusDownloadInFlight = false;
     corpusRecord = await corpusStore.get().catch(() => null);
-    renderEmergencyCorpusDownload();
+    renderRagComponents();
   }
 }
 
@@ -788,16 +854,21 @@ async function maybeAutoStartEmergencyCorpusDownload() {
   if (snapshot?.enabled !== true || corpusDownloadInFlight || !EMERGENCY_CORPUS_RELEASE) return;
   corpusRecord = await corpusStore.get().catch(() => null);
   if (corpusRecord?.status === 'ready' || corpusRecord?.status === 'downloading' || corpusRecord?.status === 'verifying' || corpusRecord?.status === 'extracting' || corpusRecord?.status === 'indexing') {
-    renderEmergencyCorpusDownload();
+    renderRagComponents();
     return;
   }
   void startEmergencyCorpusDownload({ automatic: true });
 }
 
-async function startSemanticDownload({ automatic = false } = {}) {
+async function startSemanticDownload({ automatic = false, confirm = !automatic } = {}) {
   if (snapshot?.enabled !== true || semanticDownloadInFlight) return;
+  if (semanticState?.status === 'ready') return;
+  if (confirm && !globalThis.confirm(t('eb.rag.confirm_semantic', {
+    network: bytes(E5_MODEL_DOWNLOAD_BYTES),
+    installed: bytes(E5_MODEL_DOWNLOAD_BYTES),
+  }))) return;
   semanticDownloadInFlight = true;
-  renderSemanticDownload();
+  renderRagComponents();
   try {
     await sendEmergencyDownloadCommand('start_semantic');
     notice(t(automatic ? 'ap.models.wikipedia.started' : 'ap.queued'), 'success');
@@ -809,7 +880,7 @@ async function startSemanticDownload({ automatic = false } = {}) {
     semanticDownloadInFlight = false;
     const snapshotState = await sendEmergencyDownloadCommand('status').catch(() => null);
     if (snapshotState?.semantic) semanticState = snapshotState.semantic;
-    renderSemanticDownload();
+    renderRagComponents();
   }
 }
 
@@ -817,7 +888,7 @@ async function maybeAutoStartSemanticDownload() {
   if (snapshot?.enabled !== true || semanticDownloadInFlight) return;
   await readEmergencyHostState();
   if (semanticState?.status === 'ready' || semanticState?.status === 'downloading') {
-    renderSemanticDownload();
+    renderRagComponents();
     return;
   }
   void startSemanticDownload({ automatic: true });
@@ -882,60 +953,55 @@ document.querySelectorAll('[data-webgpu-download-action]').forEach((button) => {
 document.querySelectorAll('[data-vision-download-action]').forEach((button) => {
   button.addEventListener('click', () => runVisionDownloadAction(button.dataset.visionDownloadAction));
 });
-elements['vision-model-test'].addEventListener('click', testWebgpuVisionModel);
-elements['basic-wikipedia-start'].addEventListener('click', () => startBasicWikipediaDownload());
+elements['vision-model-test']?.addEventListener('click', testWebgpuVisionModel);
+elements['basic-wikipedia-start']?.addEventListener('click', () => startBasicWikipediaDownload());
 document.querySelectorAll('[data-basic-wikipedia-action]').forEach((button) => {
   button.addEventListener('click', event => runBasicWikipediaAction(button.dataset.basicWikipediaAction, event.currentTarget));
 });
-elements['emergency-corpus-start']?.addEventListener('click', () => startEmergencyCorpusDownload());
-document.querySelectorAll('[data-emergency-corpus-action]').forEach((button) => {
-  button.addEventListener('click', async () => {
-    const action = button.dataset.emergencyCorpusAction;
-    if (action === 'retry') {
-      void startEmergencyCorpusDownload();
-    } else if (action === 'stop') {
-      if (corpusRecord?.status === 'ready' && (snapshot?.enabled === true || elements.enabled?.checked)) {
-        notice(t('ap.cannot_delete_while_enabled'), 'error');
-        return;
-      }
-      if (['downloading', 'verifying', 'extracting', 'indexing'].includes(corpusRecord?.status) || corpusDownloadInFlight) {
-        await sendEmergencyDownloadCommand('pause_corpus');
-        await readEmergencyHostState();
-        renderEmergencyCorpusDownload();
-      } else if (corpusRecord?.status === 'ready') {
-        const message = t('ap.delete_internal');
-        if (!globalThis.confirm(message)) return;
-        button.disabled = true;
-        try {
+elements['rag-components']?.addEventListener('click', async event => {
+  const button = event.target.closest('[data-rag-action][data-rag-component]');
+  if (!button) return;
+  const { ragAction: action, ragComponent: component } = button.dataset;
+  try {
+    if (component === 'corpus') {
+      if (action === 'download') await startEmergencyCorpusDownload({
+        confirm: corpusUiStatus() === 'not-installed',
+      });
+      if (action === 'pause') await sendEmergencyDownloadCommand('pause_corpus');
+      if (action === 'cancel') await sendEmergencyDownloadCommand('cancel_corpus');
+      if (action === 'delete') {
+        if (snapshot?.enabled === true) {
+          notice(t('ap.cannot_delete_while_enabled'), 'error');
+          return;
+        }
+        if (globalThis.confirm(t('eb.rag.confirm_delete_corpus'))) {
           await sendEmergencyDownloadCommand('delete_corpus');
           corpusRecord = null;
-          renderEmergencyCorpusDownload();
-          notice(t('eb.rag.deleted'), 'success');
-        } catch (error) {
-          notice(error.message, 'error');
-        } finally {
-          button.disabled = false;
         }
       }
     }
-  });
-});
-elements['semantic-model-start']?.addEventListener('click', () => startSemanticDownload());
-document.querySelectorAll('[data-semantic-model-action]').forEach((button) => {
-  button.addEventListener('click', async () => {
-    const action = button.dataset.semanticModelAction;
-    if (action === 'retry') {
-      void startSemanticDownload();
-    } else if (action === 'stop') {
-      if (semanticState?.status === 'downloading' || semanticDownloadInFlight) {
-        await sendEmergencyDownloadCommand('pause_semantic');
-      } else {
-        await sendEmergencyDownloadCommand('stop_semantic').catch(() => {});
+    if (component === 'semantic') {
+      if (action === 'download') await startSemanticDownload({
+        confirm: !['paused', 'error'].includes(semanticState?.status),
+      });
+      if (action === 'pause') await sendEmergencyDownloadCommand('pause_semantic');
+      if (action === 'delete') {
+        if (snapshot?.enabled === true) {
+          notice(t('ap.cannot_delete_while_enabled'), 'error');
+          return;
+        }
+        if (globalThis.confirm(t('eb.rag.confirm_delete_semantic'))) {
+          await sendEmergencyDownloadCommand('stop_semantic');
+        }
       }
-      await readEmergencyHostState();
-      renderSemanticDownload();
     }
-  });
+  } catch (error) {
+    notice(error.message, 'error');
+  } finally {
+    await readEmergencyHostState();
+    renderRagComponents();
+    void ragReadiness.refresh().catch(() => {});
+  }
 });
 runtimeApi.runtime?.onMessage?.addListener?.((message) => {
   if (message?.type === 'webgpu-text-download-state') {
@@ -946,17 +1012,18 @@ runtimeApi.runtime?.onMessage?.addListener?.((message) => {
     if (message.corpus) {
       corpusRecord = message.corpus;
       if (message.corpus.staging) corpusProgress = message.corpus.staging;
-      renderEmergencyCorpusDownload();
+      renderRagComponents();
     }
     if (message.semantic) {
       semanticState = message.semantic;
-      renderSemanticDownload();
+      renderRagComponents();
     }
+    void ragReadiness.refresh().catch(() => {});
     return false;
   }
   return false;
 });
-elements['emergency-box-link'].addEventListener('click', (event) => {
+elements['emergency-box-link']?.addEventListener('click', (event) => {
   if (elements['emergency-box-link'].getAttribute('aria-disabled') !== 'true') return;
   event.preventDefault();
   notice(t('ap.emergency.gate'), 'error');
@@ -973,8 +1040,7 @@ elements.enabled.addEventListener('change', async () => {
     if (snapshot.textModel?.modelId) setWebgpuDownloadState(snapshot.textModel);
     await refreshVisionDownload().catch(() => {});
     renderInstalled();
-    renderEmergencyCorpusDownload();
-    renderSemanticDownload();
+    renderRagComponents();
     updateOverallModelsReadiness();
     notice(t(elements.enabled.checked ? 'ap.enabled_notice' : 'ap.disabled_notice'), 'success');
     if (snapshot.enabled === true) {
@@ -989,8 +1055,8 @@ document.addEventListener('wb-locale-changed', () => {
   renderVisionDownload();
   updateWebgpuDownloadPanel();
   renderBasicWikipediaDownload();
-  renderEmergencyCorpusDownload();
-  renderSemanticDownload();
+  renderRagComponents();
+  ragReadiness.render();
   updateOverallModelsReadiness();
 });
 runtimeApi.storage?.onChanged?.addListener?.((changes, area) => {
@@ -1017,12 +1083,26 @@ await Promise.all([
   refreshWebgpuDownloadStatus(),
   loadBasicWikipediaAutoStartPreference(),
 ]);
+const params = new URLSearchParams(globalThis.location.search);
+const resumeComponent = params.get('resumeComponent');
+if (resumeComponent || globalThis.location.hash === '#offline-answer-engine') {
+  expandOfflineAnswerEngine();
+}
+if (resumeComponent) {
+  globalThis.history.replaceState({}, '', `${globalThis.location.pathname}${globalThis.location.hash || ''}`);
+  if (resumeComponent === CORPUS_DOWNLOAD_ID) void startEmergencyCorpusDownload({ confirm: false });
+  if (resumeComponent === SEMANTIC_DOWNLOAD_ID) void startSemanticDownload({ confirm: false });
+}
 if (snapshot?.enabled === true) {
   void loadBasicWikipediaCatalog();
   void maybeAutoStartEmergencyCorpusDownload();
   void maybeAutoStartSemanticDownload();
 }
+globalThis.addEventListener('hashchange', () => {
+  if (globalThis.location.hash === '#offline-answer-engine') expandOfflineAnswerEngine();
+});
 setInterval(poll, 2000);
 globalThis.addEventListener('pagehide', () => {
+  ragReadiness.close();
   downloadStateChannel?.close();
 }, { once: true });

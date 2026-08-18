@@ -45,10 +45,12 @@ indique qu'il ne peut pas.
   le PDF Emergency Box correspondant est installé, la même citation pointe
   aussi vers `emergency-pdf.html`. Aucune citation ne navigue vers une page web
   en direct.
-- **Tableau de bord de disponibilité RAG.** Une grille à 4 cellules dans le
-  mode Apocalypse et le panneau latéral affiche indépendamment la recherche
-  Wikipedia, la recherche de la bibliothèque d'urgence, le classement
-  sémantique et la génération de réponses locales.
+- **Tableau de bord de disponibilité RAG.** Une grille à 4 cellules, repliée
+  sous la Boîte d'urgence dans le mode Apocalypse et aussi dans le panneau
+  latéral, affiche indépendamment la recherche Wikipedia, la recherche de la
+  bibliothèque d'urgence, le classement sémantique et la génération de
+  réponses locales. L'installation du corpus et du modèle sémantique se fait
+  là, pas sur l'étagère PDF.
 - **Filtres par source et par langue.** Des cases à cocher limitent la
   récupération aux sources et langues installées. Les filtres persistent entre
   les sessions. Le chat autonome route aussi par requête : les questions

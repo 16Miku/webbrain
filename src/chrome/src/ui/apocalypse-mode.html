@@ -27,12 +27,13 @@
     .hero { display:grid;grid-template-columns:1fr;gap:12px; }
     .hero-overview { display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;align-items:start; }
     .hero-copy { max-width:780px; }
-    .library-callout,.emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
-    .library-callout h2,.emergency-callout h2 { margin-bottom:2px; }
+    .library-callout,.emergency-callout-row { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .emergency-callout { display:grid;gap:14px; }
+    .library-callout h2,.emergency-callout-row h2 { margin-bottom:2px; }
     .library-callout .button-link { border-color:rgba(96,211,178,.45);color:var(--teal);background:rgba(96,211,178,.1); }
     .library-callout .button-link:hover { border-color:var(--teal);background:rgba(96,211,178,.16); }
-    .emergency-callout[data-locked="true"] .section-icon,.emergency-callout[data-locked="true"] h2,.emergency-callout[data-locked="true"] .muted,.emergency-callout[data-locked="true"] .button-link { opacity:.46;filter:saturate(.2); }
-    .emergency-callout[data-locked="true"] .button-link { pointer-events:none;cursor:not-allowed; }
+    .emergency-callout[data-locked="true"] .emergency-callout-row .section-icon,.emergency-callout[data-locked="true"] .emergency-callout-row h2,.emergency-callout[data-locked="true"] .emergency-callout-row .muted,.emergency-callout[data-locked="true"] .emergency-callout-row .button-link { opacity:.46;filter:saturate(.2); }
+    .emergency-callout[data-locked="true"] .emergency-callout-row .button-link { pointer-events:none;cursor:not-allowed; }
     .emergency-gate-reason { margin-top:5px;color:var(--warn);font-size:12px;font-weight:650; }
     .button-link { display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 13px;border:1px solid rgba(85,199,133,.45);border-radius:8px;color:var(--good-link);background:rgba(85,199,133,.1);font-weight:700;text-decoration:none;white-space:nowrap; }
     .button-link:hover { border-color:var(--good);background:rgba(85,199,133,.16); }
@@ -110,11 +111,12 @@
     .empty { color:var(--muted);padding:12px 0; }
     @media(prefers-reduced-motion:reduce){.webgpu-transfer-fill{transition:none}.webgpu-transfer[data-state=downloading] .webgpu-transfer-dot,.webgpu-transfer[data-state=downloading][data-indeterminate=true] .webgpu-transfer-fill,.section-status[data-kind="loading"]::before{animation:none}}
     @media(max-width:920px){.header-stats .header-stat:last-child{display:none}}
-    @media(max-width:700px){ header{align-items:flex-start}.header-right{width:100%;margin-inline-start:64px;justify-content:space-between}.header-stat{min-width:74px}.hero-overview,.item,.library-callout,.emergency-callout{grid-template-columns:1fr}.local-models{grid-column:1}.actions{justify-content:flex-start}.local-model-head{align-items:flex-start;flex-direction:column;gap:2px}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start} }
+    @media(max-width:700px){ header{align-items:flex-start}.header-right{width:100%;margin-inline-start:64px;justify-content:space-between}.header-stat{min-width:74px}.hero-overview,.item,.library-callout,.emergency-callout-row{grid-template-columns:1fr}.local-models{grid-column:1}.actions{justify-content:flex-start}.local-model-head{align-items:flex-start;flex-direction:column;gap:2px}.library-callout .section-icon,.emergency-callout-row .section-icon{display:none}.button-link{justify-self:start} }
   </style>
   <link rel="stylesheet" href="apocalypse-kit.css">
   <link rel="stylesheet" href="apocalypse-comm.css">
   <link rel="stylesheet" href="download-tracker.css">
+  <link rel="stylesheet" href="offline-rag-readiness.css">
 </head>
 <body class="ap-page">
   <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div><div class="header-right"><div class="header-stats" data-i18n-aria-label="ap.metric.summary"><span class="header-stat"><strong id="installed-count">0</strong><small data-i18n="ap.metric.installed"></small></span><span class="header-stat"><strong id="archive-bytes">0 B</strong><small data-i18n="ap.metric.archive_bytes"></small></span><span class="header-stat"><strong id="storage-usage"></strong><small data-i18n="ap.metric.storage"></small></span></div><span id="models-readiness" class="models-readiness" data-kind="disabled" role="status" aria-live="polite"><span class="models-readiness-dot" aria-hidden="true"></span><span id="models-readiness-label"></span></span></div></header>
@@ -201,40 +203,6 @@
               </div>
             </div>
           </section>
-
-          <section id="emergency-corpus-card" class="local-model" data-model-kind="corpus" hidden>
-            <span class="local-model-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg>
-            </span>
-            <div class="local-model-body">
-              <div class="local-model-head"><strong id="emergency-corpus-title" data-i18n="eb.rag.corpus_title"></strong><span id="emergency-corpus-meta" class="meta">~245 MB · SQLite FTS5</span></div>
-              <p id="emergency-corpus-description" class="meta" data-i18n="eb.rag.corpus_description"></p>
-              <div id="emergency-corpus-status" class="vision-status" role="status" aria-live="polite"></div>
-              <progress id="emergency-corpus-progress" max="100" value="0" hidden></progress>
-              <div class="model-actions">
-                <button type="button" id="emergency-corpus-start" class="primary" data-i18n="st.providers.webgpu_download.start" hidden></button>
-                <button type="button" data-emergency-corpus-action="retry" data-i18n="ap.retry" hidden></button>
-                <button type="button" class="danger" data-emergency-corpus-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
-              </div>
-            </div>
-          </section>
-
-          <section id="semantic-model-card" class="local-model" data-model-kind="semantic" hidden>
-            <span class="local-model-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
-            </span>
-            <div class="local-model-body">
-              <div class="local-model-head"><strong id="semantic-model-title" data-i18n="eb.rag.semantic_title"></strong><span id="semantic-model-meta" class="meta">~134 MB · ONNX Model</span></div>
-              <p id="semantic-model-description" class="meta" data-i18n="eb.rag.semantic_description"></p>
-              <div id="semantic-model-status" class="vision-status" role="status" aria-live="polite"></div>
-              <progress id="semantic-model-progress" max="100" value="0" hidden></progress>
-              <div class="model-actions">
-                <button type="button" id="semantic-model-start" class="primary" data-i18n="st.providers.webgpu_download.start" hidden></button>
-                <button type="button" data-semantic-model-action="retry" data-i18n="ap.retry" hidden></button>
-                <button type="button" class="danger" data-semantic-model-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
-              </div>
-            </div>
-          </section>
       </div>
     </section>
 
@@ -245,9 +213,16 @@
     </section>
 
     <section id="emergency-box-callout" class="card emergency-callout" data-locked="true" aria-disabled="true">
-      <span class="section-icon" data-kind="emergency" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
-      <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p><p id="emergency-gate-reason" class="emergency-gate-reason" data-i18n="ap.emergency.gate"></p></div>
-      <a id="emergency-box-link" class="button-link" data-href="emergency-box.html" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1" data-i18n="ap.emergency.open"></a>
+      <div class="emergency-callout-row">
+        <span class="section-icon" data-kind="emergency" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
+        <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p><p id="emergency-gate-reason" class="emergency-gate-reason" data-i18n="ap.emergency.gate"></p></div>
+        <a id="emergency-box-link" class="button-link" data-href="emergency-box.html" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1" data-i18n="ap.emergency.open"></a>
+      </div>
+      <details id="offline-answer-engine" class="offline-answer-engine">
+        <summary data-i18n="eb.rag.eyebrow">Offline answer engine</summary>
+        <section id="offline-rag-readiness" class="offline-rag-readiness" aria-live="polite"></section>
+        <div id="rag-components" class="rag-components" aria-live="polite"></div>
+      </details>
     </section>
 
     <div id="notice" role="status" aria-live="polite"></div>

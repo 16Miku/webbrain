@@ -38,9 +38,10 @@ prompt first; the model answers from that evidence or says it cannot.
   the plaintext document. When the matching Emergency Box PDF is installed,
   the same citation also links to `emergency-pdf.html`. No citation navigates
   to a live web page.
-- **RAG readiness dashboard.** A 4-cell status grid in Apocalypse Mode and the
-  side panel shows Wikipedia search, Emergency library search, semantic ranking,
-  and local answer generation independently.
+- **RAG readiness dashboard.** A 4-cell status grid collapsed under Emergency
+  Box on Apocalypse Mode, and in the side panel, shows Wikipedia search,
+  Emergency library search, semantic ranking, and local answer generation
+  independently. Corpus and semantic installs live there, not on the PDF shelf.
 - **Source and language filters.** Checkboxes limit retrieval to installed
   sources and languages. Filters persist across sessions. Standalone chat also
   routes per query: encyclopedia questions stay on Wikipedia when both sources

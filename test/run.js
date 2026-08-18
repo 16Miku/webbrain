@@ -23575,10 +23575,12 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: communication collection filter is missing or hard-coded English`);
     assert.match(box, /data-i18n-aria-label="eb\.nav_label"/, `${browser}: Emergency Box collection navigation is not localized`);
     assert.match(box, /data-i18n-title="ap\.title"/, `${browser}: Emergency Box back-button title is not localized`);
-    assert.match(box, /id="offline-rag-readiness"[\s\S]*?id="rag-components"/,
-      `${browser}: offline search readiness and component lifecycle UI is missing`);
-    assert.match(boxCss, /\.rag-readiness\s*\{\s*margin:\s*16px 0;/,
-      `${browser}: offline readiness is visually glued to the library controls`);
+    assert.doesNotMatch(box, /id="offline-rag-readiness"|id="rag-components"/,
+      `${browser}: Emergency Box still hosts the offline answer-engine surface`);
+    assert.match(apocalypse, /id="offline-answer-engine"[\s\S]*?data-i18n="eb\.rag\.eyebrow"[\s\S]*?id="offline-rag-readiness"[\s\S]*?id="rag-components"/,
+      `${browser}: Apocalypse Mode is missing the collapsed Offline answer engine`);
+    assert.match(apocalypse, /offline-rag-readiness\.css/,
+      `${browser}: Apocalypse Mode does not load the readiness stylesheet`);
     assert.match(boxScript, /EMERGENCY_CORPUS_RELEASE[\s\S]*?sendEmergencyDownloadCommand\('start_corpus'/,
       `${browser}: Emergency text-pack download is not explicitly release-gated`);
     assert.match(corpusRelease, /2026\.08\.17-preview\.3[\s\S]*?github\.com\/webbrain-one\/emergency-box-corpus[\s\S]*?preview: true/,
@@ -23789,6 +23791,8 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: tracker controls do not route Emergency downloads to the background host`);
     assert.match(script, /sendEmergencyDownloadCommand\('pause_corpus'\)[\s\S]*?sendEmergencyDownloadCommand\('start_corpus'\)[\s\S]*?sendEmergencyDownloadCommand\('cancel_corpus'\)/,
       `${browser}: footer controls do not route Emergency corpus and semantic-model actions`);
+    assert.match(script, /function emergencyComponentItems\(\)[\s\S]*?href: `\$\{pageUrl\('apocalypse-mode\.html'\)\}#offline-answer-engine`/,
+      `${browser}: Emergency component tracker arrows do not open the Apocalypse Offline answer engine`);
     assert.doesNotMatch(script, /\?resumeComponent=/,
       `${browser}: cross-page component Resume still navigates back to Emergency Box`);
     assert.doesNotMatch(script, /signalEmergencyBox\('pause', item\)[\s\S]*?location\.href = `\$\{item\.href\}\?resume=/,
@@ -23817,6 +23821,11 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: leaving Emergency Box still aborts background-owned downloads`);
     assert.match(emergencyScript, /params\.get\('resumeComponent'\)[\s\S]*?startCorpusDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?startSemanticDownload\(\{ confirm: false, resume: true \}\)/,
       `${browser}: Emergency Box cannot accept component Resume ownership from another footer`);
+    const apocalypseScript = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.js'), 'utf8');
+    assert.match(apocalypseScript, /params\.get\('resumeComponent'\)[\s\S]*?startEmergencyCorpusDownload\(\{ confirm: false \}\)[\s\S]*?startSemanticDownload\(\{ confirm: false \}\)/,
+      `${browser}: Apocalypse Mode cannot accept component Resume ownership from the footer`);
+    assert.match(apocalypseScript, /hash === '#offline-answer-engine'[\s\S]*?expandOfflineAnswerEngine/,
+      `${browser}: tracker arrows do not expand the collapsed Offline answer engine`);
     assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false, resume: true \}\)/,
       `${browser}: tracker Resume handoff does not restart a paused PDF`);
     assert.match(emergencyScript, /sendEmergencyDownloadCommand\('start_corpus'\)/,
@@ -26814,9 +26823,12 @@ test('offline RAG readiness filters persist safely and flow only into standalone
     const panel = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/sidepanel.html`), 'utf8');
     const panelScript = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/sidepanel.js`), 'utf8');
     const readinessCss = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/offline-rag-readiness.css`), 'utf8');
-    assert.doesNotMatch(html, /id="offline-rag-readiness"/, `${browser}: Apocalypse Mode still hosts the Emergency Box readiness surface`);
-    assert.match(box, /id="offline-rag-readiness"/, `${browser}: Emergency Box readiness surface missing`);
-    assert.match(box, /offline-rag-readiness\.css/, `${browser}: Emergency Box does not load the readiness stylesheet`);
+    assert.match(html, /id="offline-answer-engine"[\s\S]*?id="offline-rag-readiness"[\s\S]*?id="rag-components"/,
+      `${browser}: Apocalypse Mode is missing the collapsed Offline answer engine`);
+    assert.match(html, /offline-rag-readiness\.css/,
+      `${browser}: Apocalypse Mode does not load the readiness stylesheet`);
+    assert.doesNotMatch(box, /id="offline-rag-readiness"/, `${browser}: Emergency Box still hosts the readiness surface`);
+    assert.doesNotMatch(box, /offline-rag-readiness\.css/, `${browser}: Emergency Box still loads the readiness stylesheet`);
     assert.match(panel, /id="standalone-rag-readiness"/, `${browser}: standalone readiness surface missing`);
     assert.match(panelScript, /standaloneRagReadinessRoot\?\.classList\.add\('hidden'\)/,
       `${browser}: standalone readiness must start hidden`);

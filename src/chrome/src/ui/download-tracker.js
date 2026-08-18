@@ -287,7 +287,7 @@ function emergencyComponentItems() {
     ...record,
     id: `component-${record.sourceId}`,
     title: t(record.componentKind === 'corpus' ? 'eb.rag.corpus_title' : 'eb.rag.semantic_title'),
-    href: pageUrl('emergency-box.html'),
+    href: `${pageUrl('apocalypse-mode.html')}#offline-answer-engine`,
     kind: 'component',
   }));
 }

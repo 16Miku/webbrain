@@ -89,18 +89,20 @@ async function localGenerationStatus() {
   return apocalypseEnabled ? 'separate' : 'unavailable';
 }
 
-const ragReadiness = createOfflineRagReadinessController({
-  root: elements['offline-rag-readiness'],
-  apocalypseStore,
-  corpusStore,
-  semanticReranker: {
-    async status() {
-      return semanticState.status === 'unknown' ? 'model-missing' : semanticState.status;
+const ragReadiness = elements['offline-rag-readiness']
+  ? createOfflineRagReadinessController({
+    root: elements['offline-rag-readiness'],
+    apocalypseStore,
+    corpusStore,
+    semanticReranker: {
+      async status() {
+        return semanticState.status === 'unknown' ? 'model-missing' : semanticState.status;
+      },
+      close() {},
     },
-    close() {},
-  },
-  getGenerationStatus: localGenerationStatus,
-});
+    getGenerationStatus: localGenerationStatus,
+  })
+  : { async refresh() {}, render() {}, close() {} };
 
 function trackDownload(id, options = {}) {
   downloads.set(id, { kind: options.bulkKind || '' });
@@ -409,7 +411,8 @@ function renderRagComponents() {
   const semanticReceived = Number(semanticState.loaded) || 0;
   const semanticTotal = Number(semanticState.total) || E5_MODEL_DOWNLOAD_BYTES;
   const semanticDetail = semanticState.error || semanticState.file || '';
-  elements['rag-components'].innerHTML = `
+  if (elements['rag-components']) {
+    elements['rag-components'].innerHTML = `
     <article class="rag-component" data-status="${escapeHtml(corpusStatus)}">
       <div class="rag-component-copy">
         <h3 class="rag-component-title">${escapeHtml(t('eb.rag.corpus_title'))}<span class="status-label" data-status="${escapeHtml(corpusStatus)}">${escapeHtml(ragStatusLabel(corpusStatus))}</span></h3>
@@ -428,6 +431,7 @@ function renderRagComponents() {
       <div class="rag-component-actions">${semanticActions(semanticStatus)}</div>
       ${componentProgress(semanticStatus, semanticReceived, semanticTotal, semanticDetail)}
     </article>`;
+  }
   publishComponentDownloadStates({
     corpusStatus, corpusReceived, corpusTotal, corpusDetail,
     semanticStatus, semanticReceived, semanticTotal, semanticDetail,
@@ -811,7 +815,7 @@ elements['resource-list'].addEventListener('click', async event => {
     }
   }
 });
-elements['rag-components'].addEventListener('click', async event => {
+elements['rag-components']?.addEventListener('click', async event => {
   const button = event.target.closest('[data-rag-action][data-rag-component]');
   if (!button) return;
   const { ragAction: action, ragComponent: component } = button.dataset;
