@@ -1,5 +1,7 @@
 const apocalypseModeTranslations = {
   "es": {
+    "ap.cannot_delete_while_enabled": "No se puede eliminar el archivo mientras el Modo Apocalipsis esté activado. Desactiva primero el Modo Apocalipsis.",
+    "ap.models.cannot_remove_while_enabled": "No se puede eliminar el modelo mientras el Modo Apocalipsis esté activado. Desactiva primero el Modo Apocalipsis.",
     "st.display.apocalypse_mode.label": "Modo Apocalipsis",
     "st.display.apocalypse_mode.desc": "Gestiona el archivo sin conexión obligatorio de Wikipedia en inglés simple y los archivos opcionales de Wikipedia por idioma y tamaño. Al activar el Modo Apocalipsis se inician las descargas básicas obligatorias.",
     "st.display.apocalypse_mode.manage": "Gestionar archivos",
@@ -120,6 +122,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Cargando detalles…"
   },
   "fr": {
+    "ap.cannot_delete_while_enabled": "Impossible de supprimer l'archive lorsque le mode Apocalypse est activé. Désactivez d'abord le mode Apocalypse.",
+    "ap.models.cannot_remove_while_enabled": "Impossible de supprimer le modèle lorsque le mode Apocalypse est activé. Désactivez d'abord le mode Apocalypse.",
     "st.display.apocalypse_mode.label": "Mode Apocalypse",
     "st.display.apocalypse_mode.desc": "Gérez l’archive hors ligne obligatoire de Wikipédia en anglais simple et les archives Wikipédia facultatives par langue et taille. L’activation du mode Apocalypse lance les téléchargements de base obligatoires.",
     "st.display.apocalypse_mode.manage": "Gérer les archives",
@@ -240,6 +244,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Chargement des détails…"
   },
   "tr": {
+    "ap.cannot_delete_while_enabled": "Kıyamet Modu etkinken arşiv silinemez. Önce Kıyamet Modunu devre dışı bırakın.",
+    "ap.models.cannot_remove_while_enabled": "Kıyamet Modu etkinken model kaldırılamaz. Önce Kıyamet Modunu devre dışı bırakın.",
     "st.display.apocalypse_mode.label": "Kıyamet Modu",
     "st.display.apocalypse_mode.desc": "Gerekli Basit İngilizce Vikipedi çevrimdışı arşivini ve isteğe bağlı Vikipedi arşivlerini dil ve boyuta göre yönetin. Kıyamet Modu’nu etkinleştirmek gerekli temel indirmeleri başlatır.",
     "st.display.apocalypse_mode.manage": "Arşivleri yönet",
@@ -360,6 +366,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Ayrıntılar yükleniyor…"
   },
   "zh": {
+    "ap.cannot_delete_while_enabled": "启用了天启模式时无法删除档案。请先禁用天启模式。",
+    "ap.models.cannot_remove_while_enabled": "启用了天启模式时无法移除模型。请先禁用天启模式。",
     "st.display.apocalypse_mode.label": "末日模式",
     "st.display.apocalypse_mode.desc": "按语言和大小管理必需的简明英语维基百科离线存档及可选的维基百科存档。启用末日模式会开始必需的基础下载。",
     "st.display.apocalypse_mode.manage": "管理存档",
@@ -480,6 +488,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "正在加载详细信息…"
   },
   "ru": {
+    "ap.cannot_delete_while_enabled": "Невозможно удалить архив при включенном режиме Апокалипсиса. Сначала отключите режим Апокалипсиса.",
+    "ap.models.cannot_remove_while_enabled": "Невозможно удалить модель при включенном режиме Апокалипсиса. Сначала отключите режим Апокалипсиса.",
     "st.display.apocalypse_mode.label": "Режим апокалипсиса",
     "st.display.apocalypse_mode.desc": "Управляйте обязательным офлайн-архивом Википедии на упрощённом английском и дополнительными архивами Википедии по языку и размеру. Включение режима «Апокалипсис» запускает обязательные базовые загрузки.",
     "st.display.apocalypse_mode.manage": "Управление архивами",
@@ -600,6 +610,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Загрузка сведений…"
   },
   "uk": {
+    "ap.cannot_delete_while_enabled": "Неможливо видалити архів, коли увімкнено режим Апокаліпсису. Спочатку вимкніть режим Апокаліпсису.",
+    "ap.models.cannot_remove_while_enabled": "Неможливо видалити модель, коли увімкнено режим Апокаліпсису. Спочатку вимкніть режим Апокаліпсису.",
     "st.display.apocalypse_mode.label": "Режим апокаліпсису",
     "st.display.apocalypse_mode.desc": "Керуйте обов’язковим офлайн-архівом Вікіпедії спрощеною англійською та додатковими архівами Вікіпедії за мовою й розміром. Увімкнення режиму «Апокаліпсис» запускає обов’язкові базові завантаження.",
     "st.display.apocalypse_mode.manage": "Керувати архівами",
@@ -720,6 +732,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Завантаження відомостей…"
   },
   "ar": {
+    "ap.cannot_delete_while_enabled": "لا يمكن حذف الأرشيف أثناء تفعيل وضع القيامة. يرجى تعطيل وضع القيامة أولاً.",
+    "ap.models.cannot_remove_while_enabled": "لا يمكن إزالة النموذج أثناء تفعيل وضع القيامة. يرجى تعطيل وضع القيامة أولاً.",
     "st.display.apocalypse_mode.label": "وضع الكارثة",
     "st.display.apocalypse_mode.desc": "أدر أرشيف ويكيبيديا باللغة الإنجليزية المبسطة المطلوب للعمل دون اتصال وأرشيفات ويكيبيديا الاختيارية حسب اللغة والحجم. يؤدي تفعيل وضع نهاية العالم إلى بدء التنزيلات الأساسية المطلوبة.",
     "st.display.apocalypse_mode.manage": "إدارة الأرشيفات",
@@ -840,6 +854,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "جارٍ تحميل التفاصيل…"
   },
   "ja": {
+    "ap.cannot_delete_while_enabled": "アポカリプスモードが有効な間はアーカイブを削除できません。まずアポカリプスモードを無効にしてください。",
+    "ap.models.cannot_remove_while_enabled": "アポカリプスモードが有効な間はモデルを削除できません。まずアポカリプスモードを無効にしてください。",
     "st.display.apocalypse_mode.label": "アポカリプスモード",
     "st.display.apocalypse_mode.desc": "必須のシンプル英語版ウィキペディアのオフラインアーカイブと、任意のウィキペディアアーカイブを言語とサイズ別に管理します。アポカリプスモードを有効にすると、必須の基本ダウンロードが始まります。",
     "st.display.apocalypse_mode.manage": "アーカイブを管理",
@@ -960,6 +976,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "詳細を読み込んでいます…"
   },
   "ko": {
+    "ap.cannot_delete_while_enabled": "아포칼립스 모드가 활성화된 상태에서는 아카이브를 삭제할 수 없습니다. 먼저 아포칼립스 모드를 비활성화하세요.",
+    "ap.models.cannot_remove_while_enabled": "아포칼립스 모드가 활성화된 상태에서는 모델을 삭제할 수 없습니다. 먼저 아포칼립스 모드를 비활성화하세요.",
     "st.display.apocalypse_mode.label": "아포칼립스 모드",
     "st.display.apocalypse_mode.desc": "필수 쉬운 영어 위키백과 오프라인 아카이브와 선택 가능한 위키백과 아카이브를 언어 및 크기별로 관리합니다. 아포칼립스 모드를 활성화하면 필수 기본 다운로드가 시작됩니다.",
     "st.display.apocalypse_mode.manage": "아카이브 관리",
@@ -1080,6 +1098,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "세부 정보를 불러오는 중…"
   },
   "id": {
+    "ap.cannot_delete_while_enabled": "Tidak dapat menghapus arsip saat Mode Kiamat aktif. Nonaktifkan Mode Kiamat terlebih dahulu.",
+    "ap.models.cannot_remove_while_enabled": "Tidak dapat menghapus model saat Mode Kiamat aktif. Nonaktifkan Mode Kiamat terlebih dahulu.",
     "st.display.apocalypse_mode.label": "Mode Apocalypse",
     "st.display.apocalypse_mode.desc": "Kelola arsip offline wajib Wikipedia Bahasa Inggris Sederhana dan arsip Wikipedia opsional berdasarkan bahasa dan ukuran. Mengaktifkan Mode Apocalypse akan memulai unduhan dasar yang wajib.",
     "st.display.apocalypse_mode.manage": "Kelola arsip",
@@ -1200,6 +1220,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Memuat detail…"
   },
   "th": {
+    "ap.cannot_delete_while_enabled": "ไม่สามารถลบไฟล์เก็บถาวรได้ในขณะที่เปิดใช้งานโหมดวันสิ้นโลก โปรดปิดใช้งานโหมดวันสิ้นโลกก่อน",
+    "ap.models.cannot_remove_while_enabled": "ไม่สามารถลบโมเดลได้ในขณะที่เปิดใช้งานโหมดวันสิ้นโลก โปรดปิดใช้งานโหมดวันสิ้นโลกก่อน",
     "st.display.apocalypse_mode.label": "โหมดอาคัปปอลิส",
     "st.display.apocalypse_mode.desc": "จัดการคลังวิกิพีเดียภาษาอังกฤษแบบง่ายออฟไลน์ที่จำเป็น และคลังวิกิพีเดียเสริมตามภาษาและขนาด การเปิดโหมด Apocalypse จะเริ่มดาวน์โหลดรายการพื้นฐานที่จำเป็น",
     "st.display.apocalypse_mode.manage": "จัดการคลังข้อมูล",
@@ -1320,6 +1342,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "กำลังโหลดรายละเอียด…"
   },
   "ms": {
+    "ap.cannot_delete_while_enabled": "Tidak dapat memadamkan arkib semasa Mod Kiamat didayakan. Lumpuhkan Mod Kiamat terlebih dahulu.",
+    "ap.models.cannot_remove_while_enabled": "Tidak dapat mengalih keluar model semasa Mod Kiamat didayakan. Lumpuhkan Mod Kiamat terlebih dahulu.",
     "st.display.apocalypse_mode.label": "Mod Apocalypse",
     "st.display.apocalypse_mode.desc": "Urus arkib luar talian Wikipedia Bahasa Inggeris Mudah yang wajib dan arkib Wikipedia pilihan mengikut bahasa dan saiz. Mengaktifkan Mod Apocalypse akan memulakan muat turun asas yang wajib.",
     "st.display.apocalypse_mode.manage": "Kelola arkib",
@@ -1440,6 +1464,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Memuat butiran…"
   },
   "tl": {
+    "ap.cannot_delete_while_enabled": "Hindi maaaring tanggalin ang archive habang naka-enable ang Apocalypse Mode. I-disable muna ang Apocalypse Mode.",
+    "ap.models.cannot_remove_while_enabled": "Hindi maaaring alisin ang modelo habang naka-enable ang Apocalypse Mode. I-disable muna ang Apocalypse Mode.",
     "st.display.apocalypse_mode.label": "Modo Apocalypse",
     "st.display.apocalypse_mode.desc": "Pamahalaan ang kinakailangang offline na arkibo ng Wikipedia sa Simpleng Ingles at mga opsyonal na arkibo ng Wikipedia ayon sa wika at laki. Kapag pinagana ang Apocalypse Mode, magsisimula ang mga kinakailangang pangunahing download.",
     "st.display.apocalypse_mode.manage": "Pamahalaan ang mga arkibo",
@@ -1560,6 +1586,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Naglo-load ng mga detalye…"
   },
   "pl": {
+    "ap.cannot_delete_while_enabled": "Nie można usunąć archiwum, gdy tryb Apokalipsy jest włączony. Najpierw wyłącz tryb Apokalipsy.",
+    "ap.models.cannot_remove_while_enabled": "Nie można usunąć modelu, gdy tryb Apokalipsy jest włączony. Najpierw wyłącz tryb Apokalipsy.",
     "st.display.apocalypse_mode.label": "Tryb apokalipsy",
     "st.display.apocalypse_mode.desc": "Zarządzaj wymaganym archiwum offline Wikipedii w uproszczonym języku angielskim oraz opcjonalnymi archiwami Wikipedii według języka i rozmiaru. Włączenie Trybu Apokalipsy rozpoczyna wymagane podstawowe pobierania.",
     "st.display.apocalypse_mode.manage": "Zarządzaj archiwami",
@@ -1680,6 +1708,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Ładowanie szczegółów…"
   },
   "he": {
+    "ap.cannot_delete_while_enabled": "לא ניתן למחוק את הארכיון כאשר מצב אפוקליפסה מופעל. השבת תחילה את מצב אפוקליפסה.",
+    "ap.models.cannot_remove_while_enabled": "לא ניתן להסיר את המודל כאשר מצב אפוקליפסה מופעל. השבת תחילה את מצב אפוקליפסה.",
     "st.display.apocalypse_mode.label": "מצב אפוקליפסה",
     "st.display.apocalypse_mode.desc": "נהלו את ארכיון ויקיפדיה באנגלית פשוטה הנדרש לשימוש לא מקוון ואת ארכיוני ויקיפדיה האופציונליים לפי שפה וגודל. הפעלת מצב אפוקליפסה מתחילה את הורדות הבסיס הנדרשות.",
     "st.display.apocalypse_mode.manage": "ניהול ארכיונים",
@@ -1800,6 +1830,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "טוען פרטים…"
   },
   "hi": {
+    "ap.cannot_delete_while_enabled": "सर्वनाश मोड सक्षम होने पर संग्रह को हटाया नहीं जा सकता। पहले सर्वनाश मोड को अक्षम करें।",
+    "ap.models.cannot_remove_while_enabled": "सर्वनाश मोड सक्षम होने पर मॉडल को हटाया नहीं जा सकता। पहले सर्वनाश मोड को अक्षम करें।",
     "st.display.apocalypse_mode.label": "अपोकैलिप्स मोड",
     "st.display.apocalypse_mode.desc": "आवश्यक सरल अंग्रेज़ी विकिपीडिया ऑफ़लाइन आर्काइव और भाषा व आकार के अनुसार वैकल्पिक विकिपीडिया आर्काइव प्रबंधित करें। अपोकैलिप्स मोड चालू करने पर आवश्यक बुनियादी डाउनलोड शुरू हो जाते हैं।",
     "st.display.apocalypse_mode.manage": "संचिकाओं का प्रबंधन",
@@ -1920,6 +1952,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "विवरण लोड हो रहे हैं…"
   },
   "pt": {
+    "ap.cannot_delete_while_enabled": "Não é possível excluir o arquivo enquanto o Modo Apocalipse estiver ativado. Desative o Modo Apocalipse primeiro.",
+    "ap.models.cannot_remove_while_enabled": "Não é possível remover o modelo enquanto o Modo Apocalipse estiver ativado. Desative o Modo Apocalipse primeiro.",
     "st.display.apocalypse_mode.label": "Modo Apocalipse",
     "st.display.apocalypse_mode.desc": "Gerencie o arquivo offline obrigatório da Wikipédia em inglês simples e os arquivos opcionais da Wikipédia por idioma e tamanho. Ativar o Modo Apocalipse inicia os downloads básicos obrigatórios.",
     "st.display.apocalypse_mode.manage": "Gerenciar arquivos",
@@ -2040,6 +2074,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Carregando detalhes…"
   },
   "vi": {
+    "ap.cannot_delete_while_enabled": "Không thể xóa kho lưu trữ khi Chế độ Ngày tận thế đang bật. Vui lòng tắt Chế độ Ngày tận thế trước.",
+    "ap.models.cannot_remove_while_enabled": "Không thể xóa mô hình khi Chế độ Ngày tận thế đang bật. Vui lòng tắt Chế độ Ngày tận thế trước.",
     "st.display.apocalypse_mode.label": "Chế độ Apocalypse",
     "st.display.apocalypse_mode.desc": "Quản lý kho lưu trữ Wikipedia tiếng Anh đơn giản bắt buộc để dùng ngoại tuyến và các kho Wikipedia tùy chọn theo ngôn ngữ và kích thước. Bật Chế độ Tận thế sẽ bắt đầu các bản tải xuống cơ bản bắt buộc.",
     "st.display.apocalypse_mode.manage": "Quản lý kho lưu trữ",
@@ -2160,6 +2196,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Đang tải chi tiết…"
   },
   "bn": {
+    "ap.cannot_delete_while_enabled": "অ্যাপোক্যালিপ্স মোড চালু থাকা অবস্থায় আর্কাইভ মুছে ফেলা যাবে না। প্রথমে অ্যাপোক্যালিপ্স মোড বন্ধ করুন।",
+    "ap.models.cannot_remove_while_enabled": "অ্যাপোক্যালিপ্স মোড চালু থাকা অবস্থায় মডেল সরানো যাবে না। প্রথমে অ্যাপোক্যালিপ্স মোড বন্ধ করুন।",
     "st.display.apocalypse_mode.label": "অপক্যালিপস মোড",
     "st.display.apocalypse_mode.desc": "প্রয়োজনীয় সহজ ইংরেজি উইকিপিডিয়া অফলাইন আর্কাইভ এবং ভাষা ও আকার অনুযায়ী ঐচ্ছিক উইকিপিডিয়া আর্কাইভ পরিচালনা করুন। অ্যাপোক্যালিপস মোড চালু করলে প্রয়োজনীয় মৌলিক ডাউনলোডগুলো শুরু হয়।",
     "st.display.apocalypse_mode.manage": "আর্কাইভ পরিচালনা",
@@ -2280,6 +2318,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "বিবরণ লোড হচ্ছে…"
   },
   "fa": {
+    "ap.cannot_delete_while_enabled": "در زمان فعال بودن حالت آخرالزمان نمی‌توان بایگانی را حذف کرد. ابتدا حالت آخرالزمان را غیرفعال کنید.",
+    "ap.models.cannot_remove_while_enabled": "در زمان فعال بودن حالت آخرالزمان نمی‌توان مدل را حذف کرد. ابتدا حالت آخرالزمان را غیرفعال کنید.",
     "st.display.apocalypse_mode.label": "حالت Apocalypse",
     "st.display.apocalypse_mode.desc": "بایگانی آفلاین الزامی ویکی‌پدیای انگلیسی ساده و بایگانی‌های اختیاری ویکی‌پدیا را بر اساس زبان و اندازه مدیریت کنید. فعال کردن حالت آخرالزمان، دانلودهای پایهٔ الزامی را آغاز می‌کند.",
     "st.display.apocalypse_mode.manage": "مدیریت آرشیوها",
@@ -2400,6 +2440,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "در حال بارگذاری جزئیات…"
   },
   "nl": {
+    "ap.cannot_delete_while_enabled": "Kan archief niet verwijderen zolang Apocalypsmodus is ingeschakeld. Schakel eerst Apocalypsmodus uit.",
+    "ap.models.cannot_remove_while_enabled": "Kan model niet verwijderen zolang Apocalypsmodus is ingeschakeld. Schakel eerst Apocalypsmodus uit.",
     "st.display.apocalypse_mode.label": "Apocalypsmodus",
     "st.display.apocalypse_mode.desc": "Beheer het verplichte offline-archief van Wikipedia in eenvoudig Engels en optionele Wikipedia-archieven op taal en grootte. Als je de Apocalypsmodus inschakelt, starten de verplichte basisdownloads.",
     "st.display.apocalypse_mode.manage": "Archieven beheren",
@@ -2520,6 +2562,8 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Details laden…"
   },
   "de": {
+    "ap.cannot_delete_while_enabled": "Archiv kann nicht gelöscht werden, während der Apokalypse-Modus aktiviert ist. Deaktivieren Sie zuerst den Apokalypse-Modus.",
+    "ap.models.cannot_remove_while_enabled": "Modell kann nicht entfernt werden, während der Apokalypse-Modus aktiviert ist. Deaktivieren Sie zuerst den Apokalypse-Modus.",
     "st.display.apocalypse_mode.label": "Apokalypse-Modus",
     "st.display.apocalypse_mode.desc": "Verwalte das erforderliche Offline-Archiv der Wikipedia in einfachem Englisch sowie optionale Wikipedia-Archive nach Sprache und Größe. Beim Aktivieren des Apokalypse-Modus werden die erforderlichen Basis-Downloads gestartet.",
     "st.display.apocalypse_mode.manage": "Archive verwalten",

@@ -9,6 +9,13 @@
 }
 
 :root {
+  /* Type roles. A grotesk carries the voice, mono carries every readout, and a
+     screen serif carries long reading. Sizes, weights, and tracking are set at
+     the role, not per component, so the suite stays in one key. */
+  --font-display:system-ui,-apple-system,"Segoe UI Variable Display","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-text:system-ui,-apple-system,"Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono","Cascadia Mono","IBM Plex Mono",Menlo,Consolas,monospace;
+  --font-serif:Charter,"Source Serif 4","New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,ui-serif,serif;
   --bg:#0d1412;
   --panel:#151e1a;
   --panel-strong:#1b2722;
@@ -171,7 +178,8 @@ body.emergency-pdf-page {
     radial-gradient(circle at 15% 0,var(--page-glow),transparent 31rem);
   background-size:32px 32px,32px 32px,100% 100%;
   color:var(--text);
-  font-family:"Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif;
+  font-family:var(--font-text);
+  font-optical-sizing:auto;
 }
 
 body.ap-page::after,
@@ -197,8 +205,24 @@ body.ap-page h2,
 .source-heading h2,
 .search-pane h2,
 #article-title {
-  font-family:"Avenir Next Condensed","Arial Narrow","Segoe UI",sans-serif;
-  font-stretch:condensed;
+  font-family:var(--font-display);
+  font-optical-sizing:auto;
+  letter-spacing:-.021em;
+  text-wrap:balance;
+}
+
+.emergency-communication-page .hero-copy h2,
+.emergency-communication-page .source-strip h2,
+.emergency-communication-page .deeper-panel h2 {
+  font-family:var(--font-display);
+  font-optical-sizing:auto;
+  text-wrap:balance;
+}
+
+.emergency-text-page .document-heading h1 {
+  font-family:var(--font-display);
+  font-optical-sizing:auto;
+  letter-spacing:-.012em;
 }
 
 button,
@@ -244,9 +268,9 @@ button:active:not(:disabled),
 
 .topbar .title-block h1,
 .ap-page .header-copy h1 {
-  font-size:23px;
-  font-weight:780;
-  letter-spacing:.025em;
+  font-size:24px;
+  font-weight:800;
+  letter-spacing:.01em;
   text-transform:uppercase;
 }
 
@@ -300,7 +324,7 @@ button:active:not(:disabled),
 .current-status,
 .status-label {
   border-radius:2px;
-  letter-spacing:.075em;
+  letter-spacing:.055em;
 }
 
 /* Apocalypse Mode: the three essentials read as one equipment rack. */
@@ -406,7 +430,7 @@ button:active:not(:disabled),
   border-radius:2px;
   background:var(--accent-soft);
   color:var(--accent-text);
-  font:760 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;
+  font:760 11px/1.2 var(--font-mono);
   letter-spacing:.07em;
   text-transform:uppercase;
 }
@@ -503,7 +527,7 @@ button:active:not(:disabled),
   padding:3px 7px;
   border:1px solid var(--border);
   color:var(--muted);
-  font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  font:10px/1.4 var(--font-mono);
   letter-spacing:.04em;
 }
 
@@ -548,7 +572,7 @@ button:active:not(:disabled),
   box-shadow:inset 0 -2px 0 var(--accent-soft);
 }
 
-.ap-page .models-readiness { border-radius:2px;text-transform:uppercase;font:760 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em; }
+.ap-page .models-readiness { border-radius:2px;text-transform:uppercase;font:760 10px/1.4 var(--font-mono);letter-spacing:.06em; }
 
 .ap-page .library-callout,
 .ap-page .emergency-callout { min-height:100px;padding:20px 22px; }
@@ -624,7 +648,7 @@ button:active:not(:disabled),
   border:0;
   border-radius:0;
   background:transparent;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-family:var(--font-mono);
 }
 
 .emergency-box-page .field-note {
@@ -649,7 +673,7 @@ button:active:not(:disabled),
   padding:8px 10px;
   border-top:1px solid var(--border);
   border-bottom:1px solid var(--border);
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-family:var(--font-mono);
 }
 
 .emergency-box-page .search-field,
@@ -736,7 +760,7 @@ button:active:not(:disabled),
   position:absolute;
   inset:auto 24px -44px auto;
   color:var(--accent);
-  font:800 190px/.75 Georgia,serif;
+  font:800 190px/.75 var(--font-display);
   opacity:.035;
   pointer-events:none;
 }
@@ -813,7 +837,7 @@ button:active:not(:disabled),
   position:absolute;
   inset:auto 18px 14px auto;
   color:var(--accent);
-  font:800 92px/.8 Georgia,serif;
+  font:800 92px/.8 var(--font-display);
   opacity:.055;
   pointer-events:none;
 }
@@ -884,9 +908,9 @@ button:active:not(:disabled),
 
 .wikipedia-reader-page .article-text {
   color:var(--article-copy);
-  font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  font-family:var(--font-serif);
   font-size:17px;
-  line-height:1.82;
+  line-height:1.75;
 }
 
 .wikipedia-reader-page .article-text h2::before {
@@ -914,9 +938,9 @@ button:active:not(:disabled),
 }
 
 .emergency-pdf-page .document-heading h1 {
-  font-family:"Avenir Next Condensed","Arial Narrow","Segoe UI",sans-serif;
+  font-family:var(--font-display);
   font-size:17px;
-  letter-spacing:.02em;
+  letter-spacing:-.012em;
 }
 
 .emergency-pdf-page .header-button,
@@ -944,7 +968,7 @@ button:active:not(:disabled),
 .emergency-pdf-page .page-control {
   padding:0 7px;
   border-inline:1px solid var(--border);
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-family:var(--font-mono);
 }
 
 .emergency-pdf-page .document-stage {
@@ -979,6 +1003,34 @@ button:active:not(:disabled),
   background:var(--header-bg);
   letter-spacing:.035em;
 }
+
+/* Every number in this suite is a reading off a device: bytes, pages, percents,
+   dates. Tabular figures keep them from shifting sideways as they tick. */
+.ap-page .header-stat strong,
+.ap-page .local-model-head > .meta,
+.ap-page .webgpu-transfer-detail,
+.emergency-box-page .storage-summary,
+.emergency-box-page .rail-count,
+.emergency-box-page .bulk-size,
+.emergency-box-page .resource-meta,
+.emergency-box-page .progress-detail,
+.wikipedia-library-page .archive-record small,
+.wikipedia-reader-page .article-kicker,
+.emergency-pdf-page .page-control,
+.emergency-pdf-page .reader-status,
+.emergency-text-page .document-provenance,
+.emergency-communication-page .coverage-board dd { font-variant-numeric:tabular-nums; }
+
+/* Short titles balance across lines; long copy avoids a one-word last line. */
+.emergency-box-page .resource-title,
+.ap-page .local-model-head strong,
+.wikipedia-library-page .edition-copy strong { text-wrap:balance; }
+
+.ap-page .hero-copy .muted,
+.ap-page .hero:not(.card) .muted,
+.emergency-box-page .resource-description,
+.wikipedia-library-page .source-description,
+.wikipedia-reader-page .article-text p { text-wrap:pretty; }
 
 @media (prefers-reduced-motion:reduce) {
   button,.button-link,.category-button,.back-button,.ap-page .toggle input::after { transition:none; }

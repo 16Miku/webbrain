@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 32.1.1 · Manifest V3 · Service Worker background
+> Version 32.2.1 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -264,6 +264,10 @@ localhost-fetch proxy already needs one for Private Network Access
 workarounds. Rather than fight over it, `offscreen/offscreen.html` loads
 `offscreen.js` (fetch proxy), `recorder.js` (tab recorder), and
 `vision-inference-host.js` (local WebGPU model worker bridge).
+`offline-rag-host.js` exclusively owns the OPFS SQLite SAH-pool worker used by
+both Emergency Box installation and standalone retrieval. Extension pages proxy
+index imports/deletions to that host because two workers cannot hold sync access
+handles for the same pool concurrently.
 `src/offscreen/ensure.js` is the single creation helper, declaring all
   reasons up front: `LOCAL_STORAGE` (fetch), `WORKERS` (WebGPU inference),
   `BLOBS` (download staging), `DISPLAY_MEDIA` (tab/display capture),

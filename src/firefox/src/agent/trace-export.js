@@ -109,13 +109,14 @@ function renderAttachmentMetadata(attachments) {
 
 function renderLocalWikipediaRag(value) {
   if (!value || typeof value !== 'object') return '';
-  if (value.attempted !== true) return ` · local Wikipedia RAG ${oneLine(value.status || 'skipped')}`;
+  const label = value.multiSource === true ? 'offline RAG' : 'local Wikipedia RAG';
+  if (value.attempted !== true) return ` · ${label} ${oneLine(value.status || 'skipped')}`;
   const matches = Math.max(0, Number(value.matchCount) || 0);
   const dates = (Array.isArray(value.archiveDates) ? value.archiveDates : [])
     .map(oneLine)
     .filter(Boolean)
     .slice(0, 3);
-  return ` · local Wikipedia RAG ${oneLine(value.status || 'attempted')} · ${matches} match${matches === 1 ? '' : 'es'}${dates.length ? ` · archive ${dates.join(', ')}` : ''}`;
+  return ` · ${label} ${oneLine(value.status || 'attempted')} · ${matches} match${matches === 1 ? '' : 'es'}${dates.length ? ` · archive ${dates.join(', ')}` : ''}`;
 }
 
 function exportedRunStatus(run, events = []) {

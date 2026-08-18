@@ -353,6 +353,18 @@ const WikipediaOfflineFx = await import(
 const ApocalypseModeCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
 );
+const OfflineAnswerCopyCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-answer-copy.js').replace(/\\/g, '/')
+);
+const {
+  getOfflineAnswerCopy: getOfflineAnswerCopyCh,
+  OFFLINE_ANSWER_LOCALES: OfflineAnswerLocalesCh,
+  OFFLINE_ANSWER_COPY_KEYS: OfflineAnswerKeysCh,
+} = OfflineAnswerCopyCh;
+const { LANGUAGES: LanguagesCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/i18n.js').replace(/\\/g, '/')
+);
+
 const ApocalypseModeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/apocalypse-mode.js').replace(/\\/g, '/')
 );
@@ -373,6 +385,63 @@ const EmergencyBoxCh = await import(
 );
 const EmergencyBoxFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/emergency-box.js').replace(/\\/g, '/')
+);
+const OfflineRagCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag.js').replace(/\\/g, '/')
+);
+const OfflineRagFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/offline-rag.js').replace(/\\/g, '/')
+);
+const EmergencyCorpusCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/emergency-corpus.js').replace(/\\/g, '/')
+);
+const EmergencyCorpusFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/emergency-corpus.js').replace(/\\/g, '/')
+);
+const OfflineRagIndexCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag-index.js').replace(/\\/g, '/')
+);
+const OfflineRagIndexFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/offline-rag-index.js').replace(/\\/g, '/')
+);
+const OfflineRagIndexHostCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag-index-host.js').replace(/\\/g, '/')
+);
+const OfflineRagIndexHostFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/offline-rag-index-host.js').replace(/\\/g, '/')
+);
+const OfflineRetrievalCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-retrieval.js').replace(/\\/g, '/')
+);
+const OfflineRetrievalFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/offline-retrieval.js').replace(/\\/g, '/')
+);
+const OfflineRetrievalOffscreenCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-retrieval-offscreen.js').replace(/\\/g, '/')
+);
+const ZimXapianCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/zim-xapian.js').replace(/\\/g, '/')
+);
+const ZimXapianFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian.js').replace(/\\/g, '/')
+);
+const OfflineRagPromptCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag-prompt.js').replace(/\\/g, '/')
+);
+const OfflineRagPromptFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/offline-rag-prompt.js').replace(/\\/g, '/')
+);
+const OfflineRagReadinessCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/offline-rag-readiness.js').replace(/\\/g, '/')
+);
+const OfflineRagReadinessFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/offline-rag-readiness.js').replace(/\\/g, '/')
+);
+const OfflineRerankerCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-reranker.js').replace(/\\/g, '/')
+);
+const OfflineRerankerFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/offline-reranker.js').replace(/\\/g, '/')
 );
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
@@ -21504,6 +21573,31 @@ test('chrome offscreen staging owns the credentialless fetch and local file life
   assert.match(ensure, /'BLOBS'/, 'offscreen document should declare its blob URL purpose');
 });
 
+test('Emergency Box downloads are hosted off the visible extension page', () => {
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/offscreen.html'), 'utf8');
+  const chromeHost = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/emergency-download-host.js'), 'utf8');
+  const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const firefoxBackground = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
+  const chromeBox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/emergency-box.js'), 'utf8');
+  const firefoxBox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/emergency-box.js'), 'utf8');
+  assert.match(chromeHtml, /<script type="module" src="emergency-download-host\.js"><\/script>/,
+    'chrome: offscreen page should load the Emergency download host');
+  assert.match(chromeHost, /createEmergencyDownloadController/,
+    'chrome: offscreen host should own Emergency downloads');
+  assert.match(chromeBackground, /target: 'offscreen-emergency-download'/,
+    'chrome: background should forward Emergency downloads to the offscreen host');
+  assert.match(firefoxBackground, /createEmergencyDownloadController/,
+    'firefox: the persistent background page should own Emergency downloads');
+  for (const [label, source] of [['chrome', chromeBox], ['firefox', firefoxBox]]) {
+    assert.doesNotMatch(source, /downloadAndInstallEmergencyCorpus/,
+      `${label}: Emergency Box page still runs the text-pack fetch`);
+    assert.doesNotMatch(source, /downloadEmergencyResource\(/,
+      `${label}: Emergency Box page still runs PDF fetches`);
+    assert.match(source, /sendEmergencyDownloadCommand\('start_corpus'\)/,
+      `${label}: Emergency Box page does not start the text pack through the background host`);
+  }
+});
+
 test('executeHttpSkillTool does not require HEAD support for skill downloads', async () => {
   const originalFetch = globalThis.fetch;
   const originalChrome = globalThis.chrome;
@@ -22674,6 +22768,114 @@ test('Emergency Box bundles the expanded field library and a stable basic health
   }
 });
 
+test('Emergency Box RAG citations map corpus hits to installed PDF readers', async () => {
+  for (const [label, runtime, prompt, core] of [
+    ['chrome', EmergencyBoxCh, OfflineRagPromptCh, OfflineRagCh],
+    ['firefox', EmergencyBoxFx, OfflineRagPromptFx, OfflineRagFx],
+  ]) {
+    const catalog = runtime.emergencyBoxPdfCatalog();
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-hesperian-en-wtnd-2025-01',
+        title: 'Hesperian EN Wtnd 2025 01',
+      }, catalog)?.id,
+      'health-hesperian-wtnd-01',
+      `${label}: Hesperian corpus chapter did not map to its installed PDF`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-hesperian-en-dent-2024-01',
+        title: 'Hesperian EN Dent 2024 01',
+      }, catalog)?.id,
+      'health-hesperian-dentist-01',
+      `${label}: dentist corpus chapter did not map onto the catalog dentist prefix`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-hesperian-en-hhwl-2012-07',
+        title: 'Hesperian EN Hhwl 2012 07',
+      }, catalog),
+      null,
+      `${label}: a Hesperian chapter not in the PDF catalog still produced a PDF link`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-who-iris-pocket-book-hospital-care-children',
+        title: 'WHO Iris WHO Pocket Book Hospital Care Children',
+        source: 'https://iris.who.int/handle/10665/81170',
+      }, catalog)?.id,
+      'health-who-pocket-hospital-care-children',
+      `${label}: WHO IRIS handle did not map to the installed pocket-book PDF`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'offline-openstax-maternal-newborn-nursing',
+        title: 'Openstax Maternal Newborn Nursing',
+      }, catalog)?.id,
+      'openstax-813',
+      `${label}: OpenStax slug did not map to the catalog PDF`,
+    );
+    assert.equal(
+      runtime.matchEmergencyBoxPdfResource({
+        documentId: 'first-aid',
+        title: 'First Aid',
+        source: 'https://example.test/first-aid',
+      }, catalog),
+      null,
+      `${label}: a generic first-aid corpus title was over-matched onto an IFRC PDF`,
+    );
+
+    const hit = {
+      sourceKind: 'emergency-box', sourceId: 'v1',
+      documentId: 'offline-hesperian-en-wtnd-2025-01',
+      passageId: 'offline-hesperian-en-wtnd-2025-01:passage-one',
+      title: 'Hesperian EN Wtnd 2025 01', language: 'eng',
+      collection: 'health', locator: 'Home cures',
+      text: 'A cough lasting 14 days or more may be caused by tuberculosis.',
+      passageSha256: 'a'.repeat(64), lexicalRank: 1,
+      readerUrl: core.createEmergencyReaderUrl(
+        'offline-hesperian-en-wtnd-2025-01',
+        'offline-hesperian-en-wtnd-2025-01:passage-one',
+      ),
+    };
+    const missingPdf = await prompt.retrieveOfflineRagForPrompt('cough', {
+      service: {
+        async search() {
+          return {
+            hits: [hit],
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {}, rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+      installedEmergencyPdfIds: [],
+      getExtensionUrl: path => `/${path}`,
+    });
+    assert.equal(missingPdf.references[0].pdfUrl, undefined,
+      `${label}: an uninstalled PDF still received an Open PDF citation`);
+    const installedPdf = await prompt.retrieveOfflineRagForPrompt('cough', {
+      service: {
+        async search() {
+          return {
+            hits: [hit],
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {}, rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+      installedEmergencyPdfIds: ['health-hesperian-wtnd-01'],
+      getExtensionUrl: path => `/${path}`,
+    });
+    assert.equal(installedPdf.references[0].pdfResourceId, 'health-hesperian-wtnd-01',
+      `${label}: installed PDF identity was not attached to the citation`);
+    assert.equal(
+      installedPdf.references[0].pdfUrl,
+      '/src/ui/emergency-pdf.html?id=health-hesperian-wtnd-01',
+      `${label}: installed PDF citation did not open the local PDF reader`,
+    );
+  }
+});
+
 test('Emergency Box All Resources groups communication, health, field manuals, then OpenStax', () => {
   const resources = [
     { id: 'communication', category: 'communication', title: 'Universal Basic Lexicon', status: 'ready' },
@@ -23476,10 +23678,17 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
   const files = [
     'src/agent/apocalypse-mode.js',
     'src/agent/emergency-box.js',
+    'src/agent/emergency-corpus-release.js',
+    'src/agent/emergency-download-controller.js',
+    'src/agent/offline-semantic-runtime.js',
+    'src/agent/offline-query-stopwords.js',
+    'src/agent/wikipedia-offline.js',
+    'src/agent/zim-xapian.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
     'src/ui/emergency-box.css',
     'src/ui/emergency-box.js',
+    'src/ui/emergency-download-client.js',
     'src/ui/apocalypse-kit.css',
     'src/ui/emergency-pdf.html',
     'src/ui/emergency-pdf.css',
@@ -23488,6 +23697,11 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/ui/emergency-communication.html',
     'src/ui/emergency-communication.css',
     'src/ui/emergency-communication.js',
+    'src/ui/emergency-text.html',
+    'src/ui/emergency-text.css',
+    'src/ui/emergency-text.js',
+    'src/ui/offline-rag-readiness.js',
+    'src/ui/offline-rag-readiness.css',
     'src/ui/apocalypse-comm.css',
     'src/ui/apocalypse-comm.js',
     'src/ui/download-tracker.css',
@@ -23515,12 +23729,16 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     const box = fs.readFileSync(path.join(uiDir, 'emergency-box.html'), 'utf8');
     const boxCss = fs.readFileSync(path.join(uiDir, 'emergency-box.css'), 'utf8');
     const boxScript = fs.readFileSync(path.join(uiDir, 'emergency-box.js'), 'utf8');
+    const corpusRelease = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/emergency-corpus-release.js`), 'utf8');
     const reader = fs.readFileSync(path.join(uiDir, 'emergency-pdf.html'), 'utf8');
     const readerCss = fs.readFileSync(path.join(uiDir, 'emergency-pdf.css'), 'utf8');
     const readerScript = fs.readFileSync(path.join(uiDir, 'emergency-pdf.js'), 'utf8');
     const communicationReader = fs.readFileSync(path.join(uiDir, 'emergency-communication.html'), 'utf8');
     const communicationReaderCss = fs.readFileSync(path.join(uiDir, 'emergency-communication.css'), 'utf8');
     const communicationReaderScript = fs.readFileSync(path.join(uiDir, 'emergency-communication.js'), 'utf8');
+    const textReader = fs.readFileSync(path.join(uiDir, 'emergency-text.html'), 'utf8');
+    const textReaderScript = fs.readFileSync(path.join(uiDir, 'emergency-text.js'), 'utf8');
+    const emergencyCopy = fs.readFileSync(path.join(uiDir, 'locales/emergency-copy.mjs'), 'utf8');
     assert.match(apocalypse, /(?:href|data-href)="emergency-box\.html"/, `${browser}: Apocalypse Mode has no Emergency Box entry point`);
     assert.match(box, /id="load-openstax"/, `${browser}: OpenStax catalog control missing`);
     assert.match(box, /id="download-basic"/, `${browser}: basic emergency download control missing`);
@@ -23534,6 +23752,41 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: communication collection filter is missing or hard-coded English`);
     assert.match(box, /data-i18n-aria-label="eb\.nav_label"/, `${browser}: Emergency Box collection navigation is not localized`);
     assert.match(box, /data-i18n-title="ap\.title"/, `${browser}: Emergency Box back-button title is not localized`);
+    assert.doesNotMatch(box, /id="offline-rag-readiness"|id="rag-components"/,
+      `${browser}: Emergency Box still hosts the offline answer-engine surface`);
+    assert.match(apocalypse, /id="offline-answer-engine"[\s\S]*?data-i18n="eb\.rag\.eyebrow"[\s\S]*?id="offline-rag-readiness"[\s\S]*?id="rag-components"/,
+      `${browser}: Apocalypse Mode is missing the collapsed Offline answer engine`);
+    assert.match(apocalypse, /offline-rag-readiness\.css/,
+      `${browser}: Apocalypse Mode does not load the readiness stylesheet`);
+    assert.match(boxScript, /EMERGENCY_CORPUS_RELEASE[\s\S]*?sendEmergencyDownloadCommand\('start_corpus'/,
+      `${browser}: Emergency text-pack download is not explicitly release-gated`);
+    assert.match(corpusRelease, /2026\.08\.17-preview\.3[\s\S]*?github\.com\/webbrain-one\/emergency-box-corpus[\s\S]*?preview: true/,
+      `${browser}: the testable corpus preview descriptor is missing or not marked as a preview`);
+    assert.match(boxScript, /EMERGENCY_CORPUS_RELEASE\.preview[\s\S]*?eb\.rag\.corpus_preview/,
+      `${browser}: the corpus preview is not disclosed in the download UI`);
+    assert.match(boxScript, /const corpusNeedsDownload = corpusUiStatus\(\) !== 'ready' && !!EMERGENCY_CORPUS_RELEASE/,
+      `${browser}: bulk kits do not skip the unfinished Emergency text-pack release`);
+    assert.doesNotMatch(boxScript, /corpusReleaseMissing|if \(corpusNeedsDownload && !EMERGENCY_CORPUS_RELEASE\)/,
+      `${browser}: unfinished corpus release still blocks existing PDF or model downloads`);
+    assert.match(boxScript, /sendEmergencyDownloadCommand\('start_semantic'/,
+      `${browser}: semantic model lifecycle is not controlled by Emergency Box`);
+    assert.match(textReader, /id="document-passages"/,
+      `${browser}: Emergency citation reader is missing its verified document view`);
+    assert.match(textReaderScript, /verifyEmergencyDocument[\s\S]*?createEmergencyPassages/,
+      `${browser}: Emergency citation reader does not re-verify and resolve the cited passage`);
+    const newLocaleKeys = new Set([
+      ...[box, textReader].flatMap(source => [...source.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g)]
+        .map(match => match[1]).filter(key => key.startsWith('eb.rag.') || key.startsWith('et.'))),
+      ...[boxScript, textReaderScript].flatMap(source => [...source.matchAll(/t\('((?:eb\.rag|et\.)[^']+)'/g)]
+        .map(match => match[1])),
+      ...[
+        'unavailable', 'not-installed', 'title-only-fallback', 'ready', 'downloading', 'verifying',
+        'downloaded', 'extracting', 'indexing', 'paused', 'error', 'model-missing', 'lexical-fallback', 'separate',
+      ].map(status => `eb.rag.status.${status}`),
+    ]);
+    for (const key of newLocaleKeys) {
+      assert.ok(emergencyCopy.includes(`'${key}':`), `${browser}: canonical Emergency copy is missing ${key}`);
+    }
     assert.match(reader, /id="pdf-canvas"/, `${browser}: internal PDF renderer missing`);
     assert.match(reader, /id="offline-badge"[\s\S]*?data-i18n="ep\.available_offline"[\s\S]*?hidden/,
       `${browser}: the PDF reader does not identify verified local documents as available offline`);
@@ -23639,19 +23892,20 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: basic download does not use the global essential kit independently of the current view`);
     assert.match(boxScript, /function formatEstimatedSize\([\s\S]*?MB[\s\S]*?GB[\s\S]*?function remainingOfTotal\([\s\S]*?remaining:[\s\S]*?total:/,
       `${browser}: bulk size estimates do not distinguish readable MB values, remaining bytes, and total bytes`);
-    assert.match(boxScript, /const basicResources = selectEmergencyBoxBasicResources\(all\)\.filter\(resource => !resource\.builtIn\)[\s\S]*?remainingOfTotal\(basicResources, basicPending\)/,
+    assert.match(boxScript, /const basicResources = selectEmergencyBoxBasicResources\(all\)\.filter\(resource => !resource\.builtIn\)[\s\S]*?kitRemainingLabel\(basicResources, basicPending\)/,
       `${browser}: basic-kit size does not show the remaining and complete downloadable pack`);
     assert.match(boxScript, /if \(catalogResource && record\.status !== 'ready'\)[\s\S]*?merged\.url = catalogResource\.url;[\s\S]*?merged\.storageKey = catalogResource\.storageKey;/,
       `${browser}: unfinished downloads can keep retrying an obsolete catalog source and stale partial file`);
-    assert.match(boxScript, /const currentView = activeFilter !== 'all' \|\| elements\['resource-search'\]\.value\.trim\(\) !== ''[\s\S]*?'eb\.download_current_view'[\s\S]*?remainingOfTotal\(downloadable, pending\)/,
+    assert.match(boxScript, /const currentView = activeFilter !== 'all' \|\| elements\['resource-search'\]\.value\.trim\(\) !== ''[\s\S]*?'eb\.download_current_view'[\s\S]*?kitRemainingLabel\(downloadable, pending\)/,
       `${browser}: filtered downloads are not identified as the current view with remaining and total sizes`);
-    assert.match(boxScript, /entry\.promise = \(async \(\) =>[\s\S]*?if \(downloads\.get\(resource\.id\) === entry\) downloads\.delete\(resource\.id\)[\s\S]*?async function stopAndDeleteDownload\(id\)[\s\S]*?await entry\.promise\.catch/,
+    const controllerScript = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/emergency-download-controller.js`), 'utf8');
+    assert.match(boxScript, /async function stopAndDeleteDownload\(id\) \{\s*await sendEmergencyDownloadCommand\('stop_resource', \{ id \}\);/,
       `${browser}: stop-and-delete does not await the exact active download before removing its record and bytes`);
-    assert.match(boxScript, /const activeEntry = downloads\.get\(resource\.id\)[\s\S]*?options\.resume !== true[\s\S]*?activeEntry\.controller\.abort\(\)[\s\S]*?await activeEntry\.promise\.catch/,
+    assert.match(controllerScript, /const existing = resourceJobs\.get\(id\)[\s\S]*?isLiveJob\(existing\)[\s\S]*?await waitForJob\(existing\)/,
       `${browser}: Resume can still be silently dropped while an earlier abort is settling`);
     assert.doesNotMatch(boxScript, /attempts\s*<\s*200|setTimeout\(resolve,\s*25\)/,
       `${browser}: stop-and-delete still relies on a time-limited busy-wait`);
-    assert.match(boxScript, /if \(bulkDownloadKind === kind\)[\s\S]*?for \(const entry of downloads\.values\(\)\)[\s\S]*?entry\.kind === kind[\s\S]*?entry\.controller\.abort\(\)[\s\S]*?bulkKind: kind/,
+    assert.match(boxScript, /if \(bulkDownloadKind === kind\)[\s\S]*?for \(const \[id, entry\] of downloads\)[\s\S]*?entry\.kind !== kind[\s\S]*?bulkKind: kind/,
       `${browser}: stopping a bulk kit can still abort downloads owned by another operation`);
     assert.doesNotMatch(boxScript, /title="Enable Apocalypse Mode to download resources"/,
       `${browser}: disabled download tooltip remains hard-coded English`);
@@ -23688,6 +23942,14 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: download tracker does not observe Wikipedia archives`);
     assert.match(script, /webbrain_emergency_box/,
       `${browser}: download tracker does not observe Emergency Box PDFs`);
+    assert.match(script, /webbrain-emergency-download-state/,
+      `${browser}: download tracker does not observe Emergency text-pack and semantic-model transfers`);
+    assert.match(script, /postMessage\(\{ type: 'request' \}\)/,
+      `${browser}: a newly opened footer cannot request the current Emergency component state`);
+    assert.match(script, /componentDownloadItems[\s\S]*?emergencyComponentItems\(\)[\s\S]*?kind: 'component'/,
+      `${browser}: Emergency Box component state is not rendered as footer download rows`);
+    assert.match(script, /ACTIVE_STATUSES[\s\S]*?'verifying'[\s\S]*?'extracting'[\s\S]*?'indexing'/,
+      `${browser}: corpus verification, extraction, and indexing disappear from the active download tracker`);
     assert.match(script, /PDF_STALE_AFTER_MS[\s\S]*?status = 'paused'/,
       `${browser}: stale page-owned PDF downloads are presented as if they were still active`);
     assert.match(script, /formatBytes\(item\.loaded\)[\s\S]*?formatBytes\(item\.total\)[\s\S]*?ETA/,
@@ -23702,10 +23964,16 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: tracker controls do not route text and vision model actions to the background host`);
     assert.match(script, /action:\s*'apocalypse_mode',[\s\S]*?command,[\s\S]*?id:\s*item\.sourceId/,
       `${browser}: tracker controls do not route Wikipedia actions to the background archive manager`);
-    assert.match(script, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?\?resume=/,
-      `${browser}: page-owned PDF controls cannot hand off safely to Emergency Box`);
-    assert.match(script, /action === 'resume'[\s\S]*?signalEmergencyBox\('pause', item\)[\s\S]*?location\.href = `\$\{item\.href\}\?resume=/,
-      `${browser}: cross-page PDF Resume navigates before pausing the old owner`);
+    assert.match(script, /action:\s*'emergency_download'|sendEmergencyDownloadCommand\('start_corpus'\)/,
+      `${browser}: tracker controls do not route Emergency downloads to the background host`);
+    assert.match(script, /sendEmergencyDownloadCommand\('pause_corpus'\)[\s\S]*?sendEmergencyDownloadCommand\('start_corpus'\)[\s\S]*?sendEmergencyDownloadCommand\('cancel_corpus'\)/,
+      `${browser}: footer controls do not route Emergency corpus and semantic-model actions`);
+    assert.match(script, /function emergencyComponentItems\(\)[\s\S]*?href: `\$\{pageUrl\('apocalypse-mode\.html'\)\}#offline-answer-engine`/,
+      `${browser}: Emergency component tracker arrows do not open the Apocalypse Offline answer engine`);
+    assert.doesNotMatch(script, /\?resumeComponent=/,
+      `${browser}: cross-page component Resume still navigates back to Emergency Box`);
+    assert.doesNotMatch(script, /signalEmergencyBox\('pause', item\)[\s\S]*?location\.href = `\$\{item\.href\}\?resume=/,
+      `${browser}: cross-page PDF Resume still navigates before handing off to the background host`);
     const emergencyRuntime = fs.readFileSync(path.join(uiDir, '../agent/emergency-box.js'), 'utf8');
     assert.match(emergencyRuntime, /withEmergencyResourceLock[\s\S]*?navigator\?\.locks[\s\S]*?mode: 'exclusive'[\s\S]*?downloadResolvedEmergencyResource/,
       `${browser}: PDF downloads do not serialize access to their OPFS writer`);
@@ -23722,10 +23990,27 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
     assert.match(css, /@keyframes wb-dl-heartbeat[\s\S]*?\.wb-dl-actions[\s\S]*?\.wb-dl-action\.danger/,
       `${browser}: tracker lacks its activity beacon or compact destructive-control treatment`);
     const emergencyScript = fs.readFileSync(path.join(uiDir, 'emergency-box.js'), 'utf8');
-    assert.match(emergencyScript, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?handleDownloadControl/,
-      `${browser}: Emergency Box cannot receive tracker controls from another Apocalypse page`);
+    assert.match(emergencyScript, /sendEmergencyDownloadCommand\('pause_corpus'\)[\s\S]*?startCorpusDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?removeCorpusComponent\(\{ cancelOnly: true \}\)/,
+      `${browser}: footer controls cannot pause, resume, and stop the Emergency text pack safely`);
+    assert.match(emergencyScript, /sendEmergencyDownloadCommand\('pause_semantic'\)[\s\S]*?startSemanticDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?removeSemanticComponent\(\)/,
+      `${browser}: footer controls cannot pause, resume, and stop the semantic model`);
+    assert.doesNotMatch(emergencyScript, /beforeunload[\s\S]*?controller\.abort/,
+      `${browser}: leaving Emergency Box still aborts background-owned downloads`);
+    assert.match(emergencyScript, /params\.get\('resumeComponent'\)[\s\S]*?startCorpusDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?startSemanticDownload\(\{ confirm: false, resume: true \}\)/,
+      `${browser}: Emergency Box cannot accept component Resume ownership from another footer`);
+    const apocalypseScript = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.js'), 'utf8');
+    assert.match(apocalypseScript, /params\.get\('resumeComponent'\)[\s\S]*?startEmergencyCorpusDownload\(\{ confirm: false \}\)[\s\S]*?startSemanticDownload\(\{ confirm: false \}\)/,
+      `${browser}: Apocalypse Mode cannot accept component Resume ownership from the footer`);
+    assert.match(apocalypseScript, /hash === '#offline-answer-engine'[\s\S]*?expandOfflineAnswerEngine/,
+      `${browser}: tracker arrows do not expand the collapsed Offline answer engine`);
     assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false, resume: true \}\)/,
       `${browser}: tracker Resume handoff does not restart a paused PDF`);
+    assert.match(emergencyScript, /sendEmergencyDownloadCommand\('start_corpus'\)/,
+      `${browser}: Emergency Box does not start the text pack through the background host`);
+    assert.match(emergencyScript, /wb-emergency-component-download-state[\s\S]*?publishComponentDownloadStates[\s\S]*?id: CORPUS_DOWNLOAD_ID[\s\S]*?id: SEMANTIC_DOWNLOAD_ID/,
+      `${browser}: Emergency Box does not publish both component lifecycles to the footer tracker`);
+    assert.match(emergencyScript, /event\.data\?\.type === 'request'[\s\S]*?renderRagComponents\(\)/,
+      `${browser}: Emergency Box cannot answer a newly opened footer's component-state request`);
   }
   const firefoxEnglish = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
   assert.match(firefoxEnglish, /'st\.providers\.webgpu_download\.stopping': 'Stopping and removing files…'/,
@@ -23795,7 +24080,7 @@ test('Apocalypse communication slot renders only a bounded fetched bulletin', as
   }
 });
 
-test('Emergency Box localization keeps every canonical key translated with matching placeholders in all 22 locales', async () => {
+test('Emergency Box localization resolves every canonical key with matching placeholders in all 22 locales', async () => {
   const emergencyCopy = (await import(
     pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/emergency-copy.mjs')).href
   )).default;
@@ -23804,17 +24089,20 @@ test('Emergency Box localization keeps every canonical key translated with match
   )).default;
   const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
   const canonicalKeys = Object.keys(emergencyCopy);
-  assert.equal(canonicalKeys.length, 145, 'English emergency copy drifted from the 145-key canonical surface');
+  assert.ok(canonicalKeys.length >= 145, 'English emergency copy lost its established canonical surface');
   const placeholdersIn = (value) => [...new Set(String(value).match(/\{[a-z]+\}/g) || [])].sort();
 
   for (const locale of localeCodes) {
     const block = emergencyTranslations[locale];
     assert.ok(block, `${locale}: emergency translation block is missing`);
     const blockKeys = Object.keys(block);
-    assert.deepEqual(blockKeys.sort(), [...canonicalKeys].sort(),
-      `${locale}: emergency key set diverged (${canonicalKeys.length} canonical, ${blockKeys.length} present)`);
+    assert.equal(blockKeys.length, 145, `${locale}: established translated Emergency copy drifted`);
+    assert.ok(blockKeys.every(key => canonicalKeys.includes(key)), `${locale}: translation contains a non-canonical key`);
+    const resolved = { ...emergencyCopy, ...block };
+    assert.deepEqual(Object.keys(resolved).sort(), [...canonicalKeys].sort(),
+      `${locale}: resolved emergency key set diverged (${canonicalKeys.length} canonical, ${Object.keys(resolved).length} present)`);
     for (const key of canonicalKeys) {
-      const translated = block[key];
+      const translated = resolved[key];
       assert.equal(typeof translated, 'string', `${locale}: ${key} is not a string`);
       assert.ok(translated.trim(), `${locale}: ${key} is empty`);
       const dropped = placeholdersIn(emergencyCopy[key]).filter(
@@ -24097,6 +24385,7 @@ test('Apocalypse Mode exposes only bounded display images from image-bearing Wik
   });
 
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    assert.equal(runtime.wikipediaArchiveIncludesImages(null, null), false, `${label}: absent archive metadata was not handled safely`);
     assert.equal(runtime.wikipediaArchiveIncludesImages({ flavour: 'maxi' }), true, `${label}: maxi archives were not recognized as image-bearing`);
     assert.equal(runtime.wikipediaArchiveIncludesImages({ flavour: 'nopic', tags: ['_pictures:yes'] }), false, `${label}: nopic archives were mislabeled as image-bearing`);
     assert.equal(runtime.wikipediaArchiveIncludesImages({ tags: ['_pictures:no'] }, { Tags: '_pictures:yes' }), false, `${label}: explicit no-picture metadata did not win`);
@@ -25033,7 +25322,7 @@ test('Apocalypse Mode retains actionable metadata when managed-byte deletion fai
     const record = { id: 'delete-me', status: 'ready', generation: 2, target: { kind: 'opfs', key: 'delete-me.zim' }, size: 4096 };
     const records = new Map([[record.id, record]]);
     const store = {
-      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async getConfig() { return { enabled: false, updatePolicy: 'manual' }; },
       async listArchives() { return [...records.values()]; },
       async getArchive(id) { return records.get(id) || null; },
       async putArchive(next) { records.set(next.id, { ...next }); return next; },
@@ -25054,6 +25343,78 @@ test('Apocalypse Mode retains actionable metadata when managed-byte deletion fai
     assert.equal(records.has(record.id), false, `${label}: successful retry retained archive metadata`);
   }
 });
+
+test('Apocalypse Mode prevents removing Wikipedia archives, emergency corpus, and emergency resources when enabled unless explicitly disabled first', async () => {
+  for (const [label, { ApocalypseMode, EmergencyCorpus, EmergencyBox }] of [
+    ['chrome', { ApocalypseMode: ApocalypseModeCh, EmergencyCorpus: EmergencyCorpusCh, EmergencyBox: EmergencyBoxCh }],
+    ['firefox', { ApocalypseMode: ApocalypseModeFx, EmergencyCorpus: EmergencyCorpusFx, EmergencyBox: EmergencyBoxFx }],
+  ]) {
+    const record = { id: 'wiki-eng', status: 'ready', generation: 1, target: { kind: 'opfs', key: 'wiki.zim' }, size: 2048 };
+    const records = new Map([[record.id, record]]);
+    const config = { enabled: true };
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = { async remove() {}, async exists() { return false; } };
+    const manager = ApocalypseMode.createApocalypseArchiveManager({ store, storage });
+
+    // Attempting to delete ready Wikipedia archive while enabled must fail
+    await assert.rejects(
+      manager.remove('wiki-eng'),
+      /Cannot delete Wikipedia archive while Apocalypse Mode is enabled/i,
+      `${label}: ready Wikipedia archive was deleted while Apocalypse Mode was enabled`,
+    );
+    assert.equal(records.has('wiki-eng'), true, `${label}: archive was removed despite rejection`);
+
+    // Disabling Apocalypse Mode permits deletion
+    config.enabled = false;
+    const removed = await manager.remove('wiki-eng');
+    assert.equal(removed, true, `${label}: archive deletion failed after disabling Apocalypse Mode`);
+    assert.equal(records.has('wiki-eng'), false, `${label}: archive was not removed after disabling Apocalypse Mode`);
+
+    // Emergency Corpus protection test
+    config.enabled = true;
+    const corpusStore = {
+      async get() { return { status: 'ready', active: { installId: 'inst-1', indexPath: 'idx-1' } }; },
+      async delete() {},
+    };
+    const corpusStorage = { async deleteInstall() {} };
+    await assert.rejects(
+      EmergencyCorpus.deleteEmergencyCorpus({
+        store: corpusStore,
+        storage: corpusStorage,
+        apocalypseStore: store,
+      }),
+      /Cannot delete emergency corpus while Apocalypse Mode is enabled/i,
+      `${label}: active emergency corpus was deleted while Apocalypse Mode was enabled`,
+    );
+
+    // Emergency Resource protection test
+    const boxRecord = { id: 'res-1', status: 'ready' };
+    const boxStore = {
+      async get() { return boxRecord; },
+      async delete() {},
+    };
+    const boxStorage = { async delete() {} };
+    await assert.rejects(
+      EmergencyBox.deleteEmergencyResource('res-1', {
+        store: boxStore,
+        storage: boxStorage,
+        apocalypseStore: store,
+      }),
+      /Cannot delete emergency resources while Apocalypse Mode is enabled/i,
+      `${label}: active emergency resource was deleted while Apocalypse Mode was enabled`,
+    );
+  }
+});
+
+
+
 
 test('Apocalypse Mode OPFS deletion verifies removal and treats an absent file as deleted', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
@@ -26274,6 +26635,1637 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
   }
 });
 
+test('offline RAG validates versioned corpus manifests, ZIP paths, UTF-8, and checksums', async () => {
+  const textBytes = new TextEncoder().encode('FIRST AID\n\nKeep the airway open.\n');
+  const sha256 = await OfflineRagCh.sha256Hex(textBytes);
+  const document = {
+    id: 'first-aid',
+    title: 'First Aid',
+    language: 'eng',
+    collection: 'field-manuals',
+    sourceUrl: 'https://example.test/first-aid',
+    license: 'Public domain',
+    path: 'documents/first-aid.txt',
+    sha256,
+  };
+  const contentSha256 = await OfflineRagCh.computeCorpusContentSha256([document]);
+  const manifest = {
+    schemaVersion: 1,
+    corpusId: 'emergency-box-text',
+    version: '2026.08.17',
+    contentSha256,
+    downloadBytes: textBytes.byteLength,
+    documents: [document],
+  };
+
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const validated = runtime.validateEmergencyCorpusManifest(manifest, [
+      'manifest.json',
+      'documents/first-aid.txt',
+    ]);
+    assert.equal(validated.documents[0].id, 'first-aid', `${label}: valid manifest was rejected`);
+    assert.equal(await runtime.computeCorpusContentSha256(validated.documents), contentSha256,
+      `${label}: corpus content digest is not deterministic`);
+    assert.equal((await runtime.verifyEmergencyDocument(validated.documents[0], textBytes)).text,
+      'FIRST AID\n\nKeep the airway open.\n', `${label}: valid normalized UTF-8 failed verification`);
+
+    for (const unsafe of [
+      '../outside.txt', '/absolute.txt', 'C:/absolute.txt', 'documents\\bad.txt',
+      'documents//bad.txt', 'documents/./bad.txt', 'documents/a/../bad.txt',
+    ]) {
+      assert.throws(() => runtime.validateZipEntryNames([unsafe]),
+        error => error?.code === 'path-traversal' || error?.code === 'absolute-path' || error?.code === 'invalid-path',
+        `${label}: unsafe ZIP path was accepted: ${unsafe}`);
+    }
+    assert.throws(() => runtime.validateZipEntryNames(['manifest.json', 'manifest.json']),
+      error => error?.code === 'duplicate-entry', `${label}: duplicate ZIP entries were accepted`);
+    assert.throws(() => runtime.validateEmergencyCorpusManifest(manifest, [
+      'manifest.json', 'documents/first-aid.txt', 'documents/undeclared.txt',
+    ]), error => error?.code === 'undeclared-entry', `${label}: undeclared ZIP file was accepted`);
+    assert.throws(() => runtime.validateEmergencyCorpusManifest({ ...manifest, schemaVersion: 3 }),
+      error => error?.code === 'unsupported-schema', `${label}: incompatible schema was accepted`);
+    const hybridManifest = {
+      ...manifest,
+      schemaVersion: 2,
+      passageSchemaVersion: 2,
+      indexes: {
+        fts5: {
+          path: 'indexes/emergency-box-fts5.sqlite3', sha256: '1'.repeat(64),
+          bytes: 4096, passageCount: 2,
+        },
+        vector: {
+          path: 'indexes/emergency-box-e5-q8.bin', sha256: '2'.repeat(64),
+          bytes: 4872, passageCount: 2, dimensions: 384,
+          modelId: 'Xenova/multilingual-e5-small', modelRevision: 'revision', modelDtype: 'q8',
+        },
+      },
+    };
+    const hybrid = runtime.validateEmergencyCorpusManifest(hybridManifest, [
+      'manifest.json', 'documents/first-aid.txt',
+      'indexes/emergency-box-fts5.sqlite3', 'indexes/emergency-box-e5-q8.bin',
+    ]);
+    assert.equal(hybrid.indexes.vector.passageCount, 2, `${label}: hybrid indexes were not retained`);
+    assert.throws(() => runtime.validateEmergencyCorpusManifest({
+      ...hybridManifest,
+      indexes: { ...hybridManifest.indexes, vector: { ...hybridManifest.indexes.vector, passageCount: 3 } },
+    }), error => error?.code === 'invalid-index', `${label}: mismatched hybrid passage counts were accepted`);
+    assert.throws(() => runtime.validateEmergencyCorpusManifest({
+      ...manifest,
+      documents: [document, { ...document }],
+    }), error => error?.code === 'duplicate-document-id', `${label}: duplicate document ids were accepted`);
+    await assert.rejects(runtime.verifyEmergencyDocument(
+      { ...document, sha256: '0'.repeat(64) }, textBytes,
+    ), error => error?.code === 'checksum-mismatch', `${label}: checksum mismatch was accepted`);
+    const invalidUtf8 = Uint8Array.from([0xc3, 0x28]);
+    const invalidUtf8Sha = await runtime.sha256Hex(invalidUtf8);
+    await assert.rejects(runtime.verifyEmergencyDocument(
+      { ...document, sha256: invalidUtf8Sha }, invalidUtf8,
+    ), error => error?.code === 'unsupported-encoding', `${label}: invalid UTF-8 was accepted`);
+  }
+});
+
+test('offline RAG creates stable bounded passages and CJK-compatible lexical terms', async () => {
+  const document = {
+    id: 'field-care', title: 'Field Care', language: 'eng', collection: 'health',
+    sourceUrl: 'https://example.test/field-care', license: 'CC BY-SA 4.0',
+  };
+  const text = [
+    'CHAPTER 8',
+    '',
+    'AIRWAY AND BREATHING',
+    '',
+    '1. Give 250 mg only when the source guidance supports that dose.',
+    '',
+    '- Keep headings, lists, numbers, and useful locators.',
+    '',
+    '急救处理',
+    '',
+    '保持呼吸道畅通，并观察呼吸。',
+    '',
+    'END OF ORIGINAL DOCUMENT',
+    '',
+  ].join('\n');
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const first = await runtime.createEmergencyPassages(document, text, { targetTokens: 32 });
+    const second = await runtime.createEmergencyPassages(document, text, { targetTokens: 32 });
+    assert.deepEqual(first.map(passage => passage.passageId), second.map(passage => passage.passageId),
+      `${label}: unchanged passages did not keep stable ids`);
+    assert.ok(first.every(passage => passage.tokenEstimate <= 700),
+      `${label}: passage exceeded the 700-token cap`);
+    assert.ok(first.every(passage => passage.source === document.sourceUrl && passage.license === document.license),
+      `${label}: passage source or license metadata was lost before indexing`);
+    assert.match(first.map(passage => passage.text).join('\n'), /250 mg/,
+      `${label}: numeric medical text was dropped during chunking`);
+    assert.match(first.map(passage => passage.text).join('\n'), /END OF ORIGINAL DOCUMENT/,
+      `${label}: document tail was truncated during chunking`);
+    const cjk = runtime.tokenizeForLexicalSearch('急救处理 保持呼吸道畅通', { language: 'zho' });
+    assert.ok(cjk.includes('急救') && cjk.includes('呼吸'),
+      `${label}: CJK bigrams were not emitted for FTS indexing`);
+  }
+});
+
+test('offline RAG bounds candidates, fuses ranks, diversifies evidence, and enforces prompt budgets', () => {
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const lexical = [];
+    for (const sourceKind of ['wikipedia', 'emergency-box']) {
+      for (let index = 1; index <= 50; index += 1) {
+        const documentId = sourceKind === 'wikipedia' ? `wiki-${Math.floor(index / 3)}` : `box-${Math.floor(index / 3)}`;
+        const passageId = `${documentId}:${index}`;
+        lexical.push({
+          sourceKind,
+          sourceId: `${sourceKind}-v1`,
+          documentId,
+          passageId,
+          title: `Title ${index}`,
+          language: 'eng',
+          text: `Distinct evidence passage ${index} from ${sourceKind}. ` + 'Evidence '.repeat(35),
+          lexicalRank: index,
+          passageSha256: 'a'.repeat(64),
+          readerUrl: sourceKind === 'wikipedia'
+            ? runtime.createWikipediaReaderUrl('archive-1', `A/Article_${index}`)
+            : runtime.createEmergencyReaderUrl(documentId, passageId),
+        });
+      }
+    }
+    const bounded = runtime.boundLexicalCandidates(lexical);
+    assert.equal(bounded.length, 80, `${label}: global lexical candidate cap was not enforced`);
+    assert.equal(bounded.filter(hit => hit.sourceKind === 'wikipedia').length, 40,
+      `${label}: Wikipedia source cap was not enforced`);
+    assert.equal(bounded.filter(hit => hit.sourceKind === 'emergency-box').length, 40,
+      `${label}: Emergency Box source cap was not enforced`);
+
+    const semantic = [...bounded].reverse();
+    semantic.push({
+      sourceKind: 'wikipedia', sourceId: 'other', documentId: 'outside', passageId: 'outside:1',
+    });
+    const fused = runtime.reciprocalRankFusion({ lexical: bounded, semantic });
+    assert.equal(fused.length, bounded.length, `${label}: semantic reranking escaped the lexical candidate set`);
+    assert.ok(fused.every(hit => Number.isInteger(hit.lexicalRank) && Number.isInteger(hit.semanticRank)),
+      `${label}: reciprocal-rank fusion lost rank provenance`);
+
+    const selected = runtime.selectDiverseRagHits(fused);
+    assert.ok(selected.length <= 8, `${label}: more than eight final passages were selected`);
+    const documentCounts = new Map();
+    for (const hit of selected) {
+      const key = `${hit.sourceKind}:${hit.sourceId}:${hit.documentId}`;
+      documentCounts.set(key, (documentCounts.get(key) || 0) + 1);
+    }
+    assert.ok([...documentCounts.values()].every(count => count <= 2),
+      `${label}: per-document passage limit was exceeded`);
+
+    const assembled = runtime.assembleRagEvidence(fused, {
+      contextWindowTokens: 4600,
+      systemTokens: 100,
+      historyTokens: 100,
+      questionTokens: 100,
+      generationTokens: 4000,
+      maximumEvidenceTokens: 300,
+    });
+    assert.ok(assembled.usedTokens <= 300, `${label}: combined evidence budget was exceeded`);
+    assert.ok(assembled.selected.length <= 8, `${label}: assembly exceeded the final passage cap`);
+    assert.equal(assembled.citations.length, assembled.selected.length,
+      `${label}: structured citation metadata did not match selected evidence`);
+    assert.ok(assembled.citations.every(citation => /^\[WB-[WE]-[A-Z0-9]+\]$/.test(citation.token)),
+      `${label}: citation tokens were not stable internal tokens`);
+    assert.equal(runtime.citationTokenForHit(fused[0]), runtime.citationTokenForHit({ ...fused[0] }),
+      `${label}: citation token changed for the same passage identity`);
+    const unsafe = runtime.assembleRagEvidence([{ ...fused[0], readerUrl: 'chrome-extension://id/secret.html' }]);
+    assert.equal(unsafe.selected.length, 0, `${label}: internal extension path was exposed as a citation target`);
+  }
+});
+
+test('offline RAG vector cache keys invalidate on content changes and LRU eviction stays under 256 MB', () => {
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const base = {
+      modelVersion: 'multilingual-e5-small-q8-v1',
+      sourceVersion: 'corpus-v1',
+      sourceKind: 'emergency-box',
+      passageId: 'first-aid:abc',
+      passageSha256: 'a'.repeat(64),
+    };
+    const first = runtime.buildVectorCacheKey(base);
+    const changed = runtime.buildVectorCacheKey({ ...base, passageSha256: 'b'.repeat(64) });
+    assert.notEqual(first, changed, `${label}: vector cache key ignored passage content changes`);
+    const eviction = runtime.selectVectorCacheEvictions([
+      { key: 'old', byteLength: 60, lastUsedAt: 1 },
+      { key: 'newer', byteLength: 50, lastUsedAt: 2 },
+      { key: 'newest', byteLength: 10, lastUsedAt: 3 },
+    ], { maximumBytes: 70 });
+    assert.deepEqual(eviction.evictions, ['old'], `${label}: LRU eviction did not remove the oldest entry`);
+    assert.equal(eviction.remainingBytes, 60, `${label}: LRU byte accounting is incorrect`);
+    assert.ok(eviction.maximumBytes <= 256 * 1024 * 1024, `${label}: cache limit exceeded 256 MB`);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-rag.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-rag.js'), 'utf8'),
+    'Chrome and Firefox offline RAG core implementations diverged',
+  );
+});
+
+test('offline RAG reader targets stay opaque until validated and resolve to local readers', () => {
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const emergency = runtime.createEmergencyReaderUrl('first-aid', 'first-aid:passage-one');
+    const wikipedia = runtime.createWikipediaReaderUrl('archive-1', 'Airway_management');
+    assert.equal(
+      runtime.ragReaderExtensionPath(emergency),
+      'src/ui/emergency-text.html?document=first-aid&passage=first-aid%3Apassage-one',
+      `${label}: Emergency citation did not resolve to its local reader`,
+    );
+    assert.equal(
+      runtime.ragReaderExtensionPath(wikipedia),
+      'src/ui/wikipedia-reader.html?id=archive-1&article=Airway_management',
+      `${label}: Wikipedia citation did not resolve to its local reader`,
+    );
+    assert.equal(
+      runtime.createEmergencyPdfExtensionPath('health-hesperian-wtnd-01'),
+      'src/ui/emergency-pdf.html?id=health-hesperian-wtnd-01',
+      `${label}: Emergency PDF citation did not resolve to its local reader`,
+    );
+    assert.throws(
+      () => runtime.validateRagReaderUrl('webbrain-reader://emergency-box/%E0%A4%A?passage=valid'),
+      error => error?.code === 'invalid-reader-target',
+      `${label}: malformed URL encoding escaped reader validation`,
+    );
+  }
+});
+
+test('offline RAG prompt bridge preserves bounded evidence, stable citations, and source filters', async () => {
+  for (const [label, runtime, core] of [
+    ['chrome', OfflineRagPromptCh, OfflineRagCh],
+    ['firefox', OfflineRagPromptFx, OfflineRagFx],
+  ]) {
+    let receivedOptions = null;
+    const hit = {
+      sourceKind: 'emergency-box', sourceId: 'v1', documentId: 'first-aid',
+      passageId: 'first-aid:passage-one', title: 'First Aid', language: 'eng',
+      collection: 'health', locator: 'Airway', text: 'Keep the airway open and monitor breathing.',
+      passageSha256: 'a'.repeat(64), lexicalRank: 1,
+      readerUrl: core.createEmergencyReaderUrl('first-aid', 'first-aid:passage-one'),
+    };
+    const result = await runtime.retrieveOfflineRagForPrompt('airway care', {
+      service: {
+        async search(_query, options) {
+          receivedOptions = options;
+          return {
+            hits: [hit], statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {}, rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+      sources: ['emergency-box'],
+      languages: ['eng'],
+      getExtensionUrl: path => `/${path}`,
+    });
+    assert.deepEqual(receivedOptions.sources, ['emergency-box'], `${label}: source filter was lost`);
+    assert.deepEqual(receivedOptions.languages, ['eng'], `${label}: language filter was lost`);
+    assert.equal(result.status, 'matched', `${label}: evidence was not reported as matched`);
+    assert.match(result.instructions, /Answer only from the supplied offline evidence/);
+    assert.match(result.evidence, /\[WB-E-[A-Z0-9]+\].*First Aid[\s\S]*Keep the airway open/);
+    assert.equal(result.references.length, 1);
+    assert.match(result.references[0].citationToken, /^\[WB-E-[A-Z0-9]+\]$/);
+    assert.equal(
+      result.references[0].url,
+      '/src/ui/emergency-text.html?document=first-aid&passage=first-aid%3Apassage-one',
+      `${label}: citation did not open the verified local reader`,
+    );
+    const noEvidence = await runtime.retrieveOfflineRagForPrompt('unknown topic', {
+      service: {
+        async search() {
+          return {
+            hits: [],
+            statuses: { wikipedia: 'not_installed', emergencyBox: 'ready', semantic: 'model-missing' },
+            errors: {},
+            rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+    });
+    assert.equal(noEvidence.status, 'no_match',
+      `${label}: one searched source with no evidence was mislabeled as entirely not installed`);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-rag-prompt.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-rag-prompt.js'), 'utf8'),
+    'Chrome and Firefox offline prompt bridges diverged',
+  );
+});
+
+test('offline RAG readiness filters persist safely and flow only into standalone WebGPU runs', async () => {
+  for (const [label, runtime] of [
+    ['chrome', OfflineRagReadinessCh], ['firefox', OfflineRagReadinessFx],
+  ]) {
+    const values = new Map();
+    const storage = {
+      getItem(key) { return values.get(key) ?? null; },
+      setItem(key, value) { values.set(key, value); },
+    };
+    const saved = runtime.saveOfflineRagFilters({
+      sources: ['emergency-box', 'invalid', 'emergency-box'],
+      languages: ['zho', '../bad', 'eng', 'eng'],
+    }, storage);
+    assert.deepEqual([...saved.sources], ['emergency-box'], `${label}: invalid or duplicate sources survived`);
+    assert.deepEqual([...saved.languages], ['eng', 'zho'], `${label}: language filter normalization changed`);
+    assert.deepEqual(runtime.offlineRagRunPayload(storage), {
+      offlineRagSources: ['emergency-box'], offlineRagLanguages: ['eng', 'zho'],
+    });
+    assert.deepEqual([...runtime.normalizeOfflineRagFilters({ sources: [] }).sources],
+      ['wikipedia', 'emergency-box'], `${label}: empty selection did not fail safe to both sources`);
+    const controller = runtime.createOfflineRagReadinessController({
+      root: { innerHTML: '', addEventListener() {} },
+      storage,
+      apocalypseStore: { async listArchives() { return []; } },
+      corpusStore: { async get() { return null; } },
+      semanticReranker: { async status() { return 'model-missing'; }, close() {} },
+      getGenerationStatus: () => 'ready',
+    });
+    await controller.refresh({
+      archives: [{ archiveKind: 'wikipedia', status: 'ready', language: 'eng' }],
+    });
+    assert.deepEqual(runtime.offlineRagRunPayload(storage), {
+      offlineRagSources: ['emergency-box'], offlineRagLanguages: ['eng'],
+    }, `${label}: pruned language filters were not persisted for the next run`);
+    controller.close();
+  }
+  const chromePanel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
+  const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  assert.match(chromePanel, /providerId: 'webgpu', \.\.\.offlineRagRunPayload\(\)/,
+    'standalone chat does not send the persisted source and language filters');
+  assert.match(chromePanel, /standaloneRagReadinessRoot\?\.classList\.add\('hidden'\)/,
+    'standalone offline readiness must stay hidden');
+  assert.match(chromeBackground, /standaloneRagFilterOptions\(msg\)/,
+    'background does not validate the standalone RAG filter payload');
+  for (const browser of ['chrome', 'firefox']) {
+    const html = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/apocalypse-mode.html`), 'utf8');
+    const box = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/emergency-box.html`), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/sidepanel.html`), 'utf8');
+    const panelScript = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/sidepanel.js`), 'utf8');
+    const readinessCss = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/offline-rag-readiness.css`), 'utf8');
+    assert.match(html, /id="offline-answer-engine"[\s\S]*?id="offline-rag-readiness"[\s\S]*?id="rag-components"/,
+      `${browser}: Apocalypse Mode is missing the collapsed Offline answer engine`);
+    assert.match(html, /offline-rag-readiness\.css/,
+      `${browser}: Apocalypse Mode does not load the readiness stylesheet`);
+    assert.doesNotMatch(box, /id="offline-rag-readiness"/, `${browser}: Emergency Box still hosts the readiness surface`);
+    assert.doesNotMatch(box, /offline-rag-readiness\.css/, `${browser}: Emergency Box still loads the readiness stylesheet`);
+    assert.match(panel, /id="standalone-rag-readiness"/, `${browser}: standalone readiness surface missing`);
+    assert.match(panelScript, /standaloneRagReadinessRoot\?\.classList\.add\('hidden'\)/,
+      `${browser}: standalone readiness must start hidden`);
+    assert.match(readinessCss, /var\(--panel, var\(--bg-secondary,/,
+      `${browser}: readiness panel does not inherit the sidepanel theme surface`);
+    assert.match(readinessCss, /color: var\(--text, var\(--text-primary,/,
+      `${browser}: readiness panel does not inherit the sidepanel text color`);
+    assert.match(readinessCss, /max-width: 960px/,
+      `${browser}: readiness panel has no readable wide-window measure`);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/offline-rag-readiness.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/offline-rag-readiness.js'), 'utf8'),
+    'Chrome and Firefox offline readiness/filter controllers diverged',
+  );
+});
+
+function createMemoryEmergencyCorpusStore(initial = null) {
+  let record = initial ? structuredClone(initial) : null;
+  return {
+    async get() { return record ? structuredClone(record) : null; },
+    async put(next) { record = structuredClone(next); return structuredClone(record); },
+    async delete() { record = null; },
+    snapshot() { return record ? structuredClone(record) : null; },
+  };
+}
+
+function createMemoryEmergencyCorpusStorage() {
+  const archives = new Map();
+  const installs = new Map();
+  const notFound = () => new DOMException('Not found.', 'NotFoundError');
+  const install = id => {
+    if (!installs.has(id)) installs.set(id, new Map());
+    return installs.get(id);
+  };
+  return {
+    archives,
+    installs,
+    async openArchive(key) {
+      const blob = archives.get(key);
+      if (!blob) throw notFound();
+      return blob;
+    },
+    async archiveSize(key) { return archives.get(key)?.size || 0; },
+    async createArchiveWriter(key) {
+      const existing = archives.get(key);
+      let bytes = existing ? new Uint8Array(await existing.arrayBuffer()) : new Uint8Array();
+      let settled = false;
+      return {
+        async write(position, value) {
+          assert.equal(settled, false, 'memory archive writer used after settlement');
+          const chunk = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+          if (position + chunk.byteLength > bytes.byteLength) {
+            const enlarged = new Uint8Array(position + chunk.byteLength);
+            enlarged.set(bytes);
+            bytes = enlarged;
+          }
+          bytes.set(chunk, position);
+        },
+        async truncate(size) {
+          const resized = new Uint8Array(size);
+          resized.set(bytes.subarray(0, size));
+          bytes = resized;
+        },
+        async close() { if (!settled) { archives.set(key, new Blob([bytes])); settled = true; } },
+        async abort() { settled = true; },
+      };
+    },
+    async deleteArchive(key) { archives.delete(key); },
+    async writeInstallFile(installId, archivePath, value) {
+      install(installId).set(archivePath, new Uint8Array(value));
+    },
+    async readInstallFile(installId, archivePath) {
+      const bytes = installs.get(installId)?.get(archivePath);
+      if (!bytes) throw notFound();
+      return new Blob([bytes]);
+    },
+    async deleteInstall(installId) { installs.delete(installId); },
+    async listInstallIds() { return [...installs.keys()].sort(); },
+  };
+}
+
+async function createEmergencyCorpusZipFixture(runtime) {
+  const fflate = await import(
+    'file://' + path.join(ROOT, 'src/chrome/vendor/fflate/browser.js').replace(/\\/g, '/')
+  );
+  const encoder = new TextEncoder();
+  const textBytes = encoder.encode('FIRST AID\n\nKeep the airway open and monitor breathing.\n');
+  const document = {
+    id: 'first-aid',
+    title: 'First Aid',
+    language: 'eng',
+    collection: 'field-manuals',
+    sourceUrl: 'https://example.test/first-aid',
+    license: 'Public domain',
+    path: 'documents/first-aid.txt',
+    sha256: await runtime.sha256Hex(textBytes),
+  };
+  const contentSha256 = await runtime.computeCorpusContentSha256([document]);
+  const manifest = {
+    schemaVersion: 1,
+    corpusId: 'emergency-box-text',
+    version: '2026.08.17',
+    contentSha256,
+    downloadBytes: 0,
+    documents: [document],
+  };
+  let zipBytes = new Uint8Array();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    zipBytes = fflate.zipSync({
+      'manifest.json': encoder.encode(JSON.stringify(manifest)),
+      [document.path]: textBytes,
+    }, { level: 6 });
+    if (manifest.downloadBytes === zipBytes.byteLength) break;
+    manifest.downloadBytes = zipBytes.byteLength;
+  }
+  assert.equal(manifest.downloadBytes, zipBytes.byteLength, 'fixture ZIP size did not converge');
+  const archiveSha256 = createHash('sha256').update(zipBytes).digest('hex');
+  return {
+    descriptor: {
+      id: 'emergency-box-text', version: manifest.version,
+      url: 'https://example.test/emergency-box.zip', archiveSha256,
+      downloadBytes: zipBytes.byteLength,
+    },
+    document,
+    manifest,
+    zipBytes,
+    fflate,
+  };
+}
+
+test('Emergency corpus uses bounded streaming SHA-256 and validates signed HTTPS descriptors', () => {
+  const vectors = [
+    ['', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'],
+    ['abc', 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'],
+    ['a'.repeat(1_000_000), 'cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0'],
+  ];
+  for (const [label, runtime] of [['chrome', EmergencyCorpusCh], ['firefox', EmergencyCorpusFx]]) {
+    for (const [input, expected] of vectors) {
+      const bytes = new TextEncoder().encode(input);
+      const hasher = runtime.createStreamingSha256();
+      for (let offset = 0; offset < bytes.length; offset += 37) hasher.update(bytes.subarray(offset, offset + 37));
+      assert.equal(hasher.digestHex(), expected, `${label}: streaming SHA-256 vector mismatch`);
+    }
+    assert.throws(() => runtime.validateEmergencyCorpusDescriptor({
+      id: 'emergency-box-text', version: 'v1', url: 'http://example.test/pack.zip',
+      archiveSha256: 'a'.repeat(64), downloadBytes: 10,
+    }), /HTTPS/, `${label}: insecure corpus URL was accepted`);
+  }
+});
+
+test('offline SQLite index helpers bound FTS5 queries and normalize attributable lexical hits', () => {
+  for (const [label, runtime] of [['chrome', OfflineRagIndexCh], ['firefox', OfflineRagIndexFx]]) {
+    const query = runtime.buildFts5Query('airway breathing 急救处理', { maximumTerms: 8 });
+    assert.ok(query.includes('"airway"') && query.includes(' OR '), `${label}: FTS query omitted lexical terms`);
+    assert.ok(query.includes('"急"') && query.includes('"急救"'), `${label}: FTS query omitted CJK n-grams`);
+    assert.ok(query.split(' OR ').length <= 8, `${label}: FTS query exceeded its term cap`);
+    assert.throws(() => runtime.validateOfflineRagIndexPath('../escape.sqlite3'), /invalid/i,
+      `${label}: unsafe SQLite path was accepted`);
+    const rows = Array.from({ length: 45 }, (_, index) => ({
+      passageId: `doc:${index}`,
+      documentId: 'doc',
+      sourceId: 'wrong-source',
+      title: 'First Aid',
+      language: 'eng',
+      collection: 'health',
+      source: 'https://example.test/first-aid',
+      license: 'CC BY-SA 4.0',
+      locator: 'Airway',
+      text: `Evidence ${index}`,
+      passageSha256: 'a'.repeat(64),
+      tokenEstimate: 10,
+      readerUrl: `webbrain-reader://emergency-box/doc?passage=doc%3A${index}`,
+      score: -10 + index,
+    }));
+    const hits = runtime.normalizeEmergencyLexicalHits(rows, 'corpus-v2');
+    assert.equal(hits.length, 40, `${label}: SQLite candidate cap was not enforced`);
+    assert.equal(hits[0].sourceKind, 'emergency-box');
+    assert.equal(hits[0].sourceId, 'corpus-v2', `${label}: active corpus version was not authoritative`);
+    assert.equal(hits[0].source, 'https://example.test/first-aid', `${label}: source provenance was lost`);
+    assert.equal(hits[0].license, 'CC BY-SA 4.0', `${label}: license provenance was lost`);
+    assert.equal(hits[0].lexicalRank, 1);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-rag-index.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-rag-index.js'), 'utf8'),
+    'Chrome and Firefox offline index clients diverged',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-rag-worker.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-rag-worker.js'), 'utf8'),
+    'Chrome and Firefox offline index workers diverged',
+  );
+  assert.equal(
+    createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/sqlite/index.mjs'))).digest('hex'),
+    'f80870f0fa03a39a3338d17ed3fbea04808d344c88e724d90d5f37b9b7b83154',
+    'vendored SQLite JS runtime does not match its pinned package hash',
+  );
+  assert.equal(
+    createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/sqlite/sqlite3.wasm'))).digest('hex'),
+    '02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312',
+    'vendored SQLite Wasm runtime does not match its pinned package hash',
+  );
+});
+
+test('offline vector index parser validates q8 layout and normalizes full-corpus hits', () => {
+  for (const [label, runtime] of [['chrome', OfflineRagIndexCh], ['firefox', OfflineRagIndexFx]]) {
+    const dimensions = runtime.EMERGENCY_VECTOR_DIMENSIONS;
+    const passageCount = 2;
+    const vectorOffset = runtime.EMERGENCY_VECTOR_HEADER_BYTES;
+    const normOffset = vectorOffset + passageCount * dimensions;
+    const buffer = new ArrayBuffer(normOffset + passageCount * 4);
+    const bytes = new Uint8Array(buffer);
+    bytes.set(new TextEncoder().encode('WBVE5Q8\0'));
+    const view = new DataView(buffer);
+    view.setUint32(8, runtime.EMERGENCY_VECTOR_INDEX_FORMAT_VERSION, true);
+    view.setUint32(12, dimensions, true);
+    view.setUint32(16, passageCount, true);
+    view.setUint32(20, vectorOffset, true);
+    view.setBigUint64(24, BigInt(vectorOffset), true);
+    view.setBigUint64(32, BigInt(normOffset), true);
+    bytes.set(new TextEncoder().encode('{"corpusVersion":"test","dimensions":384,"passageCount":2}'), 64);
+    new Int8Array(buffer, vectorOffset, passageCount * dimensions).fill(1);
+    new Float32Array(buffer, normOffset, passageCount).fill(Math.sqrt(dimensions));
+    const parsed = runtime.parseEmergencyVectorIndex(buffer, { passageCount, dimensions });
+    assert.equal(parsed.passageCount, passageCount, `${label}: vector passage count changed`);
+    assert.equal(parsed.vectors.length, passageCount * dimensions, `${label}: q8 vector payload changed`);
+    const hits = runtime.normalizeEmergencyVectorHits([{
+      documentId: 'first-aid', passageId: 'first-aid:one', title: 'First Aid', language: 'eng',
+      collection: 'health', source: 'Emergency Box', license: 'Public domain', locator: 'Airway',
+      text: 'Keep the airway open.', passageSha256: 'a'.repeat(64), tokenEstimate: 8,
+      readerUrl: 'webbrain-reader://emergency-box/first-aid?passage=first-aid%3Aone', semanticScore: 0.9,
+    }], 'v2');
+    assert.equal(hits[0]?.retrievalMode, 'e5-full-vector', `${label}: vector retrieval mode was lost`);
+    assert.equal(hits[0]?.semanticRank, 1, `${label}: vector rank was not normalized`);
+    assert.throws(() => runtime.parseEmergencyVectorIndex(buffer, { passageCount: 3, dimensions }),
+      /passage count/, `${label}: vector manifest mismatch was accepted`);
+  }
+});
+
+test('vendored SQLite FTS5 passes integrity plus English and CJK passage retrieval', async () => {
+  const sqlite3InitModule = (await import(
+    'file://' + path.join(ROOT, 'src/chrome/vendor/sqlite/index.mjs').replace(/\\/g, '/')
+  )).default;
+  const sqlite3 = await sqlite3InitModule({
+    wasmBinary: fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/sqlite/sqlite3.wasm')),
+    print: () => {},
+    printErr: () => {},
+  });
+  sqlite3.config.log = () => {};
+  const db = new sqlite3.oo1.DB(':memory:', 'ct');
+  try {
+    db.exec(OfflineRagIndexCh.EMERGENCY_FTS_SCHEMA_SQL);
+    const insert = db.prepare(OfflineRagIndexCh.EMERGENCY_FTS_INSERT_SQL);
+    const rows = [
+      {
+        passageId: 'airway:one', documentId: 'airway', title: 'Airway Care', language: 'eng',
+        collection: 'health', locator: 'Breathing', text: 'Keep the airway open and monitor breathing.',
+      },
+      {
+        passageId: 'cjk:one', documentId: 'cjk', title: '急救处理', language: 'zho',
+        collection: 'health', locator: '呼吸道', text: '保持呼吸道畅通，并观察呼吸。',
+      },
+    ];
+    try {
+      for (const row of rows) {
+        const searchTerms = OfflineRagCh.tokenizeForLexicalSearch(
+          `${row.title}\n${row.collection}\n${row.locator}\n${row.text}`,
+          { language: row.language },
+        ).join(' ');
+        insert.bind([
+          row.passageId, row.documentId, 'fixture-v1', row.title, row.language,
+          row.collection, `https://example.test/${row.documentId}`, 'CC BY-SA 4.0',
+          row.locator, row.text, searchTerms, 'a'.repeat(64),
+          20, 0, `webbrain-reader://emergency-box/${row.documentId}?passage=${encodeURIComponent(row.passageId)}`,
+        ]).stepReset().clearBindings();
+      }
+    } finally {
+      insert.finalize();
+    }
+    const english = db.selectObjects(OfflineRagIndexCh.EMERGENCY_FTS_SEARCH_SQL, [
+      OfflineRagIndexCh.buildFts5Query('airway breathing'), 40,
+    ]);
+    const cjk = db.selectObjects(OfflineRagIndexCh.EMERGENCY_FTS_SEARCH_SQL, [
+      OfflineRagIndexCh.buildFts5Query('急救 呼吸道'), 40,
+    ]);
+    assert.equal(english[0]?.passageId, 'airway:one', 'English FTS query missed its passage');
+    assert.equal(english[0]?.source, 'https://example.test/airway', 'SQLite query lost source provenance');
+    assert.equal(english[0]?.license, 'CC BY-SA 4.0', 'SQLite query lost license provenance');
+    assert.equal(cjk[0]?.passageId, 'cjk:one', 'CJK FTS query missed its passage');
+    assert.equal(db.selectValue('PRAGMA quick_check'), 'ok', 'SQLite quick_check failed');
+    assert.equal(Number(db.selectValue('SELECT count(*) FROM passages')), 2, 'SQLite searchable row count changed');
+  } finally {
+    db.close();
+  }
+});
+
+test('shared offline retrieval honors source/language filters and never downloads missing components', async () => {
+  for (const [label, runtime] of [['chrome', OfflineRetrievalCh], ['firefox', OfflineRetrievalFx]]) {
+    let indexClientCreations = 0;
+    const missingService = runtime.createOfflineRetrievalService({
+      emergencyStore: { async get() { return null; } },
+      createIndexClient() { indexClientCreations += 1; throw new Error('must stay lazy'); },
+      searchWikipedia: async () => [],
+    });
+    const missing = await missingService.search('airway', { sources: ['emergency-box'] });
+    assert.equal(missing.statuses.emergencyBox, 'not-installed', `${label}: missing corpus status changed`);
+    assert.equal(indexClientCreations, 0, `${label}: a question initialized missing index machinery`);
+
+    const emergencyHit = {
+      sourceKind: 'emergency-box', sourceId: 'v1', documentId: '急救', passageId: '急救:one',
+      title: '急救处理', language: 'zho', collection: 'health', locator: '呼吸道',
+      text: '保持呼吸道畅通，并观察呼吸。', passageSha256: 'a'.repeat(64), tokenEstimate: 20,
+      readerUrl: 'webbrain-reader://emergency-box/cjk?passage=cjk%3Aone', lexicalRank: 1,
+    };
+    const wikipediaProviders = [{ id: 'test-xapian-provider' }];
+    const service = runtime.createOfflineRetrievalService({
+      emergencyStore: {
+        async get() {
+          return { status: 'ready', active: { indexPath: 'sqlite/ready.sqlite3', version: 'v1' } };
+        },
+      },
+      indexClient: { async searchEmergency() { return [emergencyHit]; } },
+      searchWikipedia: async (_query, options) => {
+        assert.equal(options.searchAllArchives, true, `${label}: RAG did not request every selected archive`);
+        assert.equal(options.providers, wikipediaProviders, `${label}: configured ZIM providers were not forwarded`);
+        return [{
+          archiveId: 'archive-1', archiveTitle: 'Simple English Wikipedia', path: 'Airway_management',
+          title: 'Airway management', excerpt: 'Airway management keeps a patient able to breathe.',
+          language: 'eng', archiveDate: '2026-07-01', retrievalMode: 'title-only',
+        }];
+      },
+      wikipediaProviders,
+      digestHex: async () => 'b'.repeat(64),
+      semanticReranker: { async rerank() { throw new Error('embedder missing'); } },
+    });
+    const cjkOnly = await service.search('呼吸道', { languages: ['zho'], sources: ['wikipedia', 'emergency-box'] });
+    assert.equal(cjkOnly.hits.length, 1, `${label}: language filter did not exclude English Wikipedia`);
+    assert.equal(cjkOnly.hits[0].sourceKind, 'emergency-box');
+    assert.equal(cjkOnly.rankingMode, 'lexical-fallback', `${label}: embedder failure did not fall back immediately`);
+    assert.equal(cjkOnly.statuses.wikipedia, 'title-only-fallback', `${label}: title-only search was mislabeled ready`);
+    const wikipediaOnly = await service.search('airway', { sources: ['wikipedia'], languages: ['eng'] });
+    assert.equal(wikipediaOnly.hits[0]?.sourceKind, 'wikipedia');
+    assert.match(wikipediaOnly.hits[0]?.readerUrl || '', /^webbrain-reader:\/\/wikipedia\/archive-1\?/);
+    service.close();
+
+    let rerankCalls = 0;
+    const vectorOnlyHit = {
+      ...emergencyHit,
+      documentId: 'semantic-only',
+      passageId: 'semantic-only:one',
+      title: 'Semantically matched guidance',
+      text: 'A relevant passage with no lexical query terms.',
+      semanticScore: 0.91,
+    };
+    const vectorService = runtime.createOfflineRetrievalService({
+      emergencyStore: {
+        async get() {
+          return {
+            status: 'ready',
+            active: {
+              indexPath: 'sqlite/ready.sqlite3', version: 'v2', installId: 'fixture-v2',
+              vectorIndex: { path: 'indexes/emergency-box-e5-q8.bin', bytes: 1, sha256: 'c'.repeat(64) },
+            },
+          };
+        },
+      },
+      indexClient: {
+        async searchEmergency() { return [emergencyHit]; },
+        async searchEmergencyVector() { return [vectorOnlyHit]; },
+      },
+      semanticReranker: {
+        async embedQuery() { return new Float32Array(384).fill(1 / Math.sqrt(384)); },
+        async rerank() { rerankCalls += 1; return []; },
+      },
+    });
+    const hybrid = await vectorService.search('airway', { sources: ['emergency-box'] });
+    assert.equal(hybrid.rankingMode, 'hybrid-full-vector', `${label}: full vector search was not disclosed`);
+    assert.equal(hybrid.statuses.semantic, 'full-vector-ready', `${label}: full vector readiness was not exposed`);
+    assert.ok(hybrid.hits.some(hit => hit.passageId === vectorOnlyHit.passageId),
+      `${label}: a semantic-only full-corpus result was discarded`);
+    assert.equal(rerankCalls, 0, `${label}: candidate reranking ran despite a full-vector result`);
+    vectorService.close();
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-retrieval.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-retrieval.js'), 'utf8'),
+    'Chrome and Firefox offline retrieval services diverged',
+  );
+});
+
+test('offline semantic retrieval times out to lexical results instead of hanging', async () => {
+  const waitForAbort = signal => new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+  for (const [label, runtime] of [['chrome', OfflineRetrievalCh], ['firefox', OfflineRetrievalFx]]) {
+    let wikipediaResets = 0;
+    const wikipediaService = runtime.createOfflineRetrievalService({
+      emergencyStore: { async get() { return null; } },
+      searchWikipedia: async () => [{
+        archiveId: 'enwiki', path: 'Sokollu_Mehmed_Pasha', title: 'Sokollu Mehmed Pasha',
+        excerpt: 'Sokollu Mehmed Pasha was an Ottoman grand vizier.', language: 'eng',
+        retrievalMode: 'xapian-full-text',
+      }],
+      digestHex: async () => 'd'.repeat(64),
+      semanticTimeoutMs: 5,
+      semanticReranker: {
+        rerank(_query, _hits, { signal }) { return waitForAbort(signal); },
+        reset() { wikipediaResets += 1; },
+      },
+    });
+    const started = Date.now();
+    const wikipedia = await wikipediaService.search('Who is Sokollu Mehmed Pasha?', {
+      sources: ['wikipedia'],
+    });
+    assert.equal(wikipedia.rankingMode, 'lexical-fallback', `${label}: hung Wikipedia reranking did not fall back`);
+    assert.equal(wikipedia.hits[0]?.documentId, 'Sokollu_Mehmed_Pasha',
+      `${label}: timeout discarded the lexical Wikipedia result`);
+    assert.equal(wikipediaResets, 1, `${label}: timed-out semantic worker was not reset`);
+    assert.ok(Date.now() - started < 1_000, `${label}: semantic timeout did not bound retrieval latency`);
+    wikipediaService.close();
+
+    let emergencyResets = 0;
+    let emergencyReranks = 0;
+    const emergencyHit = {
+      sourceKind: 'emergency-box', sourceId: 'v1', documentId: 'first-aid', passageId: 'first-aid:1',
+      title: 'First Aid', language: 'eng', collection: 'health', locator: 'Airway',
+      text: 'Keep the airway open.', passageSha256: 'e'.repeat(64), lexicalRank: 1,
+      readerUrl: 'webbrain-reader://emergency-box/first-aid?passage=first-aid%3A1',
+    };
+    const emergencyService = runtime.createOfflineRetrievalService({
+      emergencyStore: {
+        async get() {
+          return {
+            status: 'ready',
+            active: {
+              indexPath: 'sqlite/ready.sqlite3', version: 'v1', installId: 'fixture-v1',
+              vectorIndex: { path: 'indexes/e5.bin', bytes: 1, sha256: 'f'.repeat(64) },
+            },
+          };
+        },
+      },
+      indexClient: { async searchEmergency() { return [emergencyHit]; } },
+      semanticTimeoutMs: 5,
+      semanticReranker: {
+        embedQuery(_query, { signal }) { return waitForAbort(signal); },
+        async rerank() { emergencyReranks += 1; return []; },
+        reset() { emergencyResets += 1; },
+      },
+    });
+    const emergency = await emergencyService.search('airway', { sources: ['emergency-box'] });
+    assert.equal(emergency.rankingMode, 'lexical-fallback', `${label}: hung query embedding did not fall back`);
+    assert.equal(emergency.hits[0]?.passageId, 'first-aid:1',
+      `${label}: embedding timeout discarded the Emergency lexical result`);
+    assert.equal(emergencyResets, 1, `${label}: timed-out embedder was not reset`);
+    assert.equal(emergencyReranks, 0, `${label}: failed embedding retried the same hung semantic worker`);
+    emergencyService.close();
+  }
+});
+
+test('Chrome MV3 standalone retrieval uses the worker-capable offscreen host and fails closed', async () => {
+  let ensureCalls = 0;
+  const messages = [];
+  const expected = {
+    hits: [], candidates: [], rankingMode: 'lexical-fallback',
+    statuses: { wikipedia: 'unavailable', emergencyBox: 'not-installed', semantic: 'model-missing' },
+  };
+  const api = {
+    runtime: {
+      async sendMessage(message) {
+        messages.push(message);
+        return { ok: true, result: expected };
+      },
+    },
+  };
+  const service = OfflineRetrievalOffscreenCh.createOffscreenOfflineRetrievalService({
+    api,
+    ensureHost: async () => { ensureCalls += 1; },
+  });
+  const result = await service.search('Who is Sokullu?', {
+    sources: ['emergency-box', 'invalid', 'wikipedia'],
+    languages: ['ENG', '../bad'],
+    limit: 500,
+  });
+  assert.equal(result, expected, 'offscreen proxy did not return the host retrieval result');
+  assert.equal(ensureCalls, 1, 'offscreen retrieval did not ensure its worker-capable host');
+  assert.deepEqual(messages[0]?.options, {
+    sources: ['emergency-box', 'wikipedia'], languages: ['eng'], limit: 12,
+  }, 'offscreen proxy did not bound its structured retrieval payload');
+
+  let resolveSearch;
+  const cancellationMessages = [];
+  const cancellationService = OfflineRetrievalOffscreenCh.createOffscreenOfflineRetrievalService({
+    api: {
+      runtime: {
+        async sendMessage(message) {
+          cancellationMessages.push(message);
+          if (message.action === 'cancel') return { ok: true };
+          return await new Promise(resolve => { resolveSearch = resolve; });
+        },
+      },
+    },
+    ensureHost: async () => {},
+  });
+  const controller = new AbortController();
+  const pending = cancellationService.search('chocolate', { signal: controller.signal });
+  while (!resolveSearch) await Promise.resolve();
+  controller.abort();
+  resolveSearch({ ok: true, result: expected });
+  await assert.rejects(pending, error => error?.name === 'AbortError',
+    'canceling standalone chat did not cancel its offscreen retrieval');
+  assert.equal(cancellationMessages.at(-1)?.action, 'cancel',
+    'offscreen host did not receive the retrieval cancellation');
+  assert.equal(cancellationMessages.at(-1)?.requestId, cancellationMessages[0]?.requestId,
+    'offscreen cancellation was not bound to its search request');
+
+  const agent = new AgentCh({});
+  const unavailable = await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'Who is Sokullu?' },
+    'Who is Sokullu?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: { async search() { throw new ReferenceError('Worker is not defined'); } },
+    },
+  );
+  assert.equal(unavailable.status, 'read_error', 'offline host failure still escapes the standalone chat boundary');
+  assert.equal(unavailable.multiSource, true, 'offline host failure lost multi-source failure handling');
+
+  const offscreenHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/offscreen.html'), 'utf8');
+  const hostSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/offline-rag-host.js'), 'utf8');
+  const backgroundSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  assert.match(offscreenHtml, /<script type="module" src="offline-rag-host\.js"><\/script>/,
+    'Chrome offscreen document does not load the offline retrieval host');
+  assert.match(hostSource, /createOfflineRetrievalService[\s\S]*?getSharedOfflineSemanticReranker[\s\S]*?chrome\.runtime\.onMessage/,
+    'Chrome offscreen host does not own retrieval and semantic workers');
+  assert.match(backgroundSource, /setStandaloneOfflineRagService\(createOffscreenOfflineRetrievalService\(\)\)/,
+    'Chrome service-worker agent still initializes DOM Worker clients directly');
+});
+
+test('Chrome Emergency Box shares the offscreen SQLite worker with retrieval', async () => {
+  const listeners = new Set();
+  const messages = [];
+  let removedListeners = 0;
+  const expected = { indexPath: 'sqlite/preview.sqlite3', indexBytes: 123, passageCount: 7 };
+  const api = {
+    runtime: {
+      onMessage: {
+        addListener(listener) { listeners.add(listener); },
+        removeListener(listener) { if (listeners.delete(listener)) removedListeners += 1; },
+      },
+      async sendMessage(message) {
+        messages.push(message);
+        if (message.target === 'background') return { ready: true };
+        if (message.action === 'prepare-emergency-index') {
+          for (const listener of listeners) listener({
+            target: 'offscreen-offline-rag-index-progress',
+            requestId: message.requestId,
+            progress: { phase: 'importing-index', bytesImported: 64, totalBytes: 123 },
+          });
+          return { ok: true, result: expected };
+        }
+        if (message.action === 'delete-index' || message.action === 'cancel') {
+          return { ok: true, result: { deleted: true } };
+        }
+        throw new Error(`Unexpected hosted index message: ${message.action}`);
+      },
+    },
+  };
+  const progress = [];
+  const client = OfflineRagIndexHostCh.createHostedOfflineRagIndexClient({ api });
+  const result = await client.buildEmergencyIndex({
+    manifest: { version: 'preview' },
+    installId: 'preview-install',
+    indexPath: 'sqlite/preview.sqlite3',
+    onProgress: value => progress.push(value),
+  });
+  assert.equal(result, expected, 'Chrome hosted index proxy lost the import result');
+  assert.deepEqual(progress, [{ phase: 'importing-index', bytesImported: 64, totalBytes: 123 }],
+    'Chrome hosted index proxy lost import progress');
+  assert.equal(messages[0]?.action, 'ensure_offscreen_offline_rag_host',
+    'Emergency Box did not ensure the shared offscreen host');
+  assert.equal(messages[1]?.target, 'offscreen-offline-rag');
+  assert.equal(messages[1]?.action, 'prepare-emergency-index');
+  await client.deleteIndex('sqlite/preview.sqlite3');
+  assert.equal(messages.at(-1)?.action, 'delete-index');
+  client.close();
+  assert.equal(removedListeners, 1, 'hosted index proxy retained its progress listener after close');
+
+  let resolveImport;
+  const cancellationMessages = [];
+  const cancellationClient = OfflineRagIndexHostCh.createHostedOfflineRagIndexClient({
+    ensureHost: async () => {},
+    api: {
+      runtime: {
+        onMessage: { addListener() {}, removeListener() {} },
+        async sendMessage(message) {
+          cancellationMessages.push(message);
+          if (message.action === 'cancel') return { ok: true };
+          return await new Promise(resolve => { resolveImport = resolve; });
+        },
+      },
+    },
+  });
+  const controller = new AbortController();
+  const pending = cancellationClient.buildEmergencyIndex({
+    manifest: { version: 'preview' },
+    installId: 'preview-install',
+    indexPath: 'sqlite/preview.sqlite3',
+    signal: controller.signal,
+  });
+  while (!resolveImport) await Promise.resolve();
+  controller.abort();
+  resolveImport({ ok: true, result: expected });
+  await assert.rejects(pending, error => error?.name === 'AbortError',
+    'canceling an Emergency Box import did not cancel its offscreen request');
+  assert.equal(cancellationMessages.at(-1)?.action, 'cancel');
+  assert.equal(cancellationMessages.at(-1)?.requestId, cancellationMessages[0]?.requestId,
+    'hosted index cancellation was not bound to its import request');
+  cancellationClient.close();
+
+  class FakeWorker {
+    addEventListener() {}
+    postMessage() {}
+    terminate() { this.terminated = true; }
+  }
+  const firefoxWorker = new FakeWorker();
+  const firefoxClient = OfflineRagIndexHostFx.createHostedOfflineRagIndexClient({ worker: firefoxWorker });
+  firefoxClient.close();
+  assert.equal(firefoxWorker.terminated, true, 'Firefox hosted adapter stopped using its direct page worker');
+
+  const hostSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/offline-rag-host.js'), 'utf8');
+  const downloadHostSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/emergency-download-host.js'), 'utf8');
+  const backgroundSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const chromeBoxSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/emergency-box.js'), 'utf8');
+  const firefoxBoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/emergency-box.js'), 'utf8');
+  assert.match(hostSource, /createOfflineRagIndexClient\(\)[\s\S]*?createOfflineRetrievalService\(\{[\s\S]*?indexClient/,
+    'offscreen retrieval and installation do not share one SQLite client');
+  assert.match(hostSource, /embedQuery[\s\S]*?prepare-emergency-index[\s\S]*?delete-index/,
+    'offscreen host does not expose full-vector queries and index lifecycle actions');
+  assert.match(downloadHostSource, /createEmergencyDownloadController[\s\S]*?createOfflineRagIndexClient/,
+    'Emergency downloads do not use the offscreen SQLite client');
+  assert.match(backgroundSource, /case 'ensure_offscreen_offline_rag_host':[\s\S]*?await ensureOffscreen\(\)/,
+    'Emergency Box cannot ensure that the shared offscreen host exists');
+  assert.doesNotMatch(chromeBoxSource, /createHostedOfflineRagIndexClient|createOfflineRagIndexClient\(/,
+    'Chrome Emergency Box still creates a competing SQLite worker');
+  assert.equal(chromeBoxSource, firefoxBoxSource, 'Emergency Box UI diverged while selecting its hosted index adapter');
+});
+
+test('license-gated ZIM Xapian adapter searches indexed archives and falls back honestly', async () => {
+  for (const [label, runtime] of [['chrome', ZimXapianCh], ['firefox', ZimXapianFx]]) {
+    assert.equal(runtime.JAVASCRIPT_LIBZIM_VERSION, '0.95', `${label}: javascript-libzim version changed`);
+    assert.equal(runtime.LIBZIM_VERSION, '9.8.1', `${label}: libzim version changed`);
+    assert.equal(runtime.XAPIAN_VERSION, '1.4.31', `${label}: Xapian version changed`);
+    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, false, `${label}: GPL runtime was marked bundled without approval`);
+    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'blocked-pending-owner-license-decision');
+
+    const storage = { async open(target) { return new Blob([target.kind]); } };
+    const fallbackCalls = [];
+    const fallbackProvider = {
+      async search(record, query) {
+        fallbackCalls.push({ archiveId: record.id, query });
+        return [{
+          archiveId: record.id, archiveTitle: record.title, path: 'Fallback_title',
+          title: 'Fallback title', excerpt: 'Title lookup only.', retrievalMode: 'title-only',
+        }];
+      },
+      async read(_record, articlePath) { return { path: articlePath, text: 'reader' }; },
+      async readImage(_record, articlePath) { return { path: articlePath, bytes: Uint8Array.of(1) }; },
+    };
+    const fullRecord = {
+      id: 'full-wikipedia', archiveKind: 'wikipedia', title: 'English Wikipedia',
+      language: 'eng', archiveDate: '2026-08', source: 'Kiwix', license: 'CC BY-SA 4.0',
+      target: { kind: 'opfs' },
+    };
+    let closed = 0;
+    const searches = [];
+    const provider = runtime.createZimXapianProvider({
+      storage,
+      fallbackProvider,
+      runtime: {
+        async openArchive({ record }) {
+          return {
+            async hasFullTextIndex() { return record.id !== 'simple-no-index'; },
+            async searchWithSnippets(query, options) {
+              searches.push({ archiveId: record.id, query, options });
+              return [{
+                path: 'Airway_management', title: 'Airway management',
+                snippet: '<b>Keep</b> the airway &amp; breathing safe.<script>bad()</script>', score: 9.5,
+              }];
+            },
+            async close() { closed += 1; },
+          };
+        },
+      },
+    });
+    const fullText = await provider.search(fullRecord, 'airway', { limit: 40 });
+    assert.equal(searches[0].options.limit, 10, `${label}: per-archive Xapian cap changed`);
+    assert.equal(searches[0].options.language, 'eng');
+    assert.equal(fullText[0].archiveId, 'full-wikipedia');
+    assert.equal(fullText[0].retrievalMode, 'xapian-full-text');
+    assert.equal(fullText[0].excerpt, 'Keep the airway & breathing safe.', `${label}: snippet markup was not neutralized`);
+    assert.equal(fullText[0].lexicalScore, 9.5);
+    assert.equal(closed, 1, `${label}: indexed Xapian session was not closed`);
+
+    const simpleRecord = { ...fullRecord, id: 'simple-no-index', title: 'Simple English Wikipedia' };
+    const missingIndex = await provider.search(simpleRecord, 'airway');
+    assert.equal(missingIndex[0].retrievalMode, 'title-only', `${label}: missing index did not use title fallback`);
+    assert.equal(fallbackCalls.at(-1).archiveId, 'simple-no-index');
+    assert.equal(closed, 2, `${label}: missing-index Xapian session was not closed`);
+    assert.notEqual(fullText[0].archiveId, missingIndex[0].archiveId,
+      `${label}: Simple and full Wikipedia result identities collapsed`);
+
+    const runtimeFailureProvider = runtime.createZimXapianProvider({
+      storage,
+      fallbackProvider,
+      runtime: { async openArchive() { throw new Error('worker unavailable'); } },
+    });
+    const runtimeFailure = await runtimeFailureProvider.search(fullRecord, 'airway');
+    assert.equal(runtimeFailure[0].retrievalMode, 'title-only', `${label}: runtime error did not use title fallback`);
+
+    const unbundled = runtime.createZimXapianProvider({ fallbackProvider });
+    const withoutRuntime = await unbundled.search(fullRecord, 'airway');
+    assert.equal(withoutRuntime[0].retrievalMode, 'title-only', `${label}: absent GPL runtime did not use title fallback`);
+    assert.deepEqual(await provider.read(fullRecord, 'Airway_management'), { path: 'Airway_management', text: 'reader' });
+    assert.equal((await provider.readImage(fullRecord, 'I/airway.png')).bytes[0], 1);
+  }
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/zim-xapian.js'), 'utf8');
+  assert.equal(
+    chromeSource,
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/zim-xapian.js'), 'utf8'),
+    'Chrome and Firefox ZIM Xapian adapters diverged',
+  );
+  assert.doesNotMatch(chromeSource, /\bfetch\s*\(|import\s*\(\s*['"]https?:/,
+    'the license-neutral adapter must not download or dynamically import runtime code');
+  const licensing = fs.readFileSync(path.join(ROOT, 'docs/offline-rag-licensing.md'), 'utf8');
+  assert.match(licensing, /Status: \*\*BLOCKED — explicit repository-owner decision required\*\*/);
+  assert.match(licensing, /896e4eab4986670ae9c0858312fa5225436e3498990c45df752e0be46eb4fe3d/);
+  assert.match(licensing, /Approve GPL distribution[\s\S]*Reject GPL distribution[\s\S]*Use a different runtime/);
+});
+
+test('multilingual E5 reranker is deterministic, prefixed, cancelable, and never downloads on a question', async () => {
+  class FakeWorker {
+    constructor() { this.listeners = new Map(); this.messages = []; }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    emit(message) { this.listeners.get('message')?.({ data: message }); }
+    postMessage(message) {
+      this.messages.push(message);
+      queueMicrotask(() => {
+        const base = { protocolVersion: OfflineRerankerCh.OFFLINE_RERANKER_PROTOCOL_VERSION, id: message.id };
+        if (message.type === 'model-status') {
+          this.emit({ ...base, kind: 'result', result: { status: 'model-missing', ready: false } });
+        } else if (message.type === 'embed-query') {
+          const vector = new Float32Array(384);
+          vector[0] = 0.6;
+          vector[1] = 0.8;
+          this.emit({ ...base, kind: 'result', result: { vector } });
+        } else if (message.type === 'rerank') {
+          this.emit({
+            ...base,
+            kind: 'error',
+            error: { name: 'Error', code: 'model-missing', message: 'model missing' },
+          });
+        } else if (message.type === 'pause-model') {
+          this.emit({ ...base, kind: 'result', result: { status: 'paused', ready: false } });
+        }
+      });
+    }
+    terminate() {}
+  }
+  for (const [label, runtime] of [['chrome', OfflineRerankerCh], ['firefox', OfflineRerankerFx]]) {
+    assert.equal(runtime.e5QueryText(' airway '), 'query: airway', `${label}: E5 query prefix changed`);
+    assert.equal(runtime.e5PassageText(' evidence '), 'passage: evidence', `${label}: E5 passage prefix changed`);
+    assert.equal(runtime.E5_MODEL_DOWNLOAD_BYTES, 140_461_908, `${label}: measured E5 artifact total changed`);
+    assert.ok(Math.abs(runtime.cosineSimilarity([1, 0], [0.5, 0.5]) - Math.SQRT1_2) < 1e-12,
+      `${label}: cosine similarity is incorrect`);
+    const ranked = runtime.rankCandidatesBySemanticScore([
+      { sourceKind: 'wikipedia', sourceId: 'v', documentId: 'a', passageId: 'a:1' },
+      { sourceKind: 'emergency-box', sourceId: 'v', documentId: 'b', passageId: 'b:1' },
+    ], [0.1, 0.9]);
+    assert.equal(ranked[0].passageId, 'b:1', `${label}: semantic score ordering is incorrect`);
+    assert.deepEqual(ranked.map(hit => hit.semanticRank), [1, 2]);
+
+    const worker = new FakeWorker();
+    const reranker = runtime.createOfflineSemanticReranker({ worker });
+    assert.equal(await reranker.status(), 'model-missing');
+    const queryVector = await reranker.embedQuery('airway');
+    assert.equal(queryVector.length, 384);
+    assert.ok(Math.abs(queryVector[0] - 0.6) < 1e-6 && Math.abs(queryVector[1] - 0.8) < 1e-6,
+      `${label}: query embedding response changed`);
+    await assert.rejects(reranker.rerank('airway', [{
+      sourceKind: 'emergency-box', sourceId: 'v1', documentId: 'a', passageId: 'a:1',
+      passageSha256: 'a'.repeat(64), text: 'Keep the airway open.',
+    }]), error => error?.code === 'model-missing');
+    assert.equal(worker.messages.some(message => message.type === 'download-model'), false,
+      `${label}: reranking a question started a model download`);
+    const controller = new AbortController();
+    const download = reranker.download({ signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    const paused = await download;
+    assert.equal(paused.status, 'paused', `${label}: download abort did not become a pause`);
+    assert.ok(worker.messages.some(message => message.type === 'pause-model'),
+      `${label}: pause was not forwarded to the model worker`);
+    reranker.close();
+
+    const hangingWorker = new FakeWorker();
+    hangingWorker.postMessage = message => { hangingWorker.messages.push(message); };
+    const hangingReranker = runtime.createOfflineSemanticReranker({ worker: hangingWorker });
+    const searchController = new AbortController();
+    const hangingSearch = hangingReranker.embedQuery('airway', { signal: searchController.signal });
+    searchController.abort();
+    await assert.rejects(hangingSearch, error => error?.name === 'AbortError',
+      `${label}: canceling a hung semantic request did not reject immediately`);
+    assert.ok(hangingWorker.messages.some(message => message.type === 'cancel'),
+      `${label}: hung semantic request was not canceled in the worker`);
+    hangingReranker.close();
+  }
+  for (const relativePath of [
+    'transformers.web.js',
+    'ort.webgpu.mjs',
+    'ort-wasm-simd-threaded.asyncify.mjs',
+    'ort-wasm-simd-threaded.asyncify.wasm',
+  ]) {
+    assert.equal(
+      createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/transformers', relativePath))).digest('hex'),
+      createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'src/firefox/vendor/transformers', relativePath))).digest('hex'),
+      `Firefox CPU/WASM runtime diverged for ${relativePath}`,
+    );
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-reranker.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-reranker.js'), 'utf8'),
+    'Chrome and Firefox semantic reranker clients diverged',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/offline-reranker-worker.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/offline-reranker-worker.js'), 'utf8'),
+    'Chrome and Firefox semantic reranker workers diverged',
+  );
+});
+
+test('Apocalypse RAG search checks every ready archive while ordinary title search keeps its early exit', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = [
+      { id: 'archive-a', status: 'ready', archiveDate: '2026-01-01' },
+      { id: 'archive-b', status: 'ready', archiveDate: '2025-01-01' },
+    ];
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return records; },
+    };
+    const searched = [];
+    const provider = {
+      supports() { return true; },
+      async search(record) {
+        searched.push(record.id);
+        return [{ archiveId: record.id, title: record.id, excerpt: 'match', path: record.id }];
+      },
+    };
+    const all = await runtime.searchApocalypseArchives('match', {
+      store, providers: [provider], limit: 40, searchAllArchives: true,
+    });
+    assert.deepEqual(searched, ['archive-a', 'archive-b'], `${label}: RAG skipped a selected archive`);
+    assert.equal(all.length, 2);
+    searched.length = 0;
+    await runtime.searchApocalypseArchives('match', { store, providers: [provider], limit: 1 });
+    assert.deepEqual(searched, ['archive-a'], `${label}: ordinary search lost its bounded early exit`);
+  }
+});
+
+test('Emergency corpus streams a real ZIP, rejects traversal, and verifies every document', async () => {
+  const fixture = await createEmergencyCorpusZipFixture(OfflineRagCh);
+  for (const [label, runtime] of [['chrome', EmergencyCorpusCh], ['firefox', EmergencyCorpusFx]]) {
+    const storage = createMemoryEmergencyCorpusStorage();
+    const result = await runtime.extractEmergencyCorpusArchive(new Blob([fixture.zipBytes]), {
+      storage, installId: `${label}-fixture`, fflate: fixture.fflate,
+    });
+    assert.equal(result.manifest.contentSha256, fixture.manifest.contentSha256,
+      `${label}: verified manifest was not returned`);
+    assert.equal(
+      await (await storage.readInstallFile(`${label}-fixture`, fixture.document.path)).text(),
+      'FIRST AID\n\nKeep the airway open and monitor breathing.\n',
+      `${label}: extracted document content changed`,
+    );
+    const unsafeZip = fixture.fflate.zipSync({ '../escape.txt': new TextEncoder().encode('escape') });
+    await assert.rejects(
+      runtime.extractEmergencyCorpusArchive(new Blob([unsafeZip]), {
+        storage, installId: `${label}-unsafe`, fflate: fixture.fflate,
+      }),
+      /path|traversal|invalid/i,
+      `${label}: traversal ZIP entry was accepted`,
+    );
+  }
+});
+
+test('Emergency corpus HTTP download pauses and resumes with a validated byte range', async () => {
+  const fixture = await createEmergencyCorpusZipFixture(OfflineRagCh);
+  const storage = createMemoryEmergencyCorpusStorage();
+  const store = createMemoryEmergencyCorpusStore();
+  const pauseController = new AbortController();
+  let firstFetches = 0;
+  const chunkedStream = (bytes, chunkSize) => new ReadableStream({
+    pull(controller) {
+      const offset = this.offset || 0;
+      if (offset >= bytes.byteLength) { controller.close(); return; }
+      controller.enqueue(bytes.subarray(offset, Math.min(bytes.byteLength, offset + chunkSize)));
+      this.offset = offset + chunkSize;
+    },
+  });
+  const firstFetch = async (_url, options) => {
+    firstFetches += 1;
+    assert.equal(options.headers, undefined, 'initial corpus request unexpectedly used Range');
+    return new Response(chunkedStream(fixture.zipBytes, 64), {
+      status: 200,
+      headers: { 'content-length': String(fixture.zipBytes.byteLength), etag: '"fixture-v1"' },
+    });
+  };
+  const paused = await EmergencyCorpusCh.downloadEmergencyCorpus(fixture.descriptor, {
+    store, storage, fetchImpl: firstFetch, signal: pauseController.signal,
+    onProgress(record) {
+      if (record.staging?.bytesReceived >= 64 && !pauseController.signal.aborted) pauseController.abort();
+    },
+  });
+  assert.equal(firstFetches, 1);
+  assert.equal(paused.status, 'paused');
+  const partialBytes = paused.staging.bytesReceived;
+  assert.ok(partialBytes > 0 && partialBytes < fixture.zipBytes.byteLength,
+    'paused corpus download did not retain a bounded partial');
+  let resumedRange = '';
+  const resumed = await EmergencyCorpusCh.downloadEmergencyCorpus(fixture.descriptor, {
+    store,
+    storage,
+    fetchImpl: async (_url, options) => {
+      resumedRange = options.headers?.Range || '';
+      const start = Number(resumedRange.match(/^bytes=([0-9]+)-$/)?.[1]);
+      assert.equal(options.headers?.['If-Range'], '"fixture-v1"');
+      const remaining = fixture.zipBytes.subarray(start);
+      return new Response(chunkedStream(remaining, 71), {
+        status: 206,
+        headers: {
+          'content-length': String(remaining.byteLength),
+          'content-range': `bytes ${start}-${fixture.zipBytes.byteLength - 1}/${fixture.zipBytes.byteLength}`,
+          etag: '"fixture-v1"',
+        },
+      });
+    },
+  });
+  assert.equal(resumedRange, `bytes=${partialBytes}-`);
+  assert.equal(resumed.status, 'downloaded');
+  assert.equal(await EmergencyCorpusCh.hashBlobSha256(
+    await storage.openArchive(resumed.staging.archiveKey),
+  ), fixture.descriptor.archiveSha256);
+});
+
+test('Emergency corpus re-verifies complete staged archives and recovers from checksum failures', async () => {
+  const fixture = await createEmergencyCorpusZipFixture(OfflineRagCh);
+  for (const [label, runtime] of [['chrome', EmergencyCorpusCh], ['firefox', EmergencyCorpusFx]]) {
+    const archiveKey = `${fixture.descriptor.version}-${fixture.descriptor.archiveSha256.slice(0, 20)}`;
+    const stagedRecord = {
+      id: 'emergency-box-text',
+      status: 'paused',
+      error: '',
+      staging: {
+        archiveKey,
+        archiveSha256: fixture.descriptor.archiveSha256,
+        version: fixture.descriptor.version,
+        url: fixture.descriptor.url,
+        bytesReceived: fixture.zipBytes.byteLength,
+        totalBytes: fixture.zipBytes.byteLength,
+        ifRangeValidator: '',
+        phase: 'downloading',
+      },
+    };
+
+    const validStorage = createMemoryEmergencyCorpusStorage();
+    validStorage.archives.set(archiveKey, new Blob([fixture.zipBytes]));
+    let validFetches = 0;
+    const verified = await runtime.downloadEmergencyCorpus(fixture.descriptor, {
+      store: createMemoryEmergencyCorpusStore(stagedRecord),
+      storage: validStorage,
+      fetchImpl: async () => { validFetches += 1; throw new Error('complete archive must not be fetched again'); },
+    });
+    assert.equal(verified.status, 'downloaded', `${label}: a complete valid archive was not re-verified`);
+    assert.equal(validFetches, 0, `${label}: a complete valid archive was unnecessarily downloaded again`);
+
+    const corruptBytes = fixture.zipBytes.slice();
+    corruptBytes[0] ^= 0xff;
+    const corruptStorage = createMemoryEmergencyCorpusStorage();
+    corruptStorage.archives.set(archiveKey, new Blob([corruptBytes]));
+    const corruptStore = createMemoryEmergencyCorpusStore(stagedRecord);
+    await assert.rejects(
+      runtime.downloadEmergencyCorpus(fixture.descriptor, {
+        store: corruptStore,
+        storage: corruptStorage,
+        fetchImpl: async () => { throw new Error('complete archive must be verified before fetching'); },
+      }),
+      /checksum mismatch/,
+      `${label}: corrupt complete archive was accepted`,
+    );
+    assert.equal(corruptStore.snapshot()?.status, 'error',
+      `${label}: corrupt complete archive remained stuck in verifying`);
+    assert.equal(corruptStore.snapshot()?.staging?.phase, 'error',
+      `${label}: corrupt complete archive retained a non-recoverable phase`);
+    assert.equal(corruptStorage.archives.has(archiveKey), false,
+      `${label}: corrupt complete archive was not deleted for a clean retry`);
+  }
+});
+
+test('Emergency corpus activation is transactional and failed indexes preserve the previous corpus', async () => {
+  const fixture = await createEmergencyCorpusZipFixture(OfflineRagCh);
+  for (const [label, runtime] of [['chrome', EmergencyCorpusCh], ['firefox', EmergencyCorpusFx]]) {
+    const storage = createMemoryEmergencyCorpusStorage();
+    const archiveKey = `${fixture.descriptor.version}-${fixture.descriptor.archiveSha256.slice(0, 20)}`;
+    storage.archives.set(archiveKey, new Blob([fixture.zipBytes]));
+    storage.installs.set('previous-install', new Map([['index/emergency.sqlite3', new Uint8Array([1])]]));
+    const previousActive = {
+      installId: 'previous-install', version: '2026.07.01', contentSha256: 'b'.repeat(64),
+      archiveSha256: 'c'.repeat(64), documentCount: 1, passageCount: 1,
+      indexBytes: 1, indexPath: 'index/emergency.sqlite3', activatedAt: 1,
+    };
+    const initial = {
+      id: 'emergency-box-text', status: 'downloaded', active: previousActive, error: '',
+      staging: {
+        archiveKey, archiveSha256: fixture.descriptor.archiveSha256,
+        version: fixture.descriptor.version, url: fixture.descriptor.url,
+        bytesReceived: fixture.zipBytes.byteLength, totalBytes: fixture.zipBytes.byteLength,
+        ifRangeValidator: '"fixture-v1"', phase: 'downloaded', verifiedAt: Date.now(),
+      },
+    };
+    const failedStore = createMemoryEmergencyCorpusStore(initial);
+    await assert.rejects(
+      runtime.installEmergencyCorpus(fixture.descriptor, {
+        store: failedStore, storage, fflate: fixture.fflate, installId: `${label}-failed`,
+        buildIndex: async () => { throw new Error('simulated index failure'); },
+      }),
+      /simulated index failure/,
+    );
+    assert.deepEqual(failedStore.snapshot().active, previousActive,
+      `${label}: failed update replaced the previous active corpus`);
+    assert.ok(storage.installs.has('previous-install'), `${label}: failed update deleted the previous corpus`);
+    assert.equal(storage.installs.has(`${label}-failed`), false, `${label}: failed staging install was not cleaned`);
+    assert.ok(storage.archives.has(archiveKey), `${label}: retry archive was discarded after index failure`);
+
+    const succeededStore = createMemoryEmergencyCorpusStore(initial);
+    const installed = await runtime.installEmergencyCorpus(fixture.descriptor, {
+      store: succeededStore, storage, fflate: fixture.fflate, installId: `${label}-ready`,
+      buildIndex: async ({ installId, indexPath }) => {
+        const indexBytes = new Uint8Array([0x53, 0x51, 0x4c, 0x69, 0x74, 0x65]);
+        return { passageCount: 3, indexBytes: indexBytes.byteLength, indexPath };
+      },
+    });
+    assert.equal(installed.status, 'ready');
+    assert.equal(installed.active.installId, `${label}-ready`);
+    assert.equal(installed.active.contentSha256, fixture.manifest.contentSha256);
+    assert.equal(storage.installs.has('previous-install'), false,
+      `${label}: replaced corpus was not cleaned after successful pointer activation`);
+    assert.equal(storage.archives.has(archiveKey), false,
+      `${label}: verified archive was not cleaned after activation`);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/emergency-corpus.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/emergency-corpus.js'), 'utf8'),
+    'Chrome and Firefox Emergency corpus implementations diverged',
+  );
+});
+
+test('Emergency corpus recovery and cancellation prune orphaned staging index paths and bypass active download locks', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyCorpusCh], ['firefox', EmergencyCorpusFx]]) {
+    const storage = createMemoryEmergencyCorpusStorage();
+    storage.installs.set('orphaned-install', new Map([['doc1.txt', new Uint8Array([1])]]));
+    const staging = {
+      archiveKey: 'corpus-key',
+      archiveSha256: 'a'.repeat(64),
+      version: '2026.08.17',
+      url: 'https://example.invalid/emergency.zip',
+      bytesReceived: 100,
+      totalBytes: 200,
+      phase: 'indexing',
+      installId: 'orphaned-install',
+      indexPath: 'sqlite/orphaned-install.sqlite3',
+    };
+    const store = createMemoryEmergencyCorpusStore({
+      id: 'emergency-box-text',
+      status: 'indexing',
+      active: null,
+      staging,
+      error: '',
+    });
+    const deletedIndexPaths = [];
+    const recovered = await runtime.recoverEmergencyCorpusLifecycle({
+      store,
+      storage,
+      deleteIndex: async path => { deletedIndexPaths.push(path); },
+    });
+    assert.equal(recovered.status, 'paused', `${label}: interrupted indexing was not recovered to paused`);
+    assert.deepEqual(deletedIndexPaths, ['sqlite/orphaned-install.sqlite3'],
+      `${label}: orphaned staging index path was not deleted during recovery`);
+    assert.equal(storage.installs.has('orphaned-install'), false,
+      `${label}: orphaned staging install directory was not deleted`);
+    assert.equal(recovered.staging?.indexPath, null,
+      `${label}: recovered staging retained stale indexPath`);
+
+    // Non-blocking lock handling when active download is running in another tab
+    const lockedStore = createMemoryEmergencyCorpusStore({
+      id: 'emergency-box-text',
+      status: 'downloading',
+      active: null,
+      staging: { ...staging, phase: 'downloading' },
+      error: '',
+    });
+    const mockBusyLockManager = {
+      request: async (name, options, callback) => {
+        if (options?.ifAvailable) return await callback(null);
+        return await callback({});
+      },
+    };
+    const lockBypassed = await runtime.recoverEmergencyCorpusLifecycle({
+      store: lockedStore,
+      storage,
+      lockManager: mockBusyLockManager,
+    });
+    assert.equal(lockBypassed.status, 'downloading',
+      `${label}: active download lock was not cleanly bypassed without blocking`);
+
+    // Cancellation prunes staging index
+    const cancelStore = createMemoryEmergencyCorpusStore({
+      id: 'emergency-box-text',
+      status: 'extracting',
+      active: null,
+      staging: { ...staging, installId: 'cancel-install', indexPath: 'sqlite/cancel-install.sqlite3' },
+      error: '',
+    });
+    const cancelDeletedPaths = [];
+    const canceled = await runtime.cancelEmergencyCorpusInstall({
+      store: cancelStore,
+      storage,
+      deleteIndex: async path => { cancelDeletedPaths.push(path); },
+    });
+    assert.equal(canceled.status, 'not-installed', `${label}: canceled install did not revert to not-installed`);
+    assert.deepEqual(cancelDeletedPaths, ['sqlite/cancel-install.sqlite3'],
+      `${label}: staging index path was not deleted during installation cancellation`);
+  }
+});
+
+test('Emergency download controller returns before the corpus transfer finishes', async () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const { createEmergencyDownloadController } = await import(pathToFileURL(path.join(
+      ROOT, `src/${browser}/src/agent/emergency-download-controller.js`,
+    )).href);
+    let releaseDownload;
+    const held = new Promise(resolve => { releaseDownload = resolve; });
+    let downloadCalls = 0;
+    const controller = createEmergencyDownloadController({
+      requireApocalypse: false,
+      corpusDescriptor: {
+        url: 'https://example.test/emergency.zip',
+        downloadBytes: 100,
+        archiveSha256: 'a'.repeat(64),
+        version: 'test',
+      },
+      corpusStore: {
+        async get() { return { status: 'downloading', staging: { bytesReceived: 10, totalBytes: 100 } }; },
+        async put(record) { return record; },
+      },
+      corpusStorage: {},
+      resourceStore: { async list() { return []; }, async get() { return null; }, async put() {} },
+      resourceStorage: {},
+      indexClient: { async buildEmergencyIndex() { return {}; }, async deleteIndex() {} },
+      semanticReranker: {
+        snapshot() { return { status: 'unknown', loaded: 0, total: 0, progress: 0 }; },
+        async status() { return 'unknown'; },
+        async pause() { return { status: 'paused' }; },
+        async stop() { return { status: 'not-downloaded' }; },
+        async download() { return { status: 'ready' }; },
+      },
+      apocalypseStore: { async getConfig() { return { enabled: true }; } },
+      recoverCorpus: async () => ({ status: 'not-installed' }),
+      cancelCorpus: async () => ({ status: 'not-installed' }),
+      deleteCorpus: async () => true,
+      downloadCorpus: async () => {
+        downloadCalls += 1;
+        await held;
+        return { status: 'ready' };
+      },
+      broadcast() {},
+    });
+    const started = await controller.handle('start_corpus');
+    assert.equal(started.ok, true, `${browser}: start_corpus failed`);
+    assert.equal(started.started, true, `${browser}: start_corpus did not begin in the background`);
+    assert.equal(downloadCalls, 1, `${browser}: corpus download was not started`);
+    assert.notEqual(started.corpus?.status, 'ready', `${browser}: start_corpus waited for the archive to finish`);
+    const duplicate = await controller.handle('start_corpus');
+    assert.equal(duplicate.started, false, `${browser}: a second start_corpus launched another transfer`);
+    releaseDownload();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+});
+
+test('Emergency download controller starts a resource after an in-flight abort settles', async () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const { createEmergencyDownloadController } = await import(pathToFileURL(path.join(
+      ROOT, `src/${browser}/src/agent/emergency-download-controller.js`,
+    )).href);
+    let downloadCalls = 0;
+    const controller = createEmergencyDownloadController({
+      requireApocalypse: false,
+      corpusDescriptor: null,
+      corpusStore: { async get() { return null; }, async put(record) { return record; } },
+      corpusStorage: {},
+      resourceStore: {
+        async list() { return []; },
+        async get() { return { id: 'pdf-1', status: 'paused' }; },
+        async put() {},
+      },
+      resourceStorage: {},
+      indexClient: { async buildEmergencyIndex() { return {}; }, async deleteIndex() {} },
+      semanticReranker: {
+        snapshot() { return { status: 'unknown', loaded: 0, total: 0, progress: 0 }; },
+        async status() { return 'unknown'; },
+        async pause() { return { status: 'paused' }; },
+        async stop() { return { status: 'not-downloaded' }; },
+        async download() { return { status: 'ready' }; },
+      },
+      apocalypseStore: { async getConfig() { return { enabled: true }; } },
+      recoverCorpus: async () => null,
+      cancelCorpus: async () => null,
+      deleteCorpus: async () => true,
+      downloadResource: async (resource, { signal }) => {
+        downloadCalls += 1;
+        await new Promise((resolve, reject) => {
+          const fail = () => reject(signal.reason || new Error('Emergency download paused.'));
+          if (signal.aborted) {
+            fail();
+            return;
+          }
+          signal.addEventListener('abort', fail, { once: true });
+          if (downloadCalls > 1) resolve();
+        });
+        return { id: resource.id, status: 'ready' };
+      },
+      broadcast() {},
+    });
+    const resource = { id: 'pdf-1', url: 'https://example.test/a.pdf', title: 'A' };
+    const started = await controller.handle('start_resource', { resource });
+    assert.equal(started.ok, true, `${browser}: first PDF start failed`);
+    assert.equal(started.started, true, `${browser}: first PDF start did not begin`);
+    const pausePromise = controller.handle('pause_resource', { id: 'pdf-1' });
+    const resume = await controller.handle('start_resource', { resource });
+    await pausePromise;
+    assert.equal(resume.started, true, `${browser}: resume was dropped while pause was settling`);
+    assert.equal(downloadCalls, 2, `${browser}: resume did not start a second transfer after abort`);
+  }
+});
+
+
 test('Wikipedia tools use installed Apocalypse Mode archives only after online failure', async () => {
   for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
     const tool = {
@@ -26318,6 +28310,43 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
       runtime.localWikipediaSearchQuery('tell me more about sokullu mehmed pasha when was he born?'),
       'sokullu mehmed pasha',
       `${label}: compound biography question was not reduced to the article subject`,
+    );
+    assert.equal(runtime.localWikipediaSearchQuery('i have asthma what can i do to help?'), 'asthma',
+      `${label}: first-person health question kept stopwords instead of the condition`);
+    assert.match(
+      runtime.localWikipediaSearchQuery(
+        'i have asthma, what should i do using natural remedies to fix it',
+        { fallbackTopic: 'ottoman empire' },
+      ),
+      /asthma/i,
+      `${label}: leftover it reused the prior encyclopedia topic instead of Asthma`,
+    );
+    assert.doesNotMatch(
+      runtime.localWikipediaSearchQuery(
+        'i have asthma, what should i do using natural remedies to fix it',
+        { fallbackTopic: 'ottoman empire' },
+      ),
+      /ottoman/i,
+      `${label}: a new health question stayed pinned to the previous Wikipedia subject`,
+    );
+    assert.equal(runtime.localWikipediaSearchQuery('my teeth are decaying what can i do?'), 'teeth decaying',
+      `${label}: dental how-to kept leftover function words`);
+    assert.equal(runtime.localWikipediaSearchQuery('Who was Ada Lovelace?'), 'Ada Lovelace',
+      `${label}: multilingual stopwords deleted the English name Ada`);
+    assert.equal(runtime.localWikipediaSearchQuery('tengo asma qué puedo hacer?'), 'asma',
+      `${label}: Spanish health question was not reduced to its topic`);
+    assert.match(runtime.localWikipediaSearchQuery("qu'est-ce que je peux faire pour l'asthme ?"), /asthme/i,
+      `${label}: French health question dropped the condition after stripping que/je`);
+    assert.doesNotMatch(runtime.localWikipediaSearchQuery("qu'est-ce que je peux faire pour l'asthme ?"), /\b(?:que|je|ce)\b/i,
+      `${label}: French stopwords remained in the Wikipedia search topic`);
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords([
+        { title: 'What Have I Done to Deserve This?', excerpt: 'A Pet Shop Boys song.' },
+        { title: 'I Can Help', excerpt: 'A song by Billy Swan.' },
+        { title: 'Asthma', excerpt: 'Asthma is a long-term inflammatory disease of the airways.' },
+      ], 'i have asthma what can i do to help?').map(record => record.title),
+      ['Asthma'],
+      `${label}: leftover stopwords ranked song titles above Asthma`,
     );
     let limit = 0;
     let searchQuery = '';
@@ -26384,10 +28413,18 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: local Wikipedia RAG passages are not marked as untrusted data');
   assert.equal((agentSource.match(/_applyStandaloneWikipediaRag\(enriched, userMessage, runOptions,/g) || []).length, 2,
     'chrome: local Wikipedia RAG is not applied to both standalone message entry paths');
-  assert.equal((agentSource.match(/const standaloneWikipediaFailure = this\._standaloneWikipediaFailureMessage\(localWikipediaRag, runOptions\)/g) || []).length, 2,
-    'chrome: a factual Wikipedia failure does not fail closed on both agent entry paths');
+  assert.equal((agentSource.match(/let standaloneGroundingGap = this\._standaloneOfflineGroundingGap\(localWikipediaRag, runOptions\)/g) || []).length, 2,
+    'chrome: a retrieval miss does not reach the unverified-answer fallback on both agent entry paths');
+  assert.equal((agentSource.match(/this\._appendStandaloneUngroundedPolicy\(enriched, standaloneGroundingGap\)/g) || []).length, 4,
+    'chrome: the ungrounded answer policy is not attached on both entry gates and both model-search retries');
+  assert.equal((agentSource.match(/this\._withStandaloneUnverifiedNotice\(/g) || []).length, 2,
+    'chrome: the unverified label is not applied on both agent entry paths');
   assert.equal((agentSource.match(/standaloneIncompleteAnswerRecoveryAttempted = true;/g) || []).length, 2,
     'chrome: incomplete local answers do not receive one bounded recovery on both agent entry paths');
+  assert.equal((agentSource.match(/standaloneWebgpuBudgetRecoveryAttempted = true;/g) || []).length, 2,
+    'chrome: exhausted WebGPU reasoning budgets do not retry once with a shorter prompt');
+  assert.match(agentSource, /const STANDALONE_WEBGPU_RAG_GENERATION_TOKENS = 2048/,
+    'chrome: standalone WebGPU RAG still reserves the old 512-token generation budget');
 });
 
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
@@ -26410,6 +28447,39 @@ test('Apocalypse archive search reports disabled, missing, and not-ready states 
   }
 });
 
+test('archive passages come from the densest query window, not the first term hit', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const lead = 'Water is a chemical substance found across the planet. '.repeat(30);
+    const filler = 'Rivers and lakes cover much of the surface in many regions. '.repeat(80);
+    const answer = 'Chlorine dosing for drinking water requires 0.2 to 0.5 mg per litre of free residual chlorine. ';
+    const tail = 'Unrelated closing material about geography and climate history. '.repeat(60);
+    const article = lead + filler + answer + tail;
+
+    assert.match(
+      runtime.relevantPassage(article, 'chlorine dosing drinking water'),
+      /0\.2 to 0\.5 mg per litre/,
+      `${label}: a deep answer was passed over for the first place a query word appeared`,
+    );
+    assert.ok(
+      runtime.relevantPassage(article, 'water').startsWith('Water is a chemical'),
+      `${label}: a definitional query stopped favouring the lead paragraph`,
+    );
+    assert.ok(
+      runtime.relevantPassage(article, 'zzzznotpresent').startsWith('Water is a chemical'),
+      `${label}: a query with no archive terms did not fall back to the article opening`,
+    );
+    assert.equal(
+      runtime.relevantPassage('a short article', 'short'),
+      'a short article',
+      `${label}: a passage shorter than the window was rewritten`,
+    );
+    const windowed = runtime.relevantPassage(article, 'chlorine dosing drinking water');
+    assert.ok(windowed.length <= 2600, `${label}: the selected passage overran the excerpt window`);
+    assert.doesNotMatch(windowed.replace(/^…/, ''), /^[a-z]{2,} /,
+      `${label}: the excerpt opened mid-sentence instead of snapping to a boundary`);
+  }
+});
+
 test('standalone WebGPU uses a compact tool-free chat profile with no browser context', async () => {
   const agent = new AgentCh({
     getActive() { throw new Error('standalone prompt must not consult the globally selected provider'); },
@@ -26420,6 +28490,8 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   assert.match(prompt, /private on-device chat assistant/);
   assert.match(prompt, /no browser, page, network, file, API, skill, or tool access/);
   assert.match(prompt, /Offline Wikipedia/);
+  assert.match(prompt, /Emergency Box/);
+  assert.match(prompt, /never relabel one as the other/);
   assert.ok(prompt.length < 1400, `standalone WebGPU system prompt is unexpectedly large (${prompt.length} chars)`);
   assert.doesNotMatch(prompt, /cookie|paywall|click_ax|get_accessibility_tree|CAPTCHA|User profile/i);
   assert.match(
@@ -26498,11 +28570,290 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     { status: 'matched', matchCount: 1, resolvedFromHistory: true },
     'pronoun follow-up was not grounded in the prior subject',
   );
-  assert.match(
-    agent._standaloneWikipediaFailureMessage({ attempted: true, status: 'no_match' }, { standaloneChat: true, providerId: 'webgpu' }),
-    /will not guess/,
-    'a factual no-match did not fail closed',
+  let entitySources = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'Who is Sokullu Mehmed Pasha?' },
+    'Who is Sokullu Mehmed Pasha?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(_query, options) {
+          entitySources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
   );
+  assert.deepEqual(entitySources, ['wikipedia'],
+    'generic encyclopedic query unnecessarily scanned the Emergency corpus');
+  let healthSources = null;
+  let healthSearchQuery = '';
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'i have asthma what can i do to help?' },
+    'i have asthma what can i do to help?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(query, options) {
+          healthSearchQuery = query;
+          healthSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'not_ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(healthSearchQuery, 'asthma',
+    'first-person asthma question searched leftover stopwords instead of Asthma');
+  assert.deepEqual(healthSources, ['wikipedia', 'emergency-box'],
+    'personal health question did not include the Emergency Box pack');
+  let followOnHealthQuery = '';
+  let followOnHealthSources = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'i have asthma, what should i do using natural remedies to fix it' },
+    'i have asthma, what should i do using natural remedies to fix it',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [
+        { role: 'user', content: 'who founded ottoman empire?', webbrainStandaloneChat: true },
+        { role: 'assistant', content: 'Osman I founded the Ottoman Empire.' },
+      ],
+      offlineRetrievalService: {
+        async search(query, options) {
+          followOnHealthQuery = query;
+          followOnHealthSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.match(followOnHealthQuery, /asthma/i,
+    'a new health question after an encyclopedia turn reused the Ottoman search topic');
+  assert.doesNotMatch(followOnHealthQuery, /ottoman/i,
+    'a new health question after an encyclopedia turn stayed on Wikipedia-only Ottoman lookup');
+  assert.deepEqual(followOnHealthSources, ['wikipedia', 'emergency-box'],
+    'a new health question after an encyclopedia turn did not switch into Emergency Box');
+  let dentalSources = null;
+  let dentalSearchQuery = '';
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'my teeth are decaying what can i do?' },
+    'my teeth are decaying what can i do?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(query, options) {
+          dentalSearchQuery = query;
+          dentalSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'not_ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(dentalSearchQuery, 'teeth decaying',
+    'dental how-to searched leftover stopwords instead of the condition');
+  assert.deepEqual(dentalSources, ['wikipedia', 'emergency-box'],
+    'dental how-to did not include the Emergency Box pack');
+
+  // Multilingual emergency query (Turkish) activates emergency-box
+  let multilingualSources = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'yangın durumunda ne yapılmalı?' },
+    'yangın durumunda ne yapılmalı?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(_query, options) {
+          multilingualSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(multilingualSources, ['emergency-box'], 'multilingual emergency query was not routed to emergency-box');
+  const offlineEnriched = { role: 'user', content: 'How should I keep an airway open?' };
+  let offlineReferences = [];
+  const multiSourceRag = await agent._applyStandaloneWikipediaRag(
+    offlineEnriched,
+    'How should I keep an airway open?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['emergency-box'] },
+    {
+      offlineRetrievalService: {
+        async search(_query, options) {
+          assert.deepEqual(options.sources, ['emergency-box'], 'agent lost the selected offline source filter');
+          return {
+            hits: [{
+              sourceKind: 'emergency-box', sourceId: 'corpus-v1', documentId: 'first-aid',
+              passageId: 'first-aid:passage-one', title: 'First Aid', language: 'eng',
+              collection: 'health', locator: 'Airway',
+              retrievalMode: 'fts5', source: 'Emergency Box', license: 'CC BY 4.0',
+              text: 'Keep the airway open and monitor breathing.', passageSha256: 'a'.repeat(64),
+              lexicalRank: 1,
+              readerUrl: OfflineRagCh.createEmergencyReaderUrl('first-aid', 'first-aid:passage-one'),
+            }],
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {}, rankingMode: 'lexical-fallback',
+          };
+        },
+      },
+      onReferences: references => { offlineReferences = references; },
+    },
+  );
+  assert.equal(multiSourceRag.status, 'matched', 'multi-source evidence did not reach standalone chat');
+  assert.equal(multiSourceRag.rankingMode, 'lexical-fallback', 'lexical fallback was not disclosed');
+  assert.match(JSON.stringify(offlineEnriched.content), /OFFLINE EVIDENCE POLICY/,
+    'trusted offline evidence policy was not added to the prompt');
+  assert.match(JSON.stringify(offlineEnriched.content), /offline_rag_evidence/,
+    'retrieved evidence was not wrapped in the untrusted-content boundary');
+  assert.match(JSON.stringify(offlineEnriched.content), /\[WB-E-[A-Z0-9]+\]/,
+    'stable Emergency Box citation token was not supplied to the local model');
+  assert.equal(offlineReferences[0]?.sourceKind, 'emergency-box',
+    'structured Emergency Box citation metadata was not emitted');
+  assert.equal(
+    offlineReferences[0]?.url,
+    '/src/ui/emergency-text.html?document=first-aid&passage=first-aid%3Apassage-one',
+    'Emergency Box citation did not retain a sidepanel-safe local reader target',
+  );
+  assert.match(String(offlineEnriched.content[1]?.text || ''), /"retrievalMode":"fts5"[\s\S]*?"source":"Emergency Box"[\s\S]*?"license":"CC BY 4\.0"/,
+    'offline evidence prompt omitted retrieval mode, source, or license attribution');
+  const multiSourceAttributed = agent._withStandaloneWikipediaAttribution(
+    'Keep the airway open. ' + offlineReferences[0].citationToken,
+    offlineReferences,
+    { standaloneChat: true, providerId: 'webgpu' },
+  );
+  assert.match(multiSourceAttributed, /Emergency Box — First Aid \(Airway\)/,
+    'Emergency Box attribution did not name the local source and locator');
+  assert.match(multiSourceAttributed, /\[Open source\]\(\/src\/ui\/emergency-text\.html\?/,
+    'Emergency Box attribution did not render a clickable local reader link');
+  const attributedWithPdf = agent._withStandaloneWikipediaAttribution(
+    'Keep the airway open. ' + offlineReferences[0].citationToken,
+    [{
+      ...offlineReferences[0],
+      pdfResourceId: 'health-ifrc-first-aid-guidelines-2020',
+      pdfUrl: '/src/ui/emergency-pdf.html?id=health-ifrc-first-aid-guidelines-2020',
+    }],
+    { standaloneChat: true, providerId: 'webgpu' },
+  );
+  assert.match(
+    attributedWithPdf,
+    /\[Open source\]\(\/src\/ui\/emergency-text\.html\?.*\) · \[Open PDF\]\(\/src\/ui\/emergency-pdf\.html\?id=health-ifrc-first-aid-guidelines-2020\)/,
+    'Emergency Box attribution did not add a clickable installed PDF link',
+  );
+  assert.match(
+    sanitizeMarkdownLinks(attributedWithPdf),
+    /<a href="\/src\/ui\/emergency-pdf\.html\?id=health-ifrc-first-aid-guidelines-2020"/,
+    'the sidepanel sanitizer did not preserve the installed PDF as a clickable link',
+  );
+  assert.match(sanitizeMarkdownLinks(multiSourceAttributed), /<a href="\/src\/ui\/emergency-text\.html\?[^\"]+"/,
+    'the sidepanel sanitizer did not preserve the local reader as a clickable link');
+  const standaloneWebgpuOptions = { standaloneChat: true, providerId: 'webgpu' };
+  const noMatchGap = agent._standaloneOfflineGroundingGap({ attempted: true, status: 'no_match' }, standaloneWebgpuOptions);
+  assert.equal(noMatchGap?.health, false, 'a plain factual no-match was treated as a health question');
+  assert.match(noMatchGap.reason, /No matching entry/, 'a factual no-match did not explain the missing archive entry');
+  assert.equal(
+    agent._standaloneOfflineGroundingGap({ attempted: true, status: 'matched' }, standaloneWebgpuOptions),
+    null,
+    'a matched retrieval was mislabeled as a grounding gap',
+  );
+  assert.equal(
+    agent._standaloneOfflineGroundingGap({ attempted: true, status: 'no_match' }, { standaloneChat: true, providerId: 'openai' }),
+    null,
+    'the unverified fallback escaped the standalone WebGPU profile',
+  );
+  const notice = agent._withStandaloneUnverifiedNotice('Boil water for one minute.', noMatchGap, standaloneWebgpuOptions);
+  assert.match(notice, /^\*\*Unverified answer, not from your offline sources\.\*\*/, 'the unverified answer was not labeled');
+  assert.match(notice, /Boil water for one minute\./, 'the unverified label discarded the model answer');
+  assert.doesNotMatch(notice, /will not guess/, 'the refusal wording survived the unverified fallback');
+  const healthGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'no_match', healthContext: true, multiSource: true },
+    standaloneWebgpuOptions,
+  );
+  assert.equal(healthGap.health, true, 'a health question did not carry the stronger warning flag');
+  assert.match(
+    agent._withStandaloneUnverifiedNotice('Apply firm pressure.', healthGap, standaloneWebgpuOptions),
+    /not checked medical guidance.*trained help/s,
+    'a health question did not get the stronger unverified warning',
+  );
+  assert.equal(
+    agent._withStandaloneUnverifiedNotice('Anything.', null, standaloneWebgpuOptions),
+    'Anything.',
+    'a grounded answer was labeled unverified',
+  );
+  const ungroundedEnriched = { content: [{ type: 'text', text: 'question' }] };
+  agent._appendStandaloneUngroundedPolicy(ungroundedEnriched, healthGap);
+  const ungroundedPolicy = ungroundedEnriched.content.at(-1);
+  assert.equal(ungroundedPolicy.webbrainEphemeralLocalWikipedia, true,
+    'the ungrounded answer policy would persist into stored history');
+  assert.match(ungroundedPolicy.text, /Do not emit citation tokens/,
+    'the ungrounded answer policy did not forbid invented citations');
+  assert.match(ungroundedPolicy.text, /health or emergency question/,
+    'the ungrounded answer policy dropped the health caution for a health question');
+  const turkishGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'not_installed', multiSource: true },
+    { standaloneChat: true, providerId: 'webgpu', locale: 'tr' },
+  );
+  assert.equal(turkishGap.locale, 'tr', 'the grounding gap dropped the interface locale');
+  assert.match(turkishGap.reason, /Acil Durum Kutusu/,
+    'a Turkish session got an English reason instead of the localized Emergency Box name');
+  const turkishNotice = agent._withStandaloneUnverifiedNotice(
+    'Suyu bir dakika kaynatın.',
+    turkishGap,
+    { standaloneChat: true, providerId: 'webgpu', locale: 'tr' },
+  );
+  assert.match(turkishNotice, /^\*\*Doğrulanmamış yanıt/, 'the unverified label stayed English in a Turkish session');
+  assert.doesNotMatch(turkishNotice, /Unverified answer/, 'the English label leaked into a localized notice');
+  assert.match(turkishNotice, /Suyu bir dakika kaynatın\./, 'the localized label discarded the model answer');
+  const unknownLocaleGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'no_match' },
+    { standaloneChat: true, providerId: 'webgpu', locale: 'xx' },
+  );
+  assert.match(unknownLocaleGap.reason, /No matching entry/, 'an unshipped locale did not fall back to English');
+  const unknownStatusGap = agent._standaloneOfflineGroundingGap(
+    { attempted: true, status: 'something-new' },
+    standaloneWebgpuOptions,
+  );
+  assert.equal(unknownStatusGap.status, 'no_match', 'an unmapped retrieval status did not collapse to a plain miss');
+  assert.ok(unknownStatusGap.reason, 'an unmapped retrieval status produced an empty reason');
+
+  const shippedLocales = LanguagesCh.map(language => language.code).filter(code => code !== 'en');
+  assert.deepEqual(
+    [...OfflineAnswerLocalesCh].sort(),
+    [...shippedLocales].sort(),
+    'the offline answer copy does not cover exactly the shipped interface locales',
+  );
+  for (const code of OfflineAnswerLocalesCh) {
+    for (const key of OfflineAnswerKeysCh) {
+      const value = getOfflineAnswerCopyCh(code)[key];
+      assert.ok(typeof value === 'string' && value.trim(), `${code}: offline answer copy is missing ${key}`);
+    }
+  }
+
+  assert.match(agent._standaloneIncompleteAnswerNudge(noMatchGap), /do not cite or name any source/,
+    'the mid-sentence recovery nudge still points an ungrounded turn at references');
+  assert.match(agent._standaloneIncompleteAnswerNudge(null), /use only the Offline Wikipedia references/,
+    'the mid-sentence recovery nudge dropped the grounded citation rule');
   assert.equal(
     agent._isClearlyIncompleteStandaloneAnswer('Based on Offline Wikipedia, Sokollu Mehmed Pasha was a', { standaloneChat: true, providerId: 'webgpu' }),
     true,
@@ -26596,7 +28947,7 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     archiveDate: '2026-07-17',
     url: 'https://en.wikipedia.org/wiki/Sokollu_Mehmed_Pasha',
   }], standaloneRun);
-  assert.match(attributed, /Offline Wikipedia — Sokollu Mehmed Pasha \(archive 2026-07-17\): https:\/\/en\.wikipedia\.org\/wiki\/Sokollu_Mehmed_Pasha/,
+  assert.match(attributed, /Offline Wikipedia — Sokollu Mehmed Pasha \(archive 2026-07-17\): \[Open source\]\(https:\/\/en\.wikipedia\.org\/wiki\/Sokollu_Mehmed_Pasha\)/,
     'standalone RAG answers must receive deterministic archive attribution');
   assert.deepEqual(
     agent._mergeStandaloneWikipediaReferences(
@@ -35466,7 +37817,7 @@ test('standalone WebGPU control uses a per-run provider without changing global 
     'the ordinary provider picker should lock while the WebGPU override is active');
   assert.match(panel, /standaloneWebgpuBtn\.disabled = !standaloneWebgpuEnabled/,
     'the nuclear control should be clickable whenever Apocalypse Mode is enabled');
-  assert.match(panel, /function standaloneWebgpuRunPayload\(\) \{\s*return isStandaloneWindow && standaloneWebgpuActive \? \{ providerId: 'webgpu' \} : \{\};/,
+  assert.match(panel, /function standaloneWebgpuRunPayload\(\) \{[\s\S]*?return isStandaloneWindow && standaloneWebgpuActive[\s\S]*?\? \{ providerId: 'webgpu', \.\.\.offlineRagRunPayload\(\) \}[\s\S]*?: \{\};/,
     'standalone WebGPU state is not carried as a run-scoped override');
   assert.match(background, /case 'get_providers': \{[\s\S]*?delete providers\.webgpu/,
     'WebGPU must never appear in the ordinary provider picker');
@@ -47750,7 +50101,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /function textDtypeKey\(dtype\)/);
   assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
-  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 512/);
+  assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
@@ -48288,7 +50639,7 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       temperature: 0.1,
       top_k: 50,
       repetition_penalty: 1.1,
-      max_new_tokens: 512,
+      max_new_tokens: 2048,
       tools: undefined,
       tokenizer_encode_kwargs: { preserve_thinking: false },
     }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');

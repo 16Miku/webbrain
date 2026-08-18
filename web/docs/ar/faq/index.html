@@ -102,6 +102,14 @@
     },
     {
       "@type": "Question",
+      "name": "What is the Emergency Box, and how does offline RAG work?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required. Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page. You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "ما النماذج التي يدعمها WebBrain؟",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -266,6 +274,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "لا. لا يرسل WebBrain افتراضيًا HTML الخام أو نسخة خامًا من DOM. يبدأ بعنوان URL وعنوان الصفحة وإرشادات الموقع المطابقة، ومع لقطة شاشة اختيارية لنافذة العرض عند تفعيل الرؤية. عندما تتطلب المهمة محتوى الصفحة، يقرأه WebBrain عند الحاجة على شكل شجرة وصول دلالية مختصرة أو نص مستخرج. تُرشَّح القراءات حسب الظهور عند الحاجة، وتُفرض عليها حدود للأحرف، وتُقسَّم النتائج الكبيرة إلى صفحات. الوصول إلى مصدر الصفحة الخام متاح فقط في وضع Dev."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does the offline RAG feature affect WebBrain's MIT license?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license. There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the licensing decision record for details."
       }
     },
     {
@@ -581,11 +597,15 @@
     <section class="faq-topic" id="topic-models" data-faq-topic>
       <header class="faq-topic-header">
         <h2>النماذج والإعداد المحلي</h2>
-        <span aria-label="7">7</span>
+        <span aria-label="8">8</span>
       </header>
       <details class="faq-question" id="offline" data-faq-item>
         <summary><span>هل يمكنني استخدام WebBrain بدون اتصال بالإنترنت بالكامل؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>نعم. المزوّد الافتراضي لـ WebBrain هو llama.cpp، الذي يُشغّل نموذج ذكاء اصطناعي محلي على حاسوبك. لا تحتاج إلى مفاتيح API، ولا إلى الإنترنت لتشغيل الذكاء الاصطناعي، ولا تغادر بياناتك جهازك أبدًا. نزّل نموذج GGUF، شغّل llama-server، وسيكون لديك وكيل تصفّح ذكي خاص بالكامل. يمكنك أيضًا استخدام Ollama عبر نقطة نهايته المتوافقة مع OpenAI.</p></div>
+      </details>
+      <details class="faq-question" id="emergency-box" data-faq-item>
+        <summary><span>What is the Emergency Box, and how does offline RAG work?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required.</p><p>Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page.</p><p>You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched.</p></div>
       </details>
       <details class="faq-question" id="models-supported" data-faq-item>
         <summary><span>ما النماذج التي يدعمها WebBrain؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -641,7 +661,7 @@
     <section class="faq-topic" id="topic-safety" data-faq-topic>
       <header class="faq-topic-header">
         <h2>الأمان والخصوصية</h2>
-        <span aria-label="7">7</span>
+        <span aria-label="8">8</span>
       </header>
       <details class="faq-question" id="safe" data-faq-item>
         <summary><span>هل WebBrain آمن للاستخدام؟ وهل يمكنه تعديل صفحات الويب؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -670,6 +690,10 @@
       <details class="faq-question" id="page-context" data-faq-item>
         <summary><span>هل يرسل WebBrain شجرة DOM كاملة إلى نموذج الذكاء الاصطناعي؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>لا. لا يرسل WebBrain افتراضيًا HTML الخام أو نسخة خامًا من DOM. يبدأ بعنوان URL وعنوان الصفحة وإرشادات الموقع المطابقة، ومع لقطة شاشة اختيارية لنافذة العرض عند تفعيل الرؤية.</p><p>عندما تتطلب المهمة محتوى الصفحة، يقرأه WebBrain عند الحاجة على شكل شجرة وصول دلالية مختصرة أو نص مستخرج. تُرشَّح القراءات حسب الظهور عند الحاجة، وتُفرض عليها حدود للأحرف، وتُقسَّم النتائج الكبيرة إلى صفحات. الوصول إلى مصدر الصفحة الخام متاح فقط في وضع Dev.</p></div>
+      </details>
+      <details class="faq-question" id="offline-licensing" data-faq-item>
+        <summary><span>Does the offline RAG feature affect WebBrain&#39;s MIT license?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license.</p><p>There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
       </details>
     </section>
     </main>

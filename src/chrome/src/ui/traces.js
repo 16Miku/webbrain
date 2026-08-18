@@ -295,8 +295,9 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
       ].filter(Boolean).join(' · ');
       const rag = ev.data?.localWikipediaRag;
       const ragDates = (Array.isArray(rag?.archiveDates) ? rag.archiveDates : []).slice(0, 3).join(', ');
+      const ragLabel = rag?.multiSource === true ? 'Offline RAG' : 'Wikipedia RAG';
       const ragDetails = rag
-        ? ` · Wikipedia RAG: ${rag.status || (rag.attempted ? 'attempted' : 'skipped')}${rag.attempted ? ` · ${Number(rag.matchCount) || 0} match${Number(rag.matchCount) === 1 ? '' : 'es'}` : ''}${ragDates ? ` · ${ragDates}` : ''}`
+        ? ` · ${ragLabel}: ${rag.status || (rag.attempted ? 'attempted' : 'skipped')}${rag.attempted ? ` · ${Number(rag.matchCount) || 0} match${Number(rag.matchCount) === 1 ? '' : 'es'}` : ''}${ragDates ? ` · ${ragDates}` : ''}`
         : '';
       return `
         <div class="event llm_request">

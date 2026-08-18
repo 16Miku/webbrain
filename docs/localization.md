@@ -181,3 +181,41 @@ Copy the locale file to `src/firefox/src/ui/locales/<code>.js` and update `src/f
 - `en.js` is the canonical source of truth. When adding a new key, always add it to `en.js` first.
 - After adding a key to `en.js`, add it to every other locale file. English values as placeholders are acceptable for initial commits.
 - Updated strings in `en.js` should be flagged for translators — there is no automated sync.
+
+### Agent-emitted copy
+
+Most user-facing strings come from `src/chrome/src/ui/locales/`, which the service
+worker cannot use: those dictionaries are DOM-scoped and loaded by `i18n.js` in a
+page context. Strings the agent itself writes into an answer live beside the agent
+instead.
+
+`src/chrome/src/agent/offline-answer-copy.js` holds the copy for the standalone
+Apocalypse Mode chat's unverified-answer caveat: the label, the two cautions
+(general and health), and the reason each offline source came up empty. It ships
+English plus the same 22 locales as the interface, and follows the same shape as
+`apocalypse-copy.mjs`: a canonical English map, a per-locale override map, and an
+accessor with English fallback.
+
+```js
+import { offlineAnswerText } from './offline-answer-copy.js';
+
+offlineAnswerText(runOptions.locale, 'oa.gap.wikipedia.not_installed');
+```
+
+Two rules for this file:
+
+- Product names are inlined per locale, matching the names already used in
+  `apocalypse-translations.mjs` and `emergency-translations.mjs`. Turkish says
+  "Acil Durum Kutusu", not "Emergency Box".
+- Model-facing text is not copy. The ungrounded answer policy and the mid-sentence
+  recovery nudge stay English in `agent.js`, because they instruct the model rather
+  than address the user.
+
+The caveat follows the interface locale. The model itself replies in the language
+of the request, so a user asking in Turkish from an English interface will see a
+Turkish answer under an English caveat. Interface locale is the soft fallback the
+response-language rules already describe, and it is deterministic; inferring the
+request language for the caveat alone would not be.
+
+This file is Chrome-only, like the standalone WebGPU path it serves. Firefox MV2
+has no on-device standalone chat, so it has no importer.

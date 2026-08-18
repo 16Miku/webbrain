@@ -130,6 +130,7 @@ const FAQ_KEYS = [
   'faq.cloud_sync',
   'faq.vs_frameworks',
   'faq.offline',
+  'faq.emergency_box',
   'faq.models_supported',
   'faq.recommended_model',
   'faq.webgpu_apocalypse',
@@ -151,6 +152,7 @@ const FAQ_KEYS = [
   'faq.cookies_paywalls',
   'faq.multilingual',
   'faq.page_context',
+  'faq.offline_licensing',
   'faq.token_conscious',
   'faq.contribute',
 ];
@@ -168,6 +170,7 @@ const FAQ_CATEGORY = {
   'faq.cloud_sync': 'cloud',
   'faq.token_conscious': 'cloud',
   'faq.offline': 'models',
+  'faq.emergency_box': 'models',
   'faq.models_supported': 'models',
   'faq.recommended_model': 'models',
   'faq.webgpu_apocalypse': 'models',
@@ -186,6 +189,7 @@ const FAQ_CATEGORY = {
   'faq.profile': 'safety',
   'faq.screenshot_redaction': 'safety',
   'faq.page_context': 'safety',
+  'faq.offline_licensing': 'safety',
 };
 
 const FAQ_PAGE_KEYS = [

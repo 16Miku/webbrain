@@ -9,7 +9,7 @@
     :root { --bg:#1a1a2e;--panel:#16213e;--panel2:#1e2746;--text:#e8e8e8;--muted:#a0a0b8;--border:rgba(255,255,255,.08);--accent:#6c63ff;--accent2:#5a52d5;--good:#4caf50;--warn:#ffc870;--bad:#f44336;--header-bg:rgba(26,26,46,.96);--stats-bg:rgba(22,33,62,.76);--link:#9e97ff;--good-link:#d5ffe6;--accent-soft:#a9a3ff;--teal:#60d3b2;color-scheme:dark; }
     :root[data-theme="light"] { --bg:#f7f1e6;--panel:#fffdf8;--panel2:#fdf6e0;--text:#2c1810;--muted:#6b5b47;--border:rgba(89,55,25,.15);--accent:#5b52e8;--accent2:#4a42c4;--good:#2d8866;--warn:#a85f00;--bad:#c5363c;--header-bg:rgba(247,241,230,.96);--stats-bg:rgba(255,253,248,.82);--link:#4a42c4;--good-link:#1f6f4a;--accent-soft:#4a42c4;--teal:#177f69;color-scheme:light; }
     * { box-sizing:border-box; }
-    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif; }
+    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--font-text, system-ui,-apple-system,sans-serif); }
     header { border-bottom:1px solid var(--border);padding:20px max(24px,calc((100vw - 1120px)/2));display:flex;align-items:center;gap:16px;position:sticky;top:0;background:var(--header-bg);z-index:2; }
     .apocalypse-icon { color:var(--warn);font-size:48px;line-height:1; }
     .header-copy { display:grid;gap:1px; }
@@ -24,7 +24,8 @@
     main { max-width:1120px;margin:24px auto;padding:0 24px 48px;display:grid;gap:18px; }
     .card { background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px; }
     .hero { display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center; }
-    .library-callout,.emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .library-callout,.emergency-callout-row { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .emergency-callout { display:grid;gap:14px; }
     .section-icon { width:36px;height:36px;display:grid;place-items:center;color:var(--good);border:1px solid rgba(85,199,133,.38);border-radius:9px;background:rgba(85,199,133,.09); }
     .section-icon svg { width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
     .button-link { display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 13px;border:1px solid rgba(85,199,133,.45);border-radius:8px;color:var(--good-link);background:rgba(85,199,133,.1);font-weight:700;text-decoration:none;white-space:nowrap; }
@@ -37,11 +38,12 @@
     .toggle input { width:42px;height:22px;accent-color:var(--accent); }
     #notice { min-height:21px;color:var(--muted); } #notice[data-kind=error] { color:var(--bad); } #notice[data-kind=success] { color:var(--good); }
     @media(max-width:860px){.header-stats .header-stat:last-child{display:none}}
-    @media(max-width:700px){header{align-items:flex-start;flex-wrap:wrap}.header-stats{width:100%;margin-inline-start:64px}.header-stat{flex:1}.hero,.library-callout,.emergency-callout{grid-template-columns:1fr}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start}}
+    @media(max-width:700px){header{align-items:flex-start;flex-wrap:wrap}.header-stats{width:100%;margin-inline-start:64px}.header-stat{flex:1}.hero,.library-callout,.emergency-callout-row{grid-template-columns:1fr}.library-callout .section-icon,.emergency-callout-row .section-icon{display:none}.button-link{justify-self:start}}
   </style>
   <link rel="stylesheet" href="apocalypse-kit.css">
   <link rel="stylesheet" href="apocalypse-comm.css">
   <link rel="stylesheet" href="download-tracker.css">
+  <link rel="stylesheet" href="offline-rag-readiness.css">
 </head>
 <body class="ap-page">
   <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div><div class="header-stats" data-i18n-aria-label="ap.metric.summary"><span class="header-stat"><strong id="installed-count">0</strong><small data-i18n="ap.metric.installed"></small></span><span class="header-stat"><strong id="archive-bytes">0 B</strong><small data-i18n="ap.metric.archive_bytes"></small></span><span class="header-stat"><strong id="storage-usage"></strong><small data-i18n="ap.metric.storage"></small></span></div></header>
@@ -50,15 +52,23 @@
       <div><h2 data-i18n="ap.hero.title"></h2><p class="muted" data-i18n="ap.hero.desc"></p><p class="warning" data-i18n="ap.hero.consent"></p></div>
       <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
     </section>
+
     <section id="wikipedia-library-callout" class="card library-callout" hidden>
       <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
       <div><h2 data-i18n="wl.title"></h2><p class="muted" data-i18n="wl.choose_desc"></p></div>
       <a id="wikipedia-library-link" class="button-link" href="wikipedia-library.html" data-i18n="st.display.apocalypse_mode.manage"></a>
     </section>
-    <section class="card emergency-callout">
-      <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
-      <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p></div>
-      <a class="button-link" href="emergency-box.html" target="_blank" rel="noopener" data-i18n="ap.emergency.open"></a>
+    <section id="emergency-box-callout" class="card emergency-callout">
+      <div class="emergency-callout-row">
+        <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
+        <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p></div>
+        <a class="button-link" href="emergency-box.html" target="_blank" rel="noopener" data-i18n="ap.emergency.open"></a>
+      </div>
+      <details id="offline-answer-engine" class="offline-answer-engine">
+        <summary data-i18n="eb.rag.eyebrow">Offline answer engine</summary>
+        <section id="offline-rag-readiness" class="offline-rag-readiness" aria-live="polite"></section>
+        <div id="rag-components" class="rag-components" aria-live="polite"></div>
+      </details>
     </section>
     <div id="notice" role="status" aria-live="polite"></div>
   </main>
