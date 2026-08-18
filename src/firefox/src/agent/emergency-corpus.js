@@ -208,6 +208,19 @@ function idbTransaction(transaction) {
   });
 }
 
+function isClosingIdbError(error) {
+  return error?.name === 'InvalidStateError'
+    || /database connection is closing|connection is closing|database is closed/i.test(String(error?.message || error || ''));
+}
+
+function bindIdbLifetime(database, reset) {
+  database.onversionchange = () => {
+    try { database.close(); } catch { /* already closing */ }
+    reset();
+  };
+  database.onclose = () => reset();
+}
+
 function safeKey(value, label = 'storage key') {
   const key = String(value || '').trim().toLowerCase();
   if (!SAFE_KEY_RE.test(key)) throw new Error(`Invalid Emergency Box ${label}.`);
@@ -296,6 +309,7 @@ export function validateEmergencyCorpusDescriptor(value) {
 
 export function createEmergencyCorpusStore(indexedDb = globalThis.indexedDB) {
   let databasePromise;
+  const reset = () => { databasePromise = null; };
   const open = () => {
     if (!indexedDb) return Promise.reject(new Error('IndexedDB is unavailable.'));
     if (databasePromise) return databasePromise;
@@ -307,32 +321,49 @@ export function createEmergencyCorpusStore(indexedDb = globalThis.indexedDB) {
           database.createObjectStore(EMERGENCY_CORPUS_STORE, { keyPath: 'id' });
         }
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        bindIdbLifetime(request.result, reset);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reset();
+        reject(request.error);
+      };
     });
     return databasePromise;
   };
+  const withDatabase = async fn => {
+    try {
+      return await fn(await open());
+    } catch (error) {
+      if (!isClosingIdbError(error)) throw error;
+      reset();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return await fn(await open());
+    }
+  };
   return Object.freeze({
     async get() {
-      const database = await open();
-      return await idbRequest(
+      return await withDatabase(database => idbRequest(
         database.transaction(EMERGENCY_CORPUS_STORE, 'readonly')
           .objectStore(EMERGENCY_CORPUS_STORE).get(EMERGENCY_CORPUS_ID),
-      );
+      ));
     },
     async put(record) {
       const normalized = baseRecord({ ...record, id: EMERGENCY_CORPUS_ID, updatedAt: Date.now() });
-      const database = await open();
-      const transaction = database.transaction(EMERGENCY_CORPUS_STORE, 'readwrite');
-      transaction.objectStore(EMERGENCY_CORPUS_STORE).put(normalized);
-      await idbTransaction(transaction);
+      await withDatabase(async database => {
+        const transaction = database.transaction(EMERGENCY_CORPUS_STORE, 'readwrite');
+        transaction.objectStore(EMERGENCY_CORPUS_STORE).put(normalized);
+        await idbTransaction(transaction);
+      });
       return normalized;
     },
     async delete() {
-      const database = await open();
-      const transaction = database.transaction(EMERGENCY_CORPUS_STORE, 'readwrite');
-      transaction.objectStore(EMERGENCY_CORPUS_STORE).delete(EMERGENCY_CORPUS_ID);
-      await idbTransaction(transaction);
+      await withDatabase(async database => {
+        const transaction = database.transaction(EMERGENCY_CORPUS_STORE, 'readwrite');
+        transaction.objectStore(EMERGENCY_CORPUS_STORE).delete(EMERGENCY_CORPUS_ID);
+        await idbTransaction(transaction);
+      });
     },
   });
 }

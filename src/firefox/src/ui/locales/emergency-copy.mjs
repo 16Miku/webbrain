@@ -130,7 +130,7 @@ const emergencyCopy = {
   'eb.openstax_updated': 'OpenStax catalog updated. {count} books are available.',
   'eb.confirm_download': 'Download “{title}” for offline reading?\n\nPublisher: {publisher}\n\nKeep the Emergency Box open while the download runs.',
   'eb.unknown_publisher': 'Unknown publisher',
-  'eb.keep_open': 'Downloading to browser-managed storage. Keep this window open; you can pause and resume.',
+  'eb.keep_open': 'Downloading to browser-managed storage. You can switch pages; keep the browser open.',
   'eb.download_complete': '“{title}” is ready to read offline.',
   'eb.confirm_download_basic': 'Download the {count} most essential health and survival resources?\n\nThe basic kit downloads one resource at a time. Completed files remain available if you stop early.',
   'eb.confirm_download_all': 'Download all {count} resources in the current view?\n\nThis may use many gigabytes. Downloads run one at a time and completed files remain available if you stop early.',

@@ -7,7 +7,8 @@
  * (the localhost-fetch proxy in offscreen.js, local WebGPU inference worker,
  * offline SQLite/E5 retrieval workers,
  * large-file staging in
- * skill-download.js, the tab-recorder in recorder.js, and the cloud bridge in
+ * skill-download.js, Emergency Box downloads in emergency-download-host.js,
+ * the tab-recorder in recorder.js, and the cloud bridge in
  * cloud-bridge.js) must agree on a single
  * createDocument call that lists
  * every reason either of them might ever need.

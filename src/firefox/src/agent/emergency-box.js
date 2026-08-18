@@ -426,6 +426,19 @@ function idbTransaction(transaction) {
   });
 }
 
+function isClosingIdbError(error) {
+  return error?.name === 'InvalidStateError'
+    || /database connection is closing|connection is closing|database is closed/i.test(String(error?.message || error || ''));
+}
+
+function bindIdbLifetime(database, reset) {
+  database.onversionchange = () => {
+    try { database.close(); } catch { /* already closing */ }
+    reset();
+  };
+  database.onclose = () => reset();
+}
+
 function safeResourceKey(value) {
   const key = String(value || '').replace(/[^a-z0-9._-]+/gi, '_').replace(/^\.+/, '').slice(0, 180);
   if (!key) throw new Error('Emergency Box resource key is invalid.');
@@ -485,6 +498,7 @@ function normalizedRecord(resource, patch = {}) {
 
 export function createEmergencyBoxStore(indexedDb = globalThis.indexedDB) {
   let databasePromise;
+  const reset = () => { databasePromise = null; };
   const open = () => {
     if (!indexedDb) return Promise.reject(new Error('IndexedDB is unavailable.'));
     if (databasePromise) return databasePromise;
@@ -496,32 +510,52 @@ export function createEmergencyBoxStore(indexedDb = globalThis.indexedDB) {
           database.createObjectStore(RESOURCE_STORE, { keyPath: 'id' });
         }
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        bindIdbLifetime(request.result, reset);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reset();
+        reject(request.error);
+      };
     });
     return databasePromise;
   };
+  const withDatabase = async fn => {
+    try {
+      return await fn(await open());
+    } catch (error) {
+      if (!isClosingIdbError(error)) throw error;
+      reset();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return await fn(await open());
+    }
+  };
   return {
     async list() {
-      const database = await open();
-      return await idbRequest(database.transaction(RESOURCE_STORE, 'readonly').objectStore(RESOURCE_STORE).getAll());
+      return await withDatabase(database => idbRequest(
+        database.transaction(RESOURCE_STORE, 'readonly').objectStore(RESOURCE_STORE).getAll(),
+      ));
     },
     async get(id) {
-      const database = await open();
-      return await idbRequest(database.transaction(RESOURCE_STORE, 'readonly').objectStore(RESOURCE_STORE).get(id));
+      return await withDatabase(database => idbRequest(
+        database.transaction(RESOURCE_STORE, 'readonly').objectStore(RESOURCE_STORE).get(id),
+      ));
     },
     async put(record) {
-      const database = await open();
-      const transaction = database.transaction(RESOURCE_STORE, 'readwrite');
-      transaction.objectStore(RESOURCE_STORE).put(record);
-      await idbTransaction(transaction);
+      await withDatabase(async database => {
+        const transaction = database.transaction(RESOURCE_STORE, 'readwrite');
+        transaction.objectStore(RESOURCE_STORE).put(record);
+        await idbTransaction(transaction);
+      });
       return record;
     },
     async delete(id) {
-      const database = await open();
-      const transaction = database.transaction(RESOURCE_STORE, 'readwrite');
-      transaction.objectStore(RESOURCE_STORE).delete(id);
-      await idbTransaction(transaction);
+      await withDatabase(async database => {
+        const transaction = database.transaction(RESOURCE_STORE, 'readwrite');
+        transaction.objectStore(RESOURCE_STORE).delete(id);
+        await idbTransaction(transaction);
+      });
     },
   };
 }

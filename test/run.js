@@ -21396,6 +21396,31 @@ test('chrome offscreen staging owns the credentialless fetch and local file life
   assert.match(ensure, /'BLOBS'/, 'offscreen document should declare its blob URL purpose');
 });
 
+test('Emergency Box downloads are hosted off the visible extension page', () => {
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/offscreen.html'), 'utf8');
+  const chromeHost = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/emergency-download-host.js'), 'utf8');
+  const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const firefoxBackground = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
+  const chromeBox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/emergency-box.js'), 'utf8');
+  const firefoxBox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/emergency-box.js'), 'utf8');
+  assert.match(chromeHtml, /<script type="module" src="emergency-download-host\.js"><\/script>/,
+    'chrome: offscreen page should load the Emergency download host');
+  assert.match(chromeHost, /createEmergencyDownloadController/,
+    'chrome: offscreen host should own Emergency downloads');
+  assert.match(chromeBackground, /target: 'offscreen-emergency-download'/,
+    'chrome: background should forward Emergency downloads to the offscreen host');
+  assert.match(firefoxBackground, /createEmergencyDownloadController/,
+    'firefox: the persistent background page should own Emergency downloads');
+  for (const [label, source] of [['chrome', chromeBox], ['firefox', firefoxBox]]) {
+    assert.doesNotMatch(source, /downloadAndInstallEmergencyCorpus/,
+      `${label}: Emergency Box page still runs the text-pack fetch`);
+    assert.doesNotMatch(source, /downloadEmergencyResource\(/,
+      `${label}: Emergency Box page still runs PDF fetches`);
+    assert.match(source, /sendEmergencyDownloadCommand\('start_corpus'\)/,
+      `${label}: Emergency Box page does not start the text pack through the background host`);
+  }
+});
+
 test('executeHttpSkillTool does not require HEAD support for skill downloads', async () => {
   const originalFetch = globalThis.fetch;
   const originalChrome = globalThis.chrome;
@@ -23369,11 +23394,14 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/agent/apocalypse-mode.js',
     'src/agent/emergency-box.js',
     'src/agent/emergency-corpus-release.js',
+    'src/agent/emergency-download-controller.js',
+    'src/agent/offline-semantic-runtime.js',
     'src/agent/zim-xapian.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
     'src/ui/emergency-box.css',
     'src/ui/emergency-box.js',
+    'src/ui/emergency-download-client.js',
     'src/ui/apocalypse-kit.css',
     'src/ui/emergency-pdf.html',
     'src/ui/emergency-pdf.css',
@@ -23441,7 +23469,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: offline search readiness and component lifecycle UI is missing`);
     assert.match(boxCss, /\.rag-readiness\s*\{\s*margin:\s*16px 0;/,
       `${browser}: offline readiness is visually glued to the library controls`);
-    assert.match(boxScript, /EMERGENCY_CORPUS_RELEASE[\s\S]*?downloadAndInstallEmergencyCorpus/,
+    assert.match(boxScript, /EMERGENCY_CORPUS_RELEASE[\s\S]*?sendEmergencyDownloadCommand\('start_corpus'/,
       `${browser}: Emergency text-pack download is not explicitly release-gated`);
     assert.match(corpusRelease, /2026\.08\.17-preview\.3[\s\S]*?github\.com\/webbrain-one\/emergency-box-corpus[\s\S]*?preview: true/,
       `${browser}: the testable corpus preview descriptor is missing or not marked as a preview`);
@@ -23451,7 +23479,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: bulk kits do not skip the unfinished Emergency text-pack release`);
     assert.doesNotMatch(boxScript, /corpusReleaseMissing|if \(corpusNeedsDownload && !EMERGENCY_CORPUS_RELEASE\)/,
       `${browser}: unfinished corpus release still blocks existing PDF or model downloads`);
-    assert.match(boxScript, /createOfflineSemanticReranker\(\)/,
+    assert.match(boxScript, /sendEmergencyDownloadCommand\('start_semantic'/,
       `${browser}: semantic model lifecycle is not controlled by Emergency Box`);
     assert.match(textReader, /id="document-passages"/,
       `${browser}: Emergency citation reader is missing its verified document view`);
@@ -23581,13 +23609,14 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: unfinished downloads can keep retrying an obsolete catalog source and stale partial file`);
     assert.match(boxScript, /const currentView = activeFilter !== 'all' \|\| elements\['resource-search'\]\.value\.trim\(\) !== ''[\s\S]*?'eb\.download_current_view'[\s\S]*?kitRemainingLabel\(downloadable, pending\)/,
       `${browser}: filtered downloads are not identified as the current view with remaining and total sizes`);
-    assert.match(boxScript, /entry\.promise = \(async \(\) =>[\s\S]*?if \(downloads\.get\(resource\.id\) === entry\) downloads\.delete\(resource\.id\)[\s\S]*?async function stopAndDeleteDownload\(id\)[\s\S]*?await entry\.promise\.catch/,
+    const controllerScript = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/emergency-download-controller.js`), 'utf8');
+    assert.match(boxScript, /async function stopAndDeleteDownload\(id\) \{\s*await sendEmergencyDownloadCommand\('stop_resource', \{ id \}\);/,
       `${browser}: stop-and-delete does not await the exact active download before removing its record and bytes`);
-    assert.match(boxScript, /const activeEntry = downloads\.get\(resource\.id\)[\s\S]*?options\.resume !== true[\s\S]*?activeEntry\.controller\.abort\(\)[\s\S]*?await activeEntry\.promise\.catch/,
+    assert.match(controllerScript, /const existing = resourceJobs\.get\(id\)[\s\S]*?isLiveJob\(existing\)[\s\S]*?await waitForJob\(existing\)/,
       `${browser}: Resume can still be silently dropped while an earlier abort is settling`);
     assert.doesNotMatch(boxScript, /attempts\s*<\s*200|setTimeout\(resolve,\s*25\)/,
       `${browser}: stop-and-delete still relies on a time-limited busy-wait`);
-    assert.match(boxScript, /if \(bulkDownloadKind === kind\)[\s\S]*?for \(const entry of downloads\.values\(\)\)[\s\S]*?entry\.kind === kind[\s\S]*?entry\.controller\.abort\(\)[\s\S]*?bulkKind: kind/,
+    assert.match(boxScript, /if \(bulkDownloadKind === kind\)[\s\S]*?for \(const \[id, entry\] of downloads\)[\s\S]*?entry\.kind !== kind[\s\S]*?bulkKind: kind/,
       `${browser}: stopping a bulk kit can still abort downloads owned by another operation`);
     assert.doesNotMatch(boxScript, /title="Enable Apocalypse Mode to download resources"/,
       `${browser}: disabled download tooltip remains hard-coded English`);
@@ -23646,14 +23675,14 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: tracker controls do not route text and vision model actions to the background host`);
     assert.match(script, /action:\s*'apocalypse_mode',[\s\S]*?command,[\s\S]*?id:\s*item\.sourceId/,
       `${browser}: tracker controls do not route Wikipedia actions to the background archive manager`);
-    assert.match(script, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?\?resume=/,
-      `${browser}: page-owned PDF controls cannot hand off safely to Emergency Box`);
-    assert.match(script, /item\.kind === 'component'[\s\S]*?signalEmergencyBox\(action, item\)/,
+    assert.match(script, /action:\s*'emergency_download'|sendEmergencyDownloadCommand\('start_corpus'\)/,
+      `${browser}: tracker controls do not route Emergency downloads to the background host`);
+    assert.match(script, /sendEmergencyDownloadCommand\('pause_corpus'\)[\s\S]*?sendEmergencyDownloadCommand\('start_corpus'\)[\s\S]*?sendEmergencyDownloadCommand\('cancel_corpus'\)/,
       `${browser}: footer controls do not route Emergency corpus and semantic-model actions`);
-    assert.match(script, /item\.kind === 'component'[\s\S]*?action === 'resume'[\s\S]*?signalEmergencyBox\('pause', item\)[\s\S]*?\?resumeComponent=/,
-      `${browser}: cross-page component Resume does not hand ownership to Emergency Box`);
-    assert.match(script, /action === 'resume'[\s\S]*?signalEmergencyBox\('pause', item\)[\s\S]*?location\.href = `\$\{item\.href\}\?resume=/,
-      `${browser}: cross-page PDF Resume navigates before pausing the old owner`);
+    assert.doesNotMatch(script, /\?resumeComponent=/,
+      `${browser}: cross-page component Resume still navigates back to Emergency Box`);
+    assert.doesNotMatch(script, /signalEmergencyBox\('pause', item\)[\s\S]*?location\.href = `\$\{item\.href\}\?resume=/,
+      `${browser}: cross-page PDF Resume still navigates before handing off to the background host`);
     const emergencyRuntime = fs.readFileSync(path.join(uiDir, '../agent/emergency-box.js'), 'utf8');
     assert.match(emergencyRuntime, /withEmergencyResourceLock[\s\S]*?navigator\?\.locks[\s\S]*?mode: 'exclusive'[\s\S]*?downloadResolvedEmergencyResource/,
       `${browser}: PDF downloads do not serialize access to their OPFS writer`);
@@ -23670,22 +23699,22 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
     assert.match(css, /@keyframes wb-dl-heartbeat[\s\S]*?\.wb-dl-actions[\s\S]*?\.wb-dl-action\.danger/,
       `${browser}: tracker lacks its activity beacon or compact destructive-control treatment`);
     const emergencyScript = fs.readFileSync(path.join(uiDir, 'emergency-box.js'), 'utf8');
-    assert.match(emergencyScript, /BroadcastChannel\('webbrain-emergency-download-control'\)[\s\S]*?handleDownloadControl/,
-      `${browser}: Emergency Box cannot receive tracker controls from another Apocalypse page`);
+    assert.match(emergencyScript, /sendEmergencyDownloadCommand\('pause_corpus'\)[\s\S]*?startCorpusDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?removeCorpusComponent\(\{ cancelOnly: true \}\)/,
+      `${browser}: footer controls cannot pause, resume, and stop the Emergency text pack safely`);
+    assert.match(emergencyScript, /sendEmergencyDownloadCommand\('pause_semantic'\)[\s\S]*?startSemanticDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?removeSemanticComponent\(\)/,
+      `${browser}: footer controls cannot pause, resume, and stop the semantic model`);
+    assert.doesNotMatch(emergencyScript, /beforeunload[\s\S]*?controller\.abort/,
+      `${browser}: leaving Emergency Box still aborts background-owned downloads`);
+    assert.match(emergencyScript, /params\.get\('resumeComponent'\)[\s\S]*?startCorpusDownload\(\{ confirm: false, resume: true \}\)[\s\S]*?startSemanticDownload\(\{ confirm: false, resume: true \}\)/,
+      `${browser}: Emergency Box cannot accept component Resume ownership from another footer`);
+    assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false, resume: true \}\)/,
+      `${browser}: tracker Resume handoff does not restart a paused PDF`);
+    assert.match(emergencyScript, /sendEmergencyDownloadCommand\('start_corpus'\)/,
+      `${browser}: Emergency Box does not start the text pack through the background host`);
     assert.match(emergencyScript, /wb-emergency-component-download-state[\s\S]*?publishComponentDownloadStates[\s\S]*?id: CORPUS_DOWNLOAD_ID[\s\S]*?id: SEMANTIC_DOWNLOAD_ID/,
       `${browser}: Emergency Box does not publish both component lifecycles to the footer tracker`);
     assert.match(emergencyScript, /event\.data\?\.type === 'request'[\s\S]*?renderRagComponents\(\)/,
       `${browser}: Emergency Box cannot answer a newly opened footer's component-state request`);
-    assert.match(emergencyScript, /id === CORPUS_DOWNLOAD_ID[\s\S]*?startCorpusDownload\(\{ confirm: false \}\)[\s\S]*?removeCorpusComponent\(\{ cancelOnly: true \}\)/,
-      `${browser}: footer controls cannot pause, resume, and stop the Emergency text pack safely`);
-    assert.match(emergencyScript, /id === SEMANTIC_DOWNLOAD_ID[\s\S]*?startSemanticDownload\(\{ confirm: false \}\)[\s\S]*?removeSemanticComponent\(\)/,
-      `${browser}: footer controls cannot pause, resume, and stop the semantic model`);
-    assert.match(emergencyScript, /publishPausedComponentTransfers\(\)[\s\S]*?for \(const entry of downloads\.values\(\)\) entry\.controller\.abort\(\)/,
-      `${browser}: closing Emergency Box can leave component footer rows falsely active`);
-    assert.match(emergencyScript, /params\.get\('resumeComponent'\)[\s\S]*?startCorpusDownload\(\{ confirm: false \}\)[\s\S]*?startSemanticDownload\(\{ confirm: false \}\)/,
-      `${browser}: Emergency Box cannot accept component Resume ownership from another footer`);
-    assert.match(emergencyScript, /params\.get\('resume'\)[\s\S]*?startDownload\(resource, \{ confirm: false, resume: true \}\)/,
-      `${browser}: tracker Resume handoff does not restart a paused PDF`);
   }
   const firefoxEnglish = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
   assert.match(firefoxEnglish, /'st\.providers\.webgpu_download\.stopping': 'Stopping and removing files…'/,
@@ -27208,7 +27237,7 @@ test('Chrome MV3 standalone retrieval uses the worker-capable offscreen host and
   const backgroundSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   assert.match(offscreenHtml, /<script type="module" src="offline-rag-host\.js"><\/script>/,
     'Chrome offscreen document does not load the offline retrieval host');
-  assert.match(hostSource, /createOfflineRetrievalService[\s\S]*?createOfflineSemanticReranker[\s\S]*?chrome\.runtime\.onMessage/,
+  assert.match(hostSource, /createOfflineRetrievalService[\s\S]*?getSharedOfflineSemanticReranker[\s\S]*?chrome\.runtime\.onMessage/,
     'Chrome offscreen host does not own retrieval and semantic workers');
   assert.match(backgroundSource, /setStandaloneOfflineRagService\(createOffscreenOfflineRetrievalService\(\)\)/,
     'Chrome service-worker agent still initializes DOM Worker clients directly');
@@ -27306,6 +27335,7 @@ test('Chrome Emergency Box shares the offscreen SQLite worker with retrieval', a
   assert.equal(firefoxWorker.terminated, true, 'Firefox hosted adapter stopped using its direct page worker');
 
   const hostSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/offline-rag-host.js'), 'utf8');
+  const downloadHostSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/emergency-download-host.js'), 'utf8');
   const backgroundSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const chromeBoxSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/emergency-box.js'), 'utf8');
   const firefoxBoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/emergency-box.js'), 'utf8');
@@ -27313,9 +27343,11 @@ test('Chrome Emergency Box shares the offscreen SQLite worker with retrieval', a
     'offscreen retrieval and installation do not share one SQLite client');
   assert.match(hostSource, /embedQuery[\s\S]*?prepare-emergency-index[\s\S]*?delete-index/,
     'offscreen host does not expose full-vector queries and index lifecycle actions');
+  assert.match(downloadHostSource, /createEmergencyDownloadController[\s\S]*?createOfflineRagIndexClient/,
+    'Emergency downloads do not use the offscreen SQLite client');
   assert.match(backgroundSource, /case 'ensure_offscreen_offline_rag_host':[\s\S]*?await ensureOffscreen\(\)/,
     'Emergency Box cannot ensure that the shared offscreen host exists');
-  assert.match(chromeBoxSource, /createHostedOfflineRagIndexClient/,
+  assert.doesNotMatch(chromeBoxSource, /createHostedOfflineRagIndexClient|createOfflineRagIndexClient\(/,
     'Chrome Emergency Box still creates a competing SQLite worker');
   assert.equal(chromeBoxSource, firefoxBoxSource, 'Emergency Box UI diverged while selecting its hosted index adapter');
 });
@@ -27815,6 +27847,117 @@ test('Emergency corpus recovery and cancellation prune orphaned staging index pa
       `${label}: staging index path was not deleted during installation cancellation`);
   }
 });
+
+test('Emergency download controller returns before the corpus transfer finishes', async () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const { createEmergencyDownloadController } = await import(pathToFileURL(path.join(
+      ROOT, `src/${browser}/src/agent/emergency-download-controller.js`,
+    )).href);
+    let releaseDownload;
+    const held = new Promise(resolve => { releaseDownload = resolve; });
+    let downloadCalls = 0;
+    const controller = createEmergencyDownloadController({
+      requireApocalypse: false,
+      corpusDescriptor: {
+        url: 'https://example.test/emergency.zip',
+        downloadBytes: 100,
+        archiveSha256: 'a'.repeat(64),
+        version: 'test',
+      },
+      corpusStore: {
+        async get() { return { status: 'downloading', staging: { bytesReceived: 10, totalBytes: 100 } }; },
+        async put(record) { return record; },
+      },
+      corpusStorage: {},
+      resourceStore: { async list() { return []; }, async get() { return null; }, async put() {} },
+      resourceStorage: {},
+      indexClient: { async buildEmergencyIndex() { return {}; }, async deleteIndex() {} },
+      semanticReranker: {
+        snapshot() { return { status: 'unknown', loaded: 0, total: 0, progress: 0 }; },
+        async status() { return 'unknown'; },
+        async pause() { return { status: 'paused' }; },
+        async stop() { return { status: 'not-downloaded' }; },
+        async download() { return { status: 'ready' }; },
+      },
+      apocalypseStore: { async getConfig() { return { enabled: true }; } },
+      recoverCorpus: async () => ({ status: 'not-installed' }),
+      cancelCorpus: async () => ({ status: 'not-installed' }),
+      deleteCorpus: async () => true,
+      downloadCorpus: async () => {
+        downloadCalls += 1;
+        await held;
+        return { status: 'ready' };
+      },
+      broadcast() {},
+    });
+    const started = await controller.handle('start_corpus');
+    assert.equal(started.ok, true, `${browser}: start_corpus failed`);
+    assert.equal(started.started, true, `${browser}: start_corpus did not begin in the background`);
+    assert.equal(downloadCalls, 1, `${browser}: corpus download was not started`);
+    assert.notEqual(started.corpus?.status, 'ready', `${browser}: start_corpus waited for the archive to finish`);
+    const duplicate = await controller.handle('start_corpus');
+    assert.equal(duplicate.started, false, `${browser}: a second start_corpus launched another transfer`);
+    releaseDownload();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+});
+
+test('Emergency download controller starts a resource after an in-flight abort settles', async () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const { createEmergencyDownloadController } = await import(pathToFileURL(path.join(
+      ROOT, `src/${browser}/src/agent/emergency-download-controller.js`,
+    )).href);
+    let downloadCalls = 0;
+    const controller = createEmergencyDownloadController({
+      requireApocalypse: false,
+      corpusDescriptor: null,
+      corpusStore: { async get() { return null; }, async put(record) { return record; } },
+      corpusStorage: {},
+      resourceStore: {
+        async list() { return []; },
+        async get() { return { id: 'pdf-1', status: 'paused' }; },
+        async put() {},
+      },
+      resourceStorage: {},
+      indexClient: { async buildEmergencyIndex() { return {}; }, async deleteIndex() {} },
+      semanticReranker: {
+        snapshot() { return { status: 'unknown', loaded: 0, total: 0, progress: 0 }; },
+        async status() { return 'unknown'; },
+        async pause() { return { status: 'paused' }; },
+        async stop() { return { status: 'not-downloaded' }; },
+        async download() { return { status: 'ready' }; },
+      },
+      apocalypseStore: { async getConfig() { return { enabled: true }; } },
+      recoverCorpus: async () => null,
+      cancelCorpus: async () => null,
+      deleteCorpus: async () => true,
+      downloadResource: async (resource, { signal }) => {
+        downloadCalls += 1;
+        await new Promise((resolve, reject) => {
+          const fail = () => reject(signal.reason || new Error('Emergency download paused.'));
+          if (signal.aborted) {
+            fail();
+            return;
+          }
+          signal.addEventListener('abort', fail, { once: true });
+          if (downloadCalls > 1) resolve();
+        });
+        return { id: resource.id, status: 'ready' };
+      },
+      broadcast() {},
+    });
+    const resource = { id: 'pdf-1', url: 'https://example.test/a.pdf', title: 'A' };
+    const started = await controller.handle('start_resource', { resource });
+    assert.equal(started.ok, true, `${browser}: first PDF start failed`);
+    assert.equal(started.started, true, `${browser}: first PDF start did not begin`);
+    const pausePromise = controller.handle('pause_resource', { id: 'pdf-1' });
+    const resume = await controller.handle('start_resource', { resource });
+    await pausePromise;
+    assert.equal(resume.started, true, `${browser}: resume was dropped while pause was settling`);
+    assert.equal(downloadCalls, 2, `${browser}: resume did not start a second transfer after abort`);
+  }
+});
+
 
 test('Wikipedia tools use installed Apocalypse Mode archives only after online failure', async () => {
   for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {

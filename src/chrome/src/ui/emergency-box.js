@@ -1,11 +1,6 @@
 import { createApocalypseStore } from '../agent/apocalypse-mode.js';
 import {
-  cancelEmergencyCorpusInstall,
-  createEmergencyCorpusStorage,
   createEmergencyCorpusStore,
-  deleteEmergencyCorpus,
-  downloadAndInstallEmergencyCorpus,
-  recoverEmergencyCorpusLifecycle,
 } from '../agent/emergency-corpus.js';
 import {
   EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS,
@@ -15,22 +10,23 @@ import {
   EMERGENCY_BOX_COMMUNICATION_RESOURCES,
   EMERGENCY_BOX_HEALTH_RESOURCES,
   compareEmergencyBoxResources,
-  createEmergencyBoxStorage,
   createEmergencyBoxStore,
-  deleteEmergencyResource,
-  downloadEmergencyResource,
   estimateEmergencyBoxResourceBytes,
   loadOpenStaxCatalog,
   OPENSTAX_CATALOG_SNAPSHOT_DATE,
   PREFETCHED_OPENSTAX_CATALOG,
   selectEmergencyBoxBasicResources,
 } from '../agent/emergency-box.js';
-import { createHostedOfflineRagIndexClient } from '../agent/offline-rag-index-host.js';
 import {
   E5_MODEL_DOWNLOAD_BYTES,
-  createOfflineSemanticReranker,
 } from '../agent/offline-reranker.js';
 import { t } from './i18n.js';
+import {
+  CORPUS_DOWNLOAD_ID,
+  EMERGENCY_DOWNLOAD_STATE_MESSAGE,
+  SEMANTIC_DOWNLOAD_ID,
+  sendEmergencyDownloadCommand,
+} from './emergency-download-client.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
@@ -48,15 +44,7 @@ runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
 
 const apocalypseStore = createApocalypseStore();
 const resourceStore = createEmergencyBoxStore();
-const resourceStorage = createEmergencyBoxStorage();
 const corpusStore = createEmergencyCorpusStore();
-const corpusStorage = createEmergencyCorpusStorage();
-let ragIndexClient = null;
-const indexClient = () => {
-  if (!ragIndexClient) ragIndexClient = createHostedOfflineRagIndexClient();
-  return ragIndexClient;
-};
-const semanticReranker = createOfflineSemanticReranker();
 const elements = Object.fromEntries([
   'mode-status', 'resource-count', 'installed-rail-count', 'installed-count', 'installed-bytes',
   'category-nav', 'resource-search', 'load-openstax', 'download-basic', 'download-all', 'notice', 'resource-list',
@@ -64,14 +52,9 @@ const elements = Object.fromEntries([
 ].map(id => [id, document.getElementById(id)]));
 
 const OPENSTAX_CACHE_KEY = 'webbrainEmergencyOpenStaxCatalog';
-const CORPUS_DOWNLOAD_ID = 'rag-emergency-corpus';
-const SEMANTIC_DOWNLOAD_ID = 'rag-semantic-model';
 const EMERGENCY_COMPONENT_STATE_EVENT = 'wb-emergency-component-download-state';
 const EMERGENCY_COMPONENT_STATE_CHANNEL = 'webbrain-emergency-download-state';
 const EMERGENCY_READER_PAGES = new Set(['emergency-pdf.html', 'emergency-communication.html']);
-const downloadControlChannel = typeof BroadcastChannel === 'function'
-  ? new BroadcastChannel('webbrain-emergency-download-control')
-  : null;
 const downloadStateChannel = typeof BroadcastChannel === 'function'
   ? new BroadcastChannel(EMERGENCY_COMPONENT_STATE_CHANNEL)
   : null;
@@ -80,17 +63,19 @@ let activeFilter = 'all';
 let openStaxResources = cachedOpenStaxCatalog();
 let records = new Map();
 let corpusRecord = null;
-let semanticState = semanticReranker.snapshot();
+let semanticState = {
+  status: 'unknown', ready: false, loaded: 0, total: E5_MODEL_DOWNLOAD_BYTES, progress: 0, error: '',
+};
 let wikipediaRagStatus = 'unavailable';
 let loadingOpenStax = false;
 let bulkDownloading = false;
 let bulkDownloadKind = '';
 let stopBulkDownload = false;
 const downloads = new Map();
-semanticReranker.subscribe(state => {
-  semanticState = state;
-  render();
-});
+
+function trackDownload(id, options = {}) {
+  downloads.set(id, { kind: options.bulkKind || '' });
+}
 
 function cachedOpenStaxCatalog() {
   try {
@@ -321,27 +306,6 @@ function publishComponentDownloadStates({
   });
 }
 
-function publishPausedComponentTransfers() {
-  if (downloads.has(CORPUS_DOWNLOAD_ID)) {
-    publishComponentDownloadState({
-      id: CORPUS_DOWNLOAD_ID,
-      status: 'paused',
-      loaded: Number(corpusRecord?.staging?.bytesReceived) || 0,
-      total: Number(corpusRecord?.staging?.totalBytes) || Number(EMERGENCY_CORPUS_RELEASE?.downloadBytes) || 0,
-      updatedAt: Date.now(),
-    });
-  }
-  if (downloads.has(SEMANTIC_DOWNLOAD_ID)) {
-    publishComponentDownloadState({
-      id: SEMANTIC_DOWNLOAD_ID,
-      status: 'paused',
-      loaded: Number(semanticState.loaded) || 0,
-      total: Number(semanticState.total) || E5_MODEL_DOWNLOAD_BYTES,
-      updatedAt: Date.now(),
-    });
-  }
-}
-
 function componentAction(component, action, label, options = {}) {
   const disabled = options.disabled ? ' disabled' : '';
   const danger = options.danger ? ' danger' : '';
@@ -498,36 +462,37 @@ function render() {
     : `<div class="empty-state"><span class="empty-glyph" aria-hidden="true">□</span>${escapeHtml(t('eb.no_resources'))}</div>`;
 }
 
-async function refreshState({ recoverInterrupted = false } = {}) {
-  apocalypseEnabled = (await apocalypseStore.getConfig()).enabled === true;
-  if (recoverInterrupted) {
-    corpusRecord = await recoverEmergencyCorpusLifecycle({
-      store: corpusStore,
-      storage: corpusStorage,
-      deleteIndex: path => indexClient().deleteIndex(path),
-    });
-  } else {
-    corpusRecord = await corpusStore.get();
+function applyHostSnapshot(snapshot) {
+  if (snapshot?.corpus) corpusRecord = snapshot.corpus;
+  if (snapshot?.semantic) semanticState = snapshot.semantic;
+  if (Array.isArray(snapshot?.resources)) {
+    for (const record of snapshot.resources) records.set(record.id, record);
   }
+}
+
+async function refreshState() {
+  apocalypseEnabled = (await apocalypseStore.getConfig()).enabled === true;
+  const host = await sendEmergencyDownloadCommand('status').catch(() => null);
+  if (host?.corpus) corpusRecord = host.corpus;
+  else corpusRecord = await corpusStore.get();
+  if (host?.semantic) semanticState = host.semantic;
   const wikipediaArchives = await apocalypseStore.listArchives();
   wikipediaRagStatus = wikipediaArchives.some(record => record.status === 'ready')
     ? 'title-only-fallback'
     : (wikipediaArchives.length ? 'unavailable' : 'not-installed');
-  await semanticReranker.status().catch(() => 'error');
-  semanticState = semanticReranker.snapshot();
-  const stored = await resourceStore.list();
-  if (recoverInterrupted) {
-    for (const record of stored) {
-      if (record.status !== 'downloading') continue;
-      record.status = 'paused';
-      record.error = '';
-      record.updatedAt = Date.now();
-      await resourceStore.put(record);
-    }
-  }
   records = new Map((await resourceStore.list()).map(record => [record.id, record]));
   if (!apocalypseEnabled && !elements.notice.textContent) setNotice(t('eb.enable_downloads'));
   render();
+}
+
+async function waitForHost(isActive) {
+  for (;;) {
+    const snapshot = await sendEmergencyDownloadCommand('status');
+    applyHostSnapshot(snapshot);
+    render();
+    if (!isActive(snapshot) || stopBulkDownload) return snapshot;
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
 }
 
 async function loadOpenStax() {
@@ -555,14 +520,7 @@ function resourceById(id) {
 
 async function startDownload(resource, options = {}) {
   if (!resource || !apocalypseEnabled) return;
-  const activeEntry = downloads.get(resource.id);
-  if (activeEntry) {
-    if (options.resume !== true) return;
-    activeEntry.controller.abort();
-    if (activeEntry.promise) await activeEntry.promise.catch(() => {});
-    resource = resourceById(resource.id) || resource;
-    if (resource.status === 'ready') return resource;
-  }
+  if (downloads.has(resource.id) && options.resume !== true) return;
   if (options.confirm !== false) {
     const confirmed = globalThis.confirm(t('eb.confirm_download', {
       title: resource.title,
@@ -570,35 +528,24 @@ async function startDownload(resource, options = {}) {
     }));
     if (!confirmed) return;
   }
-  const controller = new AbortController();
-  const entry = {
-    controller,
-    kind: String(options.bulkKind || ''),
-    promise: null,
-  };
-  downloads.set(resource.id, entry);
+  trackDownload(resource.id, options);
   if (options.quiet !== true) setNotice(t('eb.keep_open'));
-  entry.promise = (async () => {
-    try {
-      const record = await downloadEmergencyResource(resource, {
-        store: resourceStore,
-        storage: resourceStorage,
-        signal: controller.signal,
-        onProgress: next => {
-          records.set(next.id, next);
-          render();
-        },
-      });
-      records.set(record.id, record);
-      if (record.status === 'ready' && options.quiet !== true) setNotice(t('eb.download_complete', { title: record.title }), 'success');
-    } catch (error) {
-      if (options.quiet !== true) setNotice(error.message, 'error');
-    } finally {
-      if (downloads.get(resource.id) === entry) downloads.delete(resource.id);
-      await refreshState();
+  try {
+    await sendEmergencyDownloadCommand('start_resource', { resource: { ...resource } });
+    const snapshot = await waitForHost(state => (
+      state.active?.resources?.includes(resource.id)
+      || ['downloading', 'queued'].includes(records.get(resource.id)?.status)
+    ));
+    const record = records.get(resource.id) || snapshot.resources?.find(item => item.id === resource.id);
+    if (record?.status === 'ready' && options.quiet !== true) {
+      setNotice(t('eb.download_complete', { title: record.title }), 'success');
     }
-  })();
-  return await entry.promise;
+  } catch (error) {
+    if (options.quiet !== true) setNotice(error.message, 'error');
+  } finally {
+    downloads.delete(resource.id);
+    await refreshState();
+  }
 }
 
 async function startCorpusDownload(options = {}) {
@@ -606,7 +553,7 @@ async function startCorpusDownload(options = {}) {
     setNotice(t('eb.rag.corpus_pending'), 'error');
     return null;
   }
-  if (downloads.has(CORPUS_DOWNLOAD_ID)) return await downloads.get(CORPUS_DOWNLOAD_ID).promise;
+  if (downloads.has(CORPUS_DOWNLOAD_ID) && options.resume !== true) return corpusRecord;
   if (options.confirm !== false) {
     const installedEstimate = Number(EMERGENCY_CORPUS_RELEASE.installedTextBytes || 0)
       + Number(EMERGENCY_CORPUS_RELEASE.installedIndexBytes
@@ -619,134 +566,105 @@ async function startCorpusDownload(options = {}) {
       installed: formatBytes(installedEstimate),
     }))) return null;
   }
-  const controller = new AbortController();
-  const entry = { controller, kind: String(options.bulkKind || ''), promise: null };
-  downloads.set(CORPUS_DOWNLOAD_ID, entry);
-  entry.promise = (async () => {
-    try {
-      corpusRecord = await downloadAndInstallEmergencyCorpus(EMERGENCY_CORPUS_RELEASE, {
-        store: corpusStore,
-        storage: corpusStorage,
-        signal: controller.signal,
-        buildIndex: request => indexClient().buildEmergencyIndex(request),
-        deleteIndex: path => indexClient().deleteIndex(path),
-        onProgress: next => {
-          if (next?.id) corpusRecord = next;
-          render();
-        },
-      });
-      if (corpusRecord?.status === 'ready' && options.quiet !== true) {
-        setNotice(t(EMERGENCY_CORPUS_RELEASE.preview ? 'eb.rag.corpus_preview_ready' : 'eb.rag.corpus_ready'), 'success');
-      }
-      return corpusRecord;
-    } catch (error) {
-      if (options.quiet !== true) setNotice(error.message, 'error');
-      return null;
-    } finally {
-      if (downloads.get(CORPUS_DOWNLOAD_ID) === entry) downloads.delete(CORPUS_DOWNLOAD_ID);
-      await refreshState();
+  trackDownload(CORPUS_DOWNLOAD_ID, options);
+  try {
+    await sendEmergencyDownloadCommand('start_corpus');
+    await waitForHost(state => (
+      state.active?.corpus
+      || ['downloading', 'verifying', 'extracting', 'indexing'].includes(state.corpus?.status)
+    ));
+    if (corpusRecord?.status === 'ready' && options.quiet !== true) {
+      setNotice(t(EMERGENCY_CORPUS_RELEASE.preview ? 'eb.rag.corpus_preview_ready' : 'eb.rag.corpus_ready'), 'success');
     }
-  })();
-  return await entry.promise;
+    return corpusRecord;
+  } catch (error) {
+    if (options.quiet !== true) setNotice(error.message, 'error');
+    return null;
+  } finally {
+    downloads.delete(CORPUS_DOWNLOAD_ID);
+    await refreshState();
+  }
 }
 
 async function startSemanticDownload(options = {}) {
   if (!apocalypseEnabled) return null;
-  if (downloads.has(SEMANTIC_DOWNLOAD_ID)) return await downloads.get(SEMANTIC_DOWNLOAD_ID).promise;
+  if (downloads.has(SEMANTIC_DOWNLOAD_ID) && options.resume !== true) return semanticState;
   if (semanticState.status === 'ready') return semanticState;
   if (options.confirm !== false && !globalThis.confirm(t('eb.rag.confirm_semantic', {
     network: formatBytes(E5_MODEL_DOWNLOAD_BYTES),
     installed: formatBytes(E5_MODEL_DOWNLOAD_BYTES),
   }))) return null;
-  const controller = new AbortController();
-  const entry = { controller, kind: String(options.bulkKind || ''), promise: null };
-  downloads.set(SEMANTIC_DOWNLOAD_ID, entry);
-  entry.promise = (async () => {
-    try {
-      semanticState = await semanticReranker.download({ signal: controller.signal });
-      if (semanticState.status === 'ready' && options.quiet !== true) {
-        setNotice(t('eb.rag.semantic_ready'), 'success');
-      }
-      return semanticState;
-    } catch (error) {
-      if (options.quiet !== true) setNotice(error.message, 'error');
-      return null;
-    } finally {
-      if (downloads.get(SEMANTIC_DOWNLOAD_ID) === entry) downloads.delete(SEMANTIC_DOWNLOAD_ID);
-      semanticState = semanticReranker.snapshot();
-      render();
+  trackDownload(SEMANTIC_DOWNLOAD_ID, options);
+  try {
+    await sendEmergencyDownloadCommand('start_semantic');
+    await waitForHost(state => state.active?.semantic || state.semantic?.status === 'downloading');
+    if (semanticState.status === 'ready' && options.quiet !== true) {
+      setNotice(t('eb.rag.semantic_ready'), 'success');
     }
-  })();
-  return await entry.promise;
+    return semanticState;
+  } catch (error) {
+    if (options.quiet !== true) setNotice(error.message, 'error');
+    return null;
+  } finally {
+    downloads.delete(SEMANTIC_DOWNLOAD_ID);
+    await refreshState();
+  }
 }
 
 async function removeCorpusComponent({ cancelOnly = false } = {}) {
-  const entry = downloads.get(CORPUS_DOWNLOAD_ID);
-  entry?.controller.abort();
-  if (entry?.promise) await entry.promise.catch(() => {});
-  if (cancelOnly) {
-    corpusRecord = await cancelEmergencyCorpusInstall({
-      store: corpusStore,
-      storage: corpusStorage,
-      deleteIndex: path => indexClient().deleteIndex(path),
-    });
-  } else {
-    await deleteEmergencyCorpus({
-      store: corpusStore,
-      storage: corpusStorage,
-      deleteIndex: path => indexClient().deleteIndex(path),
-    });
-    corpusRecord = null;
-  }
+  const snapshot = await sendEmergencyDownloadCommand(cancelOnly ? 'cancel_corpus' : 'delete_corpus');
+  applyHostSnapshot(snapshot);
+  if (!cancelOnly) corpusRecord = snapshot.corpus || null;
   render();
 }
 
 async function removeSemanticComponent() {
-  const entry = downloads.get(SEMANTIC_DOWNLOAD_ID);
-  entry?.controller.abort();
-  if (entry?.promise) await entry.promise.catch(() => {});
-  semanticState = await semanticReranker.stop();
+  const snapshot = await sendEmergencyDownloadCommand('stop_semantic');
+  applyHostSnapshot(snapshot);
   render();
 }
 
 async function stopAndDeleteDownload(id) {
-  const entry = downloads.get(id);
-  entry?.controller.abort();
-  if (entry?.promise) await entry.promise.catch(() => {});
-  await deleteEmergencyResource(id, { store: resourceStore, storage: resourceStorage });
+  await sendEmergencyDownloadCommand('stop_resource', { id });
   records.delete(id);
   setNotice(t('eb.deleted'), 'success');
-  render();
+  await refreshState();
 }
 
 async function handleDownloadControl(detail = {}) {
   const id = String(detail.id || '');
   const action = String(detail.action || '');
   if (id === CORPUS_DOWNLOAD_ID) {
-    if (action === 'pause') downloads.get(id)?.controller.abort();
-    if (action === 'resume') await startCorpusDownload({ confirm: false });
+    if (action === 'pause') await sendEmergencyDownloadCommand('pause_corpus');
+    if (action === 'resume') await startCorpusDownload({ confirm: false, resume: true });
     if (action === 'stop') await removeCorpusComponent({ cancelOnly: true });
+    await refreshState();
     return;
   }
   if (id === SEMANTIC_DOWNLOAD_ID) {
-    if (action === 'pause') downloads.get(id)?.controller.abort();
-    if (action === 'resume') await startSemanticDownload({ confirm: false });
+    if (action === 'pause') await sendEmergencyDownloadCommand('pause_semantic');
+    if (action === 'resume') await startSemanticDownload({ confirm: false, resume: true });
     if (action === 'stop') await removeSemanticComponent();
+    await refreshState();
     return;
   }
   const resource = resourceById(id);
   if (!id || !resource) return;
-  if (action === 'pause') downloads.get(id)?.controller.abort();
+  if (action === 'pause') await sendEmergencyDownloadCommand('pause_resource', { id });
   if (action === 'resume') await startDownload(resource, { confirm: false, resume: true });
   if (action === 'stop') await stopAndDeleteDownload(id);
+  await refreshState();
 }
 
 async function downloadResources(resources, kind) {
   if (bulkDownloading) {
     if (bulkDownloadKind === kind) {
       stopBulkDownload = true;
-      for (const entry of downloads.values()) {
-        if (entry.kind === kind) entry.controller.abort();
+      for (const [id, entry] of downloads) {
+        if (entry.kind !== kind) continue;
+        if (id === CORPUS_DOWNLOAD_ID) void sendEmergencyDownloadCommand('pause_corpus').catch(() => {});
+        else if (id === SEMANTIC_DOWNLOAD_ID) void sendEmergencyDownloadCommand('pause_semantic').catch(() => {});
+        else void sendEmergencyDownloadCommand('pause_resource', { id }).catch(() => {});
       }
     }
     return;
@@ -859,7 +777,7 @@ elements['resource-list'].addEventListener('click', async event => {
   if (action === 'download') await startDownload(resource, {
     resume: ['paused', 'error'].includes(resource?.status),
   });
-  if (action === 'pause') downloads.get(id)?.controller.abort();
+  if (action === 'pause') await sendEmergencyDownloadCommand('pause_resource', { id });
   if (action === 'read') openReader(resource);
   if (action === 'delete') {
     const config = await apocalypseStore.getConfig().catch(() => null);
@@ -882,8 +800,11 @@ elements['rag-components'].addEventListener('click', async event => {
   const { ragAction: action, ragComponent: component } = button.dataset;
   try {
     if (component === 'corpus') {
-      if (action === 'download') await startCorpusDownload({ confirm: corpusUiStatus() === 'not-installed' });
-      if (action === 'pause') downloads.get(CORPUS_DOWNLOAD_ID)?.controller.abort();
+      if (action === 'download') await startCorpusDownload({
+        confirm: corpusUiStatus() === 'not-installed',
+        resume: ['paused', 'error', 'downloaded'].includes(corpusUiStatus()),
+      });
+      if (action === 'pause') await sendEmergencyDownloadCommand('pause_corpus');
       if (action === 'cancel') await removeCorpusComponent({ cancelOnly: true });
       if (action === 'delete') {
         const config = await apocalypseStore.getConfig().catch(() => null);
@@ -897,8 +818,10 @@ elements['rag-components'].addEventListener('click', async event => {
       }
     }
     if (component === 'semantic') {
-      if (action === 'download') await startSemanticDownload();
-      if (action === 'pause') downloads.get(SEMANTIC_DOWNLOAD_ID)?.controller.abort();
+      if (action === 'download') await startSemanticDownload({
+        resume: ['paused', 'error'].includes(semanticState.status),
+      });
+      if (action === 'pause') await sendEmergencyDownloadCommand('pause_semantic');
       if (action === 'delete') {
         const config = await apocalypseStore.getConfig().catch(() => null);
         if (config?.enabled === true) {
@@ -918,28 +841,29 @@ elements['rag-components'].addEventListener('click', async event => {
 globalThis.addEventListener('wb-emergency-download-control', event => {
   void handleDownloadControl(event.detail).catch(error => setNotice(error.message, 'error'));
 });
-if (downloadControlChannel) {
-  downloadControlChannel.addEventListener('message', event => {
-    void handleDownloadControl(event.data).catch(error => setNotice(error.message, 'error'));
-  });
-}
 downloadStateChannel?.addEventListener('message', event => {
   if (event.data?.type === 'request') renderRagComponents();
+});
+runtimeApi?.runtime?.onMessage?.addListener?.((message) => {
+  if (message?.type !== EMERGENCY_DOWNLOAD_STATE_MESSAGE) return false;
+  if (message.corpus) corpusRecord = message.corpus;
+  if (message.semantic) semanticState = message.semantic;
+  if (message.resource?.id && message.resource.status !== 'deleted') {
+    records.set(message.resource.id, message.resource);
+  }
+  if (message.resource?.status === 'deleted') records.delete(message.resource.id);
+  render();
+  return false;
 });
 
 globalThis.addEventListener('beforeunload', () => {
   stopBulkDownload = true;
-  publishPausedComponentTransfers();
-  for (const entry of downloads.values()) entry.controller.abort();
-  ragIndexClient?.close?.();
-  semanticReranker.close();
-  downloadControlChannel?.close();
   downloadStateChannel?.close();
 });
 globalThis.addEventListener('focus', () => refreshState().catch(error => setNotice(error.message, 'error')));
 document.addEventListener('wb-locale-changed', render);
 
-refreshState({ recoverInterrupted: true }).then(async () => {
+refreshState().then(async () => {
   if (!elements.notice.textContent) {
     setNotice(t('eb.openstax_prefetched', { count: openStaxResources.length, date: OPENSTAX_CATALOG_SNAPSHOT_DATE }));
   }
@@ -947,8 +871,8 @@ refreshState({ recoverInterrupted: true }).then(async () => {
   const resumeComponent = params.get('resumeComponent');
   if (resumeComponent) {
     globalThis.history.replaceState({}, '', globalThis.location.pathname);
-    if (resumeComponent === CORPUS_DOWNLOAD_ID) await startCorpusDownload({ confirm: false });
-    if (resumeComponent === SEMANTIC_DOWNLOAD_ID) await startSemanticDownload({ confirm: false });
+    if (resumeComponent === CORPUS_DOWNLOAD_ID) await startCorpusDownload({ confirm: false, resume: true });
+    if (resumeComponent === SEMANTIC_DOWNLOAD_ID) await startSemanticDownload({ confirm: false, resume: true });
     return;
   }
   if (apocalypseEnabled) {

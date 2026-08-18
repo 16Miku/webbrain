@@ -1,31 +1,26 @@
 /** Worker-capable host for standalone-chat offline retrieval in Chrome MV3. */
 
 import { createOfflineRetrievalService } from '../agent/offline-retrieval.js';
-import { createOfflineSemanticReranker } from '../agent/offline-reranker.js';
 import { createOfflineRagIndexClient } from '../agent/offline-rag-index.js';
+import { getSharedOfflineSemanticReranker, resetSharedOfflineSemanticReranker } from '../agent/offline-semantic-runtime.js';
 
 const TARGET = 'offscreen-offline-rag';
 const INDEX_PROGRESS_TARGET = 'offscreen-offline-rag-index-progress';
 const ALLOWED_SOURCES = new Set(['wikipedia', 'emergency-box']);
 const requests = new Map();
-let semanticReranker = null;
 
 const lazySemanticReranker = Object.freeze({
   rerank(...args) {
-    if (!semanticReranker) semanticReranker = createOfflineSemanticReranker();
-    return semanticReranker.rerank(...args);
+    return getSharedOfflineSemanticReranker().rerank(...args);
   },
   embedQuery(...args) {
-    if (!semanticReranker) semanticReranker = createOfflineSemanticReranker();
-    return semanticReranker.embedQuery(...args);
+    return getSharedOfflineSemanticReranker().embedQuery(...args);
   },
   reset() {
-    semanticReranker?.close?.();
-    semanticReranker = null;
+    resetSharedOfflineSemanticReranker();
   },
   close() {
-    semanticReranker?.close?.();
-    semanticReranker = null;
+    resetSharedOfflineSemanticReranker();
   },
 });
 const indexClient = createOfflineRagIndexClient();

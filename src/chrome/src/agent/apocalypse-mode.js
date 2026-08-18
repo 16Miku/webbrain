@@ -701,8 +701,22 @@ function idbTransaction(transaction) {
   });
 }
 
+function isClosingIdbError(error) {
+  return error?.name === 'InvalidStateError'
+    || /database connection is closing|connection is closing|database is closed/i.test(String(error?.message || error || ''));
+}
+
+function bindIdbLifetime(database, reset) {
+  database.onversionchange = () => {
+    try { database.close(); } catch { /* already closing */ }
+    reset();
+  };
+  database.onclose = () => reset();
+}
+
 export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
   let databasePromise;
+  const reset = () => { databasePromise = null; };
   const open = () => {
     if (!indexedDb) return Promise.reject(new Error('IndexedDB is unavailable.'));
     if (databasePromise) return databasePromise;
@@ -713,12 +727,18 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
         if (!database.objectStoreNames.contains(CONFIG_STORE)) database.createObjectStore(CONFIG_STORE, { keyPath: 'key' });
         if (!database.objectStoreNames.contains(ARCHIVE_STORE)) database.createObjectStore(ARCHIVE_STORE, { keyPath: 'id' });
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        bindIdbLifetime(request.result, reset);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reset();
+        reject(request.error);
+      };
     });
     return databasePromise;
   };
-  return {
+  const impl = {
     async getConfig() {
       const database = await open();
       const value = await idbRequest(database.transaction(CONFIG_STORE, 'readonly').objectStore(CONFIG_STORE).get(CONFIG_KEY));
@@ -785,6 +805,22 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
       return claimed;
     },
   };
+  return new Proxy(impl, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      return async (...args) => {
+        try {
+          return await value.apply(target, args);
+        } catch (error) {
+          if (!isClosingIdbError(error)) throw error;
+          reset();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          return await value.apply(target, args);
+        }
+      };
+    },
+  });
 }
 
 function safeArchiveKey(value) {

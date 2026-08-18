@@ -41,6 +41,7 @@ import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
+import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
 import { createOffscreenOfflineRetrievalService } from './agent/offline-retrieval-offscreen.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
@@ -2263,6 +2264,7 @@ async function handleMessage(msg, sender) {
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
     'ensure_offscreen_offline_rag_host',
+    EMERGENCY_DOWNLOAD_ACTION,
   ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
@@ -2283,6 +2285,25 @@ async function handleMessage(msg, sender) {
     case 'ensure_offscreen_offline_rag_host':
       await ensureOffscreen();
       return { ready: true };
+    case EMERGENCY_DOWNLOAD_ACTION: {
+      await ensureOffscreen();
+      return await new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage({
+            target: 'offscreen-emergency-download',
+            command: msg.command,
+            resource: msg.resource,
+            id: msg.id,
+          }, (response) => {
+            const lastError = chrome.runtime.lastError;
+            if (lastError) reject(new Error(lastError.message));
+            else resolve(response);
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    }
     case 'apocalypse_mode': {
       const snapshot = await apocalypseController.handle(msg.command, msg);
       if (msg.command === 'enable') {

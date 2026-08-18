@@ -7,6 +7,7 @@
       • offline-rag-host.js — worker-capable SQLite and semantic retrieval
       • vision-inference-host.js — local WebGPU model worker bridge
       • skill-download.js — validated large-file staging through OPFS + blob URLs
+      • emergency-download-host.js — Emergency text pack, PDF, and E5 downloads
       • recorder.js  — tab/display capture + mic mix + MediaRecorder
       • cloud-bridge.js — outbound localhost WebSocket for managed cloud runs
 
@@ -22,6 +23,7 @@
   -->
   <script src="offscreen.js"></script>
   <script type="module" src="offline-rag-host.js"></script>
+  <script type="module" src="emergency-download-host.js"></script>
   <script src="vision-inference-host.js"></script>
   <script src="skill-download.js"></script>
   <script src="recorder.js"></script>
