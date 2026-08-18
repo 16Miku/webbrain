@@ -6615,7 +6615,7 @@ function syncStandaloneWebgpuUi() {
   standaloneWebgpuBtn.hidden = !isStandaloneWindow;
   if (!isStandaloneWindow) return;
   if (!standaloneWebgpuEnabled) standaloneWebgpuActive = false;
-  standaloneRagReadinessRoot?.classList.toggle('hidden', !(isStandaloneWindow && standaloneWebgpuActive));
+  standaloneRagReadinessRoot?.classList.add('hidden');
   standaloneWebgpuBtn.disabled = !standaloneWebgpuEnabled;
   standaloneWebgpuBtn.classList.toggle('active', standaloneWebgpuActive);
   standaloneWebgpuBtn.setAttribute('aria-pressed', String(standaloneWebgpuActive));

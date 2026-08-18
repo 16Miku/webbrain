@@ -26660,8 +26660,8 @@ test('offline RAG readiness filters persist safely and flow only into standalone
   const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   assert.match(chromePanel, /providerId: 'webgpu', \.\.\.offlineRagRunPayload\(\)/,
     'standalone chat does not send the persisted source and language filters');
-  assert.match(chromePanel, /standaloneRagReadinessRoot\?\.classList\.toggle\('hidden', !\(isStandaloneWindow && standaloneWebgpuActive\)\)/,
-    'standalone offline readiness must stay hidden until the WebGPU override is active');
+  assert.match(chromePanel, /standaloneRagReadinessRoot\?\.classList\.add\('hidden'\)/,
+    'standalone offline readiness must stay hidden');
   assert.match(chromeBackground, /standaloneRagFilterOptions\(msg\)/,
     'background does not validate the standalone RAG filter payload');
   for (const browser of ['chrome', 'firefox']) {
