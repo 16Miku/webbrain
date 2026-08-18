@@ -4,6 +4,34 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.2.0] - 2026-08-18
+
+### Added
+- Added a "Ask WebBrain a Question" bubble with improved opacity and lifecycle handling.
+- Added markdown table rendering for assistant responses, preserving tables after headings and across conversation history.
+- Added Apocalypse Mode basic and full kit downloads with a built-in communication reader, size estimates, and i18n translations.
+
+### Changed
+- Improved Instagram carousel handling by no longer treating editor arrows and current-slide labels as carousel failures.
+
+### Fixed
+- Fixed markdown tables being removed after headings and in conversation history.
+- Fixed offline RAG PR review findings and standalone chat routing.
+- Fixed selection quote follow-up action lifecycle and hardening.
+- Fixed stale selection actions being cleared on send.
+- Fixed answer selection action positioning and lifecycle preservation.
+- Fixed Escape key run semantics.
+- Fixed Anthropic thinking content preservation across turns and graceful handling when replay fails mid-stream.
+- Fixed built-in provider default model listing in settings.
+- Fixed OpenAI o-series routed provider legacy contract handling.
+- Fixed Apocalypse Mode PDF range validation and stale search result handling.
+- Fixed stale list refresh handling.
+- Fixed Apocalypse Mode downloads and readiness showcase.
+- Fixed SPA same-url navigation history handling.
+
+### Tests
+- Added offline RAG documentation and FAQ entries.
+
 ## [32.1.1] - 2026-08-18
 
 ### Added
