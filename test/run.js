@@ -13534,6 +13534,19 @@ test('pipe tables keep rendering when a body row has missing or extra cells', ()
   assert.doesNotMatch(out, /\| one \|/);
 });
 
+test('pipe tables still render when they follow an ATX heading with no blank line', () => {
+  const source = '## Comparison\n| A | B |\n|---|---|\n| 1 | 2 |';
+  const headingsFirst = renderMarkdownTables(renderMarkdownHeadings(source));
+  assert.match(headingsFirst, /<h2>Comparison<\/h2>/);
+  assert.doesNotMatch(headingsFirst, /<table>/, 'heading newline swallowing used to glue the header onto the h2');
+
+  const out = renderMarkdownHeadings(renderMarkdownTables(source));
+  assert.match(out, /<h2>Comparison<\/h2>/);
+  assert.match(out, /<table>/);
+  assert.match(out, /<td>1<\/td><td>2<\/td>/);
+  assert.doesNotMatch(out, /\| A \|/);
+});
+
 test('Chrome and Firefox Markdown rendering helpers stay in parity', () => {
   const samples = [
     ['const x = "<tag>";', 'javascript'],
@@ -13561,8 +13574,7 @@ test('sidepanels wire highlighting and heading rendering into fenced Markdown', 
     assert.match(panel, /import \{ codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables \} from '\.\/markdown-render\.js';/, `${label}: renderer helpers should be imported`);
     assert.match(panel, /const lang = codeFenceLanguage\(info\);/, `${label}: fenced code should tolerate metadata after its language token`);
     assert.match(panel, /const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);/, `${label}: completed fenced code should be highlighted by its language while live code stays lightweight`);
-    assert.match(panel, /text = renderMarkdownHeadings\(text\);/, `${label}: ATX headings should be rendered`);
-    assert.match(panel, /text = renderMarkdownTables\(text\);/, `${label}: pipe tables should be rendered`);
+    assert.match(panel, /text = renderMarkdownTables\(text\);\s*text = renderMarkdownHeadings\(text\);/, `${label}: pipe tables must render before headings swallow the following newline`);
     assert.match(css, /\.message-content table \{[\s\S]*?border-collapse: collapse;/, `${label}: rendered tables should have readable borders`);
     assert.match(css, /\.syntax-keyword[\s\S]*?var\(--syntax-keyword\)/, `${label}: token colors should be styled`);
     assert.match(css, /\.syntax-variable \{ color: var\(--syntax-variable\); \}/, `${label}: variables should use their dedicated theme color`);
@@ -30466,6 +30478,22 @@ test('chat history text serialization preserves rendered line structure', () => 
       serialize(renderedCodeFollowedByText),
       '```javascript\nline 1\n```\nClosing',
       `${label}: rendered code wrappers should preserve their language and use the source <br> as the only post-fence newline`,
+    );
+    const table = element(
+      'TABLE',
+      element('THEAD', element('TR', element('TH', textNode('Aspect')), element('TH', textNode('BM25')))),
+      element(
+        'TBODY',
+        element('TR', element('TD', textNode('Exact keyword matching')), element('TD', element('STRONG', textNode('Excellent')))),
+        element('TR', element('TD', textNode('A | B')), element('TD', textNode('kept'))),
+      ),
+    );
+    const wrappedTable = element('DIV', table);
+    wrappedTable.classList = { contains: (name) => name === 'markdown-table-wrapper' };
+    assert.equal(
+      serialize(wrappedTable).trim(),
+      '| Aspect | BM25 |\n|---|---|\n| Exact keyword matching | **Excellent** |\n| A \\| B | kept |',
+      `${label}: rendered pipe tables should round-trip as Markdown instead of flattened cells`,
     );
   }
 });
