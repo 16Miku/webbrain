@@ -79,6 +79,7 @@ const emergencyCopy = {
   'eb.rag.semantic_ready': 'Multilingual semantic ranking is ready.',
   'eb.rag.confirm_delete_corpus': 'Delete the Emergency text pack and its local search index?',
   'eb.rag.confirm_delete_semantic': 'Delete the semantic model and its cached passage vectors?',
+  'eb.cannot_delete_while_enabled': 'Cannot delete emergency resources while Apocalypse Mode is enabled. Disable Apocalypse Mode first.',
   'eb.rag.confirm_kit': '{kit}: download {count} remaining components and resources?\n\nNetwork: {network}\nEstimated installed storage: {installed}\n\nDownloads run one at a time and verified items remain available if you stop early.',
   'eb.rag.downloading_corpus': 'Downloading and installing the Emergency text pack…',
   'eb.rag.downloading_semantic': 'Downloading multilingual semantic ranking…',

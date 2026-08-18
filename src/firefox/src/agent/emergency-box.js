@@ -1,4 +1,5 @@
 import { OPENSTAX_CATALOG_SNAPSHOT_DATE, PREFETCHED_OPENSTAX_CATALOG } from './openstax-catalog.js';
+import { createApocalypseStore } from './apocalypse-mode.js';
 
 export { OPENSTAX_CATALOG_SNAPSHOT_DATE, PREFETCHED_OPENSTAX_CATALOG };
 
@@ -869,10 +870,17 @@ export async function downloadEmergencyResource(resource, options = {}) {
 }
 
 export async function deleteEmergencyResource(id, options = {}) {
-  const store = options.store || createEmergencyBoxStore();
-  const storage = options.storage || createEmergencyBoxStorage();
+  const store = options.store || createEmergencyBoxStore(options.indexedDb);
+  const storage = options.storage || createEmergencyBoxStorage(options.opfsRoot);
   const record = await store.get(id);
   if (!record) return false;
+  if (record.status === 'ready' && !options.force && !options.allowWhileEnabled) {
+    const apocalypseStore = options.apocalypseStore || createApocalypseStore(options.indexedDb || globalThis.indexedDB);
+    const apocalypseConfig = await apocalypseStore.getConfig().catch(() => null);
+    if (apocalypseConfig?.enabled === true) {
+      throw new Error('Cannot delete emergency resources while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
+    }
+  }
   await storage.delete(record.storageKey || record.id);
   await store.delete(id);
   return true;

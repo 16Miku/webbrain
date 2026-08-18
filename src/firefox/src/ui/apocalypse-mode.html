@@ -6,109 +6,38 @@
   <title data-i18n="ap.page_title"></title>
   <script src="theme-bootstrap.js"></script>
   <style>
-    :root { --bg:#0b0f19;--panel:#131926;--panel2:#1a2234;--text:#f1f5f9;--muted:#94a3b8;--border:rgba(255,255,255,.08);--accent:#6366f1;--accent2:#4f46e5;--good:#10b981;--warn:#f59e0b;--bad:#f43f5e;--header-bg:rgba(11,15,25,.92);--stats-bg:rgba(19,25,38,.85);--link:#38bdf8;--good-link:#6ee7b7;--accent-soft:rgba(99,102,241,.12);--teal:#14b8a6;color-scheme:dark; }
-    :root[data-theme="light"] { --bg:#f8fafc;--panel:#ffffff;--panel2:#f1f5f9;--text:#0f172a;--muted:#64748b;--border:rgba(0,0,0,.08);--accent:#4f46e5;--accent2:#4338ca;--good:#059669;--warn:#d97706;--bad:#dc2626;--header-bg:rgba(248,250,252,.94);--stats-bg:rgba(241,245,249,.9);--link:#0284c7;--good-link:#047857;--accent-soft:rgba(79,70,229,.09);--teal:#0d9488;color-scheme:light; }
+    :root { --bg:#1a1a2e;--panel:#16213e;--panel2:#1e2746;--text:#e8e8e8;--muted:#a0a0b8;--border:rgba(255,255,255,.08);--accent:#6c63ff;--accent2:#5a52d5;--good:#4caf50;--warn:#ffc870;--bad:#f44336;--header-bg:rgba(26,26,46,.96);--stats-bg:rgba(22,33,62,.76);--link:#9e97ff;--good-link:#d5ffe6;--accent-soft:#a9a3ff;--teal:#60d3b2;color-scheme:dark; }
+    :root[data-theme="light"] { --bg:#f7f1e6;--panel:#fffdf8;--panel2:#fdf6e0;--text:#2c1810;--muted:#6b5b47;--border:rgba(89,55,25,.15);--accent:#5b52e8;--accent2:#4a42c4;--good:#2d8866;--warn:#a85f00;--bad:#c5363c;--header-bg:rgba(247,241,230,.96);--stats-bg:rgba(255,253,248,.82);--link:#4a42c4;--good-link:#1f6f4a;--accent-soft:#4a42c4;--teal:#177f69;color-scheme:light; }
     * { box-sizing:border-box; }
-    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased; }
-    header { border-bottom:1px solid var(--border);padding:18px max(24px,calc((100vw - 1120px)/2));display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:sticky;top:0;background:var(--header-bg);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:2;box-shadow:0 4px 20px -4px rgba(0,0,0,.2); }
-    .apocalypse-icon { color:var(--warn);font-size:42px;line-height:1; }
+    body { margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif; }
+    header { border-bottom:1px solid var(--border);padding:20px max(24px,calc((100vw - 1120px)/2));display:flex;align-items:center;gap:16px;position:sticky;top:0;background:var(--header-bg);z-index:2; }
+    .apocalypse-icon { color:var(--warn);font-size:48px;line-height:1; }
     .header-copy { display:grid;gap:1px; }
     .header-copy .muted { font-size:13px; }
-    h1,h2,h3,p { margin:0; } h1 { font-size:21px;font-weight:700;letter-spacing:-.02em; } h2 { font-size:17px;font-weight:650;margin-bottom:12px;letter-spacing:-.015em; } h3 { font-size:14px; }
+    .header-stats { display:flex;align-items:stretch;overflow:hidden;margin-inline-start:auto;border:1px solid var(--border);border-radius:9px;background:var(--stats-bg); }
+    .header-stat { min-width:94px;padding:6px 10px;border-inline-start:1px solid var(--border); }
+    .header-stat:first-child { border-inline-start:0; }
+    .header-stat strong,.header-stat small { display:block; }
+    .header-stat strong { font-size:13px;line-height:1.2; }
+    .header-stat small { margin-top:2px;color:var(--muted);font-size:9px;line-height:1.2;white-space:nowrap; }
+    h1,h2,p { margin:0; } h1 { font-size:21px; } h2 { font-size:17px;margin-bottom:4px; }
     main { max-width:1120px;margin:24px auto;padding:0 24px 48px;display:grid;gap:18px; }
-    .card { background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:22px;box-shadow:0 10px 30px -5px rgba(0,0,0,.2); }
-    .section-heading { display:flex;align-items:flex-start;gap:12px;margin-bottom:14px; }
-    .section-heading h2 { margin-bottom:2px; }
-    .section-icon { width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border:1px solid rgba(99,102,241,.35);border-radius:12px;background:rgba(99,102,241,.1);color:var(--accent); }
-    .section-icon[data-kind="catalog"] { border-color:rgba(20,184,166,.35);background:rgba(20,184,166,.1);color:var(--teal); }
-    .section-icon[data-kind="import"] { border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.1);color:var(--warn); }
-    .section-icon[data-kind="emergency"] { border-color:rgba(16,185,129,.38);background:rgba(16,185,129,.1);color:var(--good); }
+    .card { background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px; }
+    .hero { display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center; }
+    .library-callout,.emergency-callout { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center; }
+    .section-icon { width:36px;height:36px;display:grid;place-items:center;color:var(--good);border:1px solid rgba(85,199,133,.38);border-radius:9px;background:rgba(85,199,133,.09); }
     .section-icon svg { width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
-    .hero { display:grid;grid-template-columns:1fr;gap:12px; }
-    .hero-overview { display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;align-items:start; }
-    .hero-copy { max-width:780px; }
-    .library-callout,.emergency-callout { display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:14px;align-items:center; }
-    .library-callout h2,.emergency-callout h2 { margin-bottom:2px; }
-    .library-callout .button-link { border-color:var(--teal);color:#fff;background:var(--teal); }
-    .library-callout .button-link:hover { filter:brightness(1.08); }
-    .emergency-callout[data-locked="true"] .section-icon,.emergency-callout[data-locked="true"] h2,.emergency-callout[data-locked="true"] .muted,.emergency-callout[data-locked="true"] .button-link { opacity:.46;filter:saturate(.2); }
-    .emergency-callout[data-locked="true"] .button-link { pointer-events:none;cursor:not-allowed; }
-    .emergency-gate-reason { margin-top:5px;color:var(--warn);font-size:12px;font-weight:650; }
-    .button-link { display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 14px;border:1px solid var(--good);border-radius:10px;color:#fff;background:var(--good);font-weight:650;text-decoration:none;white-space:nowrap;transition:all .15s ease; }
-    .button-link:hover { filter:brightness(1.08);transform:translateY(-1px); }
-    .muted,.meta { color:var(--muted); } .warning { color:var(--warn);margin-top:8px; }
-    .toggle { display:flex;gap:10px;align-items:center;font-weight:600;font-size:13px; }
-    .toggle input { width:38px;height:20px;accent-color:var(--accent);cursor:pointer; }
-    .header-right { display:flex;align-items:center;gap:12px;margin-inline-start:auto; }
-    .header-stats { display:flex;align-items:stretch;overflow:hidden;border:1px solid var(--border);border-radius:10px;background:var(--stats-bg); }
-    .header-stat { min-width:86px;display:grid;gap:0;padding:6px 10px;border-inline-end:1px solid var(--border); }
-    .header-stat:last-child { min-width:132px;border-inline-end:0; }
-    .header-stat strong { overflow:hidden;font:700 11px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace;text-overflow:ellipsis;white-space:nowrap; }
-    .header-stat small { color:var(--muted);font-size:9px;line-height:1.2;white-space:nowrap; }
-    .models-readiness { display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border:1px solid currentColor;border-radius:9999px;font-size:12px;font-weight:650;white-space:nowrap; }
-    .models-readiness-dot { width:7px;height:7px;border-radius:50%;background:currentColor; }
-    .models-readiness[data-kind="ready"] { color:var(--good);background:rgba(16,185,129,.1); }
-    .models-readiness[data-kind="pending"] { color:var(--warn);background:rgba(245,158,11,.1); }
-    .models-readiness[data-kind="disabled"],.models-readiness[data-kind="error"] { color:var(--bad);background:rgba(244,63,94,.1); }
-    .local-models { grid-column:1 / -1;width:100%;display:grid;gap:12px; }
-    .local-model { width:100%;display:grid;grid-template-columns:48px minmax(0,1fr);gap:16px;align-items:start;padding:18px;border:1px solid var(--border);border-radius:12px;background:var(--panel2); }
-    .local-model-icon { width:48px;height:48px;display:grid;place-items:center;border:1px solid rgba(99,102,241,.35);border-radius:12px;background:rgba(99,102,241,.1);color:var(--accent); }
-    .local-model[data-model-kind="vision"] .local-model-icon { border-color:rgba(20,184,166,.35);background:rgba(20,184,166,.1);color:var(--teal); }
-    .local-model[data-model-kind="knowledge"] .local-model-icon { border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.1);color:var(--warn); }
-    .local-model-icon svg { width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
-    .local-model-body { min-width:0; }
-    .local-model-head { display:flex;align-items:baseline;justify-content:space-between;gap:12px; }
-    .local-model .meta { margin-top:4px; }
-    .model-test-result { min-height:18px;margin-top:8px;color:var(--muted);font-size:12px;font-weight:600; }
-    .model-test-result[data-kind="success"] { color:var(--good); }
-    .model-test-result[data-kind="error"] { color:var(--bad); }
-    .model-actions { display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px; }
-    .vision-status { margin-top:8px;color:var(--muted);font-weight:600; }
-    .vision-status[data-kind="ready"] { color:var(--good); }
-    .vision-status[data-kind="error"] { color:var(--bad); }
-    .check { display:flex;gap:8px;align-items:center;min-height:38px;color:var(--text); }
-    .check input { accent-color:var(--accent); }
-    .controls { display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:14px; }
-    label.field { display:grid;gap:5px;color:var(--muted);font-size:12px; }
-    button,select,input[type=file],input[type=text],input[type=number] { background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:8px 12px;font:inherit; }
-    button { cursor:pointer;font-weight:600;transition:all .15s ease; } button.primary { background:var(--accent);border-color:var(--accent);color:#fff; } button.primary:hover:not(:disabled) { background:var(--accent2);border-color:var(--accent2);transform:translateY(-1px); } button.danger { color:var(--bad); } button:disabled { opacity:.5;cursor:not-allowed; }
-    a { color:var(--link); }
-    .webgpu-transfer { margin-top:10px; }
-    .local-model:has(.webgpu-transfer[data-state=error]) { border-color:rgba(244,63,94,.5); }
-    .webgpu-transfer-heading,.webgpu-transfer-status-row,.webgpu-transfer-actions { display:flex;align-items:center;gap:8px; }
-    .webgpu-transfer-heading { justify-content:space-between;margin-bottom:10px; }
-    .webgpu-transfer-title { font-size:12px;font-weight:700; }
-    .webgpu-transfer-status-row { margin-bottom:7px; }
-    .webgpu-transfer-dot { width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:var(--muted); }
-    .webgpu-transfer[data-state=downloading] .webgpu-transfer-dot { background:var(--teal);box-shadow:0 0 0 4px rgba(20,184,166,.15);animation:webgpu-transfer-pulse 1.25s ease-in-out infinite; }
-    .webgpu-transfer[data-state=ready] .webgpu-transfer-dot { background:var(--good); }
-    .webgpu-transfer[data-state=paused] .webgpu-transfer-dot,.webgpu-transfer[data-state=stopping] .webgpu-transfer-dot { background:var(--warn); }
-    .webgpu-transfer[data-state=error] .webgpu-transfer-dot { background:var(--bad); }
-    .webgpu-transfer-status { font-size:12px;font-weight:600; }
-    .webgpu-transfer-track { position:relative;height:6px;overflow:hidden;border-radius:9999px;background:rgba(128,128,160,.2); }
-    .webgpu-transfer-fill { width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--teal));transition:width .18s ease; }
-    .webgpu-transfer[data-state=downloading][data-indeterminate=true] .webgpu-transfer-fill { width:36%!important;animation:webgpu-transfer-scan 1.15s ease-in-out infinite alternate; }
-    .webgpu-transfer-detail { min-height:17px;margin-top:7px;color:var(--muted);font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere; }
-    .webgpu-transfer-actions { flex-wrap:wrap;margin-top:10px; }
-    .webgpu-transfer-actions button { padding:6px 12px; }
-    @keyframes webgpu-transfer-pulse { 50% { opacity:.45;transform:scale(.75); } }
-    @keyframes webgpu-transfer-scan { from { transform:translateX(-100%); } to { transform:translateX(280%); } }
-    @keyframes status-pulse { 50% { opacity:.35;transform:scale(.75); } }
-    .list { display:grid;gap:10px;margin-top:12px; }
-    .item { border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center; }
-    .item .meta { font-size:12px;margin-top:3px;overflow-wrap:anywhere; } .actions { display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end; }
-    progress { width:100%;height:6px;margin-top:8px;accent-color:var(--accent);border-radius:9999px; }
-    .section-status { min-height:20px;margin-top:10px;color:var(--muted);font-size:12px;font-weight:600; }
-    .section-status:not(:empty)::before { content:"";display:inline-block;width:7px;height:7px;margin-inline-end:7px;border-radius:50%;background:currentColor;vertical-align:1px; }
-    .section-status[data-kind="loading"] { color:var(--teal); }
-    .section-status[data-kind="loading"]::before { animation:status-pulse 1.2s ease-in-out infinite; }
-    .section-status[data-kind="success"] { color:var(--good); }
-    .section-status[data-kind="error"] { color:var(--bad); }
+    .button-link { display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 13px;border:1px solid rgba(85,199,133,.45);border-radius:8px;color:var(--good-link);background:rgba(85,199,133,.1);font-weight:700;text-decoration:none;white-space:nowrap; }
+    .button-link:hover { border-color:var(--good);background:rgba(85,199,133,.16); }
+    .library-callout .section-icon { border-color:rgba(96,211,178,.35);background:rgba(96,211,178,.09);color:#60d3b2; }
+    .library-callout .button-link { border-color:rgba(96,211,178,.45);color:#60d3b2;background:rgba(96,211,178,.1); }
+    .library-callout .button-link:hover { border-color:#60d3b2;background:rgba(96,211,178,.16); }
+    .muted { color:var(--muted); } .warning { color:var(--warn);margin-top:8px; }
+    .toggle { display:flex;gap:10px;align-items:center;font-weight:700; }
+    .toggle input { width:42px;height:22px;accent-color:var(--accent); }
     #notice { min-height:21px;color:var(--muted); } #notice[data-kind=error] { color:var(--bad); } #notice[data-kind=success] { color:var(--good); }
-    .empty { color:var(--muted);padding:12px 0; }
-    @media(prefers-reduced-motion:reduce){.webgpu-transfer-fill{transition:none}.webgpu-transfer[data-state=downloading] .webgpu-transfer-dot,.webgpu-transfer[data-state=downloading][data-indeterminate=true] .webgpu-transfer-fill,.section-status[data-kind="loading"]::before{animation:none}}
-    @media(max-width:920px){.header-stats .header-stat:last-child{display:none}}
-    @media(max-width:700px){ header{align-items:flex-start}.header-right{width:100%;margin-inline-start:64px;justify-content:space-between}.header-stat{min-width:74px}.hero-overview,.item,.library-callout,.emergency-callout{grid-template-columns:1fr}.local-models{grid-column:1}.actions{justify-content:flex-start}.local-model-head{align-items:flex-start;flex-direction:column;gap:2px}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start} }
+    @media(max-width:860px){.header-stats .header-stat:last-child{display:none}}
+    @media(max-width:700px){header{align-items:flex-start;flex-wrap:wrap}.header-stats{width:100%;margin-inline-start:64px}.header-stat{flex:1}.hero,.library-callout,.emergency-callout{grid-template-columns:1fr}.library-callout .section-icon,.emergency-callout .section-icon{display:none}.button-link{justify-self:start}}
   </style>
   <link rel="stylesheet" href="apocalypse-kit.css">
   <link rel="stylesheet" href="apocalypse-comm.css">
@@ -116,107 +45,24 @@
   <link rel="stylesheet" href="offline-rag-readiness.css">
 </head>
 <body class="ap-page">
-  <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div><div class="header-right"><div class="header-stats" data-i18n-aria-label="ap.metric.summary"><span class="header-stat"><strong id="installed-count">0</strong><small data-i18n="ap.metric.installed"></small></span><span class="header-stat"><strong id="archive-bytes">0 B</strong><small data-i18n="ap.metric.archive_bytes"></small></span><span class="header-stat"><strong id="storage-usage"></strong><small data-i18n="ap.metric.storage"></small></span></div><span id="models-readiness" class="models-readiness" data-kind="disabled" role="status" aria-live="polite"><span class="models-readiness-dot" aria-hidden="true"></span><span id="models-readiness-label"></span></span></div></header>
+  <header><span class="apocalypse-icon" aria-hidden="true">☢</span><div class="header-copy"><h1 data-i18n="ap.title"></h1><p class="muted" data-i18n="ap.subtitle"></p></div><div class="header-stats" data-i18n-aria-label="ap.metric.summary"><span class="header-stat"><strong id="installed-count">0</strong><small data-i18n="ap.metric.installed"></small></span><span class="header-stat"><strong id="archive-bytes">0 B</strong><small data-i18n="ap.metric.archive_bytes"></small></span><span class="header-stat"><strong id="storage-usage"></strong><small data-i18n="ap.metric.storage"></small></span></div></header>
   <main>
-    <section class="card hero">
-      <div class="hero-overview">
-        <div class="hero-copy">
-          <h2 data-i18n="ap.hero.title"></h2>
-          <p class="muted" data-i18n="ap.hero.desc"></p>
-          <p class="warning" data-i18n="ap.hero.consent"></p>
-        </div>
-        <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
-      </div>
-      <div class="local-models">
-          <section id="webgpu-provider-card" class="local-model" data-model-kind="text" hidden>
-            <span class="local-model-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M5 6.5h14M12 6.5v11M8.5 17.5h7"/></svg>
-            </span>
-            <div class="local-model-body">
-              <div class="local-model-head">
-                <strong data-i18n="ap.models.text.title"></strong>
-                <span class="meta">1.55 GB · WebGPU</span>
-              </div>
-              <p class="meta" data-i18n="ap.webgpu.rag"></p>
-              <section class="webgpu-transfer" data-webgpu-download-panel data-state="checking" data-indeterminate="true" aria-labelledby="webgpu-transfer-title">
-                <div class="webgpu-transfer-heading">
-                  <span class="webgpu-transfer-title" id="webgpu-transfer-title" data-i18n="st.providers.webgpu_download.title"></span>
-                </div>
-                <div class="webgpu-transfer-status-row" role="status" aria-live="polite">
-                  <span class="webgpu-transfer-dot" aria-hidden="true"></span>
-                  <span class="webgpu-transfer-status" data-webgpu-download-status></span>
-                </div>
-                <div class="webgpu-transfer-track" data-webgpu-download-track role="progressbar" data-i18n-aria-label="st.providers.webgpu_download.progress_label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                  <div class="webgpu-transfer-fill" data-webgpu-download-fill></div>
-                </div>
-                <div class="webgpu-transfer-detail" data-webgpu-download-detail></div>
-                <div class="webgpu-transfer-actions">
-                  <button type="button" class="primary" data-webgpu-download-action="start" data-i18n="st.providers.webgpu_download.start"></button>
-                  <button type="button" data-webgpu-download-action="pause" data-i18n="st.providers.webgpu_download.pause" hidden></button>
-                  <button type="button" class="primary" data-webgpu-download-action="resume" data-i18n="st.providers.webgpu_download.resume" hidden></button>
-                  <button type="button" data-webgpu-download-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
-                </div>
-              </section>
-            </div>
-          </section>
-
-          <section id="vision-model-card" class="local-model" data-model-kind="vision" hidden>
-            <span class="local-model-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
-            </span>
-            <div class="local-model-body">
-              <div class="local-model-head"><strong data-i18n="ap.models.vision.title"></strong><span class="meta">~770 MB · WebGPU</span></div>
-              <p class="meta" data-i18n="st.vision.local.desc"></p>
-              <p class="meta" data-i18n="ap.vision.auto"></p>
-              <div id="vision-model-status" class="vision-status" role="status" aria-live="polite"></div>
-              <progress id="vision-model-progress" max="100" value="0" hidden></progress>
-              <div class="model-actions">
-                <button type="button" class="primary" data-vision-download-action="start" data-i18n="st.providers.webgpu_download.start" hidden></button>
-                <button type="button" data-vision-download-action="pause" data-i18n="st.providers.webgpu_download.pause" hidden></button>
-                <button type="button" class="primary" data-vision-download-action="resume" data-i18n="st.providers.webgpu_download.resume" hidden></button>
-                <button type="button" class="danger" data-vision-download-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
-                <button type="button" id="vision-model-test" data-i18n="st.vision.test" disabled></button>
-              </div>
-              <div id="vision-model-test-result" class="model-test-result" role="status" aria-live="polite"></div>
-            </div>
-          </section>
-
-          <section id="basic-wikipedia-card" class="local-model" data-model-kind="knowledge" hidden>
-            <span class="local-model-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg>
-            </span>
-            <div class="local-model-body">
-              <div class="local-model-head"><strong id="basic-wikipedia-title" data-i18n="ap.models.wikipedia.title"></strong><span id="basic-wikipedia-meta" class="meta"></span></div>
-              <p id="basic-wikipedia-description" class="meta" data-i18n="ap.models.wikipedia.desc"></p>
-              <div id="basic-wikipedia-status" class="vision-status" role="status" aria-live="polite"></div>
-              <progress id="basic-wikipedia-progress" max="100" value="0" hidden></progress>
-              <div class="model-actions">
-                <button type="button" id="basic-wikipedia-start" class="primary" data-i18n="st.providers.webgpu_download.start" hidden></button>
-                <button type="button" data-basic-wikipedia-action="pause" data-i18n="ap.pause" hidden></button>
-                <button type="button" class="primary" data-basic-wikipedia-action="resume" data-i18n="ap.resume" hidden></button>
-                <button type="button" data-basic-wikipedia-action="retry" data-i18n="ap.retry" hidden></button>
-                <button type="button" class="primary" data-basic-wikipedia-action="read" data-i18n="ap.reader.open" hidden></button>
-                <button type="button" class="danger" data-basic-wikipedia-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
-              </div>
-            </div>
-          </section>
-      </div>
+    <section class="hero">
+      <div><h2 data-i18n="ap.hero.title"></h2><p class="muted" data-i18n="ap.hero.desc"></p><p class="warning" data-i18n="ap.hero.consent"></p></div>
+      <label class="toggle"><input id="enabled" type="checkbox"> <span data-i18n="ap.enabled"></span></label>
     </section>
-
     <section id="offline-rag-readiness" class="card offline-rag-readiness" aria-live="polite"></section>
 
     <section id="wikipedia-library-callout" class="card library-callout" hidden>
-      <span class="section-icon" data-kind="catalog" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
+      <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h5.3c1.8 0 3.2 1.4 3.2 3.2v10.8c0-1.8-1.4-3.2-3.2-3.2H3.5V5.5ZM20.5 5.5h-5.3c-1.8 0-3.2 1.4-3.2 3.2v10.8c0-1.8 1.4-3.2 3.2-3.2h5.3V5.5Z"/></svg></span>
       <div><h2 data-i18n="wl.title"></h2><p class="muted" data-i18n="wl.choose_desc"></p></div>
       <a id="wikipedia-library-link" class="button-link" href="wikipedia-library.html" data-i18n="st.display.apocalypse_mode.manage"></a>
     </section>
-
-    <section id="emergency-box-callout" class="card emergency-callout" data-locked="true" aria-disabled="true">
-      <span class="section-icon" data-kind="emergency" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
-      <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p><p id="emergency-gate-reason" class="emergency-gate-reason" data-i18n="ap.emergency.gate"></p></div>
-      <a id="emergency-box-link" class="button-link" data-href="emergency-box.html" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1" data-i18n="ap.emergency.open"></a>
+    <section class="card emergency-callout">
+      <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7v2.3M12 11.5v5M9.5 14h5"/></svg></span>
+      <div><h2 data-i18n="ap.emergency.title"></h2><p class="muted" data-i18n="ap.emergency.desc"></p></div>
+      <a class="button-link" href="emergency-box.html" target="_blank" rel="noopener" data-i18n="ap.emergency.open"></a>
     </section>
-
     <div id="notice" role="status" aria-live="polite"></div>
   </main>
   <script type="module" src="apocalypse-comm.js"></script>

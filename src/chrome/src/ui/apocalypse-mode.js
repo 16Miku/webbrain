@@ -4,6 +4,14 @@ import {
   wikipediaArchiveIncludesImages,
 } from '../agent/apocalypse-mode.js';
 import {
+  createEmergencyCorpusStore,
+  createEmergencyCorpusStorage,
+  downloadAndInstallEmergencyCorpus,
+} from '../agent/emergency-corpus.js';
+import { EMERGENCY_CORPUS_RELEASE } from '../agent/emergency-corpus-release.js';
+import { createHostedOfflineRagIndexClient } from '../agent/offline-rag-index-host.js';
+import { createOfflineSemanticReranker } from '../agent/offline-reranker.js';
+import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
 } from '../providers/webgpu.js';
@@ -67,9 +75,19 @@ let webgpuDownloadState = {
   progress: 0,
   error: '',
 };
+const corpusStore = createEmergencyCorpusStore();
+const corpusStorage = createEmergencyCorpusStorage();
+const semanticReranker = createOfflineSemanticReranker();
+let ragIndexClient = null;
+const indexClient = () => {
+  if (!ragIndexClient) ragIndexClient = createHostedOfflineRagIndexClient();
+  return ragIndexClient;
+};
 const ragReadiness = createOfflineRagReadinessController({
   root: elements['offline-rag-readiness'],
   manageHref: 'emergency-box.html',
+  corpusStore,
+  semanticReranker,
   getGenerationStatus: () => webgpuDownloadState.status === 'ready'
     ? 'ready'
     : webgpuDownloadState.status === 'error'
@@ -258,6 +276,10 @@ function updateWebgpuDownloadPanel() {
 
 function confirmCompletedModelRemoval(action, status, modelTitleKey) {
   if (action !== 'stop' || status !== 'ready') return true;
+  if (snapshot?.enabled === true || elements['enable']?.checked) {
+    notice(t('ap.models.cannot_remove_while_enabled'), 'error');
+    return false;
+  }
   return globalThis.confirm(t('ap.models.confirm_remove', { model: t(modelTitleKey) }));
 }
 
@@ -585,6 +607,55 @@ function maybeAutoStartBasicWikipediaDownload() {
   void startBasicWikipediaDownload({ automatic: true });
 }
 
+let corpusDownloadInFlight = false;
+let semanticDownloadInFlight = false;
+
+async function maybeAutoStartEmergencyCorpusDownload() {
+  if (snapshot?.enabled !== true || corpusDownloadInFlight || !EMERGENCY_CORPUS_RELEASE) return;
+  try {
+    const record = await corpusStore.get();
+    if (record?.status === 'ready' || record?.status === 'downloading' || record?.status === 'verifying' || record?.status === 'extracting' || record?.status === 'indexing') return;
+    corpusDownloadInFlight = true;
+    const controller = new AbortController();
+    await downloadAndInstallEmergencyCorpus(EMERGENCY_CORPUS_RELEASE, {
+      store: corpusStore,
+      storage: corpusStorage,
+      signal: controller.signal,
+      buildIndex: request => indexClient().buildEmergencyIndex(request),
+      deleteIndex: path => indexClient().deleteIndex(path),
+      onProgress: () => {
+        void ragReadiness.refresh();
+      },
+    });
+  } catch {
+    // Auto-download handles background interruptions gracefully without breaking page lifecycle
+  } finally {
+    corpusDownloadInFlight = false;
+    await ragReadiness.refresh();
+  }
+}
+
+async function maybeAutoStartSemanticDownload() {
+  if (snapshot?.enabled !== true || semanticDownloadInFlight) return;
+  try {
+    const state = semanticReranker.snapshot();
+    if (state?.status === 'ready' || state?.status === 'downloading') return;
+    semanticDownloadInFlight = true;
+    const controller = new AbortController();
+    await semanticReranker.download({
+      signal: controller.signal,
+      onProgress: () => {
+        void ragReadiness.refresh();
+      },
+    });
+  } catch {
+    // Auto-download handles background interruptions gracefully without breaking page lifecycle
+  } finally {
+    semanticDownloadInFlight = false;
+    await ragReadiness.refresh();
+  }
+}
+
 async function loadBasicWikipediaCatalog() {
   if (snapshot?.enabled !== true || basicWikipediaCatalogItem || basicWikipediaCatalogLoading) return;
   basicWikipediaCatalogLoading = true;
@@ -613,6 +684,10 @@ async function runBasicWikipediaAction(action, sourceButton) {
     return;
   }
   if (action === 'stop') {
+    if (record.status === 'ready' && (snapshot?.enabled === true || elements['enable']?.checked)) {
+      notice(t('ap.cannot_delete_while_enabled'), 'error');
+      return;
+    }
     const message = record.target?.kind === 'file-handle' ? t('ap.delete_external') : t('ap.delete_internal');
     if (!globalThis.confirm(message)) return;
     await setBasicWikipediaAutoStartSuppressed(true);
@@ -664,7 +739,11 @@ elements.enabled.addEventListener('change', async () => {
     renderInstalled();
     updateOverallModelsReadiness();
     notice(t(elements.enabled.checked ? 'ap.enabled_notice' : 'ap.disabled_notice'), 'success');
-    if (snapshot.enabled === true) void loadBasicWikipediaCatalog();
+    if (snapshot.enabled === true) {
+      void loadBasicWikipediaCatalog();
+      void maybeAutoStartEmergencyCorpusDownload();
+      void maybeAutoStartSemanticDownload();
+    }
   } catch (error) { elements.enabled.checked = !elements.enabled.checked; notice(error.message, 'error'); }
 });
 document.addEventListener('wb-locale-changed', () => {
@@ -694,7 +773,7 @@ async function poll() {
       processingDownload = true;
       command('process').catch(() => {}).finally(() => { processingDownload = false; });
     }
-    await Promise.all([refresh(), refreshWebgpuDownloadStatus()]);
+    await Promise.all([refresh(), refreshWebgpuDownloadStatus(), ragReadiness.refresh()]);
   } catch { /* The next poll or persisted alarm retries. */ }
   finally { polling = false; }
 }
@@ -704,6 +783,14 @@ await Promise.all([
   refreshWebgpuDownloadStatus(),
   loadBasicWikipediaAutoStartPreference(),
 ]);
-if (snapshot?.enabled === true) void loadBasicWikipediaCatalog();
+if (snapshot?.enabled === true) {
+  void loadBasicWikipediaCatalog();
+  void maybeAutoStartEmergencyCorpusDownload();
+  void maybeAutoStartSemanticDownload();
+}
 setInterval(poll, 2000);
-globalThis.addEventListener('pagehide', () => ragReadiness.close(), { once: true });
+globalThis.addEventListener('pagehide', () => {
+  ragReadiness.close();
+  ragIndexClient?.close?.();
+  semanticReranker.close?.();
+}, { once: true });

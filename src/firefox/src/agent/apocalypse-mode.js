@@ -1095,9 +1095,13 @@ export function createApocalypseArchiveManager(options = {}) {
     return next;
   }
 
-  async function remove(id) {
+  async function remove(id, removeOptions = {}) {
     const record = await store.getArchive(id);
     if (!record) return false;
+    const config = await store.getConfig();
+    if (record.status === 'ready' && config?.enabled === true && !removeOptions.allowWhileEnabled && !removeOptions.force) {
+      throw new Error('Cannot delete Wikipedia archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
+    }
     controllers.get(id)?.abort();
     const deleting = {
       ...record,
@@ -1654,7 +1658,7 @@ export function createApocalypseController(api, options = {}) {
           continue;
         }
         try {
-          await manager.remove(id);
+          await manager.remove(id, { allowWhileEnabled: true });
           removed.push(id);
         } catch (error) {
           retained.push(id);
@@ -1904,7 +1908,7 @@ export function createApocalypseController(api, options = {}) {
       case 'pause': await manager.pause(payload.id); return await snapshot();
       case 'resume': await manager.resume(payload.id); return await snapshot();
       case 'retry': await manager.retry(payload.id); return await snapshot();
-      case 'delete': await manager.remove(payload.id); return await snapshot();
+      case 'delete': await manager.remove(payload.id, payload); return await snapshot();
       case 'process': return await manager.processNext();
       default: throw new Error(`Unknown Apocalypse Mode action: ${action}`);
     }

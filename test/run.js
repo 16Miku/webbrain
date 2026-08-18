@@ -24997,7 +24997,7 @@ test('Apocalypse Mode retains actionable metadata when managed-byte deletion fai
     const record = { id: 'delete-me', status: 'ready', generation: 2, target: { kind: 'opfs', key: 'delete-me.zim' }, size: 4096 };
     const records = new Map([[record.id, record]]);
     const store = {
-      async getConfig() { return { enabled: true, updatePolicy: 'manual' }; },
+      async getConfig() { return { enabled: false, updatePolicy: 'manual' }; },
       async listArchives() { return [...records.values()]; },
       async getArchive(id) { return records.get(id) || null; },
       async putArchive(next) { records.set(next.id, { ...next }); return next; },
@@ -25018,6 +25018,78 @@ test('Apocalypse Mode retains actionable metadata when managed-byte deletion fai
     assert.equal(records.has(record.id), false, `${label}: successful retry retained archive metadata`);
   }
 });
+
+test('Apocalypse Mode prevents removing Wikipedia archives, emergency corpus, and emergency resources when enabled unless explicitly disabled first', async () => {
+  for (const [label, { ApocalypseMode, EmergencyCorpus, EmergencyBox }] of [
+    ['chrome', { ApocalypseMode: ApocalypseModeCh, EmergencyCorpus: EmergencyCorpusCh, EmergencyBox: EmergencyBoxCh }],
+    ['firefox', { ApocalypseMode: ApocalypseModeFx, EmergencyCorpus: EmergencyCorpusFx, EmergencyBox: EmergencyBoxFx }],
+  ]) {
+    const record = { id: 'wiki-eng', status: 'ready', generation: 1, target: { kind: 'opfs', key: 'wiki.zim' }, size: 2048 };
+    const records = new Map([[record.id, record]]);
+    const config = { enabled: true };
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return config; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { return records.get(id) || null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = { async remove() {}, async exists() { return false; } };
+    const manager = ApocalypseMode.createApocalypseArchiveManager({ store, storage });
+
+    // Attempting to delete ready Wikipedia archive while enabled must fail
+    await assert.rejects(
+      manager.remove('wiki-eng'),
+      /Cannot delete Wikipedia archive while Apocalypse Mode is enabled/i,
+      `${label}: ready Wikipedia archive was deleted while Apocalypse Mode was enabled`,
+    );
+    assert.equal(records.has('wiki-eng'), true, `${label}: archive was removed despite rejection`);
+
+    // Disabling Apocalypse Mode permits deletion
+    config.enabled = false;
+    const removed = await manager.remove('wiki-eng');
+    assert.equal(removed, true, `${label}: archive deletion failed after disabling Apocalypse Mode`);
+    assert.equal(records.has('wiki-eng'), false, `${label}: archive was not removed after disabling Apocalypse Mode`);
+
+    // Emergency Corpus protection test
+    config.enabled = true;
+    const corpusStore = {
+      async get() { return { status: 'ready', active: { installId: 'inst-1', indexPath: 'idx-1' } }; },
+      async delete() {},
+    };
+    const corpusStorage = { async deleteInstall() {} };
+    await assert.rejects(
+      EmergencyCorpus.deleteEmergencyCorpus({
+        store: corpusStore,
+        storage: corpusStorage,
+        apocalypseStore: store,
+      }),
+      /Cannot delete emergency corpus while Apocalypse Mode is enabled/i,
+      `${label}: active emergency corpus was deleted while Apocalypse Mode was enabled`,
+    );
+
+    // Emergency Resource protection test
+    const boxRecord = { id: 'res-1', status: 'ready' };
+    const boxStore = {
+      async get() { return boxRecord; },
+      async delete() {},
+    };
+    const boxStorage = { async delete() {} };
+    await assert.rejects(
+      EmergencyBox.deleteEmergencyResource('res-1', {
+        store: boxStore,
+        storage: boxStorage,
+        apocalypseStore: store,
+      }),
+      /Cannot delete emergency resources while Apocalypse Mode is enabled/i,
+      `${label}: active emergency resource was deleted while Apocalypse Mode was enabled`,
+    );
+  }
+});
+
+
+
 
 test('Apocalypse Mode OPFS deletion verifies removal and treats an absent file as deleted', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {

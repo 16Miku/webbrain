@@ -861,11 +861,18 @@ elements['resource-list'].addEventListener('click', async event => {
   });
   if (action === 'pause') downloads.get(id)?.controller.abort();
   if (action === 'read') openReader(resource);
-  if (action === 'delete' && globalThis.confirm(t('eb.confirm_delete', { title: resource?.title || id }))) {
-    try {
-      await stopAndDeleteDownload(id);
-    } catch (error) {
-      setNotice(error.message, 'error');
+  if (action === 'delete') {
+    const config = await apocalypseStore.getConfig().catch(() => null);
+    if (config?.enabled === true && resource?.status === 'ready') {
+      setNotice(t('eb.cannot_delete_while_enabled'), 'error');
+      return;
+    }
+    if (globalThis.confirm(t('eb.confirm_delete', { title: resource?.title || id }))) {
+      try {
+        await stopAndDeleteDownload(id);
+      } catch (error) {
+        setNotice(error.message, 'error');
+      }
     }
   }
 });
@@ -878,15 +885,29 @@ elements['rag-components'].addEventListener('click', async event => {
       if (action === 'download') await startCorpusDownload({ confirm: corpusUiStatus() === 'not-installed' });
       if (action === 'pause') downloads.get(CORPUS_DOWNLOAD_ID)?.controller.abort();
       if (action === 'cancel') await removeCorpusComponent({ cancelOnly: true });
-      if (action === 'delete' && globalThis.confirm(t('eb.rag.confirm_delete_corpus'))) {
-        await removeCorpusComponent();
+      if (action === 'delete') {
+        const config = await apocalypseStore.getConfig().catch(() => null);
+        if (config?.enabled === true) {
+          setNotice(t('eb.cannot_delete_while_enabled'), 'error');
+          return;
+        }
+        if (globalThis.confirm(t('eb.rag.confirm_delete_corpus'))) {
+          await removeCorpusComponent();
+        }
       }
     }
     if (component === 'semantic') {
       if (action === 'download') await startSemanticDownload();
       if (action === 'pause') downloads.get(SEMANTIC_DOWNLOAD_ID)?.controller.abort();
-      if (action === 'delete' && globalThis.confirm(t('eb.rag.confirm_delete_semantic'))) {
-        await removeSemanticComponent();
+      if (action === 'delete') {
+        const config = await apocalypseStore.getConfig().catch(() => null);
+        if (config?.enabled === true) {
+          setNotice(t('eb.cannot_delete_while_enabled'), 'error');
+          return;
+        }
+        if (globalThis.confirm(t('eb.rag.confirm_delete_semantic'))) {
+          await removeSemanticComponent();
+        }
       }
     }
   } catch (error) {
@@ -929,6 +950,14 @@ refreshState({ recoverInterrupted: true }).then(async () => {
     if (resumeComponent === CORPUS_DOWNLOAD_ID) await startCorpusDownload({ confirm: false });
     if (resumeComponent === SEMANTIC_DOWNLOAD_ID) await startSemanticDownload({ confirm: false });
     return;
+  }
+  if (apocalypseEnabled) {
+    if (!downloads.has(CORPUS_DOWNLOAD_ID) && corpusRecord?.status !== 'ready' && corpusRecord?.status !== 'downloading' && corpusRecord?.status !== 'verifying' && corpusRecord?.status !== 'extracting' && corpusRecord?.status !== 'indexing' && EMERGENCY_CORPUS_RELEASE) {
+      void startCorpusDownload({ confirm: false, quiet: true });
+    }
+    if (!downloads.has(SEMANTIC_DOWNLOAD_ID) && semanticState?.status !== 'ready' && semanticState?.status !== 'downloading') {
+      void startSemanticDownload({ confirm: false, quiet: true });
+    }
   }
   const resumeId = params.get('resume');
   if (!resumeId) return;

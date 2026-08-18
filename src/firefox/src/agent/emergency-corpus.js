@@ -14,6 +14,7 @@ import {
   validateEmergencyCorpusManifest,
   verifyEmergencyDocument,
 } from './offline-rag.js';
+import { createApocalypseStore } from './apocalypse-mode.js';
 
 export const EMERGENCY_CORPUS_DB_NAME = 'webbrain_offline_rag';
 export const EMERGENCY_CORPUS_DB_VERSION = 1;
@@ -1037,10 +1038,17 @@ export async function cancelEmergencyCorpusInstall(options = {}) {
 }
 
 export async function deleteEmergencyCorpus(options = {}) {
-  const store = options.store || createEmergencyCorpusStore();
-  const storage = options.storage || createEmergencyCorpusStorage();
+  const store = options.store || createEmergencyCorpusStore(options.indexedDb);
+  const storage = options.storage || createEmergencyCorpusStorage(options.opfsRoot);
+  const current = baseRecord(await store.get() || {});
+  if (current.active?.installId && !options.force && !options.allowWhileEnabled) {
+    const apocalypseStore = options.apocalypseStore || createApocalypseStore(options.indexedDb || globalThis.indexedDB);
+    const apocalypseConfig = await apocalypseStore.getConfig().catch(() => null);
+    if (apocalypseConfig?.enabled === true) {
+      throw new Error('Cannot delete emergency corpus while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
+    }
+  }
   return await withEmergencyCorpusLock(async () => {
-    const current = baseRecord(await store.get() || {});
     if (current.active?.indexPath) await options.deleteIndex?.(current.active.indexPath).catch(() => {});
     if (current.active?.installId) await storage.deleteInstall(current.active.installId).catch(() => {});
     if (current.staging?.indexPath) await options.deleteIndex?.(current.staging.indexPath).catch(() => {});
