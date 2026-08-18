@@ -13626,6 +13626,95 @@ test('sidepanels wire highlighting and heading rendering into fenced Markdown', 
   }
 });
 
+test('sidepanel composers leave IME Enter for the composition commit', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const handlerStart = source.indexOf("inputEl.addEventListener('keydown', (e) => {");
+    const bodyStart = source.indexOf('{', handlerStart) + 1;
+    const nextListener = source.indexOf("inputEl.addEventListener('input', handleInput);", bodyStart);
+    const handlerEnd = source.lastIndexOf('\n});', nextListener);
+    assert.notEqual(handlerStart, -1, `${label}: composer keydown handler missing`);
+    assert.notEqual(nextListener, -1, `${label}: composer input listener missing`);
+    assert.notEqual(handlerEnd, -1, `${label}: composer keydown handler boundary missing`);
+
+    const handlerBody = source.slice(bodyStart, handlerEnd);
+    const runHandler = (event) => {
+      let sends = 0;
+      Function(
+        'e',
+        'handleSlashCommandKeydown',
+        'editLastQueuedComposerMessageForCurrentTab',
+        'navigateComposerHistory',
+        'sendMessage',
+        handlerBody,
+      )(
+        event,
+        () => false,
+        () => false,
+        () => false,
+        () => { sends += 1; },
+      );
+      return { sends, defaultPrevented: event.defaultPrevented === true };
+    };
+    for (const composingEnter of [
+      { key: 'Enter', shiftKey: false, isComposing: true, keyCode: 13 },
+      { key: 'Enter', shiftKey: false, isComposing: false, keyCode: 229 },
+    ]) {
+      composingEnter.defaultPrevented = false;
+      composingEnter.preventDefault = function preventDefault() { this.defaultPrevented = true; };
+      assert.deepEqual(
+        runHandler(composingEnter),
+        { sends: 0, defaultPrevented: false },
+        `${label}: IME Enter must commit composition without sending`,
+      );
+    }
+
+    const composingArrow = {
+      key: 'ArrowUp',
+      shiftKey: false,
+      isComposing: true,
+      keyCode: 38,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    };
+    assert.deepEqual(
+      runHandler(composingArrow),
+      { sends: 0, defaultPrevented: false },
+      `${label}: IME navigation keys must remain native`,
+    );
+
+    const shiftEnter = {
+      key: 'Enter',
+      shiftKey: true,
+      isComposing: false,
+      keyCode: 13,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    };
+    assert.deepEqual(
+      runHandler(shiftEnter),
+      { sends: 0, defaultPrevented: false },
+      `${label}: Shift+Enter must remain a multiline newline`,
+    );
+
+    const normalEnter = {
+      key: 'Enter',
+      shiftKey: false,
+      isComposing: false,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    };
+    assert.deepEqual(
+      runHandler(normalEnter),
+      { sends: 1, defaultPrevented: true },
+      `${label}: ordinary Enter should retain send behavior`,
+    );
+  }
+});
+
 test('sidepanels hide empty assistant placeholders until output renders', () => {
   for (const [label, panelRel, cssRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/styles/sidepanel.css'],
@@ -34760,7 +34849,7 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.match(panel, /queued-message-edit/, `${label}: queued item should render an edit button`);
     assert.match(panel, /queued-message-delete/, `${label}: queued item should render a delete button`);
     assert.match(panel, /queuedMessagesEl\?\.addEventListener\('click', \(e\) => \{[\s\S]*?e\.target\.closest\('button\[data-queue-action\]\[data-queue-id\]'\);[\s\S]*?editQueuedComposerMessage\(currentTabId, queueId\);[\s\S]*?\}\);/, `${label}: queued edit button clicks should call the edit helper`);
-    assert.match(panel, /inputEl\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(handleSlashCommandKeydown\(e\)\) return;[\s\S]*?const isPlainArrow = !e\.isComposing[\s\S]*?if \(e\.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab\(\)\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(e\.key === 'Enter' && !e\.shiftKey\)/, `${label}: plain ArrowUp should edit queued messages before history and Enter handling`);
+    assert.match(panel, /inputEl\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.isComposing \|\| e\.keyCode === 229\) return;[\s\S]*?if \(handleSlashCommandKeydown\(e\)\) return;[\s\S]*?const isPlainArrow = !e\.altKey && !e\.ctrlKey && !e\.metaKey && !e\.shiftKey;[\s\S]*?if \(e\.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab\(\)\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(e\.key === 'Enter' && !e\.shiftKey\)/, `${label}: plain ArrowUp should edit queued messages before history and Enter handling`);
     const drainStart = panel.indexOf('function drainQueuedComposerMessageForCurrentTab()');
     const drainEnd = panel.indexOf('function renderClearedConversationForTab', drainStart);
     assert.notEqual(drainStart, -1, `${label}: queued composer drain helper should exist`);
@@ -34845,7 +34934,7 @@ test('sidepanel composer history navigation is queue-aware and draft-safe', () =
     assert.ok(slashIdx >= 0 && slashIdx < queueIdx, `${label}: slash autocomplete should keep priority over queued and sent history`);
     assert.ok(queueIdx < historyUpIdx, `${label}: queued-message editing should keep priority over sent history`);
     assert.ok(historyUpIdx < historyDownIdx && historyDownIdx < enterIdx, `${label}: history arrows should run before Enter handling`);
-    assert.match(keydown, /const isPlainArrow = !e\.isComposing && !e\.altKey && !e\.ctrlKey && !e\.metaKey && !e\.shiftKey;/, `${label}: modified arrows and IME composition should retain native behavior`);
+    assert.match(keydown, /if \(e\.isComposing \|\| e\.keyCode === 229\) return;[\s\S]*?const isPlainArrow = !e\.altKey && !e\.ctrlKey && !e\.metaKey && !e\.shiftKey;/, `${label}: modified arrows and IME composition should retain native behavior`);
   }
 });
 

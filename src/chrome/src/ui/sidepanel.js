@@ -12925,8 +12925,11 @@ queuedMessagesEl?.addEventListener('click', (e) => {
 });
 
 inputEl.addEventListener('keydown', (e) => {
+  // During an active IME composition, every keydown belongs to the input method,
+  // including the Enter that commits the composition rather than sending.
+  if (e.isComposing || e.keyCode === 229) return;
   if (handleSlashCommandKeydown(e)) return;
-  const isPlainArrow = !e.isComposing && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  const isPlainArrow = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
   if (isPlainArrow) {
     if (e.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab()) {
       e.preventDefault();
