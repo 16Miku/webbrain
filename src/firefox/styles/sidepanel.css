@@ -1262,6 +1262,11 @@ body {
   cursor: pointer;
 }
 
+.message.assistant .message-text {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .message.assistant.assistant-awaiting-content {
   display: none;
 }
@@ -2178,30 +2183,34 @@ body {
 
 .selection-ask-action {
   position: fixed;
-  z-index: 30;
+  z-index: 10000;
+  display: block;
+  opacity: 0.8;
   max-width: calc(100vw - 16px);
   padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border: 1px solid var(--accent);
   border-radius: 999px;
-  background: var(--bg-secondary);
+  background: var(--accent);
   box-shadow: 0 5px 16px color-mix(in srgb, var(--text-primary) 18%, transparent);
-  color: var(--text-primary);
+  color: #fff;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
   font-weight: 700;
   line-height: 1.2;
+  pointer-events: auto;
   user-select: none;
   white-space: nowrap;
 }
 
 .selection-ask-action.hidden {
-  display: none;
+  display: none !important;
 }
 
 .selection-ask-action:hover {
-  border-color: var(--accent);
-  background: var(--accent-dim);
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  opacity: 1;
 }
 
 .selection-ask-action:focus-visible {
@@ -3006,6 +3015,31 @@ html[data-standalone="true"] #mode-toggle {
 .message-content h4,
 .message-content h5,
 .message-content h6 { font-size: 13px; }
+
+.markdown-table-wrapper {
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.message-content th,
+.message-content td {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-content th {
+  background: var(--overlay-bg);
+  font-weight: 600;
+}
 
 .message-content code {
   background: var(--overlay-bg);

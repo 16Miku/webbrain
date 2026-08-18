@@ -6,7 +6,7 @@
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './markdown-render.js';
+import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
@@ -30,7 +30,13 @@ import { formatErrorMessage } from '../error-format.js';
 import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
 import { createOfflineRagReadinessController, offlineRagRunPayload } from './offline-rag-readiness.js';
-import { buildSelectionComposerDraft, selectionIsQuoteable, selectionTextFromRange } from './selection-quote.js';
+import {
+  buildSelectionComposerDraft,
+  selectionIsQuoteable,
+  selectionRangeIsVisible,
+  selectionRangeRect,
+  selectionTextFromRange,
+} from './selection-quote.js';
 import { getSelectionShortcutLocalization } from '../selection-shortcut-i18n.js';
 import {
   isBackgroundConnectionError,
@@ -538,7 +544,7 @@ const selectionScopeBannerEl = document.getElementById('selection-scope-banner')
 const selectionScopeTitleEl = document.getElementById('selection-scope-title');
 const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
-const selectionAskActionEl = document.getElementById('selection-ask-action');
+let selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
 const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
@@ -595,7 +601,7 @@ const ASK_PLACEHOLDER_KEYS = [
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
 let pendingAnswerSelection = null;
 let selectionAskActionRefreshFrame = null;
-let selectionAskPointerDown = false;
+let selectionAskActionRefreshTimer = null;
 let selectionAskActionLocale = '';
 let selectionAskActionLabel = '';
 const SLASH_COMMANDS = [
@@ -10648,6 +10654,11 @@ function messageInfoClickIsInteractive(target) {
   );
 }
 
+function messageInfoClickHasTextSelection() {
+  const selection = globalThis.getSelection?.();
+  return Boolean(selection && !selection.isCollapsed);
+}
+
 function toggleMessageInfo(msgEl) {
   const open = msgEl.classList.toggle('message-info-open');
   ensureMessageInfoElements(msgEl).toggle.setAttribute('aria-expanded', String(open));
@@ -10668,6 +10679,7 @@ function bindMessageInfoToggle(msgEl) {
   toggle.addEventListener('click', () => toggleMessageInfo(msgEl));
   msgEl.addEventListener('click', (event) => {
     if (messageInfoClickIsInteractive(event.target)) return;
+    if (messageInfoClickHasTextSelection()) return;
     toggleMessageInfo(msgEl);
   });
 }
@@ -10705,24 +10717,50 @@ function refreshOpenMessageInfoRows() {
   });
 }
 
-function assistantTextElementForSelectionNode(node) {
-  const element = node?.nodeType === 1 ? node : node?.parentElement;
-  return element?.closest?.('.message.assistant .message-text') || null;
+function assistantAnswerElementForSelectionNode(node) {
+  let element = node?.nodeType === 1 ? node : node?.parentElement;
+  const viaClosest = element?.closest?.('.message.assistant') || null;
+  if (viaClosest) return viaClosest;
+  while (element) {
+    if (element.matches?.('.message.assistant')) return element;
+    element = element.parentElement || element.getRootNode?.()?.host || null;
+  }
+  return null;
 }
 
 function selectedAssistantAnswer() {
   const selection = window.getSelection?.();
-  if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
+  if (!selection || selection.rangeCount < 1 || selection.isCollapsed) return null;
   const range = selection.getRangeAt(0);
   if (!range.startContainer.isConnected || !range.endContainer.isConnected) return null;
-  const startTextElement = assistantTextElementForSelectionNode(range.startContainer);
-  const endTextElement = assistantTextElementForSelectionNode(range.endContainer);
-  const text = selectionTextFromRange(range);
+  const startTextElement = assistantAnswerElementForSelectionNode(range.startContainer);
+  const endTextElement = assistantAnswerElementForSelectionNode(range.endContainer);
+  const text = selectionTextFromRange(range) || String(range.toString?.() || '').trim();
   if (!selectionIsQuoteable({ startTextElement, endTextElement, text })) return null;
   return { range, text };
 }
 
+function ensureSelectionAskActionEl() {
+  if (!selectionAskActionEl?.isConnected) {
+    selectionAskActionEl = document.getElementById('selection-ask-action');
+  }
+  if (!selectionAskActionEl) {
+    selectionAskActionEl = document.createElement('button');
+    selectionAskActionEl.id = 'selection-ask-action';
+    selectionAskActionEl.className = 'selection-ask-action hidden';
+    selectionAskActionEl.type = 'button';
+  }
+  if (selectionAskActionEl.parentElement !== document.body) {
+    document.body.appendChild(selectionAskActionEl);
+  }
+  return selectionAskActionEl;
+}
+
 function dismissSelectionAskAction() {
+  if (selectionAskActionRefreshTimer != null) {
+    clearTimeout(selectionAskActionRefreshTimer);
+    selectionAskActionRefreshTimer = null;
+  }
   if (selectionAskActionRefreshFrame != null) {
     cancelAnimationFrame(selectionAskActionRefreshFrame);
     selectionAskActionRefreshFrame = null;
@@ -10732,26 +10770,26 @@ function dismissSelectionAskAction() {
 }
 
 function positionSelectionAskAction(range) {
-  if (!selectionAskActionEl || !range) return;
-  const rect = range.getBoundingClientRect();
-  if (!rect.width && !rect.height) {
-    dismissSelectionAskAction();
-    return;
-  }
-  const gap = 6;
+  if (!selectionAskActionEl) return;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
   const actionRect = selectionAskActionEl.getBoundingClientRect();
+  const actionWidth = actionRect.width || 180;
+  const actionHeight = actionRect.height || 32;
+  const inputTop = inputArea?.getBoundingClientRect().top;
+  const floor = Math.min(vh, Number.isFinite(inputTop) ? inputTop : vh) - 8;
+  const gap = 6;
+  const rect = range ? selectionRangeRect(range) : null;
+  const usable = rect && selectionRangeIsVisible(rect, { width: vw, height: vh });
   const left = Math.min(
-    Math.max(8, rect.left),
-    Math.max(8, window.innerWidth - actionRect.width - 8),
+    Math.max(8, usable ? rect.left : (vw - actionWidth) / 2),
+    Math.max(8, vw - actionWidth - 8),
   );
-  const belowTop = rect.bottom + gap;
-  const preferredTop = belowTop + actionRect.height <= window.innerHeight - 8
+  const belowTop = usable ? rect.bottom + gap : floor - actionHeight;
+  const preferredTop = usable && belowTop + actionHeight <= floor
     ? belowTop
-    : Math.max(8, rect.top - actionRect.height - gap);
-  const top = Math.min(
-    Math.max(8, window.innerHeight - actionRect.height - 8),
-    preferredTop,
-  );
+    : Math.max(8, usable ? rect.top - actionHeight - gap : floor - actionHeight);
+  const top = Math.min(Math.max(8, floor - actionHeight), preferredTop);
   selectionAskActionEl.style.left = `${left}px`;
   selectionAskActionEl.style.top = `${top}px`;
 }
@@ -10772,47 +10810,68 @@ function applySelectionAskActionLabel() {
 
 function refreshSelectionAskAction() {
   const selected = selectedAssistantAnswer();
-  if (!selected || !selectionAskActionEl) {
-    dismissSelectionAskAction();
+  if (selected) {
+    showSelectionAskAction(selected);
     return;
   }
-  pendingAnswerSelection = selected;
-  applySelectionAskActionLabel();
-  selectionAskActionEl.classList.remove('hidden');
-  positionSelectionAskAction(selected.range);
+  dismissSelectionAskAction();
 }
 
-function scheduleSelectionAskActionRefresh({ force = false } = {}) {
-  if (!force && selectionAskPointerDown) return;
-  if (selectionAskActionRefreshFrame != null) return;
-  selectionAskActionRefreshFrame = requestAnimationFrame(() => {
+function showSelectionAskAction(selected) {
+  if (!selected?.text || !ensureSelectionAskActionEl()) return;
+  pendingAnswerSelection = {
+    text: selected.text,
+    range: typeof selected.range?.cloneRange === 'function'
+      ? selected.range.cloneRange()
+      : selected.range,
+  };
+  applySelectionAskActionLabel();
+  selectionAskActionEl.classList.remove('hidden');
+  positionSelectionAskAction(pendingAnswerSelection.range);
+}
+
+function scheduleSelectionAskActionRefresh() {
+  if (selectionAskActionRefreshTimer != null) clearTimeout(selectionAskActionRefreshTimer);
+  if (selectionAskActionRefreshFrame != null) {
+    cancelAnimationFrame(selectionAskActionRefreshFrame);
     selectionAskActionRefreshFrame = null;
-    if (!force && selectionAskPointerDown) return;
+  }
+  selectionAskActionRefreshTimer = setTimeout(() => {
+    selectionAskActionRefreshTimer = null;
     refreshSelectionAskAction();
-  });
+  }, 60);
 }
 
 function handleSelectionAskPointerDown(event) {
   if (selectionAskActionEl?.contains(event.target)) return;
-  selectionAskPointerDown = true;
   dismissSelectionAskAction();
 }
 
 function handleSelectionAskPointerUp() {
-  if (!selectionAskPointerDown) return;
-  selectionAskPointerDown = false;
-  scheduleSelectionAskActionRefresh({ force: true });
+  const selected = selectedAssistantAnswer();
+  if (selected) {
+    showSelectionAskAction(selected);
+    return;
+  }
+  requestAnimationFrame(() => {
+    const next = selectedAssistantAnswer();
+    if (next) showSelectionAskAction(next);
+    else scheduleSelectionAskActionRefresh();
+  });
+}
+
+function handleSelectionAskScroll() {
+  scheduleSelectionAskActionRefresh();
 }
 
 function askAboutSelectedAnswer() {
-  const selection = pendingAnswerSelection;
-  if (!selection) return;
   const liveSelection = selectedAssistantAnswer();
-  if (!liveSelection) {
+  const selection = liveSelection || pendingAnswerSelection;
+  if (!selection?.text) {
     dismissSelectionAskAction();
     return;
   }
-  const nextDraft = buildSelectionComposerDraft(liveSelection.text, inputEl.value);
+  const nextDraft = buildSelectionComposerDraft(selection.text, inputEl.value);
   if (nextDraft === inputEl.value) {
     dismissSelectionAskAction();
     return;
@@ -11504,9 +11563,12 @@ function formatMarkdown(text, options = {}) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // 4. Block headings, inline formatting, markdown link sanitization, then
-  // newline → <br>. Code and inline-code placeholders were extracted above,
-  // so Markdown-looking source inside them is not interpreted here.
+  // 4. Tables, then headings, inline formatting, markdown link sanitization,
+  // then newline → <br>. Headings swallow their trailing newline, so tables
+  // must run first or a table on the next line is glued onto the heading.
+  // Code and inline-code placeholders were extracted above, so
+  // Markdown-looking source inside them is not interpreted here.
+  text = renderMarkdownTables(text);
   text = renderMarkdownHeadings(text);
   text = text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -12835,18 +12897,25 @@ if (attachBtn && fileAttachInput) {
 
 // --- Event Listeners ---
 
+ensureSelectionAskActionEl();
 if (selectionAskActionEl) {
+  if (selectionAskActionEl.parentElement !== document.body) {
+    document.body.appendChild(selectionAskActionEl);
+  }
   selectionAskActionEl.addEventListener('mousedown', (event) => event.preventDefault());
   selectionAskActionEl.addEventListener('click', (event) => {
     event.stopPropagation();
     askAboutSelectedAnswer();
   });
   document.addEventListener('selectionchange', scheduleSelectionAskActionRefresh);
-  document.addEventListener('pointerdown', handleSelectionAskPointerDown);
-  document.addEventListener('pointerup', handleSelectionAskPointerUp);
-  document.addEventListener('pointercancel', handleSelectionAskPointerUp);
+  document.addEventListener('pointerdown', handleSelectionAskPointerDown, true);
+  document.addEventListener('pointerup', handleSelectionAskPointerUp, true);
+  document.addEventListener('pointercancel', handleSelectionAskPointerUp, true);
+  document.addEventListener('mouseup', handleSelectionAskPointerUp, true);
+  window.addEventListener('pointerup', handleSelectionAskPointerUp, true);
+  window.addEventListener('pointercancel', handleSelectionAskPointerUp, true);
   document.addEventListener('keyup', scheduleSelectionAskActionRefresh);
-  chatContainerEl?.addEventListener('scroll', dismissSelectionAskAction, { passive: true });
+  chatContainerEl?.addEventListener('scroll', handleSelectionAskScroll, { passive: true });
   window.addEventListener('resize', dismissSelectionAskAction);
   document.addEventListener('wb-locale-changed', () => {
     selectionAskActionLocale = '';

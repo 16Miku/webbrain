@@ -66,3 +66,59 @@ export function selectionIsQuoteable({ startTextElement, endTextElement, text } 
       && normalizedSelectionText(text),
   );
 }
+
+function numericRectEdge(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function rectFromClientRect(rect) {
+  if (!rect) return null;
+  const top = numericRectEdge(rect.top);
+  const left = numericRectEdge(rect.left);
+  const width = numericRectEdge(rect.width);
+  const height = numericRectEdge(rect.height);
+  const bottom = rect.bottom == null ? top + height : numericRectEdge(rect.bottom, top + height);
+  const right = rect.right == null ? left + width : numericRectEdge(rect.right, left + width);
+  if (!width && !height && !top && !left && !bottom && !right) return null;
+  return { top, left, bottom, right, width: right - left, height: bottom - top };
+}
+
+export function selectionRangeRect(range) {
+  if (!range) return null;
+  const bounding = typeof range.getBoundingClientRect === 'function'
+    ? rectFromClientRect(range.getBoundingClientRect())
+    : null;
+  if (bounding && (bounding.width || bounding.height)) return bounding;
+  const list = typeof range.getClientRects === 'function' ? range.getClientRects() : null;
+  const rects = list ? Array.from(list, rectFromClientRect).filter(Boolean) : [];
+  if (rects.length) {
+    let top = Infinity;
+    let left = Infinity;
+    let bottom = -Infinity;
+    let right = -Infinity;
+    for (const rect of rects) {
+      top = Math.min(top, rect.top);
+      left = Math.min(left, rect.left);
+      bottom = Math.max(bottom, rect.bottom);
+      right = Math.max(right, rect.right);
+    }
+    return { top, left, bottom, right, width: right - left, height: bottom - top };
+  }
+  const startEl = range.startContainer?.nodeType === 1 ? range.startContainer : range.startContainer?.parentElement;
+  const endEl = range.endContainer?.nodeType === 1 ? range.endContainer : range.endContainer?.parentElement;
+  return nodeElementRect(startEl) || nodeElementRect(endEl) || bounding;
+}
+
+function nodeElementRect(node) {
+  if (!node?.getBoundingClientRect) return null;
+  const rect = rectFromClientRect(node.getBoundingClientRect());
+  return rect && (rect.width || rect.height) ? rect : null;
+}
+
+export function selectionRangeIsVisible(rect, viewport = {}) {
+  if (!rect) return false;
+  const width = numericRectEdge(viewport.width);
+  const height = numericRectEdge(viewport.height);
+  return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
+}

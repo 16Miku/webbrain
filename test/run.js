@@ -451,7 +451,7 @@ const ChromeWebStoreReleaseFx = await import(
 const { sanitizeLink, sanitizeMarkdownLinks } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/markdown-link.js').replace(/\\/g, '/')
 );
-const { codeFenceLanguage, highlightCode, renderMarkdownHeadings } = await import(
+const { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/markdown-render.js').replace(/\\/g, '/')
 );
 const { renderSkillMarkdown } = await import(
@@ -588,7 +588,7 @@ const {
 const { sanitizeMarkdownLinks: sanitizeMarkdownLinksFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/markdown-link.js').replace(/\\/g, '/')
 );
-const { codeFenceLanguage: codeFenceLanguageFx, highlightCode: highlightCodeFx, renderMarkdownHeadings: renderMarkdownHeadingsFx } = await import(
+const { codeFenceLanguage: codeFenceLanguageFx, highlightCode: highlightCodeFx, renderMarkdownHeadings: renderMarkdownHeadingsFx, renderMarkdownTables: renderMarkdownTablesFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/markdown-render.js').replace(/\\/g, '/')
 );
 const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
@@ -1192,6 +1192,8 @@ const {
   buildSelectionQuote,
   buildSelectionComposerDraft,
   selectionIsQuoteable,
+  selectionRangeIsVisible,
+  selectionRangeRect,
   selectionTextFromContents,
   isSelectionQuoteChrome,
 } = await import(
@@ -1201,6 +1203,8 @@ const {
   buildSelectionQuote: buildSelectionQuoteFx,
   buildSelectionComposerDraft: buildSelectionComposerDraftFx,
   selectionIsQuoteable: selectionIsQuoteableFx,
+  selectionRangeIsVisible: selectionRangeIsVisibleFx,
+  selectionRangeRect: selectionRangeRectFx,
   selectionTextFromContents: selectionTextFromContentsFx,
   isSelectionQuoteChrome: isSelectionQuoteChromeFx,
 } = await import(
@@ -1249,6 +1253,28 @@ test('buildSelectionQuote preserves multiline answer text as an editable quote',
   assert.equal(buildSelectionComposerDraft('', 'draft'), 'draft');
   assert.equal(buildSelectionComposerDraft('A detail', '> A detail\n\nWhy?'), '> A detail\n\nWhy?');
   assert.equal(buildSelectionComposerDraft('A detail', ' '), '> A detail\n\n ');
+});
+
+test('selectionRangeRect prefers a non-empty bounding box and unions client rects otherwise', () => {
+  const bounding = { top: 10, left: 20, bottom: 40, right: 80, width: 60, height: 30 };
+  assert.deepEqual(selectionRangeRect({
+    getBoundingClientRect: () => bounding,
+    getClientRects: () => [],
+  }), bounding);
+  assert.deepEqual(selectionRangeRectFx({
+    getBoundingClientRect: () => bounding,
+    getClientRects: () => [],
+  }), bounding, 'Firefox range rect helper should match Chrome');
+  assert.deepEqual(selectionRangeRect({
+    getBoundingClientRect: () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 }),
+    getClientRects: () => [
+      { top: 8, left: 12, bottom: 24, right: 40, width: 28, height: 16 },
+      { top: 20, left: 10, bottom: 36, right: 48, width: 38, height: 16 },
+    ],
+  }), { top: 8, left: 10, bottom: 36, right: 48, width: 38, height: 28 });
+  assert.equal(selectionRangeIsVisible({ top: 10, left: 10, bottom: 40, right: 80 }, { width: 100, height: 80 }), true);
+  assert.equal(selectionRangeIsVisible({ top: 90, left: 10, bottom: 120, right: 80 }, { width: 100, height: 80 }), false);
+  assert.equal(selectionRangeIsVisibleFx({ top: 10, left: 10, bottom: 40, right: 80 }, { width: 100, height: 80 }), true);
 });
 
 test('selectionIsQuoteable requires one non-empty assistant answer element', () => {
@@ -1303,16 +1329,33 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     const clearConversationSource = sourceBetween(source, 'async function renderClearedConversationForTab', '\nconst TOOL_KEYS =');
     const sendMessageSource = sourceBetween(source, 'async function sendMessage', '\nasync function continueAgent');
     assert.match(source, /document\.addEventListener\('selectionchange', scheduleSelectionAskActionRefresh\)/);
-    assert.match(source, /document\.addEventListener\('pointerdown', handleSelectionAskPointerDown\)/);
-    assert.match(source, /document\.addEventListener\('pointerup', handleSelectionAskPointerUp\)/);
-    assert.match(source, /document\.addEventListener\('pointercancel', handleSelectionAskPointerUp\)/);
+    assert.match(source, /document\.addEventListener\('pointerdown', handleSelectionAskPointerDown/);
+    assert.match(source, /function showSelectionAskAction\(selected\)/);
+    assert.match(source, /function ensureSelectionAskActionEl\(\)/);
+    assert.match(source, /function handleSelectionAskPointerDown\(event\) \{[\s\S]*?if \(selectionAskActionEl\?\.contains\(event\.target\)\) return;[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /function refreshSelectionAskAction\(\) \{[\s\S]*?const selected = selectedAssistantAnswer\(\);[\s\S]*?showSelectionAskAction\(selected\);[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /selection\.rangeCount < 1/);
+    assert.match(source, /document\.addEventListener\('pointercancel', handleSelectionAskPointerUp/);
+    assert.match(source, /document\.addEventListener\('mouseup', handleSelectionAskPointerUp/);
+    assert.match(source, /window\.addEventListener\('pointerup', handleSelectionAskPointerUp/);
+    assert.match(source, /window\.addEventListener\('pointercancel', handleSelectionAskPointerUp/);
     assert.match(source, /document\.addEventListener\('keyup', scheduleSelectionAskActionRefresh\)/);
-    assert.match(source, /if \(!force && selectionAskPointerDown\) return;/);
-    assert.match(source, /const text = selectionTextFromRange\(range\);/);
+    assert.match(source, /function handleSelectionAskScroll\(\) \{[\s\S]*?scheduleSelectionAskActionRefresh\(\);/);
+    assert.match(source, /selectionAskActionRefreshTimer = setTimeout\([\s\S]*?refreshSelectionAskAction\(\);[\s\S]*?, 60\)/);
+    assert.match(source, /inputArea\?\.getBoundingClientRect\(\)\.top/);
+    assert.match(source, /chatContainerEl\?\.addEventListener\('scroll', handleSelectionAskScroll/);
+    assert.match(source, /document\.body\.appendChild\(selectionAskActionEl\)/);
+    assert.match(source, /closest\?\.\('\.message\.assistant'\)/);
+    assert.match(source, /function messageInfoClickHasTextSelection\(\) \{[\s\S]*?return Boolean\(selection && !selection\.isCollapsed\);/);
+    assert.match(source, /if \(messageInfoClickHasTextSelection\(\)\) return;/);
+    assert.match(source, /const text = selectionTextFromRange\(range\) \|\| String\(range\.toString\?\.\(\) \|\| ''\)\.trim\(\);/);
     assert.match(source, /function applySelectionAskActionLabel\(\)/);
     assert.match(source, /if \(selectionAskActionLocale === locale && selectionAskActionLabel[\s\S]*?selectionAskActionEl\.textContent === selectionAskActionLabel\)/);
     assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
-    assert.match(source, /if \(!rect\.width && !rect\.height\) \{[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /const rect = range \? selectionRangeRect\(range\) : null;/);
+    assert.match(source, /const usable = rect && selectionRangeIsVisible\(rect, \{ width: vw, height: vh \}\);/);
+    assert.match(source, /cloneRange/);
+    assert.match(source, /ensureSelectionAskActionEl\(\);/);
     assert.match(source, /if \(!range\.startContainer\.isConnected \|\| !range\.endContainer\.isConnected\) return null;/);
     assert.match(source, /const liveSelection = selectedAssistantAnswer\(\);/);
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
@@ -1322,7 +1365,8 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /dismissSelectionAskAction\(\);\s*return;/);
     assert.match(sidepanelHtmlSources[index], /id="selection-ask-action"/);
     assert.doesNotMatch(sidepanelHtmlSources[index], /id="selection-ask-action"[^>]*aria-live/);
-    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?user-select:\s*none;/);
+    assert.doesNotMatch(sidepanelHtmlSources[index], /<div id="app"[\s\S]*id="selection-ask-action"[\s\S]*<\/div>\s*<script/);
+    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?z-index:\s*10000;[\s\S]*?opacity:\s*0\.8;[\s\S]*?user-select:\s*none;/);
   }
 });
 
@@ -13560,6 +13604,50 @@ test('ATX headings render as semantic headings and preserve inline Markdown', ()
   assert.equal(renderMarkdownHeadings('## C#\nText'), '<h2>C#</h2>Text');
 });
 
+test('pipe tables render as semantic tables instead of literal Markdown', () => {
+  const source = [
+    '| Aspect | multilingual-e5-small | BM25 |',
+    '|---|---|---|',
+    '| Retrieval type | Dense semantic retrieval | Sparse lexical retrieval |',
+    '| Exact keyword matching | Moderate | Excellent |',
+  ].join('\n');
+  const escaped = source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const out = renderMarkdownTables(escaped);
+  assert.equal(
+    out,
+    '<div class="markdown-table-wrapper"><table><thead><tr><th>Aspect</th><th>multilingual-e5-small</th><th>BM25</th></tr></thead><tbody><tr><td>Retrieval type</td><td>Dense semantic retrieval</td><td>Sparse lexical retrieval</td></tr><tr><td>Exact keyword matching</td><td>Moderate</td><td>Excellent</td></tr></tbody></table></div>',
+  );
+  assert.doesNotMatch(out, /\| Aspect \|/);
+});
+
+test('pipe tables preserve inline-safe cell content and only match a valid separator', () => {
+  const table = '| Name | Value |\n|:---|---:|\n| `x` | &lt;safe&gt; |';
+  const out = renderMarkdownTables(table);
+  assert.match(out, /<th>Name<\/th><th>Value<\/th>/);
+  assert.match(out, /<td>`x`<\/td><td>&lt;safe&gt;<\/td>/);
+  assert.equal(renderMarkdownTables('| not a table |\n| still prose |'), '| not a table |\n| still prose |');
+});
+
+test('pipe tables keep rendering when a body row has missing or extra cells', () => {
+  const out = renderMarkdownTables('| A | B |\n|---|---|\n| one |\n| one | two | three |');
+  assert.match(out, /<td>one<\/td><td><\/td>/);
+  assert.match(out, /<td>one<\/td><td>two<\/td>/);
+  assert.doesNotMatch(out, /\| one \|/);
+});
+
+test('pipe tables still render when they follow an ATX heading with no blank line', () => {
+  const source = '## Comparison\n| A | B |\n|---|---|\n| 1 | 2 |';
+  const headingsFirst = renderMarkdownTables(renderMarkdownHeadings(source));
+  assert.match(headingsFirst, /<h2>Comparison<\/h2>/);
+  assert.doesNotMatch(headingsFirst, /<table>/, 'heading newline swallowing used to glue the header onto the h2');
+
+  const out = renderMarkdownHeadings(renderMarkdownTables(source));
+  assert.match(out, /<h2>Comparison<\/h2>/);
+  assert.match(out, /<table>/);
+  assert.match(out, /<td>1<\/td><td>2<\/td>/);
+  assert.doesNotMatch(out, /\| A \|/);
+});
+
 test('Chrome and Firefox Markdown rendering helpers stay in parity', () => {
   const samples = [
     ['const x = "<tag>";', 'javascript'],
@@ -13573,6 +13661,8 @@ test('Chrome and Firefox Markdown rendering helpers stay in parity', () => {
   const heading = '### **Option A**\nBody';
   assert.equal(renderMarkdownHeadingsFx(heading), renderMarkdownHeadings(heading));
   assert.equal(codeFenceLanguageFx('js title="example.js"'), codeFenceLanguage('js title="example.js"'));
+  const table = '| A | B |\n|---|---|\n| 1 | 2 |';
+  assert.equal(renderMarkdownTablesFx(table), renderMarkdownTables(table));
 });
 
 test('sidepanels wire highlighting and heading rendering into fenced Markdown', () => {
@@ -13582,10 +13672,11 @@ test('sidepanels wire highlighting and heading rendering into fenced Markdown', 
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
-    assert.match(panel, /import \{ codeFenceLanguage, highlightCode, renderMarkdownHeadings \} from '\.\/markdown-render\.js';/, `${label}: renderer helpers should be imported`);
+    assert.match(panel, /import \{ codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables \} from '\.\/markdown-render\.js';/, `${label}: renderer helpers should be imported`);
     assert.match(panel, /const lang = codeFenceLanguage\(info\);/, `${label}: fenced code should tolerate metadata after its language token`);
     assert.match(panel, /const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);/, `${label}: completed fenced code should be highlighted by its language while live code stays lightweight`);
-    assert.match(panel, /text = renderMarkdownHeadings\(text\);/, `${label}: ATX headings should be rendered`);
+    assert.match(panel, /text = renderMarkdownTables\(text\);\s*text = renderMarkdownHeadings\(text\);/, `${label}: pipe tables must render before headings swallow the following newline`);
+    assert.match(css, /\.message-content table \{[\s\S]*?border-collapse: collapse;/, `${label}: rendered tables should have readable borders`);
     assert.match(css, /\.syntax-keyword[\s\S]*?var\(--syntax-keyword\)/, `${label}: token colors should be styled`);
     assert.match(css, /\.syntax-variable \{ color: var\(--syntax-variable\); \}/, `${label}: variables should use their dedicated theme color`);
     assert.match(css, /\.message-content h3 \{ font-size: 14px; \}/, `${label}: level-three headings should be visually distinct`);
@@ -32167,6 +32258,22 @@ test('chat history text serialization preserves rendered line structure', () => 
       serialize(renderedCodeFollowedByText),
       '```javascript\nline 1\n```\nClosing',
       `${label}: rendered code wrappers should preserve their language and use the source <br> as the only post-fence newline`,
+    );
+    const table = element(
+      'TABLE',
+      element('THEAD', element('TR', element('TH', textNode('Aspect')), element('TH', textNode('BM25')))),
+      element(
+        'TBODY',
+        element('TR', element('TD', textNode('Exact keyword matching')), element('TD', element('STRONG', textNode('Excellent')))),
+        element('TR', element('TD', textNode('A | B')), element('TD', textNode('kept'))),
+      ),
+    );
+    const wrappedTable = element('DIV', table);
+    wrappedTable.classList = { contains: (name) => name === 'markdown-table-wrapper' };
+    assert.equal(
+      serialize(wrappedTable).trim(),
+      '| Aspect | BM25 |\n|---|---|\n| Exact keyword matching | **Excellent** |\n| A \\| B | kept |',
+      `${label}: rendered pipe tables should round-trip as Markdown instead of flattened cells`,
     );
   }
 });
@@ -89371,6 +89478,7 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     );
     assert.match(panel, /function bindMessageInfoToggle\([\s\S]*?toggle\.addEventListener\('click',[\s\S]*?msgEl\.addEventListener\('click'/, `${label}: the semantic button and bubble click should share the info toggle`);
     const bindMessageInfoToggle = panel.match(/function bindMessageInfoToggle\(msgEl\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.match(bindMessageInfoToggle, /if \(messageInfoClickHasTextSelection\(\)\) return;/, `${label}: selecting answer text must not toggle message info`);
     assert.doesNotMatch(bindMessageInfoToggle, /msgEl\.tabIndex|msgEl\.addEventListener\('keydown'/, `${label}: the generic message container must not masquerade as a keyboard control`);
     assert.match(panel, /case 'message_info':[\s\S]*?applyMessageCompletion\(/, `${label}: live completion metadata should reach the active message`);
     assert.match(panel, /case 'run_complete':[\s\S]*?setMessageCreatedAt\([\s\S]*?data\?\.endedAt/, `${label}: assistant sent time should use the terminal timestamp`);
@@ -89423,6 +89531,7 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     assert.notEqual(blockEnd, -1, `${label}: message-info block boundary missing`);
     const block = panel.slice(blockStart, blockEnd);
 
+    let selectionCollapsed = true;
     const sandbox = {
       document: {
         createElement: (tag) => fakeDomElement('', tag),
@@ -89434,6 +89543,9 @@ test('message info toggles behaviorally through a semantic button, terminal repl
       getLocale: () => 'en-GB',
       t: (key) => key,
       schedulePersist: () => {},
+      getSelection: () => ({ isCollapsed: selectionCollapsed }),
+      pendingAnswerSelection: null,
+      selectionAskActionEl: null,
     };
     const { messageCreatedAt, setMessageCreatedAt, messageCompletionFromElement, renderMessageInfo, toggleMessageInfo, bindMessageInfoToggle, applyMessageCompletion } = vm.runInNewContext(
       `(() => { ${block} return { messageCreatedAt, setMessageCreatedAt, messageCompletionFromElement, renderMessageInfo, toggleMessageInfo, bindMessageInfoToggle, applyMessageCompletion }; })()`,
@@ -89476,6 +89588,10 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     assert.equal(msgEl.classList.contains('message-info-open'), false, `${label}: a bubble click should close keyboard-opened info`);
     msgEl.dispatch('click', { target: msgEl });
     assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: a second bubble click should reopen info`);
+    selectionCollapsed = false;
+    msgEl.dispatch('click', { target: msgEl });
+    assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: selecting answer text should not toggle message info`);
+    selectionCollapsed = true;
 
     // Live completion metadata reaches the datasets and renders in verbose mode.
     applyMessageCompletion(msgEl, {
