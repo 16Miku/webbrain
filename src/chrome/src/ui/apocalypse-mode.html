@@ -55,6 +55,8 @@
     .local-model-icon { width:42px;height:42px;display:grid;place-items:center;border:1px solid rgba(124,114,255,.35);border-radius:9px;background:rgba(124,114,255,.1);color:var(--accent-soft); }
     .local-model[data-model-kind="vision"] .local-model-icon { border-color:rgba(96,211,178,.35);background:rgba(96,211,178,.09);color:var(--teal); }
     .local-model[data-model-kind="knowledge"] .local-model-icon { border-color:rgba(255,180,84,.35);background:rgba(255,180,84,.09);color:var(--warn); }
+    .local-model[data-model-kind="corpus"] .local-model-icon { border-color:rgba(23,127,105,.35);background:rgba(23,127,105,.09);color:var(--good); }
+    .local-model[data-model-kind="semantic"] .local-model-icon { border-color:rgba(124,114,255,.35);background:rgba(124,114,255,.1);color:var(--accent-soft); }
     .local-model-icon svg { width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
     .local-model-body { min-width:0; }
     .local-model-head { display:flex;align-items:baseline;justify-content:space-between;gap:12px; }
@@ -197,6 +199,40 @@
                 <button type="button" data-basic-wikipedia-action="retry" data-i18n="ap.retry" hidden></button>
                 <button type="button" class="primary" data-basic-wikipedia-action="read" data-i18n="ap.reader.open" hidden></button>
                 <button type="button" class="danger" data-basic-wikipedia-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
+              </div>
+            </div>
+          </section>
+
+          <section id="emergency-corpus-card" class="local-model" data-model-kind="corpus" hidden>
+            <span class="local-model-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M5 8.5h14v11H5zM8.5 8.5V6.2c0-.9.8-1.7 1.7-1.7h3.6c.9 0 1.7.8 1.7 1.7v2.3M12 11.5v5M9.5 14h5"/></svg>
+            </span>
+            <div class="local-model-body">
+              <div class="local-model-head"><strong id="emergency-corpus-title" data-i18n="eb.rag.corpus_title"></strong><span id="emergency-corpus-meta" class="meta">~245 MB · SQLite FTS5</span></div>
+              <p id="emergency-corpus-description" class="meta" data-i18n="eb.rag.corpus_desc"></p>
+              <div id="emergency-corpus-status" class="vision-status" role="status" aria-live="polite"></div>
+              <progress id="emergency-corpus-progress" max="100" value="0" hidden></progress>
+              <div class="model-actions">
+                <button type="button" id="emergency-corpus-start" class="primary" data-i18n="st.providers.webgpu_download.start" hidden></button>
+                <button type="button" data-emergency-corpus-action="retry" data-i18n="ap.retry" hidden></button>
+                <button type="button" class="danger" data-emergency-corpus-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
+              </div>
+            </div>
+          </section>
+
+          <section id="semantic-model-card" class="local-model" data-model-kind="semantic" hidden>
+            <span class="local-model-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+            </span>
+            <div class="local-model-body">
+              <div class="local-model-head"><strong id="semantic-model-title" data-i18n="eb.rag.semantic_title"></strong><span id="semantic-model-meta" class="meta">~134 MB · ONNX Model</span></div>
+              <p id="semantic-model-description" class="meta" data-i18n="eb.rag.semantic_desc"></p>
+              <div id="semantic-model-status" class="vision-status" role="status" aria-live="polite"></div>
+              <progress id="semantic-model-progress" max="100" value="0" hidden></progress>
+              <div class="model-actions">
+                <button type="button" id="semantic-model-start" class="primary" data-i18n="st.providers.webgpu_download.start" hidden></button>
+                <button type="button" data-semantic-model-action="retry" data-i18n="ap.retry" hidden></button>
+                <button type="button" class="danger" data-semantic-model-action="stop" data-i18n="st.providers.webgpu_download.stop" hidden></button>
               </div>
             </div>
           </section>
