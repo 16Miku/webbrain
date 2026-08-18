@@ -33,8 +33,7 @@ conversation.
 | `transformers.web.js` | `@huggingface/transformers` 4.2.0 | Browser ESM model/processor APIs |
 | `ort.webgpu.mjs` | `onnxruntime-web` 1.27.0 | WebGPU execution provider |
 | `onnxruntime-common/` | matching `onnxruntime-common` dependency | Tensor and session types |
-| `ort-wasm-simd-threaded.asyncify.*` | `onnxruntime-web` 1.27.0 | WASM bridge used by the worker |
-| `ort-wasm-simd-threaded.jsep.*` | `onnxruntime-web` 1.27.0 | Packaged WebGPU/JSEP runtime |
+| `ort-wasm-simd-threaded.asyncify.*` | `onnxruntime-web` 1.27.0 | The only WASM bridge; carries the WebGPU/JSEP runtime |
 | `LICENSE.transformers.txt` | `@huggingface/transformers` 4.2.0 | Apache-2.0 license |
 | `LICENSE.onnxruntime.txt` | ONNX Runtime 1.27.0 | MIT license |
 | `ThirdPartyNotices.onnxruntime.txt` | ONNX Runtime 1.27.0 | Notices for incorporated third-party software |
@@ -43,6 +42,14 @@ The readable, unminified browser builds are committed so a fresh checkout is a
 complete, Chrome Web Store-reviewable extension. Remote executable code is not
 allowed by Manifest V3 CSP; only model/config/tokenizer data is fetched from
 Hugging Face.
+
+Only the asyncify variant is vendored. `ort.webgpu.mjs` resolves its WASM
+filename from flags fixed at ONNX Runtime build time, and in this build the jsep
+and jspi branches are compiled out, so `ort-wasm-simd-threaded.asyncify.*` is the
+only bridge that can ever load. The WebGPU/JSEP execution provider lives inside
+that artifact; it is not a separate download. Copying the `jsep` or `jspi` pair
+adds tens of megabytes of unreachable binary to the reviewed package, so do not
+restore them without first checking that filename branch.
 
 The ONNX Runtime files are intentionally newer than the version pinned by
 Transformers.js 4.2.0. Stable 1.27.0 contains WebGPU buffer-pool and
@@ -80,7 +87,7 @@ cp node_modules/@huggingface/transformers/dist/transformers.web.js \
   src/chrome/vendor/transformers/
 cp node_modules/onnxruntime-web/dist/ort.webgpu.mjs \
   src/chrome/vendor/transformers/
-cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.{asyncify,jsep}.{mjs,wasm} \
+cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.{mjs,wasm} \
   src/chrome/vendor/transformers/
 rm -rf src/chrome/vendor/transformers/onnxruntime-common
 mkdir src/chrome/vendor/transformers/onnxruntime-common
