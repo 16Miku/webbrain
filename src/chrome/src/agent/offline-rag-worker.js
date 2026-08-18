@@ -53,18 +53,23 @@ function postProgress(id, progress) {
 async function sqliteRuntime() {
   if (!sqlitePromise) {
     sqlitePromise = (async () => {
-      const sqlite3 = await sqlite3InitModule({
-        locateFile: filename => new URL(`../../vendor/sqlite/${filename}`, import.meta.url).href,
-        print: () => {},
-        printErr: (...args) => console.warn('[offline-rag/sqlite]', ...args),
-      });
-      const pool = await sqlite3.installOpfsSAHPoolVfs({
-        name: SQLITE_POOL_NAME,
-        directory: SQLITE_POOL_DIRECTORY,
-        initialCapacity: 12,
-      });
-      await pool.reserveMinimumCapacity(12);
-      return { sqlite3, pool };
+      try {
+        const sqlite3 = await sqlite3InitModule({
+          locateFile: filename => new URL(`../../vendor/sqlite/${filename}`, import.meta.url).href,
+          print: () => {},
+          printErr: (...args) => console.warn('[offline-rag/sqlite]', ...args),
+        });
+        const pool = await sqlite3.installOpfsSAHPoolVfs({
+          name: SQLITE_POOL_NAME,
+          directory: SQLITE_POOL_DIRECTORY,
+          initialCapacity: 12,
+        });
+        await pool.reserveMinimumCapacity(12);
+        return { sqlite3, pool };
+      } catch (error) {
+        sqlitePromise = null;
+        throw error;
+      }
     })();
   }
   return await sqlitePromise;

@@ -27575,6 +27575,84 @@ test('Emergency corpus activation is transactional and failed indexes preserve t
   );
 });
 
+test('Emergency corpus recovery and cancellation prune orphaned staging index paths and bypass active download locks', async () => {
+  for (const [label, runtime] of [['chrome', EmergencyCorpusCh], ['firefox', EmergencyCorpusFx]]) {
+    const storage = createMemoryEmergencyCorpusStorage();
+    storage.installs.set('orphaned-install', new Map([['doc1.txt', new Uint8Array([1])]]));
+    const staging = {
+      archiveKey: 'corpus-key',
+      archiveSha256: 'a'.repeat(64),
+      version: '2026.08.17',
+      url: 'https://example.invalid/emergency.zip',
+      bytesReceived: 100,
+      totalBytes: 200,
+      phase: 'indexing',
+      installId: 'orphaned-install',
+      indexPath: 'sqlite/orphaned-install.sqlite3',
+    };
+    const store = createMemoryEmergencyCorpusStore({
+      id: 'emergency-box-text',
+      status: 'indexing',
+      active: null,
+      staging,
+      error: '',
+    });
+    const deletedIndexPaths = [];
+    const recovered = await runtime.recoverEmergencyCorpusLifecycle({
+      store,
+      storage,
+      deleteIndex: async path => { deletedIndexPaths.push(path); },
+    });
+    assert.equal(recovered.status, 'paused', `${label}: interrupted indexing was not recovered to paused`);
+    assert.deepEqual(deletedIndexPaths, ['sqlite/orphaned-install.sqlite3'],
+      `${label}: orphaned staging index path was not deleted during recovery`);
+    assert.equal(storage.installs.has('orphaned-install'), false,
+      `${label}: orphaned staging install directory was not deleted`);
+    assert.equal(recovered.staging?.indexPath, null,
+      `${label}: recovered staging retained stale indexPath`);
+
+    // Non-blocking lock handling when active download is running in another tab
+    const lockedStore = createMemoryEmergencyCorpusStore({
+      id: 'emergency-box-text',
+      status: 'downloading',
+      active: null,
+      staging: { ...staging, phase: 'downloading' },
+      error: '',
+    });
+    const mockBusyLockManager = {
+      request: async (name, options, callback) => {
+        if (options?.ifAvailable) return await callback(null);
+        return await callback({});
+      },
+    };
+    const lockBypassed = await runtime.recoverEmergencyCorpusLifecycle({
+      store: lockedStore,
+      storage,
+      lockManager: mockBusyLockManager,
+    });
+    assert.equal(lockBypassed.status, 'downloading',
+      `${label}: active download lock was not cleanly bypassed without blocking`);
+
+    // Cancellation prunes staging index
+    const cancelStore = createMemoryEmergencyCorpusStore({
+      id: 'emergency-box-text',
+      status: 'extracting',
+      active: null,
+      staging: { ...staging, installId: 'cancel-install', indexPath: 'sqlite/cancel-install.sqlite3' },
+      error: '',
+    });
+    const cancelDeletedPaths = [];
+    const canceled = await runtime.cancelEmergencyCorpusInstall({
+      store: cancelStore,
+      storage,
+      deleteIndex: async path => { cancelDeletedPaths.push(path); },
+    });
+    assert.equal(canceled.status, 'not-installed', `${label}: canceled install did not revert to not-installed`);
+    assert.deepEqual(cancelDeletedPaths, ['sqlite/cancel-install.sqlite3'],
+      `${label}: staging index path was not deleted during installation cancellation`);
+  }
+});
+
 test('Wikipedia tools use installed Apocalypse Mode archives only after online failure', async () => {
   for (const [label, runtime] of [['chrome', WikipediaOfflineCh], ['firefox', WikipediaOfflineFx]]) {
     const tool = {
@@ -27822,6 +27900,28 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   );
   assert.deepEqual(entitySources, ['wikipedia'],
     'generic encyclopedic query unnecessarily scanned the Emergency corpus');
+
+  // Multilingual emergency query (Turkish) activates emergency-box
+  let multilingualSources = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'yangın durumunda ne yapılmalı?' },
+    'yangın durumunda ne yapılmalı?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(_query, options) {
+          multilingualSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'skipped', emergencyBox: 'ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(multilingualSources, ['emergency-box'], 'multilingual emergency query was not routed to emergency-box');
   const offlineEnriched = { role: 'user', content: 'How should I keep an airway open?' };
   let offlineReferences = [];
   const multiSourceRag = await agent._applyStandaloneWikipediaRag(

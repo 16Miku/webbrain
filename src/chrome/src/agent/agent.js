@@ -198,7 +198,7 @@ const STANDALONE_WIKIPEDIA_MODEL_SEARCH_ALIASES = new Set([
   'wikipedia',
   'wikipedia_search',
 ]);
-const STANDALONE_EMERGENCY_QUERY_RE = /\b(?:airway|breath|bleed|blood|wound|cut|burn|injur|first aid|poison|fracture|shock|resuscitat|cpr|emergency|disaster|fire|flood|earthquake|shelter|surviv|safe water|dehydrat|hypotherm|heatstroke)\b/i;
+const STANDALONE_EMERGENCY_QUERY_RE = /(?:^|[^\p{L}\p{N}])(?:airway|breath|bleed|blood|wound|cut|burn|injur|first aid|poison|fracture|shock|resuscitat|cpr|emergency|disaster|fire|flood|earthquake|shelter|surviv|safe water|dehydrat|hypotherm|heatstroke|tourniquet|triage|choking|seizure|bandage|primeros auxilios|emergencia|desastre|fuego|incendio|hemorragia|sangre|herida|quemadura|fractura|asfixia|rcp|terremoto|sismo|inundaci[oó]n|torniquete|veneno|intoxicaci[oó]n|supervivencia|refugio|premiers secours|urgence|d[eé]sastre|feu|saignement|sang|blessure|br[uû]lure|[eé]touffement|s[eé]isme|tremblement de terre|inondation|garrot|survie|abri|erste hilfe|notfall|katastrophe|brand|blutung|blut|wunde|verbrennung|knochenbruch|erstickung|hlw|erdbeben|[uü]berschwemmung|abbinden|vergiftung|[uü]berleben|notunterkunft|ilk\s*yard[ıi]m|acil durum|afet|felaket|yang[ıi]n|kanama|kan kayb[ıi]|yara|yaralanma|yan[ıi]k|k[ıi]r[ıi]k|bo[gğ]ulma|kalp masaj[ıi]|suni teneff[uü]s|suni solunum|deprem|sel|turnike|zehir|zehirlenme|hayatta kalma|bar[ıi]nak|первая помощь|экстренная|чрезвычайная|катастрофа|пожар|кровотечение|кровь|рана|ожог|перелом|удушье|слр|землетрясение|наводнение|жгут|яд|отравление|выживание|убежище|primeiros socorros|emerg[eê]ncia|inc[eê]ndio|sangramento|ferida|queimadura|fratura|engasgo|enchente|intoxica[cç][aã]o|sobreviv[eê]ncia|急救|紧急|火灾|出血|伤口|骨折|心肺复苏|地震|洪水|中毒|避难|救生|応急手当|救急|火災|出血|骨折|心肺蘇生|地震|洪水|毒|避難)(?:[^\p{L}\p{N}]|$)/iu;
 
 function isStandaloneEmergencyQuery(value) {
   return STANDALONE_EMERGENCY_QUERY_RE.test(String(value || '').toLowerCase().replace(/\s+/g, ' '));
@@ -233,7 +233,6 @@ function shouldRetrieveStandaloneOfflineSources(value, runOptions = {}) {
     : [];
   const emergencySelected = selectedSources.length === 0 || selectedSources.includes('emergency-box');
   if (!emergencySelected) return false;
-  if (selectedSources.length === 1 && selectedSources[0] === 'emergency-box') return true;
   return isStandaloneEmergencyQuery(normalized);
 }
 // Appended to the system prompt of every selection-grounded model request.

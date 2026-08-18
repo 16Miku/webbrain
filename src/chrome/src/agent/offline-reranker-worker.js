@@ -168,8 +168,23 @@ function publishModelState(patch = {}) {
 
 async function hasReadyMarker() {
   if (typeof caches === 'undefined') return false;
-  try { return !!(await (await caches.open(MODEL_CACHE_NAME)).match(MODEL_MARKER_URL)); }
-  catch { return false; }
+  try {
+    const cache = await caches.open(MODEL_CACHE_NAME);
+    const marker = await cache.match(MODEL_MARKER_URL);
+    if (!marker) return false;
+    const keys = await cache.keys();
+    const hasModelFile = keys.some(request => {
+      const url = String(request?.url || '');
+      return url.includes('model_quantized.onnx') || (url.includes('multilingual-e5-small') && url.endsWith('.onnx'));
+    });
+    if (!hasModelFile) {
+      await cache.delete(MODEL_MARKER_URL).catch(() => {});
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function setReadyMarker() {

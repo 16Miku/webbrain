@@ -4,6 +4,18 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.1.1] - 2026-08-18
+
+### Added
+- Added offline RAG support with emergency corpus, SQLite FTS5 search, multilingual semantic reranking, and local text citation readers.
+- Added selection quote follow-up action for Ask WebBrain.
+
+### Fixed
+- Fixed offline RAG lifecycle recovery, SQLite SAH pool database cleanup on cancellation, and multilingual emergency query routing.
+
+### Tests
+- Added test coverage for offline RAG emergency corpus recovery, lock bypass, and multilingual query detection.
+
 ## [32.1.0] - 2026-08-16
 
 ### Added

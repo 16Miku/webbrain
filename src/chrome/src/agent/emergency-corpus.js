@@ -470,7 +470,16 @@ export async function withEmergencyCorpusLock(task, options = {}) {
   if (typeof lockManager?.request !== 'function') return await task();
   const lockOptions = { mode: 'exclusive' };
   if (options.signal) lockOptions.signal = options.signal;
-  return await lockManager.request('webbrain-emergency-corpus', lockOptions, task);
+  if (options.ifAvailable) lockOptions.ifAvailable = true;
+  return await lockManager.request('webbrain-emergency-corpus', lockOptions, async (lock) => {
+    if (options.ifAvailable && !lock) {
+      if (typeof options.onLockUnavailable === 'function') {
+        return await options.onLockUnavailable();
+      }
+      return null;
+    }
+    return await task(lock);
+  });
 }
 
 async function persistState(store, current, patch, onProgress) {
@@ -500,6 +509,7 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
     && current.staging?.archiveSha256 === descriptor.archiveSha256;
   if (!matchingStaging && current.staging) {
     if (current.staging.installId) await storage.deleteInstall(current.staging.installId).catch(() => {});
+    if (current.staging.indexPath) await options.deleteIndex?.(current.staging.indexPath).catch(() => {});
     if (current.staging.archiveKey) await storage.deleteArchive(current.staging.archiveKey).catch(() => {});
   }
   let offset = matchingStaging ? await storage.archiveSize(archiveKey) : 0;
@@ -860,7 +870,7 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
   await storage.deleteInstall(installId).catch(() => {});
   current = await persistState(store, current, {
     status: 'extracting', error: '',
-    staging: { ...current.staging, phase: 'extracting', installId },
+    staging: { ...current.staging, phase: 'extracting', installId, indexPath },
   }, onProgress);
   try {
     const extracted = await (options.extractArchive || extractEmergencyCorpusArchive)(archive, {
@@ -875,7 +885,7 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
     current = await persistState(store, current, {
       status: 'indexing',
       staging: {
-        ...current.staging, phase: 'indexing', installId,
+        ...current.staging, phase: 'indexing', installId, indexPath,
         manifest: extracted.manifest,
       },
     }, onProgress);
@@ -924,6 +934,7 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
       staging: {
         ...current.staging,
         installId: null,
+        indexPath: null,
         phase: 'downloaded',
         manifest: null,
       },
@@ -971,6 +982,9 @@ export async function recoverEmergencyCorpusLifecycle(options = {}) {
     if (interrupted && current.staging?.installId) {
       await storage.deleteInstall(current.staging.installId).catch(() => {});
     }
+    if (interrupted && current.staging?.indexPath) {
+      await options.deleteIndex?.(current.staging.indexPath).catch(() => {});
+    }
     if (interrupted) {
       const archiveBytes = current.staging?.archiveKey
         ? await storage.archiveSize(current.staging.archiveKey).catch(() => 0)
@@ -983,6 +997,7 @@ export async function recoverEmergencyCorpusLifecycle(options = {}) {
         staging: current.staging ? {
           ...current.staging,
           installId: null,
+          indexPath: null,
           manifest: null,
           bytesReceived: archiveBytes,
           phase: downloaded ? 'downloaded' : 'downloading',
@@ -997,7 +1012,11 @@ export async function recoverEmergencyCorpusLifecycle(options = {}) {
       if (!keep.has(installId)) await storage.deleteInstall(installId).catch(() => {});
     }
     return current;
-  }, { lockManager: options.lockManager });
+  }, {
+    lockManager: options.lockManager,
+    ifAvailable: options.ifAvailable ?? true,
+    onLockUnavailable: async () => baseRecord(await store.get() || {}),
+  });
 }
 
 export async function cancelEmergencyCorpusInstall(options = {}) {
@@ -1006,6 +1025,7 @@ export async function cancelEmergencyCorpusInstall(options = {}) {
   return await withEmergencyCorpusLock(async () => {
     const current = baseRecord(await store.get() || {});
     if (current.staging?.installId) await storage.deleteInstall(current.staging.installId).catch(() => {});
+    if (current.staging?.indexPath) await options.deleteIndex?.(current.staging.indexPath).catch(() => {});
     if (current.staging?.archiveKey) await storage.deleteArchive(current.staging.archiveKey).catch(() => {});
     return await store.put({
       ...current,
@@ -1023,6 +1043,7 @@ export async function deleteEmergencyCorpus(options = {}) {
     const current = baseRecord(await store.get() || {});
     if (current.active?.indexPath) await options.deleteIndex?.(current.active.indexPath).catch(() => {});
     if (current.active?.installId) await storage.deleteInstall(current.active.installId).catch(() => {});
+    if (current.staging?.indexPath) await options.deleteIndex?.(current.staging.indexPath).catch(() => {});
     if (current.staging?.installId) await storage.deleteInstall(current.staging.installId).catch(() => {});
     if (current.staging?.archiveKey) await storage.deleteArchive(current.staging.archiveKey).catch(() => {});
     await store.delete();

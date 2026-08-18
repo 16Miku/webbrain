@@ -149,17 +149,19 @@ function remainingOfTotal(resources, pending) {
 
 function ragComponentNetworkBytes({ includeInstalled = false } = {}) {
   let bytes = 0;
-  if (semanticState.status !== 'ready') bytes += E5_MODEL_DOWNLOAD_BYTES;
-  if (corpusUiStatus() !== 'ready' && EMERGENCY_CORPUS_RELEASE) bytes += Number(EMERGENCY_CORPUS_RELEASE.downloadBytes) || 0;
-  if (includeInstalled) return bytes;
+  if (includeInstalled || semanticState.status !== 'ready') bytes += E5_MODEL_DOWNLOAD_BYTES;
+  if (EMERGENCY_CORPUS_RELEASE && (includeInstalled || corpusUiStatus() !== 'ready')) {
+    bytes += Number(EMERGENCY_CORPUS_RELEASE.downloadBytes) || 0;
+  }
   return bytes;
 }
 
 function kitRemainingLabel(resources, pending) {
-  const componentBytes = ragComponentNetworkBytes();
+  const pendingComponentBytes = ragComponentNetworkBytes({ includeInstalled: false });
+  const totalComponentBytes = ragComponentNetworkBytes({ includeInstalled: true });
   return t('eb.remaining_of_total', {
-    remaining: formatEstimatedSize(estimatedDownloadBytes(pending) + componentBytes),
-    total: formatEstimatedSize(estimatedDownloadBytes(resources) + componentBytes),
+    remaining: formatEstimatedSize(estimatedDownloadBytes(pending) + pendingComponentBytes),
+    total: formatEstimatedSize(estimatedDownloadBytes(resources) + totalComponentBytes),
   });
 }
 
@@ -502,6 +504,7 @@ async function refreshState({ recoverInterrupted = false } = {}) {
     corpusRecord = await recoverEmergencyCorpusLifecycle({
       store: corpusStore,
       storage: corpusStorage,
+      deleteIndex: path => indexClient().deleteIndex(path),
     });
   } else {
     corpusRecord = await corpusStore.get();
@@ -682,7 +685,11 @@ async function removeCorpusComponent({ cancelOnly = false } = {}) {
   entry?.controller.abort();
   if (entry?.promise) await entry.promise.catch(() => {});
   if (cancelOnly) {
-    corpusRecord = await cancelEmergencyCorpusInstall({ store: corpusStore, storage: corpusStorage });
+    corpusRecord = await cancelEmergencyCorpusInstall({
+      store: corpusStore,
+      storage: corpusStorage,
+      deleteIndex: path => indexClient().deleteIndex(path),
+    });
   } else {
     await deleteEmergencyCorpus({
       store: corpusStore,
