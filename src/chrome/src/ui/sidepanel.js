@@ -29,6 +29,8 @@ import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
+import { buildSelectionComposerDraft, selectionIsQuoteable, selectionTextFromRange } from './selection-quote.js';
+import { getSelectionShortcutLocalization } from '../selection-shortcut-i18n.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -535,6 +537,7 @@ const selectionScopeBannerEl = document.getElementById('selection-scope-banner')
 const selectionScopeTitleEl = document.getElementById('selection-scope-title');
 const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
+const selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
 const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
@@ -589,6 +592,11 @@ const ASK_PLACEHOLDER_KEYS = [
   'sp.input.placeholder_tip.record',
 ];
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
+let pendingAnswerSelection = null;
+let selectionAskActionRefreshFrame = null;
+let selectionAskPointerDown = false;
+let selectionAskActionLocale = '';
+let selectionAskActionLabel = '';
 const SLASH_COMMANDS = [
   { value: '/help', usage: '/help', descriptionKey: 'sp.slash.help', action: 'show', outOfBand: true },
   {
@@ -2252,6 +2260,7 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
+  dismissSelectionAskAction();
   setSelectionGroundedForTab(tabId, false);
   const clearResult = await clearCachedTabChat(tabId);
   if (!clearResult?.ok || clearResult?.skipped) {
@@ -4208,6 +4217,7 @@ if (verboseBtn) {
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  dismissSelectionAskAction();
   if (newConversationConfirmationState
       && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
     settleNewConversationConfirmation(false, { restoreFocus: false });
@@ -7854,6 +7864,7 @@ async function sendMessage(extraChatParams = {}) {
       ...(retryOptions ? { __retry: { ...retryOptions, mode: 'ask' } } : {}),
     };
   }
+  dismissSelectionAskAction();
   const retryOptions = extraChatParams?.__retry || null;
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
   const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
@@ -10678,6 +10689,126 @@ function refreshOpenMessageInfoRows() {
   });
 }
 
+function assistantTextElementForSelectionNode(node) {
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  return element?.closest?.('.message.assistant .message-text') || null;
+}
+
+function selectedAssistantAnswer() {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.startContainer.isConnected || !range.endContainer.isConnected) return null;
+  const startTextElement = assistantTextElementForSelectionNode(range.startContainer);
+  const endTextElement = assistantTextElementForSelectionNode(range.endContainer);
+  const text = selectionTextFromRange(range);
+  if (!selectionIsQuoteable({ startTextElement, endTextElement, text })) return null;
+  return { range, text };
+}
+
+function dismissSelectionAskAction() {
+  if (selectionAskActionRefreshFrame != null) {
+    cancelAnimationFrame(selectionAskActionRefreshFrame);
+    selectionAskActionRefreshFrame = null;
+  }
+  pendingAnswerSelection = null;
+  selectionAskActionEl?.classList.add('hidden');
+}
+
+function positionSelectionAskAction(range) {
+  if (!selectionAskActionEl || !range) return;
+  const rect = range.getBoundingClientRect();
+  if (!rect.width && !rect.height) {
+    dismissSelectionAskAction();
+    return;
+  }
+  const gap = 6;
+  const actionRect = selectionAskActionEl.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(8, rect.left),
+    Math.max(8, window.innerWidth - actionRect.width - 8),
+  );
+  const belowTop = rect.bottom + gap;
+  const preferredTop = belowTop + actionRect.height <= window.innerHeight - 8
+    ? belowTop
+    : Math.max(8, rect.top - actionRect.height - gap);
+  const top = Math.min(
+    Math.max(8, window.innerHeight - actionRect.height - 8),
+    preferredTop,
+  );
+  selectionAskActionEl.style.left = `${left}px`;
+  selectionAskActionEl.style.top = `${top}px`;
+}
+
+function applySelectionAskActionLabel() {
+  if (!selectionAskActionEl) return;
+  const locale = getLocale();
+  if (selectionAskActionLocale === locale && selectionAskActionLabel
+      && selectionAskActionEl.textContent === selectionAskActionLabel) {
+    return;
+  }
+  selectionAskActionLocale = locale;
+  selectionAskActionLabel = getSelectionShortcutLocalization(locale).strings.askQuestion;
+  selectionAskActionEl.textContent = selectionAskActionLabel;
+  selectionAskActionEl.title = selectionAskActionLabel;
+  selectionAskActionEl.setAttribute('aria-label', selectionAskActionLabel);
+}
+
+function refreshSelectionAskAction() {
+  const selected = selectedAssistantAnswer();
+  if (!selected || !selectionAskActionEl) {
+    dismissSelectionAskAction();
+    return;
+  }
+  pendingAnswerSelection = selected;
+  applySelectionAskActionLabel();
+  selectionAskActionEl.classList.remove('hidden');
+  positionSelectionAskAction(selected.range);
+}
+
+function scheduleSelectionAskActionRefresh({ force = false } = {}) {
+  if (!force && selectionAskPointerDown) return;
+  if (selectionAskActionRefreshFrame != null) return;
+  selectionAskActionRefreshFrame = requestAnimationFrame(() => {
+    selectionAskActionRefreshFrame = null;
+    if (!force && selectionAskPointerDown) return;
+    refreshSelectionAskAction();
+  });
+}
+
+function handleSelectionAskPointerDown(event) {
+  if (selectionAskActionEl?.contains(event.target)) return;
+  selectionAskPointerDown = true;
+  dismissSelectionAskAction();
+}
+
+function handleSelectionAskPointerUp() {
+  if (!selectionAskPointerDown) return;
+  selectionAskPointerDown = false;
+  scheduleSelectionAskActionRefresh({ force: true });
+}
+
+function askAboutSelectedAnswer() {
+  const selection = pendingAnswerSelection;
+  if (!selection) return;
+  const liveSelection = selectedAssistantAnswer();
+  if (!liveSelection) {
+    dismissSelectionAskAction();
+    return;
+  }
+  const nextDraft = buildSelectionComposerDraft(liveSelection.text, inputEl.value);
+  if (nextDraft === inputEl.value) {
+    dismissSelectionAskAction();
+    return;
+  }
+  inputEl.value = nextDraft;
+  dismissSelectionAskAction();
+  window.getSelection?.()?.removeAllRanges();
+  handleInput();
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+}
+
 function addMessage(role, content, options = {}) {
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
@@ -11677,6 +11808,11 @@ async function handleGlobalKeydown(e) {
   if (e.key === 'Escape') {
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
     if (slashMenuOpen) return;
+    if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {
+      e.preventDefault();
+      dismissSelectionAskAction();
+      return;
+    }
     if (isProcessing) {
       e.preventDefault();
       abortRun();
@@ -12682,6 +12818,26 @@ if (attachBtn && fileAttachInput) {
 }
 
 // --- Event Listeners ---
+
+if (selectionAskActionEl) {
+  selectionAskActionEl.addEventListener('mousedown', (event) => event.preventDefault());
+  selectionAskActionEl.addEventListener('click', (event) => {
+    event.stopPropagation();
+    askAboutSelectedAnswer();
+  });
+  document.addEventListener('selectionchange', scheduleSelectionAskActionRefresh);
+  document.addEventListener('pointerdown', handleSelectionAskPointerDown);
+  document.addEventListener('pointerup', handleSelectionAskPointerUp);
+  document.addEventListener('pointercancel', handleSelectionAskPointerUp);
+  document.addEventListener('keyup', scheduleSelectionAskActionRefresh);
+  chatContainerEl?.addEventListener('scroll', dismissSelectionAskAction, { passive: true });
+  window.addEventListener('resize', dismissSelectionAskAction);
+  document.addEventListener('wb-locale-changed', () => {
+    selectionAskActionLocale = '';
+    applySelectionAskActionLabel();
+    scheduleSelectionAskActionRefresh();
+  });
+}
 
 sendBtn.addEventListener('click', sendMessage);
 

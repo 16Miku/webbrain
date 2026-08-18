@@ -1131,12 +1131,143 @@ const {
   'file://' + path.join(ROOT, 'src/firefox/src/agent/sheets-tools.js').replace(/\\/g, '/')
 );
 
+const {
+  buildSelectionQuote,
+  buildSelectionComposerDraft,
+  selectionIsQuoteable,
+  selectionTextFromContents,
+  isSelectionQuoteChrome,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/selection-quote.js').replace(/\\/g, '/')
+);
+const {
+  buildSelectionQuote: buildSelectionQuoteFx,
+  buildSelectionComposerDraft: buildSelectionComposerDraftFx,
+  selectionIsQuoteable: selectionIsQuoteableFx,
+  selectionTextFromContents: selectionTextFromContentsFx,
+  isSelectionQuoteChrome: isSelectionQuoteChromeFx,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/selection-quote.js').replace(/\\/g, '/')
+);
+const sidepanelSources = [
+  fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8'),
+];
+const sidepanelHtmlSources = [
+  fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.html'), 'utf8'),
+];
+const sidepanelStyleSources = [
+  fs.readFileSync(path.join(ROOT, 'src/chrome/styles/sidepanel.css'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src/firefox/styles/sidepanel.css'), 'utf8'),
+];
+const selectionQuoteSources = [
+  fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/selection-quote.js'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/selection-quote.js'), 'utf8'),
+];
+
+function sourceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `source markers missing: ${startMarker}`);
+  return source.slice(start, end);
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Test framework (one function, no deps)
 // ────────────────────────────────────────────────────────────────────────
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+console.log('\nselection quote');
+
+test('buildSelectionQuote preserves multiline answer text as an editable quote', () => {
+  const selected = 'First line\n\n<script>alert("x")</script>';
+  const expected = '> First line\n> \n> <script>alert("x")</script>\n\n';
+  assert.equal(buildSelectionQuote(selected), expected);
+  assert.equal(buildSelectionQuoteFx(selected), expected, 'Firefox quote builder should match Chrome');
+  assert.equal(buildSelectionComposerDraft('A detail', 'Why?'), '> A detail\n\nWhy?');
+  assert.equal(buildSelectionComposerDraftFx('A detail', 'Why?'), '> A detail\n\nWhy?', 'Firefox draft builder should match Chrome');
+  assert.equal(buildSelectionComposerDraft('', 'draft'), 'draft');
+  assert.equal(buildSelectionComposerDraft('A detail', '> A detail\n\nWhy?'), '> A detail\n\nWhy?');
+  assert.equal(buildSelectionComposerDraft('A detail', ' '), '> A detail\n\n ');
+});
+
+test('selectionIsQuoteable requires one non-empty assistant answer element', () => {
+  const answer = {};
+  const otherAnswer = {};
+  const valid = { startTextElement: answer, endTextElement: answer, text: 'A detail' };
+  assert.equal(selectionIsQuoteable(valid), true);
+  assert.equal(selectionIsQuoteable({ ...valid, endTextElement: otherAnswer }), false);
+  assert.equal(selectionIsQuoteable({ ...valid, text: ' \n ' }), false);
+  assert.equal(selectionIsQuoteableFx(valid), true, 'Firefox eligibility should match Chrome');
+  assert.equal(selectionIsQuoteableFx({ ...valid, endTextElement: otherAnswer }), false);
+});
+
+test('selection quote helper stays byte-identical across browser builds', () => {
+  assert.equal(selectionQuoteSources[0], selectionQuoteSources[1]);
+});
+
+test('selectionTextFromContents skips in-bubble chrome and keeps answer text', () => {
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value });
+  const element = (tagName, className, ...childNodes) => ({
+    nodeType: 1,
+    tagName,
+    className,
+    classList: { contains: (name) => String(className || '').split(/\s+/).includes(name) },
+    childNodes,
+  });
+  const tree = element(
+    'DIV',
+    'message-text',
+    textNode('Intro '),
+    element('DIV', 'code-block-wrapper',
+      element('DIV', 'code-block-header',
+        element('SPAN', 'code-lang', textNode('javascript')),
+        element('BUTTON', 'code-copy-btn', textNode('Copy')),
+      ),
+      element('PRE', '', element('CODE', '', textNode('const x = 1;'))),
+    ),
+    element('BR', ''),
+    textNode('Outro'),
+  );
+  const expected = 'Intro const x = 1;\nOutro';
+  assert.equal(selectionTextFromContents(tree), expected);
+  assert.equal(selectionTextFromContentsFx(tree), expected, 'Firefox chrome-stripping should match Chrome');
+  assert.equal(isSelectionQuoteChrome(element('BUTTON', 'code-copy-btn', textNode('Copy'))), true);
+  assert.equal(isSelectionQuoteChromeFx(element('SPAN', 'code-lang', textNode('javascript'))), true);
+  assert.equal(isSelectionQuoteChrome(element('CODE', '', textNode('const x = 1;'))), false);
+});
+
+test('selection answer action wiring covers show, dismiss, and tab/conversation changes in both sidepanels', () => {
+  for (const [index, source] of sidepanelSources.entries()) {
+    const switchToTabSource = sourceBetween(source, 'async function switchToTab', '\n}\n\nasync function refreshVisibleSidePanelState');
+    const clearConversationSource = sourceBetween(source, 'async function renderClearedConversationForTab', '\nconst TOOL_KEYS =');
+    const sendMessageSource = sourceBetween(source, 'async function sendMessage', '\nasync function continueAgent');
+    assert.match(source, /document\.addEventListener\('selectionchange', scheduleSelectionAskActionRefresh\)/);
+    assert.match(source, /document\.addEventListener\('pointerdown', handleSelectionAskPointerDown\)/);
+    assert.match(source, /document\.addEventListener\('pointerup', handleSelectionAskPointerUp\)/);
+    assert.match(source, /document\.addEventListener\('pointercancel', handleSelectionAskPointerUp\)/);
+    assert.match(source, /document\.addEventListener\('keyup', scheduleSelectionAskActionRefresh\)/);
+    assert.match(source, /if \(!force && selectionAskPointerDown\) return;/);
+    assert.match(source, /const text = selectionTextFromRange\(range\);/);
+    assert.match(source, /function applySelectionAskActionLabel\(\)/);
+    assert.match(source, /if \(selectionAskActionLocale === locale && selectionAskActionLabel[\s\S]*?selectionAskActionEl\.textContent === selectionAskActionLabel\)/);
+    assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
+    assert.match(source, /if \(!rect\.width && !rect\.height\) \{[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /if \(!range\.startContainer\.isConnected \|\| !range\.endContainer\.isConnected\) return null;/);
+    assert.match(source, /const liveSelection = selectedAssistantAnswer\(\);/);
+    assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
+    assert.match(clearConversationSource, /dismissSelectionAskAction\(\);/);
+    assert.match(sendMessageSource, /dismissSelectionAskAction\(\);/);
+    assert.match(source, /dismissSelectionAskAction\(\);\s*return;/);
+    assert.match(sidepanelHtmlSources[index], /id="selection-ask-action"/);
+    assert.doesNotMatch(sidepanelHtmlSources[index], /id="selection-ask-action"[^>]*aria-live/);
+    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?user-select:\s*none;/);
+  }
+});
 
 console.log('\nscreenshot redaction');
 
