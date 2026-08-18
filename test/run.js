@@ -1275,8 +1275,8 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /document\.addEventListener\('pointerdown', handleSelectionAskPointerDown/);
     assert.match(source, /function showSelectionAskAction\(selected\)/);
     assert.match(source, /function ensureSelectionAskActionEl\(\)/);
-    assert.match(source, /keepSelectionAskActionUntil = Date\.now\(\) \+ 2000/);
-    assert.match(source, /if \(pendingAnswerSelection\) return;/);
+    assert.match(source, /function handleSelectionAskPointerDown\(event\) \{[\s\S]*?if \(selectionAskActionEl\?\.contains\(event\.target\)\) return;[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(source, /function refreshSelectionAskAction\(\) \{[\s\S]*?const selected = selectedAssistantAnswer\(\);[\s\S]*?showSelectionAskAction\(selected\);[\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(source, /selection\.rangeCount < 1/);
     assert.match(source, /document\.addEventListener\('pointercancel', handleSelectionAskPointerUp/);
     assert.match(source, /document\.addEventListener\('mouseup', handleSelectionAskPointerUp/);
@@ -1289,7 +1289,7 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /chatContainerEl\?\.addEventListener\('scroll', handleSelectionAskScroll/);
     assert.match(source, /document\.body\.appendChild\(selectionAskActionEl\)/);
     assert.match(source, /closest\?\.\('\.message\.assistant'\)/);
-    assert.match(source, /function messageInfoClickHasTextSelection\(\) \{[\s\S]*?if \(selection && !selection\.isCollapsed\) return true;[\s\S]*?pendingAnswerSelection/);
+    assert.match(source, /function messageInfoClickHasTextSelection\(\) \{[\s\S]*?return Boolean\(selection && !selection\.isCollapsed\);/);
     assert.match(source, /if \(messageInfoClickHasTextSelection\(\)\) return;/);
     assert.match(source, /const text = selectionTextFromRange\(range\) \|\| String\(range\.toString\?\.\(\) \|\| ''\)\.trim\(\);/);
     assert.match(source, /function applySelectionAskActionLabel\(\)/);
@@ -1309,7 +1309,7 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(sidepanelHtmlSources[index], /id="selection-ask-action"/);
     assert.doesNotMatch(sidepanelHtmlSources[index], /id="selection-ask-action"[^>]*aria-live/);
     assert.doesNotMatch(sidepanelHtmlSources[index], /<div id="app"[\s\S]*id="selection-ask-action"[\s\S]*<\/div>\s*<script/);
-    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?z-index:\s*10000;[\s\S]*?user-select:\s*none;/);
+    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?z-index:\s*10000;[\s\S]*?opacity:\s*0\.8;[\s\S]*?user-select:\s*none;/);
   }
 });
 
