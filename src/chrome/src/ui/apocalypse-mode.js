@@ -92,6 +92,57 @@ let webgpuDownloadState = {
 const corpusStore = createEmergencyCorpusStore();
 const corpusStorage = createEmergencyCorpusStorage();
 const semanticReranker = createOfflineSemanticReranker();
+const CORPUS_DOWNLOAD_ID = 'rag-emergency-corpus';
+const SEMANTIC_DOWNLOAD_ID = 'rag-semantic-model';
+const EMERGENCY_COMPONENT_STATE_EVENT = 'wb-emergency-component-download-state';
+const EMERGENCY_COMPONENT_STATE_CHANNEL = 'webbrain-emergency-download-state';
+const downloadStateChannel = typeof BroadcastChannel === 'function'
+  ? new BroadcastChannel(EMERGENCY_COMPONENT_STATE_CHANNEL)
+  : null;
+
+function publishComponentDownloadState(detail) {
+  try {
+    globalThis.dispatchEvent(new CustomEvent(EMERGENCY_COMPONENT_STATE_EVENT, { detail }));
+  } catch { /* Another extension page can still observe the broadcast below. */ }
+  try {
+    downloadStateChannel?.postMessage(detail);
+  } catch { /* The footer tracker is optional and must never interrupt a download. */ }
+}
+
+function publishComponentDownloadStates() {
+  const corpusStatus = corpusRecord?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
+  const corpusTotal = Number(corpusProgress.totalBytes) || Number(corpusRecord?.staging?.totalBytes) || (corpusRecord?.status === 'ready' ? 245 * 1024 * 1024 : 0);
+  const corpusReceived = Number(corpusProgress.bytesReceived) || Number(corpusRecord?.staging?.bytesReceived) || (corpusRecord?.status === 'ready' ? corpusTotal : 0);
+  publishComponentDownloadState({
+    id: CORPUS_DOWNLOAD_ID,
+    status: corpusStatus,
+    loaded: corpusReceived,
+    total: corpusTotal,
+    progress: corpusTotal > 0 ? corpusReceived / corpusTotal : (Number(corpusProgress.percent) ? Number(corpusProgress.percent) / 100 : 0),
+    updatedAt: Number(corpusRecord?.updatedAt) || Date.now(),
+    detail: corpusStatus === 'indexing' ? t('eb.rag.status.indexing') : '',
+  });
+
+  const semanticStatus = semanticState?.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
+  const semanticTotal = Number(semanticState?.total) || (semanticState?.status === 'ready' ? 134 * 1024 * 1024 : 0);
+  const semanticReceived = Number(semanticState?.loaded) || (semanticState?.status === 'ready' ? semanticTotal : 0);
+  publishComponentDownloadState({
+    id: SEMANTIC_DOWNLOAD_ID,
+    status: semanticStatus,
+    loaded: semanticReceived,
+    total: semanticTotal,
+    progress: Number(semanticState?.progress) || (semanticTotal > 0 ? semanticReceived / semanticTotal : 0),
+    updatedAt: Date.now(),
+    detail: '',
+  });
+}
+
+downloadStateChannel?.addEventListener('message', (event) => {
+  if (event.data?.type === 'request') {
+    publishComponentDownloadStates();
+  }
+});
+
 let ragIndexClient = null;
 const indexClient = () => {
   if (!ragIndexClient) ragIndexClient = createHostedOfflineRagIndexClient();
@@ -617,6 +668,7 @@ function renderEmergencyCorpusDownload() {
     elements['emergency-corpus-status'].textContent = t('ap.vision.waiting');
   }
   updateOverallModelsReadiness();
+  publishComponentDownloadStates();
 }
 
 function renderSemanticDownload() {
@@ -658,6 +710,7 @@ function renderSemanticDownload() {
     elements['semantic-model-status'].textContent = t('ap.vision.waiting');
   }
   updateOverallModelsReadiness();
+  publishComponentDownloadStates();
 }
 
 async function refresh() {
@@ -997,4 +1050,5 @@ globalThis.addEventListener('pagehide', () => {
   ragReadiness.close();
   ragIndexClient?.close?.();
   semanticReranker.close?.();
+  downloadStateChannel?.close();
 }, { once: true });

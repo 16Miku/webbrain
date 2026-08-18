@@ -1,6 +1,8 @@
 import { getLocale, t } from './i18n.js';
+import { createEmergencyCorpusStore } from '../agent/emergency-corpus.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
+const corpusStore = createEmergencyCorpusStore();
 const EMERGENCY_DB_NAME = 'webbrain_emergency_box';
 const EMERGENCY_DB_VERSION = 1;
 const EMERGENCY_STORE = 'resources';
@@ -184,11 +186,9 @@ async function readVisionState() {
 }
 
 async function requestTextModelState(enabled) {
-  if (textModelStateRequested || enabled !== true || !globalThis.chrome?.offscreen) return;
-  textModelStateRequested = true;
+  if (enabled !== true || !globalThis.chrome?.offscreen) return;
   const state = await send({ target: 'background', action: 'get_webgpu_download_status' });
   if (state) textModelState = state;
-  else textModelStateRequested = false;
 }
 
 function normalizedStatus(value) {
@@ -295,9 +295,19 @@ function priority(item) {
 }
 
 async function collectItems() {
-  const [snapshot, vision, pdfs] = await Promise.all([
-    apocalypseSnapshot(), readVisionState(), emergencyRecords(),
+  const [snapshot, vision, pdfs, corpusRecord] = await Promise.all([
+    apocalypseSnapshot(), readVisionState(), emergencyRecords(), corpusStore.get().catch(() => null),
   ]);
+  if (corpusRecord?.status && corpusRecord.status !== 'ready' && corpusRecord.status !== 'not-installed') {
+    observeEmergencyComponentState({
+      id: CORPUS_DOWNLOAD_ID,
+      status: corpusRecord.status,
+      loaded: Number(corpusRecord.staging?.bytesReceived) || 0,
+      total: Number(corpusRecord.staging?.totalBytes) || 0,
+      progress: Number(corpusRecord.staging?.totalBytes) > 0 ? (Number(corpusRecord.staging?.bytesReceived) || 0) / Number(corpusRecord.staging?.totalBytes) : 0,
+      updatedAt: Number(corpusRecord.updatedAt) || Date.now(),
+    });
+  }
   await requestTextModelState(snapshot?.enabled);
   return addTelemetry([
     modelItem(textModelState, 'text'),
