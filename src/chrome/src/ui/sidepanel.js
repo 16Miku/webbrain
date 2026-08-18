@@ -29,6 +29,7 @@ import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
+import { createOfflineRagReadinessController, offlineRagRunPayload } from './offline-rag-readiness.js';
 import {
   buildSelectionComposerDraft,
   selectionIsQuoteable,
@@ -1049,6 +1050,17 @@ let selectedProviderId = 'webbrain_cloud';
 let standaloneWebgpuEnabled = false;
 let standaloneWebgpuReady = false;
 let standaloneWebgpuActive = false;
+const standaloneRagReadinessRoot = document.getElementById('standalone-rag-readiness');
+const standaloneRagReadiness = isStandaloneWindow && standaloneRagReadinessRoot
+  ? createOfflineRagReadinessController({
+    root: standaloneRagReadinessRoot,
+    manageHref: 'emergency-box.html',
+    getGenerationStatus: () => standaloneWebgpuEnabled
+      ? (standaloneWebgpuReady ? 'ready' : 'model-missing')
+      : 'unavailable',
+  })
+  : null;
+standaloneRagReadinessRoot?.classList.add('hidden');
 let recommendedActionsCollapsed = false;
 let webbrainPromotionHasAnimated = false;
 let slashCommandMatches = [];
@@ -6593,7 +6605,9 @@ function setActiveChatProvider(providerId) {
 }
 
 function standaloneWebgpuRunPayload() {
-  return isStandaloneWindow && standaloneWebgpuActive ? { providerId: 'webgpu' } : {};
+  return isStandaloneWindow && standaloneWebgpuActive
+    ? { providerId: 'webgpu', ...offlineRagRunPayload() }
+    : {};
 }
 
 function syncStandaloneWebgpuUi() {
@@ -6601,6 +6615,7 @@ function syncStandaloneWebgpuUi() {
   standaloneWebgpuBtn.hidden = !isStandaloneWindow;
   if (!isStandaloneWindow) return;
   if (!standaloneWebgpuEnabled) standaloneWebgpuActive = false;
+  standaloneRagReadinessRoot?.classList.add('hidden');
   standaloneWebgpuBtn.disabled = !standaloneWebgpuEnabled;
   standaloneWebgpuBtn.classList.toggle('active', standaloneWebgpuActive);
   standaloneWebgpuBtn.setAttribute('aria-pressed', String(standaloneWebgpuActive));
@@ -6630,6 +6645,7 @@ async function refreshStandaloneWebgpuStatus() {
     standaloneWebgpuReady = false;
   }
   syncStandaloneWebgpuUi();
+  if (standaloneWebgpuActive) await standaloneRagReadiness?.refresh().catch(() => {});
 }
 
 function isWebBrainCloudProviderSelected() {
@@ -13025,6 +13041,7 @@ standaloneWebgpuBtn?.addEventListener('click', async () => {
   if (!standaloneWebgpuEnabled) return;
   standaloneWebgpuActive = !standaloneWebgpuActive;
   syncStandaloneWebgpuUi();
+  if (standaloneWebgpuActive) await standaloneRagReadiness?.refresh().catch(() => {});
 });
 
 providerPickerBtn?.addEventListener('click', (event) => {
@@ -13258,5 +13275,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 // --- Start ---
+document.addEventListener('wb-locale-changed', () => standaloneRagReadiness?.render());
+globalThis.addEventListener('pagehide', () => standaloneRagReadiness?.close(), { once: true });
 startInputPlaceholderRotation();
 init();

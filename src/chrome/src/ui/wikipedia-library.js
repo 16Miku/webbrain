@@ -400,8 +400,18 @@ async function runArchiveAction(action, id, button) {
     button.disabled = true;
     return;
   }
-  if (action === 'stop' && !globalThis.confirm(t('wl.confirm_stop'))) return;
+  if (action === 'stop') {
+    if (record.status === 'ready' && snapshot?.enabled === true) {
+      setNotice(t('ap.cannot_delete_while_enabled'), 'error');
+      return;
+    }
+    if (!globalThis.confirm(t('wl.confirm_stop'))) return;
+  }
   if (action === 'delete') {
+    if (snapshot?.enabled === true) {
+      setNotice(t('ap.cannot_delete_while_enabled'), 'error');
+      return;
+    }
     const confirmation = record.target?.kind === 'file-handle' ? 'ap.delete_external' : 'ap.delete_internal';
     if (!globalThis.confirm(t(confirmation))) return;
   }

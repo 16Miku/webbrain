@@ -1,18 +1,21 @@
 # Vendored Transformers.js WebGPU runtime
 
 This directory packages the JavaScript and WASM runtime used by two local
-WebGPU paths in Chrome:
+WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
 
 - **Apocalypse Mode -> LFM2.5 2.6B local chat** downloads the fixed text/tool
   model used by the standalone-chat nuclear override.
 - **Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback** runs
   `LiquidAI/LFM2.5-VL-450M-ONNX` as the dedicated screenshot sidecar.
+- **Apocalypse Mode -> Offline RAG** runs the explicitly downloaded, pinned
+  `Xenova/multilingual-e5-small` q8 model in a separate CPU/WASM worker. Model
+  weights remain optional and are never bundled or downloaded by a question.
 
 Model weights are not bundled. Transformers.js downloads each WebGPU model on
 first use and stores it in the browser cache. LFM2.5 2.6B uses the standard
 `q4f16` graph (about 1.55 GB). It is available only through the nuclear control
 in standalone chat and does not replace the user's globally selected provider.
-The LFM2.5 text model uses its official reasoning template and a 512-token generation budget;
+The LFM2.5 text model uses its official reasoning template and a 2048-token generation budget;
 reasoning before `</think>` is kept out of visible answers. LFM2.5-VL uses:
 
 - `embed_tokens`: FP16
@@ -30,8 +33,7 @@ conversation.
 | `transformers.web.js` | `@huggingface/transformers` 4.2.0 | Browser ESM model/processor APIs |
 | `ort.webgpu.mjs` | `onnxruntime-web` 1.27.0 | WebGPU execution provider |
 | `onnxruntime-common/` | matching `onnxruntime-common` dependency | Tensor and session types |
-| `ort-wasm-simd-threaded.asyncify.*` | `onnxruntime-web` 1.27.0 | WASM bridge used by the worker |
-| `ort-wasm-simd-threaded.jsep.*` | `onnxruntime-web` 1.27.0 | Packaged WebGPU/JSEP runtime |
+| `ort-wasm-simd-threaded.asyncify.*` | `onnxruntime-web` 1.27.0 | The only WASM bridge; carries the WebGPU/JSEP runtime |
 | `LICENSE.transformers.txt` | `@huggingface/transformers` 4.2.0 | Apache-2.0 license |
 | `LICENSE.onnxruntime.txt` | ONNX Runtime 1.27.0 | MIT license |
 | `ThirdPartyNotices.onnxruntime.txt` | ONNX Runtime 1.27.0 | Notices for incorporated third-party software |
@@ -40,6 +42,14 @@ The readable, unminified browser builds are committed so a fresh checkout is a
 complete, Chrome Web Store-reviewable extension. Remote executable code is not
 allowed by Manifest V3 CSP; only model/config/tokenizer data is fetched from
 Hugging Face.
+
+Only the asyncify variant is vendored. `ort.webgpu.mjs` resolves its WASM
+filename from flags fixed at ONNX Runtime build time, and in this build the jsep
+and jspi branches are compiled out, so `ort-wasm-simd-threaded.asyncify.*` is the
+only bridge that can ever load. The WebGPU/JSEP execution provider lives inside
+that artifact; it is not a separate download. Copying the `jsep` or `jspi` pair
+adds tens of megabytes of unreachable binary to the reviewed package, so do not
+restore them without first checking that filename branch.
 
 The ONNX Runtime files are intentionally newer than the version pinned by
 Transformers.js 4.2.0. Stable 1.27.0 contains WebGPU buffer-pool and
@@ -77,7 +87,7 @@ cp node_modules/@huggingface/transformers/dist/transformers.web.js \
   src/chrome/vendor/transformers/
 cp node_modules/onnxruntime-web/dist/ort.webgpu.mjs \
   src/chrome/vendor/transformers/
-cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.{asyncify,jsep}.{mjs,wasm} \
+cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.{mjs,wasm} \
   src/chrome/vendor/transformers/
 rm -rf src/chrome/vendor/transformers/onnxruntime-common
 mkdir src/chrome/vendor/transformers/onnxruntime-common

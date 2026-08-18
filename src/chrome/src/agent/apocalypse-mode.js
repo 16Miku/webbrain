@@ -285,16 +285,80 @@ function decodeHtmlArticleText(html) {
     .trim();
 }
 
-function relevantPassage(text, query, maxChars = 2400) {
+const PASSAGE_SNAP_CHARS = 220;
+const MAX_PASSAGE_TERM_OFFSETS = 4000;
+
+// Nudge a window start back onto a sentence or paragraph edge so the excerpt does
+// not open mid-clause. Only looks a short way back; a long run without a break
+// keeps the original offset.
+function snapPassageStart(text, index) {
+  if (index <= 0) return 0;
+  const lookBehind = Math.max(0, index - PASSAGE_SNAP_CHARS);
+  const window = text.slice(lookBehind, index);
+  const breakAt = Math.max(
+    window.lastIndexOf('\n'),
+    window.lastIndexOf('. '),
+    window.lastIndexOf('。'),
+    window.lastIndexOf('! '),
+    window.lastIndexOf('? '),
+  );
+  return breakAt < 0 ? index : lookBehind + breakAt + 1;
+}
+
+// Every offset where a query term appears, capped so a pathological article
+// cannot make scoring unbounded.
+function queryTermOffsets(lowerText, terms) {
+  const offsets = [];
+  for (const term of terms) {
+    for (let index = lowerText.indexOf(term); index >= 0; index = lowerText.indexOf(term, index + term.length)) {
+      offsets.push({ term, offset: index });
+      if (offsets.length >= MAX_PASSAGE_TERM_OFFSETS) return offsets.sort((left, right) => left.offset - right.offset);
+    }
+  }
+  return offsets.sort((left, right) => left.offset - right.offset);
+}
+
+// The answer to a question is often several sections into an article, so take the
+// densest window of query terms rather than the first place any one of them
+// appears. A two-pointer sweep over term offsets finds it in one pass; coverage of
+// distinct terms dominates raw frequency, and the lead paragraph wins ties because
+// definitional questions are usually answered there.
+export function relevantPassage(text, query, maxChars = 2400) {
   if (text.length <= maxChars) return text;
   const lower = text.toLowerCase();
-  const offsets = String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
-    .filter(token => token.length >= 3)
-    .map(token => lower.indexOf(token))
-    .filter(offset => offset >= 0)
-    .sort((left, right) => left - right);
-  const start = Math.max(0, (offsets[0] || 0) - Math.floor(maxChars / 4));
-  return `${start ? '…' : ''}${text.slice(start, start + maxChars).trim()}${start + maxChars < text.length ? '…' : ''}`;
+  const terms = [...new Set(String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
+    .filter(token => token.length >= 3))];
+  const offsets = terms.length ? queryTermOffsets(lower, terms) : [];
+  let bestScore = -1;
+  let bestOffset = 0;
+  const counts = new Map();
+  let distinct = 0;
+  let left = 0;
+  for (let right = 0; right < offsets.length; right += 1) {
+    const term = offsets[right].term;
+    counts.set(term, (counts.get(term) || 0) + 1);
+    if (counts.get(term) === 1) distinct += 1;
+    while (offsets[right].offset - offsets[left].offset > maxChars - 1) {
+      const leaving = offsets[left].term;
+      const remaining = counts.get(leaving) - 1;
+      counts.set(leaving, remaining);
+      if (remaining === 0) distinct -= 1;
+      left += 1;
+    }
+    const anchor = offsets[left].offset;
+    const score = distinct * 1000
+      + Math.min(right - left + 1, 40)
+      - (anchor / text.length) * 12;
+    if (score > bestScore) {
+      bestScore = score;
+      bestOffset = anchor;
+    }
+  }
+  const start = bestScore < 0
+    ? 0
+    : snapPassageStart(text, Math.max(0, bestOffset - Math.floor(maxChars / 6)));
+  const end = start + maxChars;
+  return `${start ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
 }
 
 function queryPaths(query) {
@@ -387,6 +451,8 @@ export function mergeZimProvenance(metadata = {}, embedded = {}) {
 }
 
 export function wikipediaArchiveIncludesImages(metadata = {}, embedded = {}) {
+  metadata = metadata || {};
+  embedded = embedded || {};
   const flavour = String(metadata.flavour || '').toLowerCase();
   const tags = [
     ...(Array.isArray(metadata.tags) ? metadata.tags : String(metadata.tags || '').split(/[;,]/)),
@@ -699,8 +765,22 @@ function idbTransaction(transaction) {
   });
 }
 
+function isClosingIdbError(error) {
+  return error?.name === 'InvalidStateError'
+    || /database connection is closing|connection is closing|database is closed/i.test(String(error?.message || error || ''));
+}
+
+function bindIdbLifetime(database, reset) {
+  database.onversionchange = () => {
+    try { database.close(); } catch { /* already closing */ }
+    reset();
+  };
+  database.onclose = () => reset();
+}
+
 export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
   let databasePromise;
+  const reset = () => { databasePromise = null; };
   const open = () => {
     if (!indexedDb) return Promise.reject(new Error('IndexedDB is unavailable.'));
     if (databasePromise) return databasePromise;
@@ -711,12 +791,18 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
         if (!database.objectStoreNames.contains(CONFIG_STORE)) database.createObjectStore(CONFIG_STORE, { keyPath: 'key' });
         if (!database.objectStoreNames.contains(ARCHIVE_STORE)) database.createObjectStore(ARCHIVE_STORE, { keyPath: 'id' });
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        bindIdbLifetime(request.result, reset);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reset();
+        reject(request.error);
+      };
     });
     return databasePromise;
   };
-  return {
+  const impl = {
     async getConfig() {
       const database = await open();
       const value = await idbRequest(database.transaction(CONFIG_STORE, 'readonly').objectStore(CONFIG_STORE).get(CONFIG_KEY));
@@ -783,6 +869,22 @@ export function createApocalypseStore(indexedDb = globalThis.indexedDB) {
       return claimed;
     },
   };
+  return new Proxy(impl, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      return async (...args) => {
+        try {
+          return await value.apply(target, args);
+        } catch (error) {
+          if (!isClosingIdbError(error)) throw error;
+          reset();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          return await value.apply(target, args);
+        }
+      };
+    },
+  });
 }
 
 function safeArchiveKey(value) {
@@ -1093,9 +1195,13 @@ export function createApocalypseArchiveManager(options = {}) {
     return next;
   }
 
-  async function remove(id) {
+  async function remove(id, removeOptions = {}) {
     const record = await store.getArchive(id);
     if (!record) return false;
+    const config = await store.getConfig();
+    if (record.status === 'ready' && config?.enabled === true && !removeOptions.allowWhileEnabled && !removeOptions.force) {
+      throw new Error('Cannot delete Wikipedia archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
+    }
     controllers.get(id)?.abort();
     const deleting = {
       ...record,
@@ -1369,8 +1475,12 @@ export async function searchApocalypseArchives(query, options = {}) {
     try {
       const provider = providers.find(candidate => candidate.supports(record));
       if (!provider) continue;
-      results.push(...await provider.search(record, query, { limit: options.limit || 3 }));
-      if (results.length >= (options.limit || 3)) break;
+      results.push(...await provider.search(record, query, {
+        limit: options.searchAllArchives
+          ? Math.min(10, Number(options.perArchiveLimit) || 10)
+          : options.limit || 3,
+      }));
+      if (!options.searchAllArchives && results.length >= (options.limit || 3)) break;
     } catch (error) {
       const permissionRequired = isFilePermissionError(error, record.target);
       const message = permissionRequired
@@ -1391,7 +1501,8 @@ export async function searchApocalypseArchives(query, options = {}) {
   }
   if (!results.length && archiveErrors.length) throw new Error(archiveErrors[0]);
   reportStatus(results.length ? 'matched' : 'no_match');
-  return results.slice(0, Math.max(1, Math.min(10, Number(options.limit) || 3)));
+  const maximumResults = options.searchAllArchives ? 40 : 10;
+  return results.slice(0, Math.max(1, Math.min(maximumResults, Number(options.limit) || 3)));
 }
 
 function cachedKiwixArchive(record, storage, cache) {
@@ -1429,6 +1540,7 @@ export function createKiwixZimProvider(options = {}) {
         ...result,
         archiveId: record.id,
         archiveTitle: record.title || record.filename,
+        retrievalMode: 'title-only',
       }));
     },
     async read(record, path, readOptions = {}) {
@@ -1646,7 +1758,7 @@ export function createApocalypseController(api, options = {}) {
           continue;
         }
         try {
-          await manager.remove(id);
+          await manager.remove(id, { allowWhileEnabled: true });
           removed.push(id);
         } catch (error) {
           retained.push(id);
@@ -1896,7 +2008,7 @@ export function createApocalypseController(api, options = {}) {
       case 'pause': await manager.pause(payload.id); return await snapshot();
       case 'resume': await manager.resume(payload.id); return await snapshot();
       case 'retry': await manager.retry(payload.id); return await snapshot();
-      case 'delete': await manager.remove(payload.id); return await snapshot();
+      case 'delete': await manager.remove(payload.id, payload); return await snapshot();
       case 'process': return await manager.processNext();
       default: throw new Error(`Unknown Apocalypse Mode action: ${action}`);
     }

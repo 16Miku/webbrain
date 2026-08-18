@@ -111,6 +111,8 @@ const englishApocalypseModeCopy = {
   'ap.file_permission_required': 'File access expired. Authorize this file again to continue.',
   'ap.imported': 'Archive imported and validated.',
   'ap.import_cancelled': 'Import cancelled and partial bytes removed.',
+  'ap.cannot_delete_while_enabled': 'Cannot delete archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.',
+  'ap.models.cannot_remove_while_enabled': 'Cannot remove model while Apocalypse Mode is enabled. Disable Apocalypse Mode first.',
   'ap.status.queued': 'queued',
   'ap.status.downloading': 'downloading',
   'ap.status.retrying': 'retrying',

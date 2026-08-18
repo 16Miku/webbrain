@@ -1,4 +1,9 @@
 import { searchApocalypseArchives } from './apocalypse-mode.js';
+import {
+  foldOfflineQueryToken,
+  isOfflineQueryStopWord,
+  tokenizeOfflineQuery,
+} from './offline-query-stopwords.js';
 
 const BUILT_IN_SOURCE = 'skills/wikipedia.md';
 const SEARCH_TOOL = 'search_wikipedia';
@@ -6,12 +11,6 @@ const SUMMARY_TOOL = 'get_wikipedia_summary';
 const LOCAL_RAG_RESULT_LIMIT = 2;
 const LOCAL_RAG_SEARCH_LIMIT = 6;
 const LOCAL_RAG_EXCERPT_CHARS = 1800;
-const LOCAL_RAG_QUERY_STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'about', 'biography', 'born', 'date', 'did', 'does', 'facts', 'for',
-  'founded', 'give', 'had', 'has', 'have', 'history', 'information', 'is', 'it', 'life', 'made',
-  'me', 'more', 'of', 'overview', 'tell', 'the', 'was', 'were', 'what', 'when', 'where', 'which',
-  'who', 'why', 'how', 'work', 'works',
-]);
 
 export function shouldRetrieveLocalWikipedia(value) {
   const text = String(value || '').trim();
@@ -34,12 +33,37 @@ export function shouldRetrieveLocalWikipedia(value) {
     ].includes(word));
 }
 
+function stripOfflineQueryStopWords(value, query) {
+  const kept = [];
+  for (const raw of tokenizeOfflineQuery(value)) {
+    if (isOfflineQueryStopWord(raw, query)) continue;
+    const folded = foldOfflineQueryToken(raw);
+    if (folded.length < 2 && !/[^\u0000-\u007f]/.test(raw)) continue;
+    kept.push(raw);
+  }
+  return kept.join(' ').trim();
+}
+
+const FOLLOW_UP_GENERIC_TERMS = new Set([
+  'age', 'birth', 'born', 'date', 'death', 'died', 'husband', 'lifespan', 'name', 'sign', 'wife', 'zodiac',
+]);
+
+function distinctiveFollowUpTerms(extractedTopic, fallbackTopic) {
+  const fallbackTerms = new Set(
+    tokenizeOfflineQuery(fallbackTopic).map(term => foldOfflineQueryToken(term)).filter(term => term.length >= 2),
+  );
+  return tokenizeOfflineQuery(extractedTopic)
+    .map(term => foldOfflineQueryToken(term))
+    .filter(term => term.length >= 4
+      && !fallbackTerms.has(term)
+      && !FOLLOW_UP_GENERIC_TERMS.has(term)
+      && !isOfflineQueryStopWord(term, extractedTopic));
+}
+
 export function localWikipediaSearchQuery(value, options = {}) {
   const source = String(value || '').trim();
   const fallbackTopic = String(options.fallbackTopic || '').trim();
-  const contextualFollowUp = /\b(?:he|him|his|she|her|hers|they|them|their|theirs|it|its|this|that)\b/i.test(source);
-  if (contextualFollowUp && fallbackTopic) return fallbackTopic;
-  return source
+  const reduced = source
     .replace(/[?？!！.]+$/g, '')
     .replace(/[,;:]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -55,12 +79,18 @@ export function localWikipediaSearchQuery(value, options = {}) {
     .replace(/\s+born$/i, '')
     .replace(/\s+(?:work|mean)$/i, '')
     .trim();
+  const topic = stripOfflineQueryStopWords(reduced, source);
+  const contextualFollowUp = /\b(?:he|him|his|she|her|hers|they|them|their|theirs|it|its|this|that)\b/i.test(source);
+  if (contextualFollowUp && fallbackTopic && distinctiveFollowUpTerms(topic, fallbackTopic).length === 0) {
+    return fallbackTopic;
+  }
+  return topic || fallbackTopic;
 }
 
 function localRagTerms(value) {
-  return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(term => term.length >= 2 && !LOCAL_RAG_QUERY_STOP_WORDS.has(term));
+  return tokenizeOfflineQuery(value)
+    .map(term => foldOfflineQueryToken(term))
+    .filter(term => term.length >= 2 && !isOfflineQueryStopWord(term, value));
 }
 
 function differsByAtMostOne(left, right) {
@@ -121,7 +151,8 @@ export async function retrieveLocalWikipediaResultForStandalone(query, options =
     return { status: 'skipped', records: [], searchQuery: '' };
   }
   const search = options.apocalypseSearch || searchApocalypseArchives;
-  const searchQuery = String(options.searchQuery || localWikipediaSearchQuery(query) || query).trim();
+  const searchQuery = String(options.searchQuery || localWikipediaSearchQuery(query) || '').trim();
+  if (!searchQuery) return { status: 'no_match', records: [], searchQuery: '' };
   let reportedStatus = '';
   try {
     const records = await search(searchQuery, {

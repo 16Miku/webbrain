@@ -30,7 +30,7 @@
   border-radius: 50%;
   background: rgba(10, 15, 13, .58);
   cursor: pointer;
-  font: 700 16px/1 system-ui, sans-serif;
+  font: 700 16px/1 var(--font-text, system-ui, sans-serif);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }

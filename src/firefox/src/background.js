@@ -14,6 +14,10 @@ import {
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
 import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
+import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
+import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
+import { getSharedOfflineSemanticReranker } from './agent/offline-semantic-runtime.js';
+import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -95,6 +99,17 @@ import {
 
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(browser);
+let emergencyDownloads = null;
+
+function emergencyDownloadController() {
+  if (!emergencyDownloads) {
+    emergencyDownloads = createEmergencyDownloadController({
+      indexClient: createHostedOfflineRagIndexClient(),
+      semanticReranker: getSharedOfflineSemanticReranker(),
+    });
+  }
+  return emergencyDownloads;
+}
 Promise.all([
   apocalypseController.syncUpdateSchedule(),
   apocalypseController.syncDownloadSchedule(),
@@ -1949,6 +1964,7 @@ async function handleMessage(msg, sender) {
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
+    EMERGENCY_DOWNLOAD_ACTION,
   ].includes(msg.action);
   if (!lightweightAction) {
     if (providerManager.providers.size === 0) {
@@ -1965,6 +1981,8 @@ async function handleMessage(msg, sender) {
   switch (msg.action) {
     case 'apocalypse_mode':
       return await apocalypseController.handle(msg.command, msg);
+    case EMERGENCY_DOWNLOAD_ACTION:
+      return await emergencyDownloadController().handle(msg.command, msg);
     case 'profile_sync_state': return { ok: true, ...(await profileSync.state()) };
     case 'profile_sync_auth_start': return { ok: true, ...(await profileSync.authStart(String(msg.email || '').trim())) };
     case 'profile_sync_auth_status': return { ok: true, ...(await profileSync.authStatus(msg.challengeId, msg.verifier)) };
