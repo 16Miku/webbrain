@@ -1068,13 +1068,8 @@ export class ProviderManager {
     return { ok: true, skipped: true };
   }
 
-  /**
-   * Get a dedicated vision provider if the user has configured one under
-   * `visionModel` in storage. Returns an OpenAI-compatible provider instance
-   * or null if not configured. Caller is responsible for falling back to the
-   * active provider when this returns null.
-   */
-  async getVisionProvider() {
+  /** Return the explicitly configured portable vision override, if any. */
+  async getVisionOverrideProvider() {
     try {
       const { visionModel } = await browser.storage.local.get(['visionModel']);
       if (!visionModel || !visionModel.baseUrl || !visionModel.model) return null;
@@ -1095,6 +1090,25 @@ export class ProviderManager {
       console.warn('[providers] getVisionProvider failed:', e);
       return null;
     }
+  }
+
+  // Firefox has no in-browser WebGPU vision runtime. Keep the method for
+  // browser-parity callers and future local implementations.
+  async getLocalVisionFallbackProvider() {
+    return null;
+  }
+
+  async resolveVisionRoute(activeProvider = null) {
+    const override = await this.getVisionOverrideProvider();
+    if (override) return { provider: override, route: 'explicit_override', rawImage: false };
+    if (activeProvider?.supportsVision) {
+      return { provider: activeProvider, route: 'active_raw', rawImage: true };
+    }
+    return { provider: null, route: 'none', rawImage: false };
+  }
+
+  async getVisionProvider() {
+    return this.getVisionOverrideProvider();
   }
 
   /**
@@ -1307,7 +1321,8 @@ export class ProviderManager {
    * Test the optional dedicated vision provider's connection.
    */
   async testVisionProvider() {
-    const provider = await this.getVisionProvider();
+    const provider = await this.getVisionOverrideProvider()
+      || await this.getLocalVisionFallbackProvider();
     if (!provider) return { ok: false, error: 'Vision model not configured' };
     let imageDataUrl;
     try {

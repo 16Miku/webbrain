@@ -66,6 +66,10 @@ function validateValue(value, schema, path, failures) {
     if (Number.isFinite(schema.minLength) && length < schema.minLength) failures.push(path);
     if (Number.isFinite(schema.maxLength) && length > schema.maxLength) failures.push(path);
   }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (Number.isFinite(schema.minimum) && value < schema.minimum) failures.push(path);
+    if (Number.isFinite(schema.maximum) && value > schema.maximum) failures.push(path);
+  }
   if (Array.isArray(value) && schema.items) {
     value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, failures));
   }
@@ -98,6 +102,21 @@ function validateValue(value, schema, path, failures) {
   }
 }
 
+function normalizeClickTargetDefaults(args) {
+  const next = { ...args };
+  if (typeof next.text === 'string' && next.text.trim() === '') delete next.text;
+  if (typeof next.selector === 'string' && next.selector.trim() === '') delete next.selector;
+  if (typeof next.capture_id === 'string' && next.capture_id.trim() === '') delete next.capture_id;
+  if (typeof next.expected_name === 'string' && next.expected_name.trim() === '') delete next.expected_name;
+  if (typeof next.expected_role === 'string' && next.expected_role.trim() === '') delete next.expected_role;
+  if (Number.isInteger(next.index) && next.index < 0) delete next.index;
+  if (next.x === 0 && next.y === 0) {
+    delete next.x;
+    delete next.y;
+  }
+  return next;
+}
+
 function validateClickTarget(args) {
   const text = typeof args.text === 'string' && args.text.trim() !== '';
   const selector = typeof args.selector === 'string' && args.selector.trim() !== '';
@@ -107,8 +126,12 @@ function validateClickTarget(args) {
   const coordinates = hasX && hasY && !(args.x === 0 && args.y === 0);
   const strategies = [text, selector, index, coordinates].filter(Boolean).length;
   const invalidCoordinates = hasX !== hasY || ((hasX && hasY) && args.x === 0 && args.y === 0);
-  if (strategies !== 1 || invalidCoordinates || (args.from_screenshot === true && !coordinates)) {
-    return validationFailure('click', ['target'], 'Provide exactly one target strategy: non-empty text, non-empty selector, a non-negative integer index, or a complete non-zero x/y coordinate pair.');
+  const screenshotBindingInvalid = args.from_screenshot === true
+    && (!coordinates || typeof args.capture_id !== 'string' || !args.capture_id.trim());
+  const coordinateAssertionWithoutCoordinates = !coordinates
+    && (!!String(args.expected_name || '').trim() || !!String(args.expected_role || '').trim());
+  if (strategies !== 1 || invalidCoordinates || screenshotBindingInvalid || coordinateAssertionWithoutCoordinates) {
+    return validationFailure('click', ['target'], 'Provide exactly one target strategy: non-empty text, non-empty selector, a non-negative integer index, or a complete non-zero x/y coordinate pair. Screenshot coordinates also require capture_id from the exact capture; expected_name/expected_role are coordinate-only safety assertions.');
   }
   return null;
 }
@@ -151,17 +174,18 @@ export function validateToolArguments(toolName, args, parameters) {
   if (!isPlainObject(args)) {
     return validationFailure(toolName, ['$'], 'Arguments must be a JSON object.');
   }
+  const normalizedArgs = toolName === 'click' ? normalizeClickTargetDefaults(args) : args;
   const closedParameters = isPlainObject(parameters)
     ? { ...parameters, additionalProperties: false }
     : { type: 'object', properties: {}, additionalProperties: false };
   const failures = [];
-  validateValue(args, closedParameters, '$', failures);
+  validateValue(normalizedArgs, closedParameters, '$', failures);
   if (failures.length) {
     return validationFailure(toolName, failures, `Invalid or undeclared argument(s): ${[...new Set(failures)].join(', ')}.`);
   }
   if (toolName === 'click') {
-    const clickFailure = validateClickTarget(args);
+    const clickFailure = validateClickTarget(normalizedArgs);
     if (clickFailure) return clickFailure;
   }
-  return { ok: true, args };
+  return { ok: true, args: normalizedArgs };
 }
