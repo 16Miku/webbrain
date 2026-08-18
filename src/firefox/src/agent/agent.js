@@ -30,7 +30,7 @@ import { buildGithubStargazerProgressItems } from './observers/github-stargazers
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
-import { getActiveAdapter, getCarouselNavigationPolicy, getCarouselNavigationTarget, getMessageRecipientGuardPolicy, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { getActiveAdapter, getCarouselNavigationPolicy, getCarouselNavigationTarget, getMessageRecipientGuardPolicy, parseCarouselSlideCount, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import {
   fetchUrl,
@@ -3721,13 +3721,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           src: el.currentSrc || el.src || el.poster || '', alt: el.alt || '', w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height)
         })).sort((a,b) => b.w*b.h-a.w*a.h)[0] || null;
         const labels = Array.from(document.querySelectorAll('[aria-label]')).map(el => el.getAttribute('aria-label') || '');
-        const slideNumbers = labels.map(label => /(?:slide|image)\\s*(\\d+)/i.exec(label)?.[1]).filter(Boolean).map(Number);
-        return { media, slideCount: slideNumbers.length ? Math.max(...slideNumbers) : null };
+        return { media, labels };
       })()` });
       const state = results?.[0] || {};
       return {
         visibleMediaFingerprint: state.media ? JSON.stringify(state.media) : '',
-        discoveredSlideCount: Number.isInteger(state.slideCount) ? state.slideCount : null,
+        discoveredSlideCount: parseCarouselSlideCount(state.labels),
       };
     } catch {
       return { visibleMediaFingerprint: '', discoveredSlideCount: null };
@@ -3749,11 +3748,72 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _parseKeyProgressSnapshot(snapshot) {
+    try {
+      const parsed = JSON.parse(String(snapshot || ''));
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async _keyProgressSnapshot(tabId) {
+    const page = await this._clickProgressSnapshot(tabId);
+    try {
+      const values = await browser.tabs.executeScript(tabId, { code: `(() => {
+        const el = document.activeElement;
+        const tag = String(el && el.tagName || '');
+        const role = String(el && el.getAttribute && el.getAttribute('role') || '').toLowerCase();
+        const editable = !!(el && (
+          el.isContentEditable === true
+          || (el.getAttribute && el.getAttribute('contenteditable') === 'true')
+          || tag === 'INPUT'
+          || tag === 'TEXTAREA'
+          || role === 'textbox'
+          || role === 'searchbox'
+          || role === 'combobox'
+        ));
+        const caret = el && Number.isInteger(el.selectionStart) && Number.isInteger(el.selectionEnd)
+          ? (el.selectionStart + ':' + el.selectionEnd)
+          : '';
+        let selection = '';
+        try {
+          const s = window.getSelection();
+          if (s && s.rangeCount > 0) {
+            const r = s.getRangeAt(0);
+            selection = [s.anchorOffset, s.focusOffset, r.startOffset, r.endOffset].join(':');
+          }
+        } catch (e) {}
+        const scrollEl = document.scrollingElement || document.documentElement;
+        const scroll = [
+          Math.round(Number(el && el.scrollTop) || 0),
+          Math.round(Number(el && el.scrollLeft) || 0),
+          Math.round(Number(scrollEl && scrollEl.scrollTop) || window.scrollY || 0),
+          Math.round(Number(scrollEl && scrollEl.scrollLeft) || window.scrollX || 0),
+        ].join(':');
+        const mediaTime = (el && (tag === 'VIDEO' || tag === 'AUDIO') && Number.isFinite(el.currentTime))
+          ? String(Math.round(el.currentTime * 10) / 10)
+          : '';
+        return { editable, caret, selection, scroll, mediaTime };
+      })()` });
+      const extra = values?.[0] && typeof values[0] === 'object' ? values[0] : {};
+      return JSON.stringify({ page, ...extra });
+    } catch {
+      return JSON.stringify({ page });
+    }
+  }
+
   async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
     await new Promise(resolve => setTimeout(resolve, 200));
-    const afterSnapshot = await this._clickProgressSnapshot(tabId);
-    if (beforeSnapshot && afterSnapshot && beforeSnapshot !== afterSnapshot) return { ...response, verified: true, noProgress: false };
+    const afterSnapshot = await this._keyProgressSnapshot(tabId);
+    const before = this._parseKeyProgressSnapshot(beforeSnapshot);
+    const after = this._parseKeyProgressSnapshot(afterSnapshot);
+    if (before?.editable === true || after?.editable === true) return response;
+    if (beforeSnapshot && afterSnapshot && beforeSnapshot !== afterSnapshot) {
+      return { ...response, verified: true, noProgress: false };
+    }
+    if (!beforeSnapshot || !afterSnapshot) return response;
     return {
       ...response, success: false, verified: false, noProgress: true,
       failureScope: key === 'ArrowRight' ? 'carousel-forward|keyboard' : `keyboard-${String(key).toLowerCase()}`,
@@ -19557,7 +19617,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? { frameId: dispatchBinding.frameId }
       : undefined;
     const keyProgressBefore = name === 'press_keys' && String(args?.key || '').startsWith('Arrow')
-      ? await this._clickProgressSnapshot(tabId)
+      ? await this._keyProgressSnapshot(tabId)
       : '';
     const sendContentAction = () => browser.tabs.sendMessage(tabId, {
       target: 'content',

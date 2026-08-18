@@ -17265,6 +17265,35 @@ export function getCarouselNavigationTarget(url, index) {
 }
 
 /**
+ * Infer a carousel total from aria-labels. Prefer an explicit "N of M" / "N/M"
+ * total; never treat a lone current-position label such as "Slide 3" as the
+ * last slide, which would abort a forward scan.
+ */
+export function parseCarouselSlideCount(labels) {
+  if (!Array.isArray(labels) || !labels.length) return null;
+  let total = null;
+  const indexes = [];
+  for (const raw of labels) {
+    const label = String(raw || '');
+    const ofMatch = /(?:slide|image)\s+(\d+)\s*(?:of|\/|de|von|sur)\s+(\d+)/i.exec(label);
+    if (ofMatch) {
+      const count = Number(ofMatch[2]);
+      if (Number.isInteger(count) && count >= 1) total = Math.max(total || 0, count);
+      continue;
+    }
+    const slideMatch = /(?:slide|image)\s+(\d+)/i.exec(label);
+    if (slideMatch) {
+      const n = Number(slideMatch[1]);
+      if (Number.isInteger(n) && n >= 1) indexes.push(n);
+    }
+  }
+  if (Number.isInteger(total) && total >= 1) return total;
+  const unique = [...new Set(indexes)];
+  if (unique.length < 2) return null;
+  return Math.max(...unique);
+}
+
+/**
  * Return machine-readable full-page capture behavior for the active URL.
  * This is runtime policy, not prompt guidance, so callers do not need an LLM
  * turn or the model-facing site-adapter setting to be enabled.

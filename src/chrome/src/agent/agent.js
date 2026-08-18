@@ -31,7 +31,7 @@ import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard 
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
 import { cdpClient } from '../cdp/cdp-client.js';
-import { getActiveAdapter, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getMessageRecipientGuardPolicy, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { getActiveAdapter, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getMessageRecipientGuardPolicy, parseCarouselSlideCount, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import {
   fetchUrl,
@@ -4491,13 +4491,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           src: el.currentSrc || el.src || el.poster || '', alt: el.alt || '', w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height)
         })).sort((a,b) => b.w*b.h-a.w*a.h)[0] || null;
         const labels = Array.from(document.querySelectorAll('[aria-label]')).map(el => el.getAttribute('aria-label') || '');
-        const slideNumbers = labels.map(label => /(?:slide|image)\s*(\d+)/i.exec(label)?.[1]).filter(Boolean).map(Number);
-        return { media, slideCount: slideNumbers.length ? Math.max(...slideNumbers) : null };
+        return { media, labels };
       })()`);
       const state = evaluated?.result?.value || {};
       return {
         visibleMediaFingerprint: state.media ? JSON.stringify(state.media) : '',
-        discoveredSlideCount: Number.isInteger(state.slideCount) ? state.slideCount : null,
+        discoveredSlideCount: parseCarouselSlideCount(state.labels),
       };
     } catch {
       return { visibleMediaFingerprint: '', discoveredSlideCount: null };
@@ -23912,7 +23911,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const keyProgressBefore = String(key).startsWith('Arrow')
-        ? await this._clickProgressSnapshot(tabId)
+        ? await this._keyProgressSnapshot(tabId)
         : '';
 
       let guardedTargetConsumed = false;
@@ -25308,13 +25307,75 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _parseKeyProgressSnapshot(snapshot) {
+    try {
+      const parsed = JSON.parse(String(snapshot || ''));
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async _keyProgressSnapshot(tabId) {
+    const page = await this._clickProgressSnapshot(tabId);
+    try {
+      await cdpClient.attach(tabId);
+      const res = await cdpClient.evaluate(tabId, `(() => {
+        const el = document.activeElement;
+        const tag = String(el?.tagName || '');
+        const role = String(el?.getAttribute?.('role') || '').toLowerCase();
+        const editable = !!(el && (
+          el.isContentEditable === true
+          || el.getAttribute?.('contenteditable') === 'true'
+          || tag === 'INPUT'
+          || tag === 'TEXTAREA'
+          || role === 'textbox'
+          || role === 'searchbox'
+          || role === 'combobox'
+        ));
+        const caret = el && Number.isInteger(el.selectionStart) && Number.isInteger(el.selectionEnd)
+          ? (el.selectionStart + ':' + el.selectionEnd)
+          : '';
+        let selection = '';
+        try {
+          const s = window.getSelection();
+          if (s && s.rangeCount > 0) {
+            const r = s.getRangeAt(0);
+            selection = [s.anchorOffset, s.focusOffset, r.startOffset, r.endOffset].join(':');
+          }
+        } catch {}
+        const scrollEl = document.scrollingElement || document.documentElement;
+        const scroll = [
+          Math.round(Number(el?.scrollTop) || 0),
+          Math.round(Number(el?.scrollLeft) || 0),
+          Math.round(Number(scrollEl?.scrollTop) || window.scrollY || 0),
+          Math.round(Number(scrollEl?.scrollLeft) || window.scrollX || 0),
+        ].join(':');
+        const mediaTime = (el && (tag === 'VIDEO' || tag === 'AUDIO') && Number.isFinite(el.currentTime))
+          ? String(Math.round(el.currentTime * 10) / 10)
+          : '';
+        return { editable, caret, selection, scroll, mediaTime };
+      })()`);
+      const extra = res?.result?.value && typeof res.result.value === 'object' ? res.result.value : {};
+      return JSON.stringify({ page, ...extra });
+    } catch {
+      return JSON.stringify({ page });
+    }
+  }
+
   async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
     await new Promise(resolve => setTimeout(resolve, 200));
-    const afterSnapshot = await this._clickProgressSnapshot(tabId);
+    const afterSnapshot = await this._keyProgressSnapshot(tabId);
+    const before = this._parseKeyProgressSnapshot(beforeSnapshot);
+    const after = this._parseKeyProgressSnapshot(afterSnapshot);
+    // Caret, selection, and custom-editor arrows are real progress that the
+    // page snapshot cannot observe. Same skip as editable click annotation.
+    if (before?.editable === true || after?.editable === true) return response;
     if (beforeSnapshot && afterSnapshot && beforeSnapshot !== afterSnapshot) {
       return { ...response, verified: true, noProgress: false };
     }
+    if (!beforeSnapshot || !afterSnapshot) return response;
     return {
       ...response,
       success: false,

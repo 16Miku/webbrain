@@ -251,6 +251,7 @@ const {
   getActiveAdapter,
   getCarouselNavigationPolicy,
   getCarouselNavigationTarget,
+  parseCarouselSlideCount,
   getFullPageCapturePolicy,
   getMessageRecipientGuardPolicy,
   listAdapters,
@@ -262,6 +263,7 @@ const {
   getActiveAdapter: getActiveAdapterFx,
   getCarouselNavigationPolicy: getCarouselNavigationPolicyFx,
   getCarouselNavigationTarget: getCarouselNavigationTargetFx,
+  parseCarouselSlideCount: parseCarouselSlideCountFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
   getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
   listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
@@ -2661,7 +2663,7 @@ test('ineffective ArrowRight dispatches are provisional and stop after three no-
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
     const tabId = label === 'chrome' ? 421 : 422;
-    agent._clickProgressSnapshot = async () => 'same-url|same-focus|same-media|same-controls';
+    agent._keyProgressSnapshot = async () => 'same-url|same-focus|same-media|same-controls';
     const loopKinds = [];
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const result = await agent._verifyProvisionalKeyProgress(
@@ -2677,6 +2679,55 @@ test('ineffective ArrowRight dispatches are provisional and stop after three no-
       loopKinds.push(agent._checkLoop(tabId, 'press_keys', { key: 'ArrowRight' }, result).kind);
     }
     assert.deepEqual(loopKinds, ['none', 'nudge', 'stop'], `${label}: ineffective arrows did not escalate deterministically`);
+  }
+});
+
+test('arrow keys in an editable field are not treated as failed carousel motion', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 423 : 424;
+    const snapshot = JSON.stringify({
+      page: 'same-url|same-focus|same-media|same-controls',
+      editable: true,
+      caret: '12:12',
+    });
+    agent._keyProgressSnapshot = async () => snapshot;
+    const result = await agent._verifyProvisionalKeyProgress(
+      tabId,
+      'ArrowRight',
+      { success: true, dispatched: true, method: 'test-key' },
+      snapshot,
+    );
+    assert.equal(result.success, true, `${label}: editor caret arrows were failed closed`);
+    assert.notEqual(result.noProgress, true, `${label}: editor caret arrows were marked noProgress`);
+    assert.equal(agent._checkLoop(tabId, 'press_keys', { key: 'ArrowRight' }, result).kind, 'none');
+  }
+});
+
+test('arrow-key caret and scroll changes count as progress', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 425 : 426;
+    agent._keyProgressSnapshot = async () => JSON.stringify({
+      page: 'same-url|same-focus|same-media|same-controls',
+      editable: false,
+      caret: '13:13',
+      scroll: '0:80:0:0',
+    });
+    const result = await agent._verifyProvisionalKeyProgress(
+      tabId,
+      'ArrowRight',
+      { success: true, dispatched: true, method: 'test-key' },
+      JSON.stringify({
+        page: 'same-url|same-focus|same-media|same-controls',
+        editable: false,
+        caret: '12:12',
+        scroll: '0:0:0:0',
+      }),
+    );
+    assert.equal(result.success, true, `${label}: caret/scroll change was ignored`);
+    assert.equal(result.verified, true, `${label}: caret/scroll change was not verified`);
+    assert.equal(result.noProgress, false);
   }
 });
 
@@ -5518,6 +5569,17 @@ test('Instagram carousel adapter exposes deterministic indexed navigation only o
     assert.equal(getTarget(postUrl, 0), null, `${label}: invalid index was accepted`);
     assert.equal(getTools('act').some(tool => tool.function.name === 'carousel_navigate'), false);
     assert.equal(getTools('act', { carouselNavigation: true }).some(tool => tool.function.name === 'carousel_navigate'), true);
+  }
+});
+
+test('carousel slide count prefers an explicit total over the current index', () => {
+  for (const [label, parse] of [['chrome', parseCarouselSlideCount], ['firefox', parseCarouselSlideCountFx]]) {
+    assert.equal(parse(['Next', 'Slide 3 of 16', 'Go back']), 16, `${label}: "Slide 3 of 16" used the current index`);
+    assert.equal(parse(['Image 2 / 10']), 10, `${label}: "Image 2 / 10" used the current index`);
+    assert.equal(parse(['Slide 3']), null, `${label}: a lone current-position label was treated as the total`);
+    assert.equal(parse(['Go to slide 1', 'Go to slide 2', 'Go to slide 16']), 16, `${label}: indexed dots did not yield the max`);
+    assert.equal(parse([]), null);
+    assert.equal(parse(null), null);
   }
 });
 
