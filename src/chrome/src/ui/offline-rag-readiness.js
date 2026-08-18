@@ -84,7 +84,7 @@ export function createOfflineRagReadinessController(options = {}) {
     };
     root.innerHTML = `
       <div class="offline-rag-readiness-head">
-        <div><p class="offline-rag-eyebrow">${t('eb.rag.eyebrow')}</p><h2>${t('eb.rag.title')}</h2></div>
+        <div><p class="offline-rag-eyebrow">${t('eb.rag.eyebrow')}</p><h2 id="rag-readiness-title">${t('eb.rag.title')}</h2></div>
         ${options.manageHref ? `<a href="${options.manageHref}">${t('ap.emergency.open')}</a>` : ''}
       </div>
       <p class="offline-rag-note">${t('eb.rag.no_surprise_download')}</p>

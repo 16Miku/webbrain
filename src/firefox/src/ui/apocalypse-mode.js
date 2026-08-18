@@ -16,7 +16,6 @@ import {
   WEBGPU_MODEL_ID,
 } from '../providers/webgpu.js';
 import { t } from './i18n.js';
-import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
@@ -48,7 +47,6 @@ const elements = Object.fromEntries([
   'semantic-model-card', 'semantic-model-title', 'semantic-model-description', 'semantic-model-meta',
   'semantic-model-status', 'semantic-model-progress', 'semantic-model-start',
   'emergency-box-callout', 'emergency-gate-reason', 'emergency-box-link',
-  'offline-rag-readiness',
 ].map(id => [id, document.getElementById(id)]));
 elements['vision-model-card'].hidden = !supportsWebgpuVision;
 elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
@@ -136,25 +134,6 @@ downloadStateChannel?.addEventListener('message', (event) => {
   if (event.data?.type === 'request') {
     publishComponentDownloadStates();
   }
-});
-
-const ragReadiness = createOfflineRagReadinessController({
-  root: elements['offline-rag-readiness'],
-  corpusStore,
-  semanticReranker: {
-    async status() {
-      const snapshot = await sendEmergencyDownloadCommand('status').catch(() => null);
-      return snapshot?.semantic?.status || semanticState.status || 'model-missing';
-    },
-    close() {},
-  },
-  getGenerationStatus: () => webgpuDownloadState.status === 'ready'
-    ? 'ready'
-    : webgpuDownloadState.status === 'error'
-      ? 'error'
-      : ['downloading', 'paused'].includes(webgpuDownloadState.status)
-        ? webgpuDownloadState.status
-        : 'model-missing',
 });
 
 function bytes(value) {
@@ -740,7 +719,6 @@ async function refresh() {
   await readEmergencyHostState();
   renderEmergencyCorpusDownload();
   renderSemanticDownload();
-  await ragReadiness.refresh({ archives: snapshot.archives }).catch(() => {});
 }
 
 async function loadBasicWikipediaAutoStartPreference() {
@@ -803,7 +781,6 @@ async function startEmergencyCorpusDownload({ automatic = false } = {}) {
     corpusDownloadInFlight = false;
     corpusRecord = await corpusStore.get().catch(() => null);
     renderEmergencyCorpusDownload();
-    await ragReadiness.refresh();
   }
 }
 
@@ -833,7 +810,6 @@ async function startSemanticDownload({ automatic = false } = {}) {
     const snapshotState = await sendEmergencyDownloadCommand('status').catch(() => null);
     if (snapshotState?.semantic) semanticState = snapshotState.semantic;
     renderSemanticDownload();
-    await ragReadiness.refresh();
   }
 }
 
@@ -976,7 +952,6 @@ runtimeApi.runtime?.onMessage?.addListener?.((message) => {
       semanticState = message.semantic;
       renderSemanticDownload();
     }
-    void ragReadiness.refresh();
     return false;
   }
   return false;
@@ -1017,7 +992,6 @@ document.addEventListener('wb-locale-changed', () => {
   renderEmergencyCorpusDownload();
   renderSemanticDownload();
   updateOverallModelsReadiness();
-  ragReadiness.render();
 });
 runtimeApi.storage?.onChanged?.addListener?.((changes, area) => {
   if (!supportsWebgpuVision || area !== 'local' || !changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) return;
@@ -1033,7 +1007,7 @@ async function poll() {
       processingDownload = true;
       command('process').catch(() => {}).finally(() => { processingDownload = false; });
     }
-    await Promise.all([refresh(), refreshWebgpuDownloadStatus(), ragReadiness.refresh()]);
+    await Promise.all([refresh(), refreshWebgpuDownloadStatus()]);
   } catch { /* The next poll or persisted alarm retries. */ }
   finally { polling = false; }
 }
@@ -1050,6 +1024,5 @@ if (snapshot?.enabled === true) {
 }
 setInterval(poll, 2000);
 globalThis.addEventListener('pagehide', () => {
-  ragReadiness.close();
   downloadStateChannel?.close();
 }, { once: true });

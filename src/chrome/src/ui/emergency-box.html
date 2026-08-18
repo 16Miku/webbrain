@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="apocalypse-kit.css">
   <link rel="stylesheet" href="apocalypse-comm.css">
   <link rel="stylesheet" href="download-tracker.css">
+  <link rel="stylesheet" href="offline-rag-readiness.css">
 </head>
 <body class="emergency-box-page">
   <header class="topbar">
@@ -107,32 +108,8 @@
         </div>
       </div>
 
-      <section class="rag-readiness" aria-labelledby="rag-readiness-title" hidden>
-        <div class="rag-readiness-head">
-          <div>
-            <p class="eyebrow" data-i18n="eb.rag.eyebrow"></p>
-            <h2 id="rag-readiness-title" data-i18n="eb.rag.title"></h2>
-          </div>
-          <p data-i18n="eb.rag.no_surprise_download"></p>
-        </div>
-        <div class="rag-status-grid" role="list" data-i18n-aria-label="eb.rag.status_label">
-          <div class="rag-status-item" role="listitem">
-            <span data-i18n="eb.rag.wikipedia"></span>
-            <strong id="rag-wikipedia-status"></strong>
-          </div>
-          <div class="rag-status-item" role="listitem">
-            <span data-i18n="eb.rag.emergency_search"></span>
-            <strong id="rag-corpus-status"></strong>
-          </div>
-          <div class="rag-status-item" role="listitem">
-            <span data-i18n="eb.rag.semantic"></span>
-            <strong id="rag-semantic-status"></strong>
-          </div>
-          <div class="rag-status-item" role="listitem">
-            <span data-i18n="eb.rag.generation"></span>
-            <strong id="rag-generation-status"></strong>
-          </div>
-        </div>
+      <section class="rag-readiness" aria-labelledby="rag-readiness-title">
+        <section id="offline-rag-readiness" class="offline-rag-readiness" aria-live="polite"></section>
         <div id="rag-components" class="rag-components" aria-live="polite"></div>
       </section>
 

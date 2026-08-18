@@ -23575,7 +23575,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: communication collection filter is missing or hard-coded English`);
     assert.match(box, /data-i18n-aria-label="eb\.nav_label"/, `${browser}: Emergency Box collection navigation is not localized`);
     assert.match(box, /data-i18n-title="ap\.title"/, `${browser}: Emergency Box back-button title is not localized`);
-    assert.match(box, /id="rag-generation-status"[\s\S]*?id="rag-components"/,
+    assert.match(box, /id="offline-rag-readiness"[\s\S]*?id="rag-components"/,
       `${browser}: offline search readiness and component lifecycle UI is missing`);
     assert.match(boxCss, /\.rag-readiness\s*\{\s*margin:\s*16px 0;/,
       `${browser}: offline readiness is visually glued to the library controls`);
@@ -26810,10 +26810,13 @@ test('offline RAG readiness filters persist safely and flow only into standalone
     'background does not validate the standalone RAG filter payload');
   for (const browser of ['chrome', 'firefox']) {
     const html = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/apocalypse-mode.html`), 'utf8');
+    const box = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/emergency-box.html`), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/sidepanel.html`), 'utf8');
     const panelScript = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/sidepanel.js`), 'utf8');
     const readinessCss = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/offline-rag-readiness.css`), 'utf8');
-    assert.match(html, /id="offline-rag-readiness"/, `${browser}: Apocalypse Mode readiness surface missing`);
+    assert.doesNotMatch(html, /id="offline-rag-readiness"/, `${browser}: Apocalypse Mode still hosts the Emergency Box readiness surface`);
+    assert.match(box, /id="offline-rag-readiness"/, `${browser}: Emergency Box readiness surface missing`);
+    assert.match(box, /offline-rag-readiness\.css/, `${browser}: Emergency Box does not load the readiness stylesheet`);
     assert.match(panel, /id="standalone-rag-readiness"/, `${browser}: standalone readiness surface missing`);
     assert.match(panelScript, /standaloneRagReadinessRoot\?\.classList\.add\('hidden'\)/,
       `${browser}: standalone readiness must start hidden`);

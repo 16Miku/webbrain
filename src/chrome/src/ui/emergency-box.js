@@ -27,6 +27,7 @@ import {
   SEMANTIC_DOWNLOAD_ID,
   sendEmergencyDownloadCommand,
 } from './emergency-download-client.js';
+import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
 const runtimeApi = globalThis.browser || globalThis.chrome;
@@ -48,7 +49,7 @@ const corpusStore = createEmergencyCorpusStore();
 const elements = Object.fromEntries([
   'mode-status', 'resource-count', 'installed-rail-count', 'installed-count', 'installed-bytes',
   'category-nav', 'resource-search', 'load-openstax', 'download-basic', 'download-all', 'notice', 'resource-list',
-  'rag-wikipedia-status', 'rag-corpus-status', 'rag-semantic-status', 'rag-generation-status', 'rag-components',
+  'offline-rag-readiness', 'rag-components',
 ].map(id => [id, document.getElementById(id)]));
 
 const OPENSTAX_CACHE_KEY = 'webbrainEmergencyOpenStaxCatalog';
@@ -66,12 +67,40 @@ let corpusRecord = null;
 let semanticState = {
   status: 'unknown', ready: false, loaded: 0, total: E5_MODEL_DOWNLOAD_BYTES, progress: 0, error: '',
 };
-let wikipediaRagStatus = 'unavailable';
 let loadingOpenStax = false;
 let bulkDownloading = false;
 let bulkDownloadKind = '';
 let stopBulkDownload = false;
 const downloads = new Map();
+
+async function localGenerationStatus() {
+  try {
+    const state = await runtimeApi.runtime.sendMessage({
+      target: 'background',
+      action: 'get_webgpu_download_status',
+    });
+    const status = String(state?.status || '');
+    if (status === 'ready') return 'ready';
+    if (status === 'error') return 'error';
+    if (status === 'downloading' || status === 'paused') return status;
+    if (status === 'stopping') return 'downloading';
+    if (status) return 'model-missing';
+  } catch { /* Firefox and builds without WebGPU leave generation on Apocalypse Mode. */ }
+  return apocalypseEnabled ? 'separate' : 'unavailable';
+}
+
+const ragReadiness = createOfflineRagReadinessController({
+  root: elements['offline-rag-readiness'],
+  apocalypseStore,
+  corpusStore,
+  semanticReranker: {
+    async status() {
+      return semanticState.status === 'unknown' ? 'model-missing' : semanticState.status;
+    },
+    close() {},
+  },
+  getGenerationStatus: localGenerationStatus,
+});
 
 function trackDownload(id, options = {}) {
   downloads.set(id, { kind: options.bulkKind || '' });
@@ -352,11 +381,6 @@ function componentProgress(status, received, total, detail = '') {
   </div>`;
 }
 
-function setReadinessStatus(element, status) {
-  element.textContent = ragStatusLabel(status);
-  element.dataset.status = status;
-}
-
 function renderRagComponents() {
   const corpusStatus = corpusUiStatus();
   const corpusReceived = Number(corpusRecord?.staging?.bytesReceived) || 0;
@@ -404,10 +428,6 @@ function renderRagComponents() {
       <div class="rag-component-actions">${semanticActions(semanticStatus)}</div>
       ${componentProgress(semanticStatus, semanticReceived, semanticTotal, semanticDetail)}
     </article>`;
-  setReadinessStatus(elements['rag-wikipedia-status'], wikipediaRagStatus);
-  setReadinessStatus(elements['rag-corpus-status'], corpusStatus === 'ready' ? 'ready' : corpusStatus);
-  setReadinessStatus(elements['rag-semantic-status'], semanticStatus);
-  setReadinessStatus(elements['rag-generation-status'], apocalypseEnabled ? 'separate' : 'unavailable');
   publishComponentDownloadStates({
     corpusStatus, corpusReceived, corpusTotal, corpusDetail,
     semanticStatus, semanticReceived, semanticTotal, semanticDetail,
@@ -476,12 +496,9 @@ async function refreshState() {
   if (host?.corpus) corpusRecord = host.corpus;
   else corpusRecord = await corpusStore.get();
   if (host?.semantic) semanticState = host.semantic;
-  const wikipediaArchives = await apocalypseStore.listArchives();
-  wikipediaRagStatus = wikipediaArchives.some(record => record.status === 'ready')
-    ? 'title-only-fallback'
-    : (wikipediaArchives.length ? 'unavailable' : 'not-installed');
   records = new Map((await resourceStore.list()).map(record => [record.id, record]));
   if (!apocalypseEnabled && !elements.notice.textContent) setNotice(t('eb.enable_downloads'));
+  await ragReadiness.refresh().catch(() => {});
   render();
 }
 
@@ -853,15 +870,20 @@ runtimeApi?.runtime?.onMessage?.addListener?.((message) => {
   }
   if (message.resource?.status === 'deleted') records.delete(message.resource.id);
   render();
+  void ragReadiness.refresh();
   return false;
 });
 
 globalThis.addEventListener('beforeunload', () => {
   stopBulkDownload = true;
+  ragReadiness.close();
   downloadStateChannel?.close();
 });
 globalThis.addEventListener('focus', () => refreshState().catch(error => setNotice(error.message, 'error')));
-document.addEventListener('wb-locale-changed', render);
+document.addEventListener('wb-locale-changed', () => {
+  ragReadiness.render();
+  render();
+});
 
 refreshState().then(async () => {
   if (!elements.notice.textContent) {
