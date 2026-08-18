@@ -23396,6 +23396,8 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/agent/emergency-corpus-release.js',
     'src/agent/emergency-download-controller.js',
     'src/agent/offline-semantic-runtime.js',
+    'src/agent/offline-query-stopwords.js',
+    'src/agent/wikipedia-offline.js',
     'src/agent/zim-xapian.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
@@ -28004,6 +28006,27 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
       'sokullu mehmed pasha',
       `${label}: compound biography question was not reduced to the article subject`,
     );
+    assert.equal(runtime.localWikipediaSearchQuery('i have asthma what can i do to help?'), 'asthma',
+      `${label}: first-person health question kept stopwords instead of the condition`);
+    assert.equal(runtime.localWikipediaSearchQuery('my teeth are decaying what can i do?'), 'teeth decaying',
+      `${label}: dental how-to kept leftover function words`);
+    assert.equal(runtime.localWikipediaSearchQuery('Who was Ada Lovelace?'), 'Ada Lovelace',
+      `${label}: multilingual stopwords deleted the English name Ada`);
+    assert.equal(runtime.localWikipediaSearchQuery('tengo asma qué puedo hacer?'), 'asma',
+      `${label}: Spanish health question was not reduced to its topic`);
+    assert.match(runtime.localWikipediaSearchQuery("qu'est-ce que je peux faire pour l'asthme ?"), /asthme/i,
+      `${label}: French health question dropped the condition after stripping que/je`);
+    assert.doesNotMatch(runtime.localWikipediaSearchQuery("qu'est-ce que je peux faire pour l'asthme ?"), /\b(?:que|je|ce)\b/i,
+      `${label}: French stopwords remained in the Wikipedia search topic`);
+    assert.deepEqual(
+      runtime.rankLocalWikipediaRagRecords([
+        { title: 'What Have I Done to Deserve This?', excerpt: 'A Pet Shop Boys song.' },
+        { title: 'I Can Help', excerpt: 'A song by Billy Swan.' },
+        { title: 'Asthma', excerpt: 'Asthma is a long-term inflammatory disease of the airways.' },
+      ], 'i have asthma what can i do to help?').map(record => record.title),
+      ['Asthma'],
+      `${label}: leftover stopwords ranked song titles above Asthma`,
+    );
     let limit = 0;
     let searchQuery = '';
     const records = await runtime.retrieveLocalWikipediaForStandalone('Who was Alan Turing?', {
@@ -28206,6 +28229,56 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   );
   assert.deepEqual(entitySources, ['wikipedia'],
     'generic encyclopedic query unnecessarily scanned the Emergency corpus');
+  let healthSources = null;
+  let healthSearchQuery = '';
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'i have asthma what can i do to help?' },
+    'i have asthma what can i do to help?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(query, options) {
+          healthSearchQuery = query;
+          healthSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'not_ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(healthSearchQuery, 'asthma',
+    'first-person asthma question searched leftover stopwords instead of Asthma');
+  assert.deepEqual(healthSources, ['wikipedia', 'emergency-box'],
+    'personal health question did not include the Emergency Box pack');
+  let dentalSources = null;
+  let dentalSearchQuery = '';
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'my teeth are decaying what can i do?' },
+    'my teeth are decaying what can i do?',
+    { standaloneChat: true, providerId: 'webgpu', offlineRagSources: ['wikipedia', 'emergency-box'] },
+    {
+      messages: [],
+      offlineRetrievalService: {
+        async search(query, options) {
+          dentalSearchQuery = query;
+          dentalSources = options.sources;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'not_ready', semantic: 'lexical-fallback' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(dentalSearchQuery, 'teeth decaying',
+    'dental how-to searched leftover stopwords instead of the condition');
+  assert.deepEqual(dentalSources, ['wikipedia', 'emergency-box'],
+    'dental how-to did not include the Emergency Box pack');
 
   // Multilingual emergency query (Turkish) activates emergency-box
   let multilingualSources = null;

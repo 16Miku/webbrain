@@ -200,8 +200,20 @@ const STANDALONE_WIKIPEDIA_MODEL_SEARCH_ALIASES = new Set([
 ]);
 const STANDALONE_EMERGENCY_QUERY_RE = /(?:^|[^\p{L}\p{N}])(?:airway|breath|bleed|blood|wound|cut|burn|injur|first aid|poison|fracture|shock|resuscitat|cpr|emergency|disaster|fire|flood|earthquake|shelter|surviv|safe water|dehydrat|hypotherm|heatstroke|tourniquet|triage|choking|seizure|bandage|primeros auxilios|emergencia|desastre|fuego|incendio|hemorragia|sangre|herida|quemadura|fractura|asfixia|rcp|terremoto|sismo|inundaci[oó]n|torniquete|veneno|intoxicaci[oó]n|supervivencia|refugio|premiers secours|urgence|d[eé]sastre|feu|saignement|sang|blessure|br[uû]lure|[eé]touffement|s[eé]isme|tremblement de terre|inondation|garrot|survie|abri|erste hilfe|notfall|katastrophe|brand|blutung|blut|wunde|verbrennung|knochenbruch|erstickung|hlw|erdbeben|[uü]berschwemmung|abbinden|vergiftung|[uü]berleben|notunterkunft|ilk\s*yard[ıi]m|acil durum|afet|felaket|yang[ıi]n|kanama|kan kayb[ıi]|yara|yaralanma|yan[ıi]k|k[ıi]r[ıi]k|bo[gğ]ulma|kalp masaj[ıi]|suni teneff[uü]s|suni solunum|deprem|sel|turnike|zehir|zehirlenme|hayatta kalma|bar[ıi]nak|первая помощь|экстренная|чрезвычайная|катастрофа|пожар|кровотечение|кровь|рана|ожог|перелом|удушье|слр|землетрясение|наводнение|жгут|яд|отравление|выживание|убежище|primeiros socorros|emerg[eê]ncia|inc[eê]ndio|sangramento|ferida|queimadura|fratura|engasgo|enchente|intoxica[cç][aã]o|sobreviv[eê]ncia|急救|紧急|火灾|出血|伤口|骨折|心肺复苏|地震|洪水|中毒|避难|救生|応急手当|救急|火災|出血|骨折|心肺蘇生|地震|洪水|毒|避難)(?:[^\p{L}\p{N}]|$)/iu;
 
+const STANDALONE_HEALTH_CONDITION_RE = /(?:^|[^\p{L}\p{N}])(?:asthma|asthmatic|asthme|asma|ast[ıi]m|diabet(?:es|ic)?|hypertens|migraine|allerg(?:y|ic|ies)?|infect(?:ion|ed)?|pneumon|bronchit|tooth|teeth|toothache|dental|decay(?:ing)?|caviti(?:es)?|cavity|fever|cough|nausea|vomit|diarrh|rash|eczema|arthritis|anemi|cancer|tumor|tumour|ulcer|\bflu\b|influenza|covid|pregnan|cholesterol|stroke|seizure|chest pain|shortness of breath|diş|dientes?|dents?|zahn(?:en|schmerz)?)(?:[^\p{L}\p{N}]|$)/iu;
+const STANDALONE_PERSONAL_RE = /(?:^|[^\p{L}\p{N}])(?:i|i'm|i’ve|ive|me|my|we|our|j'ai|j ai|tengo|mon|ma|mes|mi|mis|ich|mein|ben|benim)(?:[^\p{L}\p{N}]|$)/iu;
+
 function isStandaloneEmergencyQuery(value) {
   return STANDALONE_EMERGENCY_QUERY_RE.test(String(value || '').toLowerCase().replace(/\s+/g, ' '));
+}
+
+function isStandalonePersonalHealthQuery(value) {
+  const text = String(value || '').toLowerCase().replace(/\s+/g, ' ');
+  return STANDALONE_PERSONAL_RE.test(text) && STANDALONE_HEALTH_CONDITION_RE.test(text);
+}
+
+function isStandaloneEmergencyOrHealthQuery(value) {
+  return isStandaloneEmergencyQuery(value) || isStandalonePersonalHealthQuery(value);
 }
 
 function offlineSourcesForStandaloneQuery(value, runOptions = {}) {
@@ -214,7 +226,7 @@ function offlineSourcesForStandaloneQuery(value, runOptions = {}) {
   if (selectedSources.includes('wikipedia')
       && selectedSources.includes('emergency-box')
       && shouldRetrieveLocalWikipedia(value)
-      && !isStandaloneEmergencyQuery(value)) {
+      && !isStandaloneEmergencyOrHealthQuery(value)) {
     return ['wikipedia'];
   }
   return hasExplicitSources ? selectedSources : undefined;
@@ -233,7 +245,7 @@ function shouldRetrieveStandaloneOfflineSources(value, runOptions = {}) {
     : [];
   const emergencySelected = selectedSources.length === 0 || selectedSources.includes('emergency-box');
   if (!emergencySelected) return false;
-  return isStandaloneEmergencyQuery(normalized);
+  return isStandaloneEmergencyOrHealthQuery(normalized);
 }
 // Appended to the system prompt of every selection-grounded model request.
 // The scope hides the page and disables tools, so the model must explain the
@@ -4233,7 +4245,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const priorTopic = this._standaloneWikipediaPriorTopic(options.messages);
     const directQuery = localWikipediaSearchQuery(query);
-    const searchQuery = localWikipediaSearchQuery(query, { fallbackTopic: priorTopic }) || query;
+    const searchQuery = localWikipediaSearchQuery(query, { fallbackTopic: priorTopic });
+    if (!searchQuery) {
+      return { attempted: true, status: 'no_match', matchCount: 0, archiveDates: [], queryNormalized: true };
+    }
     if (multiSource) {
       let result;
       try {
