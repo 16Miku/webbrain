@@ -223,9 +223,13 @@ export function tracesToMarkdown(runsWithEvents, {
         md += `- 📷 Visual capture: ${oneLine(d.caption || 'viewport screenshot')}\n`;
       } else if (ev.kind === 'vision_sub_call') {
         const outcome = d.error ? `failed: ${oneLine(d.error)}` : 'succeeded';
-        const details = [oneLine(d.context), oneLine(d.model), Number.isFinite(d.latencyMs) ? `${d.latencyMs} ms` : '']
+        const details = [oneLine(d.context), oneLine(d.visionRoute), oneLine(d.model), oneLine(d.captureId), Number.isFinite(d.latencyMs) ? `${d.latencyMs} ms` : '']
           .filter(Boolean).join(' · ');
-        md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}\n`;
+        md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}${d.fallbackReason ? ` · fallback=${oneLine(d.fallbackReason)}` : ''}\n`;
+      } else if (ev.kind === 'vision_route') {
+        const details = [oneLine(d.context), oneLine(d.visionRoute), oneLine(d.model), oneLine(d.captureId)]
+          .filter(Boolean).join(' · ');
+        md += `- 👁 Vision route${details ? `: ${details}` : ''}${d.fallbackReason ? ` · fallback=${oneLine(d.fallbackReason)}` : ''}\n`;
       } else if (ev.kind === 'note' && d.note === 'planner_attempt_failed') {
         const attempt = Number(d.extra?.attempt) || 1;
         const phase = oneLine(d.extra?.phase || 'planner');
