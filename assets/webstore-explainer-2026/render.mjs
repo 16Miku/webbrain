@@ -461,7 +461,7 @@ function proofScene() {
 }
 
 /* ---------- 08 APOCALYPSE MODE ---------- */
-function apocalypseScene() {
+function apocalypseScene(nuke = false) {
   const modules = [
     ['T', 'Text Model', 'ON DEVICE · 2.6B', 'LOCAL'],
     ['V', 'Vision Model', 'ON DEVICE · SCREENSHOTS', 'LOCAL'],
@@ -470,16 +470,15 @@ function apocalypseScene() {
   ];
   return {
     scale: 1.08,
-    file: '08-apocalypse-mode.png',
+    file: nuke ? '09-apocalypse-mode-nuke.png' : '08-apocalypse-mode.png',
     theme: 'apocalypse',
     body: `
       <div style="display:grid; grid-template-columns:440px 1fr; gap:48px; align-items:center; height:100%; padding-left:16px;">
         <div>
           <div style="display:inline-flex; align-items:center; gap:10px; margin-bottom:20px;">
-            <span style="width:10px; height:10px; border-radius:99px; background:var(--accent2);
-              box-shadow:0 0 12px var(--accent2), 0 0 24px rgba(247,189,95,0.3);"></span>
+            ${nuke ? '' : '<span style="width:10px; height:10px; border-radius:99px; background:var(--accent2); box-shadow:0 0 12px var(--accent2), 0 0 24px rgba(247,189,95,0.3);"></span>'}
             <span style="font-family:var(--mono); font-size:15px; font-weight:650; color:var(--accent);
-              text-transform:uppercase; letter-spacing:0.14em;">Apocalypse Mode</span>
+              text-transform:uppercase; letter-spacing:0.14em;">${nuke ? '<span style="font-size:52px; font-family:\'Apple Color Emoji\',\'Segoe UI Emoji\',sans-serif; vertical-align:-6px;">\u2622</span> ' : ''}Apocalypse Mode</span>
           </div>
           <h1 style="font-size:62px; line-height:1.05; max-width:440px;">WebBrain, ready when the internet isn't.</h1>
           <div class="sub" style="font-size:25px; margin-top:24px; color:var(--muted); max-width:420px;">
@@ -525,6 +524,7 @@ function apocalypseScene() {
 const scenes = [
   hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
   apocalypseScene(),
+  apocalypseScene(true),
   hero(true), planScene(true),
 ];
 
