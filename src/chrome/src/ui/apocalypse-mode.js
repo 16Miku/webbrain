@@ -99,7 +99,6 @@ const indexClient = () => {
 };
 const ragReadiness = createOfflineRagReadinessController({
   root: elements['offline-rag-readiness'],
-  manageHref: 'emergency-box.html',
   corpusStore,
   semanticReranker,
   getGenerationStatus: () => webgpuDownloadState.status === 'ready'
