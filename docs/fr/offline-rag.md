@@ -161,6 +161,7 @@ propriétaire du dépôt avant que ce runtime puisse être inclus.
 ## Pour aller plus loin
 
 - [Mode Apocalypse](apocalypse-mode.md) — Gestion des archives Wikipedia
+- [Téléchargements distants et sources de données](remote-downloads.md) — Origines, ordre d'exécution et vérification
 - [Licence RAG hors ligne](offline-rag-licensing.md) — Registre de décision GPL
 - [Checklist de sortie](offline-rag-release-checklist.md) — Portes de
   vérification et mesures

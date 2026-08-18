@@ -4,6 +4,16 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.2.1] - 2026-08-18
+
+### Added
+- Added comprehensive offline remote downloads and data sources documentation (`docs/remote-downloads.md`).
+
+### Fixed
+- Fixed Emergency text pack and multilingual semantic search model download state broadcasting to the shared download tracker in Apocalypse Mode.
+- Fixed progress calculation and display sync on the Emergency text pack card.
+- Fixed data-i18n translation keys for corpus and semantic model descriptions.
+
 ## [32.2.0] - 2026-08-18
 
 ### Added

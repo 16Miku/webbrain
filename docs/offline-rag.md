@@ -157,6 +157,7 @@ runtime can be bundled.
 ## Further reading
 
 - [Apocalypse Mode](apocalypse-mode.md) — Wikipedia archive management
+- [Remote downloads & data sources](remote-downloads.md) — Origins, execution order, and verification
 - [Offline RAG licensing](offline-rag-licensing.md) — GPL decision record
 - [Release checklist](offline-rag-release-checklist.md) — Verification gates
   and measurements
