@@ -103,6 +103,9 @@ const baseCss = `
   .proof { --bg1:#f7f6ff; --bg2:#eef4ff; --ink:#171a2b; --muted:#5a6274;
     --accent:#6e56cf; --accent2:#f0a52b; --border:rgba(30,34,64,0.13);
     --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(38,34,78,0.18); }
+  .apocalypse { --bg1:#11100e; --bg2:#1c1a14; --ink:#f5f0e6; --muted:#a89e8a;
+    --accent:#f7bd5f; --accent2:#f0a72f; --border:rgba(247,189,95,0.22);
+    --panel:rgba(247,189,95,0.07); --shadow:0 28px 70px rgba(0,0,0,0.5); }
   .content { position: relative; z-index: 1; padding: 38px 48px; }
   h1 {
     margin: 18px 0 0; font-family: var(--display); font-size: 62px; line-height: 1.05;
@@ -457,8 +460,71 @@ function proofScene() {
   };
 }
 
+/* ---------- 08 APOCALYPSE MODE ---------- */
+function apocalypseScene() {
+  const modules = [
+    ['T', 'Text Model', 'ON DEVICE · 2.6B', 'LOCAL'],
+    ['V', 'Vision Model', 'ON DEVICE · SCREENSHOTS', 'LOCAL'],
+    ['W', 'Wikipedia', 'OFFLINE ARCHIVE · SEARCHABLE', 'OFFLINE'],
+    ['+', 'Emergency Box', 'PDFs · MANUALS · GUIDES', 'OFFLINE'],
+  ];
+  return {
+    scale: 1.08,
+    file: '08-apocalypse-mode.png',
+    theme: 'apocalypse',
+    body: `
+      <div style="display:grid; grid-template-columns:440px 1fr; gap:48px; align-items:center; height:100%; padding-left:16px;">
+        <div>
+          <div style="display:inline-flex; align-items:center; gap:10px; margin-bottom:20px;">
+            <span style="width:10px; height:10px; border-radius:99px; background:var(--accent2);
+              box-shadow:0 0 12px var(--accent2), 0 0 24px rgba(247,189,95,0.3);"></span>
+            <span style="font-family:var(--mono); font-size:15px; font-weight:650; color:var(--accent);
+              text-transform:uppercase; letter-spacing:0.14em;">Apocalypse Mode</span>
+          </div>
+          <h1 style="font-size:62px; line-height:1.05; max-width:440px;">WebBrain, ready when the internet isn't.</h1>
+          <div class="sub" style="font-size:25px; margin-top:24px; color:var(--muted); max-width:420px;">
+            Offline knowledge, under your control. Download the essentials while you still can.
+          </div>
+        </div>
+        <div style="display:flex; justify-content:center;">
+          <div style="width:440px; background:rgba(0,0,0,0.45); border:1px solid var(--border);
+            border-radius:22px; padding:0; overflow:hidden; box-shadow:var(--shadow);">
+            <div style="display:flex; justify-content:space-between; align-items:center;
+              padding:16px 22px; border-bottom:1px solid rgba(247,189,95,0.12);">
+              <span style="font-family:var(--mono); font-size:13px; font-weight:650; color:var(--muted);
+                letter-spacing:0.07em;">WB // OFFLINE KIT</span>
+              <span style="font-family:var(--mono); font-size:12px; font-weight:700; color:var(--accent2);
+                background:rgba(240,167,47,0.15); padding:4px 12px; border-radius:999px;
+                letter-spacing:0.1em;">READY</span>
+            </div>
+            <div style="padding:10px 16px 14px; display:grid; gap:0;">
+              ${modules.map(([icon, title, subtitle, badge], i) => `
+                <div style="display:grid; grid-template-columns:44px 1fr auto; gap:14px; align-items:center;
+                  padding:14px 6px; ${i < modules.length - 1 ? 'border-bottom:1px solid rgba(247,189,95,0.1);' : ''}">
+                  <span style="width:44px; height:44px; border-radius:12px; background:rgba(247,189,95,0.1);
+                    color:var(--accent); display:grid; place-items:center; font-family:var(--mono);
+                    font-size:19px; font-weight:700;">${icon}</span>
+                  <div style="min-width:0;">
+                    <div style="font-size:17px; font-weight:700; color:var(--ink);">${title}</div>
+                    <div style="font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--muted);
+                      letter-spacing:0.06em; text-transform:uppercase; margin-top:3px;">${subtitle}</div>
+                  </div>
+                  <span style="font-family:var(--mono); font-size:11px; font-weight:700;
+                    color:${badge === 'LOCAL' ? 'var(--accent2)' : '#65d69d'};
+                    background:${badge === 'LOCAL' ? 'rgba(240,167,47,0.15)' : 'rgba(101,214,157,0.15)'};
+                    padding:5px 11px; border-radius:999px; letter-spacing:0.1em;
+                    white-space:nowrap;">${badge}</span>
+                </div>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>`,
+  };
+}
+
 const scenes = [
   hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
+  apocalypseScene(),
   hero(true), planScene(true),
 ];
 
