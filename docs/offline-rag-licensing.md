@@ -1,6 +1,6 @@
 # Offline Wikipedia full-text licensing decision
 
-Status: **BLOCKED — explicit repository-owner decision required**  
+Status: **APPROVED — GPL distribution accepted; runtime integration in progress**  
 Scope: the Xapian/libzim WebAssembly runtime only. WebBrain currently ships no
 `javascript-libzim`, libzim, or Xapian code. Its built-in ZIM title lookup remains
 available and is reported as `title-only-fallback`, not full-text search.
@@ -96,7 +96,7 @@ review before release.
 Exactly one option must be selected in a repository change approved by the
 repository owner:
 
-- [ ] **Approve GPL distribution.** The owner accepts the compliance work and
+- [x] **Approve GPL distribution.** The owner accepts the compliance work and
   confirms the repository/release licensing strategy for the combined work.
 - [ ] **Reject GPL distribution.** Keep the honest title-only fallback and do
   not claim completion of the issue's Xapian acceptance criterion.
@@ -104,10 +104,59 @@ repository owner:
   licensed implementation that can query the ZIM Xapian index; repeat this
   dependency and distribution review before bundling it.
 
-Approver: _pending_  
-Decision date: _pending_  
-Decision/reference: _pending_
+Approver: Emre Sokullu (repository owner)
+Decision date: 2026-08-19
+Decision/reference: branch `gpld`
 
-Until those fields are completed, `ZIM_XAPIAN_RUNTIME_BUNDLED` remains `false`
-and `ZIM_XAPIAN_DISTRIBUTION_STATUS` remains
-`blocked-pending-owner-license-decision` in both browser implementations.
+### Licensing strategy for the combined work
+
+MIT and GPL do not coexist inside one distributed package. MIT code can be taken
+into a GPL work and the result is GPL, so the strategy is:
+
+- The repository stays MIT. Every file that is MIT today remains MIT, and
+  downstream users can take those files under MIT.
+- Any **release artifact** that bundles the Xapian/libzim Wasm is conveyed under
+  **GPL-3.0-or-later**. That covers the Chrome, Edge, and Firefox packages.
+
+GPL-3.0 is the resolved version because javascript-libzim is GPL-3.0-or-later
+while libzim and Xapian are GPL-2.0-or-later, and "or later" lets both move up.
+This also keeps the existing Apache-2.0 dependencies (sqlite-wasm, Transformers.js,
+pdf.js) compatible: Apache-2.0 conflicts with GPL-2.0-only but not with GPL-3.0.
+Confirm the "or later" wording on each upstream COPYING file before the first
+release, because the whole strategy rests on it.
+
+A user disabling Apocalypse Mode does not change the license of what was
+distributed. If the Wasm is in the package, the package is GPL. Shipping an
+MIT-only build would require a separate artifact without the Wasm, not a
+settings toggle.
+
+### Build provenance: use the source path, not the prebuilt one
+
+The upstream Makefile has two paths and only one of them is acceptable here.
+
+- `make libzim_release` downloads a **prebuilt** `libzim_wasm-emscripten-9.8.1`
+  tarball from download.openzim.org and compiles only the bindings against it.
+  The upstream release workflow uses this. WebBrain must not, because the
+  corresponding source for that binary is not ours to provide.
+- The default `all` target builds xz, zlib, zstd, ICU, Xapian, and libzim from
+  pinned source tarballs with documented origins, then links the bindings. Every
+  version in the table above comes from these targets.
+
+WebBrain builds the source path. CI must archive every downloaded tarball and
+patch, record its SHA-256, and publish them as the corresponding source beside
+the release.
+
+`ZIM_XAPIAN_RUNTIME_BUNDLED` stays `false` and `ZIM_XAPIAN_DISTRIBUTION_STATUS`
+stays `blocked-pending-owner-license-decision` until the Wasm is actually built
+from source and bundled. The decision is approved; the flags track whether the
+runtime is present, not whether it is permitted.
+
+### Detecting a full-text index without the runtime
+
+libzim 0.95 exposes no `hasFulltextIndex` binding, and its `search()` catches its
+own exceptions and returns an empty vector, so a missing index looks exactly like
+a query that matched nothing. Kiwix stores the index as an ordinary ZIM entry, so
+WebBrain's own reader answers the question instead: `hasFullTextIndex()` on the
+archive, surfaced through `createKiwixZimProvider`. That keeps the check outside
+the GPL surface and lets an archive with no index skip loading the runtime at
+all.

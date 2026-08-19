@@ -414,6 +414,12 @@ function normalizedTitleTerms(value) {
   return String(value || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
 }
 
+// Where Kiwix stores the Xapian full-text index, newest ZIM layout first.
+export const ZIM_FULL_TEXT_INDEX_ENTRIES = Object.freeze([
+  Object.freeze({ namespace: 'X', path: 'fulltext/xapian' }),
+  Object.freeze({ namespace: 'Z', path: '/fulltextIndex/xapian' }),
+]);
+
 export function rankZimTitleCandidates(candidates, query, limit = 3) {
   const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
   const queryTerms = normalizedTitleTerms(query);
@@ -666,6 +672,26 @@ export async function openKiwixZim(source, metadata = {}) {
   const provenance = mergeZimProvenance(metadata, embedded);
   const imagesIncluded = wikipediaArchiveIncludesImages(metadata, embedded);
 
+  // Kiwix bakes a Xapian full-text index into most ZIMs as an ordinary entry, so
+  // WebBrain's own reader can tell whether one is present without loading any
+  // search runtime. libzim 0.95 exposes no equivalent check and its search()
+  // swallows the error, which makes "this archive has no index" indistinguishable
+  // from "nothing matched". Probing here keeps that distinction honest and lets
+  // callers skip a runtime they would only fall back from.
+  let fullTextIndexPromise = null;
+  async function hasFullTextIndex() {
+    if (!fullTextIndexPromise) {
+      fullTextIndexPromise = (async () => {
+        for (const target of ZIM_FULL_TEXT_INDEX_ENTRIES) {
+          const found = await findPaths(target.path, 1, target.namespace, { includeAssets: true });
+          if (found.some(entry => entry.url === target.path)) return true;
+        }
+        return false;
+      })().catch(() => false);
+    }
+    return await fullTextIndexPromise;
+  }
+
   async function search(query, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit) || 3));
     const results = [];
@@ -749,7 +775,7 @@ export async function openKiwixZim(source, metadata = {}) {
     return { path: located.url, mimeType, byteLength: bytes.byteLength, bytes: bytes.slice() };
   }
 
-  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, search, readArticle, readImage };
+  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, hasFullTextIndex, search, readArticle, readImage };
 }
 
 const APOCALYPSE_DB_NAME = 'webbrain_apocalypse_mode';
@@ -1542,6 +1568,16 @@ export function createKiwixZimProvider(options = {}) {
     supports(record) {
       return record?.archiveKind === 'wikipedia'
         && (record?.target?.kind === 'opfs' || record?.target?.kind === 'file-handle');
+    },
+    // Lets a caller find out whether full-text search is even possible for this
+    // archive before reaching for a search runtime it would only fall back from.
+    async hasFullTextIndex(record) {
+      try {
+        const archive = await cachedKiwixArchive(record, storage, archiveCache);
+        return typeof archive.hasFullTextIndex === 'function' ? await archive.hasFullTextIndex() : false;
+      } catch {
+        return false;
+      }
     },
     async search(record, query, searchOptions = {}) {
       const archive = await cachedKiwixArchive(record, storage, archiveCache);

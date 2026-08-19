@@ -24208,6 +24208,13 @@ function minimalWikipediaZimFixture(options = {}) {
     Tags: options.tags ?? 'wikipedia;_category:wikipedia',
   };
   const entries = [
+    ...(options.fullTextIndex
+      ? [{
+        namespace: options.fullTextIndex === 'legacy' ? 'Z' : 'X',
+        url: options.fullTextIndex === 'legacy' ? '/fulltextIndex/xapian' : 'fulltext/xapian',
+        title: 'xapian', mimeType: 1, contents: 'not-a-real-index',
+      }]
+      : []),
     {
       namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
       contents: options.articleHtml || '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
@@ -28502,6 +28509,31 @@ test('ZIM title ranking falls back to one-token matches instead of an empty arch
       titles([candidate(1, 'Photosynthesis')], 'treat burn'),
       [],
       `${label}: an unrelated article was admitted by the fallback`,
+    );
+  }
+});
+
+test('ZIM reader reports whether an archive carries a Xapian full-text index', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const plain = await runtime.openKiwixZim(minimalWikipediaZimFixture());
+    assert.equal(await plain.hasFullTextIndex(), false,
+      `${label}: an archive with no index was reported as searchable`);
+
+    const modern = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: true }));
+    assert.equal(await modern.hasFullTextIndex(), true,
+      `${label}: the X/fulltext/xapian entry was not detected`);
+
+    const legacy = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: 'legacy' }));
+    assert.equal(await legacy.hasFullTextIndex(), true,
+      `${label}: the older Z//fulltextIndex/xapian layout was not detected`);
+
+    // Repeat calls must not re-scan the directory on every query.
+    assert.equal(await modern.hasFullTextIndex(), true, `${label}: the memoized probe changed its answer`);
+
+    assert.deepEqual(
+      runtime.ZIM_FULL_TEXT_INDEX_ENTRIES.map(entry => `${entry.namespace}/${entry.path}`),
+      ['X/fulltext/xapian', 'Z//fulltextIndex/xapian'],
+      `${label}: the probed index locations changed`,
     );
   }
 });
