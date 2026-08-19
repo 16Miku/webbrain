@@ -166,14 +166,14 @@ function checkClockSkew() {
     `The mounted filesystem is ${ahead}s ahead of the container clock.`,
     'meson refuses to build against a future timestamp and will abort on zstd.',
     '',
-    'Fix, in order of least effort:',
-    '  1. Restart Docker Desktop, or run "wsl --shutdown" and start it again.',
-    '     The VM clock drifts after the host sleeps. Then rerun with --keep to',
-    '     resume rather than rebuilding what already succeeded.',
-    '  2. Build on the WSL2 filesystem instead of a path under C:\\, which removes',
-    '     the skew entirely and is much faster for a build of this shape:',
+    'Fix:',
+    '  1. Build on the WSL2 filesystem rather than a path under C:\\. This removes',
+    '     the skew for good and is markedly faster, because an NTFS bind mount is',
+    '     slow for a build made of many small files. From inside a WSL shell:',
     '       npm run build:zim-xapian -- --work ~/zim-xapian-build',
-    '     run from inside a WSL shell.',
+    '  2. Or restart Docker Desktop ("wsl --shutdown", then start it) to resync the',
+    '     VM clock, and rerun with --keep. Quicker to try, but the drift returns',
+    '     after the host sleeps.',
   ].join('\n'));
 }
 
