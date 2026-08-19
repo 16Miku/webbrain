@@ -16,6 +16,7 @@
  *   node scripts/build-zim-xapian.mjs --dry-run       # validate setup, compile nothing
  *   node scripts/build-zim-xapian.mjs --keep          # resume, reusing what already built
  *   node scripts/build-zim-xapian.mjs --work <dir>    # build outside the repo
+ *   node scripts/build-zim-xapian.mjs --link-opt 1    # pin the final optimizer level
  *
  * Expect roughly 40-90 minutes on a fast machine: ICU and Xapian dominate.
  *
@@ -38,6 +39,13 @@ const workOverride = (() => {
   const index = process.argv.indexOf('--work');
   return index >= 0 && process.argv[index + 1] ? path.resolve(process.argv[index + 1]) : '';
 })();
+const linkOptOverride = (() => {
+  const index = process.argv.indexOf('--link-opt');
+  if (index < 0) return 0;
+  const level = Number(process.argv[index + 1]);
+  if (![1, 2, 3].includes(level)) fail('--link-opt takes 1, 2, or 3.');
+  return level;
+})();
 
 // Every version here must match the table in docs/offline-rag-licensing.md.
 const PIN = Object.freeze({
@@ -54,9 +62,22 @@ const PIN = Object.freeze({
 });
 
 // Only the WebAssembly build ships. The asm.js variant and the large-file test
-// harness double the build time and are never loaded by the extension.
-const MAKE_TARGETS = ['rename_pjsn', 'build/lib/libzim.a', 'libzim-wasm.js', 'restore_pjsn'];
+// harness double the build time and are never loaded by the extension. The
+// dependency build and the final link are separate steps so a failed link can
+// be retried on its own: everything up to libzim.a takes minutes, the link
+// takes seconds, and the link is the part that goes wrong.
+const COMPILE_TARGETS = ['rename_pjsn', 'build/lib/libzim.a'];
 const SHIPPED_ARTIFACTS = ['libzim-wasm.js', 'libzim-wasm.wasm'];
+
+// wasm-opt runs last and walks the whole linked module, which for libzim plus
+// Xapian plus ICU is a large one. It dies with SIGSEGV when it runs out of
+// stack, so hand the container a big *finite* limit: glibc sizes worker-thread
+// stacks from RLIMIT_STACK and falls back to a smaller default when that reads
+// as unlimited. If it still crashes, step the optimizer down a level at a time
+// rather than shipping nothing.
+const LINK_STACK_BYTES = 536870912;
+const LINK_OPT_LADDER = [3, 2, 1];
+let linkOptimization = '';
 const IMAGE_TAG = 'webbrain-emscripten-libzim:3.1.41';
 const workTree = workOverride || path.join(root, '.build', 'zim-xapian');
 const vendorDirectories = [
@@ -141,6 +162,12 @@ function preflight() {
 
 function fetchSource() {
   if (existsSync(workTree) && !keepWorkTree) {
+    // A fresh clone is the right default for a build whose output has to be
+    // reproducible, but say what is being thrown away: the dependency compile
+    // is the expensive part and --keep reuses it.
+    if (existsSync(path.join(workTree, 'build', 'lib', 'libzim.a'))) {
+      log('  the previous work tree holds a finished dependency build; --keep would reuse it');
+    }
     log(`  removing previous work tree ${workTree}`);
     if (!dryRun) rmSync(workTree, { recursive: true, force: true });
   }
@@ -211,16 +238,84 @@ function buildImage() {
   run('docker', ['build', '-t', IMAGE_TAG, '--build-arg', `VERSION=${PIN.emscripten}`, path.join(workTree, 'docker')]);
 }
 
-function compile() {
-  log('\nCompiling from source (ICU, Xapian, and libzim dominate this step)');
-  const args = ['run', '--rm', '-v', `${dockerMount(workTree)}:/src`];
+function dockerRun(command, { env = {}, allowFailure = false } = {}) {
+  const args = ['run', '--rm', '-v', `${dockerMount(workTree)}:/src`,
+    '--ulimit', `stack=${LINK_STACK_BYTES}:${LINK_STACK_BYTES}`];
   if (process.platform !== 'win32') {
     const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
     const gid = typeof process.getgid === 'function' ? process.getgid() : 0;
     args.push('-u', `${uid}:${gid}`);
   }
-  args.push(IMAGE_TAG, 'make', ...MAKE_TARGETS);
-  run('docker', args);
+  for (const [name, value] of Object.entries(env)) args.push('-e', `${name}=${value}`);
+  args.push(IMAGE_TAG, ...command);
+  if (!allowFailure) {
+    run('docker', args);
+    return 0;
+  }
+  log(`  $ docker ${args.join(' ')}`);
+  const result = spawnSync('docker', args, { stdio: 'inherit', cwd: root });
+  if (result.error) fail(`docker could not be started: ${result.error.message}`);
+  return result.status === 0 ? 0 : (result.status ?? 1);
+}
+
+// The Makefile moves package.json aside while libzim builds and moves it back
+// afterwards, because Emscripten trips over it. A build that dies in between
+// leaves only package.json.temp, and the next run's `mv package.json` then
+// fails on a missing file, so a resume has to put the tree back first.
+function normalizeWorkTree() {
+  const live = path.join(workTree, 'package.json');
+  const stashed = path.join(workTree, 'package.json.temp');
+  if (!existsSync(stashed) || existsSync(live)) return;
+  log('  restoring package.json stashed by an interrupted build');
+  copyFileSync(stashed, live);
+  rmSync(stashed, { force: true });
+}
+
+function compile() {
+  log('\nCompiling from source (ICU, Xapian, and libzim dominate this step)');
+  normalizeWorkTree();
+  dockerRun(['make', ...COMPILE_TARGETS]);
+  linkRuntime();
+  dockerRun(['make', 'restore_pjsn']);
+}
+
+// EMCC_CFLAGS is appended to the compiler's own argument list, so it overrides
+// the -O3 baked into the upstream recipe without patching the Makefile.
+function linkRuntime() {
+  const ladder = linkOptOverride ? [linkOptOverride] : LINK_OPT_LADDER;
+  for (const level of ladder) {
+    log(`\nLinking the runtime at -O${level}`);
+    // make treats a half-written artifact from the last attempt as up to date.
+    for (const name of SHIPPED_ARTIFACTS) rmSync(path.join(workTree, name), { force: true });
+    const status = dockerRun(['make', 'libzim-wasm.js'], { env: { EMCC_CFLAGS: `-O${level}` }, allowFailure: true });
+    if (status === 0) {
+      linkOptimization = `O${level}`;
+      log(`  linked at -O${level}`);
+      return;
+    }
+    if (level !== ladder[ladder.length - 1]) {
+      log(`\n  The -O${level} link failed. Retrying one optimizer level lower.`);
+    }
+  }
+  fail(linkFailureHelp());
+}
+
+function linkFailureHelp() {
+  return [
+    'Linking libzim-wasm.js failed at every optimizer level tried.',
+    '',
+    'Check what the last error actually was. "wasm-opt ... failed (received',
+    'SIGSEGV)" means Emscripten\'s optimizer ran out of room, not that anything',
+    'is wrong with the code; a compiler or linker error means something else.',
+    '',
+    'The compiled libraries under build/ survive, so each retry only repeats the',
+    'final link, which takes seconds:',
+    '',
+    '  1. Give the Docker VM more memory. Under WSL2 it takes half the host by',
+    '     default: put "memory=16GB" under [wsl2] in %UserProfile%\\.wslconfig,',
+    '     run "wsl --shutdown", restart Docker Desktop, and rerun with --keep.',
+    '  2. Rerun with --keep --link-opt 1 to pin the lightest optimizer pipeline.',
+  ].join('\n');
 }
 
 function collectLicenseFiles() {
@@ -312,7 +407,7 @@ function writeRecords(artifacts, correspondingSource) {
     builtAt: new Date().toISOString(),
     builtFrom: 'source',
     upstream: { repository: PIN.repository, tag: PIN.tag, commit: PIN.commit },
-    toolchain: { emscripten: PIN.emscripten, image: IMAGE_TAG },
+    toolchain: { emscripten: PIN.emscripten, image: IMAGE_TAG, linkOptimization: linkOptimization || `O${LINK_OPT_LADDER[0]}` },
     dependencies: [
       { name: 'javascript-libzim', version: PIN.tag, license: 'GPL-3.0-or-later' },
       { name: 'libzim', version: PIN.libzim, license: 'GPL-2.0-or-later' },
@@ -337,6 +432,9 @@ function writeRecords(artifacts, correspondingSource) {
 
 function vendorReadme(artifacts) {
   const rows = artifacts.map(item => `- \`${item.file}\`: ${item.bytes} bytes, SHA-256 \`${item.sha256}\``).join('\n');
+  const fallback = linkOptimization && linkOptimization !== `O${LINK_OPT_LADDER[0]}`
+    ? `\n\nLinked at \`-${linkOptimization}\` rather than \`-O${LINK_OPT_LADDER[0]}\`, because Emscripten's wasm-opt\ncould not optimize this module at the higher level. The module is correct and\nsomewhat larger.`
+    : '';
   return `# Vendored Xapian/libzim WebAssembly runtime
 
 Built from source by \`scripts/build-zim-xapian.mjs\`. Do not hand-copy an
@@ -347,7 +445,7 @@ binary it did not build. See \`docs/offline-rag-licensing.md\`.
 - Toolchain: Emscripten ${PIN.emscripten}
 - libzim ${PIN.libzim}, Xapian ${PIN.xapian}, ICU ${PIN.icu}, zstd ${PIN.zstd}, xz ${PIN.xz}, zlib ${PIN.zlib}
 
-${rows}
+${rows}${fallback}
 
 ## License
 
