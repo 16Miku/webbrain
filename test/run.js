@@ -23864,6 +23864,13 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: the ready label does not require the exact selected Wikipedia edition`);
     assert.match(wikipediaLibraryScript, /replacementArchiveIds/,
       `${browser}: downloading a new Wikipedia edition does not schedule replacement cleanup`);
+    // replacementArchiveIds is set when the download is queued, so the handover
+    // message must wait for the archive to be ready. Showing it earlier claims a
+    // 49 GiB download is verified while it is still running, and hides the bytes.
+    assert.match(wikipediaLibraryScript, /status === 'ready' && replacingPreviousArchive[\s\S]*?t\('wl\.finalizing'\)/,
+      `${browser}: the replacement handover message is not gated on the archive being ready`);
+    assert.doesNotMatch(wikipediaLibraryScript, /\}\s*else if \(Array\.isArray\(record\.replacementArchiveIds\) && record\.replacementArchiveIds\.length\) \{\s*detail = t\('wl\.finalizing'\)/,
+      `${browser}: an in-flight replacement download still reports itself as verified`);
     assert.match(wikipediaLibraryScript, /function managedWikipediaRecords\(\)[\s\S]*?return \[\.\.\.wikipediaRecords\(\)\]\.sort/,
       `${browser}: the Wikipedia library does not retain every installed archive in its management list`);
     assert.match(wikipediaLibraryScript, /elements\['archive-list'\]\.innerHTML = records\.map\(renderArchiveRecord\)\.join\(''\)/,
