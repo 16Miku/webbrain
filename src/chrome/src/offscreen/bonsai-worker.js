@@ -99,15 +99,55 @@ async function loadLibraries() {
   return { createEngine, createChat };
 }
 
+function textReadyMarkerUrl(modelId, dtype) {
+  const key = encodeURIComponent(textModelKey(modelId, dtype));
+  return `https://webbrain.one/.well-known/webgpu-model-ready/${key}`;
+}
+
+function copyResponse(body, response) {
+  return new Response(body, {
+    status: 200,
+    statusText: 'OK',
+    headers: response.headers,
+  });
+}
+
+function trackBodyProgress(response, url) {
+  if (!response.body) return copyResponse(null, response);
+  const total = Number(response.headers.get('content-length')) || 0;
+  if (!/\.gguf(?:$|\?)/i.test(String(url))) return copyResponse(response.body, response);
+  let loaded = 0;
+  const stream = response.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      loaded += chunk?.byteLength || chunk?.length || 0;
+      textDownloadState = {
+        ...textDownloadState,
+        status: 'downloading',
+        file: 'weights',
+        loaded,
+        total: total || textDownloadState.total,
+        progress: total > 0 ? Math.min(100, (loaded / total) * 100) : textDownloadState.progress,
+        error: '',
+      };
+      postTextDownloadState();
+      controller.enqueue(chunk);
+    },
+  }));
+  return copyResponse(stream, response);
+}
+
 async function cachedResponse(url, { signal } = {}) {
   if (!nativeFetch) throw new Error('Fetch is unavailable in the Bonsai WebGPU worker.');
   const cache = await caches.open(CACHE_NAME);
   const hit = await cache.match(url);
   if (hit) return hit;
-  const response = await nativeFetch(url, signal ? { signal } : {});
+  const response = await nativeFetch(url, signal ? { signal, redirect: 'follow' } : { redirect: 'follow' });
   if (!response.ok) throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
-  cache.put(url, response.clone()).catch(() => {});
-  return response;
+  // Redirected Responses cannot be stored. Await the put so reload still sees Basic.
+  await cache.put(url, trackBodyProgress(response, url));
+  const stored = await cache.match(url);
+  if (!stored) throw new Error(`Could not save ${url} in the local model cache.`);
+  return stored;
 }
 
 function createFetchHooks(signal) {
@@ -129,8 +169,14 @@ async function isTextModelReady(modelId = WEBGPU_BONSAI27_MODEL_ID, dtype = WEBG
   if (typeof caches === 'undefined' || !workerConfig?.dataUrl) return false;
   try {
     const cache = await caches.open(CACHE_NAME);
-    const hit = await cache.match(workerConfig.dataUrl);
-    if (!hit) return false;
+    const data = await cache.match(workerConfig.dataUrl);
+    if (!data) return false;
+    const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
+    if (!marker) {
+      await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
+        headers: { 'content-type': 'application/json' },
+      }));
+    }
     readyTextModelKeys.add(key);
     return true;
   } catch {
@@ -139,7 +185,19 @@ async function isTextModelReady(modelId = WEBGPU_BONSAI27_MODEL_ID, dtype = WEBG
 }
 
 async function markTextModelReady(modelId, dtype) {
-  readyTextModelKeys.add(textModelKey(modelId, dtype));
+  const key = textModelKey(modelId, dtype);
+  if (typeof caches === 'undefined' || !workerConfig?.dataUrl) {
+    throw new Error('The Basic model downloaded but could not be saved on this device.');
+  }
+  const cache = await caches.open(CACHE_NAME);
+  const data = await cache.match(workerConfig.dataUrl);
+  if (!data) {
+    throw new Error('The Basic model downloaded but could not be saved on this device. Check that this browser has enough disk space.');
+  }
+  await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
+    headers: { 'content-type': 'application/json' },
+  }));
+  readyTextModelKeys.add(key);
 }
 
 async function getTextDownloadStatus(modelId, dtype) {
@@ -286,7 +344,12 @@ async function downloadTextModel(payload, { onStarted } = {}) {
       await disposeTextRuntime();
       return textDownloadSnapshot();
     }
-    await markTextModelReady(modelId, dtype);
+    try {
+      await markTextModelReady(modelId, dtype);
+    } catch (error) {
+      await disposeTextRuntime();
+      throw error;
+    }
     textDownloadState = {
       ...textDownloadState,
       status: 'ready',
@@ -341,6 +404,7 @@ async function clearTextModelCache(modelId, dtype) {
         workerConfig.dataUrl,
         workerConfig.tokenizerJsonUrl,
         workerConfig.tokenizerConfigUrl,
+        textReadyMarkerUrl(normalized, normalizedDtype),
       ].filter(Boolean)) {
         await cache.delete(url);
       }
