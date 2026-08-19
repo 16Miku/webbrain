@@ -28427,6 +28427,216 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     'chrome: standalone WebGPU RAG still reserves the old 512-token generation budget');
 });
 
+test('every contributing source keeps an evidence slot', async () => {
+  for (const [label, runtime] of [['chrome', OfflineRagCh], ['firefox', OfflineRagFx]]) {
+    const hit = (sourceKind, documentId, ordinal) => ({
+      sourceKind, sourceId: sourceKind, documentId,
+      passageId: `${documentId}:${ordinal}`, text: `passage ${documentId} ${ordinal}`,
+    });
+    const mixed = [
+      hit('wikipedia', 'Bleeding', 1), hit('wikipedia', 'Hemostasis', 2),
+      hit('wikipedia', 'Blood', 3), hit('wikipedia', 'Wound', 4),
+      hit('emergency-box', 'ifrc-first-aid', 5),
+    ];
+    const selected = runtime.selectDiverseRagHits(mixed, { maximum: 4 });
+    assert.equal(selected.length, 4, `${label}: source balancing changed how many passages are selected`);
+    assert.ok(selected.some(item => item.sourceKind === 'emergency-box'),
+      `${label}: a first-aid guide was crowded out by encyclopedia passages`);
+    assert.deepEqual(
+      selected.slice(0, 3).map(item => item.documentId),
+      ['Bleeding', 'Hemostasis', 'Blood'],
+      `${label}: balancing disturbed the top-ranked passages instead of the last one`,
+    );
+
+    const singleSource = [hit('wikipedia', 'A', 1), hit('wikipedia', 'B', 2), hit('wikipedia', 'C', 3)];
+    assert.deepEqual(
+      runtime.selectDiverseRagHits(singleSource, { maximum: 2 }).map(item => item.documentId),
+      ['A', 'B'],
+      `${label}: a single-source result was altered by balancing`,
+    );
+    assert.equal(
+      runtime.selectDiverseRagHits(mixed, { maximum: 8 }).length, 5,
+      `${label}: balancing dropped a passage when there was room for every candidate`,
+    );
+  }
+});
+
+test('ZIM title ranking falls back to one-token matches instead of an empty archive', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const candidate = (index, title) => ({ index, title, url: title.replace(/ /g, '_'), namespace: 'C' });
+    const titles = (candidates, query, limit = 3) =>
+      runtime.rankZimTitleCandidates(candidates, query, limit).map(item => item.title);
+
+    // A real match must never be diluted by loose ones.
+    assert.deepEqual(
+      titles([candidate(1, 'World War II'), candidate(2, 'World Heritage Site'), candidate(3, 'War')], 'world war'),
+      ['World War II'],
+      `${label}: one-token title matches displaced or diluted the relevant article`,
+    );
+    assert.deepEqual(
+      titles([candidate(1, 'Water purification'), candidate(2, 'Water')], 'water purification'),
+      ['Water purification'],
+      `${label}: an exact multi-term title stopped ranking alone`,
+    );
+
+    // With nothing clearing the bar, the closest article beats reporting an
+    // empty archive: "treat burn" used to discard the Burn article outright.
+    assert.deepEqual(
+      titles([candidate(1, 'Burn'), candidate(2, 'Sunburn')], 'treat burn'),
+      ['Burn'],
+      `${label}: a two-word query threw away the article that answers it`,
+    );
+    assert.deepEqual(
+      titles([candidate(1, 'Bleeding'), candidate(2, 'Hemostasis')], 'stop bleeding'),
+      ['Bleeding'],
+      `${label}: a first-aid phrasing returned nothing from a stocked archive`,
+    );
+    assert.deepEqual(
+      titles([candidate(1, 'Chlorine'), candidate(2, 'Water purification'), candidate(3, 'Water')], 'much chlorine purify water'),
+      ['Water purification', 'Chlorine', 'Water'],
+      `${label}: partial matches were not ranked by how well they cover the query`,
+    );
+
+    // A candidate sharing no term with the query stays out either way.
+    assert.deepEqual(
+      titles([candidate(1, 'Photosynthesis')], 'treat burn'),
+      [],
+      `${label}: an unrelated article was admitted by the fallback`,
+    );
+  }
+});
+
+test('lexical retrieval relaxes only after exact matching comes up short', async () => {
+  for (const [label, indexRuntime, retrievalRuntime] of [
+    ['chrome', OfflineRagIndexCh, OfflineRetrievalCh],
+    ['firefox', OfflineRagIndexFx, OfflineRetrievalFx],
+  ]) {
+    const { buildFts5Query, relaxedFts5Prefix } = indexRuntime;
+
+    assert.equal(relaxedFts5Prefix('burn'), '', `${label}: a short token was truncated into a broad prefix`);
+    assert.equal(relaxedFts5Prefix('bleedng'), 'blee', `${label}: a misspelling did not reduce to a shared prefix`);
+    assert.equal(relaxedFts5Prefix('hypothermai'), 'hypoth', `${label}: a long misspelling truncated too far`);
+    assert.equal(relaxedFts5Prefix('turnike'), 'turn', `${label}: a suffixing language lost its stem`);
+
+    const exact = buildFts5Query('tourniquet bleeding');
+    assert.equal(exact, '"tourniquet" OR "bleeding"', `${label}: exact matching changed shape`);
+    assert.doesNotMatch(exact, /\*/, `${label}: exact matching leaked a prefix wildcard`);
+
+    const relaxed = buildFts5Query('tourniquet bleeding', { relax: true });
+    assert.match(relaxed, /"tourniquet"/, `${label}: the relaxed pass dropped the exact term`);
+    assert.match(relaxed, /"tourn"\*/, `${label}: the relaxed pass did not add a prefix variant`);
+    assert.ok(relaxed.indexOf('"tourniquet"') < relaxed.indexOf('"tourn"*'),
+      `${label}: the relaxed variant was ordered ahead of its exact term`);
+    assert.equal(buildFts5Query('', { relax: true }), '', `${label}: an empty query produced a match expression`);
+
+    // Exact hits must stay ahead of relaxed ones, so a query that already works
+    // cannot be reordered by the retry.
+    const calls = [];
+    const hitsFor = ids => ids.map(id => ({ passageId: id, documentId: id, sourceKind: 'emergency-box' }));
+    const store = { async get() { return { active: { indexPath: 'sqlite/x.sqlite3', version: '1', installId: 'i' }, status: 'ready' }; } };
+    const client = {
+      async searchEmergency({ relax }) {
+        calls.push(relax === true ? 'relaxed' : 'exact');
+        return relax === true ? hitsFor(['relaxed-a', 'exact-1']) : hitsFor(['exact-1', 'exact-2']);
+      },
+    };
+    const thin = await retrievalRuntime.searchEmergencyLexical('anything', { store, indexClient: client });
+    assert.deepEqual(calls, ['exact', 'relaxed'], `${label}: a thin exact result did not trigger the relaxed retry`);
+    assert.deepEqual(thin.hits.map(hit => hit.passageId), ['exact-1', 'exact-2', 'relaxed-a'],
+      `${label}: relaxed hits were not appended after exact hits, or a duplicate survived`);
+
+    calls.length = 0;
+    const wideClient = {
+      async searchEmergency({ relax }) {
+        calls.push(relax === true ? 'relaxed' : 'exact');
+        return hitsFor(['a', 'b', 'c', 'd', 'e', 'f']);
+      },
+    };
+    const wide = await retrievalRuntime.searchEmergencyLexical('anything', { store, indexClient: wideClient });
+    assert.deepEqual(calls, ['exact'], `${label}: a healthy exact result still paid for a relaxed retry`);
+    assert.equal(wide.hits.length, 6, `${label}: a healthy exact result was altered`);
+  }
+});
+
+test('offline relevance fixture stays large enough to discriminate and keeps query classes balanced', async () => {
+  const { RELEVANCE_CORPUS, RELEVANCE_QUERIES } = await import(
+    pathToFileURL(path.join(ROOT, 'test/fixtures/offline-relevance-corpus.mjs')).href
+  );
+  const ids = RELEVANCE_CORPUS.map(doc => doc.id);
+  assert.equal(new Set(ids).size, ids.length, 'relevance fixture has duplicate passage ids');
+  assert.ok(RELEVANCE_CORPUS.length >= 200, `relevance fixture has ${RELEVANCE_CORPUS.length} passages, want at least 200`);
+  const kinds = {};
+  for (const item of RELEVANCE_QUERIES) {
+    kinds[item.kind] = (kinds[item.kind] || 0) + 1;
+    assert.ok(ids.includes(item.expect), `query "${item.q}" expects missing ${item.expect}`);
+  }
+  assert.deepEqual(Object.keys(kinds).sort(), ['fragment', 'inflection', 'keyword', 'non-english', 'question', 'typo'].sort(),
+    'relevance fixture dropped a query class');
+  const counts = Object.values(kinds);
+  assert.ok(Math.min(...counts) >= 24, `a query class shrank below 24: ${JSON.stringify(kinds)}`);
+  assert.ok(Math.max(...counts) - Math.min(...counts) <= 4, `query classes are unbalanced: ${JSON.stringify(kinds)}`);
+  assert.ok(kinds['non-english'] >= 24, `non-english lagged other classes: ${JSON.stringify(kinds)}`);
+});
+
+test('lexical retrieval keeps infant technique ahead of adult technique for a baby query', async () => {
+  for (const [label, indexRuntime] of [
+    ['chrome', OfflineRagIndexCh],
+    ['firefox', OfflineRagIndexFx],
+  ]) {
+    const {
+      buildFts5Query, detectAgeCohort, documentAgeCohort, preferMatchingAgeCohort,
+    } = indexRuntime;
+
+    assert.equal(detectAgeCohort('baby not breathing'), 'infant',
+      `${label}: a baby query was not recognised as infant`);
+    assert.equal(detectAgeCohort('what do i do if someone is choking'), '',
+      `${label}: an unmarked choking query was assigned an age cohort`);
+    assert.equal(documentAgeCohort({ title: 'CPR and chest compressions for adults', text: 'not breathing' }), 'adult',
+      `${label}: an adult title lost to body terms`);
+    assert.equal(documentAgeCohort({ title: 'Infant CPR when a baby is not breathing', text: 'adult reminder' }), 'infant',
+      `${label}: an infant title was overridden by an adult word in the body`);
+
+    const babyQuery = buildFts5Query('baby not breathing');
+    assert.match(babyQuery, /"baby"/, `${label}: the original baby token was dropped`);
+    assert.match(babyQuery, /"infant"/, `${label}: baby did not expand to the field-guide synonym infant`);
+    assert.match(babyQuery, /"breathing"/, `${label}: expansion ate the rest of a short query`);
+    assert.match(babyQuery, /"not"/, `${label}: negation was stripped from not-breathing`);
+    assert.doesNotMatch(babyQuery, /bebek|bebé|lactante|nourrisson|säugling|رضيع/,
+      `${label}: an English baby query expanded into another language`);
+    assert.equal(buildFts5Query('tourniquet bleeding'), '"tourniquet" OR "bleeding"',
+      `${label}: age expansion leaked into a query with no cohort`);
+
+    assert.equal(detectAgeCohort('nourrisson ne respire pas'), 'infant',
+      `${label}: French nourrisson was not treated as infant`);
+    assert.equal(detectAgeCohort('Säugling atmet nicht'), 'infant',
+      `${label}: German Säugling was not treated as infant`);
+    assert.equal(detectAgeCohort('رضيع لا يتنفس'), 'infant',
+      `${label}: Arabic رضيع was not treated as infant`);
+    assert.equal(indexRuntime.detectQueryLanguage('baby not breathing'), '',
+      `${label}: an English query was forced into a language bucket`);
+    assert.equal(indexRuntime.detectQueryLanguage('öffnen das Fenster'), '',
+      `${label}: German ö was treated as Turkish`);
+    assert.equal(indexRuntime.detectQueryLanguage('nourrisson'), 'fra',
+      `${label}: a French infant word was not tagged French`);
+    assert.match(buildFts5Query('nourrisson ne respire pas'), /"infant"/,
+      `${label}: French nourrisson did not reach English infant passages`);
+    assert.match(buildFts5Query('Säugling atmet nicht'), /"infant"/,
+      `${label}: German Säugling did not reach English infant passages`);
+    assert.doesNotMatch(buildFts5Query('Säugling atmet nicht'), /bebek|lactante/,
+      `${label}: a German infant query pulled in a third language`);
+
+    const ranked = preferMatchingAgeCohort([
+      { documentId: 'cpr-adult', title: 'CPR and chest compressions for adults', text: 'If an adult is unresponsive and not breathing normally, start chest compressions.', language: 'eng', lexicalRank: 1 },
+      { documentId: 'choking-infant', title: 'Choking in infants under one year', text: 'Never use abdominal thrusts on an infant.', language: 'eng', lexicalRank: 2 },
+      { documentId: 'cpr-infant', title: 'Infant CPR when a baby is not breathing', text: 'If a baby is unresponsive and not breathing normally, start infant chest compressions.', language: 'eng', lexicalRank: 3 },
+      { documentId: 'wikipedia-cpr', title: 'Cardiopulmonary resuscitation', text: 'History of chest compressions.', language: 'eng', collection: 'Wikipedia', sourceKind: 'wikipedia', lexicalRank: 4 },
+    ], 'baby not breathing').map(hit => hit.documentId);
+
+    assert.deepEqual(ranked, ['cpr-infant', 'choking-infant', 'wikipedia-cpr', 'cpr-adult'],
+      `${label}: matching infant passages did not stay ahead of unlabelled then adult-conflicting hits`);
+  }
+});
+
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const statusFor = async (enabled, archives) => {

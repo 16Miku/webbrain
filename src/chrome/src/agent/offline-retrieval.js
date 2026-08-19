@@ -2,7 +2,7 @@
 
 import { searchApocalypseArchives } from './apocalypse-mode.js';
 import { createEmergencyCorpusStore } from './emergency-corpus.js';
-import { createOfflineRagIndexClient } from './offline-rag-index.js';
+import { createOfflineRagIndexClient, preferMatchingAgeCohort } from './offline-rag-index.js';
 import {
   MAX_FINAL_PASSAGES,
   MAX_LEXICAL_CANDIDATES_PER_SOURCE,
@@ -121,6 +121,23 @@ export async function searchWikipediaLexical(query, options = {}) {
   }
 }
 
+// Exact matching runs first and its results always rank above the relaxed pass,
+// so a query that already works is unaffected. The second pass only fires when
+// the first comes back thin, which is exactly the misspelled or inflected query
+// that used to return nothing at all.
+export const RELAXED_RETRY_THRESHOLD = 5;
+
+function mergeLexicalHits(exact, relaxed) {
+  const seen = new Set(exact.map(hit => hit?.passageId));
+  const merged = [...exact];
+  for (const hit of relaxed) {
+    if (!hit?.passageId || seen.has(hit.passageId)) continue;
+    seen.add(hit.passageId);
+    merged.push(hit);
+  }
+  return merged;
+}
+
 export async function searchEmergencyLexical(query, options = {}) {
   const store = options.store || createEmergencyCorpusStore();
   const state = await store.get();
@@ -128,15 +145,19 @@ export async function searchEmergencyLexical(query, options = {}) {
   if (status !== 'ready' || !state?.active?.indexPath) return { hits: [], status };
   const client = options.indexClient || options.getIndexClient?.();
   if (!client?.searchEmergency) return { hits: [], status: 'error', error: 'Offline SQLite client is unavailable.' };
+  const request = relax => client.searchEmergency({
+    indexPath: state.active.indexPath,
+    sourceVersion: state.active.version,
+    query,
+    limit: MAX_LEXICAL_CANDIDATES_PER_SOURCE,
+    signal: options.signal,
+    relax,
+  });
   try {
-    const hits = await client.searchEmergency({
-      indexPath: state.active.indexPath,
-      sourceVersion: state.active.version,
-      query,
-      limit: MAX_LEXICAL_CANDIDATES_PER_SOURCE,
-      signal: options.signal,
-    });
-    return { hits, status: 'ready', active: state.active };
+    const hits = preferMatchingAgeCohort(await request(false), query);
+    if (hits.length >= RELAXED_RETRY_THRESHOLD) return { hits, status: 'ready', active: state.active };
+    const relaxed = preferMatchingAgeCohort(await request(true), query);
+    return { hits: mergeLexicalHits(hits, relaxed), status: 'ready', active: state.active, relaxed: true };
   } catch (error) {
     return { hits: [], status: 'error', active: state.active, error: String(error?.message || error) };
   }
@@ -236,9 +257,14 @@ export function createOfflineRetrievalService(options = {}) {
         })
         : Promise.resolve({ hits: [], status: 'skipped' });
       let semanticFailure = null;
+      // E5 was trained on natural-language queries. The lexical side wants the
+      // stop-word-stripped keywords, but handing the same keyword soup to the
+      // embedder throws away the sentence it needs, so the caller can pass the
+      // user's own wording through for the semantic half.
+      const semanticQuery = String(searchOptions.semanticQuery || '').trim() || query;
       const queryVectorPromise = sources.has('emergency-box') && options.semanticReranker?.embedQuery
         ? runBoundedSemantic(
-          signal => options.semanticReranker.embedQuery(query, { signal }),
+          signal => options.semanticReranker.embedQuery(semanticQuery, { signal }),
           { signal: searchOptions.signal, timeoutMs: semanticTimeoutMs },
         ).catch(error => {
           if (searchOptions.signal?.aborted) throw error;
@@ -267,7 +293,7 @@ export function createOfflineRetrievalService(options = {}) {
       if (lexical.length && !emergencyVector.hits.length && !semanticFailure && options.semanticReranker?.rerank) {
         try {
           semantic = await runBoundedSemantic(
-            signal => options.semanticReranker.rerank(query, lexical, { signal }),
+            signal => options.semanticReranker.rerank(semanticQuery, lexical, { signal }),
             { signal: searchOptions.signal, timeoutMs: semanticTimeoutMs },
           );
           semanticStatus = 'ready';
