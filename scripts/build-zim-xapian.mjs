@@ -87,17 +87,46 @@ function sha256(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
+// Inside WSL, Docker Desktop is installed on the Windows host but only reaches
+// the distro when its WSL integration is switched on, so "not on PATH" here
+// almost never means "not installed".
+function insideWsl() {
+  if (process.platform !== 'linux') return false;
+  if (process.env.WSL_DISTRO_NAME) return true;
+  try { return /microsoft/i.test(readFileSync('/proc/version', 'utf8')); }
+  catch { return false; }
+}
+
+function dockerMissingHelp() {
+  if (!insideWsl()) {
+    return 'Docker is not on PATH. Install Docker Desktop (Windows/macOS) or docker-ce (Linux).';
+  }
+  return [
+    `Docker is not on PATH inside WSL${process.env.WSL_DISTRO_NAME ? ` (${process.env.WSL_DISTRO_NAME})` : ''}.`,
+    'Docker Desktop is probably running on Windows but not shared with this distro.',
+    '',
+    'In Docker Desktop: Settings -> Resources -> WSL Integration, enable this',
+    'distro, then Apply & Restart. Settings -> General must also have the WSL 2',
+    'based engine switched on.',
+    '',
+    'Open a new WSL shell afterwards, because the integration is added to PATH at',
+    'shell start, and confirm with:  docker ps',
+  ].join('\n');
+}
+
 function preflight() {
   log('Preflight');
   try {
     const version = execFileSync('docker', ['--version'], { encoding: 'utf8' }).trim();
     log(`  docker: ${version}`);
   } catch {
-    fail('Docker is not on PATH. Install Docker Desktop (Windows/macOS) or docker-ce (Linux).');
+    fail(dockerMissingHelp());
   }
   const daemon = spawnSync('docker', ['info', '--format', '{{.ServerVersion}}'], { encoding: 'utf8' });
   if (daemon.status !== 0) {
-    fail('The Docker daemon is not running. Start Docker Desktop and try again.');
+    fail(insideWsl()
+      ? 'The Docker daemon is not reachable from WSL. Start Docker Desktop on Windows, and check Settings -> Resources -> WSL Integration for this distro.'
+      : 'The Docker daemon is not running. Start Docker Desktop and try again.');
   }
   log(`  daemon: ${String(daemon.stdout || '').trim()}`);
   try {
