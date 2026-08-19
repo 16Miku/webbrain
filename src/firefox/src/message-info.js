@@ -9,6 +9,7 @@ function formatExactSentTime(createdAt, locale) {
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
+      second: '2-digit',
       hour12: false,
       timeZoneName: 'short',
     }).format(date);
@@ -18,7 +19,7 @@ function formatExactSentTime(createdAt, locale) {
     const offset = offsetMinutes === 0
       ? 'UTC'
       : `UTC${offsetMinutes > 0 ? '+' : '-'}${pad(Math.floor(Math.abs(offsetMinutes) / 60))}:${pad(Math.abs(offsetMinutes) % 60)}`;
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}, ${pad(date.getHours())}:${pad(date.getMinutes())} ${offset}`;
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}, ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${offset}`;
   }
 }
 
@@ -26,30 +27,31 @@ function formatRelativeSentTime(createdAt, locale, now = Date.now()) {
   const value = Number(createdAt);
   if (!Number.isFinite(value) || value <= 0) return '';
   const units = [
-    ['second', 1000],
-    ['minute', 60 * 1000],
-    ['hour', 60 * 60 * 1000],
-    ['day', 24 * 60 * 60 * 1000],
+    { name: 'second', milliseconds: 1000 },
+    { name: 'minute', milliseconds: 60 * 1000 },
+    { name: 'hour', milliseconds: 60 * 60 * 1000 },
+    { name: 'day', milliseconds: 24 * 60 * 60 * 1000 },
   ];
   const current = Number(now);
   const elapsedMs = Number.isFinite(current) ? Math.max(0, current - value) : 0;
   const lastUnit = units[units.length - 1];
   let unit = lastUnit;
   for (let index = 0; index < units.length - 1; index += 1) {
-    if (elapsedMs < units[index + 1][1]) {
+    if (elapsedMs < units[index + 1].milliseconds) {
       unit = units[index];
       break;
     }
   }
-  const amount = Math.floor(elapsedMs / unit[1]);
+  const amount = Math.floor(elapsedMs / unit.milliseconds);
   try {
     return new Intl.RelativeTimeFormat(locale || undefined, {
       numeric: 'auto',
       style: 'long',
-    }).format(-amount, unit[0]);
+    }).format(-amount, unit.name);
   } catch {
+    // Keep timestamps usable when a browser lacks ICU data for the selected locale.
     if (amount === 0) return 'now';
-    return `${amount} ${unit[0]}${amount === 1 ? '' : 's'} ago`;
+    return `${amount} ${unit.name}${amount === 1 ? '' : 's'} ago`;
   }
 }
 

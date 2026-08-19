@@ -10636,6 +10636,7 @@ function renderMessageInfo(msgEl) {
     completion: messageCompletionFromElement(msgEl),
     verbose: verboseMode,
     locale: getLocale(),
+    now: Number.isFinite(msgEl.__wbMessageInfoOpenedAt) ? msgEl.__wbMessageInfoOpenedAt : Date.now(),
   });
   row.replaceChildren(...pills.map((pill) => {
     const item = document.createElement('span');
@@ -10660,6 +10661,8 @@ function messageInfoClickHasTextSelection() {
 
 function toggleMessageInfo(msgEl) {
   const open = msgEl.classList.toggle('message-info-open');
+  if (open) msgEl.__wbMessageInfoOpenedAt = Date.now();
+  else delete msgEl.__wbMessageInfoOpenedAt;
   ensureMessageInfoElements(msgEl).toggle.setAttribute('aria-expanded', String(open));
   renderMessageInfo(msgEl);
   schedulePersist();
@@ -10672,7 +10675,10 @@ function bindMessageInfoToggle(msgEl) {
   msgEl.removeAttribute('aria-expanded');
   msgEl.removeAttribute('title');
   const { toggle } = ensureMessageInfoElements(msgEl);
-  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  if (msgEl.classList.contains('message-info-open')) {
+    if (!Number.isFinite(msgEl.__wbMessageInfoOpenedAt)) msgEl.__wbMessageInfoOpenedAt = Date.now();
+    renderMessageInfo(msgEl);
+  }
   if (msgEl.__wbMessageInfoBound) return;
   msgEl.__wbMessageInfoBound = true;
   toggle.addEventListener('click', () => toggleMessageInfo(msgEl));

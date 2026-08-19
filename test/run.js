@@ -90355,6 +90355,7 @@ function expectedMessageInfoTestTime() {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: false,
     timeZone: MESSAGE_INFO_TEST_TIME_ZONE,
     timeZoneName: 'short',
@@ -90628,6 +90629,8 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     assert.equal(msgEl.classList.contains('message-info-open'), false, `${label}: a bubble click should close keyboard-opened info`);
     msgEl.dispatch('click', { target: msgEl });
     assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: a second bubble click should reopen info`);
+    const openedAt = msgEl.__wbMessageInfoOpenedAt;
+    assert.ok(Number.isFinite(openedAt), `${label}: opening should capture one relative-time snapshot`);
     selectionCollapsed = false;
     msgEl.dispatch('click', { target: msgEl });
     assert.equal(msgEl.classList.contains('message-info-open'), true, `${label}: selecting answer text should not toggle message info`);
@@ -90642,6 +90645,7 @@ test('message info toggles behaviorally through a semantic button, terminal repl
       finishReason: 'stop',
     });
     assert.equal(messageCompletionFromElement(msgEl).finishReason, 'stop', `${label}: completion should reach the message datasets`);
+    assert.equal(msgEl.__wbMessageInfoOpenedAt, openedAt, `${label}: live completion updates should not advance the opened timestamp`);
     const finishPill = openRow.children.find((child) => child.className.includes('message-info-finish'));
     assert.ok(finishPill, `${label}: the finish-reason pill should render in verbose mode`);
 
@@ -90678,6 +90682,7 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     // Keyboard-equivalent activation: the toggle button itself toggles.
     restoredToggle.dispatch('click', { target: restoredToggle });
     assert.equal(restored.classList.contains('message-info-open'), false, `${label}: the toggle button should close the row`);
+    assert.equal(restored.__wbMessageInfoOpenedAt, undefined, `${label}: closing should discard the relative-time snapshot`);
     assert.equal(restoredToggle.attributes['aria-expanded'], 'false', `${label}: the toggle should mirror the closed state`);
     assert.equal(restoredRow.hidden, true, `${label}: the row should hide when closed`);
 
