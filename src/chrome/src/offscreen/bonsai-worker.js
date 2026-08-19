@@ -104,48 +104,199 @@ function textReadyMarkerUrl(modelId, dtype) {
   return `https://webbrain.one/.well-known/webgpu-model-ready/${key}`;
 }
 
-function copyResponse(body, response) {
-  return new Response(body, {
+function cacheStorageKey(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+  } catch {
+    // Packaged chrome-extension:// files cannot be Cache Storage keys.
+  }
+  return '';
+}
+
+function isGgufUrl(url) {
+  return /\.gguf(?:$|[?#])/i.test(String(url || ''));
+}
+
+function opfsWeightName(url) {
+  const file = decodeURIComponent(String(url || '').split('/').pop()?.split('?')[0] || '');
+  return /^[\w.-]+\.gguf$/i.test(file) ? file : '';
+}
+
+function cacheableCopy(body, response) {
+  const headers = new Headers();
+  const type = response?.headers?.get?.('content-type');
+  const length = response?.headers?.get?.('content-length');
+  if (type) headers.set('content-type', type);
+  if (length) headers.set('content-length', length);
+  return new Response(body, { status: 200, statusText: 'OK', headers });
+}
+
+async function opfsModelsDirectory(create = false) {
+  const storage = globalThis.navigator?.storage;
+  if (typeof storage?.getDirectory !== 'function') return null;
+  const root = await storage.getDirectory();
+  return await root.getDirectoryHandle('webbrain-webgpu-models', { create });
+}
+
+async function opfsWeightHandle(url, create = false) {
+  const name = opfsWeightName(url);
+  if (!name) return null;
+  try {
+    const dir = await opfsModelsDirectory(create);
+    if (!dir) return null;
+    return { dir, name, handle: await dir.getFileHandle(name, { create }) };
+  } catch {
+    return null;
+  }
+}
+
+function opfsCompleteName(name) {
+  return `${name}.complete`;
+}
+
+async function readOpfsCompleteSize(dir, name) {
+  try {
+    const handle = await dir.getFileHandle(opfsCompleteName(name));
+    const meta = JSON.parse(await (await handle.getFile()).text());
+    const size = Number(meta?.size);
+    return Number.isFinite(size) && size > 0 ? size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function writeOpfsComplete(dir, name, size) {
+  const handle = await dir.getFileHandle(opfsCompleteName(name), { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify({ size }));
+  await writable.close();
+}
+
+async function opfsWeightResponse(url) {
+  const file = await opfsWeightHandle(url, false);
+  if (!file) return null;
+  const expected = await readOpfsCompleteSize(file.dir, file.name);
+  const blob = await file.handle.getFile();
+  if (!expected || blob.size !== expected) return null;
+  return new Response(blob.stream(), {
     status: 200,
-    statusText: 'OK',
-    headers: response.headers,
+    headers: {
+      'content-type': 'application/octet-stream',
+      'content-length': String(blob.size),
+    },
   });
 }
 
-function trackBodyProgress(response, url) {
-  if (!response.body) return copyResponse(null, response);
-  const total = Number(response.headers.get('content-length')) || 0;
-  if (!/\.gguf(?:$|\?)/i.test(String(url))) return copyResponse(response.body, response);
+async function removeOpfsWeight(url) {
+  const name = opfsWeightName(url);
+  if (!name) return;
+  try {
+    const dir = await opfsModelsDirectory(false);
+    if (!dir) return;
+    await dir.removeEntry(name).catch(() => {});
+    await dir.removeEntry(opfsCompleteName(name)).catch(() => {});
+  } catch {
+    // Missing or already-cleared weights are not an error.
+  }
+}
+
+function noteWeightProgress(loaded, total) {
+  textDownloadState = {
+    ...textDownloadState,
+    status: 'downloading',
+    file: 'weights',
+    loaded,
+    total: total || textDownloadState.total,
+    progress: total > 0 ? Math.min(100, (loaded / total) * 100) : textDownloadState.progress,
+    error: '',
+  };
+  postTextDownloadState();
+}
+
+async function persistGgufToOpfs(url, response, signal) {
+  navigator.storage?.persist?.().catch(() => {});
+  const file = await opfsWeightHandle(url, true);
+  if (!file) throw new Error('Origin Private File System storage is unavailable for the Basic model.');
+  await file.dir.removeEntry(opfsCompleteName(file.name)).catch(() => {});
+  const writable = await file.handle.createWritable();
+  const encoding = String(response.headers.get('content-encoding') || '').toLowerCase();
+  const total = !encoding || encoding === 'identity'
+    ? Number(response.headers.get('content-length')) || 0
+    : 0;
   let loaded = 0;
-  const stream = response.body.pipeThrough(new TransformStream({
-    transform(chunk, controller) {
-      loaded += chunk?.byteLength || chunk?.length || 0;
-      textDownloadState = {
-        ...textDownloadState,
-        status: 'downloading',
-        file: 'weights',
-        loaded,
-        total: total || textDownloadState.total,
-        progress: total > 0 ? Math.min(100, (loaded / total) * 100) : textDownloadState.progress,
-        error: '',
-      };
-      postTextDownloadState();
-      controller.enqueue(chunk);
-    },
-  }));
-  return copyResponse(stream, response);
+  const reader = (response.body || cacheableCopy(await response.arrayBuffer(), response).body).getReader();
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException('The download was aborted.', 'AbortError');
+      const { done, value } = await reader.read();
+      if (done) break;
+      loaded += value?.byteLength || value?.length || 0;
+      noteWeightProgress(loaded, total);
+      await writable.write(value);
+    }
+    await writable.close();
+  } catch (error) {
+    await writable.abort(error).catch(() => {});
+    await file.dir.removeEntry(file.name).catch(() => {});
+    await file.dir.removeEntry(opfsCompleteName(file.name)).catch(() => {});
+    throw error;
+  }
+  if (total > 0 && loaded !== total) {
+    await file.dir.removeEntry(file.name).catch(() => {});
+    throw new Error(`Basic model length mismatch (${loaded}/${total}).`);
+  }
+  if (!loaded) {
+    await file.dir.removeEntry(file.name).catch(() => {});
+    throw new Error('The Basic model download was empty.');
+  }
+  await writeOpfsComplete(file.dir, file.name, loaded);
 }
 
 async function cachedResponse(url, { signal } = {}) {
   if (!nativeFetch) throw new Error('Fetch is unavailable in the Bonsai WebGPU worker.');
-  const cache = await caches.open(CACHE_NAME);
-  const hit = await cache.match(url);
-  if (hit) return hit;
+  const cacheKey = cacheStorageKey(url);
+  const persistGguf = isGgufUrl(url);
+
+  if (persistGguf) {
+    const existing = await opfsWeightResponse(url);
+    if (existing) return existing;
+    if (cacheKey && typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        const cached = await cache.match(cacheKey);
+        if (cached) {
+          await persistGgufToOpfs(url, cached, signal);
+          await cache.delete(cacheKey).catch(() => {});
+          const migrated = await opfsWeightResponse(url);
+          if (migrated) return migrated;
+        }
+      } catch {
+        // A previous Cache Storage copy is optional; fetch a fresh GGUF below.
+      }
+    }
+  } else if (cacheKey && typeof caches !== 'undefined') {
+    const cache = await caches.open(CACHE_NAME);
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+  }
+
   const response = await nativeFetch(url, signal ? { signal, redirect: 'follow' } : { redirect: 'follow' });
   if (!response.ok) throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
-  // Redirected Responses cannot be stored. Await the put so reload still sees Basic.
-  await cache.put(url, trackBodyProgress(response, url));
-  const stored = await cache.match(url);
+
+  if (persistGguf) {
+    await persistGgufToOpfs(url, response, signal);
+    const stored = await opfsWeightResponse(url);
+    if (!stored) throw new Error('The Basic model downloaded but could not be saved on this device.');
+    return stored;
+  }
+
+  // Packaged chrome-extension:// manifest/aux files are already on disk.
+  if (!cacheKey) return response;
+
+  const cache = await caches.open(CACHE_NAME);
+  await cache.put(cacheKey, cacheableCopy(response.body, response));
+  const stored = await cache.match(cacheKey);
   if (!stored) throw new Error(`Could not save ${url} in the local model cache.`);
   return stored;
 }
@@ -163,19 +314,36 @@ function createFetchHooks(signal) {
   return { fetchJson, fetchStream };
 }
 
+async function hasStoredGguf(dataUrl) {
+  if (await opfsWeightResponse(dataUrl)) return true;
+  const cacheKey = cacheStorageKey(dataUrl);
+  if (!cacheKey || typeof caches === 'undefined') return false;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(cacheKey);
+    if (!cached) return false;
+    await persistGgufToOpfs(dataUrl, cached);
+    await cache.delete(cacheKey).catch(() => {});
+    return Boolean(await opfsWeightResponse(dataUrl));
+  } catch {
+    return false;
+  }
+}
+
 async function isTextModelReady(modelId = WEBGPU_BONSAI27_MODEL_ID, dtype = WEBGPU_BONSAI27_DTYPE) {
   const key = textModelKey(modelId, dtype);
   if (readyTextModelKeys.has(key)) return true;
-  if (typeof caches === 'undefined' || !workerConfig?.dataUrl) return false;
+  if (!workerConfig?.dataUrl) return false;
   try {
-    const cache = await caches.open(CACHE_NAME);
-    const data = await cache.match(workerConfig.dataUrl);
-    if (!data) return false;
-    const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
-    if (!marker) {
-      await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
-        headers: { 'content-type': 'application/json' },
-      }));
+    if (!await hasStoredGguf(workerConfig.dataUrl)) return false;
+    if (typeof caches !== 'undefined') {
+      const cache = await caches.open(CACHE_NAME);
+      const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
+      if (!marker) {
+        await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
     }
     readyTextModelKeys.add(key);
     return true;
@@ -186,17 +354,15 @@ async function isTextModelReady(modelId = WEBGPU_BONSAI27_MODEL_ID, dtype = WEBG
 
 async function markTextModelReady(modelId, dtype) {
   const key = textModelKey(modelId, dtype);
-  if (typeof caches === 'undefined' || !workerConfig?.dataUrl) {
-    throw new Error('The Basic model downloaded but could not be saved on this device.');
-  }
-  const cache = await caches.open(CACHE_NAME);
-  const data = await cache.match(workerConfig.dataUrl);
-  if (!data) {
+  if (!workerConfig?.dataUrl || !await hasStoredGguf(workerConfig.dataUrl)) {
     throw new Error('The Basic model downloaded but could not be saved on this device. Check that this browser has enough disk space.');
   }
-  await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
-    headers: { 'content-type': 'application/json' },
-  }));
+  if (typeof caches !== 'undefined') {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+  }
   readyTextModelKeys.add(key);
 }
 
@@ -397,13 +563,14 @@ async function clearTextModelCache(modelId, dtype) {
   await disposeTextRuntime();
   const normalized = assertBonsaiModel(modelId);
   const normalizedDtype = dtype || WEBGPU_BONSAI27_DTYPE;
+  if (workerConfig?.dataUrl) await removeOpfsWeight(workerConfig.dataUrl);
   if (typeof caches !== 'undefined' && workerConfig) {
     try {
       const cache = await caches.open(CACHE_NAME);
       for (const url of [
-        workerConfig.dataUrl,
-        workerConfig.tokenizerJsonUrl,
-        workerConfig.tokenizerConfigUrl,
+        cacheStorageKey(workerConfig.dataUrl),
+        cacheStorageKey(workerConfig.tokenizerJsonUrl),
+        cacheStorageKey(workerConfig.tokenizerConfigUrl),
         textReadyMarkerUrl(normalized, normalizedDtype),
       ].filter(Boolean)) {
         await cache.delete(url);

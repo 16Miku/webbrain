@@ -50577,8 +50577,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic'/);
   assert.match(apocalypseHtml, />Minimal<\/span>/);
   assert.match(apocalypseHtml, />Basic<\/span>/);
-  assert.match(apocalypseHtml, /· LFM2\.5 2\.6B/);
-  assert.match(apocalypseHtml, /· Bonsai 27B/);
+  assert.doesNotMatch(apocalypseHtml, /· LFM2\.5 2\.6B/);
+  assert.doesNotMatch(apocalypseHtml, /· Bonsai 27B/);
   assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
   assert.match(emergencyCopy, /'ap\.webgpu\.rag\.pro': 'Runs Bonsai 27B on your GPU/);
   assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);
@@ -50630,7 +50630,12 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/chat\.js'/);
   assert.match(bonsaiWorker, /cannot hold Bonsai 27B/);
   assert.match(bonsaiWorker, /function textReadyMarkerUrl/);
-  assert.match(bonsaiWorker, /await cache\.put\(url/);
+  assert.match(bonsaiWorker, /function cacheStorageKey/);
+  assert.match(bonsaiWorker, /webbrain-webgpu-models/);
+  assert.match(bonsaiWorker, /opfsCompleteName/);
+  assert.match(bonsaiWorker, /parsed\.protocol === 'http:' \|\| parsed\.protocol === 'https:'/);
+  assert.match(bonsaiWorker, /await cache\.put\(cacheKey/);
+  assert.doesNotMatch(bonsaiWorker, /cache\.put\(url/);
   assert.doesNotMatch(bonsaiWorker, /cache\.put\(url, response\.clone\(\)\)\.catch/);
   assert.doesNotMatch(bonsaiWorker, /pipeline\('text-generation'/);
   assert.doesNotMatch(bonsaiWorker, /@huggingface\/transformers/);
