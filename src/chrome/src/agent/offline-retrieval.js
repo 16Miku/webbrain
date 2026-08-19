@@ -2,7 +2,7 @@
 
 import { searchApocalypseArchives } from './apocalypse-mode.js';
 import { createEmergencyCorpusStore } from './emergency-corpus.js';
-import { createOfflineRagIndexClient } from './offline-rag-index.js';
+import { createOfflineRagIndexClient, preferMatchingAgeCohort } from './offline-rag-index.js';
 import {
   MAX_FINAL_PASSAGES,
   MAX_LEXICAL_CANDIDATES_PER_SOURCE,
@@ -154,9 +154,9 @@ export async function searchEmergencyLexical(query, options = {}) {
     relax,
   });
   try {
-    const hits = await request(false);
+    const hits = preferMatchingAgeCohort(await request(false), query);
     if (hits.length >= RELAXED_RETRY_THRESHOLD) return { hits, status: 'ready', active: state.active };
-    const relaxed = await request(true);
+    const relaxed = preferMatchingAgeCohort(await request(true), query);
     return { hits: mergeLexicalHits(hits, relaxed), status: 'ready', active: state.active, relaxed: true };
   } catch (error) {
     return { hits: [], status: 'error', active: state.active, error: String(error?.message || error) };

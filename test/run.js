@@ -28558,6 +28558,85 @@ test('lexical retrieval relaxes only after exact matching comes up short', async
   }
 });
 
+test('offline relevance fixture stays large enough to discriminate and keeps query classes balanced', async () => {
+  const { RELEVANCE_CORPUS, RELEVANCE_QUERIES } = await import(
+    pathToFileURL(path.join(ROOT, 'test/fixtures/offline-relevance-corpus.mjs')).href
+  );
+  const ids = RELEVANCE_CORPUS.map(doc => doc.id);
+  assert.equal(new Set(ids).size, ids.length, 'relevance fixture has duplicate passage ids');
+  assert.ok(RELEVANCE_CORPUS.length >= 200, `relevance fixture has ${RELEVANCE_CORPUS.length} passages, want at least 200`);
+  const kinds = {};
+  for (const item of RELEVANCE_QUERIES) {
+    kinds[item.kind] = (kinds[item.kind] || 0) + 1;
+    assert.ok(ids.includes(item.expect), `query "${item.q}" expects missing ${item.expect}`);
+  }
+  assert.deepEqual(Object.keys(kinds).sort(), ['fragment', 'inflection', 'keyword', 'non-english', 'question', 'typo'].sort(),
+    'relevance fixture dropped a query class');
+  const counts = Object.values(kinds);
+  assert.ok(Math.min(...counts) >= 24, `a query class shrank below 24: ${JSON.stringify(kinds)}`);
+  assert.ok(Math.max(...counts) - Math.min(...counts) <= 4, `query classes are unbalanced: ${JSON.stringify(kinds)}`);
+  assert.ok(kinds['non-english'] >= 24, `non-english lagged other classes: ${JSON.stringify(kinds)}`);
+});
+
+test('lexical retrieval keeps infant technique ahead of adult technique for a baby query', async () => {
+  for (const [label, indexRuntime] of [
+    ['chrome', OfflineRagIndexCh],
+    ['firefox', OfflineRagIndexFx],
+  ]) {
+    const {
+      buildFts5Query, detectAgeCohort, documentAgeCohort, preferMatchingAgeCohort,
+    } = indexRuntime;
+
+    assert.equal(detectAgeCohort('baby not breathing'), 'infant',
+      `${label}: a baby query was not recognised as infant`);
+    assert.equal(detectAgeCohort('what do i do if someone is choking'), '',
+      `${label}: an unmarked choking query was assigned an age cohort`);
+    assert.equal(documentAgeCohort({ title: 'CPR and chest compressions for adults', text: 'not breathing' }), 'adult',
+      `${label}: an adult title lost to body terms`);
+    assert.equal(documentAgeCohort({ title: 'Infant CPR when a baby is not breathing', text: 'adult reminder' }), 'infant',
+      `${label}: an infant title was overridden by an adult word in the body`);
+
+    const babyQuery = buildFts5Query('baby not breathing');
+    assert.match(babyQuery, /"baby"/, `${label}: the original baby token was dropped`);
+    assert.match(babyQuery, /"infant"/, `${label}: baby did not expand to the field-guide synonym infant`);
+    assert.match(babyQuery, /"breathing"/, `${label}: expansion ate the rest of a short query`);
+    assert.match(babyQuery, /"not"/, `${label}: negation was stripped from not-breathing`);
+    assert.doesNotMatch(babyQuery, /bebek|bebé|lactante|nourrisson|säugling|رضيع/,
+      `${label}: an English baby query expanded into another language`);
+    assert.equal(buildFts5Query('tourniquet bleeding'), '"tourniquet" OR "bleeding"',
+      `${label}: age expansion leaked into a query with no cohort`);
+
+    assert.equal(detectAgeCohort('nourrisson ne respire pas'), 'infant',
+      `${label}: French nourrisson was not treated as infant`);
+    assert.equal(detectAgeCohort('Säugling atmet nicht'), 'infant',
+      `${label}: German Säugling was not treated as infant`);
+    assert.equal(detectAgeCohort('رضيع لا يتنفس'), 'infant',
+      `${label}: Arabic رضيع was not treated as infant`);
+    assert.equal(indexRuntime.detectQueryLanguage('baby not breathing'), '',
+      `${label}: an English query was forced into a language bucket`);
+    assert.equal(indexRuntime.detectQueryLanguage('öffnen das Fenster'), '',
+      `${label}: German ö was treated as Turkish`);
+    assert.equal(indexRuntime.detectQueryLanguage('nourrisson'), 'fra',
+      `${label}: a French infant word was not tagged French`);
+    assert.match(buildFts5Query('nourrisson ne respire pas'), /"infant"/,
+      `${label}: French nourrisson did not reach English infant passages`);
+    assert.match(buildFts5Query('Säugling atmet nicht'), /"infant"/,
+      `${label}: German Säugling did not reach English infant passages`);
+    assert.doesNotMatch(buildFts5Query('Säugling atmet nicht'), /bebek|lactante/,
+      `${label}: a German infant query pulled in a third language`);
+
+    const ranked = preferMatchingAgeCohort([
+      { documentId: 'cpr-adult', title: 'CPR and chest compressions for adults', text: 'If an adult is unresponsive and not breathing normally, start chest compressions.', language: 'eng', lexicalRank: 1 },
+      { documentId: 'choking-infant', title: 'Choking in infants under one year', text: 'Never use abdominal thrusts on an infant.', language: 'eng', lexicalRank: 2 },
+      { documentId: 'cpr-infant', title: 'Infant CPR when a baby is not breathing', text: 'If a baby is unresponsive and not breathing normally, start infant chest compressions.', language: 'eng', lexicalRank: 3 },
+      { documentId: 'wikipedia-cpr', title: 'Cardiopulmonary resuscitation', text: 'History of chest compressions.', language: 'eng', collection: 'Wikipedia', sourceKind: 'wikipedia', lexicalRank: 4 },
+    ], 'baby not breathing').map(hit => hit.documentId);
+
+    assert.deepEqual(ranked, ['cpr-infant', 'choking-infant', 'wikipedia-cpr', 'cpr-adult'],
+      `${label}: matching infant passages did not stay ahead of unlabelled then adult-conflicting hits`);
+  }
+});
+
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const statusFor = async (enabled, archives) => {
