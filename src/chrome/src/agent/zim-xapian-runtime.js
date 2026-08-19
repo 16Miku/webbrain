@@ -95,6 +95,16 @@ export function createZimXapianRuntime(options = {}) {
         });
       }
 
+      // The generated libzim-wasm.js does
+      // `var Module = typeof Module!="undefined" ? Module : {}` and then the
+      // pre-js registers the message listener. The 'init' handler REPLACES
+      // that object (`Module = {}`) and only then sets
+      // Module.onRuntimeInitialized. Init therefore only works if the
+      // message is handled BEFORE the async WebAssembly instantiation
+      // resolves. createWorker() and the 'init' postMessage must stay in
+      // the same turn — no await, or any other yield, between them.
+      // Breaking that only shows up as INITIALIZE_TIMEOUT_MS firing, with
+      // no error from the worker. asNamedFile() is synchronous on purpose.
       const worker = createWorker();
       let closed = false;
       const close = () => {

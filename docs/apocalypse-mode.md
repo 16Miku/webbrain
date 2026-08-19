@@ -103,12 +103,12 @@ untrusted-result boundary as live third-party content.
 WebBrain reads the documented openZIM structures directly, using the MIT-licensed
 `fzstd` decoder, and that reader stays the only path used for reading articles.
 
-Full-text search over a ZIM's Xapian index requires GPL code, which the
-repository owner has approved bundling. Until the runtime is built and vendored,
-`ZIM_XAPIAN_RUNTIME_BUNDLED` is `false` and every archive answers through title
-lookup, so a conceptual query that does not contain an article title may need a
-more specific title. See `docs/offline-rag-licensing.md` for the decision, the
-release licensing strategy, and the reproducible build.
+Full-text search over a ZIM's Xapian index uses the GPL worker vendored under
+`src/*/vendor/libzim/`. `ZIM_XAPIAN_RUNTIME_BUNDLED` is `true`. Catalog archives
+that include an index (`X/fulltext/xapian` or the older
+`Z//fulltextIndex/xapian`) answer with snippets. A conceptual query no longer
+has to name the article title. See `docs/offline-rag-licensing.md` for the
+decision, the release licensing strategy, and the reproducible -O2 source build.
 
 `hasFullTextIndex()` on the reader reports whether an archive carries an index at
 all, checking both the current `X/fulltext/xapian` entry and the older

@@ -1564,7 +1564,8 @@ function cachedKiwixArchive(record, storage, cache) {
 
 // Full-text search when the GPL runtime is bundled, title lookup otherwise. The
 // Xapian provider wraps the title provider rather than replacing it, so an
-// archive with no index, a missing runtime, or a runtime error still answers.
+// archive with no index, a missing worker factory, or a runtime error still
+// answers.
 export function defaultWikipediaProviders(options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
   const titleProvider = createKiwixZimProvider({ storage, archiveCache: options.archiveCache });

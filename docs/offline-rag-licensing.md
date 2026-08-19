@@ -1,9 +1,9 @@
 # Offline Wikipedia full-text licensing decision
 
-Status: **APPROVED — GPL distribution accepted; runtime integration in progress**  
-Scope: the Xapian/libzim WebAssembly runtime only. WebBrain currently ships no
-`javascript-libzim`, libzim, or Xapian code. Its built-in ZIM title lookup remains
-available and is reported as `title-only-fallback`, not full-text search.
+Status: **SHIPPED — GPL distribution accepted; Wasm bundled from source (-O2)**  
+Scope: the Xapian/libzim WebAssembly runtime only. Packages that include
+`src/*/vendor/libzim/` are conveyed under GPL-3.0-or-later. Title lookup remains
+the fallback when an archive has no index or the worker fails.
 
 This is an engineering distribution record, not legal advice.
 
@@ -146,10 +146,10 @@ WebBrain builds the source path. CI must archive every downloaded tarball and
 patch, record its SHA-256, and publish them as the corresponding source beside
 the release.
 
-`ZIM_XAPIAN_RUNTIME_BUNDLED` stays `false` and `ZIM_XAPIAN_DISTRIBUTION_STATUS`
-stays `blocked-pending-owner-license-decision` until the Wasm is actually built
-from source and bundled. The decision is approved; the flags track whether the
-runtime is present, not whether it is permitted.
+The Wasm is built from that path and vendored at `src/*/vendor/libzim/`.
+`ZIM_XAPIAN_RUNTIME_BUNDLED` is `true` and `ZIM_XAPIAN_DISTRIBUTION_STATUS` is
+`bundled-from-source`. Emscripten's wasm-opt segfaults on this module at `-O3`,
+so the link is `-O2`; `sbom.json` records `linkOptimization: "O2"`.
 
 ### Detecting a full-text index without the runtime
 

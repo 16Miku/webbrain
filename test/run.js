@@ -425,6 +425,12 @@ const ZimXapianCh = await import(
 const ZimXapianFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian.js').replace(/\\/g, '/')
 );
+const ZimXapianRuntimeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/zim-xapian-runtime.js').replace(/\\/g, '/')
+);
+const ZimXapianRuntimeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js').replace(/\\/g, '/')
+);
 const OfflineRagPromptCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag-prompt.js').replace(/\\/g, '/')
 );
@@ -23684,6 +23690,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/agent/offline-query-stopwords.js',
     'src/agent/wikipedia-offline.js',
     'src/agent/zim-xapian.js',
+    'src/agent/zim-xapian-runtime.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
     'src/ui/emergency-box.css',
@@ -27679,6 +27686,9 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
     assert.equal(runtime.LIBZIM_VERSION, '9.8.1', `${label}: libzim version changed`);
     assert.equal(runtime.XAPIAN_VERSION, '1.4.31', `${label}: Xapian version changed`);
     assert.equal(typeof runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, 'boolean', `${label}: the bundled flag is not a boolean`);
+    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, true, `${label}: the Xapian runtime is no longer marked bundled`);
+    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'bundled-from-source',
+      `${label}: distribution status does not describe the shipped source-built Wasm`);
 
     const storage = { async open(target) { return new Blob([target.kind]); } };
     const fallbackCalls = [];
@@ -27781,6 +27791,47 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
       'an approved record must state the license the release artifacts are conveyed under');
     assert.match(licensing, /libzim_release/,
       'an approved record must warn against the prebuilt build path');
+  }
+});
+
+test('vendored Xapian Wasm artifacts match the recorded SBOM hashes', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const vendorDir = path.join(ROOT, `src/${browser}/vendor/libzim`);
+    const sbom = JSON.parse(fs.readFileSync(path.join(vendorDir, 'sbom.json'), 'utf8'));
+    assert.equal(sbom.toolchain.linkOptimization, 'O2', `${browser}: linkOptimization drifted from the recorded O2 build`);
+    assert.ok(Array.isArray(sbom.artifacts) && sbom.artifacts.length >= 2, `${browser}: sbom.json lost its artifacts`);
+    for (const artifact of sbom.artifacts) {
+      const bytes = fs.readFileSync(path.join(vendorDir, artifact.file));
+      assert.equal(bytes.byteLength, artifact.bytes, `${browser}: ${artifact.file} size ${bytes.byteLength} != ${artifact.bytes}`);
+      assert.equal(
+        createHash('sha256').update(bytes).digest('hex'),
+        artifact.sha256,
+        `${browser}: ${artifact.file} SHA-256 does not match sbom.json`,
+      );
+    }
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/zim-xapian-runtime.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js'), 'utf8'),
+    'Chrome and Firefox Xapian runtime drivers diverged',
+  );
+});
+
+test('Xapian runtime skips the worker when the archive has no full-text index', async () => {
+  for (const [label, runtime] of [['chrome', ZimXapianRuntimeCh], ['firefox', ZimXapianRuntimeFx]]) {
+    let spawned = 0;
+    const driver = runtime.createZimXapianRuntime({
+      createWorker() {
+        spawned += 1;
+        throw new Error(`${label}: worker factory ran for an unindexed archive`);
+      },
+      hasFullTextIndex: async () => false,
+    });
+    const session = await driver.openArchive({ source: new Blob(['zim']), record: { id: 'no-index', filename: 'plain.zim' } });
+    assert.equal(spawned, 0, `${label}: an unindexed archive started the Wasm worker`);
+    assert.equal(await session.hasFullTextIndex(), false, `${label}: the dummy session claimed an index`);
+    assert.deepEqual(session.searchWithSnippets('airway'), [], `${label}: the dummy session searched`);
+    session.close();
   }
 });
 
