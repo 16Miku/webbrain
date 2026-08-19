@@ -1409,7 +1409,6 @@ body {
 
 .message.user .message-info {
   justify-content: flex-start;
-  margin-inline-start: auto;
 }
 
 .message-info[hidden] {

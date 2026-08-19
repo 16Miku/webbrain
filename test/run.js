@@ -90413,7 +90413,10 @@ test('message info relative timestamps select stable units at each boundary', as
       [24 * 60 * 60 * 1000, -1, 'day'],
     ]) {
       const createdAt = now - offsetMs;
-      const expected = new Intl.RelativeTimeFormat('en-GB', { numeric: 'auto', style: 'long' })
+      const expected = new Intl.RelativeTimeFormat('en-GB', {
+        numeric: amount === 0 ? 'auto' : 'always',
+        style: 'long',
+      })
         .format(amount, unit);
       assert.equal(
         buildMessageInfoPills({ createdAt, locale: 'en-GB', now })[0].params.time,
@@ -90539,7 +90542,7 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     assert.match(css, /\.message-info::\-webkit-scrollbar \{[^}]*display: none;/, `${label}: message-info scrollbars should stay visually hidden`);
     assert.match(
       css,
-      /\.message\.user \.message-info \{[^}]*justify-content: flex-start;[^}]*margin-inline-start: auto;/,
+      /\.message\.user \.message-info \{[^}]*justify-content: flex-start;/,
       `${label}: right-aligned user details should keep the scrollable content start reachable`,
     );
     assert.match(

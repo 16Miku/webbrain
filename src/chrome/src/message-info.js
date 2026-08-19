@@ -45,7 +45,7 @@ function formatRelativeSentTime(createdAt, locale, now = Date.now()) {
   const amount = Math.floor(elapsedMs / unit.milliseconds);
   try {
     return new Intl.RelativeTimeFormat(locale || undefined, {
-      numeric: 'auto',
+      numeric: amount === 0 ? 'auto' : 'always',
       style: 'long',
     }).format(-amount, unit.name);
   } catch {
