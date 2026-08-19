@@ -90334,6 +90334,7 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
 });
 
 const MESSAGE_INFO_TEST_DATE = Date.parse('2024-12-12T12:44:00Z');
+const MESSAGE_INFO_TEST_NOW = Date.parse('2024-12-12T12:45:30Z');
 const MESSAGE_INFO_TEST_TIME_ZONE = 'America/Los_Angeles';
 
 async function withProcessTimeZone(timeZone, callback) {
@@ -90360,7 +90361,12 @@ function expectedMessageInfoTestTime() {
   }).format(new Date(MESSAGE_INFO_TEST_DATE));
 }
 
-test('message info keeps normal mode limited to the system-timezone sent timestamp', async () => {
+function expectedMessageInfoRelativeTime() {
+  return new Intl.RelativeTimeFormat('en-GB', { numeric: 'auto', style: 'long' })
+    .format(-1, 'minute');
+}
+
+test('message info shows a click-time relative timestamp with an exact hover title', async () => {
   await withProcessTimeZone(MESSAGE_INFO_TEST_TIME_ZONE, async () => {
     for (const [label, rel] of [
       ['chrome', 'src/chrome/src/message-info.js'],
@@ -90376,15 +90382,55 @@ test('message info keeps normal mode limited to the system-timezone sent timesta
         },
         verbose: false,
         locale: 'en-GB',
+        now: MESSAGE_INFO_TEST_NOW,
       });
 
       assert.deepEqual(pills, [{
         kind: 'sent',
         key: 'sp.message_info.sent',
-        params: { time: expectedMessageInfoTestTime() },
-      }], `${label}: normal mode must use the system timezone without exposing token or provider details`);
+        params: { time: expectedMessageInfoRelativeTime() },
+        title: expectedMessageInfoTestTime(),
+      }], `${label}: normal mode should show relative time while keeping exact time for hover`);
     }
   });
+});
+
+test('message info relative timestamps select stable units at each boundary', async () => {
+  const now = Date.parse('2024-12-12T12:45:30Z');
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/message-info.js'],
+    ['firefox', 'src/firefox/src/message-info.js'],
+  ]) {
+    const { buildMessageInfoPills } = await import(pathToFileURL(path.join(ROOT, rel)).href);
+    for (const [offsetMs, amount, unit] of [
+      [0, 0, 'second'],
+      [59 * 1000, -59, 'second'],
+      [60 * 1000, -1, 'minute'],
+      [59 * 60 * 1000, -59, 'minute'],
+      [60 * 60 * 1000, -1, 'hour'],
+      [23 * 60 * 60 * 1000, -23, 'hour'],
+      [24 * 60 * 60 * 1000, -1, 'day'],
+    ]) {
+      const createdAt = now - offsetMs;
+      const expected = new Intl.RelativeTimeFormat('en-GB', { numeric: 'auto', style: 'long' })
+        .format(amount, unit);
+      assert.equal(
+        buildMessageInfoPills({ createdAt, locale: 'en-GB', now })[0].params.time,
+        expected,
+        `${label}: ${offsetMs}ms should use the ${unit} relative-time unit`,
+      );
+    }
+    assert.deepEqual(
+      buildMessageInfoPills({ createdAt: 'not-a-timestamp', locale: 'en-GB', now }),
+      [],
+      `${label}: invalid timestamps should remain unavailable`,
+    );
+    assert.equal(
+      buildMessageInfoPills({ createdAt: now + 60 * 1000, locale: 'en-GB', now })[0].params.time,
+      'now',
+      `${label}: future timestamps should not claim that a message was sent in the future`,
+    );
+  }
 });
 
 test('message info aggregates model calls into verbose completion pills', async () => {
@@ -90430,8 +90476,9 @@ test('message info aggregates model calls into verbose completion pills', async 
         completion,
         verbose: true,
         locale: 'en-GB',
+        now: MESSAGE_INFO_TEST_NOW,
       }), [
-        { kind: 'sent', key: 'sp.message_info.sent', params: { time: expectedMessageInfoTestTime() } },
+        { kind: 'sent', key: 'sp.message_info.sent', params: { time: expectedMessageInfoRelativeTime() }, title: expectedMessageInfoTestTime() },
         { kind: 'speed', key: 'sp.message_info.speed', params: { rate: '171.3' } },
         { kind: 'tokens', key: 'sp.message_info.tokens', params: { count: '1,295' } },
         { kind: 'duration', key: 'sp.message_info.duration', params: { seconds: '7.56' } },
@@ -90485,9 +90532,10 @@ test('sidepanels reveal persisted message info while verbose gates completion de
     );
     assert.match(
       css,
-      /\.message-info \{[^}]*flex-wrap: nowrap;[^}]*overflow: hidden;[^}]*white-space: nowrap;/,
-      `${label}: normal and verbose message info should stay on one clipped line`,
+      /\.message-info \{[^}]*flex-wrap: nowrap;[^}]*overflow-x: auto;[^}]*overflow-y: hidden;[^}]*scrollbar-width: none;[^}]*white-space: nowrap;/,
+      `${label}: normal and verbose message info should stay on one horizontally scrollable line`,
     );
+    assert.match(css, /\.message-info::\-webkit-scrollbar \{[^}]*display: none;/, `${label}: message-info scrollbars should stay visually hidden`);
     assert.match(
       css,
       /\.message-info-toggle \{[^}]*position: absolute;[^}]*inset: 0;[^}]*pointer-events: none;[^}]*\}[\s\S]*?\.message-info-toggle:focus-visible \{[^}]*outline:/,
@@ -90574,6 +90622,8 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     assert.equal(openRow.id, toggle.attributes['aria-controls'], `${label}: the row id should match the toggle target`);
     const sentPill = openRow.children.find((child) => child.className.includes('message-info-sent'));
     assert.ok(sentPill, `${label}: the sent-time pill should render`);
+    assert.match(sentPill.className, /message-info-pill/, `${label}: sent time should use the same pill treatment as other details`);
+    assert.ok(sentPill.title, `${label}: sent time should expose the exact timestamp on hover`);
     msgEl.dispatch('click', { target: msgEl });
     assert.equal(msgEl.classList.contains('message-info-open'), false, `${label}: a bubble click should close keyboard-opened info`);
     msgEl.dispatch('click', { target: msgEl });

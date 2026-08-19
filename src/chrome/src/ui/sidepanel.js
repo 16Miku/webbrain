@@ -10639,10 +10639,9 @@ function renderMessageInfo(msgEl) {
   });
   row.replaceChildren(...pills.map((pill) => {
     const item = document.createElement('span');
-    item.className = pill.kind === 'sent'
-      ? 'message-info-item message-info-sent'
-      : `message-info-item message-info-pill message-info-${pill.kind}`;
+    item.className = `message-info-item message-info-pill message-info-${pill.kind}`;
     item.textContent = t(pill.key, pill.params);
+    if (pill.title) item.title = pill.title;
     return item;
   }));
   row.hidden = !msgEl.classList.contains('message-info-open') || pills.length === 0;
