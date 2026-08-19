@@ -50493,12 +50493,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal'/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic'/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm\.detail': 'LFM2\.5 2\.6B'/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai\.detail': 'Bonsai 27B'/);
   assert.match(apocalypseHtml, />Minimal<\/span>/);
   assert.match(apocalypseHtml, />Basic<\/span>/);
-  assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.lfm\.detail"/);
-  assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai\.detail"/);
+  assert.match(apocalypseHtml, /· LFM2\.5 2\.6B/);
+  assert.match(apocalypseHtml, /· Bonsai 27B/);
   assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
   assert.match(emergencyCopy, /'ap\.webgpu\.rag\.pro': 'Runs Bonsai 27B on your GPU/);
   assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);
