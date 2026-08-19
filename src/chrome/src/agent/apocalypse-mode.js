@@ -963,11 +963,79 @@ function transferablePiece(bytes) {
   return { bytes: copy.buffer, transfer: [copy.buffer] };
 }
 
+/**
+ * Chrome writes `FileSystemWritableFileStream` data to a sibling `.crswap`
+ * file and only renames it into place on close(). A stream that is never
+ * closed — the MV3 service worker was torn down mid-write, the tab went away,
+ * the download was cancelled — leaks its swap file, and OPFS never reclaims
+ * it. With `keepExistingData: true` each swap is a full copy of the archive,
+ * so a multi-GB ZIM can leak hundreds of GB across repeated wakes.
+ */
+export const OPFS_SWAP_SUFFIX = '.crswap';
+
+/** Every OPFS bucket this extension writes large files into. */
+export const OPFS_ARCHIVE_DIRECTORIES = Object.freeze([
+  ARCHIVE_DIRECTORY,
+  'webbrain-emergency-box',
+  'webbrain-offline-rag',
+  'webbrain-webgpu-models',
+]);
+
+/**
+ * Delete orphaned `.crswap` files from the given OPFS buckets.
+ * Swap files still held open by a live writer fail to unlink and are skipped,
+ * so this is safe to run while a download is in flight.
+ */
+export async function sweepOpfsSwapFiles(
+  directories = OPFS_ARCHIVE_DIRECTORIES,
+  storageManager = globalThis.navigator?.storage,
+) {
+  if (typeof storageManager?.getDirectory !== 'function') return { removed: 0, bytes: 0 };
+  let root;
+  try { root = await storageManager.getDirectory(); }
+  catch { return { removed: 0, bytes: 0 }; }
+  let removed = 0;
+  let bytes = 0;
+  for (const name of directories) {
+    let dir;
+    try { dir = await root.getDirectoryHandle(name, { create: false }); }
+    catch { continue; }
+    // Collect first: removing entries while iterating the directory is undefined.
+    const stale = [];
+    try {
+      for await (const [entryName, handle] of dir.entries()) {
+        if (handle?.kind === 'file' && entryName.endsWith(OPFS_SWAP_SUFFIX)) stale.push([entryName, handle]);
+      }
+    } catch { continue; }
+    for (const [entryName, handle] of stale) {
+      let size = 0;
+      try { size = (await handle.getFile()).size; } catch { /* size is best effort */ }
+      try {
+        await dir.removeEntry(entryName);
+        removed += 1;
+        bytes += size;
+      } catch { /* still open by a live writer — leave it for the next sweep */ }
+    }
+  }
+  return { removed, bytes };
+}
+
+/**
+ * Above this size the non-durable streaming fallback is refused outright.
+ * That path reopens `createWritable({ keepExistingData: true })` once per
+ * service-worker wake, and Chrome copies the whole file into a fresh swap
+ * each time — quadratic in bytes written and unbounded in disk use.
+ */
+export const STREAMING_FALLBACK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
 export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.storage) {
   async function directory(create = true) {
     if (typeof storageManager?.getDirectory !== 'function') throw new Error('Origin Private File System storage is unavailable in this browser.');
     const root = await storageManager.getDirectory();
     return await root.getDirectoryHandle(ARCHIVE_DIRECTORY, { create });
+  }
+  async function sweepSwapFiles() {
+    return await sweepOpfsSwapFiles([ARCHIVE_DIRECTORY], storageManager);
   }
   async function fileHandle(target, create = false, mode = 'read') {
     if (target?.kind === 'file-handle' && target.handle) {
@@ -1077,25 +1145,38 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     // informational rather than a hard OPFS quota.
     quotaLimited: false,
     durableWrites: false,
+    sweepSwapFiles,
     async ensurePermission(target, mode = 'read') {
       await fileHandle(target, false, mode);
       return true;
     },
-    async createWriter(target) {
+    async createWriter(target, record) {
       if (target?.kind === 'opfs') {
         try {
           const writer = await openSyncWriter(target);
           storage.durableWrites = true;
           return writer;
-        } catch {
+        } catch (error) {
           await closeSyncWriter().catch(() => {});
           storage.durableWrites = false;
+          // The streaming fallback reopens a swap-backed writable on every
+          // wake and Chrome copies the entire file into it, so large archives
+          // must not silently take this path. `Worker` is undefined in an MV3
+          // service worker — run the download from the offscreen document,
+          // where createSyncAccessHandle() is available, instead.
+          const size = Number(record?.size) || 0;
+          if (size > STREAMING_FALLBACK_MAX_BYTES) {
+            throw new Error(
+              `Refusing to write a ${(size / 1024 ** 3).toFixed(1)} GB archive without a durable OPFS writer `
+              + `(${error?.message || error}). Run the archive download from the offscreen document.`,
+            );
+          }
         }
       }
       return await openStreamingWriter(target);
     },
-    async write(target, offset, bytes) {
-      const writer = await this.createWriter(target);
+    async write(target, offset, bytes, record) {
+      const writer = await this.createWriter(target, record);
       try {
         await writer.write(offset, bytes);
         await writer.close();
@@ -1132,8 +1213,8 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       }
       return await (await fileHandle(target, false, 'read')).getFile();
     },
-    async truncate(target, size) {
-      const writer = await this.createWriter(target);
+    async truncate(target, size, record) {
+      const writer = await this.createWriter(target, record);
       try {
         await writer.truncate(size);
         await writer.close();
@@ -1436,6 +1517,11 @@ export function createApocalypseArchiveManager(options = {}) {
       const activeWriter = writer;
       writer = null;
       if (typeof activeWriter.abort === 'function') await activeWriter.abort(reason);
+      // abort() discards this session's swap file, but earlier sessions killed
+      // mid-write left theirs behind. Reclaim them now that no writer is open.
+      if (typeof storage.sweepSwapFiles === 'function') {
+        await storage.sweepSwapFiles().catch(() => {});
+      }
     }
     async function closeWriteSession() {
       if (!writer) return;
