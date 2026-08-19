@@ -49815,8 +49815,8 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       'custom-owner/custom-model',
     );
     assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'Basic', runtime: 'onnx' },
-      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Pro', runtime: 'bitgpu' },
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal', runtime: 'onnx' },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic', runtime: 'bitgpu' },
     ]);
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
@@ -49893,7 +49893,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
       /not downloaded/,
     );
-    await assert.rejects(manager.setActive('webgpu'), /Download Basic/);
+    await assert.rejects(manager.setActive('webgpu'), /Download Minimal/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     textModelReady = true;
@@ -50491,10 +50491,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-webgpu-text-preset/);
   assert.match(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Basic'/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Pro'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic'/);
+  assert.match(apocalypseHtml, />Minimal<\/span>/);
   assert.match(apocalypseHtml, />Basic<\/span>/);
-  assert.match(apocalypseHtml, />Pro<\/span>/);
   assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
   assert.match(emergencyCopy, /'ap\.webgpu\.rag\.pro': 'Runs Bonsai 27B on your GPU/);
   assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);

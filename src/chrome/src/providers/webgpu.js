@@ -15,7 +15,7 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
   Object.freeze({
     id: WEBGPU_LFM25_MODEL_ID,
     runtime: WEBGPU_RUNTIME_ONNX,
-    label: 'Basic',
+    label: 'Minimal',
     size: '1.55 GB',
     dtype: WEBGPU_DTYPE,
     dtypeLabel: WEBGPU_DTYPE,
@@ -23,7 +23,7 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
   Object.freeze({
     id: WEBGPU_BONSAI27_MODEL_ID,
     runtime: WEBGPU_RUNTIME_BITGPU,
-    label: 'Pro',
+    label: 'Basic',
     size: '3.8 GB',
     dtype: WEBGPU_BONSAI27_DTYPE,
     dtypeLabel: WEBGPU_BONSAI27_DTYPE,
