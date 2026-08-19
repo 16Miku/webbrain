@@ -4283,6 +4283,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let result;
       try {
         result = await retrieveOfflineRagForPrompt(searchQuery, {
+          semanticQuery: query,
           service: options.offlineRetrievalService || this._getStandaloneOfflineRagService(),
           sources: offlineSourcesForStandaloneQuery(query, runOptions),
           languages: runOptions.offlineRagLanguages,

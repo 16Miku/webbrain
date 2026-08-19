@@ -673,6 +673,35 @@ function textOverlap(left, right) {
   return intersection / Math.min(leftTokens.size, rightTokens.size);
 }
 
+// A question about stopping bleeding used to fill every slot with encyclopedia
+// articles on the physiology of hemostasis while the first-aid guide, which
+// actually says to apply pressure, was pushed out. Each source that produced a
+// candidate keeps at least one slot: the cost is the lowest-ranked passage from
+// whichever source is already over-represented.
+export function balanceRagHitSources(selected, eligible, maximum) {
+  const present = new Set(selected.map(hit => hit.sourceKind));
+  const missing = [...new Set(eligible.map(hit => hit.sourceKind))].filter(kind => !present.has(kind));
+  if (!missing.length) return selected;
+  const output = [...selected];
+  for (const kind of missing) {
+    const candidate = eligible.find(hit => hit.sourceKind === kind && !output.includes(hit));
+    if (!candidate) continue;
+    if (output.length < maximum) {
+      output.push(candidate);
+      continue;
+    }
+    const counts = new Map();
+    for (const hit of output) counts.set(hit.sourceKind, (counts.get(hit.sourceKind) || 0) + 1);
+    let evictIndex = -1;
+    for (let index = output.length - 1; index >= 0; index -= 1) {
+      if ((counts.get(output[index].sourceKind) || 0) > 1) { evictIndex = index; break; }
+    }
+    if (evictIndex < 0) continue;
+    output.splice(evictIndex, 1, candidate);
+  }
+  return output;
+}
+
 export function selectDiverseRagHits(hits = [], options = {}) {
   const maximum = Math.min(
     MAX_FINAL_PASSAGES,
@@ -683,9 +712,12 @@ export function selectDiverseRagHits(hits = [], options = {}) {
     Number.isSafeInteger(options.perDocument) ? options.perDocument : MAX_PASSAGES_PER_DOCUMENT,
   );
   const output = [];
+  const eligible = [];
   const documentCounts = new Map();
   for (const hit of Array.isArray(hits) ? hits : []) {
     if (!RAG_SOURCE_KINDS.includes(hit?.sourceKind) || !hit?.documentId || !hit?.passageId) continue;
+    eligible.push(hit);
+    if (output.length >= maximum) continue;
     const documentKey = hit.sourceKind + '\0' + hit.sourceId + '\0' + hit.documentId;
     if ((documentCounts.get(documentKey) || 0) >= perDocument) continue;
     const duplicate = output.some(selected =>
@@ -700,9 +732,8 @@ export function selectDiverseRagHits(hits = [], options = {}) {
     if (duplicate) continue;
     output.push(hit);
     documentCounts.set(documentKey, (documentCounts.get(documentKey) || 0) + 1);
-    if (output.length >= maximum) break;
   }
-  return output;
+  return balanceRagHitSources(output, eligible, maximum);
 }
 
 function stableTokenHash(value) {
