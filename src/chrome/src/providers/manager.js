@@ -1319,16 +1319,16 @@ export class ProviderManager {
     }
   }
 
-  async startWebgpuDownload() {
-    return this._webgpuProvider().startDownload();
+  async startWebgpuDownload(msg) {
+    return this._webgpuProvider().startDownload(msg);
   }
 
   async pauseWebgpuDownload() {
     return this._webgpuProvider().pauseDownload();
   }
 
-  async stopWebgpuDownload() {
-    return this._webgpuProvider().stopDownload();
+  async stopWebgpuDownload(msg) {
+    return this._webgpuProvider().stopDownload(msg);
   }
 
   /**

@@ -79,7 +79,10 @@ async function localGenerationStatus() {
       target: 'background',
       action: 'get_webgpu_download_status',
     });
-    const status = String(state?.status || '');
+    const transfer = ['starting', 'queued', 'downloading', 'paused', 'stopping'].includes(state?.activeTransfer?.status)
+      ? state.activeTransfer
+      : state;
+    const status = String(transfer?.status || '');
     if (status === 'ready') return 'ready';
     if (status === 'error') return 'error';
     if (status === 'downloading' || status === 'paused') return status;

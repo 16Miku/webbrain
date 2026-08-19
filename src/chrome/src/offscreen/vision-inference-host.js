@@ -9,7 +9,9 @@ let bonsaiWorkerReady = null;
 let nextBonsaiRequestId = 1;
 const pendingBonsaiRequests = new Map();
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
+const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
 const WEBGPU_RUNTIME_BITGPU = 'bitgpu';
+const TEXT_TRANSFER_STATUSES = new Set(['starting', 'queued', 'downloading', 'paused', 'stopping']);
 const VISION_DOWNLOAD_STATE_MESSAGE = 'webgpu-vision-download-state';
 const visionDownloadFiles = new Map();
 let visionDownloadState = null;
@@ -163,6 +165,31 @@ function isBitgpuTextModel(modelId, runtime) {
   return String(modelId || '').trim() === WEBGPU_BONSAI27_MODEL_ID;
 }
 
+function isActiveTextTransfer(state) {
+  return TEXT_TRANSFER_STATUSES.has(String(state?.status || '').toLowerCase());
+}
+
+async function probeExistingTextWorkerStatus(modelId) {
+  try {
+    if (isBitgpuTextModel(modelId)) {
+      if (!bonsaiWorker) return null;
+      return await sendBonsaiWorkerMessage('text-download-status', { modelId });
+    }
+    if (!visionWorker) return null;
+    return await sendVisionWorkerMessage('text-download-status', { modelId });
+  } catch {
+    return null;
+  }
+}
+
+async function findActiveTextTransfer(requestedModel) {
+  const otherModel = isBitgpuTextModel(requestedModel)
+    ? WEBGPU_LFM25_MODEL_ID
+    : WEBGPU_BONSAI27_MODEL_ID;
+  const other = await probeExistingTextWorkerStatus(otherModel);
+  return isActiveTextTransfer(other) ? other : null;
+}
+
 function settleBonsaiRequest(data) {
   if (data?.type === 'text-download-state') {
     try {
@@ -297,10 +324,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-download-status') {
-        sendResponse(await sendTextWorkerMessage(message.model, 'text-download-status', {
+        const status = await sendTextWorkerMessage(message.model, 'text-download-status', {
           modelId: message.model,
           dtype: message.dtype,
-        }, { runtime: message.runtime }));
+        }, { runtime: message.runtime });
+        const activeTransfer = await findActiveTextTransfer(message.model);
+        sendResponse(activeTransfer ? { ...status, activeTransfer } : status);
         return;
       }
       if (message.type === 'webgpu-download-start') {

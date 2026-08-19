@@ -190,10 +190,32 @@ async function readVisionState() {
   }
 }
 
+function isTrackedTextTransfer(state) {
+  return Boolean(normalizedStatus(state?.status));
+}
+
+function resolveTextModelState(polled) {
+  if (isTrackedTextTransfer(polled?.activeTransfer)) return { ...polled.activeTransfer };
+  if (isTrackedTextTransfer(polled)) {
+    const next = { ...polled };
+    delete next.activeTransfer;
+    return next;
+  }
+  if (isTrackedTextTransfer(textModelState)
+      && String(textModelState.modelId || '')
+      && String(textModelState.modelId) !== String(polled?.modelId || '')) {
+    return textModelState;
+  }
+  if (!polled) return textModelState;
+  const next = { ...polled };
+  delete next.activeTransfer;
+  return next;
+}
+
 async function requestTextModelState(enabled) {
   if (enabled !== true || !globalThis.chrome?.offscreen) return;
   const state = await send({ target: 'background', action: 'get_webgpu_download_status' });
-  if (state) textModelState = state;
+  if (state) textModelState = resolveTextModelState(state);
 }
 
 function normalizedStatus(value) {
@@ -201,12 +223,19 @@ function normalizedStatus(value) {
   return ACTIVE_STATUSES.has(status) || ATTENTION_STATUSES.has(status) ? status : '';
 }
 
+function textModelTitle(state) {
+  const modelId = String(state?.modelId || '');
+  if (modelId === 'prism-ml/Bonsai-27B-gguf') return t('ap.models.text.bonsai');
+  if (modelId === 'LiquidAI/LFM2.5-2.6B-ONNX') return t('ap.models.text.lfm');
+  return t('ap.models.text.title');
+}
+
 function modelItem(state, kind) {
   const status = normalizedStatus(state?.status);
   if (!ACTIVE_STATUSES.has(status) && !ATTENTION_STATUSES.has(status)) return null;
   return {
     id: `model-${kind}`,
-    title: t(kind === 'text' ? 'ap.models.text.title' : 'ap.models.vision.title'),
+    title: kind === 'text' ? textModelTitle(state) : t('ap.models.vision.title'),
     status,
     progress: progressFor(state || {}),
     loaded: state?.loaded,
@@ -215,6 +244,7 @@ function modelItem(state, kind) {
     href: pageUrl('apocalypse-mode.html'),
     kind: 'model',
     modelKind: kind,
+    modelId: state?.modelId,
   };
 }
 
@@ -465,8 +495,12 @@ async function runItemAction(item, action) {
     } else if (item.kind === 'model') {
       const suffix = item.modelKind === 'vision' ? '_vision' : '';
       const command = action === 'resume' ? `start_webgpu${suffix}_download` : `${action}_webgpu${suffix}_download`;
-      const state = await send({ target: 'background', action: command });
-      if (item.modelKind === 'text' && state) textModelState = state;
+      const state = await send({
+        target: 'background',
+        action: command,
+        model: item.modelId,
+      });
+      if (item.modelKind === 'text' && state) textModelState = resolveTextModelState(state);
     } else if (item.kind === 'component' || item.kind === 'pdf') {
       if (action === 'stop' && item.kind === 'pdf' && !ACTIVE_STATUSES.has(item.status)) {
         await stopPausedPdf(item);

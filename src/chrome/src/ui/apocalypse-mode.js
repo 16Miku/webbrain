@@ -314,12 +314,13 @@ function updateOverallModelsReadiness() {
   } else if (textStatus === 'error' || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
     kind = 'error';
     key = 'ap.models.status.error';
-  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready') {
+  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready' && !anyOtherWebgpuTextBusy()) {
     kind = 'ready';
     key = 'ap.models.status.ready';
-  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused') {
+  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused' || anyOtherWebgpuTextPaused()) {
     key = 'ap.models.status.paused';
   } else if (['checking', 'downloading', 'stopping'].includes(textStatus)
+    || anyOtherWebgpuTextBusy()
     || ['starting', 'downloading', 'stopping'].includes(visionStatus)
     || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)
     || ['downloading', 'verifying', 'extracting', 'indexing'].includes(corpusStatus)
@@ -385,14 +386,46 @@ function updateWebgpuTextPresetUi() {
   if (size) size.textContent = `${preset?.size || '1.55 GB'} · WebGPU`;
   const warning = document.querySelector('[data-webgpu-text-warning]');
   if (warning) warning.hidden = preset?.id === WEBGPU_MODEL_ID;
+  const copy = document.querySelector('[data-webgpu-text-copy]');
+  if (copy) {
+    const key = preset?.id === WEBGPU_MODEL_ID ? 'ap.webgpu.rag' : 'ap.webgpu.rag.pro';
+    copy.dataset.i18n = key;
+    copy.textContent = t(key);
+  }
   for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
     input.checked = input.value === (preset?.id || WEBGPU_MODEL_ID);
   }
 }
 
+const webgpuTextStateByModel = new Map();
+const WEBGPU_TEXT_BUSY_STATUSES = new Set(['starting', 'queued', 'downloading', 'stopping', 'paused']);
+
+function otherWebgpuTextStates() {
+  const selected = selectedWebgpuModelId();
+  return [...webgpuTextStateByModel.values()].filter(state => state.modelId && state.modelId !== selected);
+}
+
+function anyOtherWebgpuTextBusy() {
+  return otherWebgpuTextStates().some(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status));
+}
+
+function anyOtherWebgpuTextPaused() {
+  return otherWebgpuTextStates().some(state => state.status === 'paused');
+}
+
 function setWebgpuDownloadState(state) {
   const normalized = normalizeWebgpuDownloadState(state);
-  if (normalized.modelId && normalized.modelId !== selectedWebgpuModelId()) return;
+  if (normalized.modelId) {
+    const liveStatus = String(state?.status || normalized.status);
+    webgpuTextStateByModel.set(normalized.modelId, {
+      ...normalized,
+      status: WEBGPU_TEXT_BUSY_STATUSES.has(liveStatus) ? liveStatus : normalized.status,
+    });
+  }
+  if (normalized.modelId && normalized.modelId !== selectedWebgpuModelId()) {
+    updateOverallModelsReadiness();
+    return;
+  }
   webgpuDownloadState = normalized;
   updateWebgpuDownloadPanel();
 }

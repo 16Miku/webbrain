@@ -3390,11 +3390,11 @@ async function handleMessage(msg, sender) {
     case 'get_webgpu_download_status':
       return await providerManager.getWebgpuDownloadStatus();
     case 'start_webgpu_download':
-      return await providerManager.startWebgpuDownload();
+      return await providerManager.startWebgpuDownload(msg);
     case 'pause_webgpu_download':
       return await providerManager.pauseWebgpuDownload();
     case 'stop_webgpu_download':
-      return await providerManager.stopWebgpuDownload();
+      return await providerManager.stopWebgpuDownload(msg);
 
     case 'test_vision_provider': {
       return await providerManager.testVisionProvider();

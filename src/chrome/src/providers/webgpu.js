@@ -15,7 +15,7 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
   Object.freeze({
     id: WEBGPU_LFM25_MODEL_ID,
     runtime: WEBGPU_RUNTIME_ONNX,
-    label: 'LFM2.5 2.6B',
+    label: 'Basic',
     size: '1.55 GB',
     dtype: WEBGPU_DTYPE,
     dtypeLabel: WEBGPU_DTYPE,
@@ -23,7 +23,7 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
   Object.freeze({
     id: WEBGPU_BONSAI27_MODEL_ID,
     runtime: WEBGPU_RUNTIME_BITGPU,
-    label: 'Bonsai 27B',
+    label: 'Pro',
     size: '3.8 GB',
     dtype: WEBGPU_BONSAI27_DTYPE,
     dtypeLabel: WEBGPU_BONSAI27_DTYPE,
@@ -246,17 +246,28 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     return response;
   }
 
-  async startDownload() {
+  _textDownloadTarget(options = {}) {
+    const model = String(options.model || this.model).trim() || this.model;
+    return {
+      model,
+      runtime: webgpuModelRuntime(model),
+      dtype: webgpuModelDtype(model, options.dtype || this.dtype),
+      requireTools: webgpuModelRequiresToolTemplate(model),
+    };
+  }
+
+  async startDownload(options = {}) {
+    const target = this._textDownloadTarget(options);
     const response = await this._dispatch({
       type: 'webgpu-download-start',
-      model: this.model,
-      runtime: webgpuModelRuntime(this.model),
+      model: target.model,
+      runtime: target.runtime,
       device: this.device,
-      dtype: this.dtype,
-      requireTools: this.requiresToolTemplate,
+      dtype: target.dtype,
+      requireTools: target.requireTools,
     });
     if (!response || response.error) {
-      throw new Error(response?.error || `Unable to download ${webgpuModelDisplayName(this.model)}.`);
+      throw new Error(response?.error || `Unable to download ${webgpuModelDisplayName(target.model)}.`);
     }
     return response;
   }
@@ -269,12 +280,13 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     return response;
   }
 
-  async stopDownload() {
+  async stopDownload(options = {}) {
+    const target = this._textDownloadTarget(options);
     const response = await this._dispatch({
       type: 'webgpu-download-stop',
-      model: this.model,
-      runtime: webgpuModelRuntime(this.model),
-      dtype: this.dtype,
+      model: target.model,
+      runtime: target.runtime,
+      dtype: target.dtype,
     });
     if (!response || response.error) {
       throw new Error(response?.error || 'Unable to stop the WebGPU model download.');

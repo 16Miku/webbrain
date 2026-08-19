@@ -23963,6 +23963,12 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: destructive tracker Stop action is not confirmed`);
     assert.match(script, /start_webgpu\$\{suffix\}_download[\s\S]*?\$\{action\}_webgpu\$\{suffix\}_download/,
       `${browser}: tracker controls do not route text and vision model actions to the background host`);
+    assert.match(script, /function resolveTextModelState/,
+      `${browser}: download tracker overwrites an in-flight text model with the selected preset's idle status`);
+    assert.match(script, /activeTransfer/,
+      `${browser}: download tracker does not keep a live text-model transfer after switching presets`);
+    assert.match(script, /model: item\.modelId/,
+      `${browser}: tracker Stop\/Resume for a text model must target the in-flight model, not only the selected preset`);
     assert.match(script, /action:\s*'apocalypse_mode',[\s\S]*?command,[\s\S]*?id:\s*item\.sourceId/,
       `${browser}: tracker controls do not route Wikipedia actions to the background archive manager`);
     assert.match(script, /action:\s*'emergency_download'|sendEmergencyDownloadCommand\('start_corpus'\)/,
@@ -49809,8 +49815,8 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       'custom-owner/custom-model',
     );
     assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B', runtime: 'onnx' },
-      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Bonsai 27B', runtime: 'bitgpu' },
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'Basic', runtime: 'onnx' },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Pro', runtime: 'bitgpu' },
     ]);
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
@@ -50317,6 +50323,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const apocalypseCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs'), 'utf8');
+  const emergencyCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/emergency-copy.mjs'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
@@ -50416,6 +50423,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
   assert.match(host, /'webgpu-download-status'/);
+  assert.match(host, /function findActiveTextTransfer/);
+  assert.match(host, /activeTransfer/);
+  assert.match(host, /probeExistingTextWorkerStatus/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-download-status'/);
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?sendVisionWorkerMessage\('stop-vision-download'/);
@@ -50480,12 +50491,19 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-webgpu-text-preset/);
   assert.match(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'LFM2\.5 2\.6B'/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Bonsai 27B'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Basic'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Pro'/);
+  assert.match(apocalypseHtml, />Basic<\/span>/);
+  assert.match(apocalypseHtml, />Pro<\/span>/);
+  assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
+  assert.match(emergencyCopy, /'ap\.webgpu\.rag\.pro': 'Runs Bonsai 27B on your GPU/);
   assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);
   assert.match(apocalypseScript, /webgpuModelPreset/);
   assert.match(apocalypseScript, /webgpuPresetHydrated/);
   assert.match(apocalypseScript, /normalized\.modelId !== selectedWebgpuModelId\(\)/);
+  assert.match(apocalypseScript, /function anyOtherWebgpuTextBusy/);
+  assert.match(apocalypseScript, /ap\.webgpu\.rag\.pro/);
+  assert.match(apocalypseHtml, /data-webgpu-text-copy/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
   assert.match(apocalypseHtml, /id="vision-model-test"[^>]*data-i18n="st\.vision\.test"[^>]*disabled/);
