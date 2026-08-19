@@ -25805,10 +25805,11 @@ test('Apocalypse Mode rolls back an interrupted OPFS write session before resumi
 
 test('Apocalypse Mode bounds production OPFS write sessions', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const pieceCount = 120;
     const record = {
       id: 'bounded-session', status: 'queued', generation: 1, updatedAt: 1,
-      filename: 'archive.zim', size: 10, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
-      pieceHashes: Array(10).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
+      filename: 'archive.zim', size: pieceCount, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: Array(pieceCount).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
       target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 0, bytesDownloaded: 0, retryCount: 0,
     };
     const records = new Map([[record.id, record]]);
@@ -25828,8 +25829,89 @@ test('Apocalypse Mode bounds production OPFS write sessions', async () => {
     const result = await manager.processNext();
 
     assert.equal(result.archive.status, 'queued', `${label}: default wake consumed the entire archive`);
-    assert.equal(result.archive.pieceIndex, 8, `${label}: default write batch was not bounded`);
+    assert.equal(result.archive.pieceIndex, 96, `${label}: default write batch was not bounded`);
     assert.equal(closes, 1, `${label}: bounded write batch was not committed`);
+  }
+});
+
+test('Apocalypse Mode prefetches the next archive piece before writing', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const events = [];
+    const records = new Map();
+    const manager = runtime.createApocalypseArchiveManager({
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(value => ({ ...value })); },
+        async getArchive(id) { const value = records.get(id); return value ? { ...value } : null; },
+        async putArchive(value) { records.set(value.id, { ...value }); return value; },
+      },
+      storage: {
+        async write(_target, offset) { events.push(`write:${offset}`); },
+      },
+      fetchImpl: async (_url, request) => {
+        events.push(`fetch:${request.headers.Range}`);
+        const offset = Number(request.headers.Range.match(/bytes=(\d+)-/)[1]);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(offset + 1).buffer; } };
+      },
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'prefetch-download',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['valid', 'valid', 'valid'], downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.status, 'ready', `${label}: prefetched download did not finish`);
+    assert.deepEqual(
+      events.slice(0, 3),
+      ['fetch:bytes=0-0', 'fetch:bytes=1-1', 'write:0'],
+      `${label}: next piece was not fetched while the current piece was still being stored`,
+    );
+    assert.deepEqual(events, [
+      'fetch:bytes=0-0', 'fetch:bytes=1-1', 'write:0',
+      'fetch:bytes=2-2', 'write:1', 'write:2',
+    ], `${label}: prefetch skipped or reordered a verified piece`);
+  }
+});
+
+test('Apocalypse Mode ends a write session when the wake budget elapses', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    let nowValue = 1000;
+    let closes = 0;
+    const manager = runtime.createApocalypseArchiveManager({
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(value => ({ ...value })); },
+        async getArchive(id) { const value = records.get(id); return value ? { ...value } : null; },
+        async putArchive(value) { records.set(value.id, { ...value }); return value; },
+      },
+      storage: { async createWriter() { return { async write() {}, async close() { closes += 1; }, async abort() {} }; } },
+      fetchImpl: async () => {
+        nowValue += 10;
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+      },
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'budget-lease',
+      now: () => nowValue,
+      maxPiecesPerWake: 50,
+      wakeBudgetMs: 5,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 10, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: Array(10).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive.status, 'queued', `${label}: elapsed wake budget kept downloading`);
+    assert.equal(result.archive.pieceIndex, 1, `${label}: elapsed wake budget did not stop after the in-flight piece`);
+    assert.equal(closes, 1, `${label}: budget-limited write batch was not committed`);
   }
 });
 

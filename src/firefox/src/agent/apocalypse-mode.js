@@ -1023,7 +1023,9 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
 }
 
 const MAX_RETRY_ATTEMPTS = 6;
-const DEFAULT_MAX_PIECES_PER_WAKE = 8;
+// 8 pieces (~32 MiB) reopened the OPFS writable too often on multi-GB archives.
+const DEFAULT_MAX_PIECES_PER_WAKE = 96;
+const DEFAULT_WAKE_BUDGET_MS = 60_000;
 const BASE_RETRY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 export const APOCALYPSE_DOWNLOAD_ALARM = 'wb_apocalypse_archive_download';
@@ -1038,6 +1040,24 @@ async function defaultDigestHex(bytes, algorithm) {
 
 function retryDelay(attempt) {
   return Math.min(MAX_RETRY_MS, BASE_RETRY_MS * (2 ** Math.max(0, attempt - 1)));
+}
+
+async function fetchArchivePiece(fetchImpl, record, pieceIndex, signal) {
+  const offset = Number(pieceIndex) * Number(record.pieceLength);
+  const expectedLength = Math.min(Number(record.pieceLength), Number(record.size) - offset);
+  const response = await fetchImpl(record.downloadUrl, {
+    method: 'GET',
+    credentials: 'omit',
+    redirect: 'follow',
+    headers: { Range: `bytes=${offset}-${offset + expectedLength - 1}` },
+    signal,
+  });
+  if (!response?.ok || (response.status !== 206 && !(offset === 0 && expectedLength === Number(record.size)))) {
+    throw new Error(`Archive download returned HTTP ${response?.status || 0} without the requested byte range.`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength !== expectedLength) throw new Error(`Archive piece length mismatch (${bytes.byteLength}/${expectedLength}).`);
+  return { pieceIndex: Number(pieceIndex), offset, bytes };
 }
 
 function downloadable(record, now) {
@@ -1103,6 +1123,10 @@ export function createApocalypseArchiveManager(options = {}) {
   const maxPiecesPerWake = Number.isFinite(configuredMaxPieces)
     ? Math.max(1, Math.floor(configuredMaxPieces))
     : DEFAULT_MAX_PIECES_PER_WAKE;
+  const configuredWakeBudget = Number(options.wakeBudgetMs);
+  const wakeBudgetMs = Number.isFinite(configuredWakeBudget)
+    ? Math.max(0, Math.floor(configuredWakeBudget))
+    : DEFAULT_WAKE_BUDGET_MS;
   const controllers = new Map();
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');
@@ -1314,22 +1338,19 @@ export function createApocalypseArchiveManager(options = {}) {
         usedWriteSession = true;
       }
       let piecesProcessed = 0;
+      const wakeStartedAt = now();
+      let inflightPiece = fetchArchivePiece(fetchImpl, record, record.pieceIndex, controller.signal);
       while (true) {
-      const offset = Number(record.pieceIndex) * Number(record.pieceLength);
-      const expectedLength = Math.min(Number(record.pieceLength), Number(record.size) - offset);
-      const response = await fetchImpl(record.downloadUrl, {
-        method: 'GET',
-        credentials: 'omit',
-        redirect: 'follow',
-        headers: { Range: `bytes=${offset}-${offset + expectedLength - 1}` },
-        signal: controller.signal,
-      });
-      if (!response?.ok || (response.status !== 206 && !(offset === 0 && expectedLength === Number(record.size)))) {
-        throw new Error(`Archive download returned HTTP ${response?.status || 0} without the requested byte range.`);
+      const { pieceIndex, offset, bytes } = await inflightPiece;
+      const bytesDownloaded = offset + bytes.byteLength;
+      const finished = bytesDownloaded >= Number(record.size);
+      const continueInWake = !finished
+        && piecesProcessed + 1 < maxPiecesPerWake
+        && (now() - wakeStartedAt) < wakeBudgetMs;
+      if (continueInWake) {
+        inflightPiece = fetchArchivePiece(fetchImpl, record, pieceIndex + 1, controller.signal);
       }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength !== expectedLength) throw new Error(`Archive piece length mismatch (${bytes.byteLength}/${expectedLength}).`);
-      const expectedHash = String(record.pieceHashes[record.pieceIndex] || '').toLowerCase();
+      const expectedHash = String(record.pieceHashes[pieceIndex] || '').toLowerCase();
       const actualHash = await digestHex(bytes, record.pieceHashAlgorithm);
       if (!expectedHash || actualHash.toLowerCase() !== expectedHash) throw new Error('Archive piece integrity check failed.');
       let current = await store.getArchive(record.id);
@@ -1346,9 +1367,6 @@ export function createApocalypseArchiveManager(options = {}) {
         if (!current) await storage.remove(record.target, record).catch(() => {});
         return await cancelledResult();
       }
-      const bytesDownloaded = offset + bytes.byteLength;
-      const finished = bytesDownloaded >= Number(record.size);
-      const continueInWake = !finished && piecesProcessed + 1 < maxPiecesPerWake;
       if (!continueInWake && writer) {
         if (finished && typeof writer.truncate === 'function') await writer.truncate(Number(record.size));
         await closeWriteSession();
@@ -1368,7 +1386,7 @@ export function createApocalypseArchiveManager(options = {}) {
         status: finished ? 'ready' : continueInWake ? 'downloading' : 'queued',
         leaseToken: continueInWake ? leaseToken : '',
         leaseUntil: continueInWake ? now() + 5 * 60_000 : 0,
-        pieceIndex: Number(record.pieceIndex) + 1,
+        pieceIndex: pieceIndex + 1,
         bytesDownloaded,
         retryCount: 0,
         nextRetryAt: 0,
