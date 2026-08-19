@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.2.3] - 2026-08-19
+
+### Changed
+- feat(offline-rag): keep adult CPR off baby queries and measure it
+- fix(offline-rag): keep the field guide when encyclopedia passages outrank it
+- fix(offline-rag): stop discarding the Wikipedia article that answers the question
+- feat(offline-rag): recover misspelled, inflected, and suffixed queries
+- Add hover tooltip on Edge card for Mac/Linux users
+
 ## [32.2.2] - 2026-08-18
 
 ### Changed
