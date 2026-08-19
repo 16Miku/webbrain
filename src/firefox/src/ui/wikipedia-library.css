@@ -118,6 +118,7 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible { 
 .import-controls button.danger { color:var(--bad);border-color:var(--border);background:var(--panel-strong); }
 .import-controls button:disabled { opacity:.52;cursor:not-allowed; }
 .replacement-note { margin:15px 0 0;color:var(--muted);font-size:12px; }
+.import-note { margin:12px 0 0;color:var(--muted);font-size:12px;line-height:1.5;text-wrap:pretty; }
 .notice { min-height:22px;margin-top:10px;color:var(--muted);font-size:12px;font-weight:650; }
 .notice[data-kind="error"] { color:var(--bad); }
 .notice[data-kind="success"] { color:var(--good); }

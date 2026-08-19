@@ -91,6 +91,7 @@ const englishApocalypseModeCopy = {
   'ap.space.insufficient': 'This archive needs {required}, but only {available} is available in extension storage.',
   'ap.confirm_install': 'Install {title}?\n\nExact download: {size}\nArchive date: {date}\nLanguage: {language}\nSource: {source}\nLicense: {license}\nIntegrity: {pieces} verified {algorithm} pieces\n\n{storage}',
   'ap.confirm_import': 'Import {title}?\n\nExact file size: {size}\nArchive date: {date}\nLanguage: {language}\nSource: {source}\nLicense: {license}\n\n{storage}',
+  'ap.import.search_note': 'Downloads from the catalog always support full-text search. A file you supply yourself may only support title search, because not every archive is published with a search index. WebBrain checks after import and tells you which one you have.',
   'ap.import.source': 'User-provided offline Wikipedia file',
   'ap.import.license': 'Not declared by the archive metadata. Wikipedia text is generally CC BY-SA 4.0 unless otherwise noted; archive components may use additional licenses.',
   'ap.install_cancelled': 'Install cancelled.',

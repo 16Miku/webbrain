@@ -23,13 +23,20 @@ vision provider becomes active again. Disabling local vision in Settings is an
 explicit opt-out and is not undone when the service worker restarts.
 
 Archive language is selected independently from WebBrain's interface language.
-The management page reads Kiwix's current OPDS catalog and offers an
-**All / Starter / Introductions / Text / Full** tier selector. **Starter** shows
-curated article subsets, **Introductions** shows compact `mini` editions,
-**Text** shows complete `nopic` text editions without images, and **Full** shows
-the complete editions that typically include images and other media. **All**
-leaves the catalog unfiltered. Before an install, WebBrain resolves the
-archive's Metalink and shows its exact byte size,
+The management page reads Kiwix's current OPDS catalog and offers a language plus
+one of two editions: **Text only**, which resolves to the complete `nopic`
+edition, and **With images**, which resolves to the complete `maxi` edition.
+Both are complete-encyclopedia (`_all_`) archives. `selectWikipediaArchiveVariant`
+accepts nothing else, so curated subsets and compact `mini` editions are never
+installed from the catalog even though `classifyArchiveTier` can still label them.
+
+The required first download is separate and fixed: Simple English, complete, and
+`nopic`. See `isBasicWikipediaArchive`. It is text-only, not an images edition.
+
+Because both selectable editions are complete `_all_` archives, both carry the
+Kiwix full-text index: `nopic` omits images, not the index.
+
+Before an install, WebBrain resolves the archive's Metalink and shows its exact byte size,
 archive date, catalog publisher/source and license notice, integrity-piece
 count, and the browser's reported free extension storage. The archive is
 downloaded only after that confirmation. Existing `.zim` files are validated
@@ -93,11 +100,23 @@ query terms, and returns the resolved canonical Wikipedia URL plus embedded
 archive language/date/source/license metadata. Local archive text uses the same
 untrusted-result boundary as live third-party content.
 
-This first implementation intentionally does not embed Kiwix's GPL-licensed
-JavaScript/libzim code in WebBrain's MIT extension. It implements the documented
-openZIM structures directly and uses the MIT-licensed `fzstd` decoder. It does
-not yet read a ZIM's Xapian full-text index, so conceptual queries that do not
-contain an article title may need a more specific title.
+WebBrain reads the documented openZIM structures directly, using the MIT-licensed
+`fzstd` decoder, and that reader stays the only path used for reading articles.
+
+Full-text search over a ZIM's Xapian index requires GPL code, which the
+repository owner has approved bundling. Until the runtime is built and vendored,
+`ZIM_XAPIAN_RUNTIME_BUNDLED` is `false` and every archive answers through title
+lookup, so a conceptual query that does not contain an article title may need a
+more specific title. See `docs/offline-rag-licensing.md` for the decision, the
+release licensing strategy, and the reproducible build.
+
+`hasFullTextIndex()` on the reader reports whether an archive carries an index at
+all, checking both the current `X/fulltext/xapian` entry and the older
+`Z//fulltextIndex/xapian` one. Every catalog edition has one. A manually imported
+`.zim` may not, and libzim gives no way to tell the difference on its own: its
+`search()` swallows the error and returns no results, which is indistinguishable
+from a query that matched nothing. Probing the archive directly keeps that
+distinction honest and lets an unindexed archive skip loading the runtime.
 
 ## Browser limits
 
