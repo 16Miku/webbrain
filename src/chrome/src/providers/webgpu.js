@@ -6,9 +6,28 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 export const WEBGPU_VISION_MODEL_ID = 'LiquidAI/LFM2.5-VL-450M-ONNX';
 export const WEBGPU_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
 export const WEBGPU_LFM25_MODEL_ID = WEBGPU_MODEL_ID;
+export const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 export const WEBGPU_DTYPE = 'q4f16';
+export const WEBGPU_BONSAI27_DTYPE = 'q1';
+export const WEBGPU_RUNTIME_ONNX = 'onnx';
+export const WEBGPU_RUNTIME_BITGPU = 'bitgpu';
 export const WEBGPU_MODEL_PRESETS = Object.freeze([
-  Object.freeze({ id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B', size: '1.55 GB', dtype: WEBGPU_DTYPE, dtypeLabel: WEBGPU_DTYPE }),
+  Object.freeze({
+    id: WEBGPU_LFM25_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX,
+    label: 'LFM2.5 2.6B',
+    size: '1.55 GB',
+    dtype: WEBGPU_DTYPE,
+    dtypeLabel: WEBGPU_DTYPE,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI27_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_BITGPU,
+    label: 'Bonsai 27B',
+    size: '3.8 GB',
+    dtype: WEBGPU_BONSAI27_DTYPE,
+    dtypeLabel: WEBGPU_BONSAI27_DTYPE,
+  }),
 ]);
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
@@ -53,19 +72,36 @@ export function normalizeWebgpuModelId(value) {
   return model;
 }
 
+export function webgpuModelPreset(modelId) {
+  try {
+    const normalized = normalizeWebgpuModelId(modelId);
+    return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function isShippedWebgpuPreset(modelId) {
+  return webgpuModelPreset(modelId) != null;
+}
+
+export function webgpuModelRuntime(modelId) {
+  return webgpuModelPreset(modelId)?.runtime || WEBGPU_RUNTIME_ONNX;
+}
+
 export function webgpuModelDisplayName(modelId) {
   const normalized = normalizeWebgpuModelId(modelId);
-  return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.label || normalized;
+  return webgpuModelPreset(normalized)?.label || normalized;
 }
 
 export function webgpuModelDtype(modelId, fallback = WEBGPU_DTYPE) {
   const normalized = normalizeWebgpuModelId(modelId);
-  return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.dtype || fallback;
+  return webgpuModelPreset(normalized)?.dtype || fallback;
 }
 
 export function webgpuModelRequiresToolTemplate(modelId) {
   const normalized = normalizeWebgpuModelId(modelId);
-  return !WEBGPU_MODEL_PRESETS.some(preset => preset.id === normalized);
+  return !isShippedWebgpuPreset(normalized);
 }
 
 class WebGPUOffscreenProvider extends BaseLLMProvider {
@@ -115,8 +151,8 @@ class WebGPUOffscreenProvider extends BaseLLMProvider {
 }
 
 /**
- * General, endpoint-free local provider backed by a Transformers.js ONNX model.
- * Model data is downloaded by Transformers.js and cached by the browser.
+ * General, endpoint-free local provider. LFM2.5 2.6B uses Transformers.js ONNX;
+ * Bonsai 27B uses the vendored bitgpu worker.
  */
 export class WebGPUProvider extends WebGPUOffscreenProvider {
   constructor(config = {}) {
@@ -162,6 +198,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     const response = await this._dispatch({
       type: 'webgpu-chat',
       model: this.model,
+      runtime: webgpuModelRuntime(this.model),
       device: this.device,
       dtype: this.dtype,
       requireTools: this.requiresToolTemplate,
@@ -177,7 +214,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       // while an exhausted generation budget is deterministic for the same
       // prompt. The generic two-second network retry only repeats either costly
       // GPU failure, so surface these terminally instead.
-      if (/OrtRun|BufferManager::Download|mapAsync|GPUBuffer|device lost|used its generation budget before finishing reasoning/i.test(error.message)) {
+      if (/OrtRun|BufferManager::Download|mapAsync|GPUBuffer|device lost|used its generation budget before finishing reasoning|cannot hold Bonsai 27B/i.test(error.message)) {
         error.isAskStreamTerminalError = true;
       }
       throw error;
@@ -200,6 +237,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     const response = await this._dispatch({
       type: 'webgpu-download-status',
       model: this.model,
+      runtime: webgpuModelRuntime(this.model),
       dtype: this.dtype,
     });
     if (!response || response.error) {
@@ -212,6 +250,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     const response = await this._dispatch({
       type: 'webgpu-download-start',
       model: this.model,
+      runtime: webgpuModelRuntime(this.model),
       device: this.device,
       dtype: this.dtype,
       requireTools: this.requiresToolTemplate,
@@ -234,6 +273,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     const response = await this._dispatch({
       type: 'webgpu-download-stop',
       model: this.model,
+      runtime: webgpuModelRuntime(this.model),
       dtype: this.dtype,
     });
     if (!response || response.error) {

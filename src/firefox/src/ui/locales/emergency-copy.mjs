@@ -5,7 +5,7 @@ const emergencyCopy = {
   'ap.emergency.desc': 'Choose another Wikipedia language or an edition with images, then add OpenStax textbooks and trusted emergency PDFs.',
   'ap.emergency.open': 'Open Emergency Box',
   'ap.emergency.gate': 'Complete the three basic downloads above first. Emergency Box stays locked so the core offline chat, vision, and knowledge setup is ready before you add optional resources.',
-  'ap.webgpu.rag': 'Runs LiquidAI/LFM2.5-2.6B-ONNX on your GPU, with chats staying on this device. When a Wikipedia archive is installed, local chat retrieves matching passages and cites the archive date.',
+  'ap.webgpu.rag': 'Runs the selected local text model on your GPU, with chats staying on this device. When a Wikipedia archive is installed, local chat retrieves matching passages and cites the archive date.',
   'ap.reader.open': 'Read',
   'ar.page_title': 'WebBrain — Offline Wikipedia Reader',
   'ar.back': 'Back to Apocalypse Mode',

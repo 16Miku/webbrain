@@ -17,6 +17,9 @@ local LFM2.5-VL vision fallback and immediately starts caching its approximately
 770 MB model from Hugging Face in the background. The management page shows
 that progress, and the download continues if the page is closed as long as
 Chrome remains open. Wikipedia archives still require their own confirmation.
+The local **text** model defaults to LFM2.5 2.6B (about 1.55 GB) and that
+download starts automatically. Bonsai 27B is an opt-in second preset
+(about 3.8 GB, 16 GB+ RAM/VRAM recommended) and is never auto-downloaded.
 WebBrain checks hardware WebGPU support before selecting the local provider. If
 that check or an automatically started download fails, any configured remote
 vision provider becomes active again. Disabling local vision in Settings is an

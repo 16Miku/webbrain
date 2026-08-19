@@ -6,6 +6,8 @@ import {
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  isShippedWebgpuPreset,
+  webgpuModelDisplayName,
 } from './providers/webgpu.js';
 import { Agent } from './agent/agent.js';
 import {
@@ -1843,8 +1845,8 @@ async function standaloneRunProviderId(msg) {
   }
   const config = providerManager.getAll().webgpu;
   const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
-  if (config?.model !== WEBGPU_MODEL_ID || download?.ready !== true) {
-    throw new Error('Download LFM2.5 2.6B in Apocalypse Mode before using WebGPU in standalone chat.');
+  if (!isShippedWebgpuPreset(config?.model) || download?.ready !== true) {
+    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_MODEL_ID)} in Apocalypse Mode before using WebGPU in standalone chat.`);
   }
   return providerId;
 }
@@ -3332,7 +3334,7 @@ async function handleMessage(msg, sender) {
       return {
         ok: true,
         enabled: apocalypse?.enabled === true,
-        ready: config?.model === WEBGPU_MODEL_ID && download?.ready === true,
+        ready: isShippedWebgpuPreset(config?.model) && download?.ready === true,
         status: download?.status || 'not-downloaded',
       };
     }

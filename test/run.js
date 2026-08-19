@@ -890,6 +890,7 @@ const {
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
   WEBGPU_LFM25_MODEL_ID,
+  WEBGPU_BONSAI27_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_DTYPE,
@@ -26581,7 +26582,9 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: Emergency Box must render locked until basic setup is ready');
       assert.match(pageScript, /function updateEmergencyBoxGate\(readinessKind\)[\s\S]*?const locked = readinessKind !== 'ready'/,
         'chrome: Emergency Box is not gated by aggregate readiness');
-      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID/, 'chrome: Apocalypse Mode does not configure the fixed WebGPU download');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: 16384/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
+      assert.match(pageHtml, /data-webgpu-text-preset/, 'chrome: the local text model picker is missing');
+      assert.match(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: the Bonsai 27B preset is missing');
       assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
         'chrome: the removed local text Test action is still wired');
       assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
@@ -26590,6 +26593,8 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     } else {
       assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
       assert.doesNotMatch(pageHtml, /id="webgpu-provider-card"/, 'firefox: Chromium-only WebGPU provider block leaked into Apocalypse Mode');
+      assert.doesNotMatch(pageHtml, /data-webgpu-text-preset/, 'firefox: Chromium-only WebGPU text picker leaked into Apocalypse Mode');
+      assert.doesNotMatch(pageHtml, /Bonsai-27B/, 'firefox: Bonsai WebGPU preset leaked into Apocalypse Mode');
     }
     const libraryScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/wikipedia-library.js'), 'utf8');
     for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
@@ -38056,16 +38061,24 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'standalone WebGPU background guard is missing');
   const apocalypseState = { enabled: true };
   const webgpuState = { ready: true };
+  let webgpuModel = 'LiquidAI/LFM2.5-2.6B-ONNX';
   const standaloneRunProviderId = vm.runInNewContext(
     `(${background.slice(helperStart, helperEnd)})`,
     {
       WEBGPU_MODEL_ID: 'LiquidAI/LFM2.5-2.6B-ONNX',
+      isShippedWebgpuPreset: (model) => [
+        'LiquidAI/LFM2.5-2.6B-ONNX',
+        'prism-ml/Bonsai-27B-gguf',
+      ].includes(model),
+      webgpuModelDisplayName: (model) => (
+        model === 'prism-ml/Bonsai-27B-gguf' ? 'Bonsai 27B' : 'LFM2.5 2.6B'
+      ),
       apocalypseController: {
         handle: async () => ({ enabled: apocalypseState.enabled }),
       },
       providerManager: {
         getAll: () => ({
-          webgpu: { model: 'LiquidAI/LFM2.5-2.6B-ONNX' },
+          webgpu: { model: webgpuModel },
         }),
         getWebgpuDownloadStatus: async () => ({ ready: webgpuState.ready }),
       },
@@ -38090,6 +38103,12 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   await assert.rejects(
     standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
     /Download LFM2\.5 2\.6B/,
+  );
+  webgpuState.ready = true;
+  webgpuModel = 'prism-ml/Bonsai-27B-gguf';
+  assert.equal(
+    await standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    'webgpu',
   );
 });
 
@@ -49789,9 +49808,12 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
       'custom-owner/custom-model',
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B' },
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B', runtime: 'onnx' },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Bonsai 27B', runtime: 'bitgpu' },
     ]);
+    assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
     assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
@@ -49807,11 +49829,13 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.deepEqual(sentMessages[1], {
       type: 'webgpu-download-status',
       model: WEBGPU_MODEL_ID,
+      runtime: 'onnx',
       dtype: WEBGPU_DTYPE,
     });
     assert.deepEqual(sentMessages[2], {
       type: 'webgpu-chat',
       model: WEBGPU_MODEL_ID,
+      runtime: 'onnx',
       device: 'webgpu',
       dtype: WEBGPU_DTYPE,
       requireTools: false,
@@ -50227,6 +50251,63 @@ test('Apocalypse text download fixes the LFM preset and avoids duplicate starts'
   }
 });
 
+test('Apocalypse enable keeps a selected Bonsai preset and does not auto-download it', async () => {
+  const previousChrome = globalThis.chrome;
+  const sentMessages = [];
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-probe') {
+            callback({ ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: 'test' });
+            return;
+          }
+          if (message.type === 'webgpu-download-status') {
+            callback({
+              ok: true,
+              status: 'not-downloaded',
+              ready: false,
+              modelId: WEBGPU_BONSAI27_MODEL_ID,
+              dtype: 'q1',
+            });
+            return;
+          }
+          callback({ ok: false, error: `Unexpected message: ${message.type}` });
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async () => {},
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    manager.providers.set('webgpu', manager._createProvider('webgpu', {
+      ...manager._defaultConfigs().webgpu,
+      model: WEBGPU_BONSAI27_MODEL_ID,
+      dtype: 'q1',
+      configured: false,
+    }));
+    const result = await manager.enableAndStartWebgpuTextDownload();
+    assert.equal(result.ok, true);
+    assert.equal(result.started, false);
+    assert.equal(result.status, 'not-downloaded');
+    assert.equal(manager.getAll().webgpu.model, WEBGPU_BONSAI27_MODEL_ID);
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-probe',
+      'webgpu-download-status',
+    ], 'enabling Apocalypse Mode must not auto-start the 3.8 GB Bonsai download');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
@@ -50322,7 +50403,13 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
   assert.match(host, /'webgpu-download-start'/);
-  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendResponse\(await sendVisionWorkerMessage\('start-download-text'/);
+  assert.match(host, /function isBitgpuTextModel/);
+  assert.match(host, /bonsai-worker\.js/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, 'start-download-text'/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-chat'/);
+  assert.match(host, /disposeOtherTextRuntime\('bitgpu'\)/);
+  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendTextWorkerMessage\(message\.model, 'start-download-text'/);
+  assert.match(host, /exclusive: true/);
   assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
@@ -50388,14 +50475,23 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseCopy, /'ap\.models\.vision\.title': 'Vision Model'/);
   assert.match(apocalypseCopy, /'ap\.models\.wikipedia\.title': 'Wikipedia in Simple English'/);
   assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
+  assert.match(apocalypseHtml, /data-webgpu-text-preset/);
+  assert.match(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
+  assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'LFM2\.5 2\.6B'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Bonsai 27B'/);
+  assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);
+  assert.match(apocalypseScript, /webgpuModelPreset/);
+  assert.match(apocalypseScript, /webgpuPresetHydrated/);
+  assert.match(apocalypseScript, /normalized\.modelId !== selectedWebgpuModelId\(\)/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
   assert.match(apocalypseHtml, /id="vision-model-test"[^>]*data-i18n="st\.vision\.test"[^>]*disabled/);
   assert.doesNotMatch(apocalypseHtml, /(?:base-url|api-key|__custom__|data-webgpu-model-link)/);
-  assert.doesNotMatch(apocalypseScript, /WEBGPU_MODEL_PRESETS|normalizeWebgpuModelId|set_active_provider/);
+  assert.doesNotMatch(apocalypseScript, /normalizeWebgpuModelId|set_active_provider/);
   assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
   assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
-  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
@@ -50418,6 +50514,28 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
+
+  const bonsaiWorker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/bonsai-worker.js'), 'utf8');
+  assert.match(bonsaiWorker, /const WEBGPU_BONSAI27_THINK_BUDGET = 128/);
+  assert.match(bonsaiWorker, /kvCache: 'q8'/);
+  assert.match(bonsaiWorker, /maxSeqLen: WEBGPU_BONSAI27_MAX_SEQ_LEN/);
+  assert.match(bonsaiWorker, /think: true/);
+  assert.match(bonsaiWorker, /createEngine/);
+  assert.match(bonsaiWorker, /createChat/);
+  assert.match(bonsaiWorker, /cannot hold Bonsai 27B/);
+  assert.doesNotMatch(bonsaiWorker, /pipeline\('text-generation'/);
+  assert.doesNotMatch(bonsaiWorker, /@huggingface\/transformers/);
+
+  const bitgpuDir = path.join(ROOT, 'src/chrome/vendor/bitgpu');
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'LICENSE'), 'utf8'), /^MIT License/);
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'package.json'), 'utf8'), /"version": "0\.19\.1"/);
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'index.js'), 'utf8'), /export \{ GpuOutOfMemoryError, WebGPUUnavailableError, createEngine \}/);
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'chat.js'), 'utf8'), /createChat/);
+  const bonsaiManifest = JSON.parse(fs.readFileSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/manifest.json'), 'utf8'));
+  assert.equal(bonsaiManifest.data_file, 'Bonsai-27B-Q1_0.gguf');
+  assert.ok(fs.existsSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin')));
+  assert.equal(fs.existsSync(path.join(ROOT, 'src/firefox/vendor/bitgpu')), false,
+    'Firefox must not package the Chromium-only bitgpu runtime');
 });
 
 test('Vision Model removal deletes only its cache entries', async () => {

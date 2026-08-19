@@ -523,12 +523,28 @@ button:active:not(:disabled),
   letter-spacing:.01em;
 }
 
-.ap-page .local-model-head > .meta {
-  padding:3px 7px;
-  border:1px solid var(--border);
-  color:var(--muted);
-  font:10px/1.4 var(--font-mono);
-  letter-spacing:.04em;
+.ap-page .webgpu-text-presets {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 14px;
+  margin:8px 0 4px;
+}
+
+.ap-page .webgpu-text-preset {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  color:var(--text);
+  cursor:pointer;
+}
+
+.ap-page .webgpu-text-preset input {
+  margin:0;
+}
+
+.ap-page [data-webgpu-text-warning] {
+  margin:4px 0 0;
 }
 
 .ap-page .webgpu-transfer,

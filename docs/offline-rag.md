@@ -8,7 +8,8 @@ field-reference documents covering medical, survival, education, and
 communication topics.
 
 Standalone WebGPU chat has no tools. Retrieved passages are injected into the
-prompt first; the model answers from that evidence or says it cannot.
+prompt first; the selected local text model (LFM2.5 2.6B by default, or opt-in
+Bonsai 27B) answers from that evidence or says it cannot.
 
 ## What's new
 
@@ -65,9 +66,11 @@ prompt first; the model answers from that evidence or says it cannot.
    always use FTS5 when the text pack is `ready`; E5 vectors are used when the
    model and index are available.
 4. **Fuse and budget.** Hits are fused, diversified, and wrapped as untrusted
-   evidence. WebGPU generation is capped (currently 2048 new tokens). If the
-   model spends that budget inside reasoning, WebBrain retries with a shorter
-   evidence prompt rather than inventing an answer.
+   evidence. WebGPU generation is capped (currently 2048 new tokens). LFM2.5
+   strips `<think>` from the visible answer; Bonsai 27B uses a 128-token think
+   budget so reasoning cannot consume the whole decode. If the model spends that
+   budget inside reasoning, WebBrain retries with a shorter evidence prompt
+   rather than inventing an answer.
 5. **Cite locally.** Each kept passage gets a stable token (`[WB-E-…]` or
    Wikipedia equivalent) and a local reader URL. Emergency Box citations add an
    **Open PDF** link only when that catalog PDF is installed.
