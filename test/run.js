@@ -23678,6 +23678,7 @@ test('Emergency PDF ignores stale search and page operations', async () => {
 test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
   const files = [
     'src/agent/apocalypse-mode.js',
+    'src/agent/archive-opfs-writer-worker.js',
     'src/agent/emergency-box.js',
     'src/agent/emergency-corpus-release.js',
     'src/agent/emergency-download-controller.js',
@@ -25485,6 +25486,19 @@ test('Apocalypse Mode OPFS storage reuses one writable for a multi-piece batch',
   }
 });
 
+test('Apocalypse Mode writes large OPFS archives through a dedicated sync handle', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/apocalypse-mode.js`), 'utf8');
+    const worker = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/archive-opfs-writer-worker.js`), 'utf8');
+    assert.match(source, /archive-opfs-writer-worker\.js/, `${browser}: OPFS writer worker is not used`);
+    assert.match(source, /record\.status === 'queued'\s*\|\|\s*record\.status === 'downloading'/, `${browser}: in-flight downloads still wait for a 5-minute lease`);
+    assert.doesNotMatch(source, /status === 'downloading' && Number\(record\.leaseUntil\) <= now/, `${browser}: stale download leases still block the next wake`);
+    assert.match(source, /storage\.durableWrites === true \|\| piecesProcessed \+ 1 < maxPiecesPerWake/, `${browser}: durable OPFS writes still cap a wake at 96 pieces`);
+    assert.match(worker, /createSyncAccessHandle/, `${browser}: archive writer worker does not use a sync OPFS handle`);
+    assert.match(worker, /handle\.flush\(\)/, `${browser}: archive writer worker does not flush durable pieces`);
+  }
+});
+
 test('Apocalypse Mode automatic policy checks daily but still requires confirmation before download', async () => {
   const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
     <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
@@ -25560,11 +25574,11 @@ test('Apocalypse Mode startup preserves update alarms and rearms persisted downl
       { id: 'retry', status: 'retrying', nextRetryAt: 16_000 },
       { id: 'ready', status: 'ready' },
     ];
-    assert.equal(await controller.syncDownloadSchedule(), 2_000, `${label}: startup did not schedule the earliest persisted attempt`);
-    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: an unexpired lease was not rearmed for its expiry`);
+    assert.equal(await controller.syncDownloadSchedule(), 0, `${label}: an in-flight download waited for its lease to expire`);
+    assert.deepEqual(downloadSchedules, [0, 0], `${label}: an unexpired lease blocked the next wake`);
     config.enabled = false;
     assert.equal(await controller.syncDownloadSchedule(), null, `${label}: disabled Apocalypse Mode rearmed downloads`);
-    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: disabled startup created a download alarm`);
+    assert.deepEqual(downloadSchedules, [0, 0], `${label}: disabled startup created a download alarm`);
   }
 });
 

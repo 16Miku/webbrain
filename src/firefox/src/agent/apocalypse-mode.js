@@ -917,6 +917,52 @@ async function putArchiveIfCurrent(store, record, expected) {
   return true;
 }
 
+function archiveWriterWorkerUrl() {
+  try {
+    return new URL('./archive-opfs-writer-worker.js', import.meta.url);
+  } catch {
+    return null;
+  }
+}
+
+function createArchiveWriterClient(worker) {
+  let nextId = 1;
+  const pending = new Map();
+  worker.addEventListener('message', (event) => {
+    const { id, ok, error } = event.data || {};
+    const waiter = pending.get(id);
+    if (!waiter) return;
+    pending.delete(id);
+    if (ok) waiter.resolve();
+    else waiter.reject(new Error(error || 'Archive writer failed.'));
+  });
+  worker.addEventListener('error', (event) => {
+    const error = new Error(event?.message || 'Archive writer crashed.');
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  });
+  return {
+    request(type, payload, transfer) {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, type, payload }, transfer || []);
+      });
+    },
+    terminate() {
+      try { worker.terminate(); } catch { /* already gone */ }
+      for (const waiter of pending.values()) waiter.reject(new Error('Archive writer closed.'));
+      pending.clear();
+    },
+  };
+}
+
+function transferablePiece(bytes) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const copy = view.slice();
+  return { bytes: copy.buffer, transfer: [copy.buffer] };
+}
+
 export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.storage) {
   async function directory(create = true) {
     if (typeof storageManager?.getDirectory !== 'function') throw new Error('Origin Private File System storage is unavailable in this browser.');
@@ -940,39 +986,113 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     if (target?.kind !== 'opfs') throw new Error('Unsupported archive storage target.');
     return await (await directory(create)).getFileHandle(safeArchiveKey(target.key), { create });
   }
-  return {
+  let syncClient = null;
+  let syncWriterKey = '';
+  let syncWriter = null;
+
+  async function closeSyncWriter() {
+    const writer = syncWriter;
+    syncWriter = null;
+    syncWriterKey = '';
+    if (!writer) return;
+    try { await writer.close(); } catch { /* already closed */ }
+  }
+
+  async function openSyncWriter(target) {
+    const key = safeArchiveKey(target.key);
+    if (syncWriter && syncWriterKey === key) return syncWriter;
+    await closeSyncWriter();
+    if (typeof Worker !== 'function') throw new Error('Dedicated archive writer workers are unavailable.');
+    const url = archiveWriterWorkerUrl();
+    if (!url) throw new Error('The dedicated archive writer worker is unavailable.');
+    if (!syncClient) syncClient = createArchiveWriterClient(new Worker(url));
+    await syncClient.request('open', { key });
+    let settled = false;
+    const writer = {
+      durable: true,
+      async write(offset, bytes) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        const piece = transferablePiece(bytes);
+        await syncClient.request('write', { offset, bytes: piece.bytes }, piece.transfer);
+      },
+      async truncate(size) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        await syncClient.request('truncate', { size });
+      },
+      async close() {
+        if (settled) return;
+        settled = true;
+        if (syncWriter === writer) {
+          syncWriter = null;
+          syncWriterKey = '';
+        }
+        await syncClient.request('close', {});
+      },
+      async abort(reason) {
+        if (settled) return;
+        settled = true;
+        if (syncWriter === writer) {
+          syncWriter = null;
+          syncWriterKey = '';
+        }
+        try { await syncClient.request('abort', { reason: reason?.message || String(reason || '') }); }
+        catch { /* exclusive handle is already gone */ }
+      },
+    };
+    syncWriter = writer;
+    syncWriterKey = key;
+    return writer;
+  }
+
+  async function openStreamingWriter(target) {
+    const handle = await fileHandle(target, true, 'readwrite');
+    const writable = await handle.createWritable({ keepExistingData: true });
+    let settled = false;
+    return {
+      durable: false,
+      async write(offset, bytes) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        await writable.seek(offset);
+        await writable.write(bytes);
+      },
+      async truncate(size) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        await writable.truncate(size);
+      },
+      async close() {
+        if (settled) return;
+        await writable.close();
+        settled = true;
+      },
+      async abort(reason) {
+        if (settled) return;
+        await writable.abort(reason);
+        settled = true;
+      },
+    };
+  }
+
+  const storage = {
     // The extension manifest declares unlimitedStorage, so estimate() is
     // informational rather than a hard OPFS quota.
     quotaLimited: false,
+    durableWrites: false,
     async ensurePermission(target, mode = 'read') {
       await fileHandle(target, false, mode);
       return true;
     },
     async createWriter(target) {
-      const handle = await fileHandle(target, true, 'readwrite');
-      const writable = await handle.createWritable({ keepExistingData: true });
-      let settled = false;
-      return {
-        async write(offset, bytes) {
-          if (settled) throw new Error('Archive writer is already closed.');
-          await writable.seek(offset);
-          await writable.write(bytes);
-        },
-        async truncate(size) {
-          if (settled) throw new Error('Archive writer is already closed.');
-          await writable.truncate(size);
-        },
-        async close() {
-          if (settled) return;
-          await writable.close();
-          settled = true;
-        },
-        async abort(reason) {
-          if (settled) return;
-          await writable.abort(reason);
-          settled = true;
-        },
-      };
+      if (target?.kind === 'opfs') {
+        try {
+          const writer = await openSyncWriter(target);
+          storage.durableWrites = true;
+          return writer;
+        } catch {
+          await closeSyncWriter().catch(() => {});
+          storage.durableWrites = false;
+        }
+      }
+      return await openStreamingWriter(target);
     },
     async write(target, offset, bytes) {
       const writer = await this.createWriter(target);
@@ -986,6 +1106,9 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     },
     async remove(target) {
       if (target?.kind === 'file-handle') return;
+      if (target?.kind === 'opfs' && syncWriterKey === safeArchiveKey(target.key)) {
+        await closeSyncWriter().catch(() => {});
+      }
       try {
         const dir = await directory(false);
         await dir.removeEntry(safeArchiveKey(target?.key));
@@ -1004,6 +1127,9 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       }
     },
     async open(target) {
+      if (target?.kind === 'opfs' && syncWriterKey === safeArchiveKey(target.key)) {
+        await closeSyncWriter().catch(() => {});
+      }
       return await (await fileHandle(target, false, 'read')).getFile();
     },
     async truncate(target, size) {
@@ -1020,12 +1146,13 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       return typeof storageManager?.estimate === 'function' ? await storageManager.estimate() : {};
     },
   };
+  return storage;
 }
 
 const MAX_RETRY_ATTEMPTS = 6;
 // 8 pieces (~32 MiB) reopened the OPFS writable too often on multi-GB archives.
 const DEFAULT_MAX_PIECES_PER_WAKE = 96;
-const DEFAULT_WAKE_BUDGET_MS = 60_000;
+const DEFAULT_WAKE_BUDGET_MS = 120_000;
 const BASE_RETRY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 export const APOCALYPSE_DOWNLOAD_ALARM = 'wb_apocalypse_archive_download';
@@ -1062,15 +1189,14 @@ async function fetchArchivePiece(fetchImpl, record, pieceIndex, signal) {
 
 function downloadable(record, now) {
   return record.status === 'queued'
-    || (record.status === 'downloading' && Number(record.leaseUntil) <= now)
+    || record.status === 'downloading'
     || (record.status === 'retrying' && Number(record.nextRetryAt) <= now);
 }
 
 function nextArchiveScheduleDelay(records, timestamp) {
   const delays = (records || []).map((record) => {
-    if (record.status === 'queued') return 0;
+    if (record.status === 'queued' || record.status === 'downloading') return 0;
     if (record.status === 'retrying') return Math.max(0, (Number(record.nextRetryAt) || 0) - timestamp);
-    if (record.status === 'downloading') return Math.max(0, (Number(record.leaseUntil) || 0) - timestamp);
     return Number.POSITIVE_INFINITY;
   });
   const delay = Math.min(...delays);
@@ -1323,19 +1449,24 @@ export function createApocalypseArchiveManager(options = {}) {
         await storage.ensurePermission(record.target, 'readwrite');
       }
       if (typeof storage.createWriter === 'function') {
-        const marked = {
-          ...record,
-          writeSessionStartPiece: Number(record.pieceIndex) || 0,
-          writeSessionStartBytes: Number(record.bytesDownloaded) || 0,
-          updatedAt: now(),
-        };
-        const saved = await putArchiveIfCurrent(store, marked, {
-          status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
-        });
-        if (!saved) return await cancelledResult();
-        record = marked;
         writer = await storage.createWriter(record.target, record);
-        usedWriteSession = true;
+        usedWriteSession = storage.durableWrites !== true;
+        if (usedWriteSession) {
+          const marked = {
+            ...record,
+            writeSessionStartPiece: Number(record.pieceIndex) || 0,
+            writeSessionStartBytes: Number(record.bytesDownloaded) || 0,
+            updatedAt: now(),
+          };
+          const saved = await putArchiveIfCurrent(store, marked, {
+            status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
+          });
+          if (!saved) {
+            await abortWriteSession(new Error('Archive download was cancelled.')).catch(() => {});
+            return await cancelledResult();
+          }
+          record = marked;
+        }
       }
       let piecesProcessed = 0;
       const wakeStartedAt = now();
@@ -1345,7 +1476,7 @@ export function createApocalypseArchiveManager(options = {}) {
       const bytesDownloaded = offset + bytes.byteLength;
       const finished = bytesDownloaded >= Number(record.size);
       const continueInWake = !finished
-        && piecesProcessed + 1 < maxPiecesPerWake
+        && (storage.durableWrites === true || piecesProcessed + 1 < maxPiecesPerWake)
         && (now() - wakeStartedAt) < wakeBudgetMs;
       if (continueInWake) {
         inflightPiece = fetchArchivePiece(fetchImpl, record, pieceIndex + 1, controller.signal);
@@ -1369,7 +1500,7 @@ export function createApocalypseArchiveManager(options = {}) {
       }
       if (!continueInWake && writer) {
         if (finished && typeof writer.truncate === 'function') await writer.truncate(Number(record.size));
-        await closeWriteSession();
+        if (finished || usedWriteSession) await closeWriteSession();
       }
       if (finished && !usedWriteSession && typeof storage.truncate === 'function') {
         await storage.truncate(record.target, Number(record.size));
