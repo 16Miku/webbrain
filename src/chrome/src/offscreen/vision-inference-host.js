@@ -9,6 +9,7 @@ let bonsaiWorkerReady = null;
 let nextBonsaiRequestId = 1;
 const pendingBonsaiRequests = new Map();
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
+const WEBGPU_RUNTIME_BITGPU = 'bitgpu';
 const VISION_DOWNLOAD_STATE_MESSAGE = 'webgpu-vision-download-state';
 const visionDownloadFiles = new Map();
 let visionDownloadState = null;
@@ -157,7 +158,8 @@ function detachVisionPreload(cancelMode) {
   visionPreloadLifecycle = null;
 }
 
-function isBitgpuTextModel(modelId) {
+function isBitgpuTextModel(modelId, runtime) {
+  if (String(runtime || '').trim() === WEBGPU_RUNTIME_BITGPU) return true;
   return String(modelId || '').trim() === WEBGPU_BONSAI27_MODEL_ID;
 }
 
@@ -199,8 +201,6 @@ async function ensureBonsaiWorker() {
     bonsaiWorkerReady = null;
   });
   bonsaiWorkerReady = sendBonsaiWorkerMessage('init', {
-    engineUrl: chrome.runtime.getURL('vendor/bitgpu/index.js'),
-    chatUrl: chrome.runtime.getURL('vendor/bitgpu/chat.js'),
     manifestUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/manifest.json'),
     auxUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin'),
     dataUrl: 'https://huggingface.co/prism-ml/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf',
@@ -219,8 +219,8 @@ async function disposeOtherTextRuntime(keepRuntime) {
   }
 }
 
-async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = false } = {}) {
-  if (isBitgpuTextModel(modelId)) {
+async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = false, runtime } = {}) {
+  if (isBitgpuTextModel(modelId, runtime) || isBitgpuTextModel(payload.modelId, payload.runtime)) {
     if (exclusive) await disposeOtherTextRuntime('bitgpu');
     await ensureBonsaiWorker();
     return sendBonsaiWorkerMessage(type, payload);
@@ -280,13 +280,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!WEBGPU_MESSAGE_TYPES.has(message?.type)) return false;
   (async () => {
     try {
-      await ensureVisionWorker();
+      // Bonsai is GGUF/bitgpu. Never boot Transformers.js for those messages —
+      // that runtime always fetches config.json, which the GGUF repo does not have.
+      if (!isBitgpuTextModel(message.model, message.runtime)) {
+        await ensureVisionWorker();
+      }
       if (message.type === 'webgpu-vision-preload') {
+        await ensureVisionWorker();
         const started = startVisionPreload(message);
         sendResponse({ ok: true, started });
         return;
       }
       if (message.type === 'webgpu-probe' || message.type === 'webgpu-vision-probe') {
+        await ensureVisionWorker();
         sendResponse(await sendVisionWorkerMessage('probe'));
         return;
       }
@@ -294,7 +300,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse(await sendTextWorkerMessage(message.model, 'text-download-status', {
           modelId: message.model,
           dtype: message.dtype,
-        }));
+        }, { runtime: message.runtime }));
         return;
       }
       if (message.type === 'webgpu-download-start') {
@@ -303,7 +309,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           device: message.device,
           dtype: message.dtype,
           requireTools: message.requireTools === true,
-        }, { exclusive: true }));
+        }, { exclusive: true, runtime: message.runtime }));
         return;
       }
       if (message.type === 'webgpu-download-pause') {
@@ -317,7 +323,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse(await sendTextWorkerMessage(message.model, 'stop-text-download', {
           modelId: message.model,
           dtype: message.dtype,
-        }));
+        }, { runtime: message.runtime }));
         return;
       }
       if (message.type === 'webgpu-vision-pause') {
@@ -385,7 +391,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           requireTools: message.requireTools === true,
           messages: message.messages || [],
           options: message.options || {},
-        }, { exclusive: true }));
+        }, { exclusive: true, runtime: message.runtime }));
         return;
       }
       const response = await sendVisionWorkerMessage('chat', {

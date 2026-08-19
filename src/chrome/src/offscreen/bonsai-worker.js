@@ -7,6 +7,9 @@
  * model id.
  */
 
+import { createEngine } from '../../vendor/bitgpu/index.js';
+import { createChat } from '../../vendor/bitgpu/chat.js';
+
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 const WEBGPU_BONSAI27_DTYPE = 'q1';
 const CACHE_NAME = 'bitgpu-models-v1';
@@ -17,8 +20,6 @@ const WEBGPU_BONSAI27_MAX_SEQ_LEN = 4096;
 const OOM_HINT = 'This machine cannot hold Bonsai 27B in GPU memory. Use LFM2.5 2.6B instead.';
 
 let workerConfig = null;
-let engineLibrary = null;
-let chatLibrary = null;
 let textRuntime = null;
 let textRuntimeLoadPromise = null;
 let modelOperationQueue = Promise.resolve();
@@ -91,17 +92,11 @@ function mapGpuError(error) {
 }
 
 async function loadLibraries() {
-  if (engineLibrary && chatLibrary) return { engineLibrary, chatLibrary };
   if (!workerConfig) throw new Error('Bonsai WebGPU worker was not initialized.');
-  try {
-    engineLibrary = await import(workerConfig.engineUrl);
-    chatLibrary = await import(workerConfig.chatUrl);
-  } catch (error) {
-    engineLibrary = null;
-    chatLibrary = null;
-    throw new Error(`The packaged bitgpu runtime could not be loaded: ${error?.message || error}`);
+  if (typeof createEngine !== 'function' || typeof createChat !== 'function') {
+    throw new Error('The packaged bitgpu runtime could not be loaded.');
   }
-  return { engineLibrary, chatLibrary };
+  return { createEngine, createChat };
 }
 
 async function cachedResponse(url, { signal } = {}) {
@@ -198,11 +193,11 @@ async function getTextRuntime({ localFilesOnly = false } = {}) {
     throw new Error(`${WEBGPU_BONSAI27_MODEL_ID} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   textRuntimeLoadPromise = (async () => {
-    const { engineLibrary: engineApi, chatLibrary: chatApi } = await loadLibraries();
+    const { createEngine: engineCreate, createChat: chatCreate } = await loadLibraries();
     navigator.storage?.persist?.().catch(() => {});
     const controller = textDownloadAbortController;
     const { fetchJson, fetchStream } = createFetchHooks(controller?.signal);
-    const engine = await engineApi.createEngine({
+    const engine = await engineCreate({
       manifestUrl: workerConfig.manifestUrl,
       auxUrl: workerConfig.auxUrl,
       dataUrl: workerConfig.dataUrl,
@@ -231,7 +226,7 @@ async function getTextRuntime({ localFilesOnly = false } = {}) {
         postTextDownloadState();
       },
     });
-    const chat = await chatApi.createChat(engine, {
+    const chat = await chatCreate(engine, {
       tokenizerJsonUrl: workerConfig.tokenizerJsonUrl,
       tokenizerConfigUrl: workerConfig.tokenizerConfigUrl,
       fetchJson,

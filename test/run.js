@@ -50409,7 +50409,9 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-chat'/);
   assert.match(host, /disposeOtherTextRuntime\('bitgpu'\)/);
   assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendTextWorkerMessage\(message\.model, 'start-download-text'/);
-  assert.match(host, /exclusive: true/);
+  assert.match(host, /exclusive: true, runtime: message\.runtime/);
+  assert.match(host, /isBitgpuTextModel\(message\.model, message\.runtime\)/);
+  assert.match(host, /if \(!isBitgpuTextModel\(message\.model, message\.runtime\)\) \{\s*await ensureVisionWorker\(\);/);
   assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
@@ -50522,9 +50524,13 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /think: true/);
   assert.match(bonsaiWorker, /createEngine/);
   assert.match(bonsaiWorker, /createChat/);
+  assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/index\.js'/);
+  assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/chat\.js'/);
   assert.match(bonsaiWorker, /cannot hold Bonsai 27B/);
   assert.doesNotMatch(bonsaiWorker, /pipeline\('text-generation'/);
   assert.doesNotMatch(bonsaiWorker, /@huggingface\/transformers/);
+  assert.match(worker, /function assertOnnxTextModel/);
+  assert.match(worker, /GGUF checkpoint and cannot be loaded with Transformers\.js/);
 
   const bitgpuDir = path.join(ROOT, 'src/chrome/vendor/bitgpu');
   assert.match(fs.readFileSync(path.join(bitgpuDir, 'LICENSE'), 'utf8'), /^MIT License/);
