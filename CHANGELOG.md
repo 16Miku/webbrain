@@ -4,6 +4,203 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [32.2.2] - 2026-08-18
+
+### Changed
+- dist: rebuild submission zips for v32.2.1
+- chore(vendor): drop the unreachable ONNX jsep runtime
+- feat(offline-rag): answer with a labelled caveat when offline evidence misses
+- style update
+- fix(offline-rag): manage the answer engine on Apocalypse Mode
+- fix(offline-rag): restore answer-engine readiness on Emergency Box
+- added emergency box pdf source linking
+- docs: add remote downloads and data sources documentation with flowchart diagram
+- fix(offline-rag): search health topics, not leftover stopwords
+- fix(ui): render markdown tables in skill previews and chat history
+- Revert "fix(ui): render markdown tables in skill previews and chat history"
+- fix(ui): render markdown tables in skill previews and chat history
+- feat(offline-rag): emergency download system with semantic runtime
+- fix(offline-rag): fix progress percentage calculation in apocalypse-mode emergency text pack card
+- fix(offline-rag): fix data-i18n keys for emergency corpus and semantic model descriptions in apocalypse-mode.html
+- fix(offline-rag): publish Emergency Pack & Semantic Model download state to shared download tracker in apocalypse-mode
+- fix(offline-rag): keep offline answer engine readiness box hidden in standalone chat when apocalypse button is clicked
+- fix(offline-rag): remove redundant Open Emergency Box link from readiness section on apocalypse-mode.html
+- feat(offline-rag): show Emergency text pack and Multilingual semantic model cards in apocalypse-mode.html
+- feat(offline-rag): auto-download emergency corpus and semantic model, protect files, and hide offline answer engine
+- Replace apocalypse mode indicator dot with ☢️ nuclear waste emoji
+- added apocalypse mode visual
+- updated numbers
+- style update
+- updated changelog
+- version up
+- fix(ui): respect IME composition in composer
+- fix(offline-rag): resolve PR 280 review findings and standalone chat routing
+- fix(ui): keep markdown tables after headings and in history
+- ask webbrain a question bubble opacity 0.8 + bugfix
+- made ask webbrain a question work
+- fix(ui): render markdown tables
+- docs: add offline RAG documentation and FAQ entries
+- fix(ui): harden selection quote follow-up action
+- feat: offline RAG with emergency corpus, retrieval, and reranking
+- Stop treating editor arrows and current-slide labels as carousel failures.
+- fix(ui): keep Escape run semantics
+- fix(ui): harden selection action lifecycle
+- fix(ui): clear stale selection actions on send
+- fix(ui): keep answer selection action usable
+- fix(ui): preserve selection action lifecycle
+- fix(ui): position answer selection action before repaint
+- feat(ui): quote selected answers for follow-up questions
+- instagram carousel findings fixed
+- trigger merge re-check
+- fix(apocalypse): ignore stale PDF search results
+- fix(ui): ignore stale list refreshes
+- fix apocalypse downloads and readiness showcase
+- fix(apocalypse): validate resumed PDF ranges
+- fix(anthropic): yield done when replay fails mid-stream instead of throwing
+- test(apocalypse): reflect hidden Wikipedia callout
+- fix(settings): list built-in provider default models
+- fix(providers): keep routed o-series on legacy contract
+- add basic/full kit downloads, built-in communication reader, size estimates, and i18n translations
+- fix(anthropic): preserve thinking content across turns
+- hide Offline Wikipedia box in apocalypse mode
+- restore apocalypse-comm from backup
+- fix(content): observe final submit cancellation state
+- fix(content): observe final submit cancellation state
+- add apocalypse comm pages and update docs
+- fix(agent): verify same-URL history traversal
+- fix(providers): scope routed contract detection by provider
+- fix(providers): classify routed reasoning model contracts by provider
+- feat(providers): add OrcaRouter
+- apocalypse mode documented in english and chinese
+- style up apocalypse mode
+- fix(content): use one set_field submit path
+- fix(providers): keep routed GPT-5 Pro token contract
+- test(agent): exercise scaled click loop path
+- fix(providers): omit unset models for every local config
+- fix(content): require observed submits for set_field
+- fix(content): keep the Enter trio and submit natively only when the page did not handle Enter
+- fix(providers): bound the reasoning-contract regex and share it with settings
+- fix(i18n): localize the window permission verb and harden the prompt fallback
+- fix(providers): require a model for local servers that need one, omit for LM Studio
+- fix(azure): stop guessing the wire contract from the deployment name
+- test(agent): pin image-space coord-click bucketing under screenshot downscaling
+- Release 32.1.0 with blank provider duplicates
+- Polish message info metadata
+- Fix provider duplicate lifecycle
+- Keep offline Wikipedia library reachable
+- Restore complete Wikipedia library management
+- Guard Wikipedia history navigation races
+- Fix message info streaming and accessibility
+- Refine homepage AI story and section flow
+- fix(message-info): propagate streamed finish reasons and expose a semantic info toggle
+- Keep small Wikipedia images compact
+- Render offline equations and showcase Apocalypse Mode
+- Harden Apocalypse offline answers
+- fix(azure): use max_completion_tokens and omit temperature for reasoning deployments
+- Build localized Apocalypse offline library
+- feat(/print): extract executePrintSlashCommand helper and add behavioral tests
+- fix(message-info): pass endedAt through synthesized run_complete on restore
+- fix(duplicate-provider): address Copilot review comments
+- Fail closed on alternate message composers
+- Resolve recipient follow-ups and nested controls
+- Stop unsafe messaging workflow replay
+- Bind all recipient sends to final dispatch
+- Bind recipient verification to message dispatch
+- Allow verified conversation retargeting
+- Distinguish chat composer from navigation controls
+- Block uploads on protected messaging routes
+- Require recipient-specific header evidence
+- Harden direct-message recipient verification
+- Fix FAQ search icon alignment
+- Localize FAQ accessibility labels
+- Validate FAQ language routes
+- Move FAQ into multilingual docs
+- Fix resumable large download cancellation
+- Scope the compare base to chrome source and port-specific firefox code
+- feat: expand Apocalypse Mode for offline use
+- fix: avoid misleading message metadata
+- feat: show message info on click
+- Add duplicate provider configurations
+- Preserve selection scope for /print
+- Add /print slash command
+- Rearm Apocalypse downloads after cancellation
+- Rebuild optimized archive artifacts
+- Optimize offline archive storage and lookup
+- Rebuild offline download artifacts
+- Harden resumable offline downloads
+- Rebuild artifacts after upstream merge
+- Rebuild ZIM matching artifacts
+- Make ZIM matching locale independent
+- Rebuild Apocalypse polling artifacts
+- Keep Apocalypse polling and lookup responsive
+- Rebuild ZIM title lookup artifacts
+- Cover combined ZIM title capitalization
+- Rebuild Apocalypse keepalive artifacts
+- Keep Apocalypse workers and imports race-safe
+- Handle LFM directional scroll aliases
+- Parse LFM2.5 native tool calls
+- Document Apocalypse archive tiers
+- Limit WebGPU presets to LFM2.5
+- Rebuild Apocalypse streaming artifacts
+- Stream Apocalypse pieces within one wake
+- Clarify Apocalypse update and import behavior
+- Default WebGPU to compact prompts
+- Fix WebGPU download conflict handling
+- Rebuild Apocalypse retry artifacts
+- Preserve Apocalypse retries and redirect aliases
+- Add LFM2.5 WebGPU reasoning preset
+- Rebuild Apocalypse failure artifacts
+- Keep Apocalypse failure lifecycle progressing
+- Rebuild Apocalypse control artifacts
+- Harden Apocalypse title lookup and controls
+- Rebuild Apocalypse scheduling artifacts
+- Keep Apocalypse download scheduling race-safe
+- Rebuild download retry review artifacts
+- Harden Apocalypse download retries
+- Add Ternary Bonsai WebGPU preset
+- Rebuild schedule recovery artifacts
+- Restore Apocalypse schedules safely
+- Add Gemma WebGPU preset
+- Rebuild catalog tier review artifacts
+- Expose all Apocalypse catalog tiers
+- Use flag-only language picker trigger
+- Rebuild WebGPU progress review artifacts
+- Filter WebGPU vision download progress
+- Rebuild search race review artifacts
+- Guard Apocalypse search error state
+- Rebuild Apocalypse review artifacts
+- Fix Apocalypse completion races
+- Scope WebGPU transfer state by model
+- Rebuild 32.0.0 store archives
+- Fix Apocalypse archive lifecycle races
+- Add selectable WebGPU models
+- Keep Ling WebGPU session options mutable
+- Reduce Ling WebGPU buffer pressure
+- feat: complete Apocalypse Mode offline setup
+- Fix Ling WebGPU inference failures
+- Add managed Ling model downloads
+- fix: align Firefox minimum version
+- Keep WebGPU state out of profile sync
+- version update
+- fix: close Apocalypse Mode lifecycle races
+- fix: harden Apocalypse Mode archive lifecycle
+- feat: rework offline Wikipedia as Apocalypse Mode
+- fix: keep Wikipedia cache provenance coherent
+- fix: preserve rich Wikipedia cache records
+- feat: add offline Wikipedia retrieval
+- Add endpoint-free WebGPU local provider
+- Remove DOM handling explanation from README
+- Keep the explicit translation exception in the brief rendering
+- Trim the response-language policy prompt cost
+- Anchor fallback language on continuation
+- blog: show shipped WebGPU vision in WebBrain 31
+- Persist continuation language policy
+- Preserve language across continuations
+- Reject empty deliverable language policies
+- Fail closed on incomplete language policy
+- Preserve request language without planner
+- Fix response language policy
+
 ## [32.2.1] - 2026-08-18
 
 ### Added
