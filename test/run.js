@@ -27671,8 +27671,7 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
     assert.equal(runtime.JAVASCRIPT_LIBZIM_VERSION, '0.95', `${label}: javascript-libzim version changed`);
     assert.equal(runtime.LIBZIM_VERSION, '9.8.1', `${label}: libzim version changed`);
     assert.equal(runtime.XAPIAN_VERSION, '1.4.31', `${label}: Xapian version changed`);
-    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, false, `${label}: GPL runtime was marked bundled without approval`);
-    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'blocked-pending-owner-license-decision');
+    assert.equal(typeof runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, 'boolean', `${label}: the bundled flag is not a boolean`);
 
     const storage = { async open(target) { return new Blob([target.kind]); } };
     const fallbackCalls = [];
@@ -27753,9 +27752,29 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
   assert.doesNotMatch(chromeSource, /\bfetch\s*\(|import\s*\(\s*['"]https?:/,
     'the license-neutral adapter must not download or dynamically import runtime code');
   const licensing = fs.readFileSync(path.join(ROOT, 'docs/offline-rag-licensing.md'), 'utf8');
-  assert.match(licensing, /Status: \*\*BLOCKED — explicit repository-owner decision required\*\*/);
   assert.match(licensing, /896e4eab4986670ae9c0858312fa5225436e3498990c45df752e0be46eb4fe3d/);
   assert.match(licensing, /Approve GPL distribution[\s\S]*Reject GPL distribution[\s\S]*Use a different runtime/);
+
+  // The invariant that matters is not which way the decision went, but that the
+  // code flag can never get ahead of the recorded decision. Bundling a GPL
+  // runtime without a signed-off approval is the failure worth catching.
+  const approved = /- \[x\] \*\*Approve GPL distribution/.test(licensing);
+  const decided = /- \[x\] \*\*(Approve GPL distribution|Reject GPL distribution|Use a different runtime)/.test(licensing);
+  assert.ok(decided, 'the licensing record does not select any owner decision');
+  for (const [label, runtime] of [['chrome', ZimXapianCh], ['firefox', ZimXapianFx]]) {
+    if (runtime.ZIM_XAPIAN_RUNTIME_BUNDLED !== true) continue;
+    assert.ok(approved, `${label}: the GPL runtime is marked bundled but the record does not approve it`);
+    assert.doesNotMatch(licensing, /Approver: _pending_/,
+      `${label}: the GPL runtime is marked bundled but no approver is recorded`);
+    assert.doesNotMatch(licensing, /Decision date: _pending_/,
+      `${label}: the GPL runtime is marked bundled but no decision date is recorded`);
+  }
+  if (approved) {
+    assert.match(licensing, /GPL-3\.0-or-later/,
+      'an approved record must state the license the release artifacts are conveyed under');
+    assert.match(licensing, /libzim_release/,
+      'an approved record must warn against the prebuilt build path');
+  }
 });
 
 test('multilingual E5 reranker is deterministic, prefixed, cancelable, and never downloads on a question', async () => {

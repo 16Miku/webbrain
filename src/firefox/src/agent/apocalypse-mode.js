@@ -1503,7 +1503,7 @@ export async function searchApocalypseArchives(query, options = {}) {
     reportStatus('not_ready');
     return [];
   }
-  const providers = options.providers || [createKiwixZimProvider({ storage })];
+  const providers = options.providers || defaultWikipediaProviders({ storage });
   const results = [];
   const archiveErrors = [];
   for (const record of archives) {
@@ -1539,6 +1539,8 @@ export async function searchApocalypseArchives(query, options = {}) {
   const maximumResults = options.searchAllArchives ? 40 : 10;
   return results.slice(0, Math.max(1, Math.min(maximumResults, Number(options.limit) || 3)));
 }
+import { ZIM_XAPIAN_RUNTIME_BUNDLED, createZimXapianProvider } from './zim-xapian.js';
+import { ZIM_XAPIAN_WORKER_PATH, createZimXapianRuntime } from './zim-xapian-runtime.js';
 
 function cachedKiwixArchive(record, storage, cache) {
   const targetIdentity = record?.target?.kind === 'file-handle'
@@ -1558,6 +1560,34 @@ function cachedKiwixArchive(record, storage, cache) {
     if (cache.get(key) === pending) cache.delete(key);
   });
   return pending;
+}
+
+// Full-text search when the GPL runtime is bundled, title lookup otherwise. The
+// Xapian provider wraps the title provider rather than replacing it, so an
+// archive with no index, a missing runtime, or a runtime error still answers.
+export function defaultWikipediaProviders(options = {}) {
+  const storage = options.storage || createOpfsArchiveStorage();
+  const titleProvider = createKiwixZimProvider({ storage, archiveCache: options.archiveCache });
+  if (!ZIM_XAPIAN_RUNTIME_BUNDLED) return [titleProvider];
+  const createWorker = options.createWorker || defaultXapianWorkerFactory();
+  if (!createWorker) return [titleProvider];
+  return [createZimXapianProvider({
+    storage,
+    fallbackProvider: titleProvider,
+    runtime: createZimXapianRuntime({
+      createWorker,
+      hasFullTextIndex: record => titleProvider.hasFullTextIndex(record),
+    }),
+  })];
+}
+
+function defaultXapianWorkerFactory() {
+  const api = globalThis.chrome?.runtime?.getURL
+    ? globalThis.chrome
+    : (globalThis.browser?.runtime?.getURL ? globalThis.browser : null);
+  if (!api || typeof Worker !== 'function') return null;
+  const url = api.runtime.getURL(ZIM_XAPIAN_WORKER_PATH);
+  return () => new Worker(url);
 }
 
 export function createKiwixZimProvider(options = {}) {
@@ -1608,7 +1638,7 @@ export async function readApocalypseArticle(archiveId, path, options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
   const record = (await store.listArchives()).find(item => item.id === archiveId && item.status === 'ready');
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
-  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  const provider = (options.providers || defaultWikipediaProviders({ storage })).find(candidate => candidate.supports(record));
   if (!provider?.read) throw new Error('This archive cannot be opened by the text reader.');
   return await provider.read(record, path, {
     maxChars: options.maxChars,
@@ -1624,7 +1654,7 @@ export async function readApocalypseImage(archiveId, path, options = {}) {
     : (await (options.store || createApocalypseStore()).listArchives())
       .find(item => item.id === archiveId && item.status === 'ready');
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
-  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  const provider = (options.providers || defaultWikipediaProviders({ storage })).find(candidate => candidate.supports(record));
   if (!provider?.readImage) throw new Error('This archive cannot provide reader images.');
   return await provider.readImage(record, path, { maxBytes: options.maxBytes });
 }
