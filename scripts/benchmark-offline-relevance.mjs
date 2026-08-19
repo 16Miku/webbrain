@@ -25,13 +25,29 @@ const sqlite3InitModule = (await import(new URL('../src/chrome/vendor/sqlite/ind
 const indexRuntime = await import(new URL('../src/chrome/src/agent/offline-rag-index.js', import.meta.url));
 const ragRuntime = await import(new URL('../src/chrome/src/agent/offline-rag.js', import.meta.url));
 const { RELAXED_RETRY_THRESHOLD } = await import(new URL('../src/chrome/src/agent/offline-retrieval.js', import.meta.url));
+const { MAX_LEXICAL_CANDIDATES_PER_SOURCE } = await import(new URL('../src/chrome/src/agent/offline-rag.js', import.meta.url));
 const { RELEVANCE_CORPUS, RELEVANCE_QUERIES } = await import(
   new URL('../test/fixtures/offline-relevance-corpus.mjs', import.meta.url)
 );
 
-// Regression floors. Raise these whenever a change improves a class of query, so
-// the next change cannot quietly give the ground back.
-const FLOORS = { 'recall@1': 0.90, 'recall@5': 0.97, mrr: 0.94 };
+// Regression floors for the harder ~250-passage fixture. Measured on this
+// corpus after age-cohort ranking: recall@1 55.4%, recall@5 87.5%, MRR 0.685
+// (keyword 57.1/96.4/0.738, question 67.9/96.4/0.792, inflection 39.3/78.6/0.536,
+// typo 35.7/82.1/0.539, fragment 57.1/85.7/0.708, non-english 75.0/85.7/0.798).
+// The 22-passage fixture was recall@1 93.8%, recall@5 100%, MRR 0.964; that drop
+// is a harder fixture, not worse retrieval. Do not raise floors back to the
+// 22-passage numbers without shrinking the corpus.
+const FLOORS = { 'recall@1': 0.53, 'recall@5': 0.85, mrr: 0.66 };
+
+const corpusIds = new Set(RELEVANCE_CORPUS.map(doc => doc.id));
+if (corpusIds.size !== RELEVANCE_CORPUS.length) {
+  throw new Error('offline-relevance-corpus: duplicate passage id');
+}
+for (const item of RELEVANCE_QUERIES) {
+  if (!corpusIds.has(item.expect)) {
+    throw new Error(`offline-relevance-corpus: query "${item.q}" expects missing id ${item.expect}`);
+  }
+}
 
 const previousLocation = globalThis.location;
 globalThis.location = { href: 'https://offline.invalid/?opfs-disable&opfs-wl-disable' };
@@ -87,12 +103,30 @@ function runMatch(match, limit) {
   return documents;
 }
 
+function searchPass(match, queryText, limit) {
+  return indexRuntime.preferMatchingAgeCohort(
+    runMatch(match, MAX_LEXICAL_CANDIDATES_PER_SOURCE).map(id => {
+      const doc = RELEVANCE_CORPUS.find(item => item.id === id);
+      return {
+        documentId: id,
+        title: doc?.title || '',
+        text: doc?.text || '',
+        language: doc?.language || 'eng',
+        collection: doc?.collection || '',
+        sourceKind: doc?.sourceKind || 'emergency-box',
+      };
+    }),
+    queryText,
+  ).map(hit => hit.documentId).slice(0, limit);
+}
+
 // Mirrors searchEmergencyLexical: exact first, relaxed only when exact is thin,
-// exact results always ranked above relaxed ones.
+// exact results always ranked above relaxed ones. Age-cohort rerank runs inside
+// each pass so a relaxed infant hit cannot leapfrog an exact adult hit.
 function search(queryText, limit = 5) {
-  const exact = runMatch(indexRuntime.buildFts5Query(queryText), limit);
+  const exact = searchPass(indexRuntime.buildFts5Query(queryText), queryText, limit);
   if (exact.length >= RELAXED_RETRY_THRESHOLD) return exact;
-  const relaxed = runMatch(indexRuntime.buildFts5Query(queryText, { relax: true }), limit);
+  const relaxed = searchPass(indexRuntime.buildFts5Query(queryText, { relax: true }), queryText, limit);
   const merged = [...exact];
   for (const id of relaxed) if (!merged.includes(id)) merged.push(id);
   return merged.slice(0, limit);
