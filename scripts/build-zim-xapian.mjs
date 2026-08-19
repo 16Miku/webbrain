@@ -12,11 +12,17 @@
  * downloads a prebuilt libzim tarball. WebBrain cannot provide corresponding
  * source for a binary it did not build. See docs/offline-rag-licensing.md.
  *
- *   node scripts/build-zim-xapian.mjs            # full build
- *   node scripts/build-zim-xapian.mjs --dry-run  # validate setup, compile nothing
- *   node scripts/build-zim-xapian.mjs --keep     # reuse an existing work tree
+ *   node scripts/build-zim-xapian.mjs                 # full build
+ *   node scripts/build-zim-xapian.mjs --dry-run       # validate setup, compile nothing
+ *   node scripts/build-zim-xapian.mjs --keep          # resume, reusing what already built
+ *   node scripts/build-zim-xapian.mjs --work <dir>    # build outside the repo
  *
  * Expect roughly 40-90 minutes on a fast machine: ICU and Xapian dominate.
+ *
+ * On Windows, prefer a --work directory on the WSL2 filesystem rather than a
+ * path under C:\. Docker bind mounts from NTFS stamp files with the host clock,
+ * which runs slightly ahead of the container and makes meson abort with "Clock
+ * skew detected", and they are far slower for builds with many small files.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -28,6 +34,10 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dryRun = process.argv.includes('--dry-run');
 const keepWorkTree = process.argv.includes('--keep');
+const workOverride = (() => {
+  const index = process.argv.indexOf('--work');
+  return index >= 0 && process.argv[index + 1] ? path.resolve(process.argv[index + 1]) : '';
+})();
 
 // Every version here must match the table in docs/offline-rag-licensing.md.
 const PIN = Object.freeze({
@@ -48,7 +58,7 @@ const PIN = Object.freeze({
 const MAKE_TARGETS = ['rename_pjsn', 'build/lib/libzim.a', 'libzim-wasm.js', 'restore_pjsn'];
 const SHIPPED_ARTIFACTS = ['libzim-wasm.js', 'libzim-wasm.wasm'];
 const IMAGE_TAG = 'webbrain-emscripten-libzim:3.1.41';
-const workTree = path.join(root, '.build', 'zim-xapian');
+const workTree = workOverride || path.join(root, '.build', 'zim-xapian');
 const vendorDirectories = [
   path.join(root, 'src', 'chrome', 'vendor', 'libzim'),
   path.join(root, 'src', 'firefox', 'vendor', 'libzim'),
@@ -122,6 +132,49 @@ function fetchSource() {
 function dockerMount(hostPath) {
   // Docker Desktop on Windows accepts a drive-letter path; POSIX passes through.
   return process.platform === 'win32' ? hostPath.replace(/\\/g, '/') : hostPath;
+}
+
+// meson aborts on any timestamp it reads as being in the future, and a Docker
+// bind mount from NTFS stamps files with the Windows clock while the container
+// runs its own slightly behind. That surfaces two dependencies deep as an
+// opaque "Clock skew detected", so measure it up front against the real mount.
+function checkClockSkew() {
+  log('\nChecking mount clock skew');
+  const probe = path.join(workTree, '.clock-probe');
+  writeFileSync(probe, 'probe');
+  const hostSeconds = Math.floor(statSync(probe).mtimeMs / 1000);
+  const args = ['run', '--rm', '-v', `${dockerMount(workTree)}:/src`, IMAGE_TAG,
+    'bash', '-c', 'echo "$(date +%s) $(stat -c %Y /src/.clock-probe)"'];
+  const result = spawnSync('docker', args, { encoding: 'utf8' });
+  rmSync(probe, { force: true });
+  if (result.status !== 0) {
+    log('  could not measure skew; continuing');
+    return;
+  }
+  const [containerNow, mountStamp] = String(result.stdout || '').trim().split(/\s+/).map(Number);
+  if (!Number.isFinite(containerNow) || !Number.isFinite(mountStamp)) {
+    log('  could not measure skew; continuing');
+    return;
+  }
+  const ahead = mountStamp - containerNow;
+  log(`  host stamp ${hostSeconds}, container now ${containerNow}, mount is ${ahead}s ahead`);
+  if (ahead <= 0) {
+    log('  ok');
+    return;
+  }
+  fail([
+    `The mounted filesystem is ${ahead}s ahead of the container clock.`,
+    'meson refuses to build against a future timestamp and will abort on zstd.',
+    '',
+    'Fix, in order of least effort:',
+    '  1. Restart Docker Desktop, or run "wsl --shutdown" and start it again.',
+    '     The VM clock drifts after the host sleeps. Then rerun with --keep to',
+    '     resume rather than rebuilding what already succeeded.',
+    '  2. Build on the WSL2 filesystem instead of a path under C:\\, which removes',
+    '     the skew entirely and is much faster for a build of this shape:',
+    '       npm run build:zim-xapian -- --work ~/zim-xapian-build',
+    '     run from inside a WSL shell.',
+  ].join('\n'));
 }
 
 function buildImage() {
@@ -285,6 +338,7 @@ log('\nFetching pinned source');
 fetchSource();
 if (!dryRun) {
   buildImage();
+  checkClockSkew();
   compile();
 }
 const artifacts = vendorArtifacts();
