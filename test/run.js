@@ -49893,7 +49893,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
       /not downloaded/,
     );
-    await assert.rejects(manager.setActive('webgpu'), /Download LFM2\.5 2\.6B/);
+    await assert.rejects(manager.setActive('webgpu'), /Download Basic/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     textModelReady = true;
