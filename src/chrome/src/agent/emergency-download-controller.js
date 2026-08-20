@@ -7,6 +7,8 @@ import {
   createEmergencyCorpusStore,
   deleteEmergencyCorpus,
   downloadAndInstallEmergencyCorpus,
+  isEmergencyCorpusRecord,
+  mergeEmergencyCorpusProgress,
   recoverEmergencyCorpusLifecycle,
 } from './emergency-corpus.js';
 import { EMERGENCY_CORPUS_RELEASE } from './emergency-corpus-release.js';
@@ -65,18 +67,33 @@ export function createEmergencyDownloadController(options = {}) {
   const requireApocalypse = options.requireApocalypse !== false;
 
   let corpusJob = null;
+  let lastCorpus = null;
   let semanticJob = null;
   const resourceJobs = new Map();
   const resourceQueue = [];
   let recovered = null;
 
+  const publishCorpus = (value) => {
+    if (!value || typeof value !== 'object') return null;
+    if (isEmergencyCorpusRecord(value)) {
+      lastCorpus = value;
+      return lastCorpus;
+    }
+    if (!isEmergencyCorpusRecord(lastCorpus)) return null;
+    lastCorpus = mergeEmergencyCorpusProgress(lastCorpus, value);
+    return lastCorpus;
+  };
+
   const publish = (patch = {}) => {
     const semantic = patch.semantic || semanticReranker.snapshot();
+    const corpus = Object.prototype.hasOwnProperty.call(patch, 'corpus')
+      ? publishCorpus(patch.corpus)
+      : null;
     if (storageArea?.set) {
       void storageArea.set({ [EMERGENCY_SEMANTIC_STATE_KEY]: semantic }).catch?.(() => {});
     }
     broadcast({
-      corpus: patch.corpus || null,
+      corpus,
       semantic,
       resource: patch.resource || null,
     });
