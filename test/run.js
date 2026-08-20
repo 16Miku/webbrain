@@ -32041,6 +32041,22 @@ test('web landing builder preserves template markers and HTML entity escaping', 
   }
 });
 
+test('download FAQ bridge is a single block-level link', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  for (const [label, html] of [['landing template', template], ['generated landing page', generated]]) {
+    assert.match(
+      html,
+      /<a class="faq-bridge" id="faq" href="(?:\{\{faq_url\}\}|\/docs\/faq\/)">/,
+      `${label}: the FAQ bridge under Downloads must be one link`,
+    );
+    assert.match(html, /<span class="faq-bridge-cta">/, `${label}: FAQ CTA text must not be a nested href`);
+    const bridge = html.slice(html.indexOf('class="faq-bridge"'), html.indexOf('class="faq-bridge-cta"'));
+    assert.doesNotMatch(bridge, /<a href=/, `${label}: FAQ title must not be a separate inner link`);
+    assert.match(html, /\.faq-bridge:hover/, `${label}: hovering anywhere on the FAQ block should restyle the card`);
+  }
+});
+
 test('Hebrew is registered as a complete RTL locale in both builds', async () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
