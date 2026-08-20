@@ -3321,8 +3321,17 @@ async function handleMessage(msg, sender) {
     // --- Provider Management ---
     case 'set_help_improve_preference': {
       if (typeof msg.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      const stored = await chrome.storage.local.get('helpImproveWebBrain');
+      const previousEnabled = stored.helpImproveWebBrain !== false;
       await chrome.storage.local.set({ helpImproveWebBrain: msg.enabled });
-      await providerManager.load();
+      try {
+        await providerManager.load();
+      } catch (error) {
+        if (previousEnabled !== msg.enabled) {
+          await chrome.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => {});
+        }
+        throw error;
+      }
       return { ok: true, enabled: msg.enabled };
     }
 

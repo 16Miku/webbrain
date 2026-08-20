@@ -2857,8 +2857,17 @@ async function handleMessage(msg, sender) {
 
     case 'set_help_improve_preference': {
       if (typeof msg.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      const stored = await browser.storage.local.get('helpImproveWebBrain');
+      const previousEnabled = stored.helpImproveWebBrain !== false;
       await browser.storage.local.set({ helpImproveWebBrain: msg.enabled });
-      await providerManager.load();
+      try {
+        await providerManager.load();
+      } catch (error) {
+        if (previousEnabled !== msg.enabled) {
+          await browser.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => {});
+        }
+        throw error;
+      }
       return { ok: true, enabled: msg.enabled };
     }
 
