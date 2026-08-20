@@ -20279,6 +20279,26 @@ test('staged screenshots use the shared vision route while ordinary uploads keep
     assert.equal(uploadResult.ok, false, `${label}: ordinary upload unexpectedly used screenshot routing`);
   }
 
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    let shrinkCalled = false;
+    const unavailable = new AgentClass({
+      resolveVisionRoute: async () => ({ provider: null, route: 'none', rawImage: false }),
+    });
+    unavailable._shrinkImageForBudget = async () => {
+      shrinkCalled = true;
+      throw new Error('a staged screenshot without a vision provider must not reach image processing');
+    };
+    const enriched = { role: 'user', content: 'Read this staged capture.' };
+    const result = await unavailable._applyAttachments(enriched, [{
+      kind: 'image',
+      dataUrl: 'data:image/png;base64,U1RBR0VE',
+      source: 'slash_screenshot',
+    }], { name: 'text-only', supportsVision: false }, { tabId: label === 'chrome' ? 485 : 486 });
+    assert.equal(result.ok, false, `${label}: missing staged vision provider bypassed rejection`);
+    assert.equal(shrinkCalled, false, `${label}: unavailable staged route processed raw pixels`);
+    assert.equal(enriched.content, 'Read this staged capture.', `${label}: unavailable staged route appended raw pixels`);
+  }
+
   let shrinkCalled = false;
   const visionStatus = {
     enabled: true,

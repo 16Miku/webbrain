@@ -20058,7 +20058,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             'staged_screenshot',
           );
         }
-        if (!provider?.supportsVision && (!stagedVisionRoute || stagedVisionRoute.rawImage)) {
+        if (!provider?.supportsVision && (!stagedVisionRoute?.provider || stagedVisionRoute.rawImage)) {
           const overrideHint = provider?.config?.visionMode != null
             ? ' If automatic detection is unavailable or incorrect, set Vision capability to Force on in Settings.'
             : '';
