@@ -624,9 +624,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           await ensureVisionWorker();
           response = await sendVisionWorkerMessage('clear-cache', { modelId: message.model });
         } else {
+          // pause-vision-download dequeues a queued preload. Tell Stop so it
+          // still takes the immediate cache-clear path instead of waiting
+          // behind an unrelated text-model transfer.
           response = await sendVisionWorkerMessage('stop-vision-download', {
             modelId: message.model,
             dtype: message.dtype,
+            ...(pauseResponse?.targetsQueued ? { targetsQueued: true } : {}),
           });
         }
         detachVisionPreload('stop');

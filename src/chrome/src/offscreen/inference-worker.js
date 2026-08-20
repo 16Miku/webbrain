@@ -1127,8 +1127,10 @@ self.addEventListener('message', async event => {
       const stopped = stopVisionDownload(modelId);
       // A queued preload owns no live vision operation. Clear its model-specific
       // cache immediately so Stop is not trapped behind an unrelated text-model
-      // transfer in the shared WebGPU operation queue.
-      const result = stopped.targetsQueued && !stopped.hasActiveVision
+      // transfer in the shared WebGPU operation queue. The host may also pass
+      // targetsQueued after pause already dequeued that preload.
+      const targetsQueued = stopped.targetsQueued || payload?.targetsQueued === true;
+      const result = targetsQueued && !stopped.hasActiveVision
         ? await clearVisionModelCache(modelId)
         : await enqueueModelOperation(() => clearVisionModelCache(modelId));
       self.postMessage({

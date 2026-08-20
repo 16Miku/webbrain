@@ -26373,11 +26373,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const textAttachmentCount = (attachments || []).filter(att => att?.kind === 'text').length;
     let textBudgetRemaining = this._textAttachmentContentBudget(provider, { ...options, enriched });
     let textAttachmentsRemaining = textAttachmentCount;
+    const stagedVisionRoutes = new Map();
     for (const att of attachments) {
       if (att.kind === 'image') {
         const stagedScreenshot = att.source === 'slash_screenshot';
         const stagedVisionRoute = stagedScreenshot
           ? await this._resolveVisionRoute(options.tabId, provider)
+          : null;
+        if (stagedScreenshot) stagedVisionRoutes.set(att, stagedVisionRoute);
+        if (stagedVisionRoute && !stagedVisionRoute.provider && stagedVisionRoute.visionStatus) continue;
+        if (!provider?.supportsVision && (!stagedVisionRoute?.provider || stagedVisionRoute.rawImage)) {
+          const overrideHint = provider?.config?.visionMode != null
+            ? ' If automatic detection is unavailable or incorrect, set Vision capability to Force on in Settings.'
+            : '';
+          return {
+            ok: false,
+            error: `The active provider (${provider?.name || 'unknown'}) does not support image attachments. Switch to a vision-capable model (e.g. Claude 3+, GPT-4o) or remove the attached image and try again.${overrideHint}`,
+          };
+        }
+      } else if (att.kind === 'document' && !provider?.supportsDocuments) {
+        return {
+          ok: false,
+          error: `The active provider (${provider?.name || 'unknown'}) does not support document attachments. Document attachments currently require an Anthropic Claude model. Remove the attached file or switch providers and try again.`,
+        };
+      }
+    }
+    for (const att of attachments) {
+      if (att.kind === 'image') {
+        const stagedScreenshot = att.source === 'slash_screenshot';
+        const stagedVisionRoute = stagedScreenshot
+          ? stagedVisionRoutes.get(att) ?? await this._resolveVisionRoute(options.tabId, provider)
           : null;
         if (stagedVisionRoute) {
           this._recordVisionRouteTrace(

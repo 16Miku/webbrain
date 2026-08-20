@@ -20333,6 +20333,46 @@ test('staged screenshots use the shared vision route while ordinary uploads keep
   assert.equal(shrinkCalled, false);
 });
 
+test('attachments: mixed staged screenshots preflight unsupported files before vision', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sidecar = { name: 'vision-sidecar', config: { model: 'sidecar-vl', baseUrl: 'https://vision.test/v1' } };
+    const agent = new AgentClass({
+      resolveVisionRoute: async () => ({
+        provider: sidecar,
+        route: 'explicit_override',
+        rawImage: false,
+      }),
+    });
+    let descriptions = 0;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    agent._describeScreenshot = async () => {
+      descriptions++;
+      throw new Error(`${label}: staged screenshot vision ran before mixed-attachment preflight`);
+    };
+    const enriched = { role: 'user', content: 'Read these files.' };
+    const result = await agent._applyAttachments(enriched, [
+      {
+        kind: 'image',
+        name: 'staged.png',
+        dataUrl: 'data:image/png;base64,U1RBR0VE',
+        source: 'slash_screenshot',
+      },
+      {
+        kind: 'document',
+        name: 'invoice.pdf',
+        dataUrl: 'data:application/pdf;base64,JVBERi0=',
+      },
+    ], { name: 'text-only', supportsVision: false, supportsDocuments: false }, {
+      tabId: label === 'chrome' ? 487 : 488,
+      onUpdate() {},
+    });
+    assert.equal(result.ok, false, `${label}: mixed unsupported document should fail closed`);
+    assert.match(result.error, /document attachments/, `${label}: rejection should name the unsupported document`);
+    assert.equal(descriptions, 0, `${label}: vision sub-call ran before attachment preflight`);
+    assert.equal(enriched.content, 'Read these files.', `${label}: rejected mixed attachments mutated the message`);
+  }
+});
+
 test('LLM trace media counts distinguish actual image and document blocks', () => {
   const messages = [
     { role: 'user', content: 'plain' },
@@ -52547,6 +52587,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
       `${label}: dedicated vision timeout is missing`);
     assert.match(source, /_withVisionDeadline\(this\._chatVisionWithCompatibilityRetry/,
       `${label}: compatibility retries are not inside one total deadline`);
+    assert.match(source, /async _applyAttachments[\s\S]*?does not support document attachments[\s\S]*?_describeScreenshot/,
+      `${label}: mixed attachments must preflight documents before staged screenshot vision`);
   }
   for (const [label, source] of [['chrome', chromePanel], ['firefox', firefoxPanel]]) {
     assert.match(source, /case 'tool_progress':[\s\S]*?updateActiveToolProgress/,
@@ -52602,6 +52644,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?sendVisionWorkerMessage\('stop-vision-download'/);
+  assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?pauseResponse\?\.targetsQueued[\s\S]*?targetsQueued: true/,
+    'Stop must preserve a queued preload fast path after pause dequeues it');
+  assert.match(worker, /type === 'stop-vision-download'[\s\S]*?stopped\.targetsQueued \|\| payload\?\.targetsQueued === true/,
+    'stop-vision-download must honor a host-reported queued preload after pause');
   assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
   assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
   assert.match(worker, /type === 'start-download-text'/);
@@ -52950,6 +52996,7 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
         if (type === 'preload') {
           this.preloadId = id;
           this.preloadModelId = payload.modelId;
+          this.preloadQueued = behavior.preloadMode === 'hang-queued';
           this.emit({ type: 'vision-preload-state', modelId: payload.modelId, status: 'queued' });
           if (behavior.preloadMode !== 'hang-queued') {
             this.emit({ type: 'vision-preload-state', modelId: payload.modelId, status: 'loading' });
@@ -52957,12 +53004,18 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
           if (behavior.preloadMode === 'ready') {
             this.emit({ id, ok: true, status: 'ready', ready: true, modelId: payload.modelId });
             this.preloadId = null;
+            this.preloadQueued = false;
           }
           return;
         }
         if (type === 'pause-vision-download') {
-          const targetsActive = this.preloadId !== null;
-          this.emit({ id, ok: true, status: 'paused', targetsActive, targetsQueued: false });
+          const targetsQueued = this.preloadId !== null && this.preloadQueued;
+          const targetsActive = this.preloadId !== null && !this.preloadQueued;
+          this.emit({ id, ok: true, status: 'paused', targetsActive, targetsQueued });
+          if (targetsQueued) {
+            this.preloadId = null;
+            this.preloadQueued = false;
+          }
           if (targetsActive && behavior.cooperativePause) {
             this.emit({
               id: this.preloadId,
@@ -52976,6 +53029,7 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
           return;
         }
         if (type === 'stop-vision-download') {
+          if (behavior.hangStopUnlessQueued && payload?.targetsQueued !== true) return;
           this.emit({ id, ok: true, status: 'not-downloaded', ready: false, deletedEntries: 3 });
           return;
         }
@@ -53096,6 +53150,14 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
   assert.equal(stop.workers[0].terminated, true,
     'Stop did not force-reset an active loader that ignored cooperative cancellation');
   assert.ok(stop.runtimeMessages.some(message => message.state?.status === 'not-downloaded'));
+
+  const queuedStop = createHarness({ preloadMode: 'hang-queued', hangStopUnlessQueued: true });
+  await queuedStop.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  const queuedStopped = await queuedStop.dispatch({ type: 'webgpu-vision-stop', model: WEBGPU_VISION_MODEL_ID });
+  assert.equal(queuedStopped.deletedEntries, 3, 'queued Stop must clear cache without waiting on the model queue');
+  assert.ok(queuedStop.workerMessages.some(({ message }) => (
+    message.type === 'stop-vision-download' && message.payload?.targetsQueued === true
+  )), 'queued Stop must preserve the worker fast path after pause dequeues the preload');
 });
 
 test('Vision Model removal deletes only its cache entries', async () => {
