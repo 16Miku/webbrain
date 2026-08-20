@@ -4,6 +4,16 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.8] - 2026-08-20
+
+### Changed
+- fix: resume vision downloads and organize settings
+- fix: require vision cache marker and isolate queued worker deadlines
+- fix: verify local vision cache and abort timed-out remote vision
+- fix: preflight mixed attachments and preserve queued vision stop
+- fix: reject staged screenshots without vision route
+- fix: make screenshot vision explicit and bounded
+
 ## [33.0.7] - 2026-08-20
 
 ### Changed
