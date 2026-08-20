@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'Meneliti dengan ChatGPT',
+  'st.display.research_escalation.label': 'Eskalasi riset',
+  'st.display.research_escalation.desc': 'Jika diaktifkan, WebBrain dapat meminta izin sebelum mengirim prompt riset hanya-baca yang sangat kompleks ke ChatGPT. Nonaktif secara default. Prompt yang persis sama hanya dibagikan setelah persetujuan eksplisit Anda.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

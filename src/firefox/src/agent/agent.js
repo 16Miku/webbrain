@@ -12,6 +12,7 @@ import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-b
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { secureRandomBase36Token } from './random-token.js';
+import { RESEARCH_ESCALATION_ENGINE, RESEARCH_ESCALATION_SYSTEM_NOTE, RESEARCH_ESCALATION_URL, isAllowedResearchEscalationUrl, normalizeResearchEscalationEngine, normalizeResearchRequest, probeChatGptPage, submitChatGptPrompt } from './research-escalation.js';
 import {
   DISPATCH_BINDING_TOOLS,
   RICH_TEXT_TOOLBAR_GUARDED_TOOLS,
@@ -481,6 +482,8 @@ export class Agent extends LoopDetector {
     this._compactCooldown = new Map();
     this.autoScreenshot = 'state_change';
     this.useSiteAdapters = true;
+    this.researchEscalationEnabled = false;
+    this.researchEscalationEngine = RESEARCH_ESCALATION_ENGINE;
     // Image budget (issue #311): screenshot quality + capture limits. All
     // loaded from browser.storage.local in background.js. Defaults preserve
     // previous behavior: no explicit `detail`, unlimited auto-screenshots
@@ -595,6 +598,11 @@ export class Agent extends LoopDetector {
     // Pending clarify() tool calls awaiting user input — see Chrome
     // agent.js. Keyed by tabId → (clarifyId → {resolve, ts}).
     this._pendingClarifications = new Map();
+    // Explicit, one-use, in-memory approvals for sharing one exact research
+    // prompt with the configured engine.
+    this._researchEscalationAuthorizations = new Map();
+    // Visible ChatGPT helper tab -> the source tab whose run owns Stop.
+    this._researchEscalationTabs = new Map();
     // A waited clarify timeout is not user authorization. Keep that fact in
     // trusted app state instead of relying on the model to obey prose in the
     // tool result. Consequential actions stay blocked until a direct clarify
@@ -1206,6 +1214,7 @@ export class Agent extends LoopDetector {
       pendingPlan: null,
       persistenceDegraded: !!persistenceState,
       persistenceDegradedReason: persistenceState?.reason || null,
+      researchEscalationSourceTabId: this.researchEscalationSourceTab(tabId),
     };
     const tabPending = this._pendingPlans.get(tabId);
     if (tabPending?.size) {
@@ -5047,6 +5056,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // both types AND submits, so it needs a TYPE grant and a CLICK grant.
       const skillCallTool = this._activeSkillToolForName(tabId, fnName);
       let capabilities = capabilitiesFor(fnName, fnArgs);
+      if (fnName === 'delegate_research') {
+        // Explicit research consent replaces generic host prompts. The handler
+        // still fails closed unless a one-use, exact-prompt token is valid.
+        capabilities = [];
+      }
       if (skillCallTool?.requiresDownloadPermission && !capabilities.includes(Capability.DOWNLOAD)) {
         capabilities.push(Capability.DOWNLOAD);
       }
@@ -8016,13 +8030,70 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Request abort for a specific tab's running agent.
    */
   abort(tabId) {
-    this.abortFlags.set(tabId, true);
-    this._cancelClarifications(tabId, 'aborted by user');
-    this._cancelUploadPickers(tabId, 'aborted by user');
-    this._cancelPendingPlans(tabId, 'aborted by user');
+    for (const id of this._researchEscalationTabIds(tabId)) {
+      this.abortFlags.set(id, true);
+      this._cancelClarifications(id, 'aborted by user');
+      this._cancelUploadPickers(id, 'aborted by user');
+      this._cancelPendingPlans(id, 'aborted by user');
+    }
     // Stop cancels the current run; it is not an answer to a prior timed-out
     // clarification. Keep that authorization guard until an explicit clarify
     // response or conversation/tab cleanup resolves its scope.
+  }
+
+  _bindResearchEscalationTab(sourceTabId, researchTabId) {
+    const source = Number(sourceTabId);
+    const helper = Number(researchTabId);
+    if (!Number.isFinite(source) || !Number.isFinite(helper) || source === helper) return;
+    this._researchEscalationTabs.set(helper, source);
+  }
+
+  _unbindResearchEscalationTab(researchTabId) {
+    this._researchEscalationTabs.delete(Number(researchTabId));
+  }
+
+  researchEscalationSourceTab(tabId) {
+    const source = this._researchEscalationTabs.get(Number(tabId));
+    return Number.isFinite(source) ? source : null;
+  }
+
+  _researchEscalationTabIds(tabId) {
+    const numeric = Number(tabId);
+    const ids = new Set(Number.isFinite(numeric) ? [numeric] : []);
+    const source = this.researchEscalationSourceTab(numeric);
+    if (source != null) ids.add(source);
+    for (const [helper, owner] of this._researchEscalationTabs) {
+      if (owner === numeric || (source != null && owner === source)) ids.add(helper);
+    }
+    return ids;
+  }
+
+  _researchEscalationAborted(...tabIds) {
+    for (const tabId of tabIds) {
+      for (const id of this._researchEscalationTabIds(tabId)) {
+        if (this.abortFlags.get(id)) return true;
+      }
+    }
+    return false;
+  }
+
+  async _researchEscalationHelperGone(researchTabId) {
+    try {
+      await browser.tabs.get(researchTabId);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  _researchEscalationClosedResult(researchTabId, extra = {}) {
+    return {
+      success: false,
+      cancelled: true,
+      tabId: researchTabId,
+      error: 'The ChatGPT research tab was closed. Research escalation stopped.',
+      ...extra,
+    };
   }
 
   /**
@@ -8037,6 +8108,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!entry) return false;
     this._settleClarification(entry, { answer, source });
     return true;
+  }
+
+  _pruneResearchEscalationAuthorizations(now = Date.now()) {
+    for (const [token, entry] of this._researchEscalationAuthorizations) {
+      if (!entry || now - Number(entry.createdAt || 0) > 5 * 60 * 1000) {
+        this._researchEscalationAuthorizations.delete(token);
+      }
+    }
+  }
+
+  _issueResearchEscalationAuthorization(tabId, request, engine) {
+    this._pruneResearchEscalationAuthorizations();
+    const token = `research_${secureRandomBase36Token(24)}`;
+    this._researchEscalationAuthorizations.set(token, {
+      tabId: Number(tabId),
+      conversationId: this.conversationIds.get(tabId) || null,
+      request: normalizeResearchRequest(request),
+      engine: normalizeResearchEscalationEngine(engine),
+      createdAt: Date.now(),
+    });
+    return token;
+  }
+
+  _researchEscalationAuthorization(tabId, token, { consume = false } = {}) {
+    this._pruneResearchEscalationAuthorizations();
+    const key = String(token || '').trim();
+    const entry = this._researchEscalationAuthorizations.get(key);
+    if (!entry) return { ok: false, error: 'Missing, expired, or already-used research authorization. Ask through clarify again.' };
+    const conversationId = this.conversationIds.get(tabId) || null;
+    if (entry.tabId !== Number(tabId) || (entry.conversationId && entry.conversationId !== conversationId)) {
+      return { ok: false, error: 'Research authorization belongs to a different tab or conversation.' };
+    }
+    if (!entry.request) return { ok: false, error: 'The approved research request is empty.' };
+    if (consume) this._researchEscalationAuthorizations.delete(key);
+    return { ok: true, entry };
+  }
+
+  _clearResearchEscalationAuthorizations(tabId) {
+    for (const [token, entry] of this._researchEscalationAuthorizations) {
+      if (entry?.tabId === Number(tabId)) this._researchEscalationAuthorizations.delete(token);
+    }
   }
 
   /**
@@ -9604,6 +9716,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
       plannerClarification: followUpContext.plannerClarification,
+      researchEscalationEnabled: this.researchEscalationEnabled,
     });
     const plannerStep = 0;
     onUpdate('thinking', { step: plannerStep, note: 'Understanding request…' });
@@ -9805,6 +9918,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
       plannerClarification: followUpContext.plannerClarification,
+      researchEscalationEnabled: this.researchEscalationEnabled,
     });
     const plannerStep = 0;
 
@@ -12003,6 +12117,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this.useSiteAdapters) {
       prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
     }
+
+    if (this.researchEscalationEnabled) {
+      prompt += `\n\n${RESEARCH_ESCALATION_SYSTEM_NOTE}`;
+    }
     const tier = this._resolvePromptTier();
     const skillsPrompt = buildCustomSkillsPrompt(this.customSkills, {
       mode,
@@ -12435,6 +12553,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
+    // Closing either the ChatGPT helper or its originating source tab must abort
+    // the mapped wait instead of leaving it stuck until the deadline.
+    if (this._researchEscalationTabIds(tabId).size > 1) this.abort(tabId);
     this._cancelPendingPlans(tabId, 'tab closed');
     this._clarificationAuthorizationGuards.delete(tabId);
     this._isPdfTabCache.delete(tabId);
@@ -12471,6 +12592,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._queueCloudflareManagedChallengeCleanup(tabId).catch(() => {});
     }
     this._userAttachmentHandles.delete(tabId);
+    this._clearResearchEscalationAuthorizations(tabId);
     this._runUpdateCallbacks.delete(tabId);
     if (!preserveRunGuard) this.persistenceDegradedTabs.delete(tabId);
     if (!preserveRunGuard) {
@@ -15339,6 +15461,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (json.length <= maxResultChars) return json;
     }
 
+    // Delegated research returns `answer` rather than `text`. Trim that field
+    // so a long ChatGPT report stays valid JSON and keeps sources/note.
+    if (safeResult && typeof safeResult.answer === 'string') {
+      const originalAnswer = safeResult.answer;
+      const originalSources = Array.isArray(safeResult.sources) ? safeResult.sources : null;
+      const answerLimits = [4000, 3000, 2000, 1000, 500, 200];
+      const sourceLimits = originalSources ? [originalSources.length, 10, 5, 0] : [null];
+      for (const answerLimit of answerLimits) {
+        for (const sourceLimit of sourceLimits) {
+          const trimmed = { ...safeResult };
+          if (originalAnswer.length > answerLimit) {
+            trimmed.answer = `${originalAnswer.slice(0, answerLimit)}\n[...research answer truncated]`;
+            trimmed.partial = true;
+            trimmed.truncated = true;
+            trimmed.originalAnswerLength = originalAnswer.length;
+          }
+          if (originalSources && sourceLimit != null && originalSources.length > sourceLimit) {
+            trimmed.sources = originalSources.slice(0, sourceLimit);
+            trimmed.partial = true;
+          }
+          json = JSON.stringify(trimmed);
+          if (json.length <= maxResultChars) return json;
+        }
+      }
+    }
+
     if (safeResult && safeResult.data && typeof safeResult.data === 'object' && !Array.isArray(safeResult.data)) {
       const originalData = safeResult.data;
       const originalText = typeof originalData.text === 'string' ? originalData.text : null;
@@ -16141,6 +16289,143 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     console.log(`[WebBrain] Emergency context trim: kept ${messages.length} messages.`);
   }
 
+  async _executeResearchPageFunction(tabId, func, args = []) {
+    const serializedArgs = args.map(arg => JSON.stringify(arg)).join(',');
+    const code = `(${func.toString()})(${serializedArgs})`;
+    const results = await browser.tabs.executeScript(tabId, { code, runAt: 'document_idle' });
+    return Array.isArray(results) ? results[0] : results;
+  }
+
+  async _runResearchEscalation(tabId, authorization, args = {}, onUpdate = null) {
+    const engine = normalizeResearchEscalationEngine(authorization?.engine);
+    if (engine !== RESEARCH_ESCALATION_ENGINE) return { success: false, error: `Unsupported research engine: ${engine}` };
+    const request = normalizeResearchRequest(authorization?.request);
+    if (!request) return { success: false, error: 'The approved research request is empty.' };
+    const timeoutSeconds = Math.max(30, Math.min(300, Math.floor(Number(args?.timeout_seconds) || 180)));
+    let sourceTab;
+    try {
+      sourceTab = await browser.tabs.get(tabId);
+    } catch {
+      return {
+        success: false,
+        cancelled: true,
+        engine,
+        error: 'The source tab was closed before research could start. Nothing was submitted.',
+      };
+    }
+    let researchTab;
+    try {
+      researchTab = await browser.tabs.create({
+        url: RESEARCH_ESCALATION_URL,
+        active: true,
+        ...(sourceTab?.windowId != null ? { windowId: sourceTab.windowId } : {}),
+        ...(sourceTab?.index != null ? { index: sourceTab.index + 1 } : {}),
+        ...(sourceTab?.id != null ? { openerTabId: sourceTab.id } : {}),
+      });
+    } catch (error) {
+      return { success: false, error: `Could not open ChatGPT: ${error.message || error}` };
+    }
+    if (!researchTab?.id) return { success: false, error: 'ChatGPT tab did not return a tab id.' };
+    const researchTabId = researchTab.id;
+    this._bindResearchEscalationTab(tabId, researchTabId);
+    try {
+    // Binding first closes the tabs.create race: once the mapping exists,
+    // source-tab cleanup can abort this helper while the revalidation runs.
+    try {
+      sourceTab = await browser.tabs.get(tabId);
+    } catch {
+      try { await browser.tabs.remove(researchTabId); } catch {}
+      return {
+        success: false,
+        cancelled: true,
+        tabId: researchTabId,
+        engine,
+        error: 'The source tab was closed before research could start. Nothing was submitted.',
+      };
+    }
+    try { await this._addToWebBrainGroup(sourceTab, researchTabId); } catch {}
+    try { onUpdate?.('thinking', { note: 'Researching with ChatGPT…' }); } catch {}
+
+    const readyDeadline = Date.now() + Math.min(30000, timeoutSeconds * 1000);
+    let before = null;
+    while (Date.now() < readyDeadline) {
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+      try {
+        before = await this._executeResearchPageFunction(researchTabId, probeChatGptPage);
+        if (before?.composerReady && !isAllowedResearchEscalationUrl(before.url)) {
+          return { success: false, tabId: researchTabId, engine, error: 'ChatGPT redirected to an unexpected origin. Nothing was submitted.' };
+        }
+        if (before?.composerReady) break;
+        if (before?.loginRequired) return { success: false, tabId: researchTabId, engine, requiresLogin: true, error: 'ChatGPT is asking the user to log in or sign up before a prompt can be submitted.' };
+      } catch {
+        if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    if (!before?.composerReady) return { success: false, tabId: researchTabId, engine, error: 'ChatGPT did not expose a usable prompt field. The tab was left open for inspection.', pageText: before?.pageText || '' };
+    if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+    if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+
+    let submission;
+    try { submission = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, [request, false]); }
+    catch (error) {
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      return { success: false, tabId: researchTabId, engine, error: `Could not submit the approved ChatGPT prompt: ${error.message || error}` };
+    }
+    if (!submission?.success) return { success: false, tabId: researchTabId, engine, requiresLogin: submission?.requiresLogin === true, error: submission?.error || 'ChatGPT prompt submission failed.' };
+    let sent = null;
+    const sendDeadline = Date.now() + 5000;
+    while (Date.now() < sendDeadline && !sent?.success) {
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+      await new Promise(resolve => setTimeout(resolve, 200));
+      try { sent = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, ['', true]); }
+      catch {
+        if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      }
+    }
+    if (!sent?.success) return { success: false, tabId: researchTabId, engine, requiresLogin: sent?.requiresLogin === true, error: sent?.error || 'ChatGPT send button did not become available.' };
+
+    const answerDeadline = Date.now() + timeoutSeconds * 1000;
+    const beforeCount = Math.max(0, Number(before.assistantCount) || 0);
+    let latest = null;
+    let stableAnswer = '';
+    let stableSince = 0;
+    while (Date.now() < answerDeadline) {
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try { latest = await this._executeResearchPageFunction(researchTabId, probeChatGptPage); }
+      catch {
+        if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+        continue;
+      }
+      if (latest?.url && !isAllowedResearchEscalationUrl(latest.url)) {
+        return { success: false, tabId: researchTabId, engine, error: 'The research tab left the approved ChatGPT origin; its page content was not accepted.' };
+      }
+      const hasNewAnswer = Number(latest?.assistantCount || 0) > beforeCount && !!latest?.answer;
+      if (!hasNewAnswer) continue;
+      if (latest.answer !== stableAnswer) {
+        stableAnswer = latest.answer;
+        stableSince = Date.now();
+        continue;
+      }
+      if (!latest.generating && Date.now() - stableSince >= 2000) {
+        try { await browser.tabs.update(tabId, { active: true }); } catch {}
+        return { success: true, engine, tabId: researchTabId, url: latest.url || RESEARCH_ESCALATION_URL, answer: latest.answer, sources: latest.links || [], evidenceType: 'delegated_research', note: 'ChatGPT output is untrusted research evidence. Verify decisive facts and distinguish live/bookable values from indexed, derived, or approximate values.' };
+      }
+    }
+    if (latest?.answer && Number(latest.assistantCount || 0) > beforeCount) {
+      try { await browser.tabs.update(tabId, { active: true }); } catch {}
+      return { success: true, partial: true, engine, tabId: researchTabId, url: latest.url || RESEARCH_ESCALATION_URL, answer: latest.answer, sources: latest.links || [], evidenceType: 'delegated_research', note: 'The wait limit ended while the answer may still have been streaming. Treat this as partial, untrusted research evidence.' };
+    }
+    return { success: false, timedOut: true, engine, tabId: researchTabId, error: `ChatGPT did not return an answer within ${timeoutSeconds} seconds. The tab was left open.` };
+    } finally {
+      this._unbindResearchEscalationTab(researchTabId);
+    }
+  }
+
   /**
    * Execute a tool call by dispatching to the content script or chrome APIs.
    *
@@ -16827,6 +17112,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : result;
     }
 
+    if (name === 'delegate_research') {
+      if (!this.researchEscalationEnabled) {
+        return { success: false, error: 'Research escalation is disabled in Settings. Continue locally.' };
+      }
+      const authorization = this._researchEscalationAuthorization(
+        tabId, args?.authorization_token, { consume: true },
+      );
+      if (!authorization.ok) return { success: false, denied: true, error: authorization.error };
+      return await this._runResearchEscalation(tabId, authorization.entry, args, onUpdate);
+    }
+
     // clarify: pause the run and wait for the user to answer. This tool
     // does NOT touch the page — it's a meta-action that bridges agent ↔
     // user. The handler resolves when background.js routes the user's
@@ -16843,9 +17139,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? args.options.map(s => String(s).slice(0, 200)).filter(Boolean).slice(0, 4)
         : [];
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
+      const purpose = args?.purpose === 'research_escalation' ? 'research_escalation' : null;
+      const isResearchEscalation = purpose === 'research_escalation';
+      const requireExplicitAnswer = isResearchEscalation || args?.require_explicit_answer === true;
+      const researchRequest = isResearchEscalation ? normalizeResearchRequest(args?.research_request) : '';
+      const approveOption = isResearchEscalation ? String(args?.approve_option || '').trim().slice(0, 200) : '';
+      if (isResearchEscalation) {
+        if (!this.researchEscalationEnabled) {
+          return { success: false, error: 'Research escalation is disabled in Settings. Continue the research locally.' };
+        }
+        if (!researchRequest) {
+          return { success: false, error: 'clarify: research_escalation requires the exact non-empty research_request that will be shared.' };
+        }
+        if (!approveOption || !options.includes(approveOption)) {
+          return { success: false, error: 'clarify: research_escalation requires approve_option to exactly match one displayed option.' };
+        }
+        if (options.length !== 2 || options[0] === approveOption || options[1] !== approveOption) {
+          return { success: false, error: 'clarify: research_escalation requires exactly two options, with the safe local/decline choice first and the exact approval choice second.' };
+        }
+      }
       const clarifyId = `clr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       // 0 = instant auto-select; >0 = wait N s; -1 = Off (wait forever).
-      const timeoutSec = this._normalizeClarifyTimeoutSec(this.clarifyTimeoutSec);
+      const timeoutSec = requireExplicitAnswer
+        ? -1
+        : this._normalizeClarifyTimeoutSec(this.clarifyTimeoutSec);
       const waitSec = timeoutSec > 0 ? timeoutSec : 0;
 
       const tabPending = this._pendingClarifications.get(tabId) || new Map();
@@ -16902,6 +17219,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             options,
             reason,
             timeoutSec: waitSec,
+            requireExplicitAnswer,
+            ...(isResearchEscalation ? {
+              researchEscalation: {
+                engine: normalizeResearchEscalationEngine(this.researchEscalationEngine),
+                request: researchRequest,
+              },
+            } : {}),
             deadlineTs: tabPending.get(clarifyId)?.deadlineTs || undefined,
           });
         } catch { /* UI emit must never break the run */ }
@@ -16921,6 +17245,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const answer = String(response?.answer || '').trim();
       const source = response?.source || 'user';
       const authorized = await this._recordClarificationAuthorization(tabId, source);
+      const explicitResearchApproval = isResearchEscalation
+        && source !== 'timeout'
+        && source !== 'auto'
+        && answer === approveOption;
+      const authorizationToken = explicitResearchApproval
+        ? this._issueResearchEscalationAuthorization(
+            tabId,
+            researchRequest,
+            this.researchEscalationEngine,
+          )
+        : null;
       let note;
       if (source === 'timeout') {
         // Passive wait expired — not deliberate auto-approve.
@@ -16937,6 +17272,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         source,
         authorized,
         requiresExplicitConfirmation: !authorized,
+        ...(isResearchEscalation ? {
+          researchEscalationApproved: explicitResearchApproval,
+          authorization_token: authorizationToken,
+          engine: normalizeResearchEscalationEngine(this.researchEscalationEngine),
+          researchNote: explicitResearchApproval
+            ? 'The user explicitly approved sharing the displayed research_request. Call delegate_research once with authorization_token; it will submit exactly that approved request.'
+            : 'The user did not approve research escalation. Do not call delegate_research; continue locally and do not ask the same question again.',
+        } : {}),
         note,
       };
     }
@@ -20309,6 +20652,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
+      researchEscalationEnabled: this.researchEscalationEnabled,
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -20502,6 +20846,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
+        researchEscalationEnabled: this.researchEscalationEnabled,
       });
       if (selectionOnly || standaloneChatRun) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
@@ -21170,6 +21515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
+      researchEscalationEnabled: this.researchEscalationEnabled,
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
@@ -21220,6 +21566,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
+        researchEscalationEnabled: this.researchEscalationEnabled,
       });
       if (selectionOnly || standaloneChatRun) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));

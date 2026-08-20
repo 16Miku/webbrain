@@ -3,6 +3,9 @@ import apocalypseModeCopy from './apocalypse-copy.mjs';
 import emergencyCopy from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'Researching with ChatGPT',
+  'st.display.research_escalation.label': 'Research escalation',
+  'st.display.research_escalation.desc': 'When enabled, WebBrain may ask before sending an unusually complex read-only research prompt to ChatGPT. Off by default. The exact prompt is shared only after your explicit approval.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

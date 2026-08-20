@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'ChatGPT로 조사 중',
+  'st.display.research_escalation.label': '조사 에스컬레이션',
+  'st.display.research_escalation.desc': '활성화하면 WebBrain이 매우 복잡한 읽기 전용 조사 프롬프트를 ChatGPT에 보내기 전에 허가를 요청할 수 있습니다. 기본값은 꺼짐입니다. 정확한 프롬프트는 명시적으로 승인한 후에만 공유됩니다.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

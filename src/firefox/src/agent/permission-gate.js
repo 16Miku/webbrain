@@ -73,6 +73,8 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'execute_webmcp_tool',
   'fetch_url',
   'research_url',
+  // ChatGPT's answer and cited links are third-party page content.
+  'delegate_research',
   'read_pdf',
   'read_page_source',
   'read_downloaded_file',
@@ -225,6 +227,11 @@ export function capabilityFor(name, args) {
  */
 export function capabilitiesFor(name, args) {
   args = args || {};
+  if (name === 'delegate_research') {
+    // agent.js substitutes explicit one-use research authorization for these
+    // generic prompts only after validating the token.
+    return [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK];
+  }
   if (name === 'set_field' && args.submit) {
     return [Capability.TYPE, Capability.CLICK];
   }
@@ -288,6 +295,7 @@ function resolveHostAgainst(url, base) {
  */
 export function hostForCapability(capability, args, currentUrlOrHost, toolName) {
   args = args || {};
+  if (toolName === 'delegate_research') return 'chatgpt.com';
   if (toolName === 'execute_webmcp_tool') {
     // A tool can belong to a cross-origin frame. Charge mutations to that
     // frame's resolved URL instead of borrowing the top-level page grant.

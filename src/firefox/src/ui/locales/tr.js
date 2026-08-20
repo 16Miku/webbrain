@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'ChatGPT ile araştırılıyor',
+  'st.display.research_escalation.label': 'Araştırmayı devretme',
+  'st.display.research_escalation.desc': 'Etkinleştirildiğinde WebBrain, olağandışı derecede karmaşık salt okunur bir araştırma istemini ChatGPT’ye göndermeden önce izin isteyebilir. Varsayılan olarak kapalıdır. İstemin tam metni yalnızca açık onayınızdan sonra paylaşılır.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

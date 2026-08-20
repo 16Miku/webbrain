@@ -162,6 +162,7 @@ export function getFrozenSnapshot() { return FROZEN_BASELINE; }
  * @param {object} caseRec - { id?, mode: 'act'|'ask'|'dev', tab: {url, title}, user }
  * @param {object} opts    - { useSiteAdapters?: boolean, strictSecretMode?: boolean,
  *                             profile?: {enabled, text}, captchaSolver?: boolean,
+ *                             researchEscalationEnabled?: boolean,
  *                             browser?: 'chrome'|'firefox',
  *                             tier?: 'full'|'mid'|'compact'   // ACT-mode prompt+tools tier
  *                           }
@@ -224,7 +225,11 @@ export function buildPayload(caseRec, opts = {}) {
   // tier, and mode options have no effect on a frozen baseline by design.
   const tools = FROZEN_BASELINE
     ? FROZEN_BASELINE.tools
-    : browser.getToolsForMode(mode, { strictSecretMode, tier });
+    : browser.getToolsForMode(mode, {
+      strictSecretMode,
+      tier,
+      researchEscalationEnabled: opts.researchEscalationEnabled === true,
+    });
 
   return {
     messages: [

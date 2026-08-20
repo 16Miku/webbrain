@@ -88,6 +88,7 @@ const imageDetailSelect = document.getElementById('select-image-detail');
 const maxScreenshotsSelect = document.getElementById('select-max-screenshots');
 const maxImageDimensionSelect = document.getElementById('select-max-image-dimension');
 const siteAdaptersToggle = document.getElementById('toggle-site-adapters');
+const researchEscalationToggle = document.getElementById('toggle-research-escalation');
 const voiceInputToggle = document.getElementById('toggle-voice-input');
 const alwaysAllowApiMutationsToggle = document.getElementById('toggle-always-allow-api-mutations');
 const apiMutationObserverToggle = document.getElementById('toggle-api-mutation-observer');
@@ -468,7 +469,7 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -517,6 +518,7 @@ async function init() {
   if (maxScreenshotsSelect) maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
   if (maxImageDimensionSelect) maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
   if (siteAdaptersToggle) siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
+  if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
   if (alwaysAllowApiMutationsToggle) alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
   if (apiMutationObserverToggle) apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
@@ -1139,6 +1141,13 @@ maxImageDimensionSelect?.addEventListener('change', async () => {
 
 siteAdaptersToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ useSiteAdapters: siteAdaptersToggle.checked }).catch(() => {});
+});
+
+researchEscalationToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({
+    researchEscalationEnabled: researchEscalationToggle.checked,
+    researchEscalationEngine: 'chatgpt',
+  }).catch(() => {});
 });
 
 voiceInputToggle?.addEventListener('change', async () => {

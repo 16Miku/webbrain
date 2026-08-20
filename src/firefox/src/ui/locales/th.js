@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'กำลังค้นคว้าด้วย ChatGPT',
+  'st.display.research_escalation.label': 'การส่งต่อการค้นคว้า',
+  'st.display.research_escalation.desc': 'เมื่อเปิดใช้ WebBrain อาจขออนุญาตก่อนส่งพรอมต์ค้นคว้าแบบอ่านอย่างเดียวที่ซับซ้อนเป็นพิเศษไปยัง ChatGPT ปิดไว้ตามค่าเริ่มต้น พรอมต์ที่ตรงกันจะถูกแชร์หลังจากคุณอนุมัติอย่างชัดเจนเท่านั้น',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

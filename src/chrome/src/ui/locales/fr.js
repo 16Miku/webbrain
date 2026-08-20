@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'Recherche avec ChatGPT',
+  'st.display.research_escalation.label': 'Escalade de recherche',
+  'st.display.research_escalation.desc': 'Lorsque cette option est activée, WebBrain peut demander votre accord avant d’envoyer à ChatGPT une requête de recherche en lecture seule particulièrement complexe. Désactivé par défaut. La requête exacte n’est partagée qu’après votre accord explicite.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

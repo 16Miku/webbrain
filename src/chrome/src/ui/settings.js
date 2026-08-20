@@ -92,6 +92,7 @@ const imageDetailSelect = document.getElementById('select-image-detail');
 const maxScreenshotsSelect = document.getElementById('select-max-screenshots');
 const maxImageDimensionSelect = document.getElementById('select-max-image-dimension');
 const siteAdaptersToggle = document.getElementById('toggle-site-adapters');
+const researchEscalationToggle = document.getElementById('toggle-research-escalation');
 const voiceInputToggle = document.getElementById('toggle-voice-input');
 const alwaysAllowApiMutationsToggle = document.getElementById('toggle-always-allow-api-mutations');
 const apiMutationObserverToggle = document.getElementById('toggle-api-mutation-observer');
@@ -693,7 +694,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -743,6 +744,7 @@ async function init() {
   maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
   maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
+  if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
   alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
   apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
@@ -1377,6 +1379,15 @@ maxImageDimensionSelect.addEventListener('change', async () => {
 siteAdaptersToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ useSiteAdapters: siteAdaptersToggle.checked }).catch(() => {});
 });
+
+if (researchEscalationToggle) {
+  researchEscalationToggle.addEventListener('change', async () => {
+    await chrome.storage.local.set({
+      researchEscalationEnabled: researchEscalationToggle.checked,
+      researchEscalationEngine: 'chatgpt',
+    }).catch(() => {});
+  });
+}
 
 if (voiceInputToggle) {
   voiceInputToggle.addEventListener('change', async () => {

@@ -2092,6 +2092,13 @@ function sameTabId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
+function researchEscalationSourceTabIdFromState(state) {
+  const raw = state?.researchEscalationSourceTabId;
+  if (raw == null || raw === '') return null;
+  const sourceTabId = Number(raw);
+  return Number.isFinite(sourceTabId) ? sourceTabId : null;
+}
+
 function normalizePlanReviewTabId(tabId = currentTabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) ? numericTabId : null;
@@ -2531,6 +2538,7 @@ const TOOL_KEYS = {
   get_selection: 'tool.get_selection',
   execute_js: 'tool.execute_js',
   new_tab: 'tool.new_tab',
+  delegate_research: 'tool.delegate_research',
   promote_iframe: 'tool.navigate',
   schedule_resume: 'tool.schedule_resume',
   schedule_task: 'tool.schedule_task',
@@ -3969,7 +3977,13 @@ async function init() {
   const [tab] = await browser.tabs.query(initialWindowId != null
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
-  currentTabId = tab?.id;
+  let initialTabId = tab?.id;
+  try {
+    const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
+    const sourceTabId = researchEscalationSourceTabIdFromState(state);
+    if (sourceTabId != null) initialTabId = sourceTabId;
+  } catch {}
+  currentTabId = initialTabId;
   renderedTabId = currentTabId;
 
   // Tab-activation events are extension-wide — every browser window fires
@@ -4123,6 +4137,17 @@ if (verboseBtn) {
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  try {
+    const state = await sendToBackground('agent_run_state', { tabId: newTabId });
+    const sourceTabId = researchEscalationSourceTabIdFromState(state);
+    if (sourceTabId != null
+        && (sameTabId(currentTabId, sourceTabId)
+          || sameTabId(renderedTabId, sourceTabId)
+          || isTabProcessing(sourceTabId)
+          || isTabProcessing(currentTabId))) {
+      return;
+    }
+  } catch {}
   dismissSelectionAskAction();
   if (newConversationConfirmationState
       && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
@@ -8934,6 +8959,15 @@ function renderClarifyCard(data) {
     reasonEl.className = 'clarify-reason';
     reasonEl.textContent = String(data.reason).slice(0, 400);
     card.appendChild(reasonEl);
+  }
+
+  if (data.researchEscalation?.request) {
+    card.dataset.researchEscalation = '1';
+    const requestEl = document.createElement('div');
+    requestEl.className = 'clarify-reason clarify-research-request';
+    const engine = String(data.researchEscalation.engine || 'ChatGPT');
+    requestEl.textContent = `${engine === 'chatgpt' ? 'ChatGPT' : engine} ← ${String(data.researchEscalation.request).slice(0, 6000)}`;
+    card.appendChild(requestEl);
   }
 
   const options = Array.isArray(data.options) ? data.options.slice(0, 4) : [];
