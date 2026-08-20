@@ -4319,9 +4319,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .filter(value => /^[a-z]{3}$/.test(value)))]
       .slice(0, STANDALONE_WIKIPEDIA_TRANSLATION_TARGET_LIMIT);
     const localeLanguage = offlineWikipediaLanguageForLocale(runOptions.locale || 'en');
-    // Pronoun follow-ups reuse a prior topic whose language may differ from the
-    // latest utterance, so classify the resolved search text, not the user turn.
-    const sourceLanguage = detectOfflineQueryLanguage(searchQuery, { locale: runOptions.locale || 'en' })
+    // Direct queries keep interrogative/stopword markers that the search
+    // normalizer strips. Follow-ups that reused a prior topic classify that
+    // resolved text instead of the latest (often UI-language) turn.
+    const languageQuery = options.languageQuery == null ? searchQuery : options.languageQuery;
+    const sourceLanguage = detectOfflineQueryLanguage(languageQuery, { locale: runOptions.locale || 'en' })
       || localeLanguage;
     const translationTargets = targetLanguages.filter(language => language !== sourceLanguage);
     if (!String(searchQuery || '').trim() || !translationTargets.length) {
@@ -4384,6 +4386,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!searchQuery) {
       return { attempted: true, status: 'no_match', matchCount: 0, archiveDates: [], queryNormalized: true, healthContext };
     }
+    const resolvedFromHistory = !!priorTopic && searchQuery === priorTopic && searchQuery !== directQuery;
     if (multiSource) {
       let result;
       const sources = offlineSourcesForStandaloneQuery(query, runOptions);
@@ -4391,7 +4394,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const queryTranslations = await this._standaloneWikipediaQueryTranslations(
         searchQuery,
         runOptions,
-        { ...options, offlineRetrievalService },
+        {
+          ...options,
+          offlineRetrievalService,
+          languageQuery: resolvedFromHistory ? searchQuery : query,
+        },
       );
       try {
         result = await retrieveOfflineRagForPrompt(searchQuery, {
@@ -4432,7 +4439,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         matchCount: result.matchCount,
         archiveDates,
         queryNormalized: searchQuery !== String(query || '').trim().replace(/[?？！!。\.]+$/g, ''),
-        resolvedFromHistory: !!priorTopic && searchQuery === priorTopic && searchQuery !== directQuery,
+        resolvedFromHistory,
         healthContext,
         multiSource: true,
         sourceStatuses: result.statuses,
@@ -4463,7 +4470,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       matchCount: references.length,
       archiveDates,
       queryNormalized: searchQuery !== String(query || '').trim().replace(/[?？!！.]+$/g, ''),
-      resolvedFromHistory: !!priorTopic && searchQuery === priorTopic && searchQuery !== directQuery,
+      resolvedFromHistory,
       healthContext,
     };
     if (!references.length) return metadata;

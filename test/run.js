@@ -29822,6 +29822,44 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     'resolved-topic language did not reach offline retrieval');
   assert.equal(followOnTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'Sokollu Mehmed Pasha',
     'the English archive searched the raw Turkish spelling instead of the translated topic');
+  let frenchTranslationRequest = null;
+  let frenchTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: "Quelle est la capitale de l'Allemagne ?" },
+    "Quelle est la capitale de l'Allemagne ?",
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        frenchTranslationRequest = request;
+        return { eng: 'capital of Germany' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          frenchTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(frenchTranslationRequest?.sourceLanguage, 'fra',
+    'a French question lost its language after search-term stripping');
+  assert.deepEqual(frenchTranslationRequest?.targets?.map(target => target.language), ['eng'],
+    'the English archive was excluded because the stripped French query looked English');
+  assert.equal(frenchTranslationOptions?.queryLanguage, 'fra',
+    'original-turn French language did not reach offline retrieval');
+  assert.equal(frenchTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'capital of Germany',
+    'the English archive searched the stripped French terms instead of the translation');
   let disabledTranslationCalled = false;
   await agent._applyStandaloneWikipediaRag(
     { role: 'user', content: 'What is the capital of Turkey?' },
