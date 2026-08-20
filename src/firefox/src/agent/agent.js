@@ -12553,6 +12553,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
+    // Closing either the ChatGPT helper or its originating source tab must abort
+    // the mapped wait instead of leaving it stuck until the deadline.
     if (this._researchEscalationTabIds(tabId).size > 1) this.abort(tabId);
     this._cancelPendingPlans(tabId, 'tab closed');
     this._clarificationAuthorizationGuards.delete(tabId);

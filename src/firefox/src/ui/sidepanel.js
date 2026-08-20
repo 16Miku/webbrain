@@ -2094,7 +2094,7 @@ function sameTabId(a, b) {
 
 function researchEscalationSourceTabIdFromState(state) {
   const raw = state?.researchEscalationSourceTabId;
-  if (raw == null) return null;
+  if (raw == null || raw === '') return null;
   const sourceTabId = Number(raw);
   return Number.isFinite(sourceTabId) ? sourceTabId : null;
 }
