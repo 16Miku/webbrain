@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.2] - 2026-08-20
+
+### Changed
+- Keep Clarify open while typing
+- Handle streamed WebBrain quota limits
+- Address WebBrain Plus review feedback
+- web: add an Apocalypse Mode video popup under Install WebBrain
+- Add WebBrain Plus upgrade prompt
+
 ## [33.0.1] - 2026-08-20
 
 ### Changed
