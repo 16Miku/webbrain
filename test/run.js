@@ -425,6 +425,12 @@ const ZimXapianCh = await import(
 const ZimXapianFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian.js').replace(/\\/g, '/')
 );
+const ZimXapianRuntimeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/zim-xapian-runtime.js').replace(/\\/g, '/')
+);
+const ZimXapianRuntimeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js').replace(/\\/g, '/')
+);
 const OfflineRagPromptCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag-prompt.js').replace(/\\/g, '/')
 );
@@ -866,8 +872,10 @@ const {
 );
 const {
   assertMatchingArchiveVersion,
+  assertCorrespondingSourceArchiveEntries,
   assertStoreSafeFlagLicenseEntries,
   assertStoreReviewableJavaScript,
+  correspondingSourceArchivePath,
   listZipEntryNames,
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
@@ -14772,6 +14780,9 @@ test('update-changelog: rejects duplicate versions and nested release headings',
 test('minor release installs dependencies and validates rebuilt archives before pushing', () => {
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/minor-release.yml'), 'utf8');
   assert.match(workflow, /- name: Install dependencies\s+run: npm ci/);
+  assert.match(workflow, /rm -f dist\/\*\.zip/);
+  assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
+  assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
 
   const orderedSteps = [
     'Bump minor version',
@@ -14796,6 +14807,9 @@ test('patch release updates the changelog and validates rebuilt archives before 
   assert.match(workflow, /git log --no-merges[\s\S]*?> \.release\/changelog-body\.md/);
   assert.match(workflow, /node scripts\/update-changelog\.mjs[\s\S]*?--notes-file \.release\/changelog-body\.md/);
   assert.match(workflow, /git add[^\n]*CHANGELOG\.md/);
+  assert.match(workflow, /rm -f dist\/\*\.zip/);
+  assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
+  assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
 
   const orderedSteps = [
     'Build patch release notes',
@@ -15004,6 +15018,30 @@ test('build-zip rejects filenames that would disagree with archived manifests', 
   assert.throws(
     () => assertMatchingArchiveVersion('23.0.0', '22.4.5', 'Chrome manifest'),
     /Chrome manifest is 22\.4\.5, but the release package version is 23\.0\.0/
+  );
+});
+
+test('build-zip names and validates the GPL corresponding-source release asset', () => {
+  assert.equal(
+    correspondingSourceArchivePath('zim-xapian-v0.95'),
+    'dist/webbrain-zim-xapian-v0.95-corresponding-source.zip'
+  );
+  const trackedFiles = ['Makefile', 'sbom.json', 'xapian-core-1.4.31.tar.xz'];
+  const completeEntries = trackedFiles.map((entry) => `zim-xapian-v0.95/${entry}`);
+  assert.doesNotThrow(() => assertCorrespondingSourceArchiveEntries(
+    completeEntries,
+    'zim-xapian-v0.95',
+    trackedFiles,
+    'source fixture'
+  ));
+  assert.throws(
+    () => assertCorrespondingSourceArchiveEntries(
+      completeEntries.slice(0, -1),
+      'zim-xapian-v0.95',
+      trackedFiles,
+      'source fixture'
+    ),
+    /source fixture is missing tracked corresponding source xapian-core-1\.4\.31\.tar\.xz/
   );
 });
 
@@ -23686,6 +23724,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/agent/offline-query-stopwords.js',
     'src/agent/wikipedia-offline.js',
     'src/agent/zim-xapian.js',
+    'src/agent/zim-xapian-runtime.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
     'src/ui/emergency-box.css',
@@ -23866,6 +23905,13 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: the ready label does not require the exact selected Wikipedia edition`);
     assert.match(wikipediaLibraryScript, /replacementArchiveIds/,
       `${browser}: downloading a new Wikipedia edition does not schedule replacement cleanup`);
+    // replacementArchiveIds is set when the download is queued, so the handover
+    // message must wait for the archive to be ready. Showing it earlier claims a
+    // 49 GiB download is verified while it is still running, and hides the bytes.
+    assert.match(wikipediaLibraryScript, /status === 'ready' && replacingPreviousArchive[\s\S]*?t\('wl\.finalizing'\)/,
+      `${browser}: the replacement handover message is not gated on the archive being ready`);
+    assert.doesNotMatch(wikipediaLibraryScript, /\}\s*else if \(Array\.isArray\(record\.replacementArchiveIds\) && record\.replacementArchiveIds\.length\) \{\s*detail = t\('wl\.finalizing'\)/,
+      `${browser}: an in-flight replacement download still reports itself as verified`);
     assert.match(wikipediaLibraryScript, /function managedWikipediaRecords\(\)[\s\S]*?return \[\.\.\.wikipediaRecords\(\)\]\.sort/,
       `${browser}: the Wikipedia library does not retain every installed archive in its management list`);
     assert.match(wikipediaLibraryScript, /elements\['archive-list'\]\.innerHTML = records\.map\(renderArchiveRecord\)\.join\(''\)/,
@@ -24216,6 +24262,13 @@ function minimalWikipediaZimFixture(options = {}) {
     Tags: options.tags ?? 'wikipedia;_category:wikipedia',
   };
   const entries = [
+    ...(options.fullTextIndex
+      ? [{
+        namespace: options.fullTextIndex === 'legacy' ? 'Z' : 'X',
+        url: options.fullTextIndex === 'legacy' ? '/fulltextIndex/xapian' : 'fulltext/xapian',
+        title: 'xapian', mimeType: 1, contents: 'not-a-real-index',
+      }]
+      : []),
     {
       namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
       contents: options.articleHtml || '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
@@ -27794,8 +27847,10 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
     assert.equal(runtime.JAVASCRIPT_LIBZIM_VERSION, '0.95', `${label}: javascript-libzim version changed`);
     assert.equal(runtime.LIBZIM_VERSION, '9.8.1', `${label}: libzim version changed`);
     assert.equal(runtime.XAPIAN_VERSION, '1.4.31', `${label}: Xapian version changed`);
-    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, false, `${label}: GPL runtime was marked bundled without approval`);
-    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'blocked-pending-owner-license-decision');
+    assert.equal(typeof runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, 'boolean', `${label}: the bundled flag is not a boolean`);
+    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, true, `${label}: the Xapian runtime is no longer marked bundled`);
+    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'bundled-from-source',
+      `${label}: distribution status does not describe the shipped source-built Wasm`);
 
     const storage = { async open(target) { return new Blob([target.kind]); } };
     const fallbackCalls = [];
@@ -27876,9 +27931,70 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
   assert.doesNotMatch(chromeSource, /\bfetch\s*\(|import\s*\(\s*['"]https?:/,
     'the license-neutral adapter must not download or dynamically import runtime code');
   const licensing = fs.readFileSync(path.join(ROOT, 'docs/offline-rag-licensing.md'), 'utf8');
-  assert.match(licensing, /Status: \*\*BLOCKED — explicit repository-owner decision required\*\*/);
   assert.match(licensing, /896e4eab4986670ae9c0858312fa5225436e3498990c45df752e0be46eb4fe3d/);
   assert.match(licensing, /Approve GPL distribution[\s\S]*Reject GPL distribution[\s\S]*Use a different runtime/);
+
+  // The invariant that matters is not which way the decision went, but that the
+  // code flag can never get ahead of the recorded decision. Bundling a GPL
+  // runtime without a signed-off approval is the failure worth catching.
+  const approved = /- \[x\] \*\*Approve GPL distribution/.test(licensing);
+  const decided = /- \[x\] \*\*(Approve GPL distribution|Reject GPL distribution|Use a different runtime)/.test(licensing);
+  assert.ok(decided, 'the licensing record does not select any owner decision');
+  for (const [label, runtime] of [['chrome', ZimXapianCh], ['firefox', ZimXapianFx]]) {
+    if (runtime.ZIM_XAPIAN_RUNTIME_BUNDLED !== true) continue;
+    assert.ok(approved, `${label}: the GPL runtime is marked bundled but the record does not approve it`);
+    assert.doesNotMatch(licensing, /Approver: _pending_/,
+      `${label}: the GPL runtime is marked bundled but no approver is recorded`);
+    assert.doesNotMatch(licensing, /Decision date: _pending_/,
+      `${label}: the GPL runtime is marked bundled but no decision date is recorded`);
+  }
+  if (approved) {
+    assert.match(licensing, /GPL-3\.0-or-later/,
+      'an approved record must state the license the release artifacts are conveyed under');
+    assert.match(licensing, /libzim_release/,
+      'an approved record must warn against the prebuilt build path');
+  }
+});
+
+test('vendored Xapian Wasm artifacts match the recorded SBOM hashes', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const vendorDir = path.join(ROOT, `src/${browser}/vendor/libzim`);
+    const sbom = JSON.parse(fs.readFileSync(path.join(vendorDir, 'sbom.json'), 'utf8'));
+    assert.equal(sbom.toolchain.linkOptimization, 'O2', `${browser}: linkOptimization drifted from the recorded O2 build`);
+    assert.ok(Array.isArray(sbom.artifacts) && sbom.artifacts.length >= 2, `${browser}: sbom.json lost its artifacts`);
+    for (const artifact of sbom.artifacts) {
+      const bytes = fs.readFileSync(path.join(vendorDir, artifact.file));
+      assert.equal(bytes.byteLength, artifact.bytes, `${browser}: ${artifact.file} size ${bytes.byteLength} != ${artifact.bytes}`);
+      assert.equal(
+        createHash('sha256').update(bytes).digest('hex'),
+        artifact.sha256,
+        `${browser}: ${artifact.file} SHA-256 does not match sbom.json`,
+      );
+    }
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/zim-xapian-runtime.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js'), 'utf8'),
+    'Chrome and Firefox Xapian runtime drivers diverged',
+  );
+});
+
+test('Xapian runtime skips the worker when the archive has no full-text index', async () => {
+  for (const [label, runtime] of [['chrome', ZimXapianRuntimeCh], ['firefox', ZimXapianRuntimeFx]]) {
+    let spawned = 0;
+    const driver = runtime.createZimXapianRuntime({
+      createWorker() {
+        spawned += 1;
+        throw new Error(`${label}: worker factory ran for an unindexed archive`);
+      },
+      hasFullTextIndex: async () => false,
+    });
+    const session = await driver.openArchive({ source: new Blob(['zim']), record: { id: 'no-index', filename: 'plain.zim' } });
+    assert.equal(spawned, 0, `${label}: an unindexed archive started the Wasm worker`);
+    assert.equal(await session.hasFullTextIndex(), false, `${label}: the dummy session claimed an index`);
+    assert.deepEqual(session.searchWithSnippets('airway'), [], `${label}: the dummy session searched`);
+    session.close();
+  }
 });
 
 test('multilingual E5 reranker is deterministic, prefixed, cancelable, and never downloads on a question', async () => {
@@ -28632,6 +28748,31 @@ test('ZIM title ranking falls back to one-token matches instead of an empty arch
       titles([candidate(1, 'Photosynthesis')], 'treat burn'),
       [],
       `${label}: an unrelated article was admitted by the fallback`,
+    );
+  }
+});
+
+test('ZIM reader reports whether an archive carries a Xapian full-text index', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const plain = await runtime.openKiwixZim(minimalWikipediaZimFixture());
+    assert.equal(await plain.hasFullTextIndex(), false,
+      `${label}: an archive with no index was reported as searchable`);
+
+    const modern = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: true }));
+    assert.equal(await modern.hasFullTextIndex(), true,
+      `${label}: the X/fulltext/xapian entry was not detected`);
+
+    const legacy = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: 'legacy' }));
+    assert.equal(await legacy.hasFullTextIndex(), true,
+      `${label}: the older Z//fulltextIndex/xapian layout was not detected`);
+
+    // Repeat calls must not re-scan the directory on every query.
+    assert.equal(await modern.hasFullTextIndex(), true, `${label}: the memoized probe changed its answer`);
+
+    assert.deepEqual(
+      runtime.ZIM_FULL_TEXT_INDEX_ENTRIES.map(entry => `${entry.namespace}/${entry.path}`),
+      ['X/fulltext/xapian', 'Z//fulltextIndex/xapian'],
+      `${label}: the probed index locations changed`,
     );
   }
 });

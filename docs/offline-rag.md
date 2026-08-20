@@ -19,9 +19,9 @@ Bonsai 27B) answers from that evidence or says it cannot.
   field references in multiple languages. Installed Emergency Box PDFs are a
   separate reader shelf and are **not** searched by this RAG path.
 - **Two retrieval engines, not one.** Wikipedia uses the installed Kiwix/ZIM
-  **title index** (`title-only`). Emergency Box uses a prebuilt SQLite **FTS5
-  BM25** index shipped inside the corpus ZIP. Wikipedia is not FTS5, and the
-  optional Xapian ZIM full-text runtime stays GPL-gated and unbundled.
+  **title index** (`title-only`) and, when the archive has a Xapian index, the
+  vendored GPL full-text worker. Emergency Box uses a prebuilt SQLite **FTS5
+  BM25** index shipped inside the corpus ZIP. Wikipedia is not FTS5.
 - **Semantic vector search (Emergency Box only).** An optional int8-quantized
   multilingual E5 model (`Xenova/multilingual-e5-small`, ~140 MB download)
   provides cosine-similarity search over passage embeddings that are also
@@ -62,7 +62,8 @@ Bonsai 27B) answers from that evidence or says it cannot.
    only. Personal health and first-aid questions search both when they are
    ready. Pronoun follow-ups such as "fix it" after a history article do not
    reuse the previous topic when the new message has its own distinctive terms.
-3. **Search.** Wikipedia hits come from the ZIM title index. Emergency Box hits
+3. **Search.** Wikipedia hits come from Xapian when the archive has an index,
+   otherwise from the ZIM title index. Emergency Box hits
    always use FTS5 when the text pack is `ready`; E5 vectors are used when the
    model and index are available.
 4. **Fuse and budget.** Hits are fused, diversified, and wrapped as untrusted
@@ -87,8 +88,9 @@ agent.js (service worker)
         → offline-rag-worker.js (dedicated Web Worker, owns SQLite Wasm + OPFS SAH pool)
 ```
 
-Wikipedia title search does not go through SQLite. It uses the installed ZIM
-title index from Apocalypse Mode, then the same fusion and citation bridge.
+Wikipedia search does not go through SQLite. Indexed archives use the vendored
+Xapian worker; otherwise Apocalypse Mode's ZIM title index. Both then share the
+same fusion and citation bridge.
 
 The offscreen document also hosts the E5 reranker worker
 (`offline-reranker-worker.js`). The layered proxy pattern exists because Chrome
@@ -107,7 +109,7 @@ MV3 service workers cannot hold OPFS synchronous access handles.
 | `offline-query-stopwords.js` | Packaged ranks.nl stopword lists used before Wikipedia and Emergency search |
 | `emergency-corpus.js` | Transactional lifecycle: resumable HTTP Range downloads, SHA-256 verification, manifest-driven extraction, OPFS storage, Web Lock coordination |
 | `emergency-corpus-release.js` | Release pointer: pinned URL, SHA-256, byte counts, passage counts for the current corpus |
-| `zim-xapian.js` | License-gated adapter for full-text Wikipedia ZIM search (currently blocked pending GPL decision) |
+| `zim-xapian.js` | Adapter for full-text Wikipedia ZIM search via the vendored Xapian/libzim Wasm worker |
 
 ### Storage layout
 
@@ -158,7 +160,8 @@ Documents are chunked into passages of 180–700 tokens (target ~420):
 
 ### Retrieval modes
 
-These modes apply to Emergency Box ranking. Wikipedia remains title-only.
+These modes apply to Emergency Box ranking. Wikipedia uses Xapian full-text when
+the archive has an index, otherwise title lookup.
 
 | Mode | Description |
 | --- | --- |
@@ -171,8 +174,8 @@ These modes apply to Emergency Box ranking. Wikipedia remains title-only.
 - Without E5: Emergency Box falls back to BM25 lexical search
 - Without Emergency Box: searches only Wikipedia sources
 - Without both: reports offline search unavailable
-- Xapian full-text Wikipedia search: blocked pending GPL license decision;
-  title-only search remains available
+- Xapian full-text Wikipedia search: used when the archive has an index;
+  otherwise title-only lookup
 - Empty retrieval: the local model must not invent medical advice
 
 ## Vendor libraries
@@ -194,10 +197,9 @@ user.
 The Emergency Box corpus, SQLite, fflate, and Transformers.js are all
 permissively licensed and do not affect WebBrain's MIT license.
 
-The Xapian/libzim full-text Wikipedia runtime is a separate question. See
-[offline-rag-licensing.md](offline-rag-licensing.md) for the full analysis and
-the three options that must be decided by the repository owner before that
-runtime can be bundled.
+The Xapian/libzim full-text Wikipedia runtime is vendored and GPL. See
+[offline-rag-licensing.md](offline-rag-licensing.md) for the decision record,
+corresponding source, and how release artifacts are conveyed.
 
 ## Further reading
 

@@ -1,7 +1,7 @@
 {
   "name": "webbrain",
   "version": "32.2.3",
-  "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
+  "description": "Open-source AI browser agent \u2014 chat with pages, automate tasks, multi-provider LLM support.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +21,7 @@
     "build:web:landing": "node web/build/build.mjs",
     "build:web": "npm run build:web:landing && npm run build:blog && npm run build:docs",
     "build:zip": "node scripts/build-zip.mjs",
+    "build:zim-xapian": "node scripts/build-zim-xapian.mjs",
     "trace:otlp": "node scripts/trace-to-otlp.mjs",
     "update:coupon-domains": "node scripts/update-coupon-domains.mjs",
     "sync:logo": "python3 scripts/sync-logo-assets.py && python3 scripts/gen-store-promos.py && node assets/webstore-explainer-2026/render.mjs && node assets/brand-assets-2026-2/render.mjs",

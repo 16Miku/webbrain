@@ -64,7 +64,7 @@ jobs:
 
       - name: Rebuild distribution zips
         run: |
-          rm -rf dist/*
+          rm -f dist/*.zip
           node scripts/build-zip.mjs
           git add -A dist
           version=$(node -p "require('./package.json').version")

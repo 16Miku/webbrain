@@ -24,8 +24,8 @@ qu'il ne peut pas.
 - **Deux moteurs de récupération, pas un.** Wikipedia utilise l'index de
   **titres** Kiwix/ZIM installé (`title-only`). Emergency Box utilise un index
   SQLite **FTS5 BM25** préconstruit livré dans le ZIP du corpus. Wikipedia n'est
-  pas FTS5, et le runtime Xapian de recherche full-text ZIM reste sous licence
-  GPL et n'est pas empaqueté.
+  pas FTS5. Le worker Xapian GPL est vendored et sert la recherche full-text
+  lorsqu'une archive a un index.
 - **Recherche vectorielle sémantique (Emergency Box uniquement).** Un modèle E5
   multilingue quantifié en int8 (`Xenova/multilingual-e5-small`, téléchargement
   d'environ 140 Mo) offre une recherche par similarité cosinus sur des
@@ -75,7 +75,8 @@ qu'il ne peut pas.
    premiers secours cherchent les deux lorsqu'ils sont prêts. Un suivi par
    pronom tel que « fix it » après un article d'histoire ne réutilise pas le
    sujet précédent lorsque le nouveau message a ses propres termes distinctifs.
-3. **Chercher.** Les résultats Wikipedia viennent de l'index de titres ZIM. Les
+3. **Chercher.** Les résultats Wikipedia viennent de Xapian si l'archive a un
+   index, sinon de l'index de titres ZIM. Les
    résultats Emergency Box utilisent toujours FTS5 lorsque le pack texte est
    `ready` ; les vecteurs E5 sont utilisés lorsque le modèle et l'index sont
    disponibles.
@@ -103,8 +104,9 @@ agent.js (service worker)
         → offline-rag-worker.js (Web Worker dédié, possède SQLite Wasm + pool SAH OPFS)
 ```
 
-La recherche par titre Wikipedia ne passe pas par SQLite. Elle utilise l'index
-de titres ZIM du mode Apocalypse, puis le même pont de fusion et de citation.
+La recherche Wikipedia ne passe pas par SQLite. Une archive indexée utilise le
+worker Xapian vendored ; sinon l'index de titres ZIM du mode Apocalypse. Les
+deux rejoignent le même pont de fusion et de citation.
 
 Le document offscreen héberge également le worker de reclassement E5
 (`offline-reranker-worker.js`). Le motif de proxy en couches existe parce que
@@ -124,7 +126,7 @@ synchrone OPFS.
 | `offline-query-stopwords.js` | Listes de mots vides ranks.nl utilisées avant la recherche Wikipedia et Emergency |
 | `emergency-corpus.js` | Cycle de vie transactionnel : téléchargements HTTP Range résumables, vérification SHA-256, extraction pilotée par manifeste, stockage OPFS, coordination Web Lock |
 | `emergency-corpus-release.js` | Pointeur de version : URL épinglée, SHA-256, nombre d'octets, nombre de passages pour le corpus actuel |
-| `zim-xapian.js` | Adaptateur sous licence pour la recherche full-text Wikipedia ZIM (actuellement bloqué en attendant la décision GPL) |
+| `zim-xapian.js` | Adaptateur de recherche full-text Wikipedia ZIM via le worker Xapian/libzim vendored |
 
 ### Disposition du stockage
 
@@ -172,7 +174,8 @@ Les documents sont découpés en passages de 180 à 700 jetons (cible ~420) :
 
 ### Modes de récupération
 
-Ces modes s'appliquent au classement Emergency Box. Wikipedia reste title-only.
+Ces modes s'appliquent au classement Emergency Box. Wikipedia utilise Xapian
+quand l'archive a un index, sinon la recherche par titre.
 
 | Mode | Description |
 | --- | --- |
@@ -185,7 +188,7 @@ Ces modes s'appliquent au classement Emergency Box. Wikipedia reste title-only.
 - Sans E5 : Emergency Box retombe sur la recherche lexicale BM25
 - Sans Emergency Box : recherche uniquement dans les sources Wikipedia
 - Sans les deux : signalisation de recherche hors ligne indisponible
-- Recherche full-text Wikipedia Xapian : bloquée en attendant la décision de licence GPL ; la recherche par titre uniquement reste disponible
+- Recherche full-text Wikipedia Xapian : utilisée quand l'archive a un index ; sinon recherche par titre
 - Récupération vide : le modèle local ne doit pas inventer de conseil médical
 
 ## Bibliothèques vendored
@@ -207,10 +210,9 @@ les données de corpus sont téléchargés par l'utilisateur.
 Le corpus Emergency Box, SQLite, fflate et Transformers.js sont tous sous
 licences permissives et n'affectent pas la licence MIT de WebBrain.
 
-Le runtime Xapian/libzim pour la recherche full-text Wikipedia est une question
-séparée. Voir [offline-rag-licensing.md](offline-rag-licensing.md) pour
-l'analyse complète et les trois options qui doivent être décidées par le
-propriétaire du dépôt avant que ce runtime puisse être inclus.
+Le runtime Xapian/libzim pour la recherche full-text Wikipedia est vendored et
+GPL. Voir [offline-rag-licensing.md](offline-rag-licensing.md) pour la décision,
+le corresponding source, et la licence des artefacts de release.
 
 ## Pour aller plus loin
 

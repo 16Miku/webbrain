@@ -414,6 +414,12 @@ function normalizedTitleTerms(value) {
   return String(value || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
 }
 
+// Where Kiwix stores the Xapian full-text index, newest ZIM layout first.
+export const ZIM_FULL_TEXT_INDEX_ENTRIES = Object.freeze([
+  Object.freeze({ namespace: 'X', path: 'fulltext/xapian' }),
+  Object.freeze({ namespace: 'Z', path: '/fulltextIndex/xapian' }),
+]);
+
 export function rankZimTitleCandidates(candidates, query, limit = 3) {
   const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
   const queryTerms = normalizedTitleTerms(query);
@@ -666,6 +672,26 @@ export async function openKiwixZim(source, metadata = {}) {
   const provenance = mergeZimProvenance(metadata, embedded);
   const imagesIncluded = wikipediaArchiveIncludesImages(metadata, embedded);
 
+  // Kiwix bakes a Xapian full-text index into most ZIMs as an ordinary entry, so
+  // WebBrain's own reader can tell whether one is present without loading any
+  // search runtime. libzim 0.95 exposes no equivalent check and its search()
+  // swallows the error, which makes "this archive has no index" indistinguishable
+  // from "nothing matched". Probing here keeps that distinction honest and lets
+  // callers skip a runtime they would only fall back from.
+  let fullTextIndexPromise = null;
+  async function hasFullTextIndex() {
+    if (!fullTextIndexPromise) {
+      fullTextIndexPromise = (async () => {
+        for (const target of ZIM_FULL_TEXT_INDEX_ENTRIES) {
+          const found = await findPaths(target.path, 1, target.namespace, { includeAssets: true });
+          if (found.some(entry => entry.url === target.path)) return true;
+        }
+        return false;
+      })().catch(() => false);
+    }
+    return await fullTextIndexPromise;
+  }
+
   async function search(query, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit) || 3));
     const results = [];
@@ -749,7 +775,7 @@ export async function openKiwixZim(source, metadata = {}) {
     return { path: located.url, mimeType, byteLength: bytes.byteLength, bytes: bytes.slice() };
   }
 
-  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, search, readArticle, readImage };
+  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, hasFullTextIndex, search, readArticle, readImage };
 }
 
 const APOCALYPSE_DB_NAME = 'webbrain_apocalypse_mode';
@@ -1712,7 +1738,7 @@ export async function searchApocalypseArchives(query, options = {}) {
     reportStatus('not_ready');
     return [];
   }
-  const providers = options.providers || [createKiwixZimProvider({ storage })];
+  const providers = options.providers || defaultWikipediaProviders({ storage });
   const results = [];
   const archiveErrors = [];
   for (const record of archives) {
@@ -1748,6 +1774,8 @@ export async function searchApocalypseArchives(query, options = {}) {
   const maximumResults = options.searchAllArchives ? 40 : 10;
   return results.slice(0, Math.max(1, Math.min(maximumResults, Number(options.limit) || 3)));
 }
+import { ZIM_XAPIAN_RUNTIME_BUNDLED, createZimXapianProvider } from './zim-xapian.js';
+import { ZIM_XAPIAN_WORKER_PATH, createZimXapianRuntime } from './zim-xapian-runtime.js';
 
 function cachedKiwixArchive(record, storage, cache) {
   const targetIdentity = record?.target?.kind === 'file-handle'
@@ -1769,6 +1797,35 @@ function cachedKiwixArchive(record, storage, cache) {
   return pending;
 }
 
+// Full-text search when the GPL runtime is bundled, title lookup otherwise. The
+// Xapian provider wraps the title provider rather than replacing it, so an
+// archive with no index, a missing worker factory, or a runtime error still
+// answers.
+export function defaultWikipediaProviders(options = {}) {
+  const storage = options.storage || createOpfsArchiveStorage();
+  const titleProvider = createKiwixZimProvider({ storage, archiveCache: options.archiveCache });
+  if (!ZIM_XAPIAN_RUNTIME_BUNDLED) return [titleProvider];
+  const createWorker = options.createWorker || defaultXapianWorkerFactory();
+  if (!createWorker) return [titleProvider];
+  return [createZimXapianProvider({
+    storage,
+    fallbackProvider: titleProvider,
+    runtime: createZimXapianRuntime({
+      createWorker,
+      hasFullTextIndex: record => titleProvider.hasFullTextIndex(record),
+    }),
+  })];
+}
+
+function defaultXapianWorkerFactory() {
+  const api = globalThis.chrome?.runtime?.getURL
+    ? globalThis.chrome
+    : (globalThis.browser?.runtime?.getURL ? globalThis.browser : null);
+  if (!api || typeof Worker !== 'function') return null;
+  const url = api.runtime.getURL(ZIM_XAPIAN_WORKER_PATH);
+  return () => new Worker(url);
+}
+
 export function createKiwixZimProvider(options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
   const archiveCache = options.archiveCache || SHARED_KIWIX_ARCHIVE_CACHE;
@@ -1777,6 +1834,16 @@ export function createKiwixZimProvider(options = {}) {
     supports(record) {
       return record?.archiveKind === 'wikipedia'
         && (record?.target?.kind === 'opfs' || record?.target?.kind === 'file-handle');
+    },
+    // Lets a caller find out whether full-text search is even possible for this
+    // archive before reaching for a search runtime it would only fall back from.
+    async hasFullTextIndex(record) {
+      try {
+        const archive = await cachedKiwixArchive(record, storage, archiveCache);
+        return typeof archive.hasFullTextIndex === 'function' ? await archive.hasFullTextIndex() : false;
+      } catch {
+        return false;
+      }
     },
     async search(record, query, searchOptions = {}) {
       const archive = await cachedKiwixArchive(record, storage, archiveCache);
@@ -1807,7 +1874,7 @@ export async function readApocalypseArticle(archiveId, path, options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
   const record = (await store.listArchives()).find(item => item.id === archiveId && item.status === 'ready');
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
-  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  const provider = (options.providers || defaultWikipediaProviders({ storage })).find(candidate => candidate.supports(record));
   if (!provider?.read) throw new Error('This archive cannot be opened by the text reader.');
   return await provider.read(record, path, {
     maxChars: options.maxChars,
@@ -1823,7 +1890,7 @@ export async function readApocalypseImage(archiveId, path, options = {}) {
     : (await (options.store || createApocalypseStore()).listArchives())
       .find(item => item.id === archiveId && item.status === 'ready');
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
-  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  const provider = (options.providers || defaultWikipediaProviders({ storage })).find(candidate => candidate.supports(record));
   if (!provider?.readImage) throw new Error('This archive cannot provide reader images.');
   return await provider.readImage(record, path, { maxBytes: options.maxBytes });
 }

@@ -169,13 +169,19 @@ function renderArchiveRecord(record) {
     wikipediaArchiveIncludesImages(record) ? t('wl.images_title') : t('wl.text_title'),
     formatBytes(record.size),
   ].filter(Boolean).join(' · ');
+  // replacementArchiveIds is written when the download is queued, not when it
+  // verifies, so it cannot stand in for progress. Announcing the handover while
+  // a 49 GiB archive is at 67% both states something untrue and takes away the
+  // byte counter, which is the one thing worth watching on a download that long.
+  const replacingPreviousArchive = Array.isArray(record.replacementArchiveIds)
+    && record.replacementArchiveIds.length > 0;
   let detail;
   if (record.replacementCleanupError) {
     detail = record.replacementCleanupError;
-  } else if (Array.isArray(record.replacementArchiveIds) && record.replacementArchiveIds.length) {
-    detail = t('wl.finalizing');
   } else if (record.error) {
     detail = record.error;
+  } else if (status === 'ready' && replacingPreviousArchive) {
+    detail = t('wl.finalizing');
   } else if (status === 'ready') {
     detail = t('wl.ready_detail');
   } else {

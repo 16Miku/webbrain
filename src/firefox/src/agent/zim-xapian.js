@@ -1,16 +1,17 @@
 /**
- * License-gated Xapian search boundary for installed Wikipedia ZIM archives.
+ * Xapian search boundary for installed Wikipedia ZIM archives.
  *
- * No runtime is loaded or downloaded here. An approved, extension-bundled worker
- * must supply the small runtime facade documented in docs/offline-rag-licensing.md.
+ * The GPL worker is vendored under vendor/libzim/. This file stays
+ * license-neutral: it opens a session, normalizes snippets, and falls back to
+ * title lookup when the archive has no index or the worker fails.
  */
 
 export const JAVASCRIPT_LIBZIM_VERSION = '0.95';
 export const JAVASCRIPT_LIBZIM_COMMIT = '470b36920fba421a4c1a83b326e66d8aa0533870';
 export const LIBZIM_VERSION = '9.8.1';
 export const XAPIAN_VERSION = '1.4.31';
-export const ZIM_XAPIAN_DISTRIBUTION_STATUS = 'blocked-pending-owner-license-decision';
-export const ZIM_XAPIAN_RUNTIME_BUNDLED = false;
+export const ZIM_XAPIAN_DISTRIBUTION_STATUS = 'bundled-from-source';
+export const ZIM_XAPIAN_RUNTIME_BUNDLED = true;
 
 const MAX_RESULTS_PER_ARCHIVE = 10;
 const MAX_EXCERPT_CHARS = 4_000;

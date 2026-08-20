@@ -19,6 +19,7 @@
  *   dist/webbrain-chrome-<version>.zip
  *   dist/webbrain-edge-<version>.zip
  *   dist/webbrain-firefox-<version>.zip
+ *   dist/webbrain-<source-name>-corresponding-source.zip
  *
  * <version> is read from package.json at HEAD, and every archived manifest
  * must match it. An uncommitted version bump is rejected instead of creating
@@ -39,6 +40,21 @@ const targets = [
   { packageName: 'edge', sourceDir: 'chrome' },
   { packageName: 'firefox', sourceDir: 'firefox' },
 ];
+
+const CORRESPONDING_SOURCE_ROOT = 'dist/corresponding-source';
+
+export function correspondingSourceArchivePath(sourceName) {
+  return `dist/webbrain-${sourceName}-corresponding-source.zip`;
+}
+
+export function assertCorrespondingSourceArchiveEntries(entries, sourceName, trackedFiles, label) {
+  const prefix = `${sourceName}/`;
+  for (const relativePath of trackedFiles) {
+    if (!entries.includes(`${prefix}${relativePath}`)) {
+      throw new Error(`${label} is missing tracked corresponding source ${relativePath}.`);
+    }
+  }
+}
 
 export function assertMatchingArchiveVersion(expected, actual, label) {
   if (actual !== expected) {
@@ -150,6 +166,18 @@ function listTreeEntryNamesAtHead(relativePath) {
   ).split(/\r?\n/).filter(Boolean);
 }
 
+function listTreeDirectoryNamesAtHead(relativePath) {
+  return execFileSync(
+    'git',
+    ['ls-tree', '-d', '--name-only', `HEAD:${relativePath}`],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  ).split(/\r?\n/).filter(Boolean);
+}
+
 function runCli() {
   const workingPackage = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const headPackage = readJsonAtHead('package.json');
@@ -191,6 +219,34 @@ function runCli() {
       `dist/webbrain-${packageName}-${version}.zip`
     );
     console.log(`  ✓ dist/webbrain-${packageName}-${version}.zip`);
+  }
+
+  // These sources are a release artifact, not scratch output. Build their ZIPs
+  // from HEAD just like the browser packages so the tagged tree and uploaded
+  // assets describe exactly the same GPL-covered runtime source.
+  for (const sourceName of listTreeDirectoryNamesAtHead(CORRESPONDING_SOURCE_ROOT)) {
+    const sourcePath = `${CORRESPONDING_SOURCE_ROOT}/${sourceName}`;
+    const relativeOut = correspondingSourceArchivePath(sourceName);
+    const out = path.join(root, relativeOut);
+    execFileSync(
+      'git',
+      [
+        'archive',
+        '--format=zip',
+        '-o',
+        out,
+        `--prefix=${sourceName}/`,
+        `HEAD:${sourcePath}`,
+      ],
+      { stdio: 'inherit', cwd: root }
+    );
+    assertCorrespondingSourceArchiveEntries(
+      listZipEntryNames(out),
+      sourceName,
+      listTreeEntryNamesAtHead(sourcePath),
+      relativeOut
+    );
+    console.log(`  ✓ ${relativeOut}`);
   }
 }
 

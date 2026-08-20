@@ -1,5 +1,6 @@
 const apocalypseModeTranslations = {
   "es": {
+    "ap.import.search_note": "Las descargas del catálogo siempre admiten la búsqueda de texto completo. Un archivo que aportes tú puede admitir solo la búsqueda por título, porque no todos los archivos se publican con un índice de búsqueda. WebBrain lo comprueba tras la importación y te dice cuál tienes.",
     "ap.cannot_delete_while_enabled": "No se puede eliminar el archivo mientras el Modo Apocalipsis esté activado. Desactiva primero el Modo Apocalipsis.",
     "ap.models.cannot_remove_while_enabled": "No se puede eliminar el modelo mientras el Modo Apocalipsis esté activado. Desactiva primero el Modo Apocalipsis.",
     "st.display.apocalypse_mode.label": "Modo Apocalipsis",
@@ -125,6 +126,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Cargando detalles…"
   },
   "fr": {
+    "ap.import.search_note": "Les téléchargements du catalogue prennent toujours en charge la recherche en texte intégral. Un fichier que vous fournissez vous-même peut ne permettre que la recherche par titre, car toutes les archives ne sont pas publiées avec un index de recherche. WebBrain vérifie après l’import et vous indique ce que vous avez.",
     "ap.cannot_delete_while_enabled": "Impossible de supprimer l'archive lorsque le mode Apocalypse est activé. Désactivez d'abord le mode Apocalypse.",
     "ap.models.cannot_remove_while_enabled": "Impossible de supprimer le modèle lorsque le mode Apocalypse est activé. Désactivez d'abord le mode Apocalypse.",
     "st.display.apocalypse_mode.label": "Mode Apocalypse",
@@ -250,6 +252,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Chargement des détails…"
   },
   "tr": {
+    "ap.import.search_note": "Katalogdan yapılan indirmeler her zaman tam metin aramayı destekler. Kendi eklediğiniz bir dosya yalnızca başlık aramasını destekliyor olabilir, çünkü her arşiv arama dizini ile yayımlanmaz. WebBrain içe aktarmadan sonra denetler ve hangisine sahip olduğunuzu söyler.",
     "ap.cannot_delete_while_enabled": "Kıyamet Modu etkinken arşiv silinemez. Önce Kıyamet Modunu devre dışı bırakın.",
     "ap.models.cannot_remove_while_enabled": "Kıyamet Modu etkinken model kaldırılamaz. Önce Kıyamet Modunu devre dışı bırakın.",
     "st.display.apocalypse_mode.label": "Kıyamet Modu",
@@ -375,6 +378,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Ayrıntılar yükleniyor…"
   },
   "zh": {
+    "ap.import.search_note": "从目录下载的档案始终支持全文搜索。你自己提供的文件可能只支持标题搜索，因为并非每个档案都附带搜索索引。WebBrain 会在导入后检查并告诉你属于哪一种。",
     "ap.cannot_delete_while_enabled": "启用了天启模式时无法删除档案。请先禁用天启模式。",
     "ap.models.cannot_remove_while_enabled": "启用了天启模式时无法移除模型。请先禁用天启模式。",
     "st.display.apocalypse_mode.label": "末日模式",
@@ -500,6 +504,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "正在加载详细信息…"
   },
   "ru": {
+    "ap.import.search_note": "Загрузки из каталога всегда поддерживают полнотекстовый поиск. Файл, который вы добавляете сами, может поддерживать только поиск по заголовкам, потому что не каждый архив публикуется с поисковым индексом. WebBrain проверит это после импорта и сообщит, какой у вас.",
     "ap.cannot_delete_while_enabled": "Невозможно удалить архив при включенном режиме Апокалипсиса. Сначала отключите режим Апокалипсиса.",
     "ap.models.cannot_remove_while_enabled": "Невозможно удалить модель при включенном режиме Апокалипсиса. Сначала отключите режим Апокалипсиса.",
     "st.display.apocalypse_mode.label": "Режим апокалипсиса",
@@ -625,6 +630,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Загрузка сведений…"
   },
   "uk": {
+    "ap.import.search_note": "Завантаження з каталогу завжди підтримують повнотекстовий пошук. Файл, який ви додаєте самі, може підтримувати лише пошук за заголовками, бо не кожен архів публікують із пошуковим індексом. WebBrain перевірить це після імпорту й повідомить, який у вас.",
     "ap.cannot_delete_while_enabled": "Неможливо видалити архів, коли увімкнено режим Апокаліпсису. Спочатку вимкніть режим Апокаліпсису.",
     "ap.models.cannot_remove_while_enabled": "Неможливо видалити модель, коли увімкнено режим Апокаліпсису. Спочатку вимкніть режим Апокаліпсису.",
     "st.display.apocalypse_mode.label": "Режим апокаліпсису",
@@ -750,6 +756,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Завантаження відомостей…"
   },
   "ar": {
+    "ap.import.search_note": "التنزيلات من الفهرس تدعم دائمًا البحث في النص الكامل. أما الملف الذي تضيفه بنفسك فقد يدعم البحث بالعناوين فقط، لأن ليس كل أرشيف يُنشر مع فهرس بحث. يتحقق WebBrain بعد الاستيراد ويخبرك أيهما لديك.",
     "ap.cannot_delete_while_enabled": "لا يمكن حذف الأرشيف أثناء تفعيل وضع القيامة. يرجى تعطيل وضع القيامة أولاً.",
     "ap.models.cannot_remove_while_enabled": "لا يمكن إزالة النموذج أثناء تفعيل وضع القيامة. يرجى تعطيل وضع القيامة أولاً.",
     "st.display.apocalypse_mode.label": "وضع الكارثة",
@@ -875,6 +882,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "جارٍ تحميل التفاصيل…"
   },
   "ja": {
+    "ap.import.search_note": "カタログからのダウンロードは常に全文検索に対応しています。ご自身で用意したファイルはタイトル検索のみになる場合があります。すべてのアーカイブが検索インデックス付きで公開されるわけではないためです。WebBrain はインポート後に確認し、どちらかをお知らせします。",
     "ap.cannot_delete_while_enabled": "アポカリプスモードが有効な間はアーカイブを削除できません。まずアポカリプスモードを無効にしてください。",
     "ap.models.cannot_remove_while_enabled": "アポカリプスモードが有効な間はモデルを削除できません。まずアポカリプスモードを無効にしてください。",
     "st.display.apocalypse_mode.label": "アポカリプスモード",
@@ -1000,6 +1008,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "詳細を読み込んでいます…"
   },
   "ko": {
+    "ap.import.search_note": "카탈로그에서 내려받은 자료는 항상 전문 검색을 지원합니다. 직접 추가한 파일은 제목 검색만 지원할 수 있습니다. 모든 아카이브가 검색 색인과 함께 배포되지는 않기 때문입니다. WebBrain이 가져오기 후에 확인해 어느 쪽인지 알려 줍니다.",
     "ap.cannot_delete_while_enabled": "아포칼립스 모드가 활성화된 상태에서는 아카이브를 삭제할 수 없습니다. 먼저 아포칼립스 모드를 비활성화하세요.",
     "ap.models.cannot_remove_while_enabled": "아포칼립스 모드가 활성화된 상태에서는 모델을 삭제할 수 없습니다. 먼저 아포칼립스 모드를 비활성화하세요.",
     "st.display.apocalypse_mode.label": "아포칼립스 모드",
@@ -1125,6 +1134,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "세부 정보를 불러오는 중…"
   },
   "id": {
+    "ap.import.search_note": "Unduhan dari katalog selalu mendukung pencarian teks lengkap. Berkas yang Anda sediakan sendiri mungkin hanya mendukung pencarian judul, karena tidak setiap arsip diterbitkan dengan indeks pencarian. WebBrain memeriksanya setelah impor dan memberi tahu Anda yang mana.",
     "ap.cannot_delete_while_enabled": "Tidak dapat menghapus arsip saat Mode Kiamat aktif. Nonaktifkan Mode Kiamat terlebih dahulu.",
     "ap.models.cannot_remove_while_enabled": "Tidak dapat menghapus model saat Mode Kiamat aktif. Nonaktifkan Mode Kiamat terlebih dahulu.",
     "st.display.apocalypse_mode.label": "Mode Apocalypse",
@@ -1250,6 +1260,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Memuat detail…"
   },
   "th": {
+    "ap.import.search_note": "ไฟล์ที่ดาวน์โหลดจากแคตตาล็อกรองรับการค้นหาข้อความเต็มเสมอ ไฟล์ที่คุณนำมาเองอาจรองรับเพียงการค้นหาจากชื่อเรื่อง เพราะไม่ใช่ทุกคลังที่เผยแพร่พร้อมดัชนีการค้นหา WebBrain จะตรวจสอบหลังนำเข้าและแจ้งให้คุณทราบว่าเป็นแบบใด",
     "ap.cannot_delete_while_enabled": "ไม่สามารถลบไฟล์เก็บถาวรได้ในขณะที่เปิดใช้งานโหมดวันสิ้นโลก โปรดปิดใช้งานโหมดวันสิ้นโลกก่อน",
     "ap.models.cannot_remove_while_enabled": "ไม่สามารถลบโมเดลได้ในขณะที่เปิดใช้งานโหมดวันสิ้นโลก โปรดปิดใช้งานโหมดวันสิ้นโลกก่อน",
     "st.display.apocalypse_mode.label": "โหมดอาคัปปอลิส",
@@ -1375,6 +1386,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "กำลังโหลดรายละเอียด…"
   },
   "ms": {
+    "ap.import.search_note": "Muat turun daripada katalog sentiasa menyokong carian teks penuh. Fail yang anda sediakan sendiri mungkin hanya menyokong carian tajuk, kerana bukan setiap arkib diterbitkan dengan indeks carian. WebBrain menyemaknya selepas import dan memberitahu anda yang mana satu.",
     "ap.cannot_delete_while_enabled": "Tidak dapat memadamkan arkib semasa Mod Kiamat didayakan. Lumpuhkan Mod Kiamat terlebih dahulu.",
     "ap.models.cannot_remove_while_enabled": "Tidak dapat mengalih keluar model semasa Mod Kiamat didayakan. Lumpuhkan Mod Kiamat terlebih dahulu.",
     "st.display.apocalypse_mode.label": "Mod Apocalypse",
@@ -1500,6 +1512,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Memuat butiran…"
   },
   "tl": {
+    "ap.import.search_note": "Ang mga download mula sa katalogo ay laging sumusuporta sa full-text search. Ang file na ikaw mismo ang nagbigay ay maaaring sumuporta lamang sa paghahanap ayon sa pamagat, dahil hindi lahat ng archive ay inilalabas na may search index. Sinusuri ito ng WebBrain pagkatapos mag-import at sasabihin sa iyo kung alin ang mayroon ka.",
     "ap.cannot_delete_while_enabled": "Hindi maaaring tanggalin ang archive habang naka-enable ang Apocalypse Mode. I-disable muna ang Apocalypse Mode.",
     "ap.models.cannot_remove_while_enabled": "Hindi maaaring alisin ang modelo habang naka-enable ang Apocalypse Mode. I-disable muna ang Apocalypse Mode.",
     "st.display.apocalypse_mode.label": "Modo Apocalypse",
@@ -1625,6 +1638,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Naglo-load ng mga detalye…"
   },
   "pl": {
+    "ap.import.search_note": "Pliki pobrane z katalogu zawsze obsługują wyszukiwanie pełnotekstowe. Plik dodany przez Ciebie może obsługiwać tylko wyszukiwanie po tytułach, bo nie każde archiwum publikowane jest z indeksem wyszukiwania. WebBrain sprawdzi to po imporcie i powie, które masz.",
     "ap.cannot_delete_while_enabled": "Nie można usunąć archiwum, gdy tryb Apokalipsy jest włączony. Najpierw wyłącz tryb Apokalipsy.",
     "ap.models.cannot_remove_while_enabled": "Nie można usunąć modelu, gdy tryb Apokalipsy jest włączony. Najpierw wyłącz tryb Apokalipsy.",
     "st.display.apocalypse_mode.label": "Tryb apokalipsy",
@@ -1750,6 +1764,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Ładowanie szczegółów…"
   },
   "he": {
+    "ap.import.search_note": "הורדות מהקטלוג תמיד תומכות בחיפוש בטקסט המלא. קובץ שאתם מוסיפים בעצמכם עשוי לתמוך רק בחיפוש לפי כותרת, כי לא כל ארכיון מתפרסם עם אינדקס חיפוש. WebBrain בודק זאת לאחר הייבוא ומודיע לכם מה יש לכם.",
     "ap.cannot_delete_while_enabled": "לא ניתן למחוק את הארכיון כאשר מצב אפוקליפסה מופעל. השבת תחילה את מצב אפוקליפסה.",
     "ap.models.cannot_remove_while_enabled": "לא ניתן להסיר את המודל כאשר מצב אפוקליפסה מופעל. השבת תחילה את מצב אפוקליפסה.",
     "st.display.apocalypse_mode.label": "מצב אפוקליפסה",
@@ -1875,6 +1890,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "טוען פרטים…"
   },
   "hi": {
+    "ap.import.search_note": "कैटलॉग से किए गए डाउनलोड हमेशा पूर्ण-पाठ खोज का समर्थन करते हैं। आपके द्वारा दी गई फ़ाइल शायद केवल शीर्षक खोज का समर्थन करे, क्योंकि हर संग्रह खोज सूचकांक के साथ प्रकाशित नहीं होता। WebBrain आयात के बाद जाँचकर बताता है कि आपके पास कौन-सा है।",
     "ap.cannot_delete_while_enabled": "सर्वनाश मोड सक्षम होने पर संग्रह को हटाया नहीं जा सकता। पहले सर्वनाश मोड को अक्षम करें।",
     "ap.models.cannot_remove_while_enabled": "सर्वनाश मोड सक्षम होने पर मॉडल को हटाया नहीं जा सकता। पहले सर्वनाश मोड को अक्षम करें।",
     "st.display.apocalypse_mode.label": "अपोकैलिप्स मोड",
@@ -2000,6 +2016,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "विवरण लोड हो रहे हैं…"
   },
   "pt": {
+    "ap.import.search_note": "Downloads do catálogo sempre oferecem busca em texto completo. Um arquivo que você mesmo fornece pode oferecer apenas busca por título, porque nem todo arquivo é publicado com um índice de busca. O WebBrain verifica após a importação e informa qual você tem.",
     "ap.cannot_delete_while_enabled": "Não é possível excluir o arquivo enquanto o Modo Apocalipse estiver ativado. Desative o Modo Apocalipse primeiro.",
     "ap.models.cannot_remove_while_enabled": "Não é possível remover o modelo enquanto o Modo Apocalipse estiver ativado. Desative o Modo Apocalipse primeiro.",
     "st.display.apocalypse_mode.label": "Modo Apocalipse",
@@ -2125,6 +2142,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Carregando detalhes…"
   },
   "vi": {
+    "ap.import.search_note": "Các bản tải từ danh mục luôn hỗ trợ tìm kiếm toàn văn. Tệp bạn tự cung cấp có thể chỉ hỗ trợ tìm theo tiêu đề, vì không phải kho nào cũng được phát hành kèm chỉ mục tìm kiếm. WebBrain kiểm tra sau khi nhập và cho bạn biết bạn đang có loại nào.",
     "ap.cannot_delete_while_enabled": "Không thể xóa kho lưu trữ khi Chế độ Ngày tận thế đang bật. Vui lòng tắt Chế độ Ngày tận thế trước.",
     "ap.models.cannot_remove_while_enabled": "Không thể xóa mô hình khi Chế độ Ngày tận thế đang bật. Vui lòng tắt Chế độ Ngày tận thế trước.",
     "st.display.apocalypse_mode.label": "Chế độ Apocalypse",
@@ -2250,6 +2268,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Đang tải chi tiết…"
   },
   "bn": {
+    "ap.import.search_note": "ক্যাটালগ থেকে ডাউনলোড করা সংরক্ষণাগার সবসময় পূর্ণ-পাঠ্য অনুসন্ধান সমর্থন করে। আপনার নিজের দেওয়া ফাইল কেবল শিরোনাম অনুসন্ধান সমর্থন করতে পারে, কারণ প্রতিটি সংরক্ষণাগার অনুসন্ধান সূচকসহ প্রকাশিত হয় না। WebBrain আমদানির পরে যাচাই করে জানায় আপনার কোনটি আছে।",
     "ap.cannot_delete_while_enabled": "অ্যাপোক্যালিপ্স মোড চালু থাকা অবস্থায় আর্কাইভ মুছে ফেলা যাবে না। প্রথমে অ্যাপোক্যালিপ্স মোড বন্ধ করুন।",
     "ap.models.cannot_remove_while_enabled": "অ্যাপোক্যালিপ্স মোড চালু থাকা অবস্থায় মডেল সরানো যাবে না। প্রথমে অ্যাপোক্যালিপ্স মোড বন্ধ করুন।",
     "st.display.apocalypse_mode.label": "অপক্যালিপস মোড",
@@ -2375,6 +2394,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "বিবরণ লোড হচ্ছে…"
   },
   "fa": {
+    "ap.import.search_note": "دانلودها از فهرست همیشه از جست‌وجوی تمام‌متن پشتیبانی می‌کنند. فایلی که خودتان اضافه می‌کنید ممکن است فقط از جست‌وجوی عنوان پشتیبانی کند، چون هر آرشیوی با نمایهٔ جست‌وجو منتشر نمی‌شود. WebBrain پس از درون‌ریزی بررسی می‌کند و به شما می‌گوید کدام را دارید.",
     "ap.cannot_delete_while_enabled": "در زمان فعال بودن حالت آخرالزمان نمی‌توان بایگانی را حذف کرد. ابتدا حالت آخرالزمان را غیرفعال کنید.",
     "ap.models.cannot_remove_while_enabled": "در زمان فعال بودن حالت آخرالزمان نمی‌توان مدل را حذف کرد. ابتدا حالت آخرالزمان را غیرفعال کنید.",
     "st.display.apocalypse_mode.label": "حالت Apocalypse",
@@ -2500,6 +2520,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "در حال بارگذاری جزئیات…"
   },
   "nl": {
+    "ap.import.search_note": "Downloads uit de catalogus ondersteunen altijd zoeken in de volledige tekst. Een bestand dat je zelf aanlevert ondersteunt mogelijk alleen zoeken op titel, want niet elk archief wordt met een zoekindex gepubliceerd. WebBrain controleert dat na het importeren en laat weten wat je hebt.",
     "ap.cannot_delete_while_enabled": "Kan archief niet verwijderen zolang Apocalypsmodus is ingeschakeld. Schakel eerst Apocalypsmodus uit.",
     "ap.models.cannot_remove_while_enabled": "Kan model niet verwijderen zolang Apocalypsmodus is ingeschakeld. Schakel eerst Apocalypsmodus uit.",
     "st.display.apocalypse_mode.label": "Apocalypsmodus",
@@ -2625,6 +2646,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Details laden…"
   },
   "de": {
+    "ap.import.search_note": "Downloads aus dem Katalog unterstützen immer die Volltextsuche. Eine Datei, die du selbst mitbringst, unterstützt möglicherweise nur die Titelsuche, denn nicht jedes Archiv wird mit einem Suchindex veröffentlicht. WebBrain prüft das nach dem Import und sagt dir, was du hast.",
     "ap.cannot_delete_while_enabled": "Archiv kann nicht gelöscht werden, während der Apokalypse-Modus aktiviert ist. Deaktivieren Sie zuerst den Apokalypse-Modus.",
     "ap.models.cannot_remove_while_enabled": "Modell kann nicht entfernt werden, während der Apokalypse-Modus aktiviert ist. Deaktivieren Sie zuerst den Apokalypse-Modus.",
     "st.display.apocalypse_mode.label": "Apokalypse-Modus",
