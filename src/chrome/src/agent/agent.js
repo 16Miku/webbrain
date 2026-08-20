@@ -4270,16 +4270,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _standaloneWikipediaPriorTopic(messages) {
-    if (!Array.isArray(messages)) return '';
+    if (!Array.isArray(messages)) return { topic: '', languageQuery: '' };
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
       if (message?.role !== 'user' || message.webbrainStandaloneChat !== true) continue;
       const text = userMessageToText(message.content);
       if (!shouldRetrieveLocalWikipedia(text)) continue;
       const topic = localWikipediaSearchQuery(text);
-      if (topic && topic.length <= 200) return topic;
+      if (topic && topic.length <= 200) return { topic, languageQuery: text };
     }
-    return '';
+    return { topic: '', languageQuery: '' };
   }
 
   async _standaloneWikipediaQueryTranslations(searchQuery, runOptions = {}, options = {}) {
@@ -4321,7 +4321,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const localeLanguage = offlineWikipediaLanguageForLocale(runOptions.locale || 'en');
     // Direct queries keep interrogative/stopword markers that the search
     // normalizer strips. Follow-ups that reused a prior topic classify that
-    // resolved text instead of the latest (often UI-language) turn.
+    // original turn, not the stripped topic or the latest UI-language utterance.
     const languageQuery = options.languageQuery == null ? searchQuery : options.languageQuery;
     const sourceLanguage = detectOfflineQueryLanguage(languageQuery, { locale: runOptions.locale || 'en' })
       || localeLanguage;
@@ -4376,7 +4376,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Carried on every result so the ungrounded fallback knows whether to use
     // the stronger health warning without re-parsing the question.
     const healthContext = isStandaloneEmergencyOrHealthQuery(query);
-    const priorTopic = this._standaloneWikipediaPriorTopic(options.messages);
+    const prior = this._standaloneWikipediaPriorTopic(options.messages);
+    const priorTopic = prior.topic;
     const directQuery = localWikipediaSearchQuery(query);
     // Stop-word stripping can empty a query that still has a searchable topic in
     // it ("what is it for?"). Searching the raw text beats reporting a miss that
@@ -4397,7 +4398,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         {
           ...options,
           offlineRetrievalService,
-          languageQuery: resolvedFromHistory ? searchQuery : query,
+          languageQuery: resolvedFromHistory ? (prior.languageQuery || searchQuery) : query,
         },
       );
       try {

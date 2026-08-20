@@ -29563,7 +29563,7 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     { role: 'user', content: 'and?', webbrainStandaloneChat: true },
     { role: 'assistant', content: 'He served as grand vizier.' },
   ];
-  assert.equal(agent._standaloneWikipediaPriorTopic(apocalypseHistory), 'sokollu',
+  assert.equal(agent._standaloneWikipediaPriorTopic(apocalypseHistory).topic, 'sokollu',
     'context-only continuation displaced the last factual subject');
   let followUpSearchQuery = '';
   const followUpEnriched = { role: 'user', content: "what's his zodiac sign?" };
@@ -29860,6 +29860,49 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     'original-turn French language did not reach offline retrieval');
   assert.equal(frenchTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'capital of Germany',
     'the English archive searched the stripped French terms instead of the translation');
+  let frenchFollowOnTranslationRequest = null;
+  let frenchFollowOnTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'When was it founded?' },
+    'When was it founded?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng'],
+    },
+    {
+      messages: [
+        { role: 'user', content: "Quelle est la capitale de l'Allemagne ?", webbrainStandaloneChat: true },
+        { role: 'assistant', content: 'Berlin is the capital of Germany.' },
+      ],
+      async translateWikipediaQuery(request) {
+        frenchFollowOnTranslationRequest = request;
+        return { eng: 'capital of Germany' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          frenchFollowOnTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(frenchFollowOnTranslationRequest?.sourceLanguage, 'fra',
+    'a follow-up over a stripped French topic used the English UI language');
+  assert.deepEqual(frenchFollowOnTranslationRequest?.targets?.map(target => target.language), ['eng'],
+    'the English archive was excluded because the resolved French topic looked English');
+  assert.equal(frenchFollowOnTranslationRequest?.query, "capitale l'Allemagne",
+    'the follow-up did not search the resolved French topic');
+  assert.equal(frenchFollowOnTranslationOptions?.queryLanguage, 'fra',
+    'prior-turn French language did not reach offline retrieval');
+  assert.equal(frenchFollowOnTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'capital of Germany',
+    'the English archive searched the stripped French topic instead of the translation');
   let disabledTranslationCalled = false;
   await agent._applyStandaloneWikipediaRag(
     { role: 'user', content: 'What is the capital of Turkey?' },
