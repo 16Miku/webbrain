@@ -155,6 +155,10 @@ function opfsCompleteName(name) {
   return `${name}.complete`;
 }
 
+function opfsPartialName(name) {
+  return `${name}.partial`;
+}
+
 async function readOpfsCompleteSize(dir, name) {
   try {
     const handle = await dir.getFileHandle(opfsCompleteName(name));
@@ -170,6 +174,43 @@ async function writeOpfsComplete(dir, name, size) {
   const handle = await dir.getFileHandle(opfsCompleteName(name), { create: true });
   const writable = await handle.createWritable();
   await writable.write(JSON.stringify({ size }));
+  await writable.close();
+}
+
+async function readOpfsPartial(url) {
+  const file = await opfsWeightHandle(url, false);
+  if (!file) return null;
+  try {
+    const handle = await file.dir.getFileHandle(opfsPartialName(file.name));
+    const meta = JSON.parse(await (await handle.getFile()).text());
+    const blob = await file.handle.getFile();
+    const size = Number(meta?.size);
+    const total = Number(meta?.total);
+    if (!Number.isFinite(size) || size <= 0 || blob.size !== size) return null;
+    if (Number.isFinite(total) && total > 0 && size > total) return null;
+    if (meta?.url && meta.url !== String(url)) return null;
+    return {
+      size,
+      total: Number.isFinite(total) && total > 0 ? total : 0,
+      etag: String(meta?.etag || ''),
+      lastModified: String(meta?.lastModified || ''),
+      file,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeOpfsPartial(file, url, size, total, response, validators = {}) {
+  const handle = await file.dir.getFileHandle(opfsPartialName(file.name), { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify({
+    url: String(url),
+    size,
+    total: Number(total) || 0,
+    etag: response?.headers?.get?.('etag') || validators.etag || '',
+    lastModified: response?.headers?.get?.('last-modified') || validators.lastModified || '',
+  }));
   await writable.close();
 }
 
@@ -196,6 +237,7 @@ async function removeOpfsWeight(url) {
     if (!dir) return;
     await dir.removeEntry(name).catch(() => {});
     await dir.removeEntry(opfsCompleteName(name)).catch(() => {});
+    await dir.removeEntry(opfsPartialName(name)).catch(() => {});
   } catch {
     // Missing or already-cleared weights are not an error.
   }
@@ -214,17 +256,26 @@ function noteWeightProgress(loaded, total) {
   postTextDownloadState();
 }
 
-async function persistGgufToOpfs(url, response, signal) {
+async function persistGgufToOpfs(url, response, signal, {
+  offset = 0,
+  expectedTotal = 0,
+  etag = '',
+  lastModified = '',
+} = {}) {
   navigator.storage?.persist?.().catch(() => {});
   const file = await opfsWeightHandle(url, true);
   if (!file) throw new Error('Origin Private File System storage is unavailable for the Basic model.');
   await file.dir.removeEntry(opfsCompleteName(file.name)).catch(() => {});
-  const writable = await file.handle.createWritable();
+  const start = Math.max(0, Number(offset) || 0);
+  if (!start) await file.dir.removeEntry(opfsPartialName(file.name)).catch(() => {});
+  const writable = await file.handle.createWritable({ keepExistingData: start > 0 });
+  if (start > 0) await writable.seek(start);
   const encoding = String(response.headers.get('content-encoding') || '').toLowerCase();
-  const total = !encoding || encoding === 'identity'
+  const responseLength = !encoding || encoding === 'identity'
     ? Number(response.headers.get('content-length')) || 0
     : 0;
-  let loaded = 0;
+  const total = Number(expectedTotal) || (responseLength ? start + responseLength : 0);
+  let loaded = start;
   const reader = (response.body || cacheableCopy(await response.arrayBuffer(), response).body).getReader();
   try {
     while (true) {
@@ -232,25 +283,101 @@ async function persistGgufToOpfs(url, response, signal) {
       const { done, value } = await reader.read();
       if (done) break;
       loaded += value?.byteLength || value?.length || 0;
-      noteWeightProgress(loaded, total);
       await writable.write(value);
+      noteWeightProgress(loaded, total);
     }
     await writable.close();
   } catch (error) {
-    await writable.abort(error).catch(() => {});
-    await file.dir.removeEntry(file.name).catch(() => {});
-    await file.dir.removeEntry(opfsCompleteName(file.name)).catch(() => {});
+    if (signal?.aborted && textDownloadCancelMode === 'pause' && loaded > 0) {
+      try {
+        await writable.close();
+        const saved = await file.handle.getFile();
+        await writeOpfsPartial(file, url, saved.size, total, response, { etag, lastModified });
+        textDownloadState = {
+          ...textDownloadState,
+          file: 'weights',
+          loaded: saved.size,
+          total: total || textDownloadState.total,
+          progress: total > 0 ? Math.min(100, (saved.size / total) * 100) : textDownloadState.progress,
+        };
+      } catch {
+        await writable.abort(error).catch(() => {});
+        await removeOpfsWeight(url);
+      }
+    } else {
+      await writable.abort(error).catch(() => {});
+      await removeOpfsWeight(url);
+    }
     throw error;
   }
   if (total > 0 && loaded !== total) {
-    await file.dir.removeEntry(file.name).catch(() => {});
+    await removeOpfsWeight(url);
     throw new Error(`Basic model length mismatch (${loaded}/${total}).`);
   }
   if (!loaded) {
-    await file.dir.removeEntry(file.name).catch(() => {});
+    await removeOpfsWeight(url);
     throw new Error('The Basic model download was empty.');
   }
   await writeOpfsComplete(file.dir, file.name, loaded);
+  await file.dir.removeEntry(opfsPartialName(file.name)).catch(() => {});
+}
+
+function parseContentRange(value) {
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+)$/i.exec(String(value || '').trim());
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  if (![start, end, total].every(Number.isSafeInteger) || start > end || end >= total) return null;
+  return { start, end, total };
+}
+
+function partialMatchesResponse(partial, response, range) {
+  if (response.status !== 206 || !range || range.start !== partial.size) return false;
+  if (partial.total > 0 && range.total !== partial.total) return false;
+  const etag = response.headers.get('etag') || '';
+  const lastModified = response.headers.get('last-modified') || '';
+  if (partial.etag && etag && partial.etag !== etag) return false;
+  if (partial.lastModified && lastModified && partial.lastModified !== lastModified) return false;
+  const length = Number(response.headers.get('content-length')) || 0;
+  return !length || length === range.end - range.start + 1;
+}
+
+async function fetchGgufForStorage(url, signal) {
+  const partial = await readOpfsPartial(url);
+  if (partial?.total > 0 && partial.size === partial.total) {
+    await writeOpfsComplete(partial.file.dir, partial.file.name, partial.size);
+    await partial.file.dir.removeEntry(opfsPartialName(partial.file.name)).catch(() => {});
+    return { stored: await opfsWeightResponse(url) };
+  }
+
+  const fetchOptions = { signal, redirect: 'follow' };
+  if (!partial) return { response: await nativeFetch(url, fetchOptions), offset: 0, expectedTotal: 0 };
+
+  let response = await nativeFetch(url, {
+    ...fetchOptions,
+    headers: { Range: `bytes=${partial.size}-` },
+  });
+  const range = parseContentRange(response.headers.get('content-range'));
+  if (partialMatchesResponse(partial, response, range)) {
+    return {
+      response,
+      offset: partial.size,
+      expectedTotal: range.total,
+      etag: partial.etag,
+      lastModified: partial.lastModified,
+    };
+  }
+
+  if (response.status === 200) {
+    await removeOpfsWeight(url);
+    return { response, offset: 0, expectedTotal: 0 };
+  }
+
+  await response.body?.cancel?.().catch(() => {});
+  await removeOpfsWeight(url);
+  response = await nativeFetch(url, fetchOptions);
+  return { response, offset: 0, expectedTotal: 0 };
 }
 
 async function cachedResponse(url, { signal } = {}) {
@@ -281,11 +408,15 @@ async function cachedResponse(url, { signal } = {}) {
     if (hit) return hit;
   }
 
-  const response = await nativeFetch(url, signal ? { signal, redirect: 'follow' } : { redirect: 'follow' });
+  const fetched = persistGguf
+    ? await fetchGgufForStorage(url, signal)
+    : { response: await nativeFetch(url, signal ? { signal, redirect: 'follow' } : { redirect: 'follow' }) };
+  if (fetched.stored) return fetched.stored;
+  const { response } = fetched;
   if (!response.ok) throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
 
   if (persistGguf) {
-    await persistGgufToOpfs(url, response, signal);
+    await persistGgufToOpfs(url, response, signal, fetched);
     const stored = await opfsWeightResponse(url);
     if (!stored) throw new Error('The Basic model downloaded but could not be saved on this device.');
     return stored;
@@ -333,18 +464,12 @@ async function hasStoredGguf(dataUrl) {
 async function isTextModelReady(modelId = WEBGPU_BONSAI27_MODEL_ID, dtype = WEBGPU_BONSAI27_DTYPE) {
   const key = textModelKey(modelId, dtype);
   if (readyTextModelKeys.has(key)) return true;
-  if (!workerConfig?.dataUrl) return false;
+  if (!workerConfig?.dataUrl || typeof caches === 'undefined') return false;
   try {
     if (!await hasStoredGguf(workerConfig.dataUrl)) return false;
-    if (typeof caches !== 'undefined') {
-      const cache = await caches.open(CACHE_NAME);
-      const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
-      if (!marker) {
-        await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
-          headers: { 'content-type': 'application/json' },
-        }));
-      }
-    }
+    const cache = await caches.open(CACHE_NAME);
+    const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
+    if (!marker) return false;
     readyTextModelKeys.add(key);
     return true;
   } catch {
@@ -357,12 +482,11 @@ async function markTextModelReady(modelId, dtype) {
   if (!workerConfig?.dataUrl || !await hasStoredGguf(workerConfig.dataUrl)) {
     throw new Error('The Basic model downloaded but could not be saved on this device. Check that this browser has enough disk space.');
   }
-  if (typeof caches !== 'undefined') {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
-      headers: { 'content-type': 'application/json' },
-    }));
-  }
+  if (typeof caches === 'undefined') throw new Error('Cache Storage is unavailable for the Basic model ready marker.');
+  const cache = await caches.open(CACHE_NAME);
+  await cache.put(textReadyMarkerUrl(modelId, dtype), new Response(JSON.stringify({ modelId, dtype }), {
+    headers: { 'content-type': 'application/json' },
+  }));
   readyTextModelKeys.add(key);
 }
 
@@ -388,6 +512,21 @@ async function getTextDownloadStatus(modelId, dtype) {
     };
   }
   if (sameModel && textDownloadState.status === 'error') return textDownloadSnapshot();
+  const partial = workerConfig?.dataUrl ? await readOpfsPartial(workerConfig.dataUrl) : null;
+  if (partial) {
+    textDownloadState = {
+      status: 'paused',
+      ready: false,
+      modelId: normalized,
+      dtype: normalizedDtype,
+      file: 'weights',
+      loaded: partial.size,
+      total: partial.total,
+      progress: partial.total > 0 ? Math.min(100, (partial.size / partial.total) * 100) : 0,
+      error: '',
+    };
+    return textDownloadSnapshot();
+  }
   return {
     status: 'not-downloaded',
     ready: false,

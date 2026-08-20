@@ -483,7 +483,7 @@ async function ensureFixedWebgpuProvider({ markConfigured = false } = {}) {
     config: {
       model,
       dtype,
-      contextWindow: 16384,
+      contextWindow: preset.contextWindow,
       promptTier: 'compact',
     },
     markConfigured,

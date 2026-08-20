@@ -26760,7 +26760,7 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: Emergency Box must render locked until basic setup is ready');
       assert.match(pageScript, /function updateEmergencyBoxGate\(readinessKind\)[\s\S]*?const locked = readinessKind !== 'ready'/,
         'chrome: Emergency Box is not gated by aggregate readiness');
-      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: 16384/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
       assert.match(pageHtml, /data-webgpu-text-preset/, 'chrome: the local text model picker is missing');
       assert.match(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: the Bonsai 27B preset is missing');
       assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
@@ -50074,9 +50074,9 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
       'custom-owner/custom-model',
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal', runtime: 'onnx' },
-      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic', runtime: 'bitgpu' },
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime, contextWindow: option.contextWindow })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal', runtime: 'onnx', contextWindow: 16384 },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic', runtime: 'bitgpu', contextWindow: 4096 },
     ]);
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
@@ -50773,7 +50773,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.doesNotMatch(apocalypseScript, /normalizeWebgpuModelId|set_active_provider/);
   assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
   assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
-  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow[\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
@@ -50811,6 +50811,16 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /function cacheStorageKey/);
   assert.match(bonsaiWorker, /webbrain-webgpu-models/);
   assert.match(bonsaiWorker, /opfsCompleteName/);
+  assert.match(bonsaiWorker, /opfsPartialName/);
+  assert.match(bonsaiWorker, /headers: \{ Range: `bytes=\$\{partial\.size\}-` \}/);
+  assert.match(bonsaiWorker, /textDownloadCancelMode === 'pause'[\s\S]*?writeOpfsPartial/);
+  const bonsaiReadyCheck = bonsaiWorker.slice(
+    bonsaiWorker.indexOf('async function isTextModelReady'),
+    bonsaiWorker.indexOf('async function markTextModelReady'),
+  );
+  assert.match(bonsaiReadyCheck, /if \(!marker\) return false/);
+  assert.doesNotMatch(bonsaiReadyCheck, /cache\.put/,
+    'status checks must not manufacture the Bonsai runtime-ready marker');
   assert.match(bonsaiWorker, /parsed\.protocol === 'http:' \|\| parsed\.protocol === 'https:'/);
   assert.match(bonsaiWorker, /await cache\.put\(cacheKey/);
   assert.doesNotMatch(bonsaiWorker, /cache\.put\(url/);

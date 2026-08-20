@@ -19,6 +19,7 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
     size: '1.55 GB',
     dtype: WEBGPU_DTYPE,
     dtypeLabel: WEBGPU_DTYPE,
+    contextWindow: 16384,
   }),
   Object.freeze({
     id: WEBGPU_BONSAI27_MODEL_ID,
@@ -27,6 +28,7 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
     size: '3.8 GB',
     dtype: WEBGPU_BONSAI27_DTYPE,
     dtypeLabel: WEBGPU_BONSAI27_DTYPE,
+    contextWindow: 4096,
   }),
 ]);
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloaded. Open Apocalypse Mode > WebGPU to download it before chatting.`;
