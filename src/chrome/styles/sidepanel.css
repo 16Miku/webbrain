@@ -792,6 +792,12 @@ body {
   color: var(--text-secondary);
 }
 
+.ob-skip:disabled {
+  color: var(--text-muted);
+  cursor: wait;
+  opacity: 0.5;
+}
+
 .ob-skip.hidden {
   display: none;
 }

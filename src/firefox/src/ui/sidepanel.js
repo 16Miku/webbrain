@@ -204,6 +204,7 @@ if (globalThis.browser?.storage?.onChanged) {
     setProviderStatus(statusKey);
     settingsBtn.textContent = t('ob.btn.settings');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   function showLocalChoices(choices) {
@@ -262,6 +263,7 @@ if (globalThis.browser?.storage?.onChanged) {
     setProviderStatus('ob.tokens.local_status', { count: choices.length });
     settingsBtn.textContent = t('ob.btn.use_local');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   function showCloudReady() {
@@ -294,11 +296,13 @@ if (globalThis.browser?.storage?.onChanged) {
     localModels?.classList.add('hidden');
     settingsBtn.textContent = t('ob.btn.start');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   async function scanLocalModels() {
     localModelChoices = [];
     settingsBtn.disabled = true;
+    skipBtn.disabled = true;
     settingsBtn.textContent = t('ob.btn.detecting');
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
