@@ -10163,28 +10163,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return false;
   }
 
-  async _researchHelperTabMissing(researchTabId) {
-    const getTab = globalThis.chrome?.tabs?.get;
-    if (typeof getTab !== 'function') return false;
+  async _researchEscalationHelperGone(researchTabId) {
     try {
-      await getTab.call(globalThis.chrome.tabs, researchTabId);
+      await chrome.tabs.get(researchTabId);
       return false;
     } catch {
       return true;
     }
   }
 
-  async _researchEscalationShouldStop(tabId, researchTabId) {
-    return this._researchEscalationAborted(tabId, researchTabId)
-      || await this._researchHelperTabMissing(researchTabId);
-  }
-
-  _researchEscalationStoppedResult(researchTabId, extra = {}) {
+  _researchEscalationClosedResult(researchTabId, extra = {}) {
     return {
       success: false,
       cancelled: true,
       tabId: researchTabId,
-      error: 'Research escalation stopped by user.',
+      error: 'The ChatGPT research tab was closed. Research escalation stopped.',
       ...extra,
     };
   }
@@ -14772,6 +14765,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Clear conversation for a tab.
    */
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
+    // Closing the visible ChatGPT helper must abort the source wait instead of
+    // leaving it stuck on “Researching with ChatGPT…” until the deadline.
     if (this.researchEscalationSourceTab(tabId) != null) this.abort(tabId);
     // Tab removal can race the protocol teardown; the tab is already gone if
     // cleanup rejects, so there is no useful recovery for this fire-and-forget path.
@@ -18587,7 +18582,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const readyDeadline = Date.now() + Math.min(30000, timeoutSeconds * 1000);
     let before = null;
     while (Date.now() < readyDeadline) {
-      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
       try {
         before = await this._executeResearchPageFunction(researchTabId, probeChatGptPage);
         if (before?.composerReady && !isAllowedResearchEscalationUrl(before.url)) {
@@ -18596,28 +18592,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (before?.composerReady) break;
         if (before?.loginRequired) return { success: false, tabId: researchTabId, engine, requiresLogin: true, error: 'ChatGPT is asking the user to log in or sign up before a prompt can be submitted.' };
       } catch {
-        if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+        if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
       }
       await new Promise(resolve => setTimeout(resolve, 500));
     }
     if (!before?.composerReady) return { success: false, tabId: researchTabId, engine, error: 'ChatGPT did not expose a usable prompt field. The tab was left open for inspection.', pageText: before?.pageText || '' };
-    if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+    if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+    if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
 
     let submission;
     try { submission = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, [request, false]); }
     catch (error) {
-      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
       return { success: false, tabId: researchTabId, engine, error: `Could not submit the approved ChatGPT prompt: ${error.message || error}` };
     }
     if (!submission?.success) return { success: false, tabId: researchTabId, engine, error: submission?.error || 'ChatGPT prompt submission failed.' };
     let sent = null;
     const sendDeadline = Date.now() + 5000;
     while (Date.now() < sendDeadline && !sent?.success) {
-      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
       await new Promise(resolve => setTimeout(resolve, 200));
       try { sent = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, ['', true]); }
       catch {
-        if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+        if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
       }
     }
     if (!sent?.success) return { success: false, tabId: researchTabId, engine, error: sent?.error || 'ChatGPT send button did not become available.' };
@@ -18628,11 +18626,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let stableAnswer = '';
     let stableSince = 0;
     while (Date.now() < answerDeadline) {
-      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
+      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
       await new Promise(resolve => setTimeout(resolve, 1000));
       try { latest = await this._executeResearchPageFunction(researchTabId, probeChatGptPage); }
       catch {
-        if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+        if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
         continue;
       }
       if (latest?.url && !isAllowedResearchEscalationUrl(latest.url)) {
