@@ -732,12 +732,24 @@ export async function openKiwixZim(source, metadata = {}) {
   async function readArticle(path, options = {}) {
     const normalizedPath = String(path || '').trim().replace(/^\/+/, '').replace(/\s+/g, '_');
     if (!normalizedPath) throw new Error('Choose a Wikipedia article to read.');
-    const located = (await findPaths(normalizedPath, 1))[0];
-    if (!located || located.url !== normalizedPath) throw new Error('The selected article is not present in this archive.');
-    const entry = await resolvedEntry(located);
-    if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) {
-      throw new Error('The selected archive entry is not a readable text article.');
+    let located = null;
+    let entry = null;
+    let exactEntryFound = false;
+    // New ZIMs store articles in C; archives using the legacy
+    // Z//fulltextIndex/xapian layout store their matching article paths in A.
+    for (const namespace of ['C', 'A']) {
+      const candidate = (await findPaths(normalizedPath, 1, namespace))[0];
+      if (!candidate || candidate.url !== normalizedPath) continue;
+      exactEntryFound = true;
+      const resolved = await resolvedEntry(candidate);
+      if (!resolved || !['C', 'A'].includes(resolved.namespace)
+        || !String(mimeTypes[resolved.mimeType] || '').startsWith('text/html')) continue;
+      located = candidate;
+      entry = resolved;
+      break;
     }
+    if (!exactEntryFound) throw new Error('The selected article is not present in this archive.');
+    if (!located || !entry) throw new Error('The selected archive entry is not a readable text article.');
     const maxChars = Math.max(2_000, Math.min(500_000, Number(options.maxChars) || 250_000));
     const maxHtmlChars = Math.max(8_000, Math.min(2_000_000, Number(options.maxHtmlChars) || 1_000_000));
     const unsafeHtml = new TextDecoder().decode(await clusterBlob(entry.clusterIndex, entry.blobIndex));
@@ -1480,7 +1492,16 @@ export function createApocalypseArchiveManager(options = {}) {
   return { getSnapshot, setEnabled, install, pause, resume, retry: resume, remove, processNext };
 }
 
+function throwIfOfflineSearchAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Offline archive search was canceled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
 export async function searchApocalypseArchives(query, options = {}) {
+  throwIfOfflineSearchAborted(options.signal);
   const store = options.store || createApocalypseStore();
   const storage = options.storage || createOpfsArchiveStorage();
   const config = await store.getConfig();
@@ -1515,17 +1536,23 @@ export async function searchApocalypseArchives(query, options = {}) {
     try { options.onSearchStatus?.(value); } catch {}
   };
   for (const record of archives) {
+    throwIfOfflineSearchAborted(options.signal);
     try {
       const provider = providers.find(candidate => candidate.supports(record));
       if (!provider) continue;
-      results.push(...await provider.search(record, query, {
+      const providerResults = await provider.search(record, query, {
         limit: options.searchAllArchives
           ? Math.min(10, Number(options.perArchiveLimit) || 10)
           : options.limit || 3,
+        signal: options.signal,
         onSearchStatus: reportProviderStatus,
-      }));
+      });
+      throwIfOfflineSearchAborted(options.signal);
+      results.push(...providerResults);
       if (!options.searchAllArchives && results.length >= (options.limit || 3)) break;
     } catch (error) {
+      if (options.signal?.aborted) throwIfOfflineSearchAborted(options.signal);
+      if (error?.name === 'AbortError') throw error;
       const permissionRequired = isFilePermissionError(error, record.target);
       const message = permissionRequired
         ? 'File access requires confirmation. Open Apocalypse Mode and authorize the selected archive file again.'

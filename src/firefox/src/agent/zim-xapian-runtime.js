@@ -81,11 +81,13 @@ export function createZimXapianRuntime(options = {}) {
   }
 
   return Object.freeze({
-    async openArchive({ source, record }) {
+    async openArchive({ source, record, signal }) {
+      if (signal?.aborted) throw abortError('Offline full-text search was canceled.');
       let indexPresent = true;
       if (typeof probeFullTextIndex === 'function') {
         indexPresent = await probeFullTextIndex(record) === true;
       }
+      if (signal?.aborted) throw abortError('Offline full-text search was canceled.');
       // Nothing to search: report it without paying to start the runtime.
       if (!indexPresent) {
         return Object.freeze({
@@ -118,6 +120,7 @@ export function createZimXapianRuntime(options = {}) {
           worker,
           { action: 'init', files: [file], assemblerType: 'wasm' },
           INITIALIZE_TIMEOUT_MS,
+          signal,
         );
         if (typeof ready === 'string' && /error|invalid/i.test(ready)) {
           throw new Error(`The offline search runtime refused the archive: ${ready}`);

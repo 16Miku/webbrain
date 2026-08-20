@@ -102,6 +102,7 @@ export async function searchWikipediaLexical(query, options = {}) {
       limit: MAX_LEXICAL_CANDIDATES_PER_SOURCE,
       searchAllArchives: true,
       providers: options.providers,
+      signal: options.signal,
       onSearchStatus(value) {
         const status = typeof value === 'string' ? value : value?.status;
         if (status) reportedStatus = String(status);
@@ -117,6 +118,7 @@ export async function searchWikipediaLexical(query, options = {}) {
         : (reportedStatus || 'unavailable'),
     };
   } catch (error) {
+    if (options.signal?.aborted || error?.name === 'AbortError') throw error;
     return { hits: [], status: 'unavailable', error: String(error?.message || error) };
   }
 }
@@ -246,6 +248,7 @@ export function createOfflineRetrievalService(options = {}) {
           search: options.searchWikipedia,
           providers: options.wikipediaProviders,
           digestHex: options.digestHex,
+          signal: searchOptions.signal,
           onSearchStatus: searchOptions.onSearchStatus,
         })
         : Promise.resolve({ hits: [], status: 'skipped' });

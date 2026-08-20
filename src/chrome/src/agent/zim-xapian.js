@@ -26,6 +26,14 @@ function boundedLimit(value) {
   return Math.max(1, Math.min(MAX_RESULTS_PER_ARCHIVE, Number.isSafeInteger(number) ? number : MAX_RESULTS_PER_ARCHIVE));
 }
 
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Offline full-text search was canceled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
 function decodeEntity(_match, numeric, named) {
   if (numeric) {
     const hexadecimal = numeric[0]?.toLowerCase() === 'x';
@@ -117,6 +125,7 @@ export function createZimXapianProvider(options = {}) {
     async search(record, queryValue, searchOptions = {}) {
       const query = String(queryValue || '').trim();
       if (!query) return [];
+      throwIfAborted(searchOptions.signal);
       if (!runtime?.openArchive) {
         return await fallback(record, query, searchOptions, 'runtime-not-bundled');
       }
@@ -128,7 +137,7 @@ export function createZimXapianProvider(options = {}) {
           ? await storage.open(record.target)
           : await record?.target?.handle?.getFile?.();
         if (!source) throw new Error('The installed archive could not be opened for Xapian search.');
-        session = await runtime.openArchive({ source, record });
+        session = await runtime.openArchive({ source, record, signal: searchOptions.signal });
         if (typeof session?.hasFullTextIndex !== 'function' || !await session.hasFullTextIndex()) {
           delegatedToFallback = true;
           return await fallback(record, query, searchOptions, 'full-text-index-missing');
@@ -140,10 +149,13 @@ export function createZimXapianProvider(options = {}) {
         const results = await session.searchWithSnippets(query, {
           limit,
           language: String(record.language || ''),
+          signal: searchOptions.signal,
         });
         statusReporter(searchOptions.onSearchStatus || options.onStatus, record)('xapian-full-text');
         return normalizeXapianResults(results, record, { limit });
       } catch (error) {
+        if (searchOptions.signal?.aborted) throwIfAborted(searchOptions.signal);
+        if (error?.name === 'AbortError') throw error;
         if (delegatedToFallback) throw error;
         return await fallback(record, query, searchOptions, 'xapian-runtime-error', error);
       } finally {

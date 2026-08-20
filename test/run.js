@@ -24264,6 +24264,8 @@ function minimalWikipediaZimFixture(options = {}) {
     Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`,
     Tags: options.tags ?? 'wikipedia;_category:wikipedia',
   };
+  const articleNamespace = options.articleNamespace
+    || (options.fullTextIndex === 'legacy' ? 'A' : 'C');
   const entries = [
     ...(options.fullTextIndex
       ? [{
@@ -24273,7 +24275,7 @@ function minimalWikipediaZimFixture(options = {}) {
       }]
       : []),
     {
-      namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
+      namespace: articleNamespace, url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
       contents: options.articleHtml || '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
     },
     ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
@@ -26259,6 +26261,42 @@ test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
   }
 });
 
+test('Apocalypse Mode forwards cancellation without corrupting archive state', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'cancel-search', status: 'ready', archiveDate: '2026-08-20',
+      target: { kind: 'opfs', key: 'cancel.zim' },
+    };
+    let providerSignal = null;
+    let archiveWrites = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [record]; },
+      async putArchiveIfCurrent() { archiveWrites += 1; return true; },
+    };
+    const controller = new AbortController();
+    const searching = runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      signal: controller.signal,
+      providers: [{
+        supports() { return true; },
+        async search(_record, _query, searchOptions) {
+          providerSignal = searchOptions.signal;
+          return await new Promise((_resolve, reject) => {
+            searchOptions.signal.addEventListener('abort', () => reject(searchOptions.signal.reason), { once: true });
+          });
+        },
+      }],
+    });
+    while (!providerSignal) await Promise.resolve();
+    assert.equal(providerSignal, controller.signal, `${label}: archive provider did not receive the request signal`);
+    controller.abort();
+    await assert.rejects(searching, error => error?.name === 'AbortError',
+      `${label}: canceling an archive search did not reject as an abort`);
+    assert.equal(archiveWrites, 0, `${label}: a canceled search marked a healthy archive unreadable`);
+  }
+});
+
 test('Apocalypse Mode preserves title-only fallback disclosure after an empty search', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const record = {
@@ -27065,17 +27103,31 @@ test('offline RAG readiness filters persist safely and flow only into standalone
     });
     assert.deepEqual([...runtime.normalizeOfflineRagFilters({ sources: [] }).sources],
       ['wikipedia', 'emergency-box'], `${label}: empty selection did not fail safe to both sources`);
+    let probedArchive = '';
     const controller = runtime.createOfflineRagReadinessController({
       root: { innerHTML: '', addEventListener() {} },
       storage,
       apocalypseStore: { async listArchives() { return []; } },
       corpusStore: { async get() { return null; } },
       semanticReranker: { async status() { return 'model-missing'; }, close() {} },
+      wikipediaProvider: {
+        async hasFullTextIndex(record) { probedArchive = record.id; return true; },
+      },
       getGenerationStatus: () => 'ready',
     });
-    await controller.refresh({
-      archives: [{ archiveKind: 'wikipedia', status: 'ready', language: 'eng' }],
+    const readiness = await controller.refresh({
+      archives: [{ id: 'indexed-wikipedia', archiveKind: 'wikipedia', status: 'ready', language: 'eng' }],
     });
+    assert.equal(readiness.wikipedia, 'ready', `${label}: an indexed archive was still labeled title-only`);
+    assert.equal(probedArchive, 'indexed-wikipedia', `${label}: readiness did not probe the installed archive index`);
+    assert.equal(await runtime.wikipediaStatus([
+      { archiveKind: 'wikipedia', status: 'ready' },
+    ], { runtimeBundled: true, hasFullTextIndex: async () => false }), 'title-only-fallback',
+    `${label}: an unindexed archive was mislabeled full-text ready`);
+    assert.equal(await runtime.wikipediaStatus([
+      { archiveKind: 'wikipedia', status: 'ready' },
+    ], { runtimeBundled: false, hasFullTextIndex: async () => true }), 'title-only-fallback',
+    `${label}: an unavailable runtime was mislabeled full-text ready`);
     assert.deepEqual(runtime.offlineRagRunPayload(storage), {
       offlineRagSources: ['emergency-box'], offlineRagLanguages: ['eng'],
     }, `${label}: pruned language filters were not persisted for the next run`);
@@ -27409,6 +27461,28 @@ test('shared offline retrieval honors source/language filters and never download
     const missing = await missingService.search('airway', { sources: ['emergency-box'] });
     assert.equal(missing.statuses.emergencyBox, 'not-installed', `${label}: missing corpus status changed`);
     assert.equal(indexClientCreations, 0, `${label}: a question initialized missing index machinery`);
+
+    let wikipediaSignal = null;
+    const cancellationService = runtime.createOfflineRetrievalService({
+      emergencyStore: { async get() { return null; } },
+      searchWikipedia: async (_query, options) => {
+        wikipediaSignal = options.signal;
+        return await new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        });
+      },
+    });
+    const wikipediaController = new AbortController();
+    const canceledWikipedia = cancellationService.search('airway', {
+      sources: ['wikipedia'], signal: wikipediaController.signal,
+    });
+    while (!wikipediaSignal) await Promise.resolve();
+    assert.equal(wikipediaSignal, wikipediaController.signal,
+      `${label}: retrieval service dropped the Wikipedia cancellation signal`);
+    wikipediaController.abort();
+    await assert.rejects(canceledWikipedia, error => error?.name === 'AbortError',
+      `${label}: canceled Wikipedia retrieval was converted into an unavailable result`);
+    cancellationService.close();
 
     const emergencyHit = {
       sourceKind: 'emergency-box', sourceId: 'v1', documentId: '急救', passageId: '急救:one',
@@ -27784,11 +27858,13 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
     };
     let closed = 0;
     const searches = [];
+    const openedSignals = [];
     const provider = runtime.createZimXapianProvider({
       storage,
       fallbackProvider,
       runtime: {
-        async openArchive({ record }) {
+        async openArchive({ record, signal }) {
+          openedSignals.push(signal);
           return {
             async hasFullTextIndex() { return record.id !== 'simple-no-index'; },
             async searchWithSnippets(query, options) {
@@ -27803,9 +27879,14 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
         },
       },
     });
-    const fullText = await provider.search(fullRecord, 'airway', { limit: 40 });
+    const searchController = new AbortController();
+    const fullText = await provider.search(fullRecord, 'airway', {
+      limit: 40, signal: searchController.signal,
+    });
+    assert.equal(openedSignals[0], searchController.signal, `${label}: Xapian initialization lost cancellation`);
     assert.equal(searches[0].options.limit, 10, `${label}: per-archive Xapian cap changed`);
     assert.equal(searches[0].options.language, 'eng');
+    assert.equal(searches[0].options.signal, searchController.signal, `${label}: Xapian query lost cancellation`);
     assert.equal(fullText[0].archiveId, 'full-wikipedia');
     assert.equal(fullText[0].retrievalMode, 'xapian-full-text');
     assert.equal(fullText[0].excerpt, 'Keep the airway & breathing safe.', `${label}: snippet markup was not neutralized`);
@@ -27931,6 +28012,69 @@ test('Xapian runtime skips the worker when the archive has no full-text index', 
     assert.equal(await session.hasFullTextIndex(), false, `${label}: the dummy session claimed an index`);
     assert.deepEqual(session.searchWithSnippets('airway'), [], `${label}: the dummy session searched`);
     session.close();
+  }
+});
+
+test('Xapian runtime aborts initialization and active search requests', async () => {
+  class FakeWorker {
+    constructor(replyToInit) {
+      this.replyToInit = replyToInit;
+      this.messages = [];
+      this.pendingPort = null;
+      this.terminated = false;
+    }
+    postMessage(message, ports) {
+      this.messages.push(message);
+      const port = ports?.[0];
+      if (message.action === 'init' && this.replyToInit) {
+        queueMicrotask(() => {
+          port.postMessage('ready');
+          port.close();
+        });
+      } else {
+        this.pendingPort = port;
+      }
+    }
+    terminate() {
+      this.terminated = true;
+      try { this.pendingPort?.close(); } catch {}
+    }
+  }
+
+  for (const [label, runtime] of [['chrome', ZimXapianRuntimeCh], ['firefox', ZimXapianRuntimeFx]]) {
+    const source = new Blob(['zim']);
+    Object.defineProperty(source, 'name', { value: `${label}.zim` });
+
+    let initializingWorker = null;
+    const initializingDriver = runtime.createZimXapianRuntime({
+      createWorker() { initializingWorker = new FakeWorker(false); return initializingWorker; },
+      hasFullTextIndex: async () => true,
+    });
+    const initializeController = new AbortController();
+    const initialization = initializingDriver.openArchive({
+      source, record: { id: `${label}-init` }, signal: initializeController.signal,
+    });
+    while (!initializingWorker?.messages.length) await Promise.resolve();
+    initializeController.abort();
+    await assert.rejects(initialization, error => error?.name === 'AbortError',
+      `${label}: canceling Xapian initialization waited for the 45-second timeout`);
+    assert.equal(initializingWorker.terminated, true,
+      `${label}: canceled Xapian initialization left its worker running`);
+
+    let searchWorker = null;
+    const searchDriver = runtime.createZimXapianRuntime({
+      createWorker() { searchWorker = new FakeWorker(true); return searchWorker; },
+      hasFullTextIndex: async () => true,
+    });
+    const session = await searchDriver.openArchive({ source, record: { id: `${label}-search` } });
+    const searchController = new AbortController();
+    const searching = session.searchWithSnippets('airway', { signal: searchController.signal });
+    while (!searchWorker?.pendingPort) await Promise.resolve();
+    searchController.abort();
+    await assert.rejects(searching, error => error?.name === 'AbortError',
+      `${label}: canceling a Xapian query waited for the 20-second timeout`);
+    session.close();
+    assert.equal(searchWorker.terminated, true, `${label}: closing a canceled Xapian session leaked its worker`);
   }
 });
 
@@ -28702,6 +28846,9 @@ test('ZIM reader reports whether an archive carries a Xapian full-text index', a
     const legacy = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: 'legacy' }));
     assert.equal(await legacy.hasFullTextIndex(), true,
       `${label}: the older Z//fulltextIndex/xapian layout was not detected`);
+    const legacyArticle = await legacy.readArticle('Alan_Turing');
+    assert.match(legacyArticle.text, /English mathematician/i,
+      `${label}: a legacy Xapian hit could not open its matching A-namespace article`);
 
     // Repeat calls must not re-scan the directory on every query.
     assert.equal(await modern.hasFullTextIndex(), true, `${label}: the memoized probe changed its answer`);
