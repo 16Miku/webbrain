@@ -36152,6 +36152,78 @@ test('provider model loading ignores an older response that finishes last', asyn
   }
 });
 
+test('provider model loading serializes overlapping saves so the newest settings persist last', async () => {
+  for (const [label, settingsRel] of [
+    ['chrome', 'src/chrome/src/ui/settings.js'],
+    ['firefox', 'src/firefox/src/ui/settings.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const start = source.indexOf('const providerModelLoadGenerations = new Map();');
+    const end = source.indexOf('\n}\n\nfunction setProviderTestResult', start);
+    assert.ok(start >= 0 && end > start, `${label}: provider model-load runtime missing`);
+
+    const datalistEl = { innerHTML: '' };
+    const optionsEl = { innerHTML: '' };
+    const loadedDialogEl = { open: false, querySelector: () => optionsEl };
+    const document = {
+      getElementById: id => id === 'models-vllm' ? datalistEl : null,
+      querySelector: selector => selector.includes('loaded-model-dialog') ? loadedDialogEl : null,
+    };
+    const saveResponses = [deferred(), deferred()];
+    const saveStarted = [deferred(), deferred()];
+    const savedBaseUrls = [];
+    let currentBaseUrl = 'http://old.test/v1';
+    let persistedBaseUrl = '';
+    let saveCount = 0;
+    let listRequestCount = 0;
+    const loadProviderModels = Function(
+      'document', 'clearProviderLoadedModels', 'saveProvider', 'setProviderLoadModelsStatus',
+      'providerModelLoadErrorMessage', 't', 'sendToBackground', 'applyProviderBaseUrl',
+      'applyProviderContextWindow', 'escapeHtml', 'openLoadedModelDialog',
+      `${source.slice(start, end + 2)}\nreturn loadProviderModels;`,
+    )(
+      document,
+      () => { datalistEl.innerHTML = ''; optionsEl.innerHTML = ''; loadedDialogEl.open = false; },
+      async () => {
+        const index = saveCount++;
+        const snapshot = currentBaseUrl;
+        savedBaseUrls.push(snapshot);
+        saveStarted[index].resolve();
+        await saveResponses[index].promise;
+        persistedBaseUrl = snapshot;
+      },
+      () => {},
+      value => String(value || ''),
+      key => key,
+      async command => {
+        assert.equal(command, 'list_provider_models', `${label}: unexpected background command`);
+        listRequestCount += 1;
+        return { ok: true, models: ['new-model'] };
+      },
+      () => {},
+      () => {},
+      value => String(value),
+      dialog => { dialog.open = true; },
+    );
+
+    const older = loadProviderModels('vllm');
+    await saveStarted[0].promise;
+    currentBaseUrl = 'http://new.test/v1';
+    const newer = loadProviderModels('vllm');
+    assert.equal(saveCount, 1, `${label}: overlapping provider saves were not serialized`);
+
+    saveResponses[0].resolve();
+    await saveStarted[1].promise;
+    saveResponses[1].resolve();
+    await Promise.all([older, newer]);
+
+    assert.deepEqual(savedBaseUrls, ['http://old.test/v1', 'http://new.test/v1'], `${label}: newest settings were not saved last`);
+    assert.equal(persistedBaseUrl, 'http://new.test/v1', `${label}: stale settings remained persisted`);
+    assert.equal(listRequestCount, 1, `${label}: stale load continued after its save completed`);
+    assert.match(datalistEl.innerHTML, /new-model/, `${label}: newest model list was not rendered`);
+  }
+});
+
 test('settings waits for immediate preference writes and theme persistence', () => {
   for (const [label, settingsRel] of [
     ['chrome', 'src/chrome/src/ui/settings.js'],
