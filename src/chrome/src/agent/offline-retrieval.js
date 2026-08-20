@@ -226,19 +226,25 @@ export function createOfflineRetrievalService(options = {}) {
 
   return Object.freeze({
     async status() {
-      const [emergency, wikipediaArchives] = await Promise.all([
+      const [emergency, wikipediaArchives, wikipediaConfig] = await Promise.all([
         emergencyStore.get().catch(() => null),
         wikipediaStore.listArchives().catch(() => []),
+        typeof wikipediaStore.getConfig === 'function'
+          ? wikipediaStore.getConfig().catch(() => null)
+          : Promise.resolve(null),
       ]);
       const semantic = options.semanticReranker?.status
         ? await options.semanticReranker.status().catch(() => 'error')
         : 'model-missing';
+      const wikipediaEnabled = wikipediaConfig == null || wikipediaConfig.enabled === true;
       return {
         wikipedia: options.wikipediaStatus || 'unknown',
-        wikipediaLanguages: [...new Set(wikipediaArchives
-          .filter(record => record?.archiveKind === 'wikipedia' && record.status === 'ready')
-          .map(record => String(record.language || '').trim().toLowerCase())
-          .filter(language => /^[a-z]{3}$/.test(language)))].sort(),
+        wikipediaLanguages: wikipediaEnabled
+          ? [...new Set(wikipediaArchives
+            .filter(record => record?.archiveKind === 'wikipedia' && record.status === 'ready')
+            .map(record => String(record.language || '').trim().toLowerCase())
+            .filter(language => /^[a-z]{3}$/.test(language)))].sort()
+          : [],
         emergencyBox: emergencyRetrievalStatus(emergency),
         semantic,
         localGeneration: options.localGenerationStatus?.() || 'unknown',
@@ -258,7 +264,7 @@ export function createOfflineRetrievalService(options = {}) {
       const queryLanguage = /^[a-z]{3}$/.test(suppliedQueryLanguage)
         ? suppliedQueryLanguage
         : detectQueryLanguage(semanticQuery);
-      const preferredLanguages = [...new Set([queryLanguage, ...languages].filter(Boolean))];
+      const preferredLanguages = [...new Set([...languages, queryLanguage].filter(Boolean))];
       const wikipediaPromise = sources.has('wikipedia')
         ? searchWikipediaLexical(query, {
           search: options.searchWikipedia,

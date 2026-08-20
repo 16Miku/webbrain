@@ -27804,6 +27804,21 @@ test('shared offline retrieval honors source/language filters and never download
     });
     assert.deepEqual((await service.status()).wikipediaLanguages, ['eng', 'tur'],
       `${label}: retrieval status did not expose the ready installed archive languages`);
+    const disabledService = runtime.createOfflineRetrievalService({
+      emergencyStore: { async get() { return null; } },
+      wikipediaStore: {
+        async getConfig() { return { enabled: false }; },
+        async listArchives() {
+          return [
+            { archiveKind: 'wikipedia', status: 'ready', language: 'tur' },
+            { archiveKind: 'wikipedia', status: 'ready', language: 'eng' },
+          ];
+        },
+      },
+    });
+    assert.deepEqual((await disabledService.status()).wikipediaLanguages, [],
+      `${label}: disabled Apocalypse Mode still advertised Wikipedia translation targets`);
+    disabledService.close();
     const cjkOnly = await service.search('呼吸道', { languages: ['zho'], sources: ['wikipedia', 'emergency-box'] });
     assert.equal(cjkOnly.hits.length, 1, `${label}: language filter did not exclude English Wikipedia`);
     assert.equal(cjkOnly.hits[0].sourceKind, 'emergency-box');
@@ -27821,8 +27836,8 @@ test('shared offline retrieval honors source/language filters and never download
       queryLanguage: 'eng',
       wikipediaQueriesByLanguage: { tur: 'Türkiye başkenti' },
     });
-    assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['eng', 'tur'],
-      `${label}: source and selected archive languages were not prioritized deterministically`);
+    assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
+      `${label}: selected archive languages were not searched before the source language`);
     assert.deepEqual(wikipediaSearchOptions.at(-1)?.queriesByLanguage, { tur: 'Türkiye başkenti' },
       `${label}: translated per-language Wikipedia queries were not forwarded`);
     service.close();
@@ -29005,6 +29020,12 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
       true,
       `${label}: a longer Turkish factual request without a question mark skipped offline retrieval`,
     );
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Bana bir e-posta yaz'), false,
+      `${label}: a Turkish writing request triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('今日はどうですか'), false,
+      `${label}: ordinary Japanese conversation triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('富士山'), true,
+      `${label}: a Japanese encyclopedia topic skipped offline retrieval`);
     assert.equal(runtime.localWikipediaSearchQuery("who's sokollu"), 'sokollu', `${label}: contracted identity question was not reduced to its subject`);
     assert.equal(
       runtime.localWikipediaSearchQuery("what's his zodiac sign?", { fallbackTopic: 'sokollu' }),
@@ -29386,6 +29407,12 @@ test('offline query language keeps unambiguous script hints over the UI locale',
       `${label}: Cyrillic proper nouns fell back to the English UI locale`);
     assert.equal(detectOfflineQueryLanguage('القاهرة', en), 'ara',
       `${label}: Arabic proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('تهران پایتخت ایران است', { locale: 'fa' }), 'fas',
+      `${label}: Persian text with a Persian locale was classified as Arabic`);
+    assert.equal(detectOfflineQueryLanguage('تهران پایتخت ایران است', en), 'fas',
+      `${label}: Persian-specific letters still fell through to Arabic`);
+    assert.equal(detectOfflineQueryLanguage('یہ پاکستان ہے', { locale: 'ur' }), 'urd',
+      `${label}: Urdu yeh-barree did not distinguish Urdu from Arabic`);
     assert.equal(detectOfflineQueryLanguage('España', en), 'spa',
       `${label}: Spanish ñ did not identify the query`);
     assert.equal(detectOfflineQueryLanguage('São Paulo', en), 'por',

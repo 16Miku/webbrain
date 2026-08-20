@@ -3,6 +3,7 @@ import {
   detectOfflineQueryLanguage,
   foldOfflineQueryToken,
   isOfflineQueryStopWord,
+  offlineQueryHasFactualMarker,
   tokenizeOfflineQuery,
 } from './offline-query-stopwords.js';
 
@@ -17,23 +18,32 @@ export function shouldRetrieveLocalWikipedia(value) {
   const text = String(value || '').trim();
   if (text.length < 3 || text.length > 500 || /^\//.test(text) || /```|<\/?(?:html|script|style)\b/i.test(text)) return false;
   const normalized = text.toLowerCase().replace(/\s+/g, ' ');
-  if (/^(?:hi|hello|hey|thanks?|thank you|good (?:morning|afternoon|evening))[!. ]*$/.test(normalized)) return false;
+  if (/^(?:hi|hello|hey|thanks?|thank you|good (?:morning|afternoon|evening)|merhaba|teşekkür(?:ler)?|こんにちは|こんばんは|おはよう(?:ございます)?|ありがとう(?:ございます)?)[!.!！ ]*$/.test(normalized)) return false;
   if (/^(?:and|and then|so|okay|ok|really|go on|continue)[?!. ]*$/.test(normalized)) return false;
   if (/\b(?:today|currently|current|latest|right now|this week|breaking|live score|weather|forecast|stock price|exchange rate)\b/.test(normalized)) return false;
   if (/\b(?:write|rewrite|draft|compose|translate|proofread|summarize this|fix this|make this)\b/.test(normalized)) return false;
+  if (/(?:e-?posta\s+yaz|メールを書|書いて(?:ください)?)/i.test(text)) return false;
   if (/^(?:(?:are|am|do|did|can|could|would|will|have|has)\s+(?:you|i|we)|what\s+are\s+you)\b/.test(normalized)) return false;
   if (/^(?:how|what should|can|could|should)\b.*\b(?:i|me|my|we|us|our)\b/.test(normalized)) return false;
   if (/[?？]\s*$/.test(text)) return true;
   if (/^(?:who|what|when|where|why|how|which|define|explain|describe|tell me (?:more )?about|history of|meaning of|overview of)\b/.test(normalized)) return true;
   const words = normalized.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const queryLanguage = detectOfflineQueryLanguage(text);
-  if (queryLanguage && queryLanguage !== 'eng') return words.length >= 1 && words.length <= 32;
-  return words.length >= 1 && words.length <= 8
-    && !words.some(word => [
-      'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'our', 'ours',
-      'he', 'him', 'his', 'she', 'her', 'hers', 'they', 'them', 'their', 'theirs',
-      'it', 'its', 'this', 'that',
-    ].includes(word));
+  const personal = [
+    'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'our', 'ours',
+    'he', 'him', 'his', 'she', 'her', 'hers', 'they', 'them', 'their', 'theirs',
+    'it', 'its', 'this', 'that',
+    'ben', 'bana', 'beni', 'benim', 'biz', 'bizi', 'bize', 'bizim',
+    'sen', 'sana', 'seni', 'senin', 'siz', 'sizi', 'size', 'sizin',
+  ];
+  const shortTopic = words.length >= 1 && words.length <= 8 && !words.some(word => personal.includes(word));
+  if (queryLanguage && queryLanguage !== 'eng') {
+    if (words.length < 1 || words.length > 32) return false;
+    if (offlineQueryHasFactualMarker(text)) return true;
+    if (/です|ます|ください|だよ|ですね/.test(text)) return false;
+    return shortTopic;
+  }
+  return shortTopic;
 }
 
 function stripOfflineQueryStopWords(value, query) {

@@ -1503,7 +1503,7 @@ const LOCALE_TO_WIKIPEDIA_LANGUAGE = Object.freeze({
   ar: 'ara', bn: 'ben', de: 'deu', en: 'eng', es: 'spa', fa: 'fas', fr: 'fra',
   he: 'heb', hi: 'hin', id: 'ind', ja: 'jpn', ko: 'kor', ms: 'msa', nl: 'nld',
   pl: 'pol', pt: 'por', ru: 'rus', th: 'tha', tl: 'tgl', tr: 'tur', uk: 'ukr',
-  vi: 'vie', zh: 'zho',
+  ur: 'urd', vi: 'vie', zh: 'zho',
 });
 
 export const OFFLINE_WIKIPEDIA_LANGUAGE_NAMES = Object.freeze({
@@ -1545,11 +1545,25 @@ const DIRECT_QUERY_LANGUAGE_HINTS = Object.freeze([
   { re: /[ñ¿¡]/iu, language: 'spa' },
   { re: /[ãõ]/iu, language: 'por' },
   { re: /ß/u, language: 'deu' },
-  { re: /[\u0600-\u06ff]/u, language: 'ara' },
   { re: /[\u0900-\u097f]/u, language: 'hin' },
   // After Ukrainian-specific letters. Shared ö/ü/é/ç stay out of this table.
   { re: /[\u0400-\u04ff]/u, language: 'rus' },
 ]);
+
+const ARABIC_SCRIPT_RE = /[\u0600-\u06ff]/u;
+const URDU_LETTER_RE = /[\u0679\u0688\u0691\u06ba\u06be\u06d2]/u;
+const PERSIAN_LETTER_RE = /[\u067e\u0686\u0698\u06af]/u;
+const ARABIC_SCRIPT_LOCALES = new Set(['ara', 'fas', 'urd']);
+const CJK_FACTUAL_MARKER_RE = /[何誰吗嗎呢뭐]|哪里|哪裡|什么|什麼|为什么|為什麼|どこ|なぜ|どうして|어디|왜/;
+
+function detectArabicScriptQueryLanguage(text, locale) {
+  if (!ARABIC_SCRIPT_RE.test(text)) return '';
+  if (URDU_LETTER_RE.test(text)) return 'urd';
+  if (PERSIAN_LETTER_RE.test(text)) return 'fas';
+  const localeLanguage = offlineWikipediaLanguageForLocale(locale);
+  if (ARABIC_SCRIPT_LOCALES.has(localeLanguage)) return localeLanguage;
+  return 'ara';
+}
 
 const QUERY_LANGUAGE_MARKERS = Object.freeze({
   english: new Set(['what', 'who', 'when', 'where', 'why', 'which', 'how', 'define', 'explain']),
@@ -1565,9 +1579,23 @@ export function offlineWikipediaLanguageForLocale(value) {
   return LOCALE_TO_WIKIPEDIA_LANGUAGE[normalized.split('-', 1)[0]] || '';
 }
 
+export function offlineQueryHasFactualMarker(value) {
+  const text = String(value || '').normalize('NFKC').trim();
+  if (!text) return false;
+  if (CJK_FACTUAL_MARKER_RE.test(text)) return true;
+  for (const token of tokenizeOfflineQuery(text).map(token => normalizeOfflineQueryToken(token)).filter(Boolean)) {
+    for (const markers of Object.values(QUERY_LANGUAGE_MARKERS)) {
+      if (markers.has(token)) return true;
+    }
+  }
+  return false;
+}
+
 export function detectOfflineQueryLanguage(value, options = {}) {
   const text = String(value || '').normalize('NFKC').trim();
   if (!text) return offlineWikipediaLanguageForLocale(options.locale);
+  const arabicScriptLanguage = detectArabicScriptQueryLanguage(text, options.locale);
+  if (arabicScriptLanguage) return arabicScriptLanguage;
   for (const hint of DIRECT_QUERY_LANGUAGE_HINTS) {
     if (hint.re.test(text)) return hint.language;
   }
