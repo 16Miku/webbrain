@@ -113,6 +113,8 @@
   "apocalypse.title": "इंटरनेट न हो, तब भी WebBrain तैयार है।",
   "apocalypse.heading": "आपके नियंत्रण में ऑफ़लाइन ज्ञान",
   "apocalypse.description": "निजी स्थानीय चैट के लिए तीन आवश्यक चीज़ें सेट अप करें: टेक्स्ट मॉडल, विज़न मॉडल और विकिपीडिया का एक ऑफ़लाइन संस्करण।",
+  "apocalypse.video.cta": "हमारा वीडियो देखें",
+  "apocalypse.video.close_aria": "अपोकैलिप्स मोड वीडियो बंद करें",
   "features.page_understanding.title": "पृष्ठ समझ",
   "features.page_understanding.desc": "किसी भी वेब पेज को पढ़ता और समझता है - लेख, दस्तावेज़, डैशबोर्ड, फॉर्म। प्रश्न पूछें और वर्तमान पृष्ठ सामग्री से तुरंत उत्तर प्राप्त करें।",
   "features.agent.title": "पूर्ण ब्राउज़र एजेंट",

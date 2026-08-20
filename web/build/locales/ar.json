@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain جاهز حتى عندما لا يكون الإنترنت متاحًا.",
   "apocalypse.heading": "معرفة دون اتصال، تحت سيطرتك",
   "apocalypse.description": "أعِدّ العناصر الأساسية الثلاثة للدردشة المحلية الخاصة: نموذج نص، ونموذج رؤية، وإصدار واحد من ويكيبيديا دون اتصال.",
+  "apocalypse.video.cta": "شاهد الفيديو",
+  "apocalypse.video.close_aria": "إغلاق فيديو وضع الكارثة",
   "features.page_understanding.title": "فهم الصفحة",
   "features.page_understanding.desc": "يقرأ ويفهم أي صفحة ويب — المقالات، التوثيق، لوحات التحكم، النماذج. اطرح أسئلة واحصل على إجابات فورية من محتوى الصفحة الحالية.",
   "features.agent.title": "وكيل متصفح كامل",

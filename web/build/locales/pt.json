@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain pronto, mesmo quando a internet não está.",
   "apocalypse.heading": "Conhecimento offline, sob seu controle",
   "apocalypse.description": "Configure os três elementos essenciais para um bate-papo local e privado: um Modelo de Texto, um Modelo de Visão e uma edição offline da Wikipédia.",
+  "apocalypse.video.cta": "Assista ao nosso vídeo",
+  "apocalypse.video.close_aria": "Fechar o vídeo do Modo Apocalipse",
   "features.page_understanding.title": "Compreensão da página",
   "features.page_understanding.desc": "Lê e compreende qualquer página da web – artigos, documentos, painéis, formulários. Faça perguntas e obtenha respostas instantâneas do conteúdo atual da página.",
   "features.agent.title": "Agente de navegador completo",

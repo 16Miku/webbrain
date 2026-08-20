@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain staat klaar, ook zonder internet.",
   "apocalypse.heading": "Offline-kennis onder uw controle",
   "apocalypse.description": "Stel de drie essentiële onderdelen voor privé lokaal chatten in: een tekstmodel, een visiemodel en één offline Wikipedia-editie.",
+  "apocalypse.video.cta": "Bekijk onze video",
+  "apocalypse.video.close_aria": "Apocalypsmodusvideo sluiten",
   "features.page_understanding.title": "Paginabegrip",
   "features.page_understanding.desc": "Leest en begrijpt elke webpagina — artikelen, documentatie, dashboards, formulieren. Stel vragen en krijg directe antwoorden op basis van de inhoud van de huidige pagina.",
   "features.agent.title": "Volledige Browser Agent",

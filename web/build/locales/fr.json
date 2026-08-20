@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain, prêt même quand Internet ne l’est pas.",
   "apocalypse.heading": "Connaissance hors ligne, sous votre contrôle",
   "apocalypse.description": "Configurez les trois éléments essentiels du chat local privé : un modèle de texte, un modèle de vision et une édition hors ligne de Wikipédia.",
+  "apocalypse.video.cta": "Regardez notre vidéo",
+  "apocalypse.video.close_aria": "Fermer la vidéo du Mode Apocalypse",
   "features.page_understanding.title": "Compréhension des pages",
   "features.page_understanding.desc": "Lit et comprend n'importe quelle page web — articles, documentation, tableaux de bord, formulaires. Posez des questions et obtenez des réponses immédiates à partir du contenu de la page.",
   "features.agent.title": "Agent complet de navigateur",

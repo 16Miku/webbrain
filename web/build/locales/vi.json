@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain luôn sẵn sàng, ngay cả khi không có internet.",
   "apocalypse.heading": "Kiến thức ngoại tuyến, dưới sự kiểm soát của bạn",
   "apocalypse.description": "Thiết lập ba thành phần thiết yếu cho trò chuyện cục bộ riêng tư: Mô hình Văn bản, Mô hình Thị giác và một phiên bản Wikipedia ngoại tuyến.",
+  "apocalypse.video.cta": "Xem video của chúng tôi",
+  "apocalypse.video.close_aria": "Đóng video Chế độ Apocalypse",
   "features.page_understanding.title": "Hiểu trang",
   "features.page_understanding.desc": "Đọc và hiểu bất kỳ trang web nào — bài viết, tài liệu, trang tổng quan, biểu mẫu. Đặt câu hỏi và nhận câu trả lời ngay lập tức từ nội dung trang hiện tại.",
   "features.agent.title": "Đại lý trình duyệt đầy đủ",

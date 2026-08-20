@@ -113,6 +113,8 @@
   "apocalypse.title": "没有网络时，WebBrain 也准备就绪。",
   "apocalypse.heading": "由您掌控的离线知识",
   "apocalypse.description": "设置私人本地聊天所需的三项核心内容：文本模型、视觉模型和一个离线维基百科版本。",
+  "apocalypse.video.cta": "观看我们的视频",
+  "apocalypse.video.close_aria": "关闭末日模式视频",
   "features.page_understanding.title": "页面理解",
   "features.page_understanding.desc": "读懂任何网页 —— 文章、文档、仪表板、表单。对当前页面内容提问并立即获得答案。",
   "features.agent.title": "完整浏览器代理",
