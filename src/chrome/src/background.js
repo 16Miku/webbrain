@@ -3103,7 +3103,9 @@ async function handleMessage(msg, sender) {
     case 'abort': {
       const tabId = msg.tabId || sender.tab?.id;
       if (tabId) {
+        const sourceTabId = agent.researchEscalationSourceTab(tabId);
         cancelDetachedRunStart(tabId);
+        if (sourceTabId) cancelDetachedRunStart(sourceTabId);
         agent.abort(tabId);
       }
       return { ok: true };

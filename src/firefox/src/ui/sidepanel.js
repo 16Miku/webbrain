@@ -3970,7 +3970,13 @@ async function init() {
   const [tab] = await browser.tabs.query(initialWindowId != null
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
-  currentTabId = tab?.id;
+  let initialTabId = tab?.id;
+  try {
+    const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
+    const sourceTabId = Number(state?.researchEscalationSourceTabId);
+    if (Number.isFinite(sourceTabId)) initialTabId = sourceTabId;
+  } catch {}
+  currentTabId = initialTabId;
   renderedTabId = currentTabId;
 
   // Tab-activation events are extension-wide — every browser window fires
@@ -4124,6 +4130,17 @@ if (verboseBtn) {
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  try {
+    const state = await sendToBackground('agent_run_state', { tabId: newTabId });
+    const sourceTabId = Number(state?.researchEscalationSourceTabId);
+    if (Number.isFinite(sourceTabId)
+        && (sameTabId(currentTabId, sourceTabId)
+          || sameTabId(renderedTabId, sourceTabId)
+          || isTabProcessing(sourceTabId)
+          || isTabProcessing(currentTabId))) {
+      return;
+    }
+  } catch {}
   dismissSelectionAskAction();
   if (newConversationConfirmationState
       && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {

@@ -2466,6 +2466,24 @@ test('research escalation authorization is exact, one-use, and conversation-scop
   }
 });
 
+test('research escalation Stop on the ChatGPT tab aborts the source run', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    assert.equal(agent.researchEscalationSourceTab(99), 17, `${label}: helper tab should map back to the source run`);
+    assert.equal(agent.activeRunState(99).researchEscalationSourceTabId, 17, `${label}: run state should expose the source tab`);
+    agent.abort(99);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: helper Stop did not abort the source run`);
+    assert.equal(agent.abortFlags.get(99), true, `${label}: helper Stop did not mark the ChatGPT tab`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore helper Stop`);
+    agent.abortFlags.clear();
+    agent.abort(17);
+    assert.equal(agent._researchEscalationAborted(99), true, `${label}: source Stop did not cover the helper tab`);
+    agent._unbindResearchEscalationTab(99);
+    assert.equal(agent.researchEscalationSourceTab(99), null, `${label}: helper mapping leaked after unbind`);
+  }
+});
+
 test('research escalation clarify ignores Instant and issues a token only on explicit approval', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
