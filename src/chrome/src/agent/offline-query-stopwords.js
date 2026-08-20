@@ -1538,7 +1538,6 @@ const DIRECT_QUERY_LANGUAGE_HINTS = Object.freeze([
   { re: /[\u0590-\u05ff]/u, language: 'heb' },
   { re: /[\u0530-\u058f]/u, language: 'hye' },
   { re: /[\u0370-\u03ff]/u, language: 'ell' },
-  { re: /[\u4e00-\u9fff\uf900-\ufaff]/u, language: 'zho' },
   { re: /[ğışĞİŞ]/u, language: 'tur' },
   { re: /[їєґЇЄҐ]/u, language: 'ukr' },
   { re: /[đơưĐƠƯ]/u, language: 'vie' },
@@ -1554,6 +1553,9 @@ const ARABIC_SCRIPT_RE = /[\u0600-\u06ff]/u;
 const URDU_LETTER_RE = /[\u0679\u0688\u0691\u06ba\u06be\u06d2]/u;
 const PERSIAN_LETTER_RE = /[\u067e\u0686\u0698\u06af]/u;
 const ARABIC_SCRIPT_LOCALES = new Set(['ara', 'fas', 'urd']);
+const HAN_RE = /[\u4e00-\u9fff\uf900-\ufaff]/u;
+const KANA_RE = /[\u3040-\u30ff]/u;
+const HAN_SCRIPT_LOCALES = new Set(['jpn', 'zho']);
 const CJK_FACTUAL_MARKER_RE = /[何誰吗嗎呢뭐]|哪里|哪裡|什么|什麼|为什么|為什麼|どこ|なぜ|どうして|어디|왜/;
 
 function detectArabicScriptQueryLanguage(text, locale) {
@@ -1563,6 +1565,14 @@ function detectArabicScriptQueryLanguage(text, locale) {
   const localeLanguage = offlineWikipediaLanguageForLocale(locale);
   if (ARABIC_SCRIPT_LOCALES.has(localeLanguage)) return localeLanguage;
   return 'ara';
+}
+
+function detectHanScriptQueryLanguage(text, locale) {
+  if (!HAN_RE.test(text)) return '';
+  if (KANA_RE.test(text)) return 'jpn';
+  const localeLanguage = offlineWikipediaLanguageForLocale(locale);
+  if (HAN_SCRIPT_LOCALES.has(localeLanguage)) return localeLanguage;
+  return 'zho';
 }
 
 const QUERY_LANGUAGE_MARKERS = Object.freeze({
@@ -1596,6 +1606,8 @@ export function detectOfflineQueryLanguage(value, options = {}) {
   if (!text) return offlineWikipediaLanguageForLocale(options.locale);
   const arabicScriptLanguage = detectArabicScriptQueryLanguage(text, options.locale);
   if (arabicScriptLanguage) return arabicScriptLanguage;
+  const hanScriptLanguage = detectHanScriptQueryLanguage(text, options.locale);
+  if (hanScriptLanguage) return hanScriptLanguage;
   for (const hint of DIRECT_QUERY_LANGUAGE_HINTS) {
     if (hint.re.test(text)) return hint.language;
   }

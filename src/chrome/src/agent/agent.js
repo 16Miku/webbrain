@@ -300,7 +300,11 @@ function normalizeStandaloneWikipediaQueryTranslations(value, targetLanguages) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   const targets = new Set(targetLanguages);
   return Object.fromEntries(Object.entries(parsed)
-    .map(([language, query]) => [String(language || '').trim().toLowerCase(), String(query || '').trim().replace(/\s+/g, ' ').slice(0, 500)])
+    .map(([language, query]) => {
+      const code = String(language || '').trim().toLowerCase();
+      if (typeof query !== 'string') return [code, ''];
+      return [code, query.trim().replace(/\s+/g, ' ').slice(0, 500)];
+    })
     .filter(([language, query]) => targets.has(language) && query));
 }
 

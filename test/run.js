@@ -29425,6 +29425,16 @@ test('offline query language keeps unambiguous script hints over the UI locale',
       `${label}: Ukrainian-specific letters lost to the general Cyrillic fallback`);
     assert.notEqual(detectOfflineQueryLanguage('öffnen das Fenster', en), 'tur',
       `${label}: shared ö was treated as a Turkish language id`);
+    assert.equal(detectOfflineQueryLanguage('富士山', { locale: 'ja' }), 'jpn',
+      `${label}: kanji-only Japanese queries were classified as Chinese`);
+    assert.equal(detectOfflineQueryLanguage('東京都', { locale: 'ja' }), 'jpn',
+      `${label}: a Japanese locale did not disambiguate shared Han characters`);
+    assert.equal(detectOfflineQueryLanguage('富士山', { locale: 'zh' }), 'zho',
+      `${label}: a Chinese locale lost the generic Han fallback`);
+    assert.equal(detectOfflineQueryLanguage('富士山', en), 'zho',
+      `${label}: Han-only queries in an English UI should still fall back to Chinese`);
+    assert.equal(detectOfflineQueryLanguage('富士山です', en), 'jpn',
+      `${label}: kana no longer identified Japanese when mixed with kanji`);
   }
 });
 
@@ -29667,6 +29677,98 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   );
   assert.deepEqual(allInstalledTranslationRequest?.targets, [{ language: 'tur', name: 'Turkish' }],
     'default all-installed retrieval did not expand the query for a different-language archive');
+  let malformedTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur', 'swa'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery() {
+        return { tur: { query: 'Türkiye başkenti' }, swa: ['mji mkuu', 'wa Uturuki'] };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          malformedTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(malformedTranslationOptions?.wikipediaQueriesByLanguage, {},
+    'non-string translation values replaced the original archive query');
+  let nestedJsonTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery() {
+        return '{"tur":{"query":"Türkiye başkenti"}}';
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          nestedJsonTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(nestedJsonTranslationOptions?.wikipediaQueriesByLanguage, {},
+    'nested JSON translation objects were coerced into archive queries');
+  let hanTranslationRequest = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: '富士山' },
+    '富士山',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'ja',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['jpn', 'zho'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        hanTranslationRequest = request;
+        return {};
+      },
+      offlineRetrievalService: {
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(hanTranslationRequest?.sourceLanguage, 'jpn',
+    'kanji-only Japanese queries were translated as if they were Chinese');
+  assert.deepEqual(hanTranslationRequest?.targets?.map(target => target.language), ['zho'],
+    'a Japanese UI asked the model to translate Japanese kanji back into Japanese');
   let healthSources = null;
   let healthSearchQuery = '';
   await agent._applyStandaloneWikipediaRag(
