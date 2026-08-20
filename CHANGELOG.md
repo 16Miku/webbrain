@@ -4,6 +4,20 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.3] - 2026-08-20
+
+### Changed
+- test: keep Wikipedia translation assertion with its call
+- fix(offline): skip personal non-English tasks and prefer the selected source language
+- fix(offline): keep prior-turn language for Wikipedia follow-ups
+- fix(offline): detect Wikipedia language from the original direct query
+- fix(offline): skip disabled Wikipedia translation and disambiguate shared scripts
+- fix(offline): detect Wikipedia translation language from the resolved query
+- fix(offline): disambiguate Han queries and reject non-string translations
+- fix(offline): tighten multilingual Wikipedia retrieval routing
+- fix(offline): restore script-based query language hints
+- Improve multilingual offline Wikipedia retrieval
+
 ## [33.0.2] - 2026-08-20
 
 ### Changed
