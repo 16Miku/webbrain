@@ -4,6 +4,11 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.6] - 2026-08-20
+
+### Changed
+- Packaged the current extension fixes for browser stores.
+
 ## [33.0.5] - 2026-08-20
 
 ### Changed
