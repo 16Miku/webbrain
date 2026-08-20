@@ -10163,6 +10163,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return false;
   }
 
+  async _researchHelperTabMissing(researchTabId) {
+    const getTab = globalThis.chrome?.tabs?.get;
+    if (typeof getTab !== 'function') return false;
+    try {
+      await getTab.call(globalThis.chrome.tabs, researchTabId);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  async _researchEscalationShouldStop(tabId, researchTabId) {
+    return this._researchEscalationAborted(tabId, researchTabId)
+      || await this._researchHelperTabMissing(researchTabId);
+  }
+
+  _researchEscalationStoppedResult(researchTabId, extra = {}) {
+    return {
+      success: false,
+      cancelled: true,
+      tabId: researchTabId,
+      error: 'Research escalation stopped by user.',
+      ...extra,
+    };
+  }
+
   /**
    * Resolve a pending clarify() tool call with the user's answer. Called by
    * background.js when the side panel posts `clarify_response`.
@@ -14746,6 +14772,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Clear conversation for a tab.
    */
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
+    if (this.researchEscalationSourceTab(tabId) != null) this.abort(tabId);
     // Tab removal can race the protocol teardown; the tab is already gone if
     // cleanup rejects, so there is no useful recovery for this fire-and-forget path.
     void cdpClient.cleanupTab(tabId).catch(() => {});
@@ -18560,7 +18587,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const readyDeadline = Date.now() + Math.min(30000, timeoutSeconds * 1000);
     let before = null;
     while (Date.now() < readyDeadline) {
-      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, error: 'Research escalation stopped by user.' };
+      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
       try {
         before = await this._executeResearchPageFunction(researchTabId, probeChatGptPage);
         if (before?.composerReady && !isAllowedResearchEscalationUrl(before.url)) {
@@ -18568,21 +18595,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (before?.composerReady) break;
         if (before?.loginRequired) return { success: false, tabId: researchTabId, engine, requiresLogin: true, error: 'ChatGPT is asking the user to log in or sign up before a prompt can be submitted.' };
-      } catch {}
+      } catch {
+        if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      }
       await new Promise(resolve => setTimeout(resolve, 500));
     }
     if (!before?.composerReady) return { success: false, tabId: researchTabId, engine, error: 'ChatGPT did not expose a usable prompt field. The tab was left open for inspection.', pageText: before?.pageText || '' };
-    if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+    if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
 
     let submission;
     try { submission = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, [request, false]); }
-    catch (error) { return { success: false, tabId: researchTabId, engine, error: `Could not submit the approved ChatGPT prompt: ${error.message || error}` }; }
+    catch (error) {
+      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      return { success: false, tabId: researchTabId, engine, error: `Could not submit the approved ChatGPT prompt: ${error.message || error}` };
+    }
     if (!submission?.success) return { success: false, tabId: researchTabId, engine, error: submission?.error || 'ChatGPT prompt submission failed.' };
     let sent = null;
     const sendDeadline = Date.now() + 5000;
     while (Date.now() < sendDeadline && !sent?.success) {
+      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
       await new Promise(resolve => setTimeout(resolve, 200));
-      try { sent = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, ['', true]); } catch {}
+      try { sent = await this._executeResearchPageFunction(researchTabId, submitChatGptPrompt, ['', true]); }
+      catch {
+        if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+      }
     }
     if (!sent?.success) return { success: false, tabId: researchTabId, engine, error: sent?.error || 'ChatGPT send button did not become available.' };
 
@@ -18592,9 +18628,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let stableAnswer = '';
     let stableSince = 0;
     while (Date.now() < answerDeadline) {
-      if (this._researchEscalationAborted(tabId, researchTabId)) return { success: false, cancelled: true, tabId: researchTabId, engine, error: 'Research escalation stopped by user.' };
+      if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
       await new Promise(resolve => setTimeout(resolve, 1000));
-      try { latest = await this._executeResearchPageFunction(researchTabId, probeChatGptPage); } catch { continue; }
+      try { latest = await this._executeResearchPageFunction(researchTabId, probeChatGptPage); }
+      catch {
+        if (await this._researchEscalationShouldStop(tabId, researchTabId)) return this._researchEscalationStoppedResult(researchTabId, { engine });
+        continue;
+      }
       if (latest?.url && !isAllowedResearchEscalationUrl(latest.url)) {
         return { success: false, tabId: researchTabId, engine, error: 'The research tab left the approved ChatGPT origin; its page content was not accepted.' };
       }

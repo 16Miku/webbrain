@@ -2513,6 +2513,88 @@ test('research escalation Stop on the ChatGPT tab aborts the source run', () => 
   }
 });
 
+test('research escalation helper tab close aborts the source run', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    agent._cleanupTab(99);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: closing ChatGPT tab did not abort the source run`);
+    assert.equal(agent.abortFlags.get(99), true, `${label}: closing ChatGPT tab did not mark the helper abort flag`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore helper tab close`);
+    const source = new AgentClass({});
+    source._bindResearchEscalationTab(17, 99);
+    source._cleanupTab(17);
+    assert.equal(source.abortFlags.get(17), undefined, `${label}: source-tab cleanup should not treat the page as a helper`);
+  }
+});
+
+test('research escalation cancels promptly when the ChatGPT helper tab is closed', async () => {
+  for (const [label, AgentClass, apiName] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const previousApi = globalThis[apiName];
+    const tabs = new Map([
+      [17, { id: 17, windowId: 1, index: 0 }],
+    ]);
+    globalThis[apiName] = {
+      tabs: {
+        async get(id) {
+          const tab = tabs.get(id);
+          if (!tab) throw new Error(`No tab with id: ${id}`);
+          return tab;
+        },
+        async create(createProperties) {
+          const tab = {
+            id: 99,
+            windowId: createProperties.windowId || 1,
+            index: 1,
+            url: createProperties.url,
+          };
+          tabs.set(99, tab);
+          return tab;
+        },
+        async update() { return {}; },
+      },
+      sidePanel: { setOptions() {} },
+    };
+    try {
+      const agent = new AgentClass({});
+      let phase = 'ready';
+      agent._addToWebBrainGroup = async () => {};
+      agent._executeResearchPageFunction = async (tabId) => {
+        if (!tabs.has(tabId)) throw new Error(`No tab with id: ${tabId}`);
+        if (phase === 'ready') {
+          phase = 'fill';
+          return { composerReady: true, url: 'https://chatgpt.com/', assistantCount: 0, generating: false };
+        }
+        if (phase === 'fill') {
+          phase = 'send';
+          return { success: true };
+        }
+        if (phase === 'send') {
+          phase = 'wait';
+          return { success: true };
+        }
+        tabs.delete(tabId);
+        throw new Error(`No tab with id: ${tabId}`);
+      };
+      const started = Date.now();
+      const result = await agent._runResearchEscalation(17, {
+        engine: 'chatgpt',
+        request: 'Compare four hotels',
+      }, { timeout_seconds: 30 });
+      assert.equal(result.cancelled, true, `${label}: closed helper tab did not cancel`);
+      assert.equal(result.success, false, `${label}: closed helper tab was treated as success`);
+      assert.equal(result.timedOut, undefined, `${label}: closed helper tab waited until the deadline`);
+      assert.ok(Date.now() - started < 5000, `${label}: closed helper tab kept waiting (${Date.now() - started}ms)`);
+    } finally {
+      if (previousApi === undefined) delete globalThis[apiName];
+      else globalThis[apiName] = previousApi;
+    }
+  }
+});
+
 test('research escalation clarify ignores Instant and issues a token only on explicit approval', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
