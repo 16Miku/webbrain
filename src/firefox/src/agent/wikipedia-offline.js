@@ -1,5 +1,6 @@
 import { searchApocalypseArchives } from './apocalypse-mode.js';
 import {
+  detectOfflineQueryLanguage,
   foldOfflineQueryToken,
   isOfflineQueryStopWord,
   tokenizeOfflineQuery,
@@ -25,6 +26,8 @@ export function shouldRetrieveLocalWikipedia(value) {
   if (/[?？]\s*$/.test(text)) return true;
   if (/^(?:who|what|when|where|why|how|which|define|explain|describe|tell me (?:more )?about|history of|meaning of|overview of)\b/.test(normalized)) return true;
   const words = normalized.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const queryLanguage = detectOfflineQueryLanguage(text);
+  if (queryLanguage && queryLanguage !== 'eng') return words.length >= 1 && words.length <= 32;
   return words.length >= 1 && words.length <= 8
     && !words.some(word => [
       'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'our', 'ours',

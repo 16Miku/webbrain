@@ -25,6 +25,14 @@ function boundedStrings(values, predicate, maximum) {
     .filter(predicate))].slice(0, maximum);
 }
 
+function boundedWikipediaQueries(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([language, query]) => [String(language || '').trim().toLowerCase(), String(query || '').trim().slice(0, 500)])
+    .filter(([language, query]) => /^[a-z]{3}$/.test(language) && query)
+    .slice(0, 24));
+}
+
 export function createOffscreenOfflineRetrievalService(options = {}) {
   const api = options.api || globalThis.chrome;
   const ensureHost = options.ensureHost || ensureOffscreen;
@@ -62,11 +70,15 @@ export function createOffscreenOfflineRetrievalService(options = {}) {
       const query = String(queryValue || '').trim().slice(0, 4_000);
       const sources = boundedStrings(searchOptions.sources, value => ALLOWED_SOURCES.has(value), 2);
       const languages = boundedStrings(searchOptions.languages, value => /^[a-z]{3}$/.test(value), 64);
+      const queryLanguage = String(searchOptions.queryLanguage || '').trim().toLowerCase();
       return await request('search', {
         query,
         options: {
           sources: sources.length ? sources : [...ALLOWED_SOURCES],
           languages,
+          semanticQuery: String(searchOptions.semanticQuery || '').trim().slice(0, 4_000),
+          queryLanguage: /^[a-z]{3}$/.test(queryLanguage) ? queryLanguage : '',
+          wikipediaQueriesByLanguage: boundedWikipediaQueries(searchOptions.wikipediaQueriesByLanguage),
           limit: Math.min(12, Math.max(1, Number(searchOptions.limit) || 6)),
         },
       }, searchOptions);

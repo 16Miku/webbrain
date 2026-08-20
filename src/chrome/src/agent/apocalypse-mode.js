@@ -1797,9 +1797,20 @@ export async function searchApocalypseArchives(query, options = {}) {
     reportStatus('not_installed');
     return [];
   }
+  const preferredLanguages = [...new Set((Array.isArray(options.preferredLanguages) ? options.preferredLanguages : [])
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(value => /^[a-z]{3}$/.test(value)))];
+  const preferredLanguageRank = language => {
+    const index = preferredLanguages.indexOf(String(language || '').trim().toLowerCase());
+    return index < 0 ? preferredLanguages.length : index;
+  };
+  const queriesByLanguage = Object.fromEntries(Object.entries(options.queriesByLanguage || {})
+    .map(([language, value]) => [String(language || '').trim().toLowerCase(), String(value || '').trim().slice(0, 500)])
+    .filter(([language, value]) => /^[a-z]{3}$/.test(language) && value));
   const archives = installedArchives
     .filter(record => record.status === 'ready' && (!options.archiveId || record.id === options.archiveId))
-    .sort((left, right) => String(right.archiveDate || '').localeCompare(String(left.archiveDate || '')));
+    .sort((left, right) => preferredLanguageRank(left.language) - preferredLanguageRank(right.language)
+      || String(right.archiveDate || '').localeCompare(String(left.archiveDate || '')));
   if (!archives.length) {
     reportStatus('not_ready');
     return [];
@@ -1820,7 +1831,8 @@ export async function searchApocalypseArchives(query, options = {}) {
     try {
       const provider = providers.find(candidate => candidate.supports(record));
       if (!provider) continue;
-      const providerResults = await provider.search(record, query, {
+      const archiveQuery = queriesByLanguage[String(record.language || '').trim().toLowerCase()] || query;
+      const providerResults = await provider.search(record, archiveQuery, {
         limit: options.searchAllArchives
           ? Math.min(10, Number(options.perArchiveLimit) || 10)
           : options.limit || 3,

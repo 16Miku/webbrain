@@ -1487,3 +1487,107 @@ export function isOfflineQueryStopWord(value, query = "") {
   return folded !== token && words.has(folded);
 }
 
+const LANGUAGE_KEY_TO_WIKIPEDIA_LANGUAGE = Object.freeze({
+  arabic: 'ara', armenian: 'hye', basque: 'eus', bengali: 'ben', brazilian: 'por',
+  bulgarian: 'bul', catalan: 'cat', chinese: 'zho', croatian: 'hrv', czech: 'ces',
+  danish: 'dan', dutch: 'nld', finnish: 'fin', french: 'fra', galician: 'glg',
+  german: 'deu', greek: 'ell', hebrew: 'heb', hindi: 'hin', hungarian: 'hun',
+  indonesian: 'ind', irish: 'gle', italian: 'ita', japanese: 'jpn', korean: 'kor',
+  kurdish: 'kur', latvian: 'lav', lithuanian: 'lit', marathi: 'mar', norwegian: 'nor',
+  persian: 'fas', polish: 'pol', portuguese: 'por', romanian: 'ron', russian: 'rus',
+  slovak: 'slk', spanish: 'spa', swedish: 'swe', thai: 'tha', turkish: 'tur',
+  ukrainian: 'ukr', urdu: 'urd',
+});
+
+const LOCALE_TO_WIKIPEDIA_LANGUAGE = Object.freeze({
+  ar: 'ara', bn: 'ben', de: 'deu', en: 'eng', es: 'spa', fa: 'fas', fr: 'fra',
+  he: 'heb', hi: 'hin', id: 'ind', ja: 'jpn', ko: 'kor', ms: 'msa', nl: 'nld',
+  pl: 'pol', pt: 'por', ru: 'rus', th: 'tha', tl: 'tgl', tr: 'tur', uk: 'ukr',
+  vi: 'vie', zh: 'zho',
+});
+
+export const OFFLINE_WIKIPEDIA_LANGUAGE_NAMES = Object.freeze({
+  ara: 'Arabic', ben: 'Bengali', deu: 'German', eng: 'English', fas: 'Persian',
+  fra: 'French', heb: 'Hebrew', hin: 'Hindi', ind: 'Indonesian', jpn: 'Japanese',
+  kor: 'Korean', msa: 'Malay', nld: 'Dutch', pol: 'Polish', por: 'Portuguese',
+  rus: 'Russian', spa: 'Spanish', tgl: 'Filipino', tha: 'Thai', tur: 'Turkish',
+  ukr: 'Ukrainian', vie: 'Vietnamese', zho: 'Chinese',
+});
+
+export function offlineWikipediaLanguageName(value, locale = 'en') {
+  const language = String(value || '').trim().toLowerCase();
+  if (!/^[a-z]{3}$/.test(language)) return '';
+  if (OFFLINE_WIKIPEDIA_LANGUAGE_NAMES[language]) {
+    return OFFLINE_WIKIPEDIA_LANGUAGE_NAMES[language];
+  }
+  try {
+    const displayNames = new Intl.DisplayNames([String(locale || 'en')], { type: 'language' });
+    const name = String(displayNames.of(language) || '').trim();
+    if (name && name.toLowerCase() !== language) return name;
+  } catch {
+    // Older extension runtimes may not expose Intl.DisplayNames.
+  }
+  return language.toUpperCase();
+}
+
+const DIRECT_QUERY_LANGUAGE_HINTS = Object.freeze([
+  { re: /[\u3040-\u30ff]/u, language: 'jpn' },
+  { re: /[\uac00-\ud7af]/u, language: 'kor' },
+  { re: /[\u0e00-\u0e7f]/u, language: 'tha' },
+  { re: /[\u0980-\u09ff]/u, language: 'ben' },
+  { re: /[\u0590-\u05ff]/u, language: 'heb' },
+  { re: /[\u0530-\u058f]/u, language: 'hye' },
+  { re: /[\u0370-\u03ff]/u, language: 'ell' },
+  { re: /[\u4e00-\u9fff\uf900-\ufaff]/u, language: 'zho' },
+  { re: /[ğışĞİŞ]/u, language: 'tur' },
+  { re: /[їєґЇЄҐ]/u, language: 'ukr' },
+  { re: /[đơưĐƠƯ]/u, language: 'vie' },
+]);
+
+const QUERY_LANGUAGE_MARKERS = Object.freeze({
+  english: new Set(['what', 'who', 'when', 'where', 'why', 'which', 'how', 'define', 'explain']),
+  french: new Set(['pourquoi', 'comment', 'lequel', 'laquelle', 'quand', 'quoi']),
+  german: new Set(['warum', 'welche', 'welcher', 'welches', 'wann', 'woher', 'wieso']),
+  spanish: new Set(['qué', 'quién', 'quiénes', 'dónde', 'cuándo', 'porqué', 'cuál', 'cuáles']),
+  turkish: new Set(['nedir', 'kimdir', 'nerede', 'nereye', 'nereden', 'nasıl', 'nasil', 'neden', 'niye', 'hangi', 'hangisi', 'kaç', 'kac']),
+});
+
+export function offlineWikipediaLanguageForLocale(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+  if (/^[a-z]{3}$/.test(normalized)) return normalized;
+  return LOCALE_TO_WIKIPEDIA_LANGUAGE[normalized.split('-', 1)[0]] || '';
+}
+
+export function detectOfflineQueryLanguage(value, options = {}) {
+  const text = String(value || '').normalize('NFKC').trim();
+  if (!text) return offlineWikipediaLanguageForLocale(options.locale);
+  for (const hint of DIRECT_QUERY_LANGUAGE_HINTS) {
+    if (hint.re.test(text)) return hint.language;
+  }
+
+  const tokens = tokenizeOfflineQuery(text).map(token => normalizeOfflineQueryToken(token)).filter(Boolean);
+  const scores = new Map();
+  const add = (language, amount = 1) => scores.set(language, (scores.get(language) || 0) + amount);
+  for (const token of tokens) {
+    if (ENGLISH_OFFLINE_QUERY_STOP_WORDS.has(token)) add('eng');
+    const matchedLanguages = new Set();
+    for (const [key, words] of Object.entries(LANGUAGE_STOPWORD_SETS)) {
+      if (words.has(token) || words.has(foldOfflineQueryToken(token))) {
+        matchedLanguages.add(LANGUAGE_KEY_TO_WIKIPEDIA_LANGUAGE[key]);
+      }
+    }
+    for (const language of matchedLanguages) add(language);
+    for (const [key, markers] of Object.entries(QUERY_LANGUAGE_MARKERS)) {
+      if (markers.has(token)) add(LANGUAGE_KEY_TO_WIKIPEDIA_LANGUAGE[key] || (key === 'english' ? 'eng' : ''), 3);
+    }
+  }
+
+  const ranked = [...scores.entries()]
+    .filter(([language]) => language)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const fallback = offlineWikipediaLanguageForLocale(options.locale);
+  if (!ranked.length) return fallback;
+  if (ranked[0][1] >= 2 && ranked[0][1] > (ranked[1]?.[1] || 0)) return ranked[0][0];
+  if (fallback && scores.has(fallback)) return fallback;
+  return ranked[0][1] >= 3 ? ranked[0][0] : fallback;
+}
