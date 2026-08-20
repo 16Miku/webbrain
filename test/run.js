@@ -15066,17 +15066,20 @@ test('extension package roots declare the combined GPL release license', () => {
   }
 });
 
-test('version 33 licensing boundary is consistent across project metadata and FAQ copy', () => {
+test('version 33-and-later licensing boundary is consistent across project metadata and FAQ copy', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const packageLock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-  assert.equal(packageJson.version, '33.0.0');
+  const versionMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(packageJson.version);
+  assert.ok(versionMatch, 'package version must use MAJOR.MINOR.PATCH');
+  assert.ok(Number(versionMatch[1]) >= 33, 'GPL project metadata applies to version 33.0.0 and later');
   assert.equal(packageJson.license, 'GPL-3.0-or-later');
-  assert.equal(packageLock.version, '33.0.0');
+  assert.equal(packageLock.version, packageJson.version);
+  assert.equal(packageLock.packages[''].version, packageJson.version);
   assert.equal(packageLock.packages[''].license, 'GPL-3.0-or-later');
 
   for (const browser of ['chrome', 'firefox']) {
     const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${browser}/manifest.json`), 'utf8'));
-    assert.equal(manifest.version, '33.0.0', `${browser}: manifest version should match the GPL transition release`);
+    assert.equal(manifest.version, packageJson.version, `${browser}: manifest version should match the current GPL release`);
   }
 
   const rootLicense = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
