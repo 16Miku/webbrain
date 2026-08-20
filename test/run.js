@@ -2513,6 +2513,33 @@ test('research escalation Stop on the ChatGPT tab aborts the source run', () => 
   }
 });
 
+test('research escalation cleanup of the ChatGPT tab aborts the source run', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    agent._cleanupTab(99);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: closing the helper tab did not abort the source run`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed helper tab`);
+
+    const apiName = label === 'chrome' ? 'chrome' : 'browser';
+    const previousApi = globalThis[apiName];
+    const closed = agent._researchEscalationClosedResult(99, { engine: 'chatgpt' });
+    assert.equal(closed.success, false, `${label}: closed helper should fail the wait`);
+    assert.equal(closed.cancelled, true, `${label}: closed helper should cancel the wait`);
+    assert.equal(closed.engine, 'chatgpt', `${label}: closed helper should keep the engine`);
+    assert.match(closed.error, /research tab was closed/i, `${label}: closed-helper error missing`);
+    try {
+      globalThis[apiName] = { tabs: { get: async () => { throw new Error('No tab with id: 99.'); } } };
+      assert.equal(await agent._researchEscalationHelperGone(99), true, `${label}: missing helper should count as gone`);
+      globalThis[apiName] = { tabs: { get: async () => ({ id: 99 }) } };
+      assert.equal(await agent._researchEscalationHelperGone(99), false, `${label}: live helper should not count as gone`);
+    } finally {
+      if (previousApi === undefined) delete globalThis[apiName];
+      else globalThis[apiName] = previousApi;
+    }
+  }
+});
+
 test('research escalation clarify ignores Instant and issues a token only on explicit approval', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
