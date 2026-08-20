@@ -1,7 +1,7 @@
 /** Main-thread client and pure query helpers for the offline SQLite worker. */
 
 import { MAX_LEXICAL_CANDIDATES_PER_SOURCE, tokenizeForLexicalSearch } from './offline-rag.js';
-import { isOfflineQueryStopWord } from './offline-query-stopwords.js';
+import { detectOfflineQueryLanguage, isOfflineQueryStopWord } from './offline-query-stopwords.js';
 
 export const OFFLINE_RAG_INDEX_PROTOCOL_VERSION = 2;
 export const EMERGENCY_VECTOR_INDEX_FORMAT_VERSION = 1;
@@ -225,22 +225,7 @@ export function detectQueryLanguage(value) {
     const language = TOKEN_TO_AGE_LANGUAGE.get(token);
     if (language && language !== 'eng') return language;
   }
-  // Unique letters only. ö/ü/é/ç are shared across German, French, and
-  // Turkish, so treating them as a language id mis-ranks English passages.
-  if (/[ğışĞİŞ]/u.test(text)) return 'tur';
-  if (/[ñ¿¡]/iu.test(text)) return 'spa';
-  if (/[ãõ]/iu.test(text)) return 'por';
-  if (/ß/u.test(text)) return 'deu';
-  if (/[\u0600-\u06FF]/u.test(text)) return 'ara';
-  if (/[\u0590-\u05FF]/u.test(text)) return 'heb';
-  if (/[\u0400-\u04FF]/u.test(text)) return 'rus';
-  if (/[\u3040-\u30FF]/u.test(text)) return 'jpn';
-  if (/[\uAC00-\uD7AF]/u.test(text)) return 'kor';
-  if (/[\u4E00-\u9FFF]/u.test(text)) return 'zho';
-  if (/[\u0E00-\u0E7F]/u.test(text)) return 'tha';
-  if (/[\u0900-\u097F]/u.test(text)) return 'hin';
-  if (/[\u0980-\u09FF]/u.test(text)) return 'ben';
-  return '';
+  return detectOfflineQueryLanguage(text);
 }
 
 export function documentAgeCohort(hit, options = {}) {

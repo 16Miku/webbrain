@@ -35,6 +35,14 @@ function stringArray(values, predicate, maximum) {
     .filter(predicate))].slice(0, maximum);
 }
 
+function wikipediaQueries(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([language, query]) => [String(language || '').trim().toLowerCase(), String(query || '').trim().slice(0, 500)])
+    .filter(([language, query]) => /^[a-z]{3}$/.test(language) && query)
+    .slice(0, 24));
+}
+
 function serializeError(error) {
   return {
     name: String(error?.name || 'Error').slice(0, 80),
@@ -54,9 +62,13 @@ async function handleRequest(message) {
       const query = String(message.query || '').trim().slice(0, 4_000);
       const sources = stringArray(message.options?.sources, value => ALLOWED_SOURCES.has(value), 2);
       const languages = stringArray(message.options?.languages, value => /^[a-z]{3}$/.test(value), 64);
+      const queryLanguage = String(message.options?.queryLanguage || '').trim().toLowerCase();
       return await retrievalService.search(query, {
         sources: sources.length ? sources : [...ALLOWED_SOURCES],
         languages,
+        semanticQuery: String(message.options?.semanticQuery || '').trim().slice(0, 4_000),
+        queryLanguage: /^[a-z]{3}$/.test(queryLanguage) ? queryLanguage : '',
+        wikipediaQueriesByLanguage: wikipediaQueries(message.options?.wikipediaQueriesByLanguage),
         limit: Math.min(12, Math.max(1, Number(message.options?.limit) || 6)),
         signal: controller.signal,
       });

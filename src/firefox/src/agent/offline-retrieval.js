@@ -1,8 +1,8 @@
 /** Shared, download-free retrieval boundary for standalone chat and search UI. */
 
-import { searchApocalypseArchives } from './apocalypse-mode.js';
+import { createApocalypseStore, searchApocalypseArchives } from './apocalypse-mode.js';
 import { createEmergencyCorpusStore } from './emergency-corpus.js';
-import { createOfflineRagIndexClient, preferMatchingAgeCohort } from './offline-rag-index.js';
+import { createOfflineRagIndexClient, detectQueryLanguage, preferMatchingAgeCohort } from './offline-rag-index.js';
 import {
   MAX_FINAL_PASSAGES,
   MAX_LEXICAL_CANDIDATES_PER_SOURCE,
@@ -101,6 +101,8 @@ export async function searchWikipediaLexical(query, options = {}) {
     const records = await search(query, {
       limit: MAX_LEXICAL_CANDIDATES_PER_SOURCE,
       searchAllArchives: true,
+      preferredLanguages: options.preferredLanguages,
+      queriesByLanguage: options.queriesByLanguage,
       providers: options.providers,
       signal: options.signal,
       onSearchStatus(value) {
@@ -210,6 +212,7 @@ function mergeSemanticRankings(rankings = []) {
 
 export function createOfflineRetrievalService(options = {}) {
   const emergencyStore = options.emergencyStore || createEmergencyCorpusStore();
+  const wikipediaStore = options.wikipediaStore || createApocalypseStore();
   const semanticTimeoutMs = Number.isFinite(Number(options.semanticTimeoutMs))
     && Number(options.semanticTimeoutMs) > 0
     ? Number(options.semanticTimeoutMs)
@@ -223,12 +226,25 @@ export function createOfflineRetrievalService(options = {}) {
 
   return Object.freeze({
     async status() {
-      const emergency = await emergencyStore.get().catch(() => null);
+      const [emergency, wikipediaArchives, wikipediaConfig] = await Promise.all([
+        emergencyStore.get().catch(() => null),
+        wikipediaStore.listArchives().catch(() => []),
+        typeof wikipediaStore.getConfig === 'function'
+          ? wikipediaStore.getConfig().catch(() => null)
+          : Promise.resolve(null),
+      ]);
       const semantic = options.semanticReranker?.status
         ? await options.semanticReranker.status().catch(() => 'error')
         : 'model-missing';
+      const wikipediaEnabled = wikipediaConfig == null || wikipediaConfig.enabled === true;
       return {
         wikipedia: options.wikipediaStatus || 'unknown',
+        wikipediaLanguages: wikipediaEnabled
+          ? [...new Set(wikipediaArchives
+            .filter(record => record?.archiveKind === 'wikipedia' && record.status === 'ready')
+            .map(record => String(record.language || '').trim().toLowerCase())
+            .filter(language => /^[a-z]{3}$/.test(language)))].sort()
+          : [],
         emergencyBox: emergencyRetrievalStatus(emergency),
         semantic,
         localGeneration: options.localGenerationStatus?.() || 'unknown',
@@ -243,10 +259,23 @@ export function createOfflineRetrievalService(options = {}) {
       const sources = normalizedFilter(searchOptions.sources, [...ALLOWED_SOURCES]);
       for (const source of [...sources]) if (!ALLOWED_SOURCES.has(source)) sources.delete(source);
       const languages = normalizedFilter(searchOptions.languages, []);
+      const semanticQuery = String(searchOptions.semanticQuery || '').trim() || query;
+      const suppliedQueryLanguage = String(searchOptions.queryLanguage || '').trim().toLowerCase();
+      const queryLanguage = /^[a-z]{3}$/.test(suppliedQueryLanguage)
+        ? suppliedQueryLanguage
+        : detectQueryLanguage(semanticQuery);
+      const selectedLanguages = [...languages];
+      const preferredLanguages = [...new Set([
+        ...(queryLanguage && languages.has(queryLanguage) ? [queryLanguage] : []),
+        ...selectedLanguages,
+        queryLanguage,
+      ].filter(Boolean))];
       const wikipediaPromise = sources.has('wikipedia')
         ? searchWikipediaLexical(query, {
           search: options.searchWikipedia,
           providers: options.wikipediaProviders,
+          preferredLanguages,
+          queriesByLanguage: searchOptions.wikipediaQueriesByLanguage,
           digestHex: options.digestHex,
           signal: searchOptions.signal,
           onSearchStatus: searchOptions.onSearchStatus,
@@ -264,7 +293,6 @@ export function createOfflineRetrievalService(options = {}) {
       // stop-word-stripped keywords, but handing the same keyword soup to the
       // embedder throws away the sentence it needs, so the caller can pass the
       // user's own wording through for the semantic half.
-      const semanticQuery = String(searchOptions.semanticQuery || '').trim() || query;
       const queryVectorPromise = sources.has('emergency-box') && options.semanticReranker?.embedQuery
         ? runBoundedSemantic(
           signal => options.semanticReranker.embedQuery(semanticQuery, { signal }),
