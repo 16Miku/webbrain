@@ -1950,12 +1950,18 @@
       line-height: 1.7;
     }
     .apocalypse-lead strong { display: block; margin-bottom: 6px; color: #f5f2e9; font-weight: 650; }
+    .apocalypse-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 14px;
+      margin-top: 30px;
+    }
     .apocalypse-cta {
       display: inline-flex;
       align-items: center;
       align-self: flex-start;
       gap: 10px;
-      margin-top: 30px;
       padding: 11px 16px;
       color: #17120a;
       border: 1px solid #f7bd5f;
@@ -1968,6 +1974,22 @@
     }
     .apocalypse-cta:hover { border-color: #ffd590; background: #ffd590; transform: translateY(-2px); }
     .apocalypse-cta:focus-visible { outline: 3px solid rgba(247, 189, 95, .45); outline-offset: 3px; }
+    .apocalypse-video-link {
+      appearance: none;
+      border: 0;
+      padding: 0;
+      background: none;
+      color: #f7bd5f;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 650;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      cursor: pointer;
+    }
+    .apocalypse-video-link:hover { color: #ffd590; }
+    .apocalypse-video-link:focus-visible { outline: 3px solid rgba(247, 189, 95, .45); outline-offset: 3px; }
+    .apocalypse-video-dialog .security-video-dialog-kicker { color: #f7bd5f; }
     .apocalypse-stack {
       position: relative;
       display: grid;
@@ -2082,6 +2104,7 @@
       .apocalypse-kicker-mark { animation: none; }
       .apocalypse-cta { transition: none; }
       .apocalypse-cta:hover { transform: none; }
+      .apocalypse-video-link { transition: none; }
     }
 
     /* ================================================================
@@ -3577,7 +3600,16 @@
       <div class="apocalypse-kicker"><span class="apocalypse-kicker-mark" aria-hidden="true"></span>Режим апокаліпсису</div>
       <h2 id="apocalypse-title">WebBrain готовий, навіть коли інтернету немає.</h2>
       <p class="apocalypse-lead"><strong>Офлайн знання під вашим контролем</strong>Налаштуйте три основні компоненти для приватного локального чату: текстову модель, модель комп’ютерного зору та одну офлайн-версію Вікіпедії.</p>
-      <a class="apocalypse-cta" href="#download">Встановити WebBrain <span aria-hidden="true">→</span></a>
+      <div class="apocalypse-actions">
+        <a class="apocalypse-cta" href="#download">Встановити WebBrain <span aria-hidden="true">→</span></a>
+        <button
+          class="apocalypse-video-link"
+          id="apocalypse-video-open"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="apocalypse-video-dialog"
+        >Дивитися наше відео</button>
+      </div>
     </div>
     <div class="apocalypse-stack" aria-hidden="true">
       <div class="apocalypse-stack-head" aria-hidden="true"><span>WB // OFFLINE KIT</span><span class="apocalypse-stack-ready">READY</span></div>
@@ -3612,6 +3644,34 @@
     </div>
   </div>
 </section>
+
+<dialog
+  class="security-video-dialog apocalypse-video-dialog"
+  id="apocalypse-video-dialog"
+  aria-labelledby="apocalypse-video-dialog-title"
+  aria-describedby="apocalypse-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">Режим апокаліпсису</div>
+      <h2 class="security-video-dialog-title" id="apocalypse-video-dialog-title">WebBrain готовий, навіть коли інтернету немає.</h2>
+      <p class="security-video-dialog-description" id="apocalypse-video-dialog-description">Налаштуйте три основні компоненти для приватного локального чату: текстову модель, модель комп’ютерного зору та одну офлайн-версію Вікіпедії.</p>
+      <button
+        class="security-video-dialog-close"
+        id="apocalypse-video-close"
+        type="button"
+        aria-label="Закрити відео режиму апокаліпсису"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="apocalypse-video" data-desktop-src="/assets/apocalypse-mode.mp4" data-mobile-src="/assets/apocalypse-mode.mp4" controls preload="none" playsinline></video>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <!-- MODES -->
 <section class="section" id="modes" style="display:none;">
@@ -3983,7 +4043,8 @@
 <script>
   (function () {
     // Pick the right source (desktop vs mobile) for every responsive video
-    // on the page - the product demo plus the security and comparison modals.
+    // on the page - the product demo plus the security, comparison, and
+    // Apocalypse Mode modals.
     const videos = Array.prototype.slice.call(
       document.querySelectorAll('video[data-desktop-src]')
     );
@@ -4083,6 +4144,44 @@
     closeButton.addEventListener('click', closeComparisonVideo);
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) closeComparisonVideo();
+    });
+    dialog.addEventListener('close', function () {
+      video.pause();
+      document.documentElement.style.overflow = previousOverflow;
+      trigger.focus();
+    });
+  })();
+</script>
+
+<script>
+  (function () {
+    const trigger = document.getElementById('apocalypse-video-open');
+    const dialog = document.getElementById('apocalypse-video-dialog');
+    const closeButton = document.getElementById('apocalypse-video-close');
+    const video = document.getElementById('apocalypse-video');
+    if (!trigger || !dialog || !closeButton || !video) return;
+
+    let previousOverflow = '';
+
+    function openApocalypseVideo() {
+      if (dialog.open) return;
+      previousOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      dialog.showModal();
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch(function () {});
+      }
+    }
+
+    function closeApocalypseVideo() {
+      if (dialog.open) dialog.close();
+    }
+
+    trigger.addEventListener('click', openApocalypseVideo);
+    closeButton.addEventListener('click', closeApocalypseVideo);
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) closeApocalypseVideo();
     });
     dialog.addEventListener('close', function () {
       video.pause();

@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain พร้อม แม้ไม่มีอินเทอร์เน็ต",
   "apocalypse.heading": "ความรู้แบบออฟไลน์ ภายใต้การควบคุมของคุณ",
   "apocalypse.description": "ตั้งค่าองค์ประกอบสำคัญสามอย่างสำหรับแชทส่วนตัวในเครื่อง ได้แก่ โมเดลข้อความ โมเดลการมองเห็น และวิกิพีเดียออฟไลน์หนึ่งฉบับ",
+  "apocalypse.video.cta": "ดูวิดีโอของเรา",
+  "apocalypse.video.close_aria": "ปิดวิดีโอโหมดอาคัปปอลิส",
   "features.page_understanding.title": "เข้าใจหน้า",
   "features.page_understanding.desc": "อ่านและเข้าใจหน้าเว็บใด ๆ — บทความ เอกสาร แดชบอร์ด ฟอร์ม ถามคำถามและรับคำตอบทันทีจากเนื้อหาของหน้าปัจจุบัน",
   "features.agent.title": "Browser agent เต็มรูปแบบ",

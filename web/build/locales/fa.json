@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain آماده است، حتی وقتی اینترنت نیست.",
   "apocalypse.heading": "دانش آفلاین، تحت کنترل شما",
   "apocalypse.description": "سه جزء ضروری برای چت خصوصی و محلی را راه‌اندازی کنید: مدل متن، مدل بینایی و یک نسخهٔ آفلاین ویکی‌پدیا.",
+  "apocalypse.video.cta": "ویدیوی ما را ببینید",
+  "apocalypse.video.close_aria": "بستن ویدیوی حالت Apocalypse",
   "features.page_understanding.title": "درک صفحه",
   "features.page_understanding.desc": "هر صفحه وب را می خواند و درک می کند - مقالات، اسناد، داشبوردها، فرم ها. سوال بپرسید و از محتوای صفحه فعلی پاسخ های فوری دریافت کنید.",
   "features.agent.title": "نماینده کامل مرورگر",
