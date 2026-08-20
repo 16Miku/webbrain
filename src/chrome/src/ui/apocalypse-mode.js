@@ -526,7 +526,7 @@ async function ensureFixedWebgpuProvider({ markConfigured = false, force = false
   if (markConfigured) fixedWebgpuProviderMarkedReady = true;
 }
 
-async function refreshWebgpuDownloadStatus() {
+async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
   if (!supportsWebgpuVision) return;
   const requestId = ++webgpuDownloadStatusRequest;
   try {
@@ -555,7 +555,7 @@ async function refreshWebgpuDownloadStatus() {
     }
     updateWebgpuTextPresetUi();
     setWebgpuDownloadState(state);
-    await refreshSiblingWebgpuTextStatus(state?.modelId, requestId);
+    if (probeSibling) await refreshSiblingWebgpuTextStatus(state?.modelId, requestId);
     if (requestId !== webgpuDownloadStatusRequest) return;
     if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true });
   } catch (error) {
@@ -595,7 +595,7 @@ async function onWebgpuTextPresetChange() {
   updateOverallModelsReadiness();
   try {
     await ensureFixedWebgpuProvider();
-    await refreshWebgpuDownloadStatus();
+    await refreshWebgpuDownloadStatus({ probeSibling: true });
   } catch (error) {
     setWebgpuDownloadState({ status: 'error', error: error.message });
   }
@@ -1246,7 +1246,7 @@ async function poll() {
 
 await Promise.all([
   refresh().catch(error => notice(error.message, 'error')),
-  refreshWebgpuDownloadStatus(),
+  refreshWebgpuDownloadStatus({ probeSibling: true }),
   loadBasicWikipediaAutoStartPreference(),
 ]);
 const params = new URLSearchParams(globalThis.location.search);

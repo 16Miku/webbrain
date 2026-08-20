@@ -51249,6 +51249,20 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'Emergency Box must treat Minimal and Basic as interchangeable text-model readiness');
   assert.match(apocalypseScript, /function refreshSiblingWebgpuTextStatus/,
     'Apocalypse Mode must probe the unselected shipped text model without switching to it');
+  assert.match(apocalypseScript, /async function refreshWebgpuDownloadStatus\(\{ probeSibling = false \} = \{\}\)/,
+    'unselected text-model status must not ride the two-second Apocalypse poll');
+  assert.match(apocalypseScript, /if \(probeSibling\) await refreshSiblingWebgpuTextStatus/,
+    'sibling WebGPU status probes must be opt-in');
+  const apocalypsePoll = apocalypseScript.slice(
+    apocalypseScript.indexOf('async function poll()'),
+    apocalypseScript.indexOf('\n\nawait Promise.all([', apocalypseScript.indexOf('async function poll()')),
+  );
+  assert.match(apocalypsePoll, /refreshWebgpuDownloadStatus\(\)/,
+    'the Apocalypse poll must keep refreshing the selected text model');
+  assert.doesNotMatch(apocalypsePoll, /probeSibling/,
+    'opening Apocalypse Mode must not poll-migrate the unselected 3.8 GB Basic model');
+  assert.match(apocalypseScript, /refreshWebgpuDownloadStatus\(\{ probeSibling: true \}\)/,
+    'first load and preset switches still need a one-shot sibling readiness probe');
   assert.match(apocalypseScript, /recordWebgpuTextState\(webgpuDownloadState\)/,
     'switching Minimal/Basic must remember the previous text model before clearing the selected panel');
   for (const state of ['ready', 'downloading', 'paused', 'incomplete', 'disabled', 'error']) {
@@ -51389,6 +51403,14 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /if \(!validator\) \{[\s\S]*?removeOpfsWeight\(url\)[\s\S]*?nativeFetch\(url, fetchOptions\)/,
     'a saved partial without a usable validator must be discarded before a full fetch');
   assert.match(bonsaiWorker, /textDownloadCancelMode === 'pause'[\s\S]*?writeOpfsPartial/);
+  const hasStoredGguf = bonsaiWorker.slice(
+    bonsaiWorker.indexOf('async function hasStoredGguf'),
+    bonsaiWorker.indexOf('async function isTextModelReady'),
+  );
+  assert.match(hasStoredGguf, /cache\.match\(cacheKey\)/,
+    'Bonsai readiness must still see a legacy Cache Storage GGUF');
+  assert.doesNotMatch(hasStoredGguf, /persistGgufToOpfs/,
+    'Bonsai status checks must not migrate a Cache Storage GGUF into OPFS');
   const bonsaiReadyCheck = bonsaiWorker.slice(
     bonsaiWorker.indexOf('async function isTextModelReady'),
     bonsaiWorker.indexOf('async function markTextModelReady'),
@@ -51396,6 +51418,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiReadyCheck, /if \(!marker\) return false/);
   assert.doesNotMatch(bonsaiReadyCheck, /cache\.put/,
     'status checks must not manufacture the Bonsai runtime-ready marker');
+  assert.doesNotMatch(bonsaiReadyCheck, /persistGgufToOpfs/,
+    'status checks must not copy the unselected Basic model as a side effect');
   assert.match(bonsaiWorker, /parsed\.protocol === 'http:' \|\| parsed\.protocol === 'https:'/);
   assert.match(bonsaiWorker, /await cache\.put\(cacheKey/);
   assert.doesNotMatch(bonsaiWorker, /cache\.put\(url/);
