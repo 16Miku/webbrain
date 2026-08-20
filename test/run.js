@@ -50522,8 +50522,8 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       'custom-owner/custom-model',
     );
     assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime, contextWindow: option.contextWindow })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal', runtime: 'onnx', contextWindow: 16384 },
-      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic', runtime: 'bitgpu', contextWindow: 4096 },
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal text model', runtime: 'onnx', contextWindow: 16384 },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic text model', runtime: 'bitgpu', contextWindow: 4096 },
     ]);
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
@@ -51204,10 +51204,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-webgpu-text-preset/);
   assert.match(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal'/);
-  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic'/);
-  assert.match(apocalypseHtml, />Minimal<\/span>/);
-  assert.match(apocalypseHtml, />Basic<\/span>/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal text model'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic text model'/);
+  assert.match(apocalypseHtml, />Minimal text model<\/span>/);
+  assert.match(apocalypseHtml, />Basic text model<\/span>/);
   assert.doesNotMatch(apocalypseHtml, /· LFM2\.5 2\.6B/);
   assert.doesNotMatch(apocalypseHtml, /· Bonsai 27B/);
   assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
