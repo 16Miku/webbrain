@@ -2360,6 +2360,95 @@ test('research escalation accepts only HTTPS ChatGPT page origins', () => {
   }
 });
 
+test('research submit injection rechecks ChatGPT origin before fill and click', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    const source = runtime.submitChatGptPrompt.toString();
+    const fillIdx = source.indexOf('composer.focus()');
+    const clickIdx = source.indexOf('sendButton.click()');
+    const firstOrigin = source.indexOf('originAllowed()');
+    const secondOrigin = source.indexOf('originAllowed()', firstOrigin + 1);
+    assert.ok(fillIdx > firstOrigin && firstOrigin >= 0, `${label}: origin must be checked before filling`);
+    assert.ok(clickIdx > secondOrigin && secondOrigin > fillIdx, `${label}: origin must be rechecked before clicking`);
+
+    function run(href, { prompt = 'approved prompt', submitOnly = false } = {}) {
+      const parsed = new URL(href);
+      let filled = false;
+      let clicked = false;
+      const visibleEl = {
+        disabled: false,
+        title: 'Send',
+        innerText: 'Send',
+        getBoundingClientRect: () => ({ width: 120, height: 40 }),
+        focus() {},
+        replaceChildren() { filled = true; },
+        appendChild() {},
+        dispatchEvent() { filled = true; },
+        click() { clicked = true; },
+        getAttribute(name) {
+          if (name === 'data-testid') return 'send-button';
+          if (name === 'aria-label') return 'Send';
+          return '';
+        },
+      };
+      const result = vm.runInNewContext(`(${source})(${JSON.stringify(prompt)}, ${submitOnly})`, {
+        location: { href, protocol: parsed.protocol, hostname: parsed.hostname },
+        document: {
+          createElement() { return { textContent: '' }; },
+          querySelector(sel) {
+            if (sel === '#prompt-textarea' || sel === '[data-testid="send-button"]') return visibleEl;
+            return null;
+          },
+          querySelectorAll() { return []; },
+        },
+        getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
+        HTMLTextAreaElement: function HTMLTextAreaElement() {},
+        HTMLInputElement: function HTMLInputElement() {},
+        Event: class Event { constructor(type, init) { this.type = type; Object.assign(this, init); } },
+        InputEvent: class InputEvent { constructor(type, init) { this.type = type; Object.assign(this, init); } },
+      });
+      return { result, filled, clicked };
+    }
+
+    const blockedFill = run('https://evil.example/login');
+    assert.equal(blockedFill.result.success, false, `${label}: off-origin fill was allowed`);
+    assert.equal(blockedFill.filled, false, `${label}: off-origin page received the approved prompt`);
+    const blockedClick = run('https://evil.example/login', { submitOnly: true });
+    assert.equal(blockedClick.result.success, false, `${label}: off-origin click was allowed`);
+    assert.equal(blockedClick.clicked, false, `${label}: off-origin page received a send click`);
+    const allowedFill = run('https://chatgpt.com/');
+    assert.equal(allowedFill.result.success, true, `${label}: ChatGPT fill was rejected`);
+    assert.equal(allowedFill.filled, true, `${label}: ChatGPT composer was not filled`);
+    const allowedClick = run('https://chatgpt.com/', { submitOnly: true });
+    assert.equal(allowedClick.result.success, true, `${label}: ChatGPT click was rejected`);
+    assert.equal(allowedClick.clicked, true, `${label}: ChatGPT send was not clicked`);
+  }
+});
+
+test('research escalation setting strings are localized in every catalog', async () => {
+  const english = {
+    'tool.delegate_research': 'Researching with ChatGPT',
+    'st.display.research_escalation.label': 'Research escalation',
+    'st.display.research_escalation.desc': 'When a read-only research subtask is unusually complex, WebBrain asks before delegating only that part to ChatGPT. On by default. The research engine will become selectable in a future update.',
+  };
+  for (const browser of ['chrome', 'firefox']) {
+    const dir = path.join(ROOT, 'src', browser, 'src/ui/locales');
+    const files = fs.readdirSync(dir).filter((file) => file.endsWith('.js'));
+    for (const file of files) {
+      const locale = await import(pathToFileURL(path.join(dir, file)).href);
+      const catalog = locale.default;
+      for (const [key, englishValue] of Object.entries(english)) {
+        assert.equal(typeof catalog[key], 'string', `${browser}/${file} missing ${key}`);
+        assert.ok(catalog[key].trim(), `${browser}/${file} left ${key} empty`);
+        if (file === 'en.js') {
+          assert.equal(catalog[key], englishValue, `${browser}/${file} drifted from the canonical English copy`);
+        } else {
+          assert.notEqual(catalog[key], englishValue, `${browser}/${file} left ${key} in English`);
+        }
+      }
+    }
+  }
+});
+
 test('research escalation authorization is exact, one-use, and conversation-scoped', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});

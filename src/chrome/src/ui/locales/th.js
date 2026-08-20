@@ -5,9 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
-  'tool.delegate_research': 'Researching with ChatGPT',
-  'st.display.research_escalation.label': 'Research escalation',
-  'st.display.research_escalation.desc': 'When a read-only research subtask is unusually complex, WebBrain asks before delegating only that part to ChatGPT. On by default. The research engine will become selectable in a future update.',
+  'tool.delegate_research': 'กำลังค้นคว้าด้วย ChatGPT',
+  'st.display.research_escalation.label': 'การส่งต่อการค้นคว้า',
+  'st.display.research_escalation.desc': 'เมื่องานย่อยค้นคว้าแบบอ่านอย่างเดียวซับซ้อนผิดปกติ WebBrain จะถามก่อนมอบหมายเฉพาะส่วนนั้นให้ ChatGPT เปิดไว้ตามค่าเริ่มต้น เครื่องมือค้นคว้าจะเลือกได้ในการอัปเดตในอนาคต',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

@@ -5,9 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
-  'tool.delegate_research': 'Researching with ChatGPT',
-  'st.display.research_escalation.label': 'Research escalation',
-  'st.display.research_escalation.desc': 'When a read-only research subtask is unusually complex, WebBrain asks before delegating only that part to ChatGPT. On by default. The research engine will become selectable in a future update.',
+  'tool.delegate_research': 'Nagsasaliksik gamit ang ChatGPT',
+  'st.display.research_escalation.label': 'Pag-escalate ng pananaliksik',
+  'st.display.research_escalation.desc': 'Kapag ang gawaing-pananaliksik na pangbasa lamang ay hindi pangkaraniwang kumplikado, nagtatanong ang WebBrain bago ipasa ang bahaging iyon lang sa ChatGPT. Naka-on bilang default. Mapipili ang makina ng pananaliksik sa isang susunod na update.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

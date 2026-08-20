@@ -72,6 +72,19 @@ export function probeChatGptPage() {
 export function submitChatGptPrompt(prompt, submitOnly = false) {
   const text = String(prompt || '').trim();
   if (!submitOnly && !text) return { success: false, error: 'The approved research prompt is empty.' };
+  const originAllowed = () => {
+    try {
+      const host = String(location.hostname || '').toLowerCase();
+      return location.protocol === 'https:' && (host === 'chatgpt.com' || host.endsWith('.chatgpt.com'));
+    } catch {
+      return false;
+    }
+  };
+  const unexpectedOrigin = () => ({
+    success: false,
+    error: 'ChatGPT redirected to an unexpected origin. Nothing was submitted.',
+    url: (() => { try { return String(location.href || ''); } catch { return ''; } })(),
+  });
   const visible = (element) => {
     if (!element) return false;
     const rect = element.getBoundingClientRect();
@@ -84,6 +97,7 @@ export function submitChatGptPrompt(prompt, submitOnly = false) {
     ...document.querySelectorAll('main textarea, main [contenteditable="true"]'),
   ].find(visible) || null;
   if (!composer) return { success: false, error: 'ChatGPT prompt field was not available.' };
+  if (!submitOnly && !originAllowed()) return unexpectedOrigin();
   if (!submitOnly) composer.focus();
   if (!submitOnly && (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement)) {
     const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -109,6 +123,7 @@ export function submitChatGptPrompt(prompt, submitOnly = false) {
     && (/send|gönder|envoyer|enviar|senden|送信|전송/i.test(String(button.getAttribute('aria-label') || button.title || button.innerText || ''))
       || button.getAttribute('data-testid') === 'send-button')) || null;
   if (!sendButton) return { success: false, error: 'ChatGPT send button did not become available after filling the prompt.' };
+  if (!originAllowed()) return unexpectedOrigin();
   sendButton.click();
   return { success: true };
 }
