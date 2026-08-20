@@ -264,7 +264,12 @@ export function createOfflineRetrievalService(options = {}) {
       const queryLanguage = /^[a-z]{3}$/.test(suppliedQueryLanguage)
         ? suppliedQueryLanguage
         : detectQueryLanguage(semanticQuery);
-      const preferredLanguages = [...new Set([...languages, queryLanguage].filter(Boolean))];
+      const selectedLanguages = [...languages];
+      const preferredLanguages = [...new Set([
+        ...(queryLanguage && languages.has(queryLanguage) ? [queryLanguage] : []),
+        ...selectedLanguages,
+        queryLanguage,
+      ].filter(Boolean))];
       const wikipediaPromise = sources.has('wikipedia')
         ? searchWikipediaLexical(query, {
           search: options.searchWikipedia,

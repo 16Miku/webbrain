@@ -39,7 +39,8 @@ export function shouldRetrieveLocalWikipedia(value) {
   const shortTopic = words.length >= 1 && words.length <= 8 && !words.some(word => personal.includes(word));
   if (queryLanguage && queryLanguage !== 'eng') {
     if (words.length < 1 || words.length > 32) return false;
-    if (offlineQueryHasFactualMarker(text)) return true;
+    const personalTask = words.some(word => personal.includes(word));
+    if (offlineQueryHasFactualMarker(text) && !personalTask) return true;
     if (/です|ます|ください|だよ|ですね/.test(text)) return false;
     return shortTopic;
   }

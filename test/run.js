@@ -27838,6 +27838,13 @@ test('shared offline retrieval honors source/language filters and never download
     });
     assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
       `${label}: selected archive languages were not searched before the source language`);
+    await service.search('Türkiye başkenti nedir?', {
+      sources: ['wikipedia'],
+      languages: ['eng', 'tur'],
+      queryLanguage: 'tur',
+    });
+    assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
+      `${label}: a selected source language was not searched before the other archive filters`);
     assert.deepEqual(wikipediaSearchOptions.at(-1)?.queriesByLanguage, { tur: 'Türkiye başkenti' },
       `${label}: translated per-language Wikipedia queries were not forwarded`);
     service.close();
@@ -29022,6 +29029,11 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     );
     assert.equal(runtime.shouldRetrieveLocalWikipedia('Bana bir e-posta yaz'), false,
       `${label}: a Turkish writing request triggered local retrieval`);
+    assert.equal(
+      runtime.shouldRetrieveLocalWikipedia('Nasıl daha yaratıcı bir şiir yazabilirim bana birkaç yöntem göster'),
+      false,
+      `${label}: a personal Turkish writing request triggered retrieval because nasıl is a factual marker`,
+    );
     assert.equal(runtime.shouldRetrieveLocalWikipedia('今日はどうですか'), false,
       `${label}: ordinary Japanese conversation triggered local retrieval`);
     assert.equal(runtime.shouldRetrieveLocalWikipedia('富士山'), true,
