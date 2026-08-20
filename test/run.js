@@ -1735,6 +1735,7 @@ test('page-coordinate redaction uses captured CSS bounds instead of the grown li
   const originalCreateImageBitmap = globalThis.createImageBitmap;
   const originalOffscreenCanvas = globalThis.OffscreenCanvas;
   const outputDrawCalls = [];
+  let bitmapCloseCalls = 0;
   const liveSnapshot = {
     viewport: { width: 1600, height: 10000 },
     elements: [
@@ -1756,7 +1757,11 @@ test('page-coordinate redaction uses captured CSS bounds instead of the grown li
     globalThis.chrome = browserApi;
     globalThis.browser = browserApi;
     globalThis.fetch = async () => ({ blob: async () => ({}) });
-    globalThis.createImageBitmap = async () => ({ width: 400, height: 1000 });
+    globalThis.createImageBitmap = async () => ({
+      width: 400,
+      height: 1000,
+      close() { bitmapCloseCalls++; },
+    });
     globalThis.OffscreenCanvas = class {
       constructor(width, height) {
         this.width = width;
@@ -1787,8 +1792,6 @@ test('page-coordinate redaction uses captured CSS bounds instead of the grown li
       const redacted = await agent._redactScreenshotDataUrl(42, originalDataUrl, {
         coordinateSpace: 'page',
         capturedCssBounds: { x: 100, y: 200, width: 800, height: 5000 },
-        imageWidth: 400,
-        imageHeight: 1000,
       });
       const pixelationDraw = outputDrawCalls.find(args => args.length === 9);
 
@@ -1800,6 +1803,7 @@ test('page-coordinate redaction uses captured CSS bounds instead of the grown li
         `${label}: mapping should use the captured 800×5000 CSS box at offset 100,200`,
       );
     }
+    assert.equal(bitmapCloseCalls, 4, 'Chrome and Firefox should close both dimension-probe and pixelation bitmaps');
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
@@ -31874,13 +31878,14 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.match(offscreen, /const hasAudioSources = capturedAudioTracks\.length > 0 \|\| !!micStream;[\s\S]*?if \(hasAudioSources\) \{[\s\S]*?mixDest = audioContext\.createMediaStreamDestination\(\);[\s\S]*?if \(mixDest\) \{[\s\S]*?mixDest\.stream\.getAudioTracks\(\)/, 'chrome: display video-only recordings should not add an empty WebAudio track');
   assert.match(offscreen, /if \(finalHasAudio\) \{[\s\S]*?recorderOptions\.audioBitsPerSecond = 192_000;[\s\S]*?\}[\s\S]*?if \(finalHasVideo\) \{[\s\S]*?recorderOptions\.videoBitsPerSecond = 2_500_000;/, 'chrome: recorder bitrate hints should match the actual final stream tracks');
   assert.doesNotMatch(offscreen, /chrome\.desktopCapture/, 'chrome: offscreen recorder cannot use extension APIs beyond chrome.runtime');
-  assert.match(offscreen, /addEventListener\('ended', \(\) => \{[\s\S]*?s\.captureEndedCleanupStarted = true;[\s\S]*?finalizeCaptureEnded\(s\)\.catch/, 'chrome: capture-ended cleanup should use the async finalize path');
+  assert.match(offscreen, /addEventListener\('ended', \(\) => \{[\s\S]*?if \(!s \|\| s\.stopping \|\| s\.captureEndedCleanupStarted\) return;[\s\S]*?s\.captureEndedCleanupStarted = true;[\s\S]*?finalizeCaptureEnded\(s\)\.catch/, 'chrome: capture-ended cleanup should ignore intentional stop and start-failure teardown');
   assert.match(offscreen, /async function finalizeCaptureEnded\(s\) \{[\s\S]*?s\.stopping = true;[\s\S]*?await waitForRecorderStop\(s\);[\s\S]*?notifyCaptureEnded\(s\);[\s\S]*?await releaseSession\(s\);[\s\S]*?\}/, 'chrome: capture-ended finalize should wait for final recorder data before notifying background');
   assert.match(offscreen, /function waitForRecorderStop\(s\) \{[\s\S]*?if \(s\.stopPromise\) return s\.stopPromise;[\s\S]*?s\.stopPromise = new Promise/, 'chrome: recorder stop waits should share one in-progress stop promise');
   assert.match(offscreen, /let dataEventCount = 0;[\s\S]*?recorder\.ondataavailable = \(e\) => \{[\s\S]*?dataEventCount \+= 1;[\s\S]*?get dataEventCount\(\) \{ return dataEventCount; \}/, 'chrome: recorder should track dataavailable events for finalization');
   assert.match(offscreen, /const onFinalDataAvailable = \(e\) => \{[\s\S]*?finalDataSettled = true;[\s\S]*?maybeFinish\(\);[\s\S]*?\};[\s\S]*?s\.recorder\.addEventListener\('dataavailable', onFinalDataAvailable\)/, 'chrome: recorder stop must wait for final dataavailable before resolving');
   assert.match(offscreen, /timed out waiting for MediaRecorder final data[\s\S]*?\}, 2000\);/, 'chrome: final data fallback should stay short enough for visible stop UI');
   assert.doesNotMatch(offscreen, /s\.recorder\.state === 'inactive'\) (?:return Promise\.resolve|finish\(\))/, 'chrome: inactive recorder state alone must not skip waiting for queued stop/dataavailable events');
+  assert.match(offscreen, /try \{[\s\S]*?recorder\.start\(2000\);[\s\S]*?\} catch \(e\) \{[\s\S]*?activeSession\.stopping = true;[\s\S]*?activeSession\.captureEndedCleanupStarted = true;[\s\S]*?await releaseSession\(activeSession\);[\s\S]*?if \(session === activeSession\) session = null;/, 'chrome: recorder startup failure must release capture resources without treating the cleanup as an unexpected capture end');
   assert.match(offscreen, /function notifyCaptureEnded\(s\) \{[\s\S]*?target: 'background'[\s\S]*?action: 'recording_capture_ended'[\s\S]*?tabId: s\.tabId/, 'chrome: capture-ended notify should ask background to persist the stopped recording');
   assert.match(background, /case 'recording_capture_ended':[\s\S]*?stopTabRecording\(\{ reason: 'capture_ended' \}\)/, 'chrome: background should finalize and save recordings when the shared stream ends');
   assert.match(offscreen, /async function releaseSession\(s\) \{[\s\S]*?s\.captureStream = null;[\s\S]*?s\.micStream = null;[\s\S]*?s\.audioContext = null;[\s\S]*?micStream\?\.getTracks/, 'chrome: releaseSession should be idempotent and stop the separately-acquired mic stream');
@@ -43081,6 +43086,70 @@ test('CDP sendCommand rejects failures reported through chrome.runtime.lastError
   }
 });
 
+test('CDP shares in-flight attaches and registers debugger listeners once across reattachment', async () => {
+  const originalChrome = globalThis.chrome;
+  const createDebuggerEvent = () => {
+    const listeners = new Set();
+    return {
+      listeners,
+      addListener(listener) { listeners.add(listener); },
+      removeListener(listener) { listeners.delete(listener); },
+      emit(...args) {
+        for (const listener of [...listeners]) listener(...args);
+      },
+    };
+  };
+  const onEvent = createDebuggerEvent();
+  const onDetach = createDebuggerEvent();
+  const attachCallbacks = [];
+  let attachCalls = 0;
+  globalThis.chrome = {
+    runtime: { lastError: null },
+    debugger: {
+      onEvent,
+      onDetach,
+      attach(_target, _version, callback) {
+        attachCalls++;
+        attachCallbacks.push(callback);
+      },
+      detach(_target, callback) { callback(); },
+    },
+  };
+
+  try {
+    const cdp = new CDPClient();
+    const firstAttach = cdp.attach(42);
+    const overlappingAttach = cdp.attach(42);
+    assert.equal(attachCalls, 1, 'overlapping callers should share one chrome.debugger.attach request');
+    attachCallbacks.shift()();
+    const [firstSession, overlappingSession] = await Promise.all([firstAttach, overlappingAttach]);
+    assert.equal(firstSession, overlappingSession, 'overlapping callers should receive the same session');
+    assert.equal(onEvent.listeners.size, 1);
+    assert.equal(onDetach.listeners.size, 1);
+
+    let eventCalls = 0;
+    cdp.on(42, 'Test.event', () => { eventCalls++; });
+    onEvent.emit({ tabId: 42 }, 'Test.event', { pass: 1 });
+    assert.equal(eventCalls, 1);
+
+    onDetach.emit({ tabId: 42 }, 'target_closed');
+    assert.equal(cdp.sessions.has(42), false);
+    const reattach = cdp.attach(42);
+    assert.equal(attachCalls, 2);
+    attachCallbacks.shift()();
+    await reattach;
+    assert.equal(onEvent.listeners.size, 1, 'reattachment must not add another global event listener');
+    assert.equal(onDetach.listeners.size, 1, 'reattachment must not add another global detach listener');
+
+    cdp.on(42, 'Test.event', () => { eventCalls++; });
+    onEvent.emit({ tabId: 42 }, 'Test.event', { pass: 2 });
+    assert.equal(eventCalls, 2, 'a reattached tab event should dispatch exactly once');
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('CDP input dispatchers never call the nonexistent Input.enable command', async () => {
   const cdp = new CDPClient();
   const commands = [];
@@ -47099,8 +47168,13 @@ test('full-page image assembly reports first-tile fallback errors', async () => 
   const originalOffscreenCanvas = globalThis.OffscreenCanvas;
   const warnings = [];
   let fallbackBounds = null;
+  let bitmapCloseCalls = 0;
   try {
-    globalThis.createImageBitmap = async () => ({ width: 10, height: 10 });
+    globalThis.createImageBitmap = async () => ({
+      width: 10,
+      height: 10,
+      close() { bitmapCloseCalls++; },
+    });
     globalThis.OffscreenCanvas = class {
       getContext() {
         return { drawImage() {} };
@@ -47123,6 +47197,7 @@ test('full-page image assembly reports first-tile fallback errors', async () => 
     assert.equal(result, firstTile);
     assert.match(warnings.join(' '), /canvas too large[\s\S]*first captured tile/i);
     assert.deepEqual(fallbackBounds, { x: 0, y: 0, width: 10, height: 10 });
+    assert.equal(bitmapCloseCalls, 1, 'decoded tiles should close even when canvas encoding falls back');
   } finally {
     if (originalCreateImageBitmap === undefined) delete globalThis.createImageBitmap;
     else globalThis.createImageBitmap = originalCreateImageBitmap;

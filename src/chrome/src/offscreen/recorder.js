@@ -284,7 +284,7 @@
     for (const t of captureStream.getTracks()) {
       t.addEventListener('ended', () => {
         const s = session;
-        if (!s || s.captureEndedCleanupStarted) return;
+        if (!s || s.stopping || s.captureEndedCleanupStarted) return;
         s.captureEndedCleanupStarted = true;
         log(`${source} track ended unexpectedly:`, t.kind);
         finalizeCaptureEnded(s).catch((e) => {
@@ -293,7 +293,19 @@
       });
     }
 
-    recorder.start(2000); // 2s timeslices → ondataavailable every 2s
+    try {
+      recorder.start(2000); // 2s timeslices → ondataavailable every 2s
+    } catch (e) {
+      try {
+        if (recorder.state !== 'inactive') recorder.stop();
+      } catch {}
+      // Recording never started — don't let track.stop() look like capture loss.
+      activeSession.stopping = true;
+      activeSession.captureEndedCleanupStarted = true;
+      await releaseSession(activeSession);
+      if (session === activeSession) session = null;
+      throw new Error(`Failed to start recorder: ${e.message || e}`);
+    }
     log('recorder started', { source, mimeType: chosenMime, video, mic: !!micStream });
     return {
       ok: true,

@@ -8076,11 +8076,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * cheap enough to run on every screenshot path.
    */
   async _analyzeScreenshotBlankness(dataUrl) {
+    let bmp = null;
     try {
       if (!dataUrl) return null;
       const resp = await fetch(dataUrl);
       const blob = await resp.blob();
-      const bmp = await createImageBitmap(blob);
+      bmp = await createImageBitmap(blob);
       const sampleW = Math.min(96, bmp.width);
       const sampleH = Math.min(96, bmp.height);
       if (!sampleW || !sampleH) return null;
@@ -8160,6 +8161,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     } catch {
       return null;
+    } finally {
+      try { bmp?.close?.(); } catch {}
     }
   }
 
@@ -8449,8 +8452,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         const m = await fetch(dataUrl);
         const bmp = await createImageBitmap(await m.blob());
-        imageWidth = bmp.width;
-        imageHeight = bmp.height;
+        try {
+          imageWidth = bmp.width;
+          imageHeight = bmp.height;
+        } finally {
+          try { bmp.close?.(); } catch {}
+        }
       } catch {
         return dataUrl;
       }
@@ -8840,25 +8847,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _cropDataUrl(dataUrl, rect, mimeType = 'image/png') {
-    const resp = await fetch(dataUrl);
-    const blob = await resp.blob();
-    const bmp = await createImageBitmap(blob);
-    const x = Math.max(0, Math.min(bmp.width - 1, Math.round(rect.x)));
-    const y = Math.max(0, Math.min(bmp.height - 1, Math.round(rect.y)));
-    const width = Math.max(1, Math.min(bmp.width - x, Math.round(rect.width)));
-    const height = Math.max(1, Math.min(bmp.height - y, Math.round(rect.height)));
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bmp, x, y, width, height, 0, 0, width, height);
-    const outBlob = await canvas.convertToBlob({ type: mimeType, quality: 0.95 });
-    const buf = await outBlob.arrayBuffer();
-    return {
-      dataUrl: Agent._bufferToDataUrl(buf, mimeType),
-      width,
-      height,
-      mimeType,
-      bytes: buf.byteLength,
-    };
+    let bmp = null;
+    try {
+      const resp = await fetch(dataUrl);
+      const blob = await resp.blob();
+      bmp = await createImageBitmap(blob);
+      const x = Math.max(0, Math.min(bmp.width - 1, Math.round(rect.x)));
+      const y = Math.max(0, Math.min(bmp.height - 1, Math.round(rect.y)));
+      const width = Math.max(1, Math.min(bmp.width - x, Math.round(rect.width)));
+      const height = Math.max(1, Math.min(bmp.height - y, Math.round(rect.height)));
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bmp, x, y, width, height, 0, 0, width, height);
+      const outBlob = await canvas.convertToBlob({ type: mimeType, quality: 0.95 });
+      const buf = await outBlob.arrayBuffer();
+      return {
+        dataUrl: Agent._bufferToDataUrl(buf, mimeType),
+        width,
+        height,
+        mimeType,
+        bytes: buf.byteLength,
+      };
+    } finally {
+      try { bmp?.close?.(); } catch {}
+    }
   }
 
   async _saveVisibleMediaCrop(tabId, args = {}) {
@@ -9092,6 +9104,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * over a single bad capture.
    */
   async _compressJpegToByteCeiling(dataUrl, budget = Agent.IMAGE_BUDGET) {
+    let bmp = null;
     try {
       if (!dataUrl) return dataUrl;
       const payloadStart = dataUrl.indexOf(',') + 1;
@@ -9100,7 +9113,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const resp = await fetch(dataUrl);
       const blob = await resp.blob();
-      const bmp = await createImageBitmap(blob);
+      bmp = await createImageBitmap(blob);
       const canvas = new OffscreenCanvas(bmp.width, bmp.height);
       const ctx = canvas.getContext('2d');
       ctx.drawImage(bmp, 0, 0);
@@ -9122,6 +9135,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return lastBuf ? Agent._bufferToDataUrl(lastBuf, 'image/jpeg') : dataUrl;
     } catch {
       return dataUrl;
+    } finally {
+      try { bmp?.close?.(); } catch {}
     }
   }
 
@@ -9134,10 +9149,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * when it already matches (DPR 1) or on any decode failure.
    */
   async _normalizeDataUrlToCssPixels(dataUrl, cssW, cssH) {
+    let bmp = null;
     try {
       if (!dataUrl || !(cssW > 0) || !(cssH > 0)) return dataUrl;
       const resp = await fetch(dataUrl);
-      const bmp = await createImageBitmap(await resp.blob());
+      bmp = await createImageBitmap(await resp.blob());
       if (bmp.width === cssW && bmp.height === cssH) return dataUrl;
       const canvas = new OffscreenCanvas(cssW, cssH);
       const ctx = canvas.getContext('2d');
@@ -9151,6 +9167,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return Agent._bufferToDataUrl(await blob.arrayBuffer(), 'image/jpeg');
     } catch {
       return dataUrl;
+    } finally {
+      try { bmp?.close?.(); } catch {}
     }
   }
 
@@ -9169,6 +9187,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * them here.
    */
   async _shrinkImageForBudget(dataUrl, origW, origH, budget = Agent.IMAGE_BUDGET) {
+    let bmp = null;
     try {
       if (!dataUrl) return { dataUrl, width: origW, height: origH };
 
@@ -9184,7 +9203,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const resp = await fetch(dataUrl);
       const blob = await resp.blob();
-      const bmp = await createImageBitmap(blob);
+      bmp = await createImageBitmap(blob);
 
       // If dims weren't passed (e.g. full_page_screenshot where we don't
       // know the document height up front), use the decoded bitmap's.
@@ -9229,6 +9248,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     } catch {
       return { dataUrl, width: origW, height: origH };
+    } finally {
+      try { bmp?.close?.(); } catch {}
     }
   }
 
@@ -9622,11 +9643,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * annotation by setting fallbackToOriginal:false and checking for null.
    */
   async _annotateScreenshot(dataUrl, rect, cssViewport, { fallbackToOriginal = true } = {}) {
+    let bmp = null;
     try {
       if (!dataUrl || !rect || !rect.w || !rect.h) return fallbackToOriginal ? dataUrl : null;
       const resp = await fetch(dataUrl);
       const blob = await resp.blob();
-      const bmp = await createImageBitmap(blob);
+      bmp = await createImageBitmap(blob);
       const canvas = new OffscreenCanvas(bmp.width, bmp.height);
       const ctx = canvas.getContext('2d');
       ctx.drawImage(bmp, 0, 0);
@@ -9656,6 +9678,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return `data:image/png;base64,${btoa(bin)}`;
     } catch {
       return fallbackToOriginal ? dataUrl : null;
+    } finally {
+      try { bmp?.close?.(); } catch {}
     }
   }
 
