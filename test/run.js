@@ -885,6 +885,12 @@ const { ProviderManager: ProviderManagerCh } = await import(
 const { ProviderManager: ProviderManagerFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/manager.js').replace(/\\/g, '/')
 );
+const { refreshSubscription: refreshSubscriptionCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/oauth-subscriptions.js').replace(/\\/g, '/')
+);
+const { refreshSubscription: refreshSubscriptionFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/providers/oauth-subscriptions.js').replace(/\\/g, '/')
+);
 const {
   WebGPUProvider,
   WebGPUVisionProvider,
@@ -50958,6 +50964,103 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     else globalThis.__holdWebgpuTextGeneration = previousHoldTextGeneration;
     if (previousReleaseTextGeneration === undefined) delete globalThis.__releaseWebgpuTextGeneration;
     else globalThis.__releaseWebgpuTextGeneration = previousReleaseTextGeneration;
+  }
+});
+
+test('subscription OAuth refreshes share in-flight work and retry after failures', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  const storageKey = 'chromeWebStoreOauthTokens';
+
+  try {
+    for (const [label, apiName, refreshSubscription] of [
+      ['chrome', 'chrome', refreshSubscriptionCh],
+      ['firefox', 'browser', refreshSubscriptionFx],
+    ]) {
+      const oldTokens = {
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        clientId: 'client-id',
+        expiresAt: 0,
+      };
+      const stored = { [storageKey]: { ...oldTokens } };
+      const local = {
+        async get(keys) {
+          const result = {};
+          for (const key of Array.isArray(keys) ? keys : [keys]) {
+            if (Object.hasOwn(stored, key)) result[key] = stored[key];
+          }
+          return result;
+        },
+        async set(values) {
+          Object.assign(stored, values);
+        },
+        async remove(keys) {
+          for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key];
+        },
+      };
+      globalThis[apiName] = { storage: { local } };
+
+      const responseGate = deferred();
+      const requestStarted = deferred();
+      let fetchCalls = 0;
+      globalThis.fetch = () => {
+        fetchCalls += 1;
+        requestStarted.resolve();
+        return responseGate.promise;
+      };
+
+      const firstRefresh = refreshSubscription('chrome_web_store');
+      const secondRefresh = refreshSubscription('chrome_web_store');
+      await requestStarted.promise;
+      await waitMicrotasks();
+      assert.equal(fetchCalls, 1, `${label}: concurrent refreshes reached the token endpoint more than once`);
+
+      responseGate.resolve({
+        ok: true,
+        status: 200,
+        async json() {
+          return { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600 };
+        },
+      });
+      const [firstTokens, secondTokens] = await Promise.all([firstRefresh, secondRefresh]);
+      assert.deepEqual(secondTokens, firstTokens, `${label}: concurrent callers received different token results`);
+      assert.equal(stored[storageKey]?.accessToken, 'new-access', `${label}: refreshed access token was not persisted`);
+      assert.equal(stored[storageKey]?.refreshToken, 'new-refresh', `${label}: rotated refresh token was not preserved`);
+
+      stored[storageKey] = { ...oldTokens };
+      let retryCalls = 0;
+      globalThis.fetch = async () => {
+        retryCalls += 1;
+        if (retryCalls === 1) return { ok: false, status: 400 };
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: 'retry-access', refresh_token: 'retry-refresh', expires_in: 3600 };
+          },
+        };
+      };
+
+      await assert.rejects(
+        refreshSubscription('chrome_web_store'),
+        /refresh token rejected/,
+        `${label}: hard refresh failure was not surfaced`,
+      );
+      assert.equal(stored[storageKey], undefined, `${label}: rejected credentials were not removed`);
+      stored[storageKey] = { ...oldTokens };
+      const retryTokens = await refreshSubscription('chrome_web_store');
+      assert.equal(retryCalls, 2, `${label}: failed in-flight refresh blocked a later retry`);
+      assert.equal(retryTokens.accessToken, 'retry-access', `${label}: retry did not return fresh credentials`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
   }
 });
 
