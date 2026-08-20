@@ -14765,9 +14765,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Clear conversation for a tab.
    */
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
-    // Closing the visible ChatGPT helper must abort the source wait instead of
-    // leaving it stuck on “Researching with ChatGPT…” until the deadline.
-    if (this.researchEscalationSourceTab(tabId) != null) this.abort(tabId);
+    // Closing the helper or the originating tab must abort the mapped wait
+    // instead of leaving it stuck on “Researching with ChatGPT…” until the deadline.
+    if (this._researchEscalationTabIds(tabId).size > 1) this.abort(tabId);
     // Tab removal can race the protocol teardown; the tab is already gone if
     // cleanup rejects, so there is no useful recovery for this fire-and-forget path.
     void cdpClient.cleanupTab(tabId).catch(() => {});

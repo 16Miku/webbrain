@@ -2521,6 +2521,19 @@ test('research escalation cleanup of the ChatGPT tab aborts the source run', asy
     assert.equal(agent.abortFlags.get(17), true, `${label}: closing the helper tab did not abort the source run`);
     assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed helper tab`);
 
+    const sourceClosed = new AgentClass({});
+    sourceClosed._bindResearchEscalationTab(17, 99);
+    sourceClosed._cleanupTab(17);
+    assert.equal(sourceClosed.abortFlags.get(17), true, `${label}: closing the source tab did not abort the wait`);
+    assert.equal(sourceClosed.abortFlags.get(99), true, `${label}: closing the source tab did not abort the helper`);
+    assert.equal(sourceClosed._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed source tab`);
+
+    const unrelated = new AgentClass({});
+    unrelated._bindResearchEscalationTab(17, 99);
+    unrelated._cleanupTab(5);
+    assert.equal(unrelated.abortFlags.get(17), undefined, `${label}: unrelated tab cleanup aborted the source run`);
+    assert.equal(unrelated.abortFlags.get(99), undefined, `${label}: unrelated tab cleanup aborted the helper`);
+
     const apiName = label === 'chrome' ? 'chrome' : 'browser';
     const previousApi = globalThis[apiName];
     const closed = agent._researchEscalationClosedResult(99, { engine: 'chatgpt' });
@@ -2537,6 +2550,31 @@ test('research escalation cleanup of the ChatGPT tab aborts the source run', asy
       if (previousApi === undefined) delete globalThis[apiName];
       else globalThis[apiName] = previousApi;
     }
+  }
+});
+
+test('research escalation source tab id ignores a null mapping', () => {
+  const runtime = [
+    ['chrome', fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8')],
+    ['firefox', fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8')],
+  ];
+  for (const [label, source] of runtime) {
+    assert.match(
+      source,
+      /function researchEscalationSourceTabIdFromState\(state\) \{[\s\S]*?if \(raw == null\) return null;[\s\S]*?Number\(raw\)/,
+      `${label}: research source tab helper must reject a null mapping before Number()`,
+    );
+    assert.doesNotMatch(
+      source,
+      /Number\(state\?\.researchEscalationSourceTabId\)/,
+      `${label}: Number(null) would bind the side panel to tab 0`,
+    );
+    const helper = source.match(/function researchEscalationSourceTabIdFromState\(state\) \{([\s\S]*?)\n\}/);
+    assert.ok(helper, `${label}: research source tab helper missing`);
+    const fn = new Function('state', `${helper[0]}\nreturn researchEscalationSourceTabIdFromState(state);`);
+    assert.equal(fn({ researchEscalationSourceTabId: null }), null, `${label}: null mapping became tab 0`);
+    assert.equal(fn({}), null, `${label}: missing mapping became tab 0`);
+    assert.equal(fn({ researchEscalationSourceTabId: 17 }), 17, `${label}: real helper mapping was dropped`);
   }
 });
 
