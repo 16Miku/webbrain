@@ -9424,7 +9424,37 @@ test('delivery checkpoints escalate at eight and reset only after meaningful pro
       { ...enforced, discoveredActionableTargets: true },
     );
     assert.equal(discovery.kind, 'none', `${label}: newly discovered action targets should count as progress`);
-    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: target discovery should reset the observation streak`);
+    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: first target discovery should reset the observation streak`);
+    let repeatedDiscovery = null;
+    for (let page = 2; page <= 9; page++) {
+      repeatedDiscovery = agent._checkDeliveryObservationStreak(
+        discoveryTab,
+        'get_accessibility_tree',
+        { page },
+        { success: true },
+        { ...enforced, discoveredActionableTargets: true },
+      );
+    }
+    assert.equal(repeatedDiscovery.kind, 'deliver', `${label}: repeated target discovery should remain bounded`);
+    assert.equal(repeatedDiscovery.count, 8, `${label}: repeated target discovery should reach forced delivery`);
+    agent._checkDeliveryObservationStreak(
+      discoveryTab,
+      'click_ax',
+      { ref: 'ref_follow' },
+      { success: true },
+      { ...enforced, consequential: true },
+    );
+    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: consequential action should rearm the discovery reset`);
+    assert.equal(agent.deliveryActionableDiscoveryResets.has(discoveryTab), false, `${label}: consequential action should restore the one-shot discovery reset`);
+    const discoveryAfterAction = agent._checkDeliveryObservationStreak(
+      discoveryTab,
+      'get_accessibility_tree',
+      { page: 10 },
+      { success: true },
+      { ...enforced, discoveredActionableTargets: true },
+    );
+    assert.equal(discoveryAfterAction.kind, 'none', `${label}: discovery after consequential progress should reset again`);
+    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: rearmed discovery should restart from zero`);
 
     const requiredReadTab = `${tab}-required-read`;
     for (let page = 1; page <= 12; page++) {
