@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'Onderzoeken met ChatGPT',
+  'st.display.research_escalation.label': 'Onderzoeksescalatie',
+  'st.display.research_escalation.desc': 'Als een alleen-lezen onderzoekssubtaak ongewoon complex is, vraagt WebBrain voordat alleen dat deel aan ChatGPT wordt gedelegeerd. Standaard ingeschakeld. De onderzoeksmachine wordt in een toekomstige update selecteerbaar.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

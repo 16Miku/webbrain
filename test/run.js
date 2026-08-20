@@ -668,6 +668,7 @@ const {
   Capability: CapabilityCh,
   CAPABILITY_LABEL: CAPABILITY_LABEL_CH,
   capabilityFor: capabilityForCh,
+  capabilitiesFor: capabilitiesForCh,
   PermissionManager: PermissionManagerCh,
   normalizeHost: normalizeHostCh,
   hostForCapability: hostForCapabilityCh,
@@ -1046,6 +1047,12 @@ const { Agent: AgentCh } = await import(
 );
 const { Agent: AgentFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/agent.js').replace(/\\/g, '/')
+);
+const ResearchEscalationCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/research-escalation.js').replace(/\\/g, '/')
+);
+const ResearchEscalationFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/research-escalation.js').replace(/\\/g, '/')
 );
 const MessageRecipientGuardCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
@@ -2298,6 +2305,312 @@ test('set_checked is exposed and permission-gated as a click in both browser age
     assert.ok(tool, `${label}: set_checked tool is missing`);
     assert.deepEqual(tool.function.parameters.required, ['ref_id', 'checked']);
     assert.equal(capabilityFn('set_checked', { ref_id: 'ref_1', checked: true }), Capabilities.CLICK);
+  }
+});
+
+test('research escalation is default-on, tier-complete, and removable by setting', () => {
+  for (const [label, prefix, getTools, configTransfer] of [
+    ['chrome', 'src/chrome', getToolsForModeCh, ConfigTransferCh],
+    ['firefox', 'src/firefox', getToolsForModeFx, ConfigTransferFx],
+  ]) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const toggleIndex = settingsHtml.indexOf('id="toggle-research-escalation"');
+    const advancedIndex = settingsHtml.indexOf('<details class="advanced-settings">');
+    assert.ok(toggleIndex >= 0 && toggleIndex < advancedIndex, `${label}: research escalation should be the final non-Advanced General setting`);
+    assert.doesNotMatch(settingsHtml.slice(toggleIndex, advancedIndex), /class="setting-row"/, `${label}: another General setting appears after research escalation`);
+    assert.match(settingsHtml, /id="toggle-research-escalation" checked/, `${label}: research escalation toggle should render on by default`);
+    assert.match(settingsJs, /researchEscalationToggle\.checked = stored\.researchEscalationEnabled !== false/, `${label}: missing default-on storage hydration`);
+    assert.match(settingsJs, /researchEscalationEngine: 'chatgpt'/, `${label}: settings should retain the future engine preference`);
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEnabled, true, `${label}: portable config should preserve the default-on preference`);
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEngine, 'chatgpt', `${label}: portable config should preserve the current engine`);
+    assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('researchEscalationEnabled'), `${label}: config export/import omitted the preference`);
+    assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('researchEscalationEngine'), `${label}: config export/import omitted the engine`);
+    for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full']]) {
+      const enabled = getTools(mode, { tier, researchEscalationEnabled: true });
+      assert.ok(enabled.some(tool => tool.function.name === 'delegate_research'), `${label}: ${mode}/${tier} did not expose research escalation`);
+      if (mode === 'ask') {
+        assert.ok(enabled.some(tool => tool.function.name === 'clarify'), `${label}: Ask mode exposed delegation without its consent step`);
+      }
+      const disabled = getTools(mode, { tier, researchEscalationEnabled: false });
+      assert.equal(disabled.some(tool => tool.function.name === 'delegate_research'), false, `${label}: disabled research escalation remained exposed`);
+    }
+  }
+});
+
+test('research escalation requires navigate, type, and click on fixed ChatGPT host', () => {
+  for (const [label, classify, hostFor, Capabilities] of [
+    ['chrome', capabilitiesForCh, hostForCapabilityCh, CapabilityCh],
+    ['firefox', capabilitiesFor, hostForCapability, Capability],
+  ]) {
+    assert.deepEqual(classify('delegate_research', {}), [Capabilities.NAVIGATE, Capabilities.TYPE, Capabilities.CLICK], `${label}: research capability contract changed`);
+    for (const capability of [Capabilities.NAVIGATE, Capabilities.TYPE, Capabilities.CLICK]) {
+      assert.equal(hostFor(capability, {}, 'https://attacker.example/', 'delegate_research'), 'chatgpt.com', `${label}: research host was not fixed`);
+    }
+  }
+});
+
+test('research escalation accepts only HTTPS ChatGPT page origins', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    assert.match(runtime.RESEARCH_ESCALATION_SYSTEM_NOTE, /use its available web\/research tools and return direct source links/i, `${label}: delegated prompt guidance does not request sourced web research`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://chatgpt.com/'), true, `${label}: canonical origin rejected`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://foo.chatgpt.com/c/1'), true, `${label}: ChatGPT subdomain rejected`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('http://chatgpt.com/'), false, `${label}: insecure origin accepted`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://chatgpt.com.attacker.example/'), false, `${label}: suffix-spoof origin accepted`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://attacker.example/?next=chatgpt.com'), false, `${label}: query-spoof origin accepted`);
+  }
+});
+
+test('research probe treats the stop-button test id as generating without a localized label', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    const stopButton = {
+      getBoundingClientRect: () => ({ width: 40, height: 40 }),
+      getAttribute(name) {
+        if (name === 'data-testid') return 'stop-button';
+        if (name === 'aria-label') return 'إيقاف';
+        return '';
+      },
+      title: '',
+      innerText: '',
+    };
+    const result = vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
+      location: { href: 'https://chatgpt.com/' },
+      document: {
+        title: 'ChatGPT',
+        body: { innerText: '' },
+        querySelector(sel) {
+          if (sel === '[data-testid="stop-button"]') return stopButton;
+          return null;
+        },
+        querySelectorAll() { return []; },
+      },
+      getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
+    });
+    assert.equal(result.generating, true, `${label}: canonical stop-button test id was ignored for a localized label`);
+  }
+});
+
+test('research submit injection rechecks ChatGPT origin before fill and click', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    const source = runtime.submitChatGptPrompt.toString();
+    const fillIdx = source.indexOf('composer.focus()');
+    const clickIdx = source.indexOf('sendButton.click()');
+    const firstOrigin = source.indexOf('originAllowed()');
+    const secondOrigin = source.indexOf('originAllowed()', firstOrigin + 1);
+    assert.ok(fillIdx > firstOrigin && firstOrigin >= 0, `${label}: origin must be checked before filling`);
+    assert.ok(clickIdx > secondOrigin && secondOrigin > fillIdx, `${label}: origin must be rechecked before clicking`);
+
+    function run(href, { prompt = 'approved prompt', submitOnly = false } = {}) {
+      const parsed = new URL(href);
+      let filled = false;
+      let clicked = false;
+      const visibleEl = {
+        disabled: false,
+        title: 'Send',
+        innerText: 'Send',
+        getBoundingClientRect: () => ({ width: 120, height: 40 }),
+        focus() {},
+        replaceChildren() { filled = true; },
+        appendChild() {},
+        dispatchEvent() { filled = true; },
+        click() { clicked = true; },
+        getAttribute(name) {
+          if (name === 'data-testid') return 'send-button';
+          if (name === 'aria-label') return 'Send';
+          return '';
+        },
+      };
+      const result = vm.runInNewContext(`(${source})(${JSON.stringify(prompt)}, ${submitOnly})`, {
+        location: { href, protocol: parsed.protocol, hostname: parsed.hostname },
+        document: {
+          createElement() { return { textContent: '' }; },
+          querySelector(sel) {
+            if (sel === '#prompt-textarea' || sel === '[data-testid="send-button"]') return visibleEl;
+            return null;
+          },
+          querySelectorAll() { return []; },
+        },
+        getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
+        HTMLTextAreaElement: function HTMLTextAreaElement() {},
+        HTMLInputElement: function HTMLInputElement() {},
+        Event: class Event { constructor(type, init) { this.type = type; Object.assign(this, init); } },
+        InputEvent: class InputEvent { constructor(type, init) { this.type = type; Object.assign(this, init); } },
+      });
+      return { result, filled, clicked };
+    }
+
+    const blockedFill = run('https://evil.example/login');
+    assert.equal(blockedFill.result.success, false, `${label}: off-origin fill was allowed`);
+    assert.equal(blockedFill.filled, false, `${label}: off-origin page received the approved prompt`);
+    const blockedClick = run('https://evil.example/login', { submitOnly: true });
+    assert.equal(blockedClick.result.success, false, `${label}: off-origin click was allowed`);
+    assert.equal(blockedClick.clicked, false, `${label}: off-origin page received a send click`);
+    const allowedFill = run('https://chatgpt.com/');
+    assert.equal(allowedFill.result.success, true, `${label}: ChatGPT fill was rejected`);
+    assert.equal(allowedFill.filled, true, `${label}: ChatGPT composer was not filled`);
+    const allowedClick = run('https://chatgpt.com/', { submitOnly: true });
+    assert.equal(allowedClick.result.success, true, `${label}: ChatGPT click was rejected`);
+    assert.equal(allowedClick.clicked, true, `${label}: ChatGPT send was not clicked`);
+  }
+});
+
+test('research escalation setting strings are localized in every catalog', async () => {
+  const english = {
+    'tool.delegate_research': 'Researching with ChatGPT',
+    'st.display.research_escalation.label': 'Research escalation',
+    'st.display.research_escalation.desc': 'When a read-only research subtask is unusually complex, WebBrain asks before delegating only that part to ChatGPT. On by default. The research engine will become selectable in a future update.',
+  };
+  for (const browser of ['chrome', 'firefox']) {
+    const dir = path.join(ROOT, 'src', browser, 'src/ui/locales');
+    const files = fs.readdirSync(dir).filter((file) => file.endsWith('.js'));
+    for (const file of files) {
+      const locale = await import(pathToFileURL(path.join(dir, file)).href);
+      const catalog = locale.default;
+      for (const [key, englishValue] of Object.entries(english)) {
+        assert.equal(typeof catalog[key], 'string', `${browser}/${file} missing ${key}`);
+        assert.ok(catalog[key].trim(), `${browser}/${file} left ${key} empty`);
+        if (file === 'en.js') {
+          assert.equal(catalog[key], englishValue, `${browser}/${file} drifted from the canonical English copy`);
+        } else {
+          assert.notEqual(catalog[key], englishValue, `${browser}/${file} left ${key} in English`);
+        }
+      }
+    }
+  }
+});
+
+test('research escalation authorization is exact, one-use, and conversation-scoped', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.conversationIds.set(17, 'conversation-a');
+    const token = agent._issueResearchEscalationAuthorization(17, 'Compare four hotels', 'chatgpt');
+    const first = agent._researchEscalationAuthorization(17, token);
+    assert.equal(first.ok, true, `${label}: fresh authorization rejected`);
+    assert.equal(first.entry.request, 'Compare four hotels');
+    assert.equal(agent._researchEscalationAuthorization(18, token).ok, false, `${label}: token escaped its tab`);
+    assert.equal(agent._researchEscalationAuthorization(17, token, { consume: true }).ok, true, `${label}: token could not be consumed`);
+    assert.equal(agent._researchEscalationAuthorization(17, token).ok, false, `${label}: consumed token was reusable`);
+    const otherConversation = agent._issueResearchEscalationAuthorization(17, 'Research', 'chatgpt');
+    agent.conversationIds.set(17, 'conversation-b');
+    assert.equal(agent._researchEscalationAuthorization(17, otherConversation).ok, false, `${label}: token escaped its conversation`);
+  }
+});
+
+test('research escalation Stop on the ChatGPT tab aborts the source run', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    assert.equal(agent.researchEscalationSourceTab(99), 17, `${label}: helper tab should map back to the source run`);
+    assert.equal(agent.activeRunState(99).researchEscalationSourceTabId, 17, `${label}: run state should expose the source tab`);
+    agent.abort(99);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: helper Stop did not abort the source run`);
+    assert.equal(agent.abortFlags.get(99), true, `${label}: helper Stop did not mark the ChatGPT tab`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore helper Stop`);
+    agent.abortFlags.clear();
+    agent.abort(17);
+    assert.equal(agent._researchEscalationAborted(99), true, `${label}: source Stop did not cover the helper tab`);
+    agent._unbindResearchEscalationTab(99);
+    assert.equal(agent.researchEscalationSourceTab(99), null, `${label}: helper mapping leaked after unbind`);
+  }
+});
+
+test('research escalation source mapping ignores nullish run state', () => {
+  for (const [label, source] of [['chrome', sidepanelSources[0]], ['firefox', sidepanelSources[1]]]) {
+    assert.match(source, /function researchEscalationSourceTabIdFromState\(state\)/, `${label}: helper missing`);
+    assert.equal(
+      source.split('const sourceTabId = researchEscalationSourceTabIdFromState(state);').length - 1,
+      2,
+      `${label}: init and switchToTab should both use the null-safe helper`,
+    );
+    const start = source.indexOf('function researchEscalationSourceTabIdFromState(');
+    const end = source.indexOf('\n}\n', start);
+    assert.ok(start >= 0 && end > start, `${label}: helper body missing`);
+    const fromState = Function(`${source.slice(start, end + 2)}\nreturn researchEscalationSourceTabIdFromState;`)();
+    assert.equal(fromState(null), null, `${label}: missing state became a tab id`);
+    assert.equal(fromState({}), null, `${label}: missing mapping became a tab id`);
+    assert.equal(fromState({ researchEscalationSourceTabId: null }), null, `${label}: null mapping became tab 0`);
+    assert.equal(fromState({ researchEscalationSourceTabId: undefined }), null, `${label}: undefined mapping became a tab id`);
+    assert.equal(fromState({ researchEscalationSourceTabId: '' }), null, `${label}: empty mapping became tab 0`);
+    assert.equal(fromState({ researchEscalationSourceTabId: 17 }), 17, `${label}: helper mapping should stay numeric`);
+    assert.equal(fromState({ researchEscalationSourceTabId: '17' }), 17, `${label}: string helper mapping should stay numeric`);
+  }
+});
+
+test('research escalation cleanup of the ChatGPT tab aborts the source run', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    agent._cleanupTab(99);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: closing the helper tab did not abort the source run`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed helper tab`);
+
+    const apiName = label === 'chrome' ? 'chrome' : 'browser';
+    const previousApi = globalThis[apiName];
+    const closed = agent._researchEscalationClosedResult(99, { engine: 'chatgpt' });
+    assert.equal(closed.success, false, `${label}: closed helper should fail the wait`);
+    assert.equal(closed.cancelled, true, `${label}: closed helper should cancel the wait`);
+    assert.equal(closed.engine, 'chatgpt', `${label}: closed helper should keep the engine`);
+    assert.match(closed.error, /research tab was closed/i, `${label}: closed-helper error missing`);
+    try {
+      globalThis[apiName] = { tabs: { get: async () => { throw new Error('No tab with id: 99.'); } } };
+      assert.equal(await agent._researchEscalationHelperGone(99), true, `${label}: missing helper should count as gone`);
+      globalThis[apiName] = { tabs: { get: async () => ({ id: 99 }) } };
+      assert.equal(await agent._researchEscalationHelperGone(99), false, `${label}: live helper should not count as gone`);
+    } finally {
+      if (previousApi === undefined) delete globalThis[apiName];
+      else globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('research escalation cleanup of the source tab aborts the ChatGPT wait', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    agent._cleanupTab(17);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: closing the source tab did not abort the source run`);
+    assert.equal(agent.abortFlags.get(99), true, `${label}: closing the source tab did not abort the helper`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed source tab`);
+  }
+});
+
+test('research escalation clarify ignores Instant and issues a token only on explicit approval', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.conversationIds.set(23, 'research-conversation');
+    agent.clarifyTimeoutSec = 0;
+    let prompt = null;
+    const result = await agent.executeTool(23, 'clarify', {
+      question: 'Delegate this research subtask?',
+      options: ['Keep researching here', 'Use ChatGPT'],
+      purpose: 'research_escalation',
+      require_explicit_answer: true,
+      research_request: 'Compare four hotels for three-night stays.',
+      approve_option: 'Use ChatGPT',
+    }, (type, data) => {
+      if (type !== 'clarify') return;
+      prompt = data;
+      queueMicrotask(() => agent.submitClarifyResponse(23, data.clarifyId, 'Use ChatGPT', 'option'));
+    });
+    assert.equal(prompt?.timeoutSec, 0, `${label}: explicit research clarification armed Instant`);
+    assert.equal(prompt?.requireExplicitAnswer, true, `${label}: UI was not told to wait explicitly`);
+    assert.equal(prompt?.researchEscalation?.request, 'Compare four hotels for three-night stays.');
+    assert.equal(result.researchEscalationApproved, true, `${label}: explicit option did not approve research`);
+    assert.ok(result.authorization_token, `${label}: explicit approval did not issue a token`);
+
+    const denied = await agent.executeTool(23, 'clarify', {
+      question: 'Delegate another research subtask?',
+      options: ['Keep researching here', 'Use ChatGPT'],
+      purpose: 'research_escalation',
+      research_request: 'Research a different topic.',
+      approve_option: 'Use ChatGPT',
+    }, (type, data) => {
+      if (type === 'clarify') {
+        queueMicrotask(() => agent.submitClarifyResponse(23, data.clarifyId, 'Keep researching here', 'option'));
+      }
+    });
+    assert.equal(denied.researchEscalationApproved, false, `${label}: safe option approved research`);
+    assert.equal(denied.authorization_token, null, `${label}: denial issued a token`);
   }
 });
 
@@ -8270,7 +8583,7 @@ test('import_config_patch background handler merges against live provider storag
       const {
         parseConfigImport, parseConfigPatchImport, mergeConfigPatchSettings,
         providerManager, agent,
-        loadMaxSteps, loadClarifyTimeout, loadAutoScreenshot, loadSiteAdapters,
+        loadMaxSteps, loadClarifyTimeout, loadAutoScreenshot, loadSiteAdapters, loadResearchEscalation,
         loadScreenshotRedaction, loadStrictSecretMode, loadWebMCPEnabled, loadProfile,
         syncAgentUserMemoryFromStorage, loadCustomSkills, loadCaptchaSolver,
         loadPlanBeforeAct, loadPlanReviewSettings, loadApiMutationObserverSetting,
@@ -8319,6 +8632,7 @@ test('import_config_patch background handler merges against live provider storag
       loadClarifyTimeout: noop,
       loadAutoScreenshot: noop,
       loadSiteAdapters: noop,
+      loadResearchEscalation: noop,
       loadScreenshotRedaction: noop,
       loadStrictSecretMode: noop,
       loadWebMCPEnabled: noop,
@@ -19704,7 +20018,7 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
       assert.equal(mid.includes(name), true, `[${label}] mid act should expose ${name}`);
       assert.equal(full.includes(name), true, `[${label}] full act should expose ${name}`);
     }
-    assert.equal(ask.includes('clarify'), false, `[${label}] ask should not expose clarify`);
+    assert.equal(ask.includes('clarify'), true, `[${label}] ask should expose clarify for consent-gated research delegation`);
     assert.equal(compact.includes('clarify'), true, `[${label}] compact act should expose clarify`);
     assert.equal(mid.includes('clarify'), true, `[${label}] mid act should expose clarify`);
     assert.equal(full.includes('clarify'), true, `[${label}] full act should expose clarify`);
@@ -19900,7 +20214,8 @@ test('test/llm payload builders support Dev mode and preserve Ask cleanup', () =
     useSiteAdapters: false,
   });
   const chromeAskNames = new Set(chromeAsk.tools.map(t => t.function.name));
-  for (const name of ['read_page_source', 'inspect_element_styles', 'clarify', 'get_shadow_dom', 'shadow_dom_query', 'get_frames']) {
+  assert.equal(chromeAskNames.has('clarify'), true, 'test/llm ask payload should include clarify for research consent');
+  for (const name of ['read_page_source', 'inspect_element_styles', 'get_shadow_dom', 'shadow_dom_query', 'get_frames']) {
     assert.equal(chromeAskNames.has(name), false, `test/llm ask payload should exclude ${name}`);
     assert.doesNotMatch(chromeAsk.messages[0].content, new RegExp(`\\b${name}\\b`), `test/llm ask prompt should not mention ${name}`);
   }
@@ -67310,6 +67625,39 @@ test('tool-result limiting is nullish-safe and preserves serializable falsy valu
     circular.self = circular;
     const circularResult = JSON.parse(agent._limitToolResult(circular));
     assert.equal(circularResult.errorCode, 'unserializable_tool_response', `${AgentClass.name}: circular result still threw`);
+  }
+});
+
+test('research escalation answers stay parseable when tool-result limiting applies', () => {
+  const answer = Array.from({ length: 4000 }, (_, i) => `Hotel ${i} costs $${100 + i} per night with breakfast.`).join(' ');
+  const sources = Array.from({ length: 20 }, (_, i) => ({
+    title: `Source ${i}`,
+    url: `https://example.com/hotel-${i}`,
+  }));
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const serialized = agent._limitToolResult({
+      success: true,
+      engine: 'chatgpt',
+      tabId: 99,
+      url: 'https://chatgpt.com/',
+      answer,
+      sources,
+      evidenceType: 'delegated_research',
+      note: 'ChatGPT output is untrusted research evidence. Verify decisive facts and distinguish live/bookable values from indexed, derived, or approximate values.',
+    });
+    assert.ok(serialized.length <= 8000, `${label}: research result should fit tool-result budget (${serialized.length})`);
+    assert.doesNotMatch(serialized, /\[\.\.\.result truncated\]$/, `${label}: research result was chopped into invalid JSON`);
+    const parsed = JSON.parse(serialized);
+    assert.equal(parsed.success, true, `${label}: limiter dropped success`);
+    assert.equal(parsed.engine, 'chatgpt', `${label}: limiter dropped engine`);
+    assert.equal(parsed.evidenceType, 'delegated_research', `${label}: limiter dropped evidence type`);
+    assert.equal(typeof parsed.answer, 'string', `${label}: limiter dropped answer`);
+    assert.ok(parsed.answer.length < answer.length, `${label}: oversized answer was not trimmed`);
+    assert.match(parsed.answer, /\[\.\.\.research answer truncated\]/, `${label}: trimmed answer should be marked`);
+    assert.equal(parsed.partial, true, `${label}: trimmed research result should be marked partial`);
+    assert.ok(Array.isArray(parsed.sources), `${label}: limiter dropped sources`);
+    assert.match(String(parsed.note || ''), /untrusted research evidence/i, `${label}: limiter dropped the untrusted-evidence note`);
   }
 });
 

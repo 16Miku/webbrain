@@ -3,6 +3,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'Pesquisando com ChatGPT',
+  'st.display.research_escalation.label': 'Escalonamento de pesquisa',
+  'st.display.research_escalation.desc': 'Quando uma subtarefa de pesquisa somente leitura é incomumente complexa, o WebBrain pergunta antes de delegar apenas essa parte ao ChatGPT. Ativado por padrão. O mecanismo de pesquisa poderá ser selecionado em uma atualização futura.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

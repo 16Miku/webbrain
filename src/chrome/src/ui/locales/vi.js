@@ -3,6 +3,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'Đang nghiên cứu với ChatGPT',
+  'st.display.research_escalation.label': 'Leo thang nghiên cứu',
+  'st.display.research_escalation.desc': 'Khi một nhiệm vụ phụ nghiên cứu chỉ đọc phức tạp bất thường, WebBrain sẽ hỏi trước khi ủy thác chỉ phần đó cho ChatGPT. Bật theo mặc định. Công cụ nghiên cứu sẽ có thể chọn trong bản cập nhật sau.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

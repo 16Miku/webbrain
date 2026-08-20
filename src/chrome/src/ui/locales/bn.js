@@ -3,6 +3,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'ChatGPT দিয়ে গবেষণা চলছে',
+  'st.display.research_escalation.label': 'গবেষণা এসকেলেশন',
+  'st.display.research_escalation.desc': 'যখন একটি শুধু-পঠন গবেষণা উপকাজ অস্বাভাবিকভাবে জটিল হয়, WebBrain শুধু সেই অংশ ChatGPT-কে অর্পণ করার আগে জিজ্ঞাসা করে। ডিফল্টভাবে চালু। গবেষণা ইঞ্জিন ভবিষ্যতের আপডেটে নির্বাচনযোগ্য হবে।',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

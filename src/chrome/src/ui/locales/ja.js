@@ -5,6 +5,9 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'tool.delegate_research': 'ChatGPTで調査中',
+  'st.display.research_escalation.label': '調査のエスカレーション',
+  'st.display.research_escalation.desc': '読み取り専用の調査サブタスクが通常より複雑な場合、WebBrainはその部分だけをChatGPTに委譲する前に確認します。デフォルトでオンです。調査エンジンは今後のアップデートで選択可能になります。',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',
