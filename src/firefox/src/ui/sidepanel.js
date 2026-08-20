@@ -437,6 +437,7 @@ if (globalThis.browser?.storage?.onChanged) {
   });
 
   skipBtn.addEventListener('click', async () => {
+    if (!await helpImproveSavePromise.catch(() => false)) return;
     await dismissOnboarding();
   });
 })();

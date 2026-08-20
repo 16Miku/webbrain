@@ -31591,6 +31591,7 @@ test('sidepanel onboarding makes Cloud improvement use an explicit persisted cho
     assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Cloud is active`);
     assert.match(panel, /function showLocalChoices\(choices\) \{[\s\S]*?setHelpImproveVisible\(false\)/, `${label}: the Cloud-only choice should stay out of local-model setup`);
     assert.match(panel, /if \(cloudReady\) \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Start should not dismiss onboarding before the latest privacy choice is saved`);
+    assert.match(panel, /skipBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Skip should not dismiss onboarding before the latest privacy choice is saved`);
     assert.match(css, /\.ob-help-improve-control input \{[\s\S]*?accent-color: var\(--accent\)/, `${label}: the privacy choice should remain a recognizable native checkbox`);
     assert.match(css, /\.onboarding \{[\s\S]*?overflow-y: auto;/, `${label}: longer localized privacy copy should remain reachable in short panels`);
   }

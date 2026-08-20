@@ -558,6 +558,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   });
 
   skipBtn.addEventListener('click', async () => {
+    if (!await helpImproveSavePromise.catch(() => false)) return;
     await dismissOnboarding();
   });
 })();
