@@ -295,9 +295,15 @@ function pdfItems(records) {
 function observeEmergencyComponentState(value = {}) {
   const sourceId = String(value.id || '');
   if (sourceId !== CORPUS_DOWNLOAD_ID && sourceId !== SEMANTIC_DOWNLOAD_ID) return;
-  const status = normalizedStatus(value.status);
-  if (!ACTIVE_STATUSES.has(status) && !ATTENTION_STATUSES.has(status)) {
-    componentDownloadItems.delete(sourceId);
+  const rawStatus = String(value.status || '').toLowerCase();
+  const status = normalizedStatus(rawStatus);
+  if (!status) {
+    // Incomplete progress ticks have no status. Keep the last live item instead
+    // of treating the pack as missing, then downloaded, on the next poll.
+    if (!rawStatus) return;
+    if (['ready', 'not-installed', 'model-missing', 'unknown', 'deleted'].includes(rawStatus)) {
+      componentDownloadItems.delete(sourceId);
+    }
     return;
   }
   componentDownloadItems.set(sourceId, {

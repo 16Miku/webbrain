@@ -6,6 +6,7 @@ import {
 } from '../agent/apocalypse-mode.js';
 import {
   createEmergencyCorpusStore,
+  isEmergencyCorpusRecord,
 } from '../agent/emergency-corpus.js';
 import {
   EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS,
@@ -110,7 +111,7 @@ function publishComponentDownloadState(detail) {
 }
 
 function publishComponentDownloadStates() {
-  const corpusStatus = corpusRecord?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
+  const corpusStatus = corpusUiStatus();
   const corpusTotal = Number(corpusProgress.totalBytes) || Number(corpusRecord?.staging?.totalBytes) || (corpusRecord?.status === 'ready' ? 245 * 1024 * 1024 : 0);
   const corpusReceived = Number(corpusProgress.bytesReceived) || Number(corpusRecord?.staging?.bytesReceived) || (corpusRecord?.status === 'ready' ? corpusTotal : 0);
   publishComponentDownloadState({
@@ -120,7 +121,8 @@ function publishComponentDownloadStates() {
     total: corpusTotal,
     progress: corpusTotal > 0 ? corpusReceived / corpusTotal : (Number(corpusProgress.percent) ? Number(corpusProgress.percent) / 100 : 0),
     updatedAt: Number(corpusRecord?.updatedAt) || Date.now(),
-    detail: corpusStatus === 'indexing' ? t('eb.rag.status.indexing') : '',
+    detail: corpusStatus === 'extracting' ? t('eb.rag.extracting_detail')
+      : corpusStatus === 'indexing' ? t('eb.rag.indexing_detail') : '',
   });
 
   const semanticStatus = semanticState?.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
@@ -323,7 +325,7 @@ function updateOverallModelsReadiness() {
     || anyOtherWebgpuTextBusy()
     || ['starting', 'downloading', 'stopping'].includes(visionStatus)
     || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)
-    || ['downloading', 'verifying', 'extracting', 'indexing'].includes(corpusStatus)
+    || ['downloading', 'verifying', 'downloaded', 'extracting', 'indexing'].includes(corpusStatus)
     || ['downloading'].includes(semanticStatus)) {
     key = 'ap.models.status.downloading';
   }
@@ -743,6 +745,13 @@ async function refreshVisionDownload() {
   renderVisionDownload();
 }
 
+function applyCorpusRecord(record) {
+  if (!isEmergencyCorpusRecord(record)) return false;
+  corpusRecord = record;
+  if (record.staging) corpusProgress = record.staging;
+  return true;
+}
+
 function ragStatusLabel(status) {
   const key = `eb.rag.status.${String(status || 'unavailable')}`;
   const translated = t(key);
@@ -864,7 +873,7 @@ function renderRagComponents() {
 
 async function readEmergencyHostState() {
   const host = await sendEmergencyDownloadCommand('status').catch(() => null);
-  if (host?.corpus) corpusRecord = host.corpus;
+  if (host?.corpus) applyCorpusRecord(host.corpus);
   else corpusRecord = await corpusStore.get().catch(() => null);
   if (host?.semantic) semanticState = host.semantic;
   return host;
@@ -1117,16 +1126,14 @@ runtimeApi.runtime?.onMessage?.addListener?.((message) => {
     return false;
   }
   if (message?.type === EMERGENCY_DOWNLOAD_STATE_MESSAGE) {
-    if (message.corpus) {
-      corpusRecord = message.corpus;
-      if (message.corpus.staging) corpusProgress = message.corpus.staging;
-      renderRagComponents();
+    const previousCorpus = corpusRecord?.status;
+    const previousSemantic = semanticState?.status;
+    const corpusUpdated = message.corpus ? applyCorpusRecord(message.corpus) : false;
+    if (message.semantic) semanticState = message.semantic;
+    if (corpusUpdated || message.semantic) renderRagComponents();
+    if (corpusRecord?.status !== previousCorpus || semanticState?.status !== previousSemantic) {
+      void ragReadiness.refresh().catch(() => {});
     }
-    if (message.semantic) {
-      semanticState = message.semantic;
-      renderRagComponents();
-    }
-    void ragReadiness.refresh().catch(() => {});
     return false;
   }
   return false;
