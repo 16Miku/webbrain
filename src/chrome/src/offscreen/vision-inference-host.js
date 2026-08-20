@@ -63,12 +63,15 @@ function resetVisionWorker(error = new Error('Vision worker was reset.')) {
 
 function requestVisionCancellation(requestId, worker, timeoutError) {
   if (!worker || worker !== visionWorker) return;
-  const timedOut = { worker, graceTimer: null };
+  const cancelId = nextVisionRequestId++;
+  const timedOut = { worker, graceTimer: null, requestId, cancelId };
   timedOutVisionRequests.set(requestId, timedOut);
+  timedOutVisionRequests.set(cancelId, timedOut);
   timedOut.graceTimer = setTimeout(() => {
     const current = timedOutVisionRequests.get(requestId);
     if (current !== timedOut) return;
     timedOutVisionRequests.delete(requestId);
+    timedOutVisionRequests.delete(cancelId);
     resetVisionWorker(deadlineError(
       'vision_worker_recreated',
       `${timeoutError.message} Cancellation did not settle within ${CANCELLATION_GRACE_PERIOD_MS}ms; the worker was recreated.`,
@@ -76,7 +79,7 @@ function requestVisionCancellation(requestId, worker, timeoutError) {
   }, CANCELLATION_GRACE_PERIOD_MS);
   try {
     worker.postMessage({
-      id: nextVisionRequestId++,
+      id: cancelId,
       type: 'cancel',
       payload: { requestId },
     });
@@ -107,10 +110,13 @@ function armVisionDownloadTimers(lifecycle, modelId) {
     ), DOWNLOAD_STALL_TIMEOUT_MS);
   };
   lifecycle.resetStall = resetStall;
-  lifecycle.absoluteTimer = setTimeout(() => fail(
-    'vision_download_timeout',
-    `Local vision download exceeded ${DOWNLOAD_ABSOLUTE_TIMEOUT_MS}ms.`,
-  ), DOWNLOAD_ABSOLUTE_TIMEOUT_MS);
+  lifecycle.armAbsoluteDeadline = () => {
+    if (!lifecycle || lifecycle.absoluteTimer || lifecycle.cancelMode) return;
+    lifecycle.absoluteTimer = setTimeout(() => fail(
+      'vision_download_timeout',
+      `Local vision download exceeded ${DOWNLOAD_ABSOLUTE_TIMEOUT_MS}ms.`,
+    ), DOWNLOAD_ABSOLUTE_TIMEOUT_MS);
+  };
 }
 
 function publishVisionDownloadState(state, immediate = false) {
@@ -191,7 +197,10 @@ function settleVisionRequest(data) {
   }
   if (data?.type === 'vision-preload-state') {
     if (!progressMatchesActiveVisionModel(data, visionDownloadState?.modelId, visionPreloadPromise)) return;
-    if (data.status === 'loading') visionPreloadLifecycle?.resetStall?.();
+    if (data.status === 'loading') {
+      visionPreloadLifecycle?.armAbsoluteDeadline?.();
+      visionPreloadLifecycle?.resetStall?.();
+    }
     publishVisionDownloadState({
       modelId: data.modelId,
       status: data.status === 'loading' ? 'loading' : 'queued',
@@ -203,8 +212,16 @@ function settleVisionRequest(data) {
   }
   const timedOut = timedOutVisionRequests.get(data?.id);
   if (timedOut) {
+    if (data?.id === timedOut.cancelId && data?.queued === true && data?.active !== true) {
+      if (timedOut.graceTimer) clearTimeout(timedOut.graceTimer);
+      timedOutVisionRequests.delete(timedOut.requestId);
+      timedOutVisionRequests.delete(timedOut.cancelId);
+      return;
+    }
+    if (data?.id !== timedOut.requestId) return;
     if (timedOut.graceTimer) clearTimeout(timedOut.graceTimer);
-    timedOutVisionRequests.delete(data.id);
+    timedOutVisionRequests.delete(timedOut.requestId);
+    if (timedOut.cancelId) timedOutVisionRequests.delete(timedOut.cancelId);
     return;
   }
   const pending = pendingVisionRequests.get(data?.id);

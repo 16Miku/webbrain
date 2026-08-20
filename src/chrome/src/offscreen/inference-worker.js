@@ -126,23 +126,34 @@ function fetchTargetsActiveVisionModel(input) {
   return safeDecodedUrl(url).includes(`/${activeVisionDownloadRequest.modelId}/`);
 }
 
+function visionReadyMarkerUrl(modelId) {
+  return `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(String(modelId || '').trim())}`;
+}
+
 async function isVisionModelCached(modelId) {
   const normalized = String(modelId || '').trim();
   if (!normalized) return false;
   if (typeof caches === 'undefined') return null;
-  const modelPath = `/${normalized}/`;
+  const markerUrl = visionReadyMarkerUrl(normalized);
   try {
     for (const name of await caches.keys()) {
       if (!/transformers/i.test(name)) continue;
       const cache = await caches.open(name);
-      for (const request of await cache.keys()) {
-        if (safeDecodedUrl(request.url).includes(modelPath)) return true;
-      }
+      if (await cache.match(markerUrl)) return true;
     }
   } catch {
     return null;
   }
   return false;
+}
+
+async function markVisionModelReady(modelId) {
+  const normalized = String(modelId || '').trim();
+  if (!normalized || typeof caches === 'undefined') return;
+  const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+  await cache.put(visionReadyMarkerUrl(normalized), new Response(JSON.stringify({ modelId: normalized }), {
+    headers: { 'content-type': 'application/json' },
+  }));
 }
 
 async function controlledFetch(input, init = {}) {
@@ -476,9 +487,11 @@ async function preloadVisionModel(payload, request) {
   visionDownloadAbortController = controller;
   try {
     await preloadRuntime(payload);
-    return visionDownloadState(request, request.cancelMode === 'stop'
+    const status = request.cancelMode === 'stop'
       ? 'not-downloaded'
-      : request.cancelMode === 'pause' ? 'paused' : 'ready');
+      : request.cancelMode === 'pause' ? 'paused' : 'ready';
+    if (status === 'ready') await markVisionModelReady(request.modelId);
+    return visionDownloadState(request, status);
   } catch (error) {
     if (request.cancelMode || controller.signal.aborted) {
       return visionDownloadState(request, request.cancelMode === 'stop' ? 'not-downloaded' : 'paused');
@@ -1062,15 +1075,19 @@ export async function clearVisionModelCache(modelId) {
   if (!normalizedModelId) throw new Error('No vision model was specified.');
   await disposeVisionRuntime();
   const modelPath = `/${normalizedModelId}/`;
+  const markerUrl = visionReadyMarkerUrl(normalizedModelId);
   let deletedEntries = 0;
   if (typeof caches !== 'undefined') {
     for (const name of await caches.keys()) {
       if (!/transformers/i.test(name)) continue;
       const cache = await caches.open(name);
       for (const request of await cache.keys()) {
-        if (!safeDecodedUrl(request.url).includes(modelPath)) continue;
-        if (await cache.delete(request)) deletedEntries++;
+        const url = safeDecodedUrl(request.url);
+        if (url.includes(modelPath) || request.url === markerUrl) {
+          if (await cache.delete(request)) deletedEntries++;
+        }
       }
+      if (await cache.delete(markerUrl)) deletedEntries++;
     }
   }
   return { modelId: normalizedModelId, deletedEntries };
@@ -1081,13 +1098,21 @@ self.addEventListener('message', async event => {
   try {
     if (type === 'cancel') {
       const requestId = Number(payload?.requestId);
-      const cancellable = Number.isFinite(requestId)
-        && (queuedVisionGenerations.has(requestId) || activeVisionGenerations.has(requestId));
+      const queued = queuedVisionGenerations.has(requestId);
+      const active = activeVisionGenerations.has(requestId);
+      const cancellable = Number.isFinite(requestId) && (queued || active);
       if (cancellable) {
         cancelledVisionGenerations.add(requestId);
         activeVisionGenerations.get(requestId)?.interrupt?.();
       }
-      self.postMessage({ id, ok: true, cancelled: cancellable, requestId });
+      self.postMessage({
+        id,
+        ok: true,
+        cancelled: cancellable,
+        requestId,
+        queued: queued && !active,
+        active,
+      });
       return;
     }
     if (type === 'init') {

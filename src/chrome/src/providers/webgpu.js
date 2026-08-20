@@ -51,26 +51,27 @@ export const WEBGPU_VISION_DTYPE = Object.freeze({
   decoder_model_merged: 'q4',
 });
 
-function safeDecodedCacheUrl(value) {
-  try { return decodeURIComponent(String(value || '')); } catch { return String(value || ''); }
+export function webgpuVisionReadyMarkerUrl(modelId = WEBGPU_VISION_MODEL_ID) {
+  return `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(String(modelId || '').trim())}`;
 }
 
 /**
- * Probe the Transformers.js cache for local vision artifacts.
+ * Probe the Transformers.js cache for a completed local vision download.
+ * Presence of a leftover config/weight file is not enough: Chrome can evict
+ * the large ONNX payload while leaving small artifacts. The ready marker is
+ * written only after a successful preload.
  * Returns true/false when Cache Storage is readable, or null when the
  * result is unknown and stored readiness must not be downgraded.
  */
 export async function hasWebgpuVisionCache(modelId = WEBGPU_VISION_MODEL_ID) {
   const normalized = String(modelId || '').trim();
   if (!normalized || typeof caches === 'undefined') return null;
-  const modelPath = `/${normalized}/`;
+  const markerUrl = webgpuVisionReadyMarkerUrl(normalized);
   try {
     for (const name of await caches.keys()) {
       if (!/transformers/i.test(name)) continue;
       const cache = await caches.open(name);
-      for (const request of await cache.keys()) {
-        if (safeDecodedCacheUrl(request.url).includes(modelPath)) return true;
-      }
+      if (await cache.match(markerUrl)) return true;
     }
     return false;
   } catch {

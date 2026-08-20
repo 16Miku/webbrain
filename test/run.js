@@ -918,6 +918,7 @@ const {
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   normalizeWebgpuModelId,
+  webgpuVisionReadyMarkerUrl,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
 );
@@ -52345,7 +52346,7 @@ test('local vision readiness probes cache before advertising a ready fallback', 
     globalThis.caches = {
       keys: async () => ['transformers-cache'],
       open: async () => ({
-        keys: async () => [],
+        match: async () => undefined,
       }),
     };
     const manager = new ProviderManagerCh();
@@ -52362,7 +52363,29 @@ test('local vision readiness probes cache before advertising a ready fallback', 
     globalThis.caches = {
       keys: async () => ['transformers-cache'],
       open: async () => ({
-        keys: async () => [{ url: `https://huggingface.co/${WEBGPU_VISION_MODEL_ID}/onnx/model.onnx` }],
+        match: async request => {
+          const url = typeof request === 'string' ? request : request.url;
+          return url.includes(`/${WEBGPU_VISION_MODEL_ID}/`) ? {} : undefined;
+        },
+      }),
+    };
+    assert.equal(await manager.getLocalVisionFallbackProvider(), null,
+      'a leftover config or weight file must not advertise a complete vision cache');
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'not-downloaded');
+
+    state[WEBGPU_VISION_DOWNLOAD_STATE_KEY] = {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    };
+    const markerUrl = webgpuVisionReadyMarkerUrl(WEBGPU_VISION_MODEL_ID);
+    globalThis.caches = {
+      keys: async () => ['transformers-cache'],
+      open: async () => ({
+        match: async request => {
+          const url = typeof request === 'string' ? request : request.url;
+          return url === markerUrl ? { ok: true } : undefined;
+        },
       }),
     };
     const cached = await manager.getLocalVisionFallbackProvider();
@@ -52566,6 +52589,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /async function getVisionRuntime[\s\S]*?local_files_only: localFilesOnly/);
   assert.match(worker, /getVisionRuntime\(modelId, dtype, device, \{ localFilesOnly: true \}\)/,
     'automatic screenshot inference must not download missing local vision weights');
+  assert.match(worker, /async function markVisionModelReady/);
+  assert.match(worker, /webgpu-vision-ready\//,
+    'a completed Vision Model preload must write a ready marker, not infer completeness from any cached file');
+  assert.match(worker, /queued: queued && !active/,
+    'cancel acknowledgements must distinguish queued vision inference from an active generation');
   assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime\(modelId, dtype, device\)[\s\S]*?await disposeVisionRuntime/,
     'explicit preload remains the only local vision download path');
   assert.match(worker, /type === 'pause-vision-download'[\s\S]*?pauseVisionDownload/);
@@ -52634,6 +52662,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /const DOWNLOAD_ABSOLUTE_TIMEOUT_MS = 30 \* 60_000/);
   assert.match(host, /requestVisionCancellation[\s\S]*?timedOutVisionRequests[\s\S]*?resetVisionWorker/,
     'timed-out local inference must cancel and force a clean worker after its grace period');
+  assert.match(host, /queued === true[\s\S]*?active !== true[\s\S]*?graceTimer/,
+    'a cancelled queued vision request must not recreate the worker still running text generation');
+  assert.match(host, /data\.status === 'loading'[\s\S]{0,180}armAbsoluteDeadline/,
+    'the absolute vision download deadline must start when loading begins, not while queued');
   assert.match(host, /rejectPendingVisionRequests[\s\S]*?pendingVisionRequests\.clear\(\)/,
     'worker recovery must reject and clear the poisoned request queue');
   assert.match(chromeAgent, /preparedVisionRoute = await this\._resolveVisionRoute[\s\S]*?visionStatus[\s\S]*?return this\._localVisionUnavailableResult[\s\S]*?let dataUrl = null/,
@@ -53054,7 +53086,14 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
           return;
         }
         if (type === 'cancel') {
-          this.emit({ id, ok: true, cancelled: true, requestId: payload.requestId });
+          this.emit({
+            id,
+            ok: true,
+            cancelled: true,
+            requestId: payload.requestId,
+            queued: behavior.cancelQueued === true,
+            active: behavior.cancelQueued !== true,
+          });
           return;
         }
         if (type === 'preload') {
@@ -53172,6 +53211,16 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
   assert.equal(inferenceRetry.content, 'recovered vision',
     'a timed-out inference poisoned the next serialized request');
 
+  const queuedInference = createHarness({ hangChatCount: 1, cancelQueued: true });
+  const hungQueuedInference = queuedInference.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
+  await queuedInference.drain();
+  await queuedInference.advance(90_000);
+  const queuedTimeout = await hungQueuedInference;
+  assert.equal(queuedTimeout.code, 'vision_inference_timeout');
+  await queuedInference.advance(5_000);
+  assert.equal(queuedInference.workers[0].terminated, false,
+    'cancelling a queued vision inference must not reset the worker still running text generation');
+
   const stalledDownload = createHarness({ preloadMode: 'hang-loading' });
   const preloadStarted = await stalledDownload.dispatch({
     type: 'webgpu-vision-preload',
@@ -53190,9 +53239,28 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
   await absoluteDownload.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
   await absoluteDownload.drain();
   await absoluteDownload.advance(30 * 60_000);
-  assert.equal(absoluteDownload.workers[0].terminated, true,
-    'a queued download exceeded the absolute ceiling without recovery');
-  assert.ok(absoluteDownload.runtimeMessages.some(message =>
+  assert.equal(absoluteDownload.workers[0].terminated, false,
+    'a queued vision preload must not reset the shared worker before loading starts');
+
+  const progressingDownload = createHarness({ preloadMode: 'hang-loading' });
+  await progressingDownload.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  await progressingDownload.drain();
+  for (let elapsed = 0, loaded = 0; elapsed < 30 * 60_000; elapsed += 90_000) {
+    loaded += 1;
+    progressingDownload.workers[0].emit({
+      type: 'progress',
+      modelId: WEBGPU_VISION_MODEL_ID,
+      file: 'model.onnx',
+      loaded,
+      total: 1000,
+      progress: loaded / 10,
+    });
+    await progressingDownload.drain();
+    await progressingDownload.advance(90_000);
+  }
+  assert.equal(progressingDownload.workers[0].terminated, true,
+    'an active vision download must still hit the 30-minute absolute deadline');
+  assert.ok(progressingDownload.runtimeMessages.some(message =>
     message.state?.status === 'error' && /exceeded/.test(message.state.error)));
 
   const pause = createHarness({ preloadMode: 'hang-loading' });
@@ -53229,9 +53297,11 @@ test('Vision Model removal deletes only its cache entries', async () => {
   const previousCaches = globalThis.caches;
   const visionBase = `https://huggingface.co/${WEBGPU_VISION_MODEL_ID}/resolve/main/`;
   const textBase = `https://huggingface.co/${WEBGPU_MODEL_ID}/resolve/main/`;
+  const markerUrl = `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(WEBGPU_VISION_MODEL_ID)}`;
   const cacheEntries = new Map([
     [`${visionBase}config.json`, true],
     [`${visionBase}onnx/model_q4.onnx`, true],
+    [markerUrl, true],
     [`${textBase}config.json`, true],
     ['https://huggingface.co/another/model/resolve/main/config.json', true],
   ]);
@@ -53252,9 +53322,11 @@ test('Vision Model removal deletes only its cache entries', async () => {
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?vision-cache-scope-test`;
     const { clearVisionModelCache } = await import(workerUrl);
     const result = await clearVisionModelCache(WEBGPU_VISION_MODEL_ID);
-    assert.equal(result.deletedEntries, 2);
+    assert.equal(result.deletedEntries, 3);
     assert.equal(cacheEntries.has(`${visionBase}config.json`), false);
     assert.equal(cacheEntries.has(`${visionBase}onnx/model_q4.onnx`), false);
+    assert.equal(cacheEntries.has(markerUrl), false,
+      'removing the Vision Model must delete its ready marker');
     assert.equal(cacheEntries.has(`${textBase}config.json`), true,
       'removing the Vision Model must preserve the Text Model cache');
     assert.equal(cacheEntries.has('https://huggingface.co/another/model/resolve/main/config.json'), true);
