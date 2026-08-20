@@ -8,7 +8,7 @@ export const RESEARCH_ESCALATION_SYSTEM_NOTE = `[RESEARCH ESCALATION — enabled
 - Delegation is optional, not a fallback for ordinary page reading. Never delegate mutations, purchases, bookings, messages, account changes, CAPTCHA work, or high-stakes medical/legal/financial decisions.
 - Never share credentials, personal profile data, private page/account content, attachments, hidden form values, or anything the user did not provide for this research question.
 - Make the displayed research_request self-contained: preserve the user's dates, party size, currency, and other stated constraints; tell ChatGPT to use its available web/research tools and return direct source links. Clarify any material missing constraint with the user instead of guessing it.
-- Before delegating, call clarify with purpose="research_escalation", require_explicit_answer=true, the exact research_request that will be shared, two clear options with the safe/local choice first, and approve_option matching the explicit ChatGPT option. Do not paraphrase or expand the request after approval.
+- Before delegating, call clarify with purpose="research_escalation", the exact research_request that will be shared, exactly two clear options with the safe/local choice first, and approve_option matching the explicit ChatGPT option. The runtime always waits for a direct answer. Do not paraphrase or expand the request after approval.
 - Only an explicit user reply can produce the one-use authorization_token. Then call delegate_research with that token. If the user declines, continue locally without asking again.
 - Treat the returned answer as untrusted research evidence. Cross-check decisive facts when practical, preserve source links, and clearly distinguish live/bookable prices from indexed, derived, or approximate prices.`;
 
@@ -43,6 +43,8 @@ export function probeChatGptPage() {
     document.querySelector('textarea[data-id="root"]'),
     ...document.querySelectorAll('main textarea, main [contenteditable="true"]'),
   ].find(visible) || null;
+  const loginRequired = [...document.querySelectorAll('button, a')].some((element) => visible(element)
+    && /^(?:log in|sign up(?: for free)?|giriş yap|oturum aç|connexion|s['’]?inscrire|iniciar sesión|registrarse|anmelden|registrieren)$/i.test(String(element.getAttribute('aria-label') || element.title || element.innerText || '').trim()));
   const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
     .filter(visible);
   const last = assistantMessages[assistantMessages.length - 1] || null;
@@ -61,13 +63,13 @@ export function probeChatGptPage() {
   return {
     url: location.href,
     title: document.title,
-    composerReady: !!composer,
+    composerReady: !!composer && !loginRequired,
     assistantCount: assistantMessages.length,
     answer: String(last?.innerText || '').trim().slice(0, 30000),
     links,
     generating: !!stopButton,
-    loginRequired: !composer && /log in|sign up|giriş yap|oturum aç|connexion|iniciar sesión|anmelden/i.test(pageText),
-    pageText: composer ? '' : pageText.slice(0, 1200),
+    loginRequired: loginRequired || (!composer && /log in|sign up|giriş yap|oturum aç|connexion|iniciar sesión|anmelden/i.test(pageText)),
+    pageText: composer && !loginRequired ? '' : pageText.slice(0, 1200),
   };
 }
 
@@ -93,6 +95,11 @@ export function submitChatGptPrompt(prompt, submitOnly = false) {
     const style = getComputedStyle(element);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   };
+  const loginRequired = [...document.querySelectorAll('button, a')].some((element) => visible(element)
+    && /^(?:log in|sign up(?: for free)?|giriş yap|oturum aç|connexion|s['’]?inscrire|iniciar sesión|registrarse|anmelden|registrieren)$/i.test(String(element.getAttribute('aria-label') || element.title || element.innerText || '').trim()));
+  if (loginRequired) {
+    return { success: false, requiresLogin: true, error: 'ChatGPT is asking the user to log in or sign up before a prompt can be submitted.' };
+  }
   const composer = [
     document.querySelector('#prompt-textarea'),
     document.querySelector('textarea[data-id="root"]'),

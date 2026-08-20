@@ -5,7 +5,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'ChatGPT দিয়ে গবেষণা চলছে',
   'st.display.research_escalation.label': 'গবেষণা এসকেলেশন',
-  'st.display.research_escalation.desc': 'যখন একটি শুধু-পঠন গবেষণা উপকাজ অস্বাভাবিকভাবে জটিল হয়, WebBrain শুধু সেই অংশ ChatGPT-কে অর্পণ করার আগে জিজ্ঞাসা করে। ডিফল্টভাবে চালু। গবেষণা ইঞ্জিন ভবিষ্যতের আপডেটে নির্বাচনযোগ্য হবে।',
+  'st.display.research_escalation.desc': 'সক্রিয় থাকলে, WebBrain একটি অস্বাভাবিক জটিল শুধু-পঠন গবেষণা প্রম্পট ChatGPT-তে পাঠানোর আগে অনুমতি চাইতে পারে। ডিফল্টভাবে বন্ধ। আপনার স্পষ্ট অনুমোদনের পরেই সঠিক প্রম্পটটি শেয়ার করা হয়।',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

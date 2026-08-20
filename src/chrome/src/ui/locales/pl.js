@@ -7,7 +7,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'Badanie z ChatGPT',
   'st.display.research_escalation.label': 'Eskalacja badań',
-  'st.display.research_escalation.desc': 'Gdy podzadanie badawcze tylko do odczytu jest wyjątkowo złożone, WebBrain pyta, zanim przekaże tylko tę część do ChatGPT. Domyślnie włączone. Silnik badawczy będzie można wybrać w przyszłej aktualizacji.',
+  'st.display.research_escalation.desc': 'Po włączeniu WebBrain może poprosić o zgodę przed wysłaniem do ChatGPT wyjątkowo złożonego polecenia badawczego tylko do odczytu. Domyślnie wyłączone. Dokładne polecenie jest udostępniane wyłącznie po wyraźnej zgodzie użytkownika.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

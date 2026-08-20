@@ -7,7 +7,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'Nagsasaliksik gamit ang ChatGPT',
   'st.display.research_escalation.label': 'Pag-escalate ng pananaliksik',
-  'st.display.research_escalation.desc': 'Kapag ang gawaing-pananaliksik na pangbasa lamang ay hindi pangkaraniwang kumplikado, nagtatanong ang WebBrain bago ipasa ang bahaging iyon lang sa ChatGPT. Naka-on bilang default. Mapipili ang makina ng pananaliksik sa isang susunod na update.',
+  'st.display.research_escalation.desc': 'Kapag pinagana, maaaring humingi ng pahintulot ang WebBrain bago magpadala ng napakakomplikadong read-only na prompt sa pananaliksik sa ChatGPT. Naka-off bilang default. Ibinabahagi lamang ang eksaktong prompt pagkatapos ng iyong tahasang pag-apruba.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

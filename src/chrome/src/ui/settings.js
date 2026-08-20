@@ -744,7 +744,7 @@ async function init() {
   maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
   maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
-  if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled !== false;
+  if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
   alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
   apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;

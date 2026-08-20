@@ -7,7 +7,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'Recherche mit ChatGPT',
   'st.display.research_escalation.label': 'Recherche-Eskalation',
-  'st.display.research_escalation.desc': 'Wenn eine schreibgeschützte Recherche-Teilaufgabe ungewöhnlich komplex ist, fragt WebBrain nach, bevor nur dieser Teil an ChatGPT delegiert wird. Standardmäßig aktiviert. Die Recherche-Engine wird in einem zukünftigen Update auswählbar.',
+  'st.display.research_escalation.desc': 'Wenn aktiviert, kann WebBrain vor dem Senden einer ungewöhnlich komplexen, schreibgeschützten Rechercheanfrage an ChatGPT um Zustimmung bitten. Standardmäßig deaktiviert. Die genaue Anfrage wird nur nach Ihrer ausdrücklichen Zustimmung geteilt.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

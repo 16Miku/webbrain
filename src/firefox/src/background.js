@@ -342,7 +342,7 @@ loadSiteAdapters();
 
 async function loadResearchEscalation() {
   const stored = await browser.storage.local.get(['researchEscalationEnabled', 'researchEscalationEngine']);
-  agent.researchEscalationEnabled = stored.researchEscalationEnabled !== false;
+  agent.researchEscalationEnabled = stored.researchEscalationEnabled === true;
   agent.researchEscalationEngine = String(stored.researchEscalationEngine || 'chatgpt');
 }
 const researchEscalationReady = loadResearchEscalation().catch(() => {});
@@ -976,7 +976,7 @@ browser.storage.onChanged.addListener((changes) => {
   }
   if (changes.researchEscalationEnabled || changes.researchEscalationEngine) {
     if (changes.researchEscalationEnabled) {
-      agent.researchEscalationEnabled = changes.researchEscalationEnabled.newValue !== false;
+      agent.researchEscalationEnabled = changes.researchEscalationEnabled.newValue === true;
     }
     if (changes.researchEscalationEngine) {
       agent.researchEscalationEngine = String(changes.researchEscalationEngine.newValue || 'chatgpt');

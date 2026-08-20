@@ -7,7 +7,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'Investigando con ChatGPT',
   'st.display.research_escalation.label': 'Escalado de investigación',
-  'st.display.research_escalation.desc': 'Cuando una subtarea de investigación de solo lectura es inusualmente compleja, WebBrain pregunta antes de delegar solo esa parte a ChatGPT. Activado de forma predeterminada. El motor de investigación será seleccionable en una actualización futura.',
+  'st.display.research_escalation.desc': 'Cuando está activado, WebBrain puede pedir permiso antes de enviar a ChatGPT una solicitud de investigación de solo lectura inusualmente compleja. Desactivado de forma predeterminada. La solicitud exacta solo se comparte tras tu aprobación explícita.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

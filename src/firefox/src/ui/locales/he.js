@@ -7,7 +7,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'חוקר עם ChatGPT',
   'st.display.research_escalation.label': 'הסלמת מחקר',
-  'st.display.research_escalation.desc': 'כאשר משימת משנה מחקרית לקריאה בלבד מורכבת באופן חריג, WebBrain שואל לפני שהוא מאציל רק את החלק הזה ל-ChatGPT. מופעל כברירת מחדל. מנוע המחקר יהיה ניתן לבחירה בעדכון עתידי.',
+  'st.display.research_escalation.desc': 'כאשר האפשרות מופעלת, WebBrain עשוי לבקש אישור לפני שליחת בקשת מחקר מורכבת לקריאה בלבד אל ChatGPT. כבוי כברירת מחדל. הבקשה המדויקת משותפת רק לאחר אישור מפורש שלך.',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

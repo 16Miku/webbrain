@@ -32,7 +32,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   clarifyTimeoutSemanticsV2: true,
   autoScreenshot: 'state_change',
   useSiteAdapters: true,
-  researchEscalationEnabled: true,
+  researchEscalationEnabled: false,
   researchEscalationEngine: 'chatgpt',
   voiceInputEnabled: true,
   alwaysAllowApiMutations: false,

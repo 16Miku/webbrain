@@ -303,6 +303,7 @@ follow-up turns and retries, and is shown in the side-panel scope banner.
 | `list_webmcp_tools`, `execute_webmcp_tool` | experimental CDP `WebMCP` domain | Chrome service worker + page-registered callback |
 | `done` | agent.js — captures verification screenshot + page state probe | Service worker + CDP |
 | `clarify` | agent.js — pauses for user input | Service worker |
+| `delegate_research` | agent.js — opens and probes a visible, fixed-origin ChatGPT helper tab | Service worker + `chrome.tabs`/`browser.tabs` + isolated page script |
 | `solve_captcha` | captcha-solver.js | Service worker + CapSolver API |
 | `read_pdf` | pdf-tools.js | Service worker |
 | `scratchpad_write` | agent.js — in-memory pinned note | Service worker |
@@ -495,6 +496,35 @@ action modes and use the normal Downloads permission gate before saving files.
 Results that carry third-party content should set `resultPolicy: "untrusted"` so
 `_wrapUntrusted()` and `_digestToolResult()` treat them as data rather than
 instructions.
+
+### Step 6b: Opt-in Research Escalation
+
+Research escalation defaults to disabled in the agent, background storage
+hydration, Settings UI, and configuration transfer defaults. The runtime adds
+its system-prompt policy and tool surface only when
+`researchEscalationEnabled === true`. Enabled Ask requests receive
+`delegate_research` plus a research-only `clarify` schema; they never receive
+the generic ambiguity/timeout schema used by Act and Dev. Disabling the feature
+removes both Ask entries, while Act and Dev retain their ordinary `clarify`
+tool.
+
+The narrowed consent call must include the displayed question, exactly two
+choices, `purpose: "research_escalation"`, the exact `research_request`, and the
+exact approval option. The safe/local choice is first. Runtime consent ignores
+global clarify auto-selection and timeout behavior, binds a random one-use
+authorization to the source tab and conversation, and expires it after five
+minutes. `delegate_research` consumes that authorization before opening
+`https://chatgpt.com/`; its Navigate, Type, and Click capability host is fixed
+to `chatgpt.com`.
+
+The helper implementation probes for a logged-in ChatGPT composer, validates
+the origin before filling and again before sending, then reads a newly produced
+answer and source links. Stop, helper-tab removal, and source-tab removal cancel
+the in-flight run. Source identity is revalidated after helper binding so a
+close during setup cannot leak the approved prompt. Returned content is marked
+as untrusted delegated-research evidence before it re-enters the normal model
+loop. See [Privacy & Data Flow](privacy-and-data-flow.md#optional-research-escalation-to-chatgpt)
+for the user-visible third-party disclosure.
 
 ### Step 7: Results Back to UI
 

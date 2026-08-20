@@ -2308,24 +2308,32 @@ test('set_checked is exposed and permission-gated as a click in both browser age
   }
 });
 
-test('research escalation is default-on, tier-complete, and removable by setting', () => {
-  for (const [label, prefix, getTools, configTransfer] of [
-    ['chrome', 'src/chrome', getToolsForModeCh, ConfigTransferCh],
-    ['firefox', 'src/firefox', getToolsForModeFx, ConfigTransferFx],
+test('research escalation is opt-in, tier-complete when enabled, and absent otherwise', () => {
+  for (const [label, prefix, AgentClass, getTools, configTransfer] of [
+    ['chrome', 'src/chrome', AgentCh, getToolsForModeCh, ConfigTransferCh],
+    ['firefox', 'src/firefox', AgentFx, getToolsForModeFx, ConfigTransferFx],
   ]) {
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const backgroundJs = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const toggleIndex = settingsHtml.indexOf('id="toggle-research-escalation"');
     const advancedIndex = settingsHtml.indexOf('<details class="advanced-settings">');
+    const toggleTag = settingsHtml.slice(settingsHtml.lastIndexOf('<input', toggleIndex), settingsHtml.indexOf('>', toggleIndex) + 1);
     assert.ok(toggleIndex >= 0 && toggleIndex < advancedIndex, `${label}: research escalation should be the final non-Advanced General setting`);
     assert.doesNotMatch(settingsHtml.slice(toggleIndex, advancedIndex), /class="setting-row"/, `${label}: another General setting appears after research escalation`);
-    assert.match(settingsHtml, /id="toggle-research-escalation" checked/, `${label}: research escalation toggle should render on by default`);
-    assert.match(settingsJs, /researchEscalationToggle\.checked = stored\.researchEscalationEnabled !== false/, `${label}: missing default-on storage hydration`);
+    assert.doesNotMatch(toggleTag, /\bchecked\b/, `${label}: research escalation toggle should render off by default`);
+    assert.match(settingsJs, /researchEscalationToggle\.checked = stored\.researchEscalationEnabled === true/, `${label}: missing opt-in settings hydration`);
+    assert.match(backgroundJs, /researchEscalationEnabled = stored\.researchEscalationEnabled === true/, `${label}: missing opt-in runtime hydration`);
+    assert.equal(new AgentClass({}).researchEscalationEnabled, false, `${label}: agent should default research escalation off`);
     assert.match(settingsJs, /researchEscalationEngine: 'chatgpt'/, `${label}: settings should retain the future engine preference`);
-    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEnabled, true, `${label}: portable config should preserve the default-on preference`);
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEnabled, false, `${label}: portable config should preserve the opt-in default`);
     assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEngine, 'chatgpt', `${label}: portable config should preserve the current engine`);
     assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('researchEscalationEnabled'), `${label}: config export/import omitted the preference`);
     assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('researchEscalationEngine'), `${label}: config export/import omitted the engine`);
+    assert.equal(getTools('ask').some(tool => tool.function.name === 'clarify'), false, `${label}: default Ask exposed research consent`);
+    assert.equal(getTools('ask').some(tool => tool.function.name === 'delegate_research'), false, `${label}: default Ask exposed research delegation`);
+    assert.equal(getTools('act').some(tool => tool.function.name === 'delegate_research'), false, `${label}: default Act exposed research delegation`);
+    assert.ok(getTools('act').some(tool => tool.function.name === 'clarify'), `${label}: opt-in default removed normal Act clarification`);
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full']]) {
       const enabled = getTools(mode, { tier, researchEscalationEnabled: true });
       assert.ok(enabled.some(tool => tool.function.name === 'delegate_research'), `${label}: ${mode}/${tier} did not expose research escalation`);
@@ -2340,6 +2348,30 @@ test('research escalation is default-on, tier-complete, and removable by setting
         `${label}: disabled research escalation must hide Ask clarification without removing normal ${mode} clarification`,
       );
     }
+
+    const askConsent = getTools('ask', { researchEscalationEnabled: true })
+      .find(tool => tool.function.name === 'clarify');
+    assert.match(askConsent.function.description, /not a generic clarification tool/i, `${label}: Ask consent still advertises generic clarification`);
+    assert.deepEqual(
+      Object.keys(askConsent.function.parameters.properties).sort(),
+      ['approve_option', 'options', 'purpose', 'question', 'reason', 'research_request'],
+      `${label}: Ask consent schema exposes unrelated clarification fields`,
+    );
+    assert.deepEqual(
+      askConsent.function.parameters.required,
+      ['question', 'options', 'purpose', 'research_request', 'approve_option'],
+      `${label}: Ask consent does not require its complete research contract`,
+    );
+    assert.deepEqual(askConsent.function.parameters.properties.purpose.enum, ['research_escalation']);
+    assert.equal(askConsent.function.parameters.properties.options.minItems, 2);
+    assert.equal(askConsent.function.parameters.properties.options.maxItems, 2);
+    assert.equal('require_explicit_answer' in askConsent.function.parameters.properties, false, `${label}: Ask model can override explicit consent semantics`);
+
+    const actClarify = getTools('act', { researchEscalationEnabled: true })
+      .find(tool => tool.function.name === 'clarify');
+    assert.ok(actClarify.function.parameters.properties.require_explicit_answer, `${label}: narrowing Ask changed normal Act clarification`);
+    assert.deepEqual(actClarify.function.parameters.required, ['question']);
+    assert.doesNotMatch(actClarify.function.description, /not a generic clarification tool/i);
   }
 });
 
@@ -2358,6 +2390,8 @@ test('research escalation requires navigate, type, and click on fixed ChatGPT ho
 test('research escalation accepts only HTTPS ChatGPT page origins', () => {
   for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
     assert.match(runtime.RESEARCH_ESCALATION_SYSTEM_NOTE, /use its available web\/research tools and return direct source links/i, `${label}: delegated prompt guidance does not request sourced web research`);
+    assert.doesNotMatch(runtime.RESEARCH_ESCALATION_SYSTEM_NOTE, /require_explicit_answer/, `${label}: system note requests a field omitted from the narrowed Ask schema`);
+    assert.match(runtime.RESEARCH_ESCALATION_SYSTEM_NOTE, /runtime always waits for a direct answer/i, `${label}: system note does not explain enforced explicit consent`);
     assert.equal(runtime.isAllowedResearchEscalationUrl('https://chatgpt.com/'), true, `${label}: canonical origin rejected`);
     assert.equal(runtime.isAllowedResearchEscalationUrl('https://foo.chatgpt.com/c/1'), true, `${label}: ChatGPT subdomain rejected`);
     assert.equal(runtime.isAllowedResearchEscalationUrl('http://chatgpt.com/'), false, `${label}: insecure origin accepted`);
@@ -2395,6 +2429,41 @@ test('research probe treats the stop-button test id as generating without a loca
   }
 });
 
+test('research probe rejects a logged-out guest composer', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    const composer = {
+      getBoundingClientRect: () => ({ width: 500, height: 100 }),
+      getAttribute: () => '',
+      title: '',
+      innerText: '',
+    };
+    const login = {
+      getBoundingClientRect: () => ({ width: 80, height: 32 }),
+      getAttribute: () => '',
+      title: '',
+      innerText: 'Log in',
+    };
+    const result = vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
+      location: { href: 'https://chatgpt.com/' },
+      document: {
+        title: 'ChatGPT',
+        body: { innerText: 'Log in Sign up Ask anything' },
+        querySelector(sel) {
+          if (sel === '#prompt-textarea') return composer;
+          return null;
+        },
+        querySelectorAll(sel) {
+          if (sel === 'button, a') return [login];
+          return [];
+        },
+      },
+      getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
+    });
+    assert.equal(result.composerReady, false, `${label}: logged-out guest composer was treated as authorized`);
+    assert.equal(result.loginRequired, true, `${label}: visible login controls were ignored`);
+  }
+});
+
 test('research submit injection rechecks ChatGPT origin before fill and click', () => {
   for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
     const source = runtime.submitChatGptPrompt.toString();
@@ -2405,7 +2474,7 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
     assert.ok(fillIdx > firstOrigin && firstOrigin >= 0, `${label}: origin must be checked before filling`);
     assert.ok(clickIdx > secondOrigin && secondOrigin > fillIdx, `${label}: origin must be rechecked before clicking`);
 
-    function run(href, { prompt = 'approved prompt', submitOnly = false } = {}) {
+    function run(href, { prompt = 'approved prompt', submitOnly = false, loggedOut = false } = {}) {
       const parsed = new URL(href);
       let filled = false;
       let clicked = false;
@@ -2425,6 +2494,12 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
           return '';
         },
       };
+      const loginEl = {
+        title: '',
+        innerText: 'Log in',
+        getBoundingClientRect: () => ({ width: 80, height: 32 }),
+        getAttribute() { return ''; },
+      };
       const result = vm.runInNewContext(`(${source})(${JSON.stringify(prompt)}, ${submitOnly})`, {
         location: { href, protocol: parsed.protocol, hostname: parsed.hostname },
         document: {
@@ -2433,7 +2508,7 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
             if (sel === '#prompt-textarea' || sel === '[data-testid="send-button"]') return visibleEl;
             return null;
           },
-          querySelectorAll() { return []; },
+          querySelectorAll(sel) { return loggedOut && sel === 'button, a' ? [loginEl] : []; },
         },
         getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
         HTMLTextAreaElement: function HTMLTextAreaElement() {},
@@ -2450,6 +2525,10 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
     const blockedClick = run('https://evil.example/login', { submitOnly: true });
     assert.equal(blockedClick.result.success, false, `${label}: off-origin click was allowed`);
     assert.equal(blockedClick.clicked, false, `${label}: off-origin page received a send click`);
+    const blockedGuest = run('https://chatgpt.com/', { loggedOut: true });
+    assert.equal(blockedGuest.result.success, false, `${label}: logged-out guest prompt was accepted`);
+    assert.equal(blockedGuest.result.requiresLogin, true, `${label}: logged-out guest failure omitted requiresLogin`);
+    assert.equal(blockedGuest.filled, false, `${label}: logged-out guest composer received the approved prompt`);
     const allowedFill = run('https://chatgpt.com/');
     assert.equal(allowedFill.result.success, true, `${label}: ChatGPT fill was rejected`);
     assert.equal(allowedFill.filled, true, `${label}: ChatGPT composer was not filled`);
@@ -2463,7 +2542,7 @@ test('research escalation setting strings are localized in every catalog', async
   const english = {
     'tool.delegate_research': 'Researching with ChatGPT',
     'st.display.research_escalation.label': 'Research escalation',
-    'st.display.research_escalation.desc': 'When a read-only research subtask is unusually complex, WebBrain asks before delegating only that part to ChatGPT. On by default. The research engine will become selectable in a future update.',
+    'st.display.research_escalation.desc': 'When enabled, WebBrain may ask before sending an unusually complex read-only research prompt to ChatGPT. Off by default. The exact prompt is shared only after your explicit approval.',
   };
   for (const browser of ['chrome', 'firefox']) {
     const dir = path.join(ROOT, 'src', browser, 'src/ui/locales');
@@ -2641,6 +2720,7 @@ test('research escalation fails closed when its source tab disappears during hel
 test('research escalation clarify ignores Instant and issues a token only on explicit approval', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
+    agent.researchEscalationEnabled = true;
     agent.conversationIds.set(23, 'research-conversation');
     agent.clarifyTimeoutSec = 0;
     let prompt = null;
@@ -2648,7 +2728,6 @@ test('research escalation clarify ignores Instant and issues a token only on exp
       question: 'Delegate this research subtask?',
       options: ['Keep researching here', 'Use ChatGPT'],
       purpose: 'research_escalation',
-      require_explicit_answer: true,
       research_request: 'Compare four hotels for three-night stays.',
       approve_option: 'Use ChatGPT',
     }, (type, data) => {
@@ -19852,13 +19931,16 @@ test('getToolsForMode: compact mode restricts act tools in both browsers', () =>
   ]) {
     const fullNames = getTools('act').map(t => t.function.name);
     const compactNamesActual = getTools('act', { compact: true }).map(t => t.function.name);
-    const fullNamesWithDynamicAdapter = getTools('act', { carouselNavigation: true }).map(t => t.function.name);
+    const fullNamesWithDynamicAdapter = getTools('act', {
+      carouselNavigation: true,
+      researchEscalationEnabled: true,
+    }).map(t => t.function.name);
     const unknownCompactNames = [...compactNames].filter(name => !fullNamesWithDynamicAdapter.includes(name));
     assert.deepEqual(unknownCompactNames, [], `[${label}] compact set must only name real tools`);
     assert.ok(compactNamesActual.length < fullNames.length, `[${label}] compact should be smaller than full act tools`);
     assert.deepEqual(
       compactNamesActual.slice().sort(),
-      [...compactNames].filter(name => name !== 'carousel_navigate').sort(),
+      [...compactNames].filter(name => name !== 'carousel_navigate' && name !== 'delegate_research').sort(),
     );
     assert.equal(
       getTools('act', { compact: true, carouselNavigation: true })
@@ -20082,7 +20164,10 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
       assert.equal(mid.includes(name), true, `[${label}] mid act should expose ${name}`);
       assert.equal(full.includes(name), true, `[${label}] full act should expose ${name}`);
     }
-    assert.equal(ask.includes('clarify'), true, `[${label}] ask should expose clarify for consent-gated research delegation`);
+    assert.equal(ask.includes('clarify'), false, `[${label}] default Ask should not expose research consent`);
+    const researchAsk = getTools('ask', { researchEscalationEnabled: true }).map(t => t.function.name);
+    assert.equal(researchAsk.includes('clarify'), true, `[${label}] opted-in Ask should expose research consent`);
+    assert.equal(researchAsk.includes('delegate_research'), true, `[${label}] opted-in Ask should expose research delegation`);
     assert.equal(compact.includes('clarify'), true, `[${label}] compact act should expose clarify`);
     assert.equal(mid.includes('clarify'), true, `[${label}] mid act should expose clarify`);
     assert.equal(full.includes('clarify'), true, `[${label}] full act should expose clarify`);
@@ -20278,7 +20363,16 @@ test('test/llm payload builders support Dev mode and preserve Ask cleanup', () =
     useSiteAdapters: false,
   });
   const chromeAskNames = new Set(chromeAsk.tools.map(t => t.function.name));
-  assert.equal(chromeAskNames.has('clarify'), true, 'test/llm ask payload should include clarify for research consent');
+  assert.equal(chromeAskNames.has('clarify'), false, 'test/llm Ask payload should keep research consent off by default');
+  const chromeResearchAsk = buildLlmPayload({ ...baseCase, mode: 'ask' }, {
+    browser: 'chrome',
+    tier: 'full',
+    useSiteAdapters: false,
+    researchEscalationEnabled: true,
+  });
+  const chromeResearchAskNames = new Set(chromeResearchAsk.tools.map(t => t.function.name));
+  assert.equal(chromeResearchAskNames.has('clarify'), true, 'test/llm opted-in Ask payload should include research consent');
+  assert.equal(chromeResearchAskNames.has('delegate_research'), true, 'test/llm opted-in Ask payload should include research delegation');
   for (const name of ['read_page_source', 'inspect_element_styles', 'get_shadow_dom', 'shadow_dom_query', 'get_frames']) {
     assert.equal(chromeAskNames.has(name), false, `test/llm ask payload should exclude ${name}`);
     assert.doesNotMatch(chromeAsk.messages[0].content, new RegExp(`\\b${name}\\b`), `test/llm ask prompt should not mention ${name}`);

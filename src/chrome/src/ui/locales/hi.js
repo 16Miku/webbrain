@@ -5,7 +5,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': 'ChatGPT से शोध हो रहा है',
   'st.display.research_escalation.label': 'शोध एस्केलेशन',
-  'st.display.research_escalation.desc': 'जब केवल-पढ़ने वाला शोध उपकार्य असामान्य रूप से जटिल हो, तो WebBrain उस हिस्से को ChatGPT को सौंपने से पहले पूछता है। डिफ़ॉल्ट रूप से चालू। शोध इंजन भविष्य के अपडेट में चयन योग्य होगा।',
+  'st.display.research_escalation.desc': 'सक्षम होने पर, WebBrain असामान्य रूप से जटिल केवल-पढ़ने योग्य शोध प्रॉम्प्ट को ChatGPT पर भेजने से पहले अनुमति मांग सकता है। डिफ़ॉल्ट रूप से बंद। सटीक प्रॉम्प्ट केवल आपकी स्पष्ट स्वीकृति के बाद साझा किया जाता है।',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

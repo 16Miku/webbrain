@@ -7,7 +7,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 export default {
   'tool.delegate_research': '正在使用 ChatGPT 进行研究',
   'st.display.research_escalation.label': '研究升级',
-  'st.display.research_escalation.desc': '当只读研究子任务异常复杂时，WebBrain 会在将这部分委托给 ChatGPT 之前先询问。默认开启。研究引擎将在未来更新中可选择。',
+  'st.display.research_escalation.desc': '启用后，WebBrain 可能会在向 ChatGPT 发送异常复杂的只读研究提示词前征求许可。默认关闭。只有在您明确批准后，才会共享提示词原文。',
   'sp.message_info.sent': 'sent {time}',
   'sp.message_info.speed': '{rate} tok/sec',
   'sp.message_info.tokens': '{count} tokens',

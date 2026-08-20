@@ -96,7 +96,8 @@ function stripUntrustedInstructions(prompt) {
 /**
  * @param {object} scenario - { id, mode, browser, tab, seed, expected }
  * @param {object} opts     - { useSiteAdapters?: boolean, strictSecretMode?: boolean,
- *                              tier?: 'full'|'mid'|'compact', unprotected?: boolean }
+ *                              tier?: 'full'|'mid'|'compact', unprotected?: boolean,
+ *                              researchEscalationEnabled?: boolean }
  *   unprotected: ABLATION — strip BOTH the untrusted-content wrapper from the
  *   seed AND the untrusted-content instructions from the system prompt.
  * @returns {{ messages: Array, tools: Array }}
@@ -126,7 +127,11 @@ export function buildScenarioPayload(scenario, opts = {}) {
 
   const tools = FROZEN
     ? FROZEN.tools
-    : browser.getToolsForMode(mode, { strictSecretMode, tier });
+    : browser.getToolsForMode(mode, {
+      strictSecretMode,
+      tier,
+      researchEscalationEnabled: opts.researchEscalationEnabled === true,
+    });
 
   // ABLATION: remove both layers of injection defense.
   let seed = scenario.seed;

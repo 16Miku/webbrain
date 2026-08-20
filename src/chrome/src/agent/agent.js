@@ -627,7 +627,7 @@ export class Agent extends LoopDetector {
     // Optional, explicit-consent delegation of unusually complex read-only
     // research subtasks. The engine key is stored separately so Settings can
     // expose a selector later without migrating the boolean preference.
-    this.researchEscalationEnabled = true;
+    this.researchEscalationEnabled = false;
     this.researchEscalationEngine = RESEARCH_ESCALATION_ENGINE;
     // Local screenshot redaction (issue #312). When true, screenshots sent
     // to a Vision endpoint are pixelated over DOM-detected PII regions
@@ -18655,7 +18655,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
       return { success: false, tabId: researchTabId, engine, error: `Could not submit the approved ChatGPT prompt: ${error.message || error}` };
     }
-    if (!submission?.success) return { success: false, tabId: researchTabId, engine, error: submission?.error || 'ChatGPT prompt submission failed.' };
+    if (!submission?.success) return { success: false, tabId: researchTabId, engine, requiresLogin: submission?.requiresLogin === true, error: submission?.error || 'ChatGPT prompt submission failed.' };
     let sent = null;
     const sendDeadline = Date.now() + 5000;
     while (Date.now() < sendDeadline && !sent?.success) {
@@ -18667,7 +18667,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (await this._researchEscalationHelperGone(researchTabId)) return this._researchEscalationClosedResult(researchTabId, { engine });
       }
     }
-    if (!sent?.success) return { success: false, tabId: researchTabId, engine, error: sent?.error || 'ChatGPT send button did not become available.' };
+    if (!sent?.success) return { success: false, tabId: researchTabId, engine, requiresLogin: sent?.requiresLogin === true, error: sent?.error || 'ChatGPT send button did not become available.' };
 
     const answerDeadline = Date.now() + timeoutSeconds * 1000;
     const beforeCount = Math.max(0, Number(before.assistantCount) || 0);
@@ -20035,8 +20035,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!approveOption || !options.includes(approveOption)) {
           return { success: false, error: 'clarify: research_escalation requires approve_option to exactly match one displayed option.' };
         }
-        if (options.length < 2 || options[0] === approveOption) {
-          return { success: false, error: 'clarify: put a safe local/decline choice first and the explicit research approval choice later.' };
+        if (options.length !== 2 || options[0] === approveOption || options[1] !== approveOption) {
+          return { success: false, error: 'clarify: research_escalation requires exactly two options, with the safe local/decline choice first and the exact approval choice second.' };
         }
       }
       const clarifyId = `clr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;

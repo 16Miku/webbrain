@@ -1351,11 +1351,46 @@ function compactUploadFileTool(tool) {
   };
 }
 
+function askResearchConsentTool(tool) {
+  const properties = tool.function.parameters.properties;
+  return {
+    ...tool,
+    function: {
+      ...tool.function,
+      description: 'Ask for explicit consent to send one exact, read-only research prompt to ChatGPT. Use only for an unusually complex research subtask after Research escalation has been enabled in Settings. This is not a generic clarification tool. Put the safe local option first and the approval option second. A timeout, automatic selection, or any answer other than the exact approval option is not consent.',
+      parameters: {
+        ...tool.function.parameters,
+        properties: {
+          question: {
+            ...properties.question,
+            description: 'A one-sentence consent question that clearly says the exact research prompt will be sent to ChatGPT in a visible tab.',
+          },
+          options: {
+            ...properties.options,
+            minItems: 2,
+            maxItems: 2,
+            description: 'Exactly two choices: the safe continue-locally choice first and the explicit ChatGPT approval choice second.',
+          },
+          reason: {
+            ...properties.reason,
+            description: 'Optional one-sentence explanation of why this unusually complex read-only research subtask would benefit from ChatGPT.',
+          },
+          purpose: properties.purpose,
+          research_request: properties.research_request,
+          approve_option: properties.approve_option,
+        },
+        required: ['question', 'options', 'purpose', 'research_request', 'approve_option'],
+      },
+    },
+  };
+}
+
 /**
  * Get tools filtered by mode.
  *
  * `opts.compact` shrinks Act mode to COMPACT_TOOL_NAMES.
- * `opts.strictSecretMode` swaps in the strict `done` description.
+ * `opts.strictSecretMode` swaps in the strict `done` description. Ask receives
+ * a research-only consent schema when research escalation is explicitly enabled.
  */
 export function getToolsForMode(mode, opts = {}) {
   // Back-compat: callers used to pass `compact: true/false`; the tier knob
@@ -1365,7 +1400,9 @@ export function getToolsForMode(mode, opts = {}) {
   const devCompactBlocked = normalizedMode === 'dev' && tier === 'compact';
   let base;
   if (normalizedMode === 'ask') {
-    base = AGENT_TOOLS.filter(t => ASK_ONLY_TOOLS.includes(t.function.name));
+    base = AGENT_TOOLS
+      .filter(t => ASK_ONLY_TOOLS.includes(t.function.name))
+      .map(t => (t.function.name === 'clarify' ? askResearchConsentTool(t) : t));
   } else if (devCompactBlocked) {
     base = [];
   } else if (tier === 'compact') {
@@ -1377,7 +1414,7 @@ export function getToolsForMode(mode, opts = {}) {
   } else {
     base = AGENT_TOOLS.filter(t => FULL_TOOL_NAMES.has(t.function.name));
   }
-  if (opts.researchEscalationEnabled === false) {
+  if (opts.researchEscalationEnabled !== true) {
     base = base.filter(t => t.function.name !== 'delegate_research'
       && !(normalizedMode === 'ask' && t.function.name === 'clarify'));
   }
