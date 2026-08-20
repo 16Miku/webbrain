@@ -4,6 +4,80 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.1] - 2026-08-20
+
+### Changed
+- test: allow GPL licensing checks after version bumps
+- web: make the Downloads FAQ a full-block link and publish the GPL 33 note
+- fix(chrome): stop sibling status polls from migrating Bonsai
+- fix(chrome): keep Emergency Box open when switching Minimal and Basic
+- test: update WebGPU text model label expectations
+- fix(settings): serialize model-load saves
+- fix(settings): ignore stale model list responses
+- fix(ui): name Minimal and Basic as text models in download boxes
+- fix(apocalypse): deduplicate corpus download starts
+- dist: rebuild submission zips for v33.0.0
+- fix(offline-rag): keep emergency text pack status stable during extraction
+- release: prepare WebBrain 33.0.0
+- fix(chrome): preserve CDP lifecycle ownership
+- fix(oauth): deduplicate subscription token refreshes
+- build(release): package Bonsai resume fix
+- fix(chrome): validate resumed Bonsai downloads
+- fix(onboarding): keep Skip gated when provider scan fails
+- fix(chrome): make debugger teardown race-safe
+- test(chrome): cover debugger cleanup on run errors
+- fix(onboarding): localize install showcase headlines
+- build(release): regenerate 32.2.3 packages
+- fix(chrome): release debugger sessions after runs
+- fix(offline-rag): address follow-up Xapian review
+- fix(onboarding): restore cloud status after a privacy retry
+- fix: use integer schema for bounded tree size
+- fix(browser): skip capture-ended notify on recorder start failure
+- fix(onboarding): keep privacy choice consistent and announced
+- fix: coordinate offline download ownership
+- fix(offline-rag): address Xapian review findings
+- fix(onboarding): acknowledge privacy provider reload
+- fix(onboarding): gate skip on provider scan
+- fix(chrome): rearm queued download work
+- fix(chrome): complete Bonsai review follow-ups
+- fix(release): address GPL packaging review
+- fix(chrome): address Bonsai download review feedback
+- fix(onboarding): await privacy choice before skip
+- fix(browser): clean up capture resource lifecycles
+- feat(onboarding): showcase WebBrain features on install
+- docs: resolve Chinese offline RAG conflict
+- Run Apocalypse archive downloads offscreen
+- fix(release): publish GPL corresponding source
+- fix(ui): keep relative time wording explicit
+- fix(ui): preserve message info scrollability
+- fix(ui): freeze opened message timestamps
+- fix(ui): show relative message timestamps
+- bugfix
+- Stop 40GB Wikipedia downloads stalling on OPFS createWritable.
+- Fix Basic (Bonsai) cache.put failing on chrome-extension URLs.
+- Speed up large Wikipedia archive downloads without breaking resume.
+- Show LFM2.5 and Bonsai beside Minimal/Basic without extra i18n keys.
+- Add Minimal/Basic model-name strings to every Apocalypse locale.
+- Persist Bonsai weights before marking Basic ready.
+- Rename Apocalypse text presets to Minimal and Basic.
+- Expect Basic in the uncached WebGPU selection error.
+- Show Basic/Pro text presets and keep download progress visible.
+- Fix Bonsai 27B download hitting Transformers.js config.json.
+- Keep Apocalypse kit CSS identical across Chrome and Firefox.
+- Add Bonsai 27B as an opt-in Chrome WebGPU text model.
+- feat(offline-rag): turn on the vendored Xapian full-text worker
+- vendor xapian/libzim wasm runtime built from source
+- fix(build): survive the wasm-opt crash on the final Wasm link
+- fix(build): explain the WSL integration switch when docker is missing
+- docs(build): lead with the WSL work tree for the clock-skew fix
+- fix(build): detect Docker mount clock skew before it aborts the build
+- fix(offline-rag): stop claiming a running download is already verified
+- fix(offline-rag): register the build:zim-xapian npm script
+- docs(offline-rag): correct the archive tier description and warn on manual imports
+- feat(offline-rag): register the Xapian provider behind the bundled flag
+- feat(offline-rag): reproducible source build and worker driver for the Xapian runtime
+- feat(offline-rag): record the GPL approval and detect ZIM full-text indexes
+
 ## [33.0.0] - 2026-08-20
 
 ### Changed
