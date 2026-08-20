@@ -224,7 +224,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     return {
       content: String(response.content || ''),
       reasoningContent: response.reasoningContent || null,
-      toolCalls: null,
+      toolCalls: Array.isArray(response.toolCalls) && response.toolCalls.length ? response.toolCalls : null,
       usage: null,
       raw: response.raw || null,
     };

@@ -50021,6 +50021,11 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   let localEnabled = true;
   let textModelReady = true;
   let webgpuExecutionError = '';
+  const returnedToolCalls = [{
+    id: 'bitgpu_call_test_1',
+    type: 'function',
+    function: { name: 'read_page', arguments: '{"offset":0}' },
+  }];
   try {
     globalThis.chrome = {
       offscreen: { hasDocument: async () => true },
@@ -50034,7 +50039,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
           else if (message.type === 'webgpu-download-status') callback({ ok: true, status: textModelReady ? 'ready' : 'not-downloaded', ready: textModelReady });
           else if (message.type === 'webgpu-chat') callback(webgpuExecutionError
             ? { ok: false, error: webgpuExecutionError }
-            : { ok: true, content: 'Local answer.' });
+            : { ok: true, content: 'Local answer.', toolCalls: returnedToolCalls });
           else callback({ ok: true, content: 'A settings page is visible.' });
         },
       },
@@ -50092,6 +50097,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const tools = [{ type: 'function', function: { name: 'read_page', parameters: { type: 'object' } } }];
     const localResult = await generalProvider.chat([{ role: 'user', content: 'Hello' }], { maxTokens: 123, tools });
     assert.equal(localResult.content, 'Local answer.');
+    assert.deepEqual(localResult.toolCalls, returnedToolCalls);
     assert.deepEqual(sentMessages[1], {
       type: 'webgpu-download-status',
       model: WEBGPU_MODEL_ID,
@@ -50564,6 +50570,7 @@ test('Apocalypse enable keeps a selected Bonsai preset and does not auto-downloa
     assert.equal(result.started, false);
     assert.equal(result.status, 'not-downloaded');
     assert.equal(manager.getAll().webgpu.model, WEBGPU_BONSAI27_MODEL_ID);
+    assert.equal(manager.getAll().webgpu.contextWindow, 4096);
     assert.deepEqual(sentMessages.map(message => message.type), [
       'webgpu-probe',
       'webgpu-download-status',
@@ -50801,6 +50808,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /const WEBGPU_BONSAI27_THINK_BUDGET = 128/);
   assert.match(bonsaiWorker, /kvCache: 'q8'/);
   assert.match(bonsaiWorker, /maxSeqLen: WEBGPU_BONSAI27_MAX_SEQ_LEN/);
+  assert.match(bonsaiWorker, /catch \(error\) \{[\s\S]*?await engine\.dispose\?\.\(\)[\s\S]*?throw error/,
+    'Bonsai engine allocations must be disposed when tokenizer/chat initialization fails');
   assert.match(bonsaiWorker, /think: true/);
   assert.match(bonsaiWorker, /createEngine/);
   assert.match(bonsaiWorker, /createChat/);
@@ -50812,6 +50821,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /webbrain-webgpu-models/);
   assert.match(bonsaiWorker, /opfsCompleteName/);
   assert.match(bonsaiWorker, /opfsPartialName/);
+  assert.match(bonsaiWorker, /tools: tools\.length \? tools : undefined/);
+  assert.match(bonsaiWorker, /function normalizeBitgpuToolCalls/);
+  assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
+  assert.match(apocalypseScript, /if \(!preset\)[\s\S]*?setWebgpuDownloadState\(state\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
+    'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
   assert.match(bonsaiWorker, /headers: \{ Range: `bytes=\$\{partial\.size\}-` \}/);
   assert.match(bonsaiWorker, /textDownloadCancelMode === 'pause'[\s\S]*?writeOpfsPartial/);
   const bonsaiReadyCheck = bonsaiWorker.slice(

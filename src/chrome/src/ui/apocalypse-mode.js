@@ -470,11 +470,11 @@ async function runVisionDownloadAction(action) {
   }
 }
 
-async function ensureFixedWebgpuProvider({ markConfigured = false } = {}) {
+async function ensureFixedWebgpuProvider({ markConfigured = false, force = false } = {}) {
   const preset = selectedWebgpuPreset();
   const model = preset?.id || WEBGPU_MODEL_ID;
   const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
-  if (fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) {
+  if (!force && fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) {
     const current = webgpuDownloadState?.modelId;
     if (current === model) return;
   }
@@ -496,9 +496,21 @@ async function refreshWebgpuDownloadStatus() {
   if (!supportsWebgpuVision) return;
   const requestId = ++webgpuDownloadStatusRequest;
   try {
-    const state = await providerCommand('get_webgpu_download_status');
+    let state = await providerCommand('get_webgpu_download_status');
     if (requestId !== webgpuDownloadStatusRequest) return;
-    const preset = webgpuModelPreset(state?.modelId);
+    let preset = webgpuModelPreset(state?.modelId);
+    if (!preset) {
+      // Apocalypse Mode exposes only shipped presets. Retain an active custom
+      // transfer in the aggregate tracker, then switch the provider to the
+      // checked shipped preset before rendering its controls.
+      setWebgpuDownloadState(state);
+      await ensureFixedWebgpuProvider({ force: true });
+      if (requestId !== webgpuDownloadStatusRequest) return;
+      state = await providerCommand('get_webgpu_download_status');
+      if (requestId !== webgpuDownloadStatusRequest) return;
+      preset = webgpuModelPreset(state?.modelId);
+      if (!preset) throw new Error('Unable to select a shipped WebGPU text preset.');
+    }
     if (preset) {
       const selectedId = selectedWebgpuModelId();
       if (!webgpuPresetHydrated || selectedId === preset.id) {

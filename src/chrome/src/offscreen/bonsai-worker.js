@@ -29,6 +29,7 @@ let queuedTextDownload = null;
 let textDownloadAbortController = null;
 let textDownloadCancelMode = '';
 let lastTextProgressPostAt = 0;
+let textToolCallSequence = 0;
 let textDownloadState = {
   status: 'not-downloaded',
   ready: false,
@@ -589,11 +590,17 @@ async function getTextRuntime({ localFilesOnly = false } = {}) {
         postTextDownloadState();
       },
     });
-    const chat = await chatCreate(engine, {
-      tokenizerJsonUrl: workerConfig.tokenizerJsonUrl,
-      tokenizerConfigUrl: workerConfig.tokenizerConfigUrl,
-      fetchJson,
-    });
+    let chat;
+    try {
+      chat = await chatCreate(engine, {
+        tokenizerJsonUrl: workerConfig.tokenizerJsonUrl,
+        tokenizerConfigUrl: workerConfig.tokenizerConfigUrl,
+        fetchJson,
+      });
+    } catch (error) {
+      try { await engine.dispose?.(); } catch { /* GPU cleanup is best-effort after tokenizer failure. */ }
+      throw error;
+    }
     textRuntime = { engine, chat };
     return textRuntime;
   })();
@@ -740,19 +747,64 @@ function enqueueModelOperation(operation) {
   return result;
 }
 
+function toolArgumentsObject(value) {
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch { parsed = {}; }
+  }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+}
+
+function prepareHistoricalToolCalls(toolCalls) {
+  return (Array.isArray(toolCalls) ? toolCalls : []).map((toolCall) => {
+    const fn = toolCall?.function && typeof toolCall.function === 'object'
+      ? toolCall.function
+      : toolCall;
+    const name = String(fn?.name || '').trim();
+    if (!name) return null;
+    return { name, arguments: toolArgumentsObject(fn?.arguments) };
+  }).filter(Boolean);
+}
+
 function prepareTextMessages(messages) {
   return (Array.isArray(messages) ? messages : []).map((message) => {
     if (!message || typeof message !== 'object') return { role: 'user', content: '' };
-    const role = ['system', 'user', 'assistant'].includes(message.role) ? message.role : 'user';
+    const role = ['system', 'user', 'assistant', 'tool'].includes(message.role) ? message.role : 'user';
+    const prepared = { role, content: '' };
     if (Array.isArray(message.content)) {
-      const text = message.content
+      prepared.content = message.content
         .filter(block => block?.type === 'text' && typeof block.text === 'string')
         .map(block => block.text)
         .join('\n');
-      return { role, content: text };
+    } else {
+      prepared.content = String(message.content || '');
     }
-    return { role, content: String(message.content || '') };
-  }).filter(message => message.content || message.role === 'system');
+    if (role === 'assistant') {
+      const toolCalls = prepareHistoricalToolCalls(message.tool_calls);
+      if (toolCalls.length) prepared.tool_calls = toolCalls;
+    }
+    if (role === 'tool' && message.tool_call_id) prepared.tool_call_id = String(message.tool_call_id);
+    return prepared;
+  }).filter(message => message.content || message.role === 'system' || message.tool_calls?.length);
+}
+
+function normalizeBitgpuToolCalls(toolCalls) {
+  return (Array.isArray(toolCalls) ? toolCalls : []).map((toolCall) => {
+    const name = String(toolCall?.name || '').trim();
+    if (!name) return null;
+    let args = '{}';
+    try {
+      args = typeof toolCall.arguments === 'string'
+        ? toolCall.arguments
+        : JSON.stringify(toolCall.arguments || {});
+    } catch { /* Keep the safe empty object fallback. */ }
+    textToolCallSequence += 1;
+    return {
+      id: `bitgpu_call_${Date.now().toString(36)}_${textToolCallSequence}`,
+      type: 'function',
+      function: { name, arguments: args },
+    };
+  }).filter(Boolean);
 }
 
 async function runText(payload) {
@@ -765,6 +817,7 @@ async function runText(payload) {
   const maxTokens = Number.isFinite(requestedTokens)
     ? Math.max(1, Math.min(WEBGPU_BONSAI27_MAX_NEW_TOKENS, Math.round(requestedTokens)))
     : WEBGPU_BONSAI27_MAX_NEW_TOKENS;
+  const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   let result;
   try {
     result = await runtime.chat.send(prepareTextMessages(payload?.messages), {
@@ -774,17 +827,19 @@ async function runText(payload) {
       temperature: 0.5,
       topP: 0.85,
       topK: 20,
+      tools: tools.length ? tools : undefined,
     });
   } catch (error) {
     throw mapGpuError(error);
   }
   const content = String(result?.text || '').trim();
   const reasoningContent = String(result?.thinkText || '').trim() || null;
-  if (!content && reasoningContent) {
+  const toolCalls = normalizeBitgpuToolCalls(result?.toolCalls);
+  if (!content && !toolCalls.length && reasoningContent) {
     throw new Error(`${modelId} used its generation budget before finishing reasoning. Retry with a shorter prompt.`);
   }
-  if (!content) throw new Error('The WebGPU model returned no generated text.');
-  return { content, reasoningContent };
+  if (!content && !toolCalls.length) throw new Error('The WebGPU model returned no generated text or tool calls.');
+  return { content, reasoningContent, toolCalls };
 }
 
 async function probeRuntime() {

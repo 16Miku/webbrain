@@ -1292,7 +1292,7 @@ export class ProviderManager {
       await this.updateProvider('webgpu', {
         model,
         dtype,
-        contextWindow: 16384,
+        contextWindow: preset?.contextWindow || 16384,
         promptTier: 'compact',
       });
       const provider = this._webgpuProvider();
