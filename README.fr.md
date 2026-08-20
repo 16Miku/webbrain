@@ -20,7 +20,7 @@
   <a href="README.fr.md">Français</a> ·
   <a href="docs/fr/">Documentation</a> ·
   <a href="https://webbrain.one">Site web</a> ·
-  <a href="LICENSE">Licence MIT</a>
+  <a href="LICENSE">GPL-3.0-or-later</a>
 </p>
 
 ![WebBrain lit une page, remplit un formulaire et télécharge un fichier](assets/webbrain-demo.gif)
@@ -294,4 +294,10 @@ Source : [`lmstudio-plugin/`](lmstudio-plugin/).
 
 ## Licence
 
-MIT — créé par [Emre Sokullu](https://emresokullu.com)
+WebBrain 33.0.0 et les versions ultérieures sont distribués sous
+[GPL-3.0-or-later](LICENSE), car l’extension de navigateur distribuée intègre
+le runtime WebAssembly Xapian/libzim sous GPL. Les versions antérieures à
+33.0.0 restent sous la licence MIT applicable lors de leur publication ; ce
+texte historique est conservé dans [LICENSES/MIT.txt](LICENSES/MIT.txt).
+
+Créé par [Emre Sokullu](https://emresokullu.com).

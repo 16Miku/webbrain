@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'Untuk memastikan WebBrain mudah dicapai, buka Sambungan Firefox, pilih gear di sebelah WebBrain, kemudian pilih Pin ke Bar Alat.',
   'install.open_failed_chromium': 'Panel sisi tidak dibuka. Tekan Alt+Shift+W atau buka menu Sambungan pelayar dan pilih WebBrain.',
   'install.open_failed_firefox': 'Bar sisi tidak dibuka. Buka Sambungan Firefox dan pilih WebBrain.',
+  'install.showcase.ask.title': "Tanya mana-mana halaman. Ambil bahagian yang berguna.",
+  'install.showcase.ask.body': "Jawapan bersih daripada halaman yang berselerak. Baca sahaja secara lalai.",
+  'install.showcase.act.title': "Beritahu pelayar apa yang perlu dilakukan.",
+  'install.showcase.model.title': "Gunakan model yang anda percayai.",
+  'install.showcase.model.body': "Tempatan, awan, atau kunci anda sendiri — tukar bila-bila masa.",
+  'install.showcase.apocalypse.body': "Pengetahuan luar talian, di bawah kawalan anda. Muat turun yang penting sementara masih boleh.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} daripada {total}',

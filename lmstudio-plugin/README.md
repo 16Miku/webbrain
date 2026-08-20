@@ -254,4 +254,4 @@ plugin's checks.
 
 ## License
 
-MIT, same as the rest of WebBrain. See `../LICENSE`.
+This independently published plugin remains MIT-licensed. See [`LICENSE`](LICENSE).

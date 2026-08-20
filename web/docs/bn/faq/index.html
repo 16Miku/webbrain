@@ -57,7 +57,7 @@
       "name": "WebBrain কি Claude এর ব্রাউজার প্লাগইনের একটি বিনামূল্যের বিকল্প?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "হ্যাঁ। WebBrain অনুরূপ AI ব্রাউজার এজেন্ট ক্ষমতা প্রদান করে — পৃষ্ঠা পড়া, ডেটা বের করা, বোতামে ক্লিক করা, ফর্ম পূরণ করা এবং বহু-পদক্ষেপের কর্মপ্রবাহ স্বয়ংক্রিয় করা। Claude এর মালিকানাধীন ব্রাউজার প্লাগইনের বিপরীতে যার জন্য একটি Claude Pro সাবস্ক্রিপশন প্রয়োজন এবং শুধুমাত্র Anthropic এর মডেলগুলির সাথে কাজ করে, WebBrain সম্পূর্ণ বিনামূল্যে, ওপেন সোর্স (MIT লাইসেন্স) এবং স্থানীয় মডেলগুলি সহ একাধিক LLM প্রদানকারীকে সমর্থন করে যা সম্পূর্ণরূপে আপনার মেশিনে চলে৷"
+        "text": "হ্যাঁ। WebBrain অনুরূপ AI ব্রাউজার এজেন্ট ক্ষমতা প্রদান করে — পৃষ্ঠা পড়া, ডেটা বের করা, বোতামে ক্লিক করা, ফর্ম পূরণ করা এবং বহু-পদক্ষেপের কর্মপ্রবাহ স্বয়ংক্রিয় করা। Claude এর মালিকানাধীন ব্রাউজার প্লাগইনের বিপরীতে যার জন্য একটি Claude Pro সাবস্ক্রিপশন প্রয়োজন এবং শুধুমাত্র Anthropic এর মডেলগুলির সাথে কাজ করে, WebBrain সম্পূর্ণ বিনামূল্যে, ওপেন সোর্স (GPL-3.0-or-later লাইসেন্স) এবং স্থানীয় মডেলগুলি সহ একাধিক LLM প্রদানকারীকে সমর্থন করে যা সম্পূর্ণরূপে আপনার মেশিনে চলে৷"
       }
     },
     {
@@ -278,10 +278,10 @@
     },
     {
       "@type": "Question",
-      "name": "Does the offline RAG feature affect WebBrain's MIT license?",
+      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license. There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the licensing decision record for details."
+        "text": "WebBrain releases before 33.0.0 remain MIT-licensed. WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
       }
     },
     {
@@ -297,7 +297,7 @@
       "name": "আমি কি WebBrain তে অবদান রাখতে পারি?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "একেবারেই! WebBrain হল MIT- লাইসেন্সপ্রাপ্ত এবং অবদানকে স্বাগত জানায়। চেক আউট GitHub সংগ্রহস্থল সমস্যা, বৈশিষ্ট্য অনুরোধ, এবং অবদান নির্দেশিকা জন্য."
+        "text": "একেবারেই! WebBrain হল GPL-3.0-or-later- লাইসেন্সপ্রাপ্ত এবং অবদানকে স্বাগত জানায়। চেক আউট GitHub সংগ্রহস্থল সমস্যা, বৈশিষ্ট্য অনুরোধ, এবং অবদান নির্দেশিকা জন্য."
       }
     }
   ]
@@ -549,7 +549,7 @@
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>WebBrain কি Claude এর ব্রাউজার প্লাগইনের একটি বিনামূল্যের বিকল্প?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>হ্যাঁ। WebBrain অনুরূপ AI ব্রাউজার এজেন্ট ক্ষমতা প্রদান করে — পৃষ্ঠা পড়া, ডেটা বের করা, বোতামে ক্লিক করা, ফর্ম পূরণ করা এবং বহু-পদক্ষেপের কর্মপ্রবাহ স্বয়ংক্রিয় করা। Claude এর মালিকানাধীন ব্রাউজার প্লাগইনের বিপরীতে যার জন্য একটি Claude Pro সাবস্ক্রিপশন প্রয়োজন এবং শুধুমাত্র Anthropic এর মডেলগুলির সাথে কাজ করে, WebBrain সম্পূর্ণ বিনামূল্যে, ওপেন সোর্স (MIT লাইসেন্স) এবং স্থানীয় মডেলগুলি সহ একাধিক LLM প্রদানকারীকে সমর্থন করে যা সম্পূর্ণরূপে আপনার মেশিনে চলে৷</p></div>
+        <div class="faq-answer"><p>হ্যাঁ। WebBrain অনুরূপ AI ব্রাউজার এজেন্ট ক্ষমতা প্রদান করে — পৃষ্ঠা পড়া, ডেটা বের করা, বোতামে ক্লিক করা, ফর্ম পূরণ করা এবং বহু-পদক্ষেপের কর্মপ্রবাহ স্বয়ংক্রিয় করা। Claude এর মালিকানাধীন ব্রাউজার প্লাগইনের বিপরীতে যার জন্য একটি Claude Pro সাবস্ক্রিপশন প্রয়োজন এবং শুধুমাত্র Anthropic এর মডেলগুলির সাথে কাজ করে, WebBrain সম্পূর্ণ বিনামূল্যে, ওপেন সোর্স (GPL-3.0-or-later লাইসেন্স) এবং স্থানীয় মডেলগুলি সহ একাধিক LLM প্রদানকারীকে সমর্থন করে যা সম্পূর্ণরূপে আপনার মেশিনে চলে৷</p></div>
       </details>
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>WebBrain কিভাবে OpenClaw, ব্রাউজার-ব্যবহার এবং অন্যান্য AI এজেন্ট ফ্রেমওয়ার্কের সাথে তুলনা করে?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -569,7 +569,7 @@
       </details>
       <details class="faq-question" id="contribute" data-faq-item>
         <summary><span>আমি কি WebBrain তে অবদান রাখতে পারি?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>একেবারেই! WebBrain হল MIT- লাইসেন্সপ্রাপ্ত এবং অবদানকে স্বাগত জানায়। চেক আউট <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub সংগ্রহস্থল</a> সমস্যা, বৈশিষ্ট্য অনুরোধ, এবং অবদান নির্দেশিকা জন্য.</p></div>
+        <div class="faq-answer"><p>একেবারেই! WebBrain হল GPL-3.0-or-later- লাইসেন্সপ্রাপ্ত এবং অবদানকে স্বাগত জানায়। চেক আউট <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub সংগ্রহস্থল</a> সমস্যা, বৈশিষ্ট্য অনুরোধ, এবং অবদান নির্দেশিকা জন্য.</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
@@ -692,8 +692,8 @@
         <div class="faq-answer"><p>না। WebBrain ডিফল্টভাবে কাঁচা HTML বা কাঁচা DOM ডাম্প পাঠায় না। এটি পৃষ্ঠার URL ও শিরোনাম, প্রাসঙ্গিক সাইট নির্দেশনা এবং ভিশন চালু থাকলে ঐচ্ছিক ভিউপোর্ট স্ক্রিনশট দিয়ে শুরু করে।</p><p>কোনো কাজে পৃষ্ঠার বিষয়বস্তু দরকার হলে WebBrain চাহিদামতো একটি সংক্ষিপ্ত সেমান্টিক অ্যাক্সেসিবিলিটি ট্রি বা নিষ্কাশিত লেখা পড়ে। প্রয়োজন অনুযায়ী দৃশ্যমানতা ফিল্টার করা হয়, অক্ষরসীমা প্রয়োগ করা হয় এবং বড় ফলাফল পৃষ্ঠায় ভাগ করা হয়। কাঁচা পৃষ্ঠা-উৎস কেবল Dev মোডে পাওয়া যায়।</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Does the offline RAG feature affect WebBrain&#39;s MIT license?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license.</p><p>There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain releases before 33.0.0 remain MIT-licensed. WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
       </details>
     </section>
     </main>

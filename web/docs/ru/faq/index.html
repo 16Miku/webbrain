@@ -57,7 +57,7 @@
       "name": "WebBrain — это бесплатная альтернатива браузерному плагину Claude?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Да. WebBrain даёт похожие возможности AI-агента в браузере — читает страницы, извлекает данные, нажимает кнопки, заполняет формы и автоматизирует многошаговые сценарии. В отличие от проприетарного плагина Claude, требующего подписки Claude Pro и работающего только с моделями Anthropic, WebBrain полностью бесплатный, open-source (лицензия MIT) и поддерживает разных LLM-провайдеров, включая локальные модели, которые целиком работают на вашей машине."
+        "text": "Да. WebBrain даёт похожие возможности AI-агента в браузере — читает страницы, извлекает данные, нажимает кнопки, заполняет формы и автоматизирует многошаговые сценарии. В отличие от проприетарного плагина Claude, требующего подписки Claude Pro и работающего только с моделями Anthropic, WebBrain полностью бесплатный, open-source (лицензия GPL-3.0-or-later) и поддерживает разных LLM-провайдеров, включая локальные модели, которые целиком работают на вашей машине."
       }
     },
     {
@@ -278,10 +278,10 @@
     },
     {
       "@type": "Question",
-      "name": "Does the offline RAG feature affect WebBrain's MIT license?",
+      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license. There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the licensing decision record for details."
+        "text": "WebBrain releases before 33.0.0 remain MIT-licensed. WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
       }
     },
     {
@@ -297,7 +297,7 @@
       "name": "Могу ли я внести свой вклад в WebBrain?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Конечно! WebBrain под лицензией MIT и приветствует контрибьюции. Загляните в репозиторий на GitHub — там issue, фича-реквесты и правила контрибьюции."
+        "text": "Конечно! WebBrain под лицензией GPL-3.0-or-later и приветствует контрибьюции. Загляните в репозиторий на GitHub — там issue, фича-реквесты и правила контрибьюции."
       }
     }
   ]
@@ -549,7 +549,7 @@
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>WebBrain — это бесплатная альтернатива браузерному плагину Claude?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Да. WebBrain даёт похожие возможности AI-агента в браузере — читает страницы, извлекает данные, нажимает кнопки, заполняет формы и автоматизирует многошаговые сценарии. В отличие от проприетарного плагина Claude, требующего подписки Claude Pro и работающего только с моделями Anthropic, WebBrain полностью бесплатный, open-source (лицензия MIT) и поддерживает разных LLM-провайдеров, включая локальные модели, которые целиком работают на вашей машине.</p></div>
+        <div class="faq-answer"><p>Да. WebBrain даёт похожие возможности AI-агента в браузере — читает страницы, извлекает данные, нажимает кнопки, заполняет формы и автоматизирует многошаговые сценарии. В отличие от проприетарного плагина Claude, требующего подписки Claude Pro и работающего только с моделями Anthropic, WebBrain полностью бесплатный, open-source (лицензия GPL-3.0-or-later) и поддерживает разных LLM-провайдеров, включая локальные модели, которые целиком работают на вашей машине.</p></div>
       </details>
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>Чем WebBrain отличается от OpenClaw, Browser-Use и других agent-фреймворков?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -569,7 +569,7 @@
       </details>
       <details class="faq-question" id="contribute" data-faq-item>
         <summary><span>Могу ли я внести свой вклад в WebBrain?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Конечно! WebBrain под лицензией MIT и приветствует контрибьюции. Загляните в <a href="https://github.com/webbrain-one/webbrain" target="_blank">репозиторий на GitHub</a> — там issue, фича-реквесты и правила контрибьюции.</p></div>
+        <div class="faq-answer"><p>Конечно! WebBrain под лицензией GPL-3.0-or-later и приветствует контрибьюции. Загляните в <a href="https://github.com/webbrain-one/webbrain" target="_blank">репозиторий на GitHub</a> — там issue, фича-реквесты и правила контрибьюции.</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
@@ -692,8 +692,8 @@
         <div class="faq-answer"><p>Нет. По умолчанию WebBrain не отправляет необработанный HTML или полный дамп DOM. Сначала используются URL и заголовок страницы, подходящие инструкции для сайта и, если включено зрение, необязательный снимок видимой области.</p><p>Когда задаче требуется содержимое страницы, WebBrain считывает его по мере необходимости в виде сокращённого семантического дерева доступности или извлечённого текста. Чтение при необходимости фильтруется по видимости, ограничивается по числу символов и разбивается на страницы. Доступ к необработанному исходному коду страницы доступен только в режиме Dev.</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Does the offline RAG feature affect WebBrain&#39;s MIT license?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license.</p><p>There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain releases before 33.0.0 remain MIT-licensed. WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
       </details>
     </section>
     </main>

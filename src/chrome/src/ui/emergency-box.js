@@ -1,6 +1,7 @@
 import { createApocalypseStore } from '../agent/apocalypse-mode.js';
 import {
   createEmergencyCorpusStore,
+  isEmergencyCorpusRecord,
 } from '../agent/emergency-corpus.js';
 import {
   EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS,
@@ -79,7 +80,10 @@ async function localGenerationStatus() {
       target: 'background',
       action: 'get_webgpu_download_status',
     });
-    const status = String(state?.status || '');
+    const transfer = ['starting', 'queued', 'downloading', 'paused', 'stopping'].includes(state?.activeTransfer?.status)
+      ? state.activeTransfer
+      : state;
+    const status = String(transfer?.status || '');
     if (status === 'ready') return 'ready';
     if (status === 'error') return 'error';
     if (status === 'downloading' || status === 'paused') return status;
@@ -486,8 +490,14 @@ function render() {
     : `<div class="empty-state"><span class="empty-glyph" aria-hidden="true">□</span>${escapeHtml(t('eb.no_resources'))}</div>`;
 }
 
+function applyCorpusRecord(record) {
+  if (!isEmergencyCorpusRecord(record)) return false;
+  corpusRecord = record;
+  return true;
+}
+
 function applyHostSnapshot(snapshot) {
-  if (snapshot?.corpus) corpusRecord = snapshot.corpus;
+  if (snapshot?.corpus) applyCorpusRecord(snapshot.corpus);
   if (snapshot?.semantic) semanticState = snapshot.semantic;
   if (Array.isArray(snapshot?.resources)) {
     for (const record of snapshot.resources) records.set(record.id, record);
@@ -497,7 +507,7 @@ function applyHostSnapshot(snapshot) {
 async function refreshState() {
   apocalypseEnabled = (await apocalypseStore.getConfig()).enabled === true;
   const host = await sendEmergencyDownloadCommand('status').catch(() => null);
-  if (host?.corpus) corpusRecord = host.corpus;
+  if (host?.corpus) applyCorpusRecord(host.corpus);
   else corpusRecord = await corpusStore.get();
   if (host?.semantic) semanticState = host.semantic;
   records = new Map((await resourceStore.list()).map(record => [record.id, record]));
@@ -592,7 +602,7 @@ async function startCorpusDownload(options = {}) {
     await sendEmergencyDownloadCommand('start_corpus');
     await waitForHost(state => (
       state.active?.corpus
-      || ['downloading', 'verifying', 'extracting', 'indexing'].includes(state.corpus?.status)
+      || ['downloading', 'verifying', 'downloaded', 'extracting', 'indexing'].includes(state.corpus?.status)
     ));
     if (corpusRecord?.status === 'ready' && options.quiet !== true) {
       setNotice(t(EMERGENCY_CORPUS_RELEASE.preview ? 'eb.rag.corpus_preview_ready' : 'eb.rag.corpus_ready'), 'success');
@@ -867,14 +877,18 @@ downloadStateChannel?.addEventListener('message', event => {
 });
 runtimeApi?.runtime?.onMessage?.addListener?.((message) => {
   if (message?.type !== EMERGENCY_DOWNLOAD_STATE_MESSAGE) return false;
-  if (message.corpus) corpusRecord = message.corpus;
+  const previousCorpus = corpusRecord?.status;
+  const previousSemantic = semanticState?.status;
+  if (message.corpus) applyCorpusRecord(message.corpus);
   if (message.semantic) semanticState = message.semantic;
   if (message.resource?.id && message.resource.status !== 'deleted') {
     records.set(message.resource.id, message.resource);
   }
   if (message.resource?.status === 'deleted') records.delete(message.resource.id);
   render();
-  void ragReadiness.refresh();
+  if (corpusRecord?.status !== previousCorpus || semanticState?.status !== previousSemantic) {
+    void ragReadiness.refresh();
+  }
   return false;
 });
 

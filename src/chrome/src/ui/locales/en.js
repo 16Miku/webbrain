@@ -50,6 +50,12 @@ export default {
   'install.firefox_pin.body': 'To keep WebBrain handy, open Firefox Extensions, select the gear beside WebBrain, then choose Pin to Toolbar.',
   'install.open_failed_chromium': 'The side panel did not open. Press Alt+Shift+W, or open your browser’s Extensions menu and select WebBrain.',
   'install.open_failed_firefox': 'The sidebar did not open. Open Firefox Extensions and select WebBrain.',
+  'install.showcase.ask.title': 'Ask any page. Get the useful part.',
+  'install.showcase.ask.body': 'Clean answers from messy pages. Read-only by default.',
+  'install.showcase.act.title': 'Tell the browser what to do.',
+  'install.showcase.model.title': 'Use the model you trust.',
+  'install.showcase.model.body': 'Local, cloud, or your own keys — switch anytime.',
+  'install.showcase.apocalypse.body': 'Offline knowledge, under your control. Download the essentials while you still can.',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': 'Disconnected',
@@ -1077,7 +1083,7 @@ export default {
   'st.providers.webgpu_download.ready': 'Ready for local chat',
   'st.providers.webgpu_download.error': 'Download needs attention',
   'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
-  'st.providers.webgpu_download.required': 'Download LFM2.5 2.6B before using WebGPU in standalone chat.',
+  'st.providers.webgpu_download.required': 'Download the selected text model before using WebGPU in standalone chat.',
   'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
   'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
   'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
@@ -1085,5 +1091,5 @@ export default {
   'st.providers.webgpu_download.pause': 'Pause',
   'st.providers.webgpu_download.resume': 'Resume',
   'st.providers.webgpu_download.stop': 'Stop & remove',
-  'st.providers.webgpu_download.activate_blocked': 'Download LFM2.5 2.6B before using WebGPU in standalone chat.',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected text model before using WebGPU in standalone chat.',
 };

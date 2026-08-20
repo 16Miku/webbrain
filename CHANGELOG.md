@@ -4,6 +4,13 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.0] - 2026-08-20
+
+### Changed
+- License WebBrain 33.0.0 and later under GPL-3.0-or-later because the distributed extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime; releases before 33.0.0 remain MIT-licensed.
+- Remove baked-in copy from onboarding-only screenshots so localized HTML captions do not overlap the artwork; Chrome Web Store screenshots remain separate and unchanged.
+- Increase the size and contrast of the `Alt+Shift+W` onboarding shortcut hint.
+
 ## [32.2.3] - 2026-08-19
 
 ### Changed

@@ -425,6 +425,12 @@ const ZimXapianCh = await import(
 const ZimXapianFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian.js').replace(/\\/g, '/')
 );
+const ZimXapianRuntimeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/zim-xapian-runtime.js').replace(/\\/g, '/')
+);
+const ZimXapianRuntimeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js').replace(/\\/g, '/')
+);
 const OfflineRagPromptCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/offline-rag-prompt.js').replace(/\\/g, '/')
 );
@@ -866,8 +872,11 @@ const {
 );
 const {
   assertMatchingArchiveVersion,
+  assertCorrespondingSourceArchiveEntries,
+  assertPackageRootGplLicense,
   assertStoreSafeFlagLicenseEntries,
   assertStoreReviewableJavaScript,
+  correspondingSourceArchivePath,
   listZipEntryNames,
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
@@ -896,6 +905,7 @@ const {
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
   WEBGPU_LFM25_MODEL_ID,
+  WEBGPU_BONSAI27_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_DTYPE,
@@ -14781,6 +14791,9 @@ test('update-changelog: rejects duplicate versions and nested release headings',
 test('minor release installs dependencies and validates rebuilt archives before pushing', () => {
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/minor-release.yml'), 'utf8');
   assert.match(workflow, /- name: Install dependencies\s+run: npm ci/);
+  assert.match(workflow, /rm -f dist\/\*\.zip/);
+  assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
+  assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
 
   const orderedSteps = [
     'Bump minor version',
@@ -14805,6 +14818,9 @@ test('patch release updates the changelog and validates rebuilt archives before 
   assert.match(workflow, /git log --no-merges[\s\S]*?> \.release\/changelog-body\.md/);
   assert.match(workflow, /node scripts\/update-changelog\.mjs[\s\S]*?--notes-file \.release\/changelog-body\.md/);
   assert.match(workflow, /git add[^\n]*CHANGELOG\.md/);
+  assert.match(workflow, /rm -f dist\/\*\.zip/);
+  assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
+  assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
 
   const orderedSteps = [
     'Build patch release notes',
@@ -15014,6 +15030,72 @@ test('build-zip rejects filenames that would disagree with archived manifests', 
     () => assertMatchingArchiveVersion('23.0.0', '22.4.5', 'Chrome manifest'),
     /Chrome manifest is 22\.4\.5, but the release package version is 23\.0\.0/
   );
+});
+
+test('build-zip names and validates the GPL corresponding-source release asset', () => {
+  assert.equal(
+    correspondingSourceArchivePath('zim-xapian-v0.95'),
+    'dist/webbrain-zim-xapian-v0.95-corresponding-source.zip'
+  );
+  const trackedFiles = ['Makefile', 'sbom.json', 'xapian-core-1.4.31.tar.xz'];
+  const completeEntries = trackedFiles.map((entry) => `zim-xapian-v0.95/${entry}`);
+  assert.doesNotThrow(() => assertCorrespondingSourceArchiveEntries(
+    completeEntries,
+    'zim-xapian-v0.95',
+    trackedFiles,
+    'source fixture'
+  ));
+  assert.throws(
+    () => assertCorrespondingSourceArchiveEntries(
+      completeEntries.slice(0, -1),
+      'zim-xapian-v0.95',
+      trackedFiles,
+      'source fixture'
+    ),
+    /source fixture is missing tracked corresponding source xapian-core-1\.4\.31\.tar\.xz/
+  );
+});
+
+test('extension package roots declare the combined GPL release license', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const license = fs.readFileSync(path.join(ROOT, `src/${browser}/LICENSE`), 'utf8');
+    assert.doesNotThrow(
+      () => assertPackageRootGplLicense(license, `${browser} package LICENSE`),
+      `${browser}: package-root LICENSE contradicts the GPL combined-work distribution`,
+    );
+  }
+});
+
+test('version 33 licensing boundary is consistent across project metadata and FAQ copy', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+  assert.equal(packageJson.version, '33.0.0');
+  assert.equal(packageJson.license, 'GPL-3.0-or-later');
+  assert.equal(packageLock.version, '33.0.0');
+  assert.equal(packageLock.packages[''].license, 'GPL-3.0-or-later');
+
+  for (const browser of ['chrome', 'firefox']) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${browser}/manifest.json`), 'utf8'));
+    assert.equal(manifest.version, '33.0.0', `${browser}: manifest version should match the GPL transition release`);
+  }
+
+  const rootLicense = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
+  assert.match(rootLicense, /WebBrain 33\.0\.0 and later/);
+  assert.match(rootLicense, /GNU GENERAL PUBLIC LICENSE\s+Version 3/);
+  assert.match(rootLicense, /releases before 33\.0\.0 remain available under the MIT License/i);
+  assert.match(fs.readFileSync(path.join(ROOT, 'LICENSES/MIT.txt'), 'utf8'), /^MIT License/);
+
+  for (const subproject of ['mcp-server', 'lmstudio-plugin']) {
+    const metadata = JSON.parse(fs.readFileSync(path.join(ROOT, subproject, 'package.json'), 'utf8'));
+    assert.equal(metadata.license, 'MIT', `${subproject}: independent package should retain its stated license`);
+    assert.match(fs.readFileSync(path.join(ROOT, subproject, 'LICENSE'), 'utf8'), /^MIT License/);
+  }
+
+  const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
+  assert.equal(english['faq.offline_licensing.q'], 'Why is WebBrain 33.0.0 and later GPL-licensed?');
+  assert.match(english['faq.offline_licensing.a_html'], /bundles and integrates the GPL-licensed Xapian\/libzim WebAssembly runtime/);
+  assert.match(english['faq.offline_licensing.a_html'], /releases before 33\.0\.0 remain MIT-licensed/i);
+  assert.doesNotMatch(english['faq.offline_licensing.a_html'], /open licensing question/i);
 });
 
 test('build-zip rejects store-obscuring JavaScript constructions', () => {
@@ -19385,6 +19467,16 @@ test('getToolsForMode: compact mode restricts act tools in both browsers', () =>
   }
 });
 
+test('getToolsForMode: bounded accessibility maxChars uses an integer schema', () => {
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    const accessibility = getTools('act', { tier: 'compact' })
+      .find(tool => tool.function.name === 'get_accessibility_tree');
+    const maxChars = accessibility?.function.parameters.properties.maxChars;
+    assert.equal(maxChars?.type, 'integer', `[${label}] bitgpu requires integer bounds`);
+    assert.equal(maxChars?.maximum, 6000, `[${label}] compact tree bound drifted`);
+  }
+});
+
 test('compact Act exposes a self-targeting upload workflow without a general selector tool', () => {
   for (const [label, getTools, prompt] of [
     ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ACT_COMPACT_CH],
@@ -23687,6 +23779,7 @@ test('Emergency PDF ignores stale search and page operations', async () => {
 test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => {
   const files = [
     'src/agent/apocalypse-mode.js',
+    'src/agent/archive-opfs-writer-worker.js',
     'src/agent/emergency-box.js',
     'src/agent/emergency-corpus-release.js',
     'src/agent/emergency-download-controller.js',
@@ -23694,6 +23787,7 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
     'src/agent/offline-query-stopwords.js',
     'src/agent/wikipedia-offline.js',
     'src/agent/zim-xapian.js',
+    'src/agent/zim-xapian-runtime.js',
     'src/agent/openstax-catalog.js',
     'src/ui/emergency-box.html',
     'src/ui/emergency-box.css',
@@ -23874,6 +23968,13 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
       `${browser}: the ready label does not require the exact selected Wikipedia edition`);
     assert.match(wikipediaLibraryScript, /replacementArchiveIds/,
       `${browser}: downloading a new Wikipedia edition does not schedule replacement cleanup`);
+    // replacementArchiveIds is set when the download is queued, so the handover
+    // message must wait for the archive to be ready. Showing it earlier claims a
+    // 49 GiB download is verified while it is still running, and hides the bytes.
+    assert.match(wikipediaLibraryScript, /status === 'ready' && replacingPreviousArchive[\s\S]*?t\('wl\.finalizing'\)/,
+      `${browser}: the replacement handover message is not gated on the archive being ready`);
+    assert.doesNotMatch(wikipediaLibraryScript, /\}\s*else if \(Array\.isArray\(record\.replacementArchiveIds\) && record\.replacementArchiveIds\.length\) \{\s*detail = t\('wl\.finalizing'\)/,
+      `${browser}: an in-flight replacement download still reports itself as verified`);
     assert.match(wikipediaLibraryScript, /function managedWikipediaRecords\(\)[\s\S]*?return \[\.\.\.wikipediaRecords\(\)\]\.sort/,
       `${browser}: the Wikipedia library does not retain every installed archive in its management list`);
     assert.match(wikipediaLibraryScript, /elements\['archive-list'\]\.innerHTML = records\.map\(renderArchiveRecord\)\.join\(''\)/,
@@ -23972,6 +24073,12 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
       `${browser}: destructive tracker Stop action is not confirmed`);
     assert.match(script, /start_webgpu\$\{suffix\}_download[\s\S]*?\$\{action\}_webgpu\$\{suffix\}_download/,
       `${browser}: tracker controls do not route text and vision model actions to the background host`);
+    assert.match(script, /function resolveTextModelState/,
+      `${browser}: download tracker overwrites an in-flight text model with the selected preset's idle status`);
+    assert.match(script, /activeTransfer/,
+      `${browser}: download tracker does not keep a live text-model transfer after switching presets`);
+    assert.match(script, /model: item\.modelId/,
+      `${browser}: tracker Stop\/Resume for a text model must target the in-flight model, not only the selected preset`);
     assert.match(script, /action:\s*'apocalypse_mode',[\s\S]*?command,[\s\S]*?id:\s*item\.sourceId/,
       `${browser}: tracker controls do not route Wikipedia actions to the background archive manager`);
     assert.match(script, /action:\s*'emergency_download'|sendEmergencyDownloadCommand\('start_corpus'\)/,
@@ -24217,9 +24324,18 @@ function minimalWikipediaZimFixture(options = {}) {
     Language: language, Name: `wikipedia_${sourceLanguage}_test`, Source: `https://${sourceLanguage}.wikipedia.org/`,
     Tags: options.tags ?? 'wikipedia;_category:wikipedia',
   };
+  const articleNamespace = options.articleNamespace
+    || (options.fullTextIndex === 'legacy' ? 'A' : 'C');
   const entries = [
+    ...(options.fullTextIndex
+      ? [{
+        namespace: options.fullTextIndex === 'legacy' ? 'Z' : 'X',
+        url: options.fullTextIndex === 'legacy' ? '/fulltextIndex/xapian' : 'fulltext/xapian',
+        title: 'xapian', mimeType: 1, contents: 'not-a-real-index',
+      }]
+      : []),
     {
-      namespace: 'C', url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
+      namespace: articleNamespace, url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
       contents: options.articleHtml || '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
     },
     ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
@@ -25354,6 +25470,63 @@ test('Apocalypse Mode retains actionable metadata when managed-byte deletion fai
   }
 });
 
+test('Apocalypse Mode closes an active archive writer before deleting its OPFS entry', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const config = { enabled: true };
+    const events = [];
+    let clock = 1000;
+    let markFetchStarted;
+    const fetchStarted = new Promise(resolve => { markFetchStarted = resolve; });
+    const store = {
+      async getConfig() { return { ...config }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      durableWrites: true,
+      async createWriter() {
+        return {
+          async write() {},
+          async close() { events.push('close'); },
+          async abort() { events.push('abort'); },
+        };
+      },
+      async remove() {
+        assert.equal(events.includes('abort'), true, `${label}: OPFS removal raced the active writer handle`);
+        events.push('remove');
+      },
+      async exists() { return false; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async (_url, options = {}) => await new Promise((resolve, reject) => {
+        markFetchStarted();
+        options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }),
+      randomId: () => 'active-delete',
+      now: () => ++clock,
+      schedule() {},
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: 4, pieceLength: 4,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+
+    const running = manager.processNext();
+    await fetchStarted;
+    assert.equal(await manager.remove('active-delete'), true, `${label}: active archive deletion failed`);
+    const result = await running;
+
+    assert.equal(result.reason, 'cancelled', `${label}: deleting an active writer did not cancel its pass`);
+    assert.deepEqual(events, ['abort', 'remove'], `${label}: archive bytes were removed before the writer closed`);
+    assert.equal(records.has('active-delete'), false, `${label}: active archive metadata survived deletion`);
+  }
+});
+
 test('Apocalypse Mode prevents removing Wikipedia archives, emergency corpus, and emergency resources when enabled unless explicitly disabled first', async () => {
   for (const [label, { ApocalypseMode, EmergencyCorpus, EmergencyBox }] of [
     ['chrome', { ApocalypseMode: ApocalypseModeCh, EmergencyCorpus: EmergencyCorpusCh, EmergencyBox: EmergencyBoxCh }],
@@ -25488,6 +25661,19 @@ test('Apocalypse Mode OPFS storage reuses one writable for a multi-piece batch',
   }
 });
 
+test('Apocalypse Mode writes large OPFS archives through a dedicated sync handle', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/apocalypse-mode.js`), 'utf8');
+    const worker = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/archive-opfs-writer-worker.js`), 'utf8');
+    assert.match(source, /archive-opfs-writer-worker\.js/, `${browser}: OPFS writer worker is not used`);
+    assert.match(source, /record\.status === 'queued'\s*\|\|\s*record\.status === 'downloading'/, `${browser}: in-flight downloads still wait for a 5-minute lease`);
+    assert.doesNotMatch(source, /status === 'downloading' && Number\(record\.leaseUntil\) <= now/, `${browser}: stale download leases still block the next wake`);
+    assert.match(source, /storage\.durableWrites === true \|\| piecesProcessed \+ 1 < maxPiecesPerWake/, `${browser}: durable OPFS writes still cap a wake at 96 pieces`);
+    assert.match(worker, /createSyncAccessHandle/, `${browser}: archive writer worker does not use a sync OPFS handle`);
+    assert.match(worker, /handle\.flush\(\)/, `${browser}: archive writer worker does not flush durable pieces`);
+  }
+});
+
 test('Apocalypse Mode automatic policy checks daily but still requires confirmation before download', async () => {
   const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
     <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
@@ -25563,11 +25749,11 @@ test('Apocalypse Mode startup preserves update alarms and rearms persisted downl
       { id: 'retry', status: 'retrying', nextRetryAt: 16_000 },
       { id: 'ready', status: 'ready' },
     ];
-    assert.equal(await controller.syncDownloadSchedule(), 2_000, `${label}: startup did not schedule the earliest persisted attempt`);
-    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: an unexpired lease was not rearmed for its expiry`);
+    assert.equal(await controller.syncDownloadSchedule(), 0, `${label}: an in-flight download waited for its lease to expire`);
+    assert.deepEqual(downloadSchedules, [0, 0], `${label}: an unexpired lease blocked the next wake`);
     config.enabled = false;
     assert.equal(await controller.syncDownloadSchedule(), null, `${label}: disabled Apocalypse Mode rearmed downloads`);
-    assert.deepEqual(downloadSchedules, [0, 2_000], `${label}: disabled startup created a download alarm`);
+    assert.deepEqual(downloadSchedules, [0, 0], `${label}: disabled startup created a download alarm`);
   }
 });
 
@@ -25808,10 +25994,11 @@ test('Apocalypse Mode rolls back an interrupted OPFS write session before resumi
 
 test('Apocalypse Mode bounds production OPFS write sessions', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const pieceCount = 120;
     const record = {
       id: 'bounded-session', status: 'queued', generation: 1, updatedAt: 1,
-      filename: 'archive.zim', size: 10, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
-      pieceHashes: Array(10).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
+      filename: 'archive.zim', size: pieceCount, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: Array(pieceCount).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
       target: { kind: 'opfs', key: 'archive.zim' }, pieceIndex: 0, bytesDownloaded: 0, retryCount: 0,
     };
     const records = new Map([[record.id, record]]);
@@ -25831,8 +26018,89 @@ test('Apocalypse Mode bounds production OPFS write sessions', async () => {
     const result = await manager.processNext();
 
     assert.equal(result.archive.status, 'queued', `${label}: default wake consumed the entire archive`);
-    assert.equal(result.archive.pieceIndex, 8, `${label}: default write batch was not bounded`);
+    assert.equal(result.archive.pieceIndex, 96, `${label}: default write batch was not bounded`);
     assert.equal(closes, 1, `${label}: bounded write batch was not committed`);
+  }
+});
+
+test('Apocalypse Mode prefetches the next archive piece before writing', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const events = [];
+    const records = new Map();
+    const manager = runtime.createApocalypseArchiveManager({
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(value => ({ ...value })); },
+        async getArchive(id) { const value = records.get(id); return value ? { ...value } : null; },
+        async putArchive(value) { records.set(value.id, { ...value }); return value; },
+      },
+      storage: {
+        async write(_target, offset) { events.push(`write:${offset}`); },
+      },
+      fetchImpl: async (_url, request) => {
+        events.push(`fetch:${request.headers.Range}`);
+        const offset = Number(request.headers.Range.match(/bytes=(\d+)-/)[1]);
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(offset + 1).buffer; } };
+      },
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'prefetch-download',
+      now: () => 1000,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 3, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: ['valid', 'valid', 'valid'], downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive?.status, 'ready', `${label}: prefetched download did not finish`);
+    assert.deepEqual(
+      events.slice(0, 3),
+      ['fetch:bytes=0-0', 'fetch:bytes=1-1', 'write:0'],
+      `${label}: next piece was not fetched while the current piece was still being stored`,
+    );
+    assert.deepEqual(events, [
+      'fetch:bytes=0-0', 'fetch:bytes=1-1', 'write:0',
+      'fetch:bytes=2-2', 'write:1', 'write:2',
+    ], `${label}: prefetch skipped or reordered a verified piece`);
+  }
+});
+
+test('Apocalypse Mode ends a write session when the wake budget elapses', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    let nowValue = 1000;
+    let closes = 0;
+    const manager = runtime.createApocalypseArchiveManager({
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [...records.values()].map(value => ({ ...value })); },
+        async getArchive(id) { const value = records.get(id); return value ? { ...value } : null; },
+        async putArchive(value) { records.set(value.id, { ...value }); return value; },
+      },
+      storage: { async createWriter() { return { async write() {}, async close() { closes += 1; }, async abort() {} }; } },
+      fetchImpl: async () => {
+        nowValue += 10;
+        return { ok: true, status: 206, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+      },
+      digestHex: async () => 'valid',
+      schedule() {},
+      randomId: () => 'budget-lease',
+      now: () => nowValue,
+      maxPiecesPerWake: 50,
+      wakeBudgetMs: 5,
+    });
+    await manager.install({
+      filename: 'archive.zim', size: 10, pieceLength: 1, pieceHashAlgorithm: 'sha-1',
+      pieceHashes: Array(10).fill('valid'), downloadUrl: 'https://example.test/archive.zim',
+    }, { kind: 'opfs', key: 'archive.zim' });
+
+    const result = await manager.processNext();
+
+    assert.equal(result.archive.status, 'queued', `${label}: elapsed wake budget kept downloading`);
+    assert.equal(result.archive.pieceIndex, 1, `${label}: elapsed wake budget did not stop after the in-flight piece`);
+    assert.equal(closes, 1, `${label}: budget-limited write batch was not committed`);
   }
 });
 
@@ -26205,6 +26473,73 @@ test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
   }
 });
 
+test('Apocalypse Mode forwards cancellation without corrupting archive state', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'cancel-search', status: 'ready', archiveDate: '2026-08-20',
+      target: { kind: 'opfs', key: 'cancel.zim' },
+    };
+    let providerSignal = null;
+    let archiveWrites = 0;
+    const store = {
+      async getConfig() { return { enabled: true }; },
+      async listArchives() { return [record]; },
+      async putArchiveIfCurrent() { archiveWrites += 1; return true; },
+    };
+    const controller = new AbortController();
+    const searching = runtime.searchApocalypseArchives('Alan Turing', {
+      store,
+      signal: controller.signal,
+      providers: [{
+        supports() { return true; },
+        async search(_record, _query, searchOptions) {
+          providerSignal = searchOptions.signal;
+          return await new Promise((_resolve, reject) => {
+            searchOptions.signal.addEventListener('abort', () => reject(searchOptions.signal.reason), { once: true });
+          });
+        },
+      }],
+    });
+    while (!providerSignal) await Promise.resolve();
+    assert.equal(providerSignal, controller.signal, `${label}: archive provider did not receive the request signal`);
+    controller.abort();
+    await assert.rejects(searching, error => error?.name === 'AbortError',
+      `${label}: canceling an archive search did not reject as an abort`);
+    assert.equal(archiveWrites, 0, `${label}: a canceled search marked a healthy archive unreadable`);
+  }
+});
+
+test('Apocalypse Mode preserves title-only fallback disclosure after an empty search', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'archive-without-index', status: 'ready', archiveDate: '2026-08-20',
+      target: { kind: 'opfs', key: 'simple.zim' },
+    };
+    let reportedStatus = '';
+    const results = await runtime.searchApocalypseArchives('missing topic', {
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [record]; },
+      },
+      providers: [{
+        supports() { return true; },
+        async search(_record, _query, searchOptions) {
+          assert.equal(typeof searchOptions.onSearchStatus, 'function',
+            `${label}: outer status callback was not forwarded to the provider`);
+          searchOptions.onSearchStatus({
+            status: 'title-only-fallback', archiveId: record.id, reason: 'full-text-index-missing',
+          });
+          return [];
+        },
+      }],
+      onSearchStatus(value) { reportedStatus = value?.status || String(value || ''); },
+    });
+    assert.deepEqual(results, [], `${label}: empty title fallback fabricated a result`);
+    assert.equal(reportedStatus, 'title-only-fallback',
+      `${label}: terminal no_match hid the required title-only fallback disclosure`);
+  }
+});
+
 test('Apocalypse Mode marks unreadable ready archives as actionable errors', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const record = { id: 'corrupt-ready', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'corrupt.zim' } };
@@ -26471,13 +26806,42 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
     assert.notEqual(start, -1, `${label}: Apocalypse download alarm listener is missing`);
     assert.notEqual(end, -1, `${label}: Apocalypse update alarm boundary is missing`);
     const downloadAlarm = source.slice(start, end);
-    assert.match(downloadAlarm, /processNext\(\)\.catch/, `${label}: unexpected download failures are not logged`);
+    assert.match(downloadAlarm, /(?:processNext|runApocalypseDownloadPass)\(\)\.catch/, `${label}: unexpected download failures are not logged`);
     assert.doesNotMatch(downloadAlarm, /alarms\.create/, `${label}: unexpected download failures still recreate an unbounded alarm`);
     if (label === 'chrome') {
       assert.match(downloadAlarm, /const releaseKeepalive = acquireRunKeepalive\(\)/,
         'chrome: archive download alarm does not acquire the MV3 keepalive');
-      assert.match(downloadAlarm, /processNext\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
+      assert.match(downloadAlarm, /(?:processNext|runApocalypseDownloadPass)\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
         'chrome: archive download alarm does not hold the keepalive until processing settles');
+      // `Worker` is undefined in an MV3 service worker, so openSyncWriter() can
+      // never succeed there and every wake falls back to a swap-file-backed
+      // writable that copies the whole archive. The pass must run in the
+      // offscreen document, where the dedicated writer worker can be created.
+      assert.match(source, /const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';/,
+        'chrome: the offscreen archive target constant is missing');
+      assert.match(source, /async function sendApocalypseOffscreenCommand\(command, payload = \{\}\)[\s\S]*?ensureOffscreen\(\)[\s\S]*?APOCALYPSE_DOWNLOAD_TARGET[\s\S]*?async function runApocalypseDownloadPass\(\)[\s\S]*?sendApocalypseOffscreenCommand\('processNext'\)/,
+        'chrome: archive downloads do not run in the offscreen document');
+      const offscreenPassStart = source.indexOf('async function runApocalypseDownloadPass()');
+      const alarmListenerStart = source.indexOf('chrome.alarms.onAlarm.addListener', offscreenPassStart);
+      const offscreenPass = source.slice(offscreenPassStart, alarmListenerStart);
+      assert.doesNotMatch(offscreenPass, /manager\.processNext\(\)/,
+        'chrome: archive alarm can still fall back to the Worker-less MV3 service worker');
+      assert.match(offscreenPass, /finally \{[\s\S]*?syncDownloadSchedule\(\)/,
+        'chrome: a failed offscreen archive pass does not re-arm the one-shot download alarm');
+      assert.match(source, /case 'apocalypse_mode': \{\s*if \(msg\.command === 'process'\) return await runApocalypseDownloadPass\(\);/,
+        'chrome: UI-triggered archive passes do not run in the offscreen document');
+      const offscreenHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/offscreen/offscreen.html'), 'utf8');
+      assert.match(offscreenHtml, /src="apocalypse-download-host\.js"/,
+        'chrome: the offscreen document does not host the archive downloader');
+      const archiveHost = fs.readFileSync(path.join(ROOT, prefix, 'src/offscreen/apocalypse-download-host.js'), 'utf8');
+      assert.match(archiveHost, /createApocalypseController\(chrome, \{[\s\S]*?schedule:/,
+        'chrome: the offscreen archive host must not own alarm scheduling');
+      assert.match(archiveHost, /const CONTROL_COMMANDS = new Set\(\['pause', 'delete', 'disable'\]\)/,
+        'chrome: archive cancellation controls are not owned by the offscreen downloader');
+      assert.match(archiveHost, /command === 'disable'[\s\S]*?controller\.handle\('enable', \{ enabled: false \}\)[\s\S]*?controller\.handle\(command, payload\)/,
+        'chrome: the offscreen downloader does not route its bounded control commands');
+      assert.match(source, /const offscreenCommand = msg\.command === 'pause' \|\| msg\.command === 'delete'[\s\S]*?msg\.command === 'enable' && msg\.enabled !== true \? 'disable'/,
+        'chrome: pause, delete, and disable can still run in the service-worker controller');
     }
   }
 });
@@ -26591,7 +26955,9 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: Emergency Box must render locked until basic setup is ready');
       assert.match(pageScript, /function updateEmergencyBoxGate\(readinessKind\)[\s\S]*?const locked = readinessKind !== 'ready'/,
         'chrome: Emergency Box is not gated by aggregate readiness');
-      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID/, 'chrome: Apocalypse Mode does not configure the fixed WebGPU download');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
+      assert.match(pageHtml, /data-webgpu-text-preset/, 'chrome: the local text model picker is missing');
+      assert.match(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: the Bonsai 27B preset is missing');
       assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
         'chrome: the removed local text Test action is still wired');
       assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
@@ -26600,6 +26966,8 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     } else {
       assert.doesNotMatch(backgroundScript, /enableAndPreloadWebgpuVision/, 'firefox: Chromium-only local vision download leaked into Firefox');
       assert.doesNotMatch(pageHtml, /id="webgpu-provider-card"/, 'firefox: Chromium-only WebGPU provider block leaked into Apocalypse Mode');
+      assert.doesNotMatch(pageHtml, /data-webgpu-text-preset/, 'firefox: Chromium-only WebGPU text picker leaked into Apocalypse Mode');
+      assert.doesNotMatch(pageHtml, /Bonsai-27B/, 'firefox: Bonsai WebGPU preset leaked into Apocalypse Mode');
     }
     const libraryScript = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/wikipedia-library.js'), 'utf8');
     for (const language of ['eng', 'zho', 'ara', 'ben', 'nld', 'tgl', 'fra', 'deu', 'heb', 'hin', 'ind', 'jpn', 'kor', 'msa', 'fas', 'pol', 'por', 'rus', 'spa', 'tha', 'tur', 'ukr', 'vie']) {
@@ -26980,17 +27348,31 @@ test('offline RAG readiness filters persist safely and flow only into standalone
     });
     assert.deepEqual([...runtime.normalizeOfflineRagFilters({ sources: [] }).sources],
       ['wikipedia', 'emergency-box'], `${label}: empty selection did not fail safe to both sources`);
+    let probedArchive = '';
     const controller = runtime.createOfflineRagReadinessController({
       root: { innerHTML: '', addEventListener() {} },
       storage,
       apocalypseStore: { async listArchives() { return []; } },
       corpusStore: { async get() { return null; } },
       semanticReranker: { async status() { return 'model-missing'; }, close() {} },
+      wikipediaProvider: {
+        async hasFullTextIndex(record) { probedArchive = record.id; return true; },
+      },
       getGenerationStatus: () => 'ready',
     });
-    await controller.refresh({
-      archives: [{ archiveKind: 'wikipedia', status: 'ready', language: 'eng' }],
+    const readiness = await controller.refresh({
+      archives: [{ id: 'indexed-wikipedia', archiveKind: 'wikipedia', status: 'ready', language: 'eng' }],
     });
+    assert.equal(readiness.wikipedia, 'ready', `${label}: an indexed archive was still labeled title-only`);
+    assert.equal(probedArchive, 'indexed-wikipedia', `${label}: readiness did not probe the installed archive index`);
+    assert.equal(await runtime.wikipediaStatus([
+      { archiveKind: 'wikipedia', status: 'ready' },
+    ], { runtimeBundled: true, hasFullTextIndex: async () => false }), 'title-only-fallback',
+    `${label}: an unindexed archive was mislabeled full-text ready`);
+    assert.equal(await runtime.wikipediaStatus([
+      { archiveKind: 'wikipedia', status: 'ready' },
+    ], { runtimeBundled: false, hasFullTextIndex: async () => true }), 'title-only-fallback',
+    `${label}: an unavailable runtime was mislabeled full-text ready`);
     assert.deepEqual(runtime.offlineRagRunPayload(storage), {
       offlineRagSources: ['emergency-box'], offlineRagLanguages: ['eng'],
     }, `${label}: pruned language filters were not persisted for the next run`);
@@ -27324,6 +27706,28 @@ test('shared offline retrieval honors source/language filters and never download
     const missing = await missingService.search('airway', { sources: ['emergency-box'] });
     assert.equal(missing.statuses.emergencyBox, 'not-installed', `${label}: missing corpus status changed`);
     assert.equal(indexClientCreations, 0, `${label}: a question initialized missing index machinery`);
+
+    let wikipediaSignal = null;
+    const cancellationService = runtime.createOfflineRetrievalService({
+      emergencyStore: { async get() { return null; } },
+      searchWikipedia: async (_query, options) => {
+        wikipediaSignal = options.signal;
+        return await new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        });
+      },
+    });
+    const wikipediaController = new AbortController();
+    const canceledWikipedia = cancellationService.search('airway', {
+      sources: ['wikipedia'], signal: wikipediaController.signal,
+    });
+    while (!wikipediaSignal) await Promise.resolve();
+    assert.equal(wikipediaSignal, wikipediaController.signal,
+      `${label}: retrieval service dropped the Wikipedia cancellation signal`);
+    wikipediaController.abort();
+    await assert.rejects(canceledWikipedia, error => error?.name === 'AbortError',
+      `${label}: canceled Wikipedia retrieval was converted into an unavailable result`);
+    cancellationService.close();
 
     const emergencyHit = {
       sourceKind: 'emergency-box', sourceId: 'v1', documentId: '急救', passageId: '急救:one',
@@ -27674,8 +28078,10 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
     assert.equal(runtime.JAVASCRIPT_LIBZIM_VERSION, '0.95', `${label}: javascript-libzim version changed`);
     assert.equal(runtime.LIBZIM_VERSION, '9.8.1', `${label}: libzim version changed`);
     assert.equal(runtime.XAPIAN_VERSION, '1.4.31', `${label}: Xapian version changed`);
-    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, false, `${label}: GPL runtime was marked bundled without approval`);
-    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'blocked-pending-owner-license-decision');
+    assert.equal(typeof runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, 'boolean', `${label}: the bundled flag is not a boolean`);
+    assert.equal(runtime.ZIM_XAPIAN_RUNTIME_BUNDLED, true, `${label}: the Xapian runtime is no longer marked bundled`);
+    assert.equal(runtime.ZIM_XAPIAN_DISTRIBUTION_STATUS, 'bundled-from-source',
+      `${label}: distribution status does not describe the shipped source-built Wasm`);
 
     const storage = { async open(target) { return new Blob([target.kind]); } };
     const fallbackCalls = [];
@@ -27697,11 +28103,13 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
     };
     let closed = 0;
     const searches = [];
+    const openedSignals = [];
     const provider = runtime.createZimXapianProvider({
       storage,
       fallbackProvider,
       runtime: {
-        async openArchive({ record }) {
+        async openArchive({ record, signal }) {
+          openedSignals.push(signal);
           return {
             async hasFullTextIndex() { return record.id !== 'simple-no-index'; },
             async searchWithSnippets(query, options) {
@@ -27716,9 +28124,14 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
         },
       },
     });
-    const fullText = await provider.search(fullRecord, 'airway', { limit: 40 });
+    const searchController = new AbortController();
+    const fullText = await provider.search(fullRecord, 'airway', {
+      limit: 40, signal: searchController.signal,
+    });
+    assert.equal(openedSignals[0], searchController.signal, `${label}: Xapian initialization lost cancellation`);
     assert.equal(searches[0].options.limit, 10, `${label}: per-archive Xapian cap changed`);
     assert.equal(searches[0].options.language, 'eng');
+    assert.equal(searches[0].options.signal, searchController.signal, `${label}: Xapian query lost cancellation`);
     assert.equal(fullText[0].archiveId, 'full-wikipedia');
     assert.equal(fullText[0].retrievalMode, 'xapian-full-text');
     assert.equal(fullText[0].excerpt, 'Keep the airway & breathing safe.', `${label}: snippet markup was not neutralized`);
@@ -27756,9 +28169,170 @@ test('license-gated ZIM Xapian adapter searches indexed archives and falls back 
   assert.doesNotMatch(chromeSource, /\bfetch\s*\(|import\s*\(\s*['"]https?:/,
     'the license-neutral adapter must not download or dynamically import runtime code');
   const licensing = fs.readFileSync(path.join(ROOT, 'docs/offline-rag-licensing.md'), 'utf8');
-  assert.match(licensing, /Status: \*\*BLOCKED — explicit repository-owner decision required\*\*/);
   assert.match(licensing, /896e4eab4986670ae9c0858312fa5225436e3498990c45df752e0be46eb4fe3d/);
   assert.match(licensing, /Approve GPL distribution[\s\S]*Reject GPL distribution[\s\S]*Use a different runtime/);
+
+  // The invariant that matters is not which way the decision went, but that the
+  // code flag can never get ahead of the recorded decision. Bundling a GPL
+  // runtime without a signed-off approval is the failure worth catching.
+  const approved = /- \[x\] \*\*Approve GPL distribution/.test(licensing);
+  const decided = /- \[x\] \*\*(Approve GPL distribution|Reject GPL distribution|Use a different runtime)/.test(licensing);
+  assert.ok(decided, 'the licensing record does not select any owner decision');
+  for (const [label, runtime] of [['chrome', ZimXapianCh], ['firefox', ZimXapianFx]]) {
+    if (runtime.ZIM_XAPIAN_RUNTIME_BUNDLED !== true) continue;
+    assert.ok(approved, `${label}: the GPL runtime is marked bundled but the record does not approve it`);
+    assert.doesNotMatch(licensing, /Approver: _pending_/,
+      `${label}: the GPL runtime is marked bundled but no approver is recorded`);
+    assert.doesNotMatch(licensing, /Decision date: _pending_/,
+      `${label}: the GPL runtime is marked bundled but no decision date is recorded`);
+  }
+  if (approved) {
+    assert.match(licensing, /GPL-3\.0-or-later/,
+      'an approved record must state the license the release artifacts are conveyed under');
+    assert.match(licensing, /libzim_release/,
+      'an approved record must warn against the prebuilt build path');
+  }
+});
+
+test('vendored Xapian Wasm artifacts match the recorded SBOM hashes', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const vendorDir = path.join(ROOT, `src/${browser}/vendor/libzim`);
+    const sbom = JSON.parse(fs.readFileSync(path.join(vendorDir, 'sbom.json'), 'utf8'));
+    assert.equal(sbom.toolchain.linkOptimization, 'O2', `${browser}: linkOptimization drifted from the recorded O2 build`);
+    assert.ok(Array.isArray(sbom.artifacts) && sbom.artifacts.length >= 2, `${browser}: sbom.json lost its artifacts`);
+    for (const artifact of sbom.artifacts) {
+      const bytes = fs.readFileSync(path.join(vendorDir, artifact.file));
+      assert.equal(bytes.byteLength, artifact.bytes, `${browser}: ${artifact.file} size ${bytes.byteLength} != ${artifact.bytes}`);
+      assert.equal(
+        createHash('sha256').update(bytes).digest('hex'),
+        artifact.sha256,
+        `${browser}: ${artifact.file} SHA-256 does not match sbom.json`,
+      );
+    }
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/zim-xapian-runtime.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js'), 'utf8'),
+    'Chrome and Firefox Xapian runtime drivers diverged',
+  );
+});
+
+test('Xapian corresponding source contains the exact build driver and rebuild guide', () => {
+  const sourceDir = path.join(ROOT, 'dist/corresponding-source/zim-xapian-v0.95');
+  const driverPath = path.join(sourceDir, 'scripts/build-zim-xapian.mjs');
+  const guidePath = path.join(sourceDir, 'README.md');
+  const driver = fs.readFileSync(driverPath, 'utf8');
+  assert.equal(
+    driver,
+    fs.readFileSync(path.join(ROOT, 'scripts/build-zim-xapian.mjs'), 'utf8'),
+    'corresponding source does not contain the exact build driver',
+  );
+  const guide = fs.readFileSync(guidePath, 'utf8');
+  assert.match(guide, /node scripts\/build-zim-xapian\.mjs --work \.build\/zim-xapian/,
+    'corresponding source does not include a standalone rebuild command');
+  assert.match(guide, /Install Docker and Node\.js/,
+    'corresponding source does not document its default build prerequisites');
+  assert.match(driver, /archivedSourceBundle[\s\S]*?verifiedArchivedSourceInputs[\s\S]*?initializeArchivedWorkTree/,
+    'standalone driver does not initialize from the archived corresponding source');
+  assert.match(driver, /downloadSourceFallback[\s\S]*?--download-source selected/,
+    'network source retrieval is not an explicit fallback');
+  assert.match(driver, /Archived build input failed SBOM verification/,
+    'standalone driver does not authenticate archived inputs against the SBOM');
+  assert.match(guide, /published source archive[^]*what gets built[^]*--download-source/,
+    'standalone guide does not explain archived inputs and the explicit network fallback');
+  const archivedMakefile = fs.readFileSync(path.join(sourceDir, 'Makefile'), 'utf8');
+  assert.match(archivedMakefile, /\[ -f icu4c-73_2-src\.tgz \] \|\| wget -N/,
+    'archived ICU source still requires its dependency host even when the tarball is present');
+  const sbom = JSON.parse(fs.readFileSync(path.join(sourceDir, 'sbom.json'), 'utf8'));
+  for (const relativePath of ['scripts/build-zim-xapian.mjs', 'README.md']) {
+    const entry = sbom.correspondingSource.find(item => item.file === relativePath);
+    assert.ok(entry, `corresponding-source SBOM omits ${relativePath}`);
+    const bytes = fs.readFileSync(path.join(sourceDir, relativePath));
+    assert.equal(bytes.byteLength, entry.bytes, `${relativePath} size does not match the SBOM`);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), entry.sha256,
+      `${relativePath} SHA-256 does not match the SBOM`);
+  }
+});
+
+test('Xapian runtime skips the worker when the archive has no full-text index', async () => {
+  for (const [label, runtime] of [['chrome', ZimXapianRuntimeCh], ['firefox', ZimXapianRuntimeFx]]) {
+    let spawned = 0;
+    const driver = runtime.createZimXapianRuntime({
+      createWorker() {
+        spawned += 1;
+        throw new Error(`${label}: worker factory ran for an unindexed archive`);
+      },
+      hasFullTextIndex: async () => false,
+    });
+    const session = await driver.openArchive({ source: new Blob(['zim']), record: { id: 'no-index', filename: 'plain.zim' } });
+    assert.equal(spawned, 0, `${label}: an unindexed archive started the Wasm worker`);
+    assert.equal(await session.hasFullTextIndex(), false, `${label}: the dummy session claimed an index`);
+    assert.deepEqual(session.searchWithSnippets('airway'), [], `${label}: the dummy session searched`);
+    session.close();
+  }
+});
+
+test('Xapian runtime aborts initialization and active search requests', async () => {
+  class FakeWorker {
+    constructor(replyToInit) {
+      this.replyToInit = replyToInit;
+      this.messages = [];
+      this.pendingPort = null;
+      this.terminated = false;
+    }
+    postMessage(message, ports) {
+      this.messages.push(message);
+      const port = ports?.[0];
+      if (message.action === 'init' && this.replyToInit) {
+        queueMicrotask(() => {
+          port.postMessage('ready');
+          port.close();
+        });
+      } else {
+        this.pendingPort = port;
+      }
+    }
+    terminate() {
+      this.terminated = true;
+      try { this.pendingPort?.close(); } catch {}
+    }
+  }
+
+  for (const [label, runtime] of [['chrome', ZimXapianRuntimeCh], ['firefox', ZimXapianRuntimeFx]]) {
+    const source = new Blob(['zim']);
+    Object.defineProperty(source, 'name', { value: `${label}.zim` });
+
+    let initializingWorker = null;
+    const initializingDriver = runtime.createZimXapianRuntime({
+      createWorker() { initializingWorker = new FakeWorker(false); return initializingWorker; },
+      hasFullTextIndex: async () => true,
+    });
+    const initializeController = new AbortController();
+    const initialization = initializingDriver.openArchive({
+      source, record: { id: `${label}-init` }, signal: initializeController.signal,
+    });
+    while (!initializingWorker?.messages.length) await Promise.resolve();
+    initializeController.abort();
+    await assert.rejects(initialization, error => error?.name === 'AbortError',
+      `${label}: canceling Xapian initialization waited for the 45-second timeout`);
+    assert.equal(initializingWorker.terminated, true,
+      `${label}: canceled Xapian initialization left its worker running`);
+
+    let searchWorker = null;
+    const searchDriver = runtime.createZimXapianRuntime({
+      createWorker() { searchWorker = new FakeWorker(true); return searchWorker; },
+      hasFullTextIndex: async () => true,
+    });
+    const session = await searchDriver.openArchive({ source, record: { id: `${label}-search` } });
+    const searchController = new AbortController();
+    const searching = session.searchWithSnippets('airway', { signal: searchController.signal });
+    while (!searchWorker?.pendingPort) await Promise.resolve();
+    searchController.abort();
+    await assert.rejects(searching, error => error?.name === 'AbortError',
+      `${label}: canceling a Xapian query waited for the 20-second timeout`);
+    session.close();
+    assert.equal(searchWorker.terminated, true, `${label}: closing a canceled Xapian session leaked its worker`);
+  }
 });
 
 test('multilingual E5 reranker is deterministic, prefixed, cancelable, and never downloads on a question', async () => {
@@ -28536,6 +29110,37 @@ test('ZIM title ranking falls back to one-token matches instead of an empty arch
       titles([candidate(1, 'Photosynthesis')], 'treat burn'),
       [],
       `${label}: an unrelated article was admitted by the fallback`,
+    );
+  }
+});
+
+test('ZIM reader reports whether an archive carries a Xapian full-text index', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const plain = await runtime.openKiwixZim(minimalWikipediaZimFixture());
+    assert.equal(await plain.hasFullTextIndex(), false,
+      `${label}: an archive with no index was reported as searchable`);
+
+    const modern = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: true }));
+    assert.equal(await modern.hasFullTextIndex(), true,
+      `${label}: the X/fulltext/xapian entry was not detected`);
+
+    const legacy = await runtime.openKiwixZim(minimalWikipediaZimFixture({ fullTextIndex: 'legacy' }));
+    assert.equal(await legacy.hasFullTextIndex(), true,
+      `${label}: the older Z//fulltextIndex/xapian layout was not detected`);
+    const legacyArticle = await legacy.readArticle('Alan_Turing');
+    assert.match(legacyArticle.text, /English mathematician/i,
+      `${label}: a legacy Xapian hit could not open its matching A-namespace article`);
+    const legacyFallback = await legacy.search('Alan Turing');
+    assert.equal(legacyFallback[0]?.path, 'Alan_Turing',
+      `${label}: title-only fallback did not search the legacy A namespace`);
+
+    // Repeat calls must not re-scan the directory on every query.
+    assert.equal(await modern.hasFullTextIndex(), true, `${label}: the memoized probe changed its answer`);
+
+    assert.deepEqual(
+      runtime.ZIM_FULL_TEXT_INDEX_ENTRIES.map(entry => `${entry.namespace}/${entry.path}`),
+      ['X/fulltext/xapian', 'Z//fulltextIndex/xapian'],
+      `${label}: the probed index locations changed`,
     );
   }
 });
@@ -31608,6 +32213,42 @@ test('sidepanel awaits onboarding completion persistence before hiding', () => {
   }
 });
 
+test('sidepanel onboarding makes Cloud improvement use an explicit persisted choice', () => {
+  for (const [label, prefix, runtime] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+
+    assert.match(html, /id="ob-help-improve"[\s\S]*?id="ob-help-improve-checkbox" aria-describedby="ob-help-improve-description" checked[\s\S]*?data-i18n="st\.display\.help_improve\.label"[\s\S]*?id="ob-help-improve-description"[\s\S]*?data-i18n-html="st\.display\.help_improve\.desc_html"/, `${label}: final onboarding step should expose the canonical Help Improve checkbox and disclosure`);
+    assert.match(panel, /storage\.local\.get\(\['onboardingComplete', 'helpImproveWebBrain'\]\)/, `${label}: onboarding should hydrate completion and privacy state together`);
+    assert.match(panel, /persistedHelpImprove = stored\.helpImproveWebBrain !== false/, `${label}: onboarding should preserve the existing default-on preference`);
+    assert.match(panel, /await sendToBackground\('set_help_improve_preference', \{ enabled: requestedValue \}\);\s*persistedHelpImprove = requestedValue;\s*if \(cloudReady\) showCloudReady\(\);/, `${label}: a successful privacy retry should restore Cloud status instead of leaving the error visible`);
+    assert.match(background, new RegExp(`case 'set_help_improve_preference':[\\s\\S]*?typeof msg\\.enabled !== 'boolean'[\\s\\S]*?await ${runtime}\\.storage\\.local\\.get\\('helpImproveWebBrain'\\)[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: msg\\.enabled \\}\\);[\\s\\S]*?await providerManager\\.load\\(\\);[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: previousEnabled \\}\\)\\.catch\\(\\(\\) => \\{\\}\\)[\\s\\S]*?return \\{ ok: true, enabled: msg\\.enabled \\};`), `${label}: a failed provider reload should roll back the stored privacy preference before the write is treated as failed`);
+    assert.match(panel, /catch \(error\) \{[\s\S]*?helpImproveCheckbox\.checked = persistedHelpImprove[\s\S]*?return false;/, `${label}: failed privacy persistence should restore the last saved choice`);
+    assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Cloud is active`);
+    assert.match(panel, /function showLocalChoices\(choices\) \{[\s\S]*?setHelpImproveVisible\(false\)/, `${label}: the Cloud-only choice should stay out of local-model setup`);
+    assert.match(panel, /function showProviderFallback\([^)]*\) \{[\s\S]*?providerUnknown = statusKey === 'ob\.tokens\.detect_failed'[\s\S]*?setHelpImproveVisible\(providerUnknown\)[\s\S]*?skipBtn\.disabled = !providerUnknown/, `${label}: a failed provider scan should keep Skip gated and show the Cloud disclosure until the active provider is known`);
+    assert.match(panel, /async function scanLocalModels\(\) \{[\s\S]*?settingsBtn\.disabled = true;\s*skipBtn\.disabled = true;/, `${label}: Skip should stay disabled until provider detection decides whether the Cloud disclosure applies`);
+    for (const outcome of ['showLocalChoices', 'showCloudReady']) {
+      assert.match(panel, new RegExp(`function ${outcome}\\([^)]*\\) \\{[\\s\\S]*?skipBtn\\.disabled = false;`), `${label}: ${outcome} should restore Skip after provider detection finishes`);
+    }
+    assert.match(panel, /if \(cloudReady\) \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Start should not dismiss onboarding before the latest privacy choice is saved`);
+    assert.match(panel, /skipBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Skip should not dismiss onboarding before the latest privacy choice is saved`);
+    assert.match(css, /\.ob-help-improve-control input \{[\s\S]*?accent-color: var\(--accent\)/, `${label}: the privacy choice should remain a recognizable native checkbox`);
+    assert.match(css, /\.ob-skip:disabled \{[\s\S]*?cursor: wait;/, `${label}: disabled Skip should communicate that provider detection is still running`);
+    assert.match(css, /\.onboarding \{[\s\S]*?overflow-y: auto;/, `${label}: longer localized privacy copy should remain reachable in short panels`);
+  }
+
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8');
+  const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.html'), 'utf8');
+  assert.doesNotMatch(chromeHtml, /class="ob-browser-pin-note"/, 'chrome: the existing real-toolbar coachmark should remain the only pin lesson');
+  assert.match(firefoxHtml, /class="ob-browser-pin-note"[^>]*data-i18n="install\.firefox_pin\.body"/, 'firefox: native toolbar pin guidance should move into the sidebar onboarding');
+});
+
 test('first install opens a browser-aware panel launcher without fake toolbar controls', async () => {
   for (const [label, prefix, runtime] of [
     ['chrome', 'src/chrome', 'chrome'],
@@ -31637,7 +32278,30 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       /openButton\.addEventListener\('click',[\s\S]*?openButton\.disabled = false;/,
       `${label}: install CTA should become interactive only after the click handler is bound`,
     );
-    assert.doesNotMatch(html, /toolbar-rehearsal|extension-menu|pin-target/, `${label}: install guide must not present fake browser controls`);
+    assert.doesNotMatch(html, /toolbar-rehearsal|extension-menu|pin-target|class="next-step"/, `${label}: install guide must not present fake browser controls or a second pinning lesson`);
+    assert.match(html, /class="feature-tabs"[^>]*role="tablist"/, `${label}: install guide should expose the showcase as an accessible tab list`);
+    assert.doesNotMatch(html, /feature-caption-\w+"[^>]*class="visually-hidden"/, `${label}: showcase explanations should be visible to sighted users`);
+    for (const feature of ['ask', 'act', 'model', 'apocalypse']) {
+      assert.match(html, new RegExp(`data-feature="${feature}"`), `${label}: ${feature} feature tab missing`);
+      assert.match(html, new RegExp(`data-feature-panel="${feature}"`), `${label}: ${feature} feature panel missing`);
+      assert.match(html, new RegExp(`id="feature-caption-${feature}" class="feature-copy"`), `${label}: ${feature} showcase copy should overlay the artwork as localizable HTML`);
+    }
+    assert.match(html, /data-i18n="install\.showcase\.ask\.title"/, `${label}: Ask showcase headline should be localizable`);
+    assert.match(html, /data-i18n="install\.showcase\.act\.title"/, `${label}: Act showcase headline should be localizable`);
+    assert.match(html, /data-i18n="install\.showcase\.model\.title"/, `${label}: Model showcase headline should be localizable`);
+    assert.match(html, /data-i18n="ap\.subtitle"/, `${label}: Apocalypse showcase headline should reuse the existing localized subtitle`);
+    for (const asset of [
+      '02-tell-the-browser.png',
+      '03-ask-any-page.png',
+      '04-any-llm.png',
+      '08-apocalypse-mode.png',
+      'fonts/bricolage-grotesque-var.woff2',
+      'fonts/instrument-sans-var.woff2',
+      'fonts/geist-mono-var.woff2',
+    ]) {
+      assert.ok(fs.existsSync(path.join(ROOT, prefix, 'src/ui/install-assets', asset)), `${label}: packaged showcase asset missing: ${asset}`);
+    }
+    assert.doesNotMatch(html, /06-launch-offer|07-social-proof/, `${label}: first-use showcase should not include pricing or social proof`);
     if (label === 'firefox') {
       assert.match(html, /data-build="firefox"/, 'firefox: the install page should identify its build');
       assert.match(
@@ -31647,15 +32311,22 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       );
     }
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, `${label}: install guide should respect reduced motion`);
-    assert.match(css, /@media \(max-width: 760px\)/, `${label}: install guide should adapt to narrow windows`);
+    assert.match(css, /@media \(max-width: 620px\)/, `${label}: install guide should adapt to narrow windows`);
+    assert.match(css, /font-family: "Bricolage Grotesque"/, `${label}: install guide should carry the explainer display typography into the product`);
+    assert.match(css, /\.feature-panels \{[\s\S]*?aspect-ratio: 8 \/ 5;/, `${label}: showcase should preserve the explainer artwork without distortion`);
+    assert.match(css, /\.feature-copy \{[\s\S]*?position: absolute;/, `${label}: localized showcase copy should overlay the copy-free artwork`);
+    assert.match(css, /\.shortcut-hint \{[\s\S]*?font-size: 14px;[\s\S]*?font-weight: 520;/, `${label}: keyboard shortcut guidance should remain comfortably readable`);
+    assert.match(css, /kbd \{[\s\S]*?padding: 3px 7px;[\s\S]*?font-size: 11px;[\s\S]*?font-weight: 650;/, `${label}: shortcut keycaps should carry clear visual emphasis`);
     assert.match(css, /\.open-panel-button:disabled/, `${label}: install CTA should visibly communicate its unavailable state`);
     assert.doesNotMatch(css, /\.open-panel-button\.is-open(?:\s|,|\{)/, `${label}: opening the panel should not look like setup completion`);
     assert.doesNotMatch(installJs, /classList\.(?:add|remove)\('is-open'\)/, `${label}: install logic should not apply the retired success-green state`);
+    assert.doesNotMatch(installJs, /advanceInstallGuide|install\.pin\.title/, `${label}: opening the panel should not replace the feature showcase with pin instructions`);
     assert.match(
       installJs,
-      /Promise\.resolve\(opening\)\.then\(\(\) => \{[\s\S]*?advanceInstallGuide\(\{ guide \}\);[\s\S]*?reportInstalledPanelOpened\(\{ build, tabId: installTab\?\.id \}\)[\s\S]*?\}\)\.catch/,
-      `${label}: a successful panel open should advance the guide before background bookkeeping`,
+      /Promise\.resolve\(opening\)\.then\(\(\) => \{[\s\S]*?reportInstalledPanelOpened\(\{ build, tabId: installTab\?\.id \}\)[\s\S]*?\}\)\.catch/,
+      `${label}: a successful panel open should preserve the showcase while completing background bookkeeping`,
     );
+    assert.match(installJs, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/, `${label}: showcase tabs should support standard keyboard navigation`);
 
     assert.equal(
       await installModule.detectBrowser({ userAgent: 'Mozilla/5.0 Chrome/140.0 Safari/537.36 Edg/140.0' }),
@@ -31699,29 +32370,30 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       `${label}: unidentified Chromium forks should receive safe generic guidance`,
     );
     assert.equal(installModule.getBrowserGuide('firefox').openKey, 'install.open_sidebar', `${label}: Firefox should use native sidebar wording`);
-    assert.equal(installModule.getBrowserGuide('firefox').nextKey, 'install.firefox_pin.body', `${label}: Firefox should keep its native toolbar-pin instructions`);
     assert.equal(installModule.getBrowserGuide('firefox').failureKey, 'install.open_failed_firefox', `${label}: Firefox should receive its native recovery instructions`);
-    assert.equal(installModule.getBrowserGuide('vivaldi').nextKey, 'install.pin.next', `${label}: Chromium install pages should preview the pin step without coachmark-only spatial copy`);
     assert.equal(installModule.getBrowserGuide('vivaldi').failureKey, 'install.open_failed_chromium', `${label}: Chromium browsers should receive shortcut and Extensions-menu recovery`);
 
-    const guideCopy = {
-      'install.pin.title': 'Pin WebBrain',
-      [installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome').nextKey]: 'Browser-specific next step',
+    const classSet = new Set();
+    const featureTabs = ['ask', 'act', 'model', 'apocalypse'].map((feature) => ({
+      dataset: { feature },
+      classList: { toggle(name, on) { if (on) classSet.add(`${feature}:${name}`); else classSet.delete(`${feature}:${name}`); } },
+      setAttribute(name, value) { this[name] = value; },
+      tabIndex: feature === 'ask' ? 0 : -1,
+    }));
+    const featurePanels = ['ask', 'act', 'model', 'apocalypse'].map((feature) => ({
+      dataset: { featurePanel: feature },
+      hidden: feature !== 'ask',
+    }));
+    const showcaseDocument = {
+      querySelectorAll(selector) {
+        return selector === '[data-feature]' ? featureTabs : featurePanels;
+      },
     };
-    const guideNodes = {
-      'install-title': { dataset: { i18n: 'install.installed' }, textContent: 'WebBrain installed' },
-      'install-intro': { dataset: { i18n: 'install.open_panel.body' }, textContent: 'Open WebBrain' },
-    };
-    const guideAdvanced = installModule.advanceInstallGuide({
-      guide: installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome'),
-      documentLike: { getElementById: (id) => guideNodes[id] || null },
-      translate: (key) => guideCopy[key],
-    });
-    assert.equal(guideAdvanced, true, `${label}: successful open should advance the install guide`);
-    assert.equal(guideNodes['install-title'].textContent, 'Pin WebBrain', `${label}: successful open should replace the stale installed heading`);
-    assert.equal(guideNodes['install-intro'].textContent, 'Browser-specific next step', `${label}: successful open should show native next-step guidance`);
-    assert.equal(guideNodes['install-title'].dataset.i18n, 'install.pin.title', `${label}: locale refresh should preserve the advanced heading`);
-    assert.equal(guideNodes['install-intro'].dataset.i18n, installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome').nextKey, `${label}: locale refresh should preserve the browser-specific guidance`);
+    assert.equal(installModule.selectInstallFeature('apocalypse', { documentLike: showcaseDocument }), true, `${label}: Apocalypse Mode should be selectable`);
+    assert.equal(featureTabs[3]['aria-selected'], 'true', `${label}: selected feature tab should expose its state`);
+    assert.equal(featureTabs[0].tabIndex, -1, `${label}: roving tab stop should leave the old feature`);
+    assert.equal(featurePanels[3].hidden, false, `${label}: selected Apocalypse Mode artwork should become visible`);
+    assert.equal(featurePanels[0].hidden, true, `${label}: previous feature artwork should be hidden`);
 
     const calls = [];
     const messages = [];
@@ -31777,6 +32449,23 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     }
   }
 
+  const explainerRenderer = fs.readFileSync(path.join(ROOT, 'assets/webstore-explainer-2026/render.mjs'), 'utf8');
+  assert.match(explainerRenderer, /actScene\(true\), askScene\(true\), modelsScene\(true\), apocalypseScene\(\{ onboarding: true \}\)/, 'install showcase should render dedicated copy-free artwork');
+  assert.match(explainerRenderer, /scene\.onboarding[\s\S]*?'install-assets'/, 'copy-free artwork should be written only to extension install assets');
+  assert.match(explainerRenderer, /candidate\.onboarding \? `onboarding\/\$\{candidate\.file\}` : candidate\.file/, 'onboarding-only renders should be independently selectable without replacing Web Store screenshots');
+  for (const asset of [
+    '02-tell-the-browser.png',
+    '03-ask-any-page.png',
+    '04-any-llm.png',
+    '08-apocalypse-mode.png',
+  ]) {
+    const storeArtwork = fs.readFileSync(path.join(ROOT, 'assets/webstore-explainer-2026', asset));
+    const chromeArtwork = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install-assets', asset));
+    const firefoxArtwork = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/install-assets', asset));
+    assert.ok(chromeArtwork.equals(firefoxArtwork), `${asset}: Chrome and Firefox should package the same copy-free artwork`);
+    assert.ok(!chromeArtwork.equals(storeArtwork), `${asset}: onboarding artwork must not reuse or replace the English Web Store screenshot`);
+  }
+
   const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const firefoxBackground = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
   const chromePanelHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8');
@@ -31803,7 +32492,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   assert.match(chromePanelHtml, /id="pin-coachmark-done"[\s\S]*?id="pin-coachmark-skip"/, 'chrome: pin coachmark should provide confirm and explicit skip actions');
   assert.doesNotMatch(firefoxPanelHtml, /id="pin-coachmark"/, 'firefox: sidebar should not point at a Chromium-only panel pin');
   assert.match(chromePanelJs, /sidePanel\?\.getLayout\?\.\(\)/, 'chrome: coachmark should read the real left/right side-panel layout when supported');
-  assert.match(chromePanelJs, /await pinCoachmarkDismissed\.catch\(\(\)\s*=>\s*\{\}\);[\s\S]*?storage\.local\.get\('onboardingComplete'\)/, 'chrome: product onboarding should wait until the pin coachmark is dismissed');
+  assert.match(chromePanelJs, /await pinCoachmarkDismissed\.catch\(\(\)\s*=>\s*\{\}\);[\s\S]*?storage\.local\.get\(\['onboardingComplete', 'helpImproveWebBrain'\]\)/, 'chrome: product onboarding should wait until the pin coachmark is dismissed before loading setup and privacy state');
   assert.match(chromePanelJs, /initPinCoachmark[\s\S]*?catch\s*\{[\s\S]*?\}[\s\S]*?\}\)\(\)/, 'chrome: pin coachmark setup failures must not reject into onboarding');
   assert.match(chromePanelJs, /for \(const layer of backgroundLayers\) \{[\s\S]*?layer\.inert = true/, 'chrome: modal coachmark should make the rest of the panel inert');
   assert.match(chromePanelJs, /for \(const \[layer, wasInert\] of backgroundInertState\) \{[\s\S]*?layer\.inert = wasInert/, 'chrome: modal coachmark should restore prior inert state on dismissal');
@@ -31829,8 +32518,9 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 29, `${filename}: install guide should translate every user-facing string`);
-    assert.ok(chromeLocale['install.pin.next'], `${filename}: install page should translate its non-spatial pin preview`);
+    assert.equal(installKeys.length, 35, `${filename}: install guide should translate every user-facing string`);
+    assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
+    assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
     assert.ok(chromeLocale['install.pin.skip'], `${filename}: pin coachmark should translate its skip action`);
     assert.ok(chromeLocale['install.open_failed_chromium'], `${filename}: Chromium recovery guidance should be translated`);
@@ -31845,7 +32535,6 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   const englishLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
   assert.match(englishLocale['install.pin.body'], /side panel header/i, 'chrome: pin guidance should identify the pin in the side-panel header');
   assert.match(englishLocale['install.pin.body'], /browser toolbar/i, 'chrome: pin guidance should separately explain the toolbar icon that pinning adds');
-  assert.doesNotMatch(englishLocale['install.pin.next'], /\babove\b/i, 'chrome: install-page preview should not use coachmark-only spatial language');
   assert.match(englishLocale['install.open_failed_chromium'], /Alt\+Shift\+W[\s\S]*Extensions/i, 'chrome: failed open should offer shortcut and Extensions-menu recovery');
   assert.match(englishLocale['install.open_failed_firefox'], /Firefox Extensions/i, 'firefox: failed open should point to Firefox Extensions');
 });
@@ -38233,16 +38922,24 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'standalone WebGPU background guard is missing');
   const apocalypseState = { enabled: true };
   const webgpuState = { ready: true };
+  let webgpuModel = 'LiquidAI/LFM2.5-2.6B-ONNX';
   const standaloneRunProviderId = vm.runInNewContext(
     `(${background.slice(helperStart, helperEnd)})`,
     {
       WEBGPU_MODEL_ID: 'LiquidAI/LFM2.5-2.6B-ONNX',
+      isShippedWebgpuPreset: (model) => [
+        'LiquidAI/LFM2.5-2.6B-ONNX',
+        'prism-ml/Bonsai-27B-gguf',
+      ].includes(model),
+      webgpuModelDisplayName: (model) => (
+        model === 'prism-ml/Bonsai-27B-gguf' ? 'Bonsai 27B' : 'LFM2.5 2.6B'
+      ),
       apocalypseController: {
         handle: async () => ({ enabled: apocalypseState.enabled }),
       },
       providerManager: {
         getAll: () => ({
-          webgpu: { model: 'LiquidAI/LFM2.5-2.6B-ONNX' },
+          webgpu: { model: webgpuModel },
         }),
         getWebgpuDownloadStatus: async () => ({ ready: webgpuState.ready }),
       },
@@ -38267,6 +38964,12 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   await assert.rejects(
     standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
     /Download LFM2\.5 2\.6B/,
+  );
+  webgpuState.ready = true;
+  webgpuModel = 'prism-ml/Bonsai-27B-gguf';
+  assert.equal(
+    await standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
+    'webgpu',
   );
 });
 
@@ -50103,6 +50806,11 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   let localEnabled = true;
   let textModelReady = true;
   let webgpuExecutionError = '';
+  const returnedToolCalls = [{
+    id: 'bitgpu_call_test_1',
+    type: 'function',
+    function: { name: 'read_page', arguments: '{"offset":0}' },
+  }];
   try {
     globalThis.chrome = {
       offscreen: { hasDocument: async () => true },
@@ -50116,7 +50824,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
           else if (message.type === 'webgpu-download-status') callback({ ok: true, status: textModelReady ? 'ready' : 'not-downloaded', ready: textModelReady });
           else if (message.type === 'webgpu-chat') callback(webgpuExecutionError
             ? { ok: false, error: webgpuExecutionError }
-            : { ok: true, content: 'Local answer.' });
+            : { ok: true, content: 'Local answer.', toolCalls: returnedToolCalls });
           else callback({ ok: true, content: 'A settings page is visible.' });
         },
       },
@@ -50156,9 +50864,12 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
       'custom-owner/custom-model',
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'LFM2.5 2.6B' },
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime, contextWindow: option.contextWindow })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal text model', runtime: 'onnx', contextWindow: 16384 },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic text model', runtime: 'bitgpu', contextWindow: 4096 },
     ]);
+    assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
+    assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
     assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
@@ -50171,23 +50882,37 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const tools = [{ type: 'function', function: { name: 'read_page', parameters: { type: 'object' } } }];
     const localResult = await generalProvider.chat([{ role: 'user', content: 'Hello' }], { maxTokens: 123, tools });
     assert.equal(localResult.content, 'Local answer.');
+    assert.deepEqual(localResult.toolCalls, returnedToolCalls);
     assert.deepEqual(sentMessages[1], {
       type: 'webgpu-download-status',
       model: WEBGPU_MODEL_ID,
+      runtime: 'onnx',
       dtype: WEBGPU_DTYPE,
     });
     assert.deepEqual(sentMessages[2], {
       type: 'webgpu-chat',
       model: WEBGPU_MODEL_ID,
+      runtime: 'onnx',
       device: 'webgpu',
       dtype: WEBGPU_DTYPE,
       requireTools: false,
       messages: [{ role: 'user', content: 'Hello' }],
       options: { maxTokens: 123, tools },
     });
+    const siblingStatus = await generalProvider.downloadStatus({
+      model: WEBGPU_BONSAI27_MODEL_ID,
+      dtype: 'q1',
+    });
+    assert.equal(siblingStatus.ready, true);
+    assert.deepEqual(sentMessages[3], {
+      type: 'webgpu-download-status',
+      model: WEBGPU_BONSAI27_MODEL_ID,
+      runtime: 'bitgpu',
+      dtype: 'q1',
+    });
     const textDisposed = await generalProvider.dispose();
     assert.deepEqual(textDisposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[3], { type: 'webgpu-dispose' });
+    assert.deepEqual(sentMessages[4], { type: 'webgpu-dispose' });
 
     const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
@@ -50206,7 +50931,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const result = await provider.chat(messages, { maxTokens: 321 });
     assert.equal(result.content, 'A settings page is visible.');
     assert.equal(result.toolCalls, null);
-    assert.deepEqual(sentMessages[4], {
+    assert.deepEqual(sentMessages[5], {
       type: 'webgpu-vision-chat',
       model: WEBGPU_VISION_MODEL_ID,
       device: 'webgpu',
@@ -50217,20 +50942,20 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
 
     const disposed = await manager.disposeWebgpuVisionRuntime();
     assert.deepEqual(disposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[5], { type: 'webgpu-vision-dispose' });
+    assert.deepEqual(sentMessages[6], { type: 'webgpu-vision-dispose' });
 
     manager.providers.set('webgpu', generalProvider);
     manager.providers.set('remote', { config: { type: 'openai', model: 'remote-model' } });
     manager.activeProviderId = 'webgpu';
     await manager.setActive('remote');
-    assert.deepEqual(sentMessages[6], { type: 'webgpu-dispose' });
+    assert.deepEqual(sentMessages[7], { type: 'webgpu-dispose' });
 
     textModelReady = false;
     await assert.rejects(
       generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
       /not downloaded/,
     );
-    await assert.rejects(manager.setActive('webgpu'), /Download LFM2\.5 2\.6B/);
+    await assert.rejects(manager.setActive('webgpu'), /Download Minimal/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     textModelReady = true;
@@ -50594,6 +51319,64 @@ test('Apocalypse text download fixes the LFM preset and avoids duplicate starts'
   }
 });
 
+test('Apocalypse enable keeps a selected Bonsai preset and does not auto-download it', async () => {
+  const previousChrome = globalThis.chrome;
+  const sentMessages = [];
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-probe') {
+            callback({ ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: 'test' });
+            return;
+          }
+          if (message.type === 'webgpu-download-status') {
+            callback({
+              ok: true,
+              status: 'not-downloaded',
+              ready: false,
+              modelId: WEBGPU_BONSAI27_MODEL_ID,
+              dtype: 'q1',
+            });
+            return;
+          }
+          callback({ ok: false, error: `Unexpected message: ${message.type}` });
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async () => {},
+        },
+      },
+    };
+
+    const manager = new ProviderManagerCh();
+    manager.providers.set('webgpu', manager._createProvider('webgpu', {
+      ...manager._defaultConfigs().webgpu,
+      model: WEBGPU_BONSAI27_MODEL_ID,
+      dtype: 'q1',
+      configured: false,
+    }));
+    const result = await manager.enableAndStartWebgpuTextDownload();
+    assert.equal(result.ok, true);
+    assert.equal(result.started, false);
+    assert.equal(result.status, 'not-downloaded');
+    assert.equal(manager.getAll().webgpu.model, WEBGPU_BONSAI27_MODEL_ID);
+    assert.equal(manager.getAll().webgpu.contextWindow, 4096);
+    assert.deepEqual(sentMessages.map(message => message.type), [
+      'webgpu-probe',
+      'webgpu-download-status',
+    ], 'enabling Apocalypse Mode must not auto-start the 3.8 GB Bonsai download');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
@@ -50603,6 +51386,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const apocalypseCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs'), 'utf8');
+  const emergencyCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/emergency-copy.mjs'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
@@ -50689,11 +51473,27 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
   assert.match(host, /'webgpu-download-start'/);
-  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendResponse\(await sendVisionWorkerMessage\('start-download-text'/);
+  assert.match(host, /function isBitgpuTextModel/);
+  assert.match(host, /bonsai-worker\.js/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, 'start-download-text'/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-chat'/);
+  assert.match(host, /disposeOtherTextRuntime\('bitgpu'\)/);
+  assert.match(host, /exclusive: true, runtime: message\.runtime/);
+  assert.match(host, /function startExclusiveTextDownload\(message\)[\s\S]*?findActiveTextTransfer\(message\.model\)[\s\S]*?status \|\| ''\)\.toLowerCase\(\) !== 'paused'[\s\S]*?Pause it before switching models[\s\S]*?sendTextWorkerMessage\(message\.model, 'start-download-text'/,
+    'switching WebGPU runtimes must reject an active transfer before exclusive disposal can queue behind it');
+  assert.match(host, /textDownloadStartChain = operation\.catch\(\(\) => \{\}\)/,
+    'concurrent WebGPU model starts are not serialized around the cross-runtime transfer check');
+  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?startExclusiveTextDownload\(message\)/);
+  assert.match(host, /isBitgpuTextModel\(message\.model, message\.runtime\)/);
+  assert.match(host, /if \(!isBitgpuTextModel\(message\.model, message\.runtime\)\) \{\s*await ensureVisionWorker\(\);/);
   assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
   assert.match(host, /'webgpu-download-status'/);
+  assert.match(host, /function findActiveTextTransfer/);
+  assert.match(host, /activeTransfer/);
+  assert.match(host, /probeExistingTextWorkerStatus/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-download-status'/);
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?sendVisionWorkerMessage\('stop-vision-download'/);
@@ -50735,8 +51535,28 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'the basic Wikipedia card must select its exact catalog archive');
   assert.match(apocalypseScript, /const ready = wikipedia[\s\S]*?if \(ready\.length\) return ready\[0\]/,
     'a verified replacement Wikipedia edition must continue to satisfy aggregate readiness');
-  assert.match(apocalypseScript, /updateEmergencyBoxGate\(kind\)/,
-    'aggregate readiness must update the Emergency Box gate');
+  assert.match(apocalypseScript, /updateEmergencyBoxGate\(emergencyKind\)/,
+    'Emergency Box must stay available when any shipped text model is still on disk');
+  assert.match(apocalypseScript, /function anyShippedWebgpuTextReady\(\)/,
+    'Emergency Box must treat Minimal and Basic as interchangeable text-model readiness');
+  assert.match(apocalypseScript, /function refreshSiblingWebgpuTextStatus/,
+    'Apocalypse Mode must probe the unselected shipped text model without switching to it');
+  assert.match(apocalypseScript, /async function refreshWebgpuDownloadStatus\(\{ probeSibling = false \} = \{\}\)/,
+    'unselected text-model status must not ride the two-second Apocalypse poll');
+  assert.match(apocalypseScript, /if \(probeSibling\) await refreshSiblingWebgpuTextStatus/,
+    'sibling WebGPU status probes must be opt-in');
+  const apocalypsePoll = apocalypseScript.slice(
+    apocalypseScript.indexOf('async function poll()'),
+    apocalypseScript.indexOf('\n\nawait Promise.all([', apocalypseScript.indexOf('async function poll()')),
+  );
+  assert.match(apocalypsePoll, /refreshWebgpuDownloadStatus\(\)/,
+    'the Apocalypse poll must keep refreshing the selected text model');
+  assert.doesNotMatch(apocalypsePoll, /probeSibling/,
+    'opening Apocalypse Mode must not poll-migrate the unselected 3.8 GB Basic model');
+  assert.match(apocalypseScript, /refreshWebgpuDownloadStatus\(\{ probeSibling: true \}\)/,
+    'first load and preset switches still need a one-shot sibling readiness probe');
+  assert.match(apocalypseScript, /recordWebgpuTextState\(webgpuDownloadState\)/,
+    'switching Minimal/Basic must remember the previous text model before clearing the selected panel');
   for (const state of ['ready', 'downloading', 'paused', 'incomplete', 'disabled', 'error']) {
     assert.match(apocalypseScript, new RegExp(`ap\\.models\\.status\\.${state}`),
       `aggregate model readiness is missing its ${state} state`);
@@ -50755,14 +51575,34 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseCopy, /'ap\.models\.vision\.title': 'Vision Model'/);
   assert.match(apocalypseCopy, /'ap\.models\.wikipedia\.title': 'Wikipedia in Simple English'/);
   assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
+  assert.match(apocalypseHtml, /data-webgpu-text-preset/);
+  assert.match(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
+  assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal text model'/);
+  assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic text model'/);
+  assert.match(apocalypseHtml, />Minimal text model<\/span>/);
+  assert.match(apocalypseHtml, />Basic text model<\/span>/);
+  assert.doesNotMatch(apocalypseHtml, /· LFM2\.5 2\.6B/);
+  assert.doesNotMatch(apocalypseHtml, /· Bonsai 27B/);
+  assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
+  assert.match(emergencyCopy, /'ap\.webgpu\.rag\.pro': 'Runs Bonsai 27B on your GPU/);
+  assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);
+  assert.match(apocalypseScript, /webgpuModelPreset/);
+  assert.match(apocalypseScript, /webgpuPresetHydrated/);
+  assert.match(apocalypseScript, /normalized\.modelId !== selectedWebgpuModelId\(\)/);
+  assert.match(apocalypseScript, /function anyOtherWebgpuTextBusy/);
+  assert.match(background, /getWebgpuDownloadStatus\(msg\)/,
+    'download-status probes must be able to inspect an unselected shipped text model');
+  assert.match(apocalypseScript, /ap\.webgpu\.rag\.pro/);
+  assert.match(apocalypseHtml, /data-webgpu-text-copy/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
   assert.match(apocalypseHtml, /id="vision-model-test"[^>]*data-i18n="st\.vision\.test"[^>]*disabled/);
   assert.doesNotMatch(apocalypseHtml, /(?:base-url|api-key|__custom__|data-webgpu-model-link)/);
-  assert.doesNotMatch(apocalypseScript, /WEBGPU_MODEL_PRESETS|normalizeWebgpuModelId|set_active_provider/);
+  assert.doesNotMatch(apocalypseScript, /normalizeWebgpuModelId|set_active_provider/);
   assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
   assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
-  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model: WEBGPU_MODEL_ID[\s\S]*?contextWindow: 16384[\s\S]*?promptTier: 'compact'/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow[\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
@@ -50785,6 +51625,112 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.onnxruntime.txt'), 'utf8'), /^MIT License/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ThirdPartyNotices.onnxruntime.txt'), 'utf8'), /^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
+
+  const bonsaiWorker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/bonsai-worker.js'), 'utf8');
+  assert.match(bonsaiWorker, /const WEBGPU_BONSAI27_THINK_BUDGET = 128/);
+  assert.match(bonsaiWorker, /kvCache: 'q8'/);
+  assert.match(bonsaiWorker, /maxSeqLen: WEBGPU_BONSAI27_MAX_SEQ_LEN/);
+  assert.match(bonsaiWorker, /catch \(error\) \{[\s\S]*?await engine\.dispose\?\.\(\)[\s\S]*?throw error/,
+    'Bonsai engine allocations must be disposed when tokenizer/chat initialization fails');
+  assert.match(bonsaiWorker, /think: true/);
+  assert.match(bonsaiWorker, /createEngine/);
+  assert.match(bonsaiWorker, /createChat/);
+  assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/index\.js'/);
+  assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/chat\.js'/);
+  assert.match(bonsaiWorker, /cannot hold Bonsai 27B/);
+  assert.match(bonsaiWorker, /function textReadyMarkerUrl/);
+  assert.match(bonsaiWorker, /function cacheStorageKey/);
+  assert.match(bonsaiWorker, /webbrain-webgpu-models/);
+  assert.match(bonsaiWorker, /opfsCompleteName/);
+  assert.match(bonsaiWorker, /opfsPartialName/);
+  assert.match(bonsaiWorker, /tools: tools\.length \? tools : undefined/);
+  assert.match(bonsaiWorker, /function normalizeBitgpuToolCalls/);
+  assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
+  assert.match(bonsaiWorker, /if \(queuedTextDownload === request\) queuedTextDownload = null/,
+    'a completed download request must not clear a newer queued resume for the same model');
+  assert.match(apocalypseScript, /if \(!preset\)[\s\S]*?setWebgpuDownloadState\(state\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
+    'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
+  const resumeHelpersStart = bonsaiWorker.indexOf('function parseContentRange');
+  const resumeHelpersEnd = bonsaiWorker.indexOf('\n\nasync function fetchGgufForStorage', resumeHelpersStart);
+  assert.ok(resumeHelpersStart >= 0 && resumeHelpersEnd > resumeHelpersStart);
+  const resumeHelpers = vm.runInNewContext(`(() => {
+    ${bonsaiWorker.slice(resumeHelpersStart, resumeHelpersEnd)}
+    return { parseContentRange, partialResumeValidator, partialMatchesResponse };
+  })()`);
+  const strongEtagPartial = { size: 100, total: 200, etag: '"revision-a"', lastModified: '' };
+  const strongEtagValidator = resumeHelpers.partialResumeValidator(strongEtagPartial);
+  assert.deepEqual({ ...strongEtagValidator }, { responseHeader: 'etag', value: '"revision-a"' });
+  const matchingRange = resumeHelpers.parseContentRange('bytes 100-199/200');
+  const rangeResponse = (headers = {}) => ({
+    status: 206,
+    headers: new Headers({ 'content-length': '100', ...headers }),
+  });
+  assert.equal(resumeHelpers.partialMatchesResponse(
+    strongEtagPartial,
+    rangeResponse({ etag: '"revision-a"' }),
+    matchingRange,
+    strongEtagValidator,
+  ), true);
+  assert.equal(resumeHelpers.partialMatchesResponse(
+    strongEtagPartial,
+    rangeResponse(),
+    matchingRange,
+    strongEtagValidator,
+  ), false, 'a resume response must repeat the persisted validator');
+  assert.equal(resumeHelpers.partialMatchesResponse(
+    strongEtagPartial,
+    rangeResponse({ etag: '"revision-b"' }),
+    matchingRange,
+    strongEtagValidator,
+  ), false, 'a changed model revision must not append to the saved partial');
+  assert.equal(resumeHelpers.partialResumeValidator({ etag: '', lastModified: '' }), null,
+    'validator-less partial downloads must restart from byte zero');
+  assert.equal(resumeHelpers.partialResumeValidator({ etag: 'W/"weak"', lastModified: '' }), null,
+    'weak ETags cannot authorize an If-Range resume');
+  assert.deepEqual(
+    { ...resumeHelpers.partialResumeValidator({ etag: 'W/"weak"', lastModified: 'Wed, 20 Aug 2026 09:00:00 GMT' }) },
+    { responseHeader: 'last-modified', value: 'Wed, 20 Aug 2026 09:00:00 GMT' },
+  );
+  assert.match(bonsaiWorker, /Range: `bytes=\$\{partial\.size\}-`[\s\S]*?'If-Range': validator\.value/);
+  assert.match(bonsaiWorker, /if \(!validator\) \{[\s\S]*?removeOpfsWeight\(url\)[\s\S]*?nativeFetch\(url, fetchOptions\)/,
+    'a saved partial without a usable validator must be discarded before a full fetch');
+  assert.match(bonsaiWorker, /textDownloadCancelMode === 'pause'[\s\S]*?writeOpfsPartial/);
+  const hasStoredGguf = bonsaiWorker.slice(
+    bonsaiWorker.indexOf('async function hasStoredGguf'),
+    bonsaiWorker.indexOf('async function isTextModelReady'),
+  );
+  assert.match(hasStoredGguf, /cache\.match\(cacheKey\)/,
+    'Bonsai readiness must still see a legacy Cache Storage GGUF');
+  assert.doesNotMatch(hasStoredGguf, /persistGgufToOpfs/,
+    'Bonsai status checks must not migrate a Cache Storage GGUF into OPFS');
+  const bonsaiReadyCheck = bonsaiWorker.slice(
+    bonsaiWorker.indexOf('async function isTextModelReady'),
+    bonsaiWorker.indexOf('async function markTextModelReady'),
+  );
+  assert.match(bonsaiReadyCheck, /if \(!marker\) return false/);
+  assert.doesNotMatch(bonsaiReadyCheck, /cache\.put/,
+    'status checks must not manufacture the Bonsai runtime-ready marker');
+  assert.doesNotMatch(bonsaiReadyCheck, /persistGgufToOpfs/,
+    'status checks must not copy the unselected Basic model as a side effect');
+  assert.match(bonsaiWorker, /parsed\.protocol === 'http:' \|\| parsed\.protocol === 'https:'/);
+  assert.match(bonsaiWorker, /await cache\.put\(cacheKey/);
+  assert.doesNotMatch(bonsaiWorker, /cache\.put\(url/);
+  assert.doesNotMatch(bonsaiWorker, /cache\.put\(url, response\.clone\(\)\)\.catch/);
+  assert.doesNotMatch(bonsaiWorker, /pipeline\('text-generation'/);
+  assert.doesNotMatch(bonsaiWorker, /@huggingface\/transformers/);
+  assert.match(worker, /function assertOnnxTextModel/);
+  assert.match(worker, /GGUF checkpoint and cannot be loaded with Transformers\.js/);
+
+  const bitgpuDir = path.join(ROOT, 'src/chrome/vendor/bitgpu');
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'LICENSE'), 'utf8'), /^MIT License/);
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'package.json'), 'utf8'), /"version": "0\.19\.1"/);
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'index.js'), 'utf8'), /export \{ GpuOutOfMemoryError, WebGPUUnavailableError, createEngine \}/);
+  assert.match(fs.readFileSync(path.join(bitgpuDir, 'chat.js'), 'utf8'), /createChat/);
+  const bonsaiManifest = JSON.parse(fs.readFileSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/manifest.json'), 'utf8'));
+  assert.equal(bonsaiManifest.data_file, 'Bonsai-27B-Q1_0.gguf');
+  assert.ok(fs.existsSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin')));
+  assert.equal(fs.existsSync(path.join(ROOT, 'src/firefox/vendor/bitgpu')), false,
+    'Firefox must not package the Chromium-only bitgpu runtime');
 });
 
 test('Vision Model removal deletes only its cache entries', async () => {

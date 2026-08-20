@@ -22,7 +22,7 @@
   <a href="https://webbrain.one">Website</a> ·
   <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
   <a href="https://www.producthunt.com/products/webbrain">Product Hunt</a> ·
-  <a href="LICENSE">MIT License</a>
+  <a href="LICENSE">GPL-3.0-or-later</a>
 </p>
 
 ![WebBrain reading a page, filling in a form, and fetching a file](assets/webbrain-demo.gif)
@@ -357,4 +357,10 @@ Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
 ## License
 
-MIT — built by [Emre Sokullu](https://emresokullu.com)
+WebBrain 33.0.0 and later is licensed under
+[GPL-3.0-or-later](LICENSE) because the distributed browser extension bundles
+and integrates the GPL-licensed Xapian/libzim WebAssembly runtime. Releases
+before 33.0.0 remain MIT-licensed under the license that applied when they were
+published; that historical text is preserved in [LICENSES/MIT.txt](LICENSES/MIT.txt).
+
+Built by [Emre Sokullu](https://emresokullu.com).

@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
-| `webgpu`（Chromium） | `webgpu` | 本地 | LFM2.5 2.6B（经过测试的默认值）或实验性自定义 HF 仓库（很可能不兼容） | 否 |
+| `webgpu`（Chromium） | `webgpu` | 本地 | LFM2.5 2.6B（默认）或可选 Bonsai 27B；实验性自定义 HF ONNX 仓库 | 否 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |
@@ -110,6 +110,8 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 部署发现或协议）。
 
 ### 本地提供商
+
+在 Chromium 上，**WebGPU（浏览器内）** 是无端点的本地提供商。末日模式文本选择器提供两个内置预设：**LFM2.5 2.6B**（`q4f16`，约 1.55 GB）走 Transformers.js / ONNX，仍是默认项，启用末日模式时会自动开始下载；**Bonsai 27B**（`Q1_0`，约 3.8 GB）走可选的 bitgpu worker，绝不会自动下载。Bonsai 需要高端 GPU（建议 16 GB 以上内存/显存）。LFM 与 Bonsai 不会同时驻留 GPU。Firefox 不提供该卡片。
 
 九个本地端点提供商默认启用。模型运行时无需 API 密钥（除非服务器启用了认证）；
 通用代理卡片必须填写客户端密钥：

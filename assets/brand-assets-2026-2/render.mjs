@@ -33,14 +33,14 @@ const copy = {
   en: {
     headline: 'Open-source AI browser agent',
     body: 'Chat with and act on any page — running local models, fully private.',
-    features: ['Chrome & Firefox', 'llama.cpp', 'OpenRouter', 'OpenAI', 'MIT licensed'],
+    features: ['Chrome & Firefox', 'llama.cpp', 'OpenRouter', 'OpenAI', 'GPL-3.0+ licensed'],
     bannerUrl: 'webbrain.one',
     socialUrl: 'github.com/webbrain-one/webbrain',
   },
   tr: {
     headline: 'Yapay Zeka Chrome/Firefox Yardımcısı',
     body: 'Herhangi bir sayfayla sohbet et, işlem yap — yerel modellerle, tamamen özel.',
-    features: ['Chrome & Firefox', 'llama.cpp', 'OpenRouter', 'OpenAI', 'MIT lisanslı'],
+    features: ['Chrome & Firefox', 'llama.cpp', 'OpenRouter', 'OpenAI', 'GPL-3.0+ lisanslı'],
     bannerUrl: 'webbrain.one/tr/',
   },
 };
@@ -376,7 +376,7 @@ function storeMarquee() {
           <h1 class="headline">Open-Source AI Browser Agent</h1>
           <div class="body-copy">Any LLM. Any Page. Your Data.</div>
           <div class="store-pills">
-            <span>MIT LICENSED</span>
+            <span>GPL-3.0+ LICENSED</span>
             <span>11+ PROVIDERS</span>
             <span>LOCAL OR CLOUD</span>
             <span>MV3 &amp; MV2</span>

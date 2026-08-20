@@ -46,9 +46,8 @@ weights are not in either extension ZIP: their pinned explicit download is
 passage vectors; the browser model only embeds each query. The legacy
 passage-vector cache is capped at 268,435,456 bytes.
 
-No GPL ZIM/Xapian runtime is included in these measurements. The candidate
-upstream Wasm ZIP alone is 4,671,056 bytes; see
-`docs/offline-rag-licensing.md` before changing that state.
+These measurements do not include the vendored Xapian/libzim Wasm
+(`src/*/vendor/libzim/`, about 2.3 MB). See `docs/offline-rag-licensing.md`.
 
 The deterministic synthetic benchmark can be repeated with:
 
@@ -130,9 +129,9 @@ Run on current stable Chrome and Firefox with a fresh profile for each:
    retrieval ready and generation unavailable as separate states.
 8. Test no-hit and insufficient-evidence prompts. The agent must say evidence
    is insufficient instead of inventing an answer or citation.
-9. After a GPL decision and runtime build, test a ZIM with a full-text index,
-   a ZIM without one, and a forced worker failure. Only the first may report
-   `xapian-full-text`; the others must report `title-only-fallback`.
+9. Test a ZIM with a full-text index, a ZIM without one, and a forced worker
+   failure. Only the first may report `xapian-full-text`; the others must
+   report `title-only-fallback`.
 
 ## Release blockers
 
@@ -143,6 +142,8 @@ Run on current stable Chrome and Firefox with a fresh profile for each:
 - [ ] The owner made the explicit GPL/runtime decision in
       `docs/offline-rag-licensing.md`.
 - [ ] If GPL was approved, complete corresponding source, build scripts,
-      notices, SBOM, and package hashes ship with the release.
+      notices, SBOM, and package hashes ship with the release. Confirm the
+      tagged tree retains `dist/corresponding-source/` and the GitHub release
+      includes `webbrain-*-corresponding-source.zip` beside the browser ZIPs.
 - [ ] The repository test suite passes apart from no acknowledged pre-existing
       artifact/environment failures.

@@ -1,14 +1,14 @@
 import { applyDOMTranslations, t } from './i18n.js';
 
 const GUIDES = {
-  chrome: { name: 'Google Chrome', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
-  edge: { name: 'Microsoft Edge', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
-  brave: { name: 'Brave', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
-  vivaldi: { name: 'Vivaldi', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
-  opera: { name: 'Opera', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
-  firefox: { name: 'Firefox', openKey: 'install.open_sidebar', nextKey: 'install.firefox_pin.body', failureKey: 'install.open_failed_firefox' },
-  chromium: { name: 'Chromium', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
-  unknown: { name: 'Browser', openKey: 'install.open_panel', nextKey: 'install.pin.next', failureKey: 'install.open_failed_chromium' },
+  chrome: { name: 'Google Chrome', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
+  edge: { name: 'Microsoft Edge', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
+  brave: { name: 'Brave', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
+  vivaldi: { name: 'Vivaldi', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
+  opera: { name: 'Opera', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
+  firefox: { name: 'Firefox', openKey: 'install.open_sidebar', failureKey: 'install.open_failed_firefox' },
+  chromium: { name: 'Chromium', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
+  unknown: { name: 'Browser', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
 };
 
 function browserBrands(navigatorLike) {
@@ -39,20 +39,46 @@ export function getBrowserGuide(browserKey) {
   return GUIDES[browserKey] || GUIDES.unknown;
 }
 
-export function advanceInstallGuide({
-  guide,
-  documentLike = globalThis.document,
-  translate = t,
-} = {}) {
-  const title = documentLike?.getElementById?.('install-title');
-  const intro = documentLike?.getElementById?.('install-intro');
-  if (!guide?.nextKey || !title || !intro) return false;
+export function selectInstallFeature(feature, { documentLike = globalThis.document } = {}) {
+  const tabs = Array.from(documentLike?.querySelectorAll?.('[data-feature]') || []);
+  const panels = Array.from(documentLike?.querySelectorAll?.('[data-feature-panel]') || []);
+  if (!tabs.some((tab) => tab.dataset.feature === feature)) return false;
 
-  title.dataset.i18n = 'install.pin.title';
-  intro.dataset.i18n = guide.nextKey;
-  title.textContent = translate('install.pin.title');
-  intro.textContent = translate(guide.nextKey);
+  for (const tab of tabs) {
+    const selected = tab.dataset.feature === feature;
+    tab.classList.toggle('is-active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of panels) {
+    panel.hidden = panel.dataset.featurePanel !== feature;
+  }
   return true;
+}
+
+export function initializeFeatureShowcase({ documentLike = globalThis.document } = {}) {
+  const tabs = Array.from(documentLike?.querySelectorAll?.('[data-feature]') || []);
+  if (tabs.length === 0) return false;
+
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => {
+      selectInstallFeature(tab.dataset.feature, { documentLike });
+    });
+    tab.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = Math.max(0, tabs.indexOf(tab));
+      let nextIndex = currentIndex;
+      if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = tabs.length - 1;
+      else if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+      else nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      const nextTab = tabs[nextIndex];
+      selectInstallFeature(nextTab.dataset.feature, { documentLike });
+      nextTab.focus();
+    });
+  }
+  return selectInstallFeature(tabs.find((tab) => tab.getAttribute('aria-selected') === 'true')?.dataset.feature || tabs[0].dataset.feature, { documentLike });
 }
 
 /**
@@ -105,6 +131,7 @@ async function getInstallTab(build) {
 
 async function hydrateGuide() {
   applyDOMTranslations(document);
+  initializeFeatureShowcase();
 
   const build = document.documentElement.dataset.build;
   const [browserKey, installTab] = await Promise.all([
@@ -118,9 +145,7 @@ async function hydrateGuide() {
   const openButton = document.getElementById('open-panel-button');
   const openLabel = document.getElementById('open-panel-label');
   const status = document.getElementById('open-panel-status');
-  const nextStepBody = document.getElementById('next-step-body');
   openLabel.textContent = t(guide.openKey);
-  nextStepBody.textContent = t(guide.nextKey);
 
   openButton.addEventListener('click', () => {
     openButton.classList.add('is-opening');
@@ -140,7 +165,6 @@ async function hydrateGuide() {
       openButton.classList.remove('is-opening');
       openButton.disabled = false;
       openButton.removeAttribute('aria-busy');
-      advanceInstallGuide({ guide });
       status.textContent = '';
       reportInstalledPanelOpened({ build, tabId: installTab?.id }).catch(() => {});
     }).catch(() => {

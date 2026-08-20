@@ -2,12 +2,14 @@
 
 WebBrain 的离线检索增强生成（RAG）流水线允许扩展在没有任何网络连接的情况下，使用本地存储的参考材料回答问题。它建立在末日模式（Apocalypse Mode）的 Wikipedia 存档之上，并新增了紧急语料库（Emergency Box）文本集合——一份涵盖医疗、生存、教育和通信领域公共领域参考文档的精选合集。
 
-独立 WebGPU 聊天没有工具。检索到的段落会先注入提示；模型根据这些证据作答，或说明无法回答。
+独立 WebGPU 聊天没有工具。检索到的段落会先注入提示；所选本地文本模型（默认
+LFM2.5 2.6B，或可选 Bonsai 27B）根据这些证据作答，或说明无法回答。切换文本模型
+只会改变本地答案生成引擎；检索、证据预算和本地引用流程保持不变。
 
 ## 新增功能
 
 - **紧急语料库文本集。** 一份经过验证的约 502 MB ZIP 文件，包含约 570 份公共领域纯文本文档（约 304 MB 源文本），从 `webbrain-one/emergency-box-corpus` 仓库分发。文档为多种语言的 PDF 衍生参考资料。已安装的 Emergency Box PDF 是单独的阅读架，**不**走这条 RAG 检索路径。
-- **两套检索引擎，不是一套。** Wikipedia 使用已安装的 Kiwix/ZIM **标题索引**（`title-only`）。Emergency Box 使用随语料库 ZIP 分发的预构建 SQLite **FTS5 BM25** 索引。Wikipedia 不是 FTS5；可选的 Xapian ZIM 全文运行时仍因 GPL 而未打包。
+- **两套检索引擎，不是一套。** Wikipedia 使用已安装的 Kiwix/ZIM **标题索引**（`title-only`），并在档案带有 Xapian 索引时使用已 vendored 的 GPL 全文 worker。Emergency Box 使用随语料库 ZIP 分发的预构建 SQLite **FTS5 BM25** 索引。Wikipedia 不是 FTS5。
 - **语义向量搜索（仅 Emergency Box）。** 可选的 int8 量化多语言 E5 模型（`Xenova/multilingual-e5-small`，约 140 MB 下载），在同样预计算并随 ZIP 分发的段落嵌入上提供余弦相似度搜索。
 - **E5 重排序。** 当预构建向量索引对某个源不可用时，可使用同一 E5 模型在设备上对 BM25 候选结果进行重排序。E5 缺失或超时会回退到 BM25，并报告为 `lexical-fallback`（聊天中显示为 “keyword fallback”）。
 - **倒数排名融合。** 词汇和语义结果通过倒数排名融合进行合并，然后进行多样化处理以限制冗余（最多 8 个段落，每个文档最多 2 个）。设备端 WebGPU 聊天还会把注入证据限制在约 900 个 token，以便本地模型写完答案。
@@ -20,7 +22,7 @@ WebBrain 的离线检索增强生成（RAG）流水线允许扩展在没有任�
 
 1. **规范化查询。** 去掉问句前缀，再删除多语言停用词（来自 [ranks.nl](https://www.ranks.nl/stopwords)，打包在 `offline-query-stopwords.js`）。只剩停用词的查询不会回退到原始句子。
 2. **为本轮选择来源。** 路由不跨轮次粘滞。在同时选中 Wikipedia 和 Emergency Box 时，百科类问题只搜 Wikipedia。个人健康和急救问题在两者就绪时会同时搜索。在历史条目之后出现的代词追问（例如 “fix it”），如果新消息有自己的区分性词语，不会复用上一轮主题。
-3. **搜索。** Wikipedia 命中来自 ZIM 标题索引。Emergency Box 在文本包为 `ready` 时始终使用 FTS5；当模型和索引可用时再使用 E5 向量。
+3. **搜索。** Wikipedia 在档案有 Xapian 索引时走全文 worker，否则走 ZIM 标题索引。Emergency Box 在文本包为 `ready` 时始终使用 FTS5；当模型和索引可用时再使用 E5 向量。
 4. **融合与预算。** 命中结果经融合、去冗余后作为不可信证据封装。WebGPU 生成有上限（当前为 2048 个新 token）。如果模型把预算花在推理上，WebBrain 会用更短的证据提示重试，而不是编造答案。
 5. **本地引用。** 每个保留的段落都有稳定标记（`[WB-E-…]` 或 Wikipedia 对应标记）和本地阅读器 URL。仅当目录中的对应 PDF 已安装时，Emergency Box 引用才会附加 **Open PDF** 链接。
 
@@ -36,7 +38,7 @@ agent.js（service worker）
         → offline-rag-worker.js（专用 Web Worker，拥有 SQLite Wasm + OPFS SAH 池）
 ```
 
-Wikipedia 标题搜索不经过 SQLite。它使用末日模式中已安装的 ZIM 标题索引，然后进入同一套融合与引用桥接。
+Wikipedia 搜索不经过 SQLite。有 Xapian 索引时走 vendored worker，否则使用末日模式中已安装的 ZIM 标题索引，然后进入同一套融合与引用桥接。
 
 Offscreen 文档还托管 E5 重排序 worker（`offline-reranker-worker.js`）。分层代理模式的存在是因为 Chrome MV3 service worker 无法持有 OPFS 同步访问句柄。
 
@@ -53,7 +55,7 @@ Offscreen 文档还托管 E5 重排序 worker（`offline-reranker-worker.js`）�
 | `offline-query-stopwords.js` | 打包的 ranks.nl 停用词表，在 Wikipedia 和 Emergency 搜索之前使用 |
 | `emergency-corpus.js` | 事务性生命周期：可恢复的 HTTP Range 下载、SHA-256 验证、清单驱动的提取、OPFS 存储、Web Lock 协调 |
 | `emergency-corpus-release.js` | 版本指针：当前语料库的固定 URL、SHA-256、字节数、段落数 |
-| `zim-xapian.js` | 许可证门控适配器，用于 Wikipedia ZIM 全文搜索（当前因 GPL 决策而阻塞） |
+| `zim-xapian.js` | 通过已 vendored 的 Xapian/libzim Wasm worker 做 Wikipedia ZIM 全文搜索 |
 
 ### 存储布局
 
@@ -100,7 +102,7 @@ BM25 评分权重：`body` 7、`search_terms` 1、`locator` 0.6、`collection` 2
 
 ### 检索模式
 
-这些模式适用于 Emergency Box 排序。Wikipedia 仍是仅标题检索。
+这些模式适用于 Emergency Box 排序。Wikipedia 在档案有索引时走 Xapian 全文，否则走标题查找。
 
 | 模式 | 描述 |
 | --- | --- |
@@ -113,7 +115,7 @@ BM25 评分权重：`body` 7、`search_terms` 1、`locator` 0.6、`collection` 2
 - 无 E5：Emergency Box 回退到 BM25 词汇搜索
 - 无紧急语料库：仅搜索 Wikipedia 源
 - 两者都没有：报告离线搜索不可用
-- Xapian Wikipedia 全文搜索：因 GPL 许可证决策而阻塞；仅标题搜索仍然可用
+- Xapian Wikipedia 全文搜索：档案有索引时使用；否则回退到标题查找
 - 检索为空：本地模型不得编造医疗建议
 
 ## 供应商库
@@ -130,9 +132,9 @@ BM25 评分权重：`body` 7、`search_terms` 1、`locator` 0.6、`collection` 2
 
 ## 许可证
 
-紧急语料库、SQLite、fflate 和 Transformers.js 均为宽松许可证，不影响 WebBrain 的 MIT 许可证。
+紧急语料库、SQLite、fflate 和 Transformers.js 均采用宽松许可证，本身不会引入 copyleft 条款。尽管如此，WebBrain 33.0.0 及更高版本仍采用 GPL-3.0-or-later，因为发布的扩展集成了采用 GPL 许可证的 Xapian/libzim 运行时。
 
-Xapian/libzim Wikipedia 全文运行时是另一个问题。详见 [offline-rag-licensing.md](offline-rag-licensing.md)，了解仓库所有者在打包该运行时之前必须做出的完整分析和三个选项。
+Xapian/libzim Wikipedia 全文运行时已 vendored，许可证为 GPL。详见 [offline-rag-licensing.md](offline-rag-licensing.md)。
 
 ## 延伸阅读
 

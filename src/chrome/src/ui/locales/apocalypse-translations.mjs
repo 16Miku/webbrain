@@ -1,5 +1,6 @@
 const apocalypseModeTranslations = {
   "es": {
+    "ap.import.search_note": "Las descargas del catálogo siempre admiten la búsqueda de texto completo. Un archivo que aportes tú puede admitir solo la búsqueda por título, porque no todos los archivos se publican con un índice de búsqueda. WebBrain lo comprueba tras la importación y te dice cuál tienes.",
     "ap.cannot_delete_while_enabled": "No se puede eliminar el archivo mientras el Modo Apocalipsis esté activado. Desactiva primero el Modo Apocalipsis.",
     "ap.models.cannot_remove_while_enabled": "No se puede eliminar el modelo mientras el Modo Apocalipsis esté activado. Desactiva primero el Modo Apocalipsis.",
     "st.display.apocalypse_mode.label": "Modo Apocalipsis",
@@ -99,6 +100,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "eliminando",
     "ap.status.error": "error",
     "ap.models.text.title": "Modelo de texto",
+    "ap.models.text.lfm": "Modelo de texto mínimo",
+    "ap.models.text.bonsai": "Modelo de texto básico",
+    "ap.models.text.bonsai_warning": "Bonsai 27B necesita una GPU de gama alta (se recomiendan 16 GB o más de RAM/VRAM). LFM2.5 sigue disponible si este equipo no puede alojar Bonsai.",
     "ap.models.vision.title": "Modelo de visión",
     "ap.models.wikipedia.title": "Wikipedia en Simple English",
     "ap.models.wikipedia.desc": "Necesario para la configuración básica sin conexión. Este archivo más pequeño, solo de texto, se inicia automáticamente y ofrece al chat local una referencia factual compacta.",
@@ -122,6 +126,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Cargando detalles…"
   },
   "fr": {
+    "ap.import.search_note": "Les téléchargements du catalogue prennent toujours en charge la recherche en texte intégral. Un fichier que vous fournissez vous-même peut ne permettre que la recherche par titre, car toutes les archives ne sont pas publiées avec un index de recherche. WebBrain vérifie après l’import et vous indique ce que vous avez.",
     "ap.cannot_delete_while_enabled": "Impossible de supprimer l'archive lorsque le mode Apocalypse est activé. Désactivez d'abord le mode Apocalypse.",
     "ap.models.cannot_remove_while_enabled": "Impossible de supprimer le modèle lorsque le mode Apocalypse est activé. Désactivez d'abord le mode Apocalypse.",
     "st.display.apocalypse_mode.label": "Mode Apocalypse",
@@ -221,6 +226,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "suppression",
     "ap.status.error": "erreur",
     "ap.models.text.title": "Modèle de texte",
+    "ap.models.text.lfm": "Modèle de texte minimal",
+    "ap.models.text.bonsai": "Modèle de texte de base",
+    "ap.models.text.bonsai_warning": "Bonsai 27B nécessite un GPU haut de gamme (16 Go+ de RAM/VRAM recommandés). LFM2.5 reste disponible si cette machine ne peut pas contenir Bonsai.",
     "ap.models.vision.title": "Modèle de vision",
     "ap.models.wikipedia.title": "Wikipédia en Simple English",
     "ap.models.wikipedia.desc": "Requis pour la configuration de base hors ligne. Cette archive plus petite, réservée au texte, démarre automatiquement et fournit au chat local une référence factuelle compacte.",
@@ -244,6 +252,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Chargement des détails…"
   },
   "tr": {
+    "ap.import.search_note": "Katalogdan yapılan indirmeler her zaman tam metin aramayı destekler. Kendi eklediğiniz bir dosya yalnızca başlık aramasını destekliyor olabilir, çünkü her arşiv arama dizini ile yayımlanmaz. WebBrain içe aktarmadan sonra denetler ve hangisine sahip olduğunuzu söyler.",
     "ap.cannot_delete_while_enabled": "Kıyamet Modu etkinken arşiv silinemez. Önce Kıyamet Modunu devre dışı bırakın.",
     "ap.models.cannot_remove_while_enabled": "Kıyamet Modu etkinken model kaldırılamaz. Önce Kıyamet Modunu devre dışı bırakın.",
     "st.display.apocalypse_mode.label": "Kıyamet Modu",
@@ -343,6 +352,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "siliniyor",
     "ap.status.error": "hata",
     "ap.models.text.title": "Metin Modeli",
+    "ap.models.text.lfm": "Minimal metin modeli",
+    "ap.models.text.bonsai": "Temel metin modeli",
+    "ap.models.text.bonsai_warning": "Bonsai 27B yüksek düzeyde bir GPU gerektirir (16 GB+ RAM/VRAM önerilir). Bu makine Bonsai'yi tutamazsa LFM2.5 kullanılabilir kalır.",
     "ap.models.vision.title": "Görsel Modeli",
     "ap.models.wikipedia.title": "Simple English Vikipedi",
     "ap.models.wikipedia.desc": "Temel çevrimdışı kurulum için gereklidir. Bu daha küçük, yalnızca metin arşivi otomatik başlar ve yerel sohbete kompakt bir bilgi kaynağı sağlar.",
@@ -366,6 +378,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Ayrıntılar yükleniyor…"
   },
   "zh": {
+    "ap.import.search_note": "从目录下载的档案始终支持全文搜索。你自己提供的文件可能只支持标题搜索，因为并非每个档案都附带搜索索引。WebBrain 会在导入后检查并告诉你属于哪一种。",
     "ap.cannot_delete_while_enabled": "启用了天启模式时无法删除档案。请先禁用天启模式。",
     "ap.models.cannot_remove_while_enabled": "启用了天启模式时无法移除模型。请先禁用天启模式。",
     "st.display.apocalypse_mode.label": "末日模式",
@@ -465,6 +478,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "删除中",
     "ap.status.error": "错误",
     "ap.models.text.title": "文本模型",
+    "ap.models.text.lfm": "精简文本模型",
+    "ap.models.text.bonsai": "基础文本模型",
+    "ap.models.text.bonsai_warning": "Bonsai 27B 需要高端 GPU（建议 16 GB 以上内存/显存）。如果本机无法容纳 Bonsai，仍可使用 LFM2.5。",
     "ap.models.vision.title": "视觉模型",
     "ap.models.wikipedia.title": "Simple English 维基百科",
     "ap.models.wikipedia.desc": "基本离线设置所必需。这个更小的纯文本存档会自动开始，为本地聊天提供简洁的事实参考。",
@@ -488,6 +504,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "正在加载详细信息…"
   },
   "ru": {
+    "ap.import.search_note": "Загрузки из каталога всегда поддерживают полнотекстовый поиск. Файл, который вы добавляете сами, может поддерживать только поиск по заголовкам, потому что не каждый архив публикуется с поисковым индексом. WebBrain проверит это после импорта и сообщит, какой у вас.",
     "ap.cannot_delete_while_enabled": "Невозможно удалить архив при включенном режиме Апокалипсиса. Сначала отключите режим Апокалипсиса.",
     "ap.models.cannot_remove_while_enabled": "Невозможно удалить модель при включенном режиме Апокалипсиса. Сначала отключите режим Апокалипсиса.",
     "st.display.apocalypse_mode.label": "Режим апокалипсиса",
@@ -587,6 +604,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "удаление",
     "ap.status.error": "ошибка",
     "ap.models.text.title": "Текстовая модель",
+    "ap.models.text.lfm": "Минимальная текстовая модель",
+    "ap.models.text.bonsai": "Базовая текстовая модель",
+    "ap.models.text.bonsai_warning": "Bonsai 27B требует производительный GPU (рекомендуется 16 ГБ+ RAM/VRAM). LFM2.5 остаётся доступен, если эта машина не может разместить Bonsai.",
     "ap.models.vision.title": "Модель зрения",
     "ap.models.wikipedia.title": "Simple English Википедия",
     "ap.models.wikipedia.desc": "Требуется для базовой настройки офлайн-режима. Этот небольшой текстовый архив запускается автоматически и даёт локальному чату компактный фактический справочник.",
@@ -610,6 +630,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Загрузка сведений…"
   },
   "uk": {
+    "ap.import.search_note": "Завантаження з каталогу завжди підтримують повнотекстовий пошук. Файл, який ви додаєте самі, може підтримувати лише пошук за заголовками, бо не кожен архів публікують із пошуковим індексом. WebBrain перевірить це після імпорту й повідомить, який у вас.",
     "ap.cannot_delete_while_enabled": "Неможливо видалити архів, коли увімкнено режим Апокаліпсису. Спочатку вимкніть режим Апокаліпсису.",
     "ap.models.cannot_remove_while_enabled": "Неможливо видалити модель, коли увімкнено режим Апокаліпсису. Спочатку вимкніть режим Апокаліпсису.",
     "st.display.apocalypse_mode.label": "Режим апокаліпсису",
@@ -709,6 +730,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "видалення",
     "ap.status.error": "помилка",
     "ap.models.text.title": "Текстова модель",
+    "ap.models.text.lfm": "Мінімальна текстова модель",
+    "ap.models.text.bonsai": "Базова текстова модель",
+    "ap.models.text.bonsai_warning": "Bonsai 27B потребує потужний GPU (рекомендовано 16 ГБ+ RAM/VRAM). LFM2.5 залишається доступним, якщо цей пристрій не може вмістити Bonsai.",
     "ap.models.vision.title": "Модель зору",
     "ap.models.wikipedia.title": "Simple English Вікіпедія",
     "ap.models.wikipedia.desc": "Потрібно для базового налаштування офлайн-режиму. Цей невеликий текстовий архів запускається автоматично й дає локальному чату компактний фактичний довідник.",
@@ -732,6 +756,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Завантаження відомостей…"
   },
   "ar": {
+    "ap.import.search_note": "التنزيلات من الفهرس تدعم دائمًا البحث في النص الكامل. أما الملف الذي تضيفه بنفسك فقد يدعم البحث بالعناوين فقط، لأن ليس كل أرشيف يُنشر مع فهرس بحث. يتحقق WebBrain بعد الاستيراد ويخبرك أيهما لديك.",
     "ap.cannot_delete_while_enabled": "لا يمكن حذف الأرشيف أثناء تفعيل وضع القيامة. يرجى تعطيل وضع القيامة أولاً.",
     "ap.models.cannot_remove_while_enabled": "لا يمكن إزالة النموذج أثناء تفعيل وضع القيامة. يرجى تعطيل وضع القيامة أولاً.",
     "st.display.apocalypse_mode.label": "وضع الكارثة",
@@ -831,6 +856,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "جاري الحذف",
     "ap.status.error": "خطأ",
     "ap.models.text.title": "نموذج النص",
+    "ap.models.text.lfm": "نموذج النص الأدنى",
+    "ap.models.text.bonsai": "نموذج النص الأساسي",
+    "ap.models.text.bonsai_warning": "يحتاج Bonsai 27B إلى وحدة معالجة رسومات عالية الأداء (يُوصى بذاكرة RAM/VRAM بسعة 16 غيغابايت أو أكثر). يبقى LFM2.5 متاحًا إذا تعذر على هذا الجهاز تشغيل Bonsai.",
     "ap.models.vision.title": "نموذج الرؤية",
     "ap.models.wikipedia.title": "ويكيبيديا Simple English",
     "ap.models.wikipedia.desc": "مطلوب للإعداد الأساسي دون اتصال. يبدأ هذا الأرشيف الأصغر النصي فقط تلقائيًا ويمنح الدردشة المحلية مرجعًا واقعيًا مدمجًا.",
@@ -854,6 +882,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "جارٍ تحميل التفاصيل…"
   },
   "ja": {
+    "ap.import.search_note": "カタログからのダウンロードは常に全文検索に対応しています。ご自身で用意したファイルはタイトル検索のみになる場合があります。すべてのアーカイブが検索インデックス付きで公開されるわけではないためです。WebBrain はインポート後に確認し、どちらかをお知らせします。",
     "ap.cannot_delete_while_enabled": "アポカリプスモードが有効な間はアーカイブを削除できません。まずアポカリプスモードを無効にしてください。",
     "ap.models.cannot_remove_while_enabled": "アポカリプスモードが有効な間はモデルを削除できません。まずアポカリプスモードを無効にしてください。",
     "st.display.apocalypse_mode.label": "アポカリプスモード",
@@ -953,6 +982,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "削除中",
     "ap.status.error": "エラー",
     "ap.models.text.title": "テキストモデル",
+    "ap.models.text.lfm": "最小テキストモデル",
+    "ap.models.text.bonsai": "基本テキストモデル",
+    "ap.models.text.bonsai_warning": "Bonsai 27B には高性能 GPU が必要です（16 GB 以上の RAM/VRAM を推奨）。このマシンで Bonsai を保持できない場合は LFM2.5 を利用できます。",
     "ap.models.vision.title": "画像認識モデル",
     "ap.models.wikipedia.title": "Simple English ウィキペディア",
     "ap.models.wikipedia.desc": "基本的なオフライン設定に必要です。この小さなテキストのみのアーカイブは自動的に開始され、ローカルチャットにコンパクトな事実の参考資料を提供します。",
@@ -976,6 +1008,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "詳細を読み込んでいます…"
   },
   "ko": {
+    "ap.import.search_note": "카탈로그에서 내려받은 자료는 항상 전문 검색을 지원합니다. 직접 추가한 파일은 제목 검색만 지원할 수 있습니다. 모든 아카이브가 검색 색인과 함께 배포되지는 않기 때문입니다. WebBrain이 가져오기 후에 확인해 어느 쪽인지 알려 줍니다.",
     "ap.cannot_delete_while_enabled": "아포칼립스 모드가 활성화된 상태에서는 아카이브를 삭제할 수 없습니다. 먼저 아포칼립스 모드를 비활성화하세요.",
     "ap.models.cannot_remove_while_enabled": "아포칼립스 모드가 활성화된 상태에서는 모델을 삭제할 수 없습니다. 먼저 아포칼립스 모드를 비활성화하세요.",
     "st.display.apocalypse_mode.label": "아포칼립스 모드",
@@ -1075,6 +1108,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "삭제 중",
     "ap.status.error": "오류",
     "ap.models.text.title": "텍스트 모델",
+    "ap.models.text.lfm": "최소 텍스트 모델",
+    "ap.models.text.bonsai": "기본 텍스트 모델",
+    "ap.models.text.bonsai_warning": "Bonsai 27B는 고사양 GPU가 필요합니다(16 GB 이상 RAM/VRAM 권장). 이 기기에서 Bonsai를 유지할 수 없으면 LFM2.5를 계속 사용할 수 있습니다.",
     "ap.models.vision.title": "비전 모델",
     "ap.models.wikipedia.title": "Simple English 위키백과",
     "ap.models.wikipedia.desc": "기본 오프라인 설정에 필요합니다. 이 더 작은 텍스트 전용 아카이브는 자동으로 시작되며 로컬 채팅에 간결한 사실 참고 자료를 제공합니다.",
@@ -1098,6 +1134,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "세부 정보를 불러오는 중…"
   },
   "id": {
+    "ap.import.search_note": "Unduhan dari katalog selalu mendukung pencarian teks lengkap. Berkas yang Anda sediakan sendiri mungkin hanya mendukung pencarian judul, karena tidak setiap arsip diterbitkan dengan indeks pencarian. WebBrain memeriksanya setelah impor dan memberi tahu Anda yang mana.",
     "ap.cannot_delete_while_enabled": "Tidak dapat menghapus arsip saat Mode Kiamat aktif. Nonaktifkan Mode Kiamat terlebih dahulu.",
     "ap.models.cannot_remove_while_enabled": "Tidak dapat menghapus model saat Mode Kiamat aktif. Nonaktifkan Mode Kiamat terlebih dahulu.",
     "st.display.apocalypse_mode.label": "Mode Apocalypse",
@@ -1197,6 +1234,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "menghapus",
     "ap.status.error": "kesalahan",
     "ap.models.text.title": "Model Teks",
+    "ap.models.text.lfm": "Model teks minimal",
+    "ap.models.text.bonsai": "Model teks dasar",
+    "ap.models.text.bonsai_warning": "Bonsai 27B membutuhkan GPU kelas atas (disarankan RAM/VRAM 16 GB+). LFM2.5 tetap tersedia jika mesin ini tidak dapat menampung Bonsai.",
     "ap.models.vision.title": "Model Visi",
     "ap.models.wikipedia.title": "Wikipedia Simple English",
     "ap.models.wikipedia.desc": "Diperlukan untuk pengaturan dasar offline. Arsip teks-saja yang lebih kecil ini dimulai secara otomatis dan memberi chat lokal referensi faktual yang ringkas.",
@@ -1220,6 +1260,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Memuat detail…"
   },
   "th": {
+    "ap.import.search_note": "ไฟล์ที่ดาวน์โหลดจากแคตตาล็อกรองรับการค้นหาข้อความเต็มเสมอ ไฟล์ที่คุณนำมาเองอาจรองรับเพียงการค้นหาจากชื่อเรื่อง เพราะไม่ใช่ทุกคลังที่เผยแพร่พร้อมดัชนีการค้นหา WebBrain จะตรวจสอบหลังนำเข้าและแจ้งให้คุณทราบว่าเป็นแบบใด",
     "ap.cannot_delete_while_enabled": "ไม่สามารถลบไฟล์เก็บถาวรได้ในขณะที่เปิดใช้งานโหมดวันสิ้นโลก โปรดปิดใช้งานโหมดวันสิ้นโลกก่อน",
     "ap.models.cannot_remove_while_enabled": "ไม่สามารถลบโมเดลได้ในขณะที่เปิดใช้งานโหมดวันสิ้นโลก โปรดปิดใช้งานโหมดวันสิ้นโลกก่อน",
     "st.display.apocalypse_mode.label": "โหมดอาคัปปอลิส",
@@ -1319,6 +1360,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "กำลังลบ",
     "ap.status.error": "ข้อผิดพลาด",
     "ap.models.text.title": "โมเดลข้อความ",
+    "ap.models.text.lfm": "โมเดลข้อความแบบน้อยสุด",
+    "ap.models.text.bonsai": "โมเดลข้อความพื้นฐาน",
+    "ap.models.text.bonsai_warning": "Bonsai 27B ต้องใช้ GPU ระดับสูง (แนะนำ RAM/VRAM 16 GB ขึ้นไป) หากเครื่องนี้รองรับ Bonsai ไม่ได้ ยังใช้ LFM2.5 ได้",
     "ap.models.vision.title": "โมเดลการมองเห็น",
     "ap.models.wikipedia.title": "วิกิพีเดีย Simple English",
     "ap.models.wikipedia.desc": "จำเป็นสำหรับการตั้งค่าแบบออฟไลน์ขั้นพื้นฐาน คลังข้อมูลแบบข้อความเท่านั้นขนาดเล็กกว่านี้จะเริ่มโดยอัตโนมัติและให้ข้อมูลอ้างอิงที่กระชับสำหรับการแชทในเครื่อง",
@@ -1342,6 +1386,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "กำลังโหลดรายละเอียด…"
   },
   "ms": {
+    "ap.import.search_note": "Muat turun daripada katalog sentiasa menyokong carian teks penuh. Fail yang anda sediakan sendiri mungkin hanya menyokong carian tajuk, kerana bukan setiap arkib diterbitkan dengan indeks carian. WebBrain menyemaknya selepas import dan memberitahu anda yang mana satu.",
     "ap.cannot_delete_while_enabled": "Tidak dapat memadamkan arkib semasa Mod Kiamat didayakan. Lumpuhkan Mod Kiamat terlebih dahulu.",
     "ap.models.cannot_remove_while_enabled": "Tidak dapat mengalih keluar model semasa Mod Kiamat didayakan. Lumpuhkan Mod Kiamat terlebih dahulu.",
     "st.display.apocalypse_mode.label": "Mod Apocalypse",
@@ -1441,6 +1486,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "memadam",
     "ap.status.error": "ralat",
     "ap.models.text.title": "Model Teks",
+    "ap.models.text.lfm": "Model teks minimum",
+    "ap.models.text.bonsai": "Model teks asas",
+    "ap.models.text.bonsai_warning": "Bonsai 27B memerlukan GPU berprestasi tinggi (RAM/VRAM 16 GB+ disyorkan). LFM2.5 kekal tersedia jika mesin ini tidak dapat menampung Bonsai.",
     "ap.models.vision.title": "Model Penglihatan",
     "ap.models.wikipedia.title": "Wikipedia Simple English",
     "ap.models.wikipedia.desc": "Diperlukan untuk penyediaan asas luar talian. Arkib teks sahaja yang lebih kecil ini dimulakan secara automatik dan memberi chat setempat rujukan fakta yang ringkas.",
@@ -1464,6 +1512,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Memuat butiran…"
   },
   "tl": {
+    "ap.import.search_note": "Ang mga download mula sa katalogo ay laging sumusuporta sa full-text search. Ang file na ikaw mismo ang nagbigay ay maaaring sumuporta lamang sa paghahanap ayon sa pamagat, dahil hindi lahat ng archive ay inilalabas na may search index. Sinusuri ito ng WebBrain pagkatapos mag-import at sasabihin sa iyo kung alin ang mayroon ka.",
     "ap.cannot_delete_while_enabled": "Hindi maaaring tanggalin ang archive habang naka-enable ang Apocalypse Mode. I-disable muna ang Apocalypse Mode.",
     "ap.models.cannot_remove_while_enabled": "Hindi maaaring alisin ang modelo habang naka-enable ang Apocalypse Mode. I-disable muna ang Apocalypse Mode.",
     "st.display.apocalypse_mode.label": "Modo Apocalypse",
@@ -1563,6 +1612,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "binubura",
     "ap.status.error": "may error",
     "ap.models.text.title": "Model ng Teksto",
+    "ap.models.text.lfm": "Minimal na text model",
+    "ap.models.text.bonsai": "Basic na text model",
+    "ap.models.text.bonsai_warning": "Kailangan ng Bonsai 27B ng high-end GPU (16 GB+ RAM/VRAM ang inirerekomenda). Available pa rin ang LFM2.5 kung hindi kayang hawakan ng machine na ito ang Bonsai.",
     "ap.models.vision.title": "Model ng Paningin",
     "ap.models.wikipedia.title": "Wikipedia sa Simple English",
     "ap.models.wikipedia.desc": "Kinakailangan para sa pangunahing offline na setup. Ang mas maliit na tekst-only na archive na ito ay awtomatikong magsisimula at magbibigay sa lokal na chat ng maikling sanggunian sa mga katotohanan.",
@@ -1586,6 +1638,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Naglo-load ng mga detalye…"
   },
   "pl": {
+    "ap.import.search_note": "Pliki pobrane z katalogu zawsze obsługują wyszukiwanie pełnotekstowe. Plik dodany przez Ciebie może obsługiwać tylko wyszukiwanie po tytułach, bo nie każde archiwum publikowane jest z indeksem wyszukiwania. WebBrain sprawdzi to po imporcie i powie, które masz.",
     "ap.cannot_delete_while_enabled": "Nie można usunąć archiwum, gdy tryb Apokalipsy jest włączony. Najpierw wyłącz tryb Apokalipsy.",
     "ap.models.cannot_remove_while_enabled": "Nie można usunąć modelu, gdy tryb Apokalipsy jest włączony. Najpierw wyłącz tryb Apokalipsy.",
     "st.display.apocalypse_mode.label": "Tryb apokalipsy",
@@ -1685,6 +1738,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "usuwanie",
     "ap.status.error": "błąd",
     "ap.models.text.title": "Model tekstowy",
+    "ap.models.text.lfm": "Minimalny model tekstowy",
+    "ap.models.text.bonsai": "Podstawowy model tekstowy",
+    "ap.models.text.bonsai_warning": "Bonsai 27B wymaga wydajnego GPU (zalecane 16 GB+ RAM/VRAM). LFM2.5 pozostaje dostępny, jeśli ten komputer nie pomieści Bonsai.",
     "ap.models.vision.title": "Model wizyjny",
     "ap.models.wikipedia.title": "Wikipedia w Simple English",
     "ap.models.wikipedia.desc": "Wymagane do podstawowej konfiguracji offline. To mniejsze archiwum tekstowe uruchamia się automatycznie i zapewnia lokalnemu czatowi zwięzłe źródło informacji.",
@@ -1708,6 +1764,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Ładowanie szczegółów…"
   },
   "he": {
+    "ap.import.search_note": "הורדות מהקטלוג תמיד תומכות בחיפוש בטקסט המלא. קובץ שאתם מוסיפים בעצמכם עשוי לתמוך רק בחיפוש לפי כותרת, כי לא כל ארכיון מתפרסם עם אינדקס חיפוש. WebBrain בודק זאת לאחר הייבוא ומודיע לכם מה יש לכם.",
     "ap.cannot_delete_while_enabled": "לא ניתן למחוק את הארכיון כאשר מצב אפוקליפסה מופעל. השבת תחילה את מצב אפוקליפסה.",
     "ap.models.cannot_remove_while_enabled": "לא ניתן להסיר את המודל כאשר מצב אפוקליפסה מופעל. השבת תחילה את מצב אפוקליפסה.",
     "st.display.apocalypse_mode.label": "מצב אפוקליפסה",
@@ -1807,6 +1864,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "מוחק",
     "ap.status.error": "שגיאה",
     "ap.models.text.title": "מודל טקסט",
+    "ap.models.text.lfm": "מודל טקסט מינימלי",
+    "ap.models.text.bonsai": "מודל טקסט בסיסי",
+    "ap.models.text.bonsai_warning": "Bonsai 27B דורש GPU מתקדם (מומלץ 16 GB+ RAM/VRAM). LFM2.5 נשאר זמין אם המחשב הזה לא יכול להחזיק את Bonsai.",
     "ap.models.vision.title": "מודל ראייה",
     "ap.models.wikipedia.title": "ויקיפדיה ב-Simple English",
     "ap.models.wikipedia.desc": "נדרש להגדרה הבסיסית ללא רשת. הארכיון הקטן הזה הכולל טקסט בלבד מתחיל אוטומטית ומספק לצ’אט המקומי ייחוס עובדתי קומפקטי.",
@@ -1830,6 +1890,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "טוען פרטים…"
   },
   "hi": {
+    "ap.import.search_note": "कैटलॉग से किए गए डाउनलोड हमेशा पूर्ण-पाठ खोज का समर्थन करते हैं। आपके द्वारा दी गई फ़ाइल शायद केवल शीर्षक खोज का समर्थन करे, क्योंकि हर संग्रह खोज सूचकांक के साथ प्रकाशित नहीं होता। WebBrain आयात के बाद जाँचकर बताता है कि आपके पास कौन-सा है।",
     "ap.cannot_delete_while_enabled": "सर्वनाश मोड सक्षम होने पर संग्रह को हटाया नहीं जा सकता। पहले सर्वनाश मोड को अक्षम करें।",
     "ap.models.cannot_remove_while_enabled": "सर्वनाश मोड सक्षम होने पर मॉडल को हटाया नहीं जा सकता। पहले सर्वनाश मोड को अक्षम करें।",
     "st.display.apocalypse_mode.label": "अपोकैलिप्स मोड",
@@ -1929,6 +1990,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "हटाना",
     "ap.status.error": "त्रुटि",
     "ap.models.text.title": "टेक्स्ट मॉडल",
+    "ap.models.text.lfm": "न्यूनतम टेक्स्ट मॉडल",
+    "ap.models.text.bonsai": "बेसिक टेक्स्ट मॉडल",
+    "ap.models.text.bonsai_warning": "Bonsai 27B को हाई-एंड GPU चाहिए (16 GB+ RAM/VRAM अनुशंसित)। अगर यह मशीन Bonsai नहीं चला सकती तो LFM2.5 उपलब्ध रहता है।",
     "ap.models.vision.title": "विज़न मॉडल",
     "ap.models.wikipedia.title": "Simple English विकिपीडिया",
     "ap.models.wikipedia.desc": "बुनियादी ऑफ़लाइन सेटअप के लिए आवश्यक। यह छोटा केवल-पाठ संग्रह अपने आप शुरू होता है और स्थानीय चैट को संक्षिप्त तथ्यात्मक संदर्भ देता है।",
@@ -1952,6 +2016,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "विवरण लोड हो रहे हैं…"
   },
   "pt": {
+    "ap.import.search_note": "Downloads do catálogo sempre oferecem busca em texto completo. Um arquivo que você mesmo fornece pode oferecer apenas busca por título, porque nem todo arquivo é publicado com um índice de busca. O WebBrain verifica após a importação e informa qual você tem.",
     "ap.cannot_delete_while_enabled": "Não é possível excluir o arquivo enquanto o Modo Apocalipse estiver ativado. Desative o Modo Apocalipse primeiro.",
     "ap.models.cannot_remove_while_enabled": "Não é possível remover o modelo enquanto o Modo Apocalipse estiver ativado. Desative o Modo Apocalipse primeiro.",
     "st.display.apocalypse_mode.label": "Modo Apocalipse",
@@ -2051,6 +2116,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "excluindo",
     "ap.status.error": "erro",
     "ap.models.text.title": "Modelo de texto",
+    "ap.models.text.lfm": "Modelo de texto mínimo",
+    "ap.models.text.bonsai": "Modelo de texto básico",
+    "ap.models.text.bonsai_warning": "O Bonsai 27B precisa de uma GPU de alto desempenho (recomendam-se 16 GB+ de RAM/VRAM). O LFM2.5 continua disponível se este computador não puder acomodar o Bonsai.",
     "ap.models.vision.title": "Modelo de visão",
     "ap.models.wikipedia.title": "Wikipedia em Simple English",
     "ap.models.wikipedia.desc": "Necessário para a configuração básica offline. Este arquivo menor, somente de texto, é iniciado automaticamente e dá ao chat local uma referência factual compacta.",
@@ -2074,6 +2142,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Carregando detalhes…"
   },
   "vi": {
+    "ap.import.search_note": "Các bản tải từ danh mục luôn hỗ trợ tìm kiếm toàn văn. Tệp bạn tự cung cấp có thể chỉ hỗ trợ tìm theo tiêu đề, vì không phải kho nào cũng được phát hành kèm chỉ mục tìm kiếm. WebBrain kiểm tra sau khi nhập và cho bạn biết bạn đang có loại nào.",
     "ap.cannot_delete_while_enabled": "Không thể xóa kho lưu trữ khi Chế độ Ngày tận thế đang bật. Vui lòng tắt Chế độ Ngày tận thế trước.",
     "ap.models.cannot_remove_while_enabled": "Không thể xóa mô hình khi Chế độ Ngày tận thế đang bật. Vui lòng tắt Chế độ Ngày tận thế trước.",
     "st.display.apocalypse_mode.label": "Chế độ Apocalypse",
@@ -2173,6 +2242,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "xóa",
     "ap.status.error": "lỗi",
     "ap.models.text.title": "Mô hình văn bản",
+    "ap.models.text.lfm": "Mô hình văn bản tối thiểu",
+    "ap.models.text.bonsai": "Mô hình văn bản cơ bản",
+    "ap.models.text.bonsai_warning": "Bonsai 27B cần GPU cao cấp (khuyến nghị RAM/VRAM 16 GB trở lên). LFM2.5 vẫn dùng được nếu máy này không chứa được Bonsai.",
     "ap.models.vision.title": "Mô hình thị giác",
     "ap.models.wikipedia.title": "Wikipedia Simple English",
     "ap.models.wikipedia.desc": "Cần thiết cho thiết lập ngoại tuyến cơ bản. Kho lưu trữ chỉ văn bản nhỏ hơn này tự động bắt đầu và cung cấp cho trò chuyện cục bộ một tài liệu tham khảo thực tế cô đọng.",
@@ -2196,6 +2268,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Đang tải chi tiết…"
   },
   "bn": {
+    "ap.import.search_note": "ক্যাটালগ থেকে ডাউনলোড করা সংরক্ষণাগার সবসময় পূর্ণ-পাঠ্য অনুসন্ধান সমর্থন করে। আপনার নিজের দেওয়া ফাইল কেবল শিরোনাম অনুসন্ধান সমর্থন করতে পারে, কারণ প্রতিটি সংরক্ষণাগার অনুসন্ধান সূচকসহ প্রকাশিত হয় না। WebBrain আমদানির পরে যাচাই করে জানায় আপনার কোনটি আছে।",
     "ap.cannot_delete_while_enabled": "অ্যাপোক্যালিপ্স মোড চালু থাকা অবস্থায় আর্কাইভ মুছে ফেলা যাবে না। প্রথমে অ্যাপোক্যালিপ্স মোড বন্ধ করুন।",
     "ap.models.cannot_remove_while_enabled": "অ্যাপোক্যালিপ্স মোড চালু থাকা অবস্থায় মডেল সরানো যাবে না। প্রথমে অ্যাপোক্যালিপ্স মোড বন্ধ করুন।",
     "st.display.apocalypse_mode.label": "অপক্যালিপস মোড",
@@ -2295,6 +2368,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "মুছে ফেলা হচ্ছে",
     "ap.status.error": "ত্রুটি",
     "ap.models.text.title": "টেক্সট মডেল",
+    "ap.models.text.lfm": "ন্যূনতম টেক্সট মডেল",
+    "ap.models.text.bonsai": "বেসিক টেক্সট মডেল",
+    "ap.models.text.bonsai_warning": "Bonsai 27B-এর জন্য হাই-এন্ড GPU লাগে (১৬ GB+ RAM/VRAM সুপারিশকৃত)। এই মেশিন Bonsai ধরে রাখতে না পারলে LFM2.5 পাওয়া যায়।",
     "ap.models.vision.title": "ভিশন মডেল",
     "ap.models.wikipedia.title": "Simple English উইকিপিডিয়া",
     "ap.models.wikipedia.desc": "মৌলিক অফলাইন সেটআপের জন্য প্রয়োজন। এই ছোট, শুধু-টেক্সট আর্কাইভটি স্বয়ংক্রিয়ভাবে শুরু হয় এবং লোকাল চ্যাটকে একটি সংক্ষিপ্ত তথ্যভিত্তিক রেফারেন্স দেয়।",
@@ -2318,6 +2394,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "বিবরণ লোড হচ্ছে…"
   },
   "fa": {
+    "ap.import.search_note": "دانلودها از فهرست همیشه از جست‌وجوی تمام‌متن پشتیبانی می‌کنند. فایلی که خودتان اضافه می‌کنید ممکن است فقط از جست‌وجوی عنوان پشتیبانی کند، چون هر آرشیوی با نمایهٔ جست‌وجو منتشر نمی‌شود. WebBrain پس از درون‌ریزی بررسی می‌کند و به شما می‌گوید کدام را دارید.",
     "ap.cannot_delete_while_enabled": "در زمان فعال بودن حالت آخرالزمان نمی‌توان بایگانی را حذف کرد. ابتدا حالت آخرالزمان را غیرفعال کنید.",
     "ap.models.cannot_remove_while_enabled": "در زمان فعال بودن حالت آخرالزمان نمی‌توان مدل را حذف کرد. ابتدا حالت آخرالزمان را غیرفعال کنید.",
     "st.display.apocalypse_mode.label": "حالت Apocalypse",
@@ -2417,6 +2494,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "در حال حذف",
     "ap.status.error": "خطا",
     "ap.models.text.title": "مدل متن",
+    "ap.models.text.lfm": "مدل متن حداقلی",
+    "ap.models.text.bonsai": "مدل متن پایه",
+    "ap.models.text.bonsai_warning": "Bonsai 27B به GPU سطح بالا نیاز دارد (۱۶ گیگابایت یا بیشتر RAM/VRAM توصیه می‌شود). اگر این دستگاه نتواند Bonsai را نگه دارد، LFM2.5 در دسترس می‌ماند.",
     "ap.models.vision.title": "مدل بینایی",
     "ap.models.wikipedia.title": "ویکی‌پدیا به زبان Simple English",
     "ap.models.wikipedia.desc": "برای راه‌اندازی اولیه آفلاین لازم است. این آرشیو کوچک‌تر فقط متنی، به‌طور خودکار شروع می‌شود و مرجع واقعی فشرده‌ای به چت محلی می‌دهد.",
@@ -2440,6 +2520,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "در حال بارگذاری جزئیات…"
   },
   "nl": {
+    "ap.import.search_note": "Downloads uit de catalogus ondersteunen altijd zoeken in de volledige tekst. Een bestand dat je zelf aanlevert ondersteunt mogelijk alleen zoeken op titel, want niet elk archief wordt met een zoekindex gepubliceerd. WebBrain controleert dat na het importeren en laat weten wat je hebt.",
     "ap.cannot_delete_while_enabled": "Kan archief niet verwijderen zolang Apocalypsmodus is ingeschakeld. Schakel eerst Apocalypsmodus uit.",
     "ap.models.cannot_remove_while_enabled": "Kan model niet verwijderen zolang Apocalypsmodus is ingeschakeld. Schakel eerst Apocalypsmodus uit.",
     "st.display.apocalypse_mode.label": "Apocalypsmodus",
@@ -2539,6 +2620,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "verwijderen",
     "ap.status.error": "fout",
     "ap.models.text.title": "Tekstmodel",
+    "ap.models.text.lfm": "Minimaal tekstmodel",
+    "ap.models.text.bonsai": "Basis tekstmodel",
+    "ap.models.text.bonsai_warning": "Bonsai 27B heeft een high-end GPU nodig (16 GB+ RAM/VRAM aanbevolen). LFM2.5 blijft beschikbaar als deze machine Bonsai niet aankan.",
     "ap.models.vision.title": "Visiemodel",
     "ap.models.wikipedia.title": "Wikipedia in het Simple English",
     "ap.models.wikipedia.desc": "Vereist voor de basisinstallatie offline. Dit kleinere archief met alleen tekst start automatisch en geeft de lokale chat een compact feitelijk naslagwerk.",
@@ -2562,6 +2646,7 @@ const apocalypseModeTranslations = {
     "ap.review_loading": "Details laden…"
   },
   "de": {
+    "ap.import.search_note": "Downloads aus dem Katalog unterstützen immer die Volltextsuche. Eine Datei, die du selbst mitbringst, unterstützt möglicherweise nur die Titelsuche, denn nicht jedes Archiv wird mit einem Suchindex veröffentlicht. WebBrain prüft das nach dem Import und sagt dir, was du hast.",
     "ap.cannot_delete_while_enabled": "Archiv kann nicht gelöscht werden, während der Apokalypse-Modus aktiviert ist. Deaktivieren Sie zuerst den Apokalypse-Modus.",
     "ap.models.cannot_remove_while_enabled": "Modell kann nicht entfernt werden, während der Apokalypse-Modus aktiviert ist. Deaktivieren Sie zuerst den Apokalypse-Modus.",
     "st.display.apocalypse_mode.label": "Apokalypse-Modus",
@@ -2661,6 +2746,9 @@ const apocalypseModeTranslations = {
     "ap.status.deleting": "löschen",
     "ap.status.error": "fehler",
     "ap.models.text.title": "Textmodell",
+    "ap.models.text.lfm": "Minimales Textmodell",
+    "ap.models.text.bonsai": "Basis-Textmodell",
+    "ap.models.text.bonsai_warning": "Bonsai 27B braucht eine High-End-GPU (16 GB+ RAM/VRAM empfohlen). LFM2.5 bleibt verfügbar, falls dieser Rechner Bonsai nicht halten kann.",
     "ap.models.vision.title": "Bildmodell",
     "ap.models.wikipedia.title": "Wikipedia auf Simple English",
     "ap.models.wikipedia.desc": "Für die grundlegende Offline-Einrichtung erforderlich. Dieses kleinere reine Textarchiv startet automatisch und gibt dem lokalen Chat eine kompakte sachliche Referenz.",

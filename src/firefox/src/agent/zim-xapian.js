@@ -1,16 +1,17 @@
 /**
- * License-gated Xapian search boundary for installed Wikipedia ZIM archives.
+ * Xapian search boundary for installed Wikipedia ZIM archives.
  *
- * No runtime is loaded or downloaded here. An approved, extension-bundled worker
- * must supply the small runtime facade documented in docs/offline-rag-licensing.md.
+ * The GPL worker is vendored under vendor/libzim/. This file stays
+ * license-neutral: it opens a session, normalizes snippets, and falls back to
+ * title lookup when the archive has no index or the worker fails.
  */
 
 export const JAVASCRIPT_LIBZIM_VERSION = '0.95';
 export const JAVASCRIPT_LIBZIM_COMMIT = '470b36920fba421a4c1a83b326e66d8aa0533870';
 export const LIBZIM_VERSION = '9.8.1';
 export const XAPIAN_VERSION = '1.4.31';
-export const ZIM_XAPIAN_DISTRIBUTION_STATUS = 'blocked-pending-owner-license-decision';
-export const ZIM_XAPIAN_RUNTIME_BUNDLED = false;
+export const ZIM_XAPIAN_DISTRIBUTION_STATUS = 'bundled-from-source';
+export const ZIM_XAPIAN_RUNTIME_BUNDLED = true;
 
 const MAX_RESULTS_PER_ARCHIVE = 10;
 const MAX_EXCERPT_CHARS = 4_000;
@@ -23,6 +24,14 @@ function supportsWikipediaRecord(record) {
 function boundedLimit(value) {
   const number = Number.parseInt(String(value || ''), 10);
   return Math.max(1, Math.min(MAX_RESULTS_PER_ARCHIVE, Number.isSafeInteger(number) ? number : MAX_RESULTS_PER_ARCHIVE));
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Offline full-text search was canceled.');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function decodeEntity(_match, numeric, named) {
@@ -116,6 +125,7 @@ export function createZimXapianProvider(options = {}) {
     async search(record, queryValue, searchOptions = {}) {
       const query = String(queryValue || '').trim();
       if (!query) return [];
+      throwIfAborted(searchOptions.signal);
       if (!runtime?.openArchive) {
         return await fallback(record, query, searchOptions, 'runtime-not-bundled');
       }
@@ -127,7 +137,7 @@ export function createZimXapianProvider(options = {}) {
           ? await storage.open(record.target)
           : await record?.target?.handle?.getFile?.();
         if (!source) throw new Error('The installed archive could not be opened for Xapian search.');
-        session = await runtime.openArchive({ source, record });
+        session = await runtime.openArchive({ source, record, signal: searchOptions.signal });
         if (typeof session?.hasFullTextIndex !== 'function' || !await session.hasFullTextIndex()) {
           delegatedToFallback = true;
           return await fallback(record, query, searchOptions, 'full-text-index-missing');
@@ -139,10 +149,13 @@ export function createZimXapianProvider(options = {}) {
         const results = await session.searchWithSnippets(query, {
           limit,
           language: String(record.language || ''),
+          signal: searchOptions.signal,
         });
         statusReporter(searchOptions.onSearchStatus || options.onStatus, record)('xapian-full-text');
         return normalizeXapianResults(results, record, { limit });
       } catch (error) {
+        if (searchOptions.signal?.aborted) throwIfAborted(searchOptions.signal);
+        if (error?.name === 'AbortError') throw error;
         if (delegatedToFallback) throw error;
         return await fallback(record, query, searchOptions, 'xapian-runtime-error', error);
       } finally {

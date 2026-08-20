@@ -44,14 +44,14 @@ KEY FEATURES:
 • Per-tab conversations — separate chat history for each tab
 • Page inspection indicator — see when the agent is analyzing a page
 • Dark mode support
-• Open source (MIT License)
+• Open source (GPL-3.0-or-later for version 33.0.0 and later)
 
 PRIVACY & SECURITY:
 WebBrain runs entirely in your browser. Your API keys are stored locally and never sent to any third-party server. All communication goes directly between your browser and your chosen AI provider. The full source code is available on GitHub for audit.
 
 Website: https://webbrain.one
 GitHub: https://github.com/webbrain-one/webbrain
-License: MIT
+License: GPL-3.0-or-later (version 33.0.0 and later; earlier releases remain MIT-licensed)
 Author: Emre Sokullu
 
 CATEGORY: Productivity

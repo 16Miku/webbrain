@@ -10,11 +10,15 @@ import {
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
+  WEBGPU_RUNTIME_BITGPU,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   webgpuModelDisplayName,
+  webgpuModelDtype,
+  webgpuModelPreset,
+  webgpuModelRuntime,
 } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
@@ -1274,17 +1278,21 @@ export class ProviderManager {
     return provider;
   }
 
-  async getWebgpuDownloadStatus() {
-    return this._webgpuProvider().downloadStatus();
+  async getWebgpuDownloadStatus(msg = {}) {
+    return this._webgpuProvider().downloadStatus(msg);
   }
 
-  /** Configure the fixed Apocalypse text model and start or resume its cache fill. */
+  /** Configure a shipped Apocalypse text preset and start LFM's cache fill. */
   async enableAndStartWebgpuTextDownload() {
     try {
+      const currentModel = this.getAll().webgpu?.model;
+      const preset = webgpuModelPreset(currentModel);
+      const model = preset?.id || WEBGPU_MODEL_ID;
+      const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
       await this.updateProvider('webgpu', {
-        model: WEBGPU_MODEL_ID,
-        dtype: WEBGPU_DTYPE,
-        contextWindow: 16384,
+        model,
+        dtype,
+        contextWindow: preset?.contextWindow || 16384,
         promptTier: 'compact',
       });
       const provider = this._webgpuProvider();
@@ -1293,6 +1301,10 @@ export class ProviderManager {
 
       const status = await provider.downloadStatus();
       if (status.ready === true || ['downloading', 'stopping'].includes(status.status)) {
+        return { ...status, ok: true, started: false };
+      }
+      // Bonsai is opt-in and too large to start from Apocalypse enable.
+      if (webgpuModelRuntime(model) === WEBGPU_RUNTIME_BITGPU) {
         return { ...status, ok: true, started: false };
       }
 
@@ -1307,16 +1319,16 @@ export class ProviderManager {
     }
   }
 
-  async startWebgpuDownload() {
-    return this._webgpuProvider().startDownload();
+  async startWebgpuDownload(msg) {
+    return this._webgpuProvider().startDownload(msg);
   }
 
   async pauseWebgpuDownload() {
     return this._webgpuProvider().pauseDownload();
   }
 
-  async stopWebgpuDownload() {
-    return this._webgpuProvider().stopDownload();
+  async stopWebgpuDownload(msg) {
+    return this._webgpuProvider().stopDownload(msg);
   }
 
   /**

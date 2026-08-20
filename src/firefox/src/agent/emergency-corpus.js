@@ -26,6 +26,7 @@ export const MAX_EMERGENCY_INDEX_BYTES = 2 * 1024 * 1024 * 1024;
 export const MAX_EMERGENCY_MANIFEST_BYTES = 4 * 1024 * 1024;
 export const MAX_EMERGENCY_EXTRACTED_BYTES = 4 * 1024 * 1024 * 1024;
 export const MAX_EMERGENCY_ZIP_ENTRIES = 10_000;
+const CORPUS_PROGRESS_INTERVAL_MS = 400;
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SAFE_KEY_RE = /^[a-z0-9][a-z0-9._-]{0,199}$/;
@@ -178,6 +179,13 @@ export async function hashBlobSha256(blob, options = {}) {
   const hasher = createStreamingSha256();
   const reader = blob.stream().getReader();
   let bytesRead = 0;
+  let lastProgressAt = 0;
+  const reportProgress = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastProgressAt < CORPUS_PROGRESS_INTERVAL_MS) return;
+    lastProgressAt = now;
+    options.onProgress?.({ phase: 'verifying', bytesReceived: bytesRead, totalBytes: blob.size });
+  };
   try {
     while (true) {
       throwIfAborted(signal);
@@ -185,11 +193,12 @@ export async function hashBlobSha256(blob, options = {}) {
       if (done) break;
       hasher.update(value);
       bytesRead += value.byteLength;
-      options.onProgress?.({ phase: 'verifying', bytesReceived: bytesRead, totalBytes: blob.size });
+      reportProgress();
     }
   } finally {
     try { reader.releaseLock(); } catch { /* reader may already be released */ }
   }
+  reportProgress(true);
   return hasher.digestHex();
 }
 
@@ -286,6 +295,53 @@ function baseRecord(previous = {}) {
     staging: null,
     error: '',
     ...previous,
+  };
+}
+
+export function isEmergencyCorpusRecord(value) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && value.id === EMERGENCY_CORPUS_ID
+    && typeof value.status === 'string'
+    && value.status,
+  );
+}
+
+export function mergeEmergencyCorpusProgress(current, patch) {
+  if (isEmergencyCorpusRecord(patch)) return patch;
+  if (!patch || typeof patch !== 'object') return current;
+  const staging = current?.staging && typeof current.staging === 'object'
+    ? { ...current.staging }
+    : {};
+  const phase = String(patch.phase || '').trim();
+  if (phase) staging.phase = phase;
+  const downloading = current?.status === 'downloading';
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === 'phase') continue;
+    // Hash/extract ticks reuse bytesReceived; keep the completed archive size
+    // on the progress bar after the network transfer finishes.
+    if (!downloading && (key === 'bytesReceived' || key === 'totalBytes')) continue;
+    staging[key] = value;
+  }
+  return baseRecord({
+    ...current,
+    staging,
+    updatedAt: Date.now(),
+  });
+}
+
+function bindCorpusProgress(getCurrent, setCurrent, onProgress) {
+  let lastEmittedAt = 0;
+  return (patch) => {
+    const next = mergeEmergencyCorpusProgress(getCurrent(), patch);
+    setCurrent(next);
+    const force = isEmergencyCorpusRecord(patch);
+    const now = Date.now();
+    if (!force && now - lastEmittedAt < CORPUS_PROGRESS_INTERVAL_MS) return next;
+    lastEmittedAt = now;
+    onProgress?.(next);
+    return next;
   };
 }
 
@@ -535,6 +591,11 @@ async function verifyDownloadedArchive(descriptor, archiveKey, storage, options 
 async function downloadEmergencyCorpusArchive(descriptor, options) {
   const { store, storage, fetchImpl, signal, onProgress } = options;
   let current = baseRecord(await store.get() || {});
+  const reportProgress = bindCorpusProgress(
+    () => current,
+    next => { current = next; },
+    onProgress,
+  );
   const archiveKey = archiveKeyForDescriptor(descriptor);
   const matchingStaging = current.staging?.archiveKey === archiveKey
     && current.staging?.url === descriptor.url
@@ -558,7 +619,7 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
     phase: 'downloading',
     startedAt: matchingStaging ? current.staging.startedAt || Date.now() : Date.now(),
   };
-  current = await persistState(store, current, { status: 'downloading', staging, error: '' }, onProgress);
+  current = await persistState(store, current, { status: 'downloading', staging, error: '' }, reportProgress);
 
   let writer;
   let response;
@@ -580,12 +641,12 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
     if (offset === descriptor.downloadBytes) {
       current = await persistState(store, current, {
         status: 'verifying', staging: { ...staging, phase: 'verifying' },
-      }, onProgress);
-      await verifyDownloadedArchive(descriptor, archiveKey, storage, { signal, onProgress });
+      }, reportProgress);
+      await verifyDownloadedArchive(descriptor, archiveKey, storage, { signal, onProgress: reportProgress });
       return await persistState(store, current, {
         status: 'downloaded',
         staging: { ...staging, phase: 'downloaded', bytesReceived: descriptor.downloadBytes, verifiedAt: Date.now() },
-      }, onProgress);
+      }, reportProgress);
     }
     response = await fetchResponse(offset > 0
       ? { Range: `bytes=${offset}-`, 'If-Range': committedValidator }
@@ -638,9 +699,9 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
       const now = Date.now();
       if (now - lastPersistedAt >= 500) {
         lastPersistedAt = now;
-        current = await persistState(store, current, { status: 'downloading', staging: progress }, onProgress);
+        current = await persistState(store, current, { status: 'downloading', staging: progress }, reportProgress);
       } else {
-        onProgress(baseRecord({ ...current, status: 'downloading', staging: progress }));
+        reportProgress(baseRecord({ ...current, status: 'downloading', staging: progress }));
       }
     }
     if (offset !== descriptor.downloadBytes) {
@@ -653,8 +714,8 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
     current = await persistState(store, current, {
       status: 'verifying',
       staging: { ...staging, bytesReceived: offset, ifRangeValidator: committedValidator, phase: 'verifying' },
-    }, onProgress);
-    await verifyDownloadedArchive(descriptor, archiveKey, storage, { signal, onProgress });
+    }, reportProgress);
+    await verifyDownloadedArchive(descriptor, archiveKey, storage, { signal, onProgress: reportProgress });
     return await persistState(store, current, {
       status: 'downloaded',
       staging: {
@@ -664,7 +725,7 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
         phase: 'downloaded',
         verifiedAt: Date.now(),
       },
-    }, onProgress);
+    }, reportProgress);
   } catch (error) {
     try { await reader?.cancel?.(error); } catch { /* preserve original error */ }
     if (writer) {
@@ -691,7 +752,7 @@ async function downloadEmergencyCorpusArchive(descriptor, options) {
         ifRangeValidator: paused ? committedValidator : '',
         phase: paused ? 'downloading' : 'error',
       },
-    }, onProgress);
+    }, reportProgress);
     if (!paused) throw error;
     return current;
   }
@@ -741,6 +802,15 @@ export async function extractEmergencyCorpusArchive(archive, options = {}) {
   let manifestBytes = null;
   let extractionError = null;
   let entriesExtracted = 0;
+  let lastProgressAt = 0;
+  const reportExtractProgress = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastProgressAt < CORPUS_PROGRESS_INTERVAL_MS) return;
+    lastProgressAt = now;
+    options.onProgress?.({
+      phase: 'extracting', entriesExtracted, extractedBytes, archiveBytes: archive.size,
+    });
+  };
 
   const unzip = new fflate.Unzip(file => {
     let name;
@@ -792,9 +862,7 @@ export async function extractEmergencyCorpusArchive(archive, options = {}) {
           pendingWrites.push(storage.writeInstallFile(installId, name, bytes));
         }
         entriesExtracted += 1;
-        options.onProgress?.({
-          phase: 'extracting', entriesExtracted, extractedBytes, archiveBytes: archive.size,
-        });
+        reportExtractProgress();
       }
     };
     try { file.start(); }
@@ -818,6 +886,7 @@ export async function extractEmergencyCorpusArchive(archive, options = {}) {
     }
     if (pendingWrites.length) await Promise.all(pendingWrites.splice(0));
     if (extractionError) throw extractionError;
+    reportExtractProgress(true);
   } finally {
     try { reader.releaseLock(); } catch { /* reader may already be released */ }
   }
@@ -884,6 +953,11 @@ function validateIndexResult(value, expectedPath = '') {
 async function installEmergencyCorpusUnlocked(descriptor, options) {
   const { store, storage, signal, onProgress } = options;
   let current = baseRecord(await store.get() || {});
+  const reportProgress = bindCorpusProgress(
+    () => current,
+    next => { current = next; },
+    onProgress,
+  );
   const archiveKey = archiveKeyForDescriptor(descriptor);
   if (
     current.staging?.archiveKey !== archiveKey
@@ -892,7 +966,6 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
   ) {
     throw new Error('The verified Emergency Box text pack must be downloaded before installation.');
   }
-  const archive = await verifyDownloadedArchive(descriptor, archiveKey, storage, { signal, onProgress });
   const installId = safeKey(
     options.installId || `${descriptor.version}-${descriptor.archiveSha256.slice(0, 12)}-${Date.now().toString(36)}`,
     'install id',
@@ -900,13 +973,19 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
   const indexPath = `sqlite/${installId}.sqlite3`;
   const previousActive = current.active;
   await storage.deleteInstall(installId).catch(() => {});
+  // Mark extracting before the second archive hash. That hash takes seconds and
+  // used to keep status at "downloaded" while progress ticks had no status, so
+  // the UI flipped between not installed and downloaded.
   current = await persistState(store, current, {
     status: 'extracting', error: '',
     staging: { ...current.staging, phase: 'extracting', installId, indexPath },
-  }, onProgress);
+  }, reportProgress);
   try {
+    const archive = await verifyDownloadedArchive(descriptor, archiveKey, storage, {
+      signal, onProgress: reportProgress,
+    });
     const extracted = await (options.extractArchive || extractEmergencyCorpusArchive)(archive, {
-      storage, installId, signal, onProgress, fflate: options.fflate,
+      storage, installId, signal, onProgress: reportProgress, fflate: options.fflate,
     });
     if (extracted.manifest.version !== descriptor.version) {
       throw new Error(`Emergency Box manifest version ${extracted.manifest.version} does not match descriptor ${descriptor.version}.`);
@@ -920,12 +999,12 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
         ...current.staging, phase: 'indexing', installId, indexPath,
         manifest: extracted.manifest,
       },
-    }, onProgress);
+    }, reportProgress);
     if (typeof options.buildIndex !== 'function') {
       throw new Error('Emergency Box SQLite indexer is unavailable.');
     }
     const index = validateIndexResult(await options.buildIndex({
-      manifest: extracted.manifest, installId, indexPath, storage, signal, onProgress,
+      manifest: extracted.manifest, installId, indexPath, storage, signal, onProgress: reportProgress,
     }), indexPath);
     throwIfAborted(signal);
     const activatedAt = Date.now();
@@ -946,7 +1025,7 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
     });
     current = await persistState(store, current, {
       status: 'ready', active, staging: null, error: '',
-    }, onProgress);
+    }, reportProgress);
     if (previousActive?.installId && previousActive.installId !== installId) {
       await storage.deleteInstall(previousActive.installId).catch(() => {});
     }
@@ -970,7 +1049,7 @@ async function installEmergencyCorpusUnlocked(descriptor, options) {
         phase: 'downloaded',
         manifest: null,
       },
-    }, onProgress);
+    }, reportProgress);
     if (!paused) throw error;
     return current;
   }

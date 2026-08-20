@@ -414,6 +414,12 @@ function normalizedTitleTerms(value) {
   return String(value || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
 }
 
+// Where Kiwix stores the Xapian full-text index, newest ZIM layout first.
+export const ZIM_FULL_TEXT_INDEX_ENTRIES = Object.freeze([
+  Object.freeze({ namespace: 'X', path: 'fulltext/xapian' }),
+  Object.freeze({ namespace: 'Z', path: '/fulltextIndex/xapian' }),
+]);
+
 export function rankZimTitleCandidates(candidates, query, limit = 3) {
   const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
   const queryTerms = normalizedTitleTerms(query);
@@ -666,15 +672,37 @@ export async function openKiwixZim(source, metadata = {}) {
   const provenance = mergeZimProvenance(metadata, embedded);
   const imagesIncluded = wikipediaArchiveIncludesImages(metadata, embedded);
 
+  // Kiwix bakes a Xapian full-text index into most ZIMs as an ordinary entry, so
+  // WebBrain's own reader can tell whether one is present without loading any
+  // search runtime. libzim 0.95 exposes no equivalent check and its search()
+  // swallows the error, which makes "this archive has no index" indistinguishable
+  // from "nothing matched". Probing here keeps that distinction honest and lets
+  // callers skip a runtime they would only fall back from.
+  let fullTextIndexPromise = null;
+  async function hasFullTextIndex() {
+    if (!fullTextIndexPromise) {
+      fullTextIndexPromise = (async () => {
+        for (const target of ZIM_FULL_TEXT_INDEX_ENTRIES) {
+          const found = await findPaths(target.path, 1, target.namespace, { includeAssets: true });
+          if (found.some(entry => entry.url === target.path)) return true;
+        }
+        return false;
+      })().catch(() => false);
+    }
+    return await fullTextIndexPromise;
+  }
+
   async function search(query, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit) || 3));
     const results = [];
     const locatedCandidates = [];
     const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
-    for (const path of queryPaths(query)) {
-      const located = await findPaths(path, Math.max(24, limit * 8));
-      locatedCandidates.push(...located);
-      if (located.some(entry => String(entry.url || '').toLowerCase() === normalizedQuery)) break;
+    for (const namespace of ['C', 'A']) {
+      for (const path of queryPaths(query)) {
+        const located = await findPaths(path, Math.max(24, limit * 8), namespace);
+        locatedCandidates.push(...located);
+        if (located.some(entry => String(entry.url || '').toLowerCase() === normalizedQuery)) break;
+      }
     }
     const resolvedCandidates = [];
     for (const located of locatedCandidates) {
@@ -687,7 +715,8 @@ export async function openKiwixZim(source, metadata = {}) {
         : entry);
     }
     for (const entry of rankZimTitleCandidates(resolvedCandidates, query, limit)) {
-      if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) continue;
+      if (!entry || !['C', 'A'].includes(entry.namespace)
+        || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) continue;
       const bytes = await clusterBlob(entry.clusterIndex, entry.blobIndex);
       const excerpt = relevantPassage(decodeHtmlText(new TextDecoder().decode(bytes)), query);
       if (!excerpt) continue;
@@ -706,12 +735,24 @@ export async function openKiwixZim(source, metadata = {}) {
   async function readArticle(path, options = {}) {
     const normalizedPath = String(path || '').trim().replace(/^\/+/, '').replace(/\s+/g, '_');
     if (!normalizedPath) throw new Error('Choose a Wikipedia article to read.');
-    const located = (await findPaths(normalizedPath, 1))[0];
-    if (!located || located.url !== normalizedPath) throw new Error('The selected article is not present in this archive.');
-    const entry = await resolvedEntry(located);
-    if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) {
-      throw new Error('The selected archive entry is not a readable text article.');
+    let located = null;
+    let entry = null;
+    let exactEntryFound = false;
+    // New ZIMs store articles in C; archives using the legacy
+    // Z//fulltextIndex/xapian layout store their matching article paths in A.
+    for (const namespace of ['C', 'A']) {
+      const candidate = (await findPaths(normalizedPath, 1, namespace))[0];
+      if (!candidate || candidate.url !== normalizedPath) continue;
+      exactEntryFound = true;
+      const resolved = await resolvedEntry(candidate);
+      if (!resolved || !['C', 'A'].includes(resolved.namespace)
+        || !String(mimeTypes[resolved.mimeType] || '').startsWith('text/html')) continue;
+      located = candidate;
+      entry = resolved;
+      break;
     }
+    if (!exactEntryFound) throw new Error('The selected article is not present in this archive.');
+    if (!located || !entry) throw new Error('The selected archive entry is not a readable text article.');
     const maxChars = Math.max(2_000, Math.min(500_000, Number(options.maxChars) || 250_000));
     const maxHtmlChars = Math.max(8_000, Math.min(2_000_000, Number(options.maxHtmlChars) || 1_000_000));
     const unsafeHtml = new TextDecoder().decode(await clusterBlob(entry.clusterIndex, entry.blobIndex));
@@ -749,7 +790,7 @@ export async function openKiwixZim(source, metadata = {}) {
     return { path: located.url, mimeType, byteLength: bytes.byteLength, bytes: bytes.slice() };
   }
 
-  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, search, readArticle, readImage };
+  return { articleCount, clusterCount, metadata: provenance, embeddedMetadata: embedded, imagesIncluded, hasFullTextIndex, search, readArticle, readImage };
 }
 
 const APOCALYPSE_DB_NAME = 'webbrain_apocalypse_mode';
@@ -917,11 +958,125 @@ async function putArchiveIfCurrent(store, record, expected) {
   return true;
 }
 
+function archiveWriterWorkerUrl() {
+  try {
+    return new URL('./archive-opfs-writer-worker.js', import.meta.url);
+  } catch {
+    return null;
+  }
+}
+
+function createArchiveWriterClient(worker) {
+  let nextId = 1;
+  const pending = new Map();
+  worker.addEventListener('message', (event) => {
+    const { id, ok, error } = event.data || {};
+    const waiter = pending.get(id);
+    if (!waiter) return;
+    pending.delete(id);
+    if (ok) waiter.resolve();
+    else waiter.reject(new Error(error || 'Archive writer failed.'));
+  });
+  worker.addEventListener('error', (event) => {
+    const error = new Error(event?.message || 'Archive writer crashed.');
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  });
+  return {
+    request(type, payload, transfer) {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, type, payload }, transfer || []);
+      });
+    },
+    terminate() {
+      try { worker.terminate(); } catch { /* already gone */ }
+      for (const waiter of pending.values()) waiter.reject(new Error('Archive writer closed.'));
+      pending.clear();
+    },
+  };
+}
+
+function transferablePiece(bytes) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const copy = view.slice();
+  return { bytes: copy.buffer, transfer: [copy.buffer] };
+}
+
+/**
+ * Chrome writes `FileSystemWritableFileStream` data to a sibling `.crswap`
+ * file and only renames it into place on close(). A stream that is never
+ * closed — the MV3 service worker was torn down mid-write, the tab went away,
+ * the download was cancelled — leaks its swap file, and OPFS never reclaims
+ * it. With `keepExistingData: true` each swap is a full copy of the archive,
+ * so a multi-GB ZIM can leak hundreds of GB across repeated wakes.
+ */
+export const OPFS_SWAP_SUFFIX = '.crswap';
+
+/** Every OPFS bucket this extension writes large files into. */
+export const OPFS_ARCHIVE_DIRECTORIES = Object.freeze([
+  ARCHIVE_DIRECTORY,
+  'webbrain-emergency-box',
+  'webbrain-offline-rag',
+  'webbrain-webgpu-models',
+]);
+
+/**
+ * Delete orphaned `.crswap` files from the given OPFS buckets.
+ * Swap files still held open by a live writer fail to unlink and are skipped,
+ * so this is safe to run while a download is in flight.
+ */
+export async function sweepOpfsSwapFiles(
+  directories = OPFS_ARCHIVE_DIRECTORIES,
+  storageManager = globalThis.navigator?.storage,
+) {
+  if (typeof storageManager?.getDirectory !== 'function') return { removed: 0, bytes: 0 };
+  let root;
+  try { root = await storageManager.getDirectory(); }
+  catch { return { removed: 0, bytes: 0 }; }
+  let removed = 0;
+  let bytes = 0;
+  for (const name of directories) {
+    let dir;
+    try { dir = await root.getDirectoryHandle(name, { create: false }); }
+    catch { continue; }
+    // Collect first: removing entries while iterating the directory is undefined.
+    const stale = [];
+    try {
+      for await (const [entryName, handle] of dir.entries()) {
+        if (handle?.kind === 'file' && entryName.endsWith(OPFS_SWAP_SUFFIX)) stale.push([entryName, handle]);
+      }
+    } catch { continue; }
+    for (const [entryName, handle] of stale) {
+      let size = 0;
+      try { size = (await handle.getFile()).size; } catch { /* size is best effort */ }
+      try {
+        await dir.removeEntry(entryName);
+        removed += 1;
+        bytes += size;
+      } catch { /* still open by a live writer — leave it for the next sweep */ }
+    }
+  }
+  return { removed, bytes };
+}
+
+/**
+ * Above this size the non-durable streaming fallback is refused outright.
+ * That path reopens `createWritable({ keepExistingData: true })` once per
+ * service-worker wake, and Chrome copies the whole file into a fresh swap
+ * each time — quadratic in bytes written and unbounded in disk use.
+ */
+export const STREAMING_FALLBACK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
 export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.storage) {
   async function directory(create = true) {
     if (typeof storageManager?.getDirectory !== 'function') throw new Error('Origin Private File System storage is unavailable in this browser.');
     const root = await storageManager.getDirectory();
     return await root.getDirectoryHandle(ARCHIVE_DIRECTORY, { create });
+  }
+  async function sweepSwapFiles() {
+    return await sweepOpfsSwapFiles([ARCHIVE_DIRECTORY], storageManager);
   }
   async function fileHandle(target, create = false, mode = 'read') {
     if (target?.kind === 'file-handle' && target.handle) {
@@ -940,42 +1095,129 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     if (target?.kind !== 'opfs') throw new Error('Unsupported archive storage target.');
     return await (await directory(create)).getFileHandle(safeArchiveKey(target.key), { create });
   }
-  return {
+  let syncClient = null;
+  let syncWriterKey = '';
+  let syncWriter = null;
+
+  async function closeSyncWriter() {
+    const writer = syncWriter;
+    syncWriter = null;
+    syncWriterKey = '';
+    if (!writer) return;
+    try { await writer.close(); } catch { /* already closed */ }
+  }
+
+  async function openSyncWriter(target) {
+    const key = safeArchiveKey(target.key);
+    if (syncWriter && syncWriterKey === key) return syncWriter;
+    await closeSyncWriter();
+    if (typeof Worker !== 'function') throw new Error('Dedicated archive writer workers are unavailable.');
+    const url = archiveWriterWorkerUrl();
+    if (!url) throw new Error('The dedicated archive writer worker is unavailable.');
+    if (!syncClient) syncClient = createArchiveWriterClient(new Worker(url));
+    await syncClient.request('open', { key });
+    let settled = false;
+    const writer = {
+      durable: true,
+      async write(offset, bytes) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        const piece = transferablePiece(bytes);
+        await syncClient.request('write', { offset, bytes: piece.bytes }, piece.transfer);
+      },
+      async truncate(size) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        await syncClient.request('truncate', { size });
+      },
+      async close() {
+        if (settled) return;
+        settled = true;
+        if (syncWriter === writer) {
+          syncWriter = null;
+          syncWriterKey = '';
+        }
+        await syncClient.request('close', {});
+      },
+      async abort(reason) {
+        if (settled) return;
+        settled = true;
+        if (syncWriter === writer) {
+          syncWriter = null;
+          syncWriterKey = '';
+        }
+        try { await syncClient.request('abort', { reason: reason?.message || String(reason || '') }); }
+        catch { /* exclusive handle is already gone */ }
+      },
+    };
+    syncWriter = writer;
+    syncWriterKey = key;
+    return writer;
+  }
+
+  async function openStreamingWriter(target) {
+    const handle = await fileHandle(target, true, 'readwrite');
+    const writable = await handle.createWritable({ keepExistingData: true });
+    let settled = false;
+    return {
+      durable: false,
+      async write(offset, bytes) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        await writable.seek(offset);
+        await writable.write(bytes);
+      },
+      async truncate(size) {
+        if (settled) throw new Error('Archive writer is already closed.');
+        await writable.truncate(size);
+      },
+      async close() {
+        if (settled) return;
+        await writable.close();
+        settled = true;
+      },
+      async abort(reason) {
+        if (settled) return;
+        await writable.abort(reason);
+        settled = true;
+      },
+    };
+  }
+
+  const storage = {
     // The extension manifest declares unlimitedStorage, so estimate() is
     // informational rather than a hard OPFS quota.
     quotaLimited: false,
+    durableWrites: false,
+    sweepSwapFiles,
     async ensurePermission(target, mode = 'read') {
       await fileHandle(target, false, mode);
       return true;
     },
-    async createWriter(target) {
-      const handle = await fileHandle(target, true, 'readwrite');
-      const writable = await handle.createWritable({ keepExistingData: true });
-      let settled = false;
-      return {
-        async write(offset, bytes) {
-          if (settled) throw new Error('Archive writer is already closed.');
-          await writable.seek(offset);
-          await writable.write(bytes);
-        },
-        async truncate(size) {
-          if (settled) throw new Error('Archive writer is already closed.');
-          await writable.truncate(size);
-        },
-        async close() {
-          if (settled) return;
-          await writable.close();
-          settled = true;
-        },
-        async abort(reason) {
-          if (settled) return;
-          await writable.abort(reason);
-          settled = true;
-        },
-      };
+    async createWriter(target, record) {
+      if (target?.kind === 'opfs') {
+        try {
+          const writer = await openSyncWriter(target);
+          storage.durableWrites = true;
+          return writer;
+        } catch (error) {
+          await closeSyncWriter().catch(() => {});
+          storage.durableWrites = false;
+          // The streaming fallback reopens a swap-backed writable on every
+          // wake and Chrome copies the entire file into it, so large archives
+          // must not silently take this path. `Worker` is undefined in an MV3
+          // service worker — run the download from the offscreen document,
+          // where createSyncAccessHandle() is available, instead.
+          const size = Number(record?.size) || 0;
+          if (size > STREAMING_FALLBACK_MAX_BYTES) {
+            throw new Error(
+              `Refusing to write a ${(size / 1024 ** 3).toFixed(1)} GB archive without a durable OPFS writer `
+              + `(${error?.message || error}). Run the archive download from the offscreen document.`,
+            );
+          }
+        }
+      }
+      return await openStreamingWriter(target);
     },
-    async write(target, offset, bytes) {
-      const writer = await this.createWriter(target);
+    async write(target, offset, bytes, record) {
+      const writer = await this.createWriter(target, record);
       try {
         await writer.write(offset, bytes);
         await writer.close();
@@ -986,6 +1228,9 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
     },
     async remove(target) {
       if (target?.kind === 'file-handle') return;
+      if (target?.kind === 'opfs' && syncWriterKey === safeArchiveKey(target.key)) {
+        await closeSyncWriter().catch(() => {});
+      }
       try {
         const dir = await directory(false);
         await dir.removeEntry(safeArchiveKey(target?.key));
@@ -1004,10 +1249,13 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       }
     },
     async open(target) {
+      if (target?.kind === 'opfs' && syncWriterKey === safeArchiveKey(target.key)) {
+        await closeSyncWriter().catch(() => {});
+      }
       return await (await fileHandle(target, false, 'read')).getFile();
     },
-    async truncate(target, size) {
-      const writer = await this.createWriter(target);
+    async truncate(target, size, record) {
+      const writer = await this.createWriter(target, record);
       try {
         await writer.truncate(size);
         await writer.close();
@@ -1020,10 +1268,13 @@ export function createOpfsArchiveStorage(storageManager = globalThis.navigator?.
       return typeof storageManager?.estimate === 'function' ? await storageManager.estimate() : {};
     },
   };
+  return storage;
 }
 
 const MAX_RETRY_ATTEMPTS = 6;
-const DEFAULT_MAX_PIECES_PER_WAKE = 8;
+// 8 pieces (~32 MiB) reopened the OPFS writable too often on multi-GB archives.
+const DEFAULT_MAX_PIECES_PER_WAKE = 96;
+const DEFAULT_WAKE_BUDGET_MS = 120_000;
 const BASE_RETRY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 export const APOCALYPSE_DOWNLOAD_ALARM = 'wb_apocalypse_archive_download';
@@ -1040,17 +1291,34 @@ function retryDelay(attempt) {
   return Math.min(MAX_RETRY_MS, BASE_RETRY_MS * (2 ** Math.max(0, attempt - 1)));
 }
 
+async function fetchArchivePiece(fetchImpl, record, pieceIndex, signal) {
+  const offset = Number(pieceIndex) * Number(record.pieceLength);
+  const expectedLength = Math.min(Number(record.pieceLength), Number(record.size) - offset);
+  const response = await fetchImpl(record.downloadUrl, {
+    method: 'GET',
+    credentials: 'omit',
+    redirect: 'follow',
+    headers: { Range: `bytes=${offset}-${offset + expectedLength - 1}` },
+    signal,
+  });
+  if (!response?.ok || (response.status !== 206 && !(offset === 0 && expectedLength === Number(record.size)))) {
+    throw new Error(`Archive download returned HTTP ${response?.status || 0} without the requested byte range.`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength !== expectedLength) throw new Error(`Archive piece length mismatch (${bytes.byteLength}/${expectedLength}).`);
+  return { pieceIndex: Number(pieceIndex), offset, bytes };
+}
+
 function downloadable(record, now) {
   return record.status === 'queued'
-    || (record.status === 'downloading' && Number(record.leaseUntil) <= now)
+    || record.status === 'downloading'
     || (record.status === 'retrying' && Number(record.nextRetryAt) <= now);
 }
 
 function nextArchiveScheduleDelay(records, timestamp) {
   const delays = (records || []).map((record) => {
-    if (record.status === 'queued') return 0;
+    if (record.status === 'queued' || record.status === 'downloading') return 0;
     if (record.status === 'retrying') return Math.max(0, (Number(record.nextRetryAt) || 0) - timestamp);
-    if (record.status === 'downloading') return Math.max(0, (Number(record.leaseUntil) || 0) - timestamp);
     return Number.POSITIVE_INFINITY;
   });
   const delay = Math.min(...delays);
@@ -1103,9 +1371,19 @@ export function createApocalypseArchiveManager(options = {}) {
   const maxPiecesPerWake = Number.isFinite(configuredMaxPieces)
     ? Math.max(1, Math.floor(configuredMaxPieces))
     : DEFAULT_MAX_PIECES_PER_WAKE;
+  const configuredWakeBudget = Number(options.wakeBudgetMs);
+  const wakeBudgetMs = Number.isFinite(configuredWakeBudget)
+    ? Math.max(0, Math.floor(configuredWakeBudget))
+    : DEFAULT_WAKE_BUDGET_MS;
   const controllers = new Map();
+  const activeWriterStops = new Map();
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');
+
+  async function abortActiveWriter(id, reason) {
+    const stop = activeWriterStops.get(id);
+    if (stop) await stop(reason);
+  }
 
   async function cancelledResult() {
     try {
@@ -1138,6 +1416,7 @@ export function createApocalypseArchiveManager(options = {}) {
       await Promise.all(archives.map(async (record) => {
         if (record.status === 'ready' || record.status === 'deleting') return;
         controllers.get(record.id)?.abort();
+        await abortActiveWriter(record.id, new Error('Apocalypse Mode was disabled.'));
         await putArchiveIfCurrent(store, {
           ...record,
           generation: (Number(record.generation) || 0) + 1,
@@ -1185,6 +1464,7 @@ export function createApocalypseArchiveManager(options = {}) {
     const record = await store.getArchive(id);
     if (!record || record.status === 'ready' || record.status === 'deleting') return record;
     controllers.get(id)?.abort();
+    await abortActiveWriter(id, new Error('Archive download was paused.'));
     const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'paused', updatedAt: now() };
     const saved = await putArchiveIfCurrent(store, next, {
       status: record.status, generation: record.generation, updatedAt: record.updatedAt,
@@ -1205,13 +1485,20 @@ export function createApocalypseArchiveManager(options = {}) {
   }
 
   async function remove(id, removeOptions = {}) {
-    const record = await store.getArchive(id);
+    let record = await store.getArchive(id);
     if (!record) return false;
-    const config = await store.getConfig();
+    let config = await store.getConfig();
     if (record.status === 'ready' && config?.enabled === true && !removeOptions.allowWhileEnabled && !removeOptions.force) {
       throw new Error('Cannot delete Wikipedia archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
     }
     controllers.get(id)?.abort();
+    await abortActiveWriter(id, new Error('Archive download was deleted.'));
+    record = await store.getArchive(id);
+    if (!record) return false;
+    config = await store.getConfig();
+    if (record.status === 'ready' && config?.enabled === true && !removeOptions.allowWhileEnabled && !removeOptions.force) {
+      throw new Error('Cannot delete Wikipedia archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
+    }
     const deleting = {
       ...record,
       generation: (Number(record.generation) || 0) + 1,
@@ -1279,57 +1566,89 @@ export function createApocalypseArchiveManager(options = {}) {
       record = recovered;
     }
     let writer = null;
+    let writerStopPromise = null;
     let usedWriteSession = false;
     let writeSessionCommitted = false;
     async function abortWriteSession(reason) {
+      if (writerStopPromise) return await writerStopPromise;
       if (!writer) return;
       const activeWriter = writer;
       writer = null;
-      if (typeof activeWriter.abort === 'function') await activeWriter.abort(reason);
+      const operation = (async () => {
+        if (typeof activeWriter.abort === 'function') await activeWriter.abort(reason);
+        // abort() discards this session's swap file, but earlier sessions killed
+        // mid-write left theirs behind. Reclaim them now that no writer is open.
+        if (typeof storage.sweepSwapFiles === 'function') {
+          await storage.sweepSwapFiles().catch(() => {});
+        }
+      })();
+      writerStopPromise = operation;
+      try {
+        await operation;
+      } finally {
+        if (writerStopPromise === operation) writerStopPromise = null;
+        if (activeWriterStops.get(record.id) === abortWriteSession) activeWriterStops.delete(record.id);
+      }
     }
     async function closeWriteSession() {
+      if (writerStopPromise) {
+        await writerStopPromise;
+        return;
+      }
       if (!writer) return;
       const activeWriter = writer;
       writer = null;
-      await activeWriter.close();
-      writeSessionCommitted = true;
+      const operation = (async () => {
+        await activeWriter.close();
+        writeSessionCommitted = true;
+      })();
+      writerStopPromise = operation;
+      try {
+        await operation;
+      } finally {
+        if (writerStopPromise === operation) writerStopPromise = null;
+        if (activeWriterStops.get(record.id) === abortWriteSession) activeWriterStops.delete(record.id);
+      }
     }
     try {
       if (record.target?.kind === 'file-handle' && typeof storage.ensurePermission === 'function') {
         await storage.ensurePermission(record.target, 'readwrite');
       }
       if (typeof storage.createWriter === 'function') {
-        const marked = {
-          ...record,
-          writeSessionStartPiece: Number(record.pieceIndex) || 0,
-          writeSessionStartBytes: Number(record.bytesDownloaded) || 0,
-          updatedAt: now(),
-        };
-        const saved = await putArchiveIfCurrent(store, marked, {
-          status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
-        });
-        if (!saved) return await cancelledResult();
-        record = marked;
         writer = await storage.createWriter(record.target, record);
-        usedWriteSession = true;
+        if (writer) activeWriterStops.set(record.id, abortWriteSession);
+        usedWriteSession = storage.durableWrites !== true;
+        if (usedWriteSession) {
+          const marked = {
+            ...record,
+            writeSessionStartPiece: Number(record.pieceIndex) || 0,
+            writeSessionStartBytes: Number(record.bytesDownloaded) || 0,
+            updatedAt: now(),
+          };
+          const saved = await putArchiveIfCurrent(store, marked, {
+            status: 'downloading', generation, leaseToken, updatedAt: record.updatedAt,
+          });
+          if (!saved) {
+            await abortWriteSession(new Error('Archive download was cancelled.')).catch(() => {});
+            return await cancelledResult();
+          }
+          record = marked;
+        }
       }
       let piecesProcessed = 0;
+      const wakeStartedAt = now();
+      let inflightPiece = fetchArchivePiece(fetchImpl, record, record.pieceIndex, controller.signal);
       while (true) {
-      const offset = Number(record.pieceIndex) * Number(record.pieceLength);
-      const expectedLength = Math.min(Number(record.pieceLength), Number(record.size) - offset);
-      const response = await fetchImpl(record.downloadUrl, {
-        method: 'GET',
-        credentials: 'omit',
-        redirect: 'follow',
-        headers: { Range: `bytes=${offset}-${offset + expectedLength - 1}` },
-        signal: controller.signal,
-      });
-      if (!response?.ok || (response.status !== 206 && !(offset === 0 && expectedLength === Number(record.size)))) {
-        throw new Error(`Archive download returned HTTP ${response?.status || 0} without the requested byte range.`);
+      const { pieceIndex, offset, bytes } = await inflightPiece;
+      const bytesDownloaded = offset + bytes.byteLength;
+      const finished = bytesDownloaded >= Number(record.size);
+      const continueInWake = !finished
+        && (storage.durableWrites === true || piecesProcessed + 1 < maxPiecesPerWake)
+        && (now() - wakeStartedAt) < wakeBudgetMs;
+      if (continueInWake) {
+        inflightPiece = fetchArchivePiece(fetchImpl, record, pieceIndex + 1, controller.signal);
       }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength !== expectedLength) throw new Error(`Archive piece length mismatch (${bytes.byteLength}/${expectedLength}).`);
-      const expectedHash = String(record.pieceHashes[record.pieceIndex] || '').toLowerCase();
+      const expectedHash = String(record.pieceHashes[pieceIndex] || '').toLowerCase();
       const actualHash = await digestHex(bytes, record.pieceHashAlgorithm);
       if (!expectedHash || actualHash.toLowerCase() !== expectedHash) throw new Error('Archive piece integrity check failed.');
       let current = await store.getArchive(record.id);
@@ -1346,13 +1665,11 @@ export function createApocalypseArchiveManager(options = {}) {
         if (!current) await storage.remove(record.target, record).catch(() => {});
         return await cancelledResult();
       }
-      const bytesDownloaded = offset + bytes.byteLength;
-      const finished = bytesDownloaded >= Number(record.size);
-      const continueInWake = !finished && piecesProcessed + 1 < maxPiecesPerWake;
       if (!continueInWake && writer) {
         if (finished && typeof writer.truncate === 'function') await writer.truncate(Number(record.size));
-        await closeWriteSession();
+        if (finished || usedWriteSession) await closeWriteSession();
       }
+      if (controller.signal.aborted) return await cancelledResult();
       if (finished && !usedWriteSession && typeof storage.truncate === 'function') {
         await storage.truncate(record.target, Number(record.size));
       }
@@ -1368,7 +1685,7 @@ export function createApocalypseArchiveManager(options = {}) {
         status: finished ? 'ready' : continueInWake ? 'downloading' : 'queued',
         leaseToken: continueInWake ? leaseToken : '',
         leaseUntil: continueInWake ? now() + 5 * 60_000 : 0,
-        pieceIndex: Number(record.pieceIndex) + 1,
+        pieceIndex: pieceIndex + 1,
         bytesDownloaded,
         retryCount: 0,
         nextRetryAt: 0,
@@ -1444,6 +1761,7 @@ export function createApocalypseArchiveManager(options = {}) {
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
     } finally {
       await abortWriteSession(new Error('Archive write session ended before commit.')).catch(() => {});
+      if (activeWriterStops.get(record.id) === abortWriteSession) activeWriterStops.delete(record.id);
       if (controllers.get(record.id) === controller) controllers.delete(record.id);
     }
     } finally {
@@ -1454,7 +1772,16 @@ export function createApocalypseArchiveManager(options = {}) {
   return { getSnapshot, setEnabled, install, pause, resume, retry: resume, remove, processNext };
 }
 
+function throwIfOfflineSearchAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Offline archive search was canceled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
 export async function searchApocalypseArchives(query, options = {}) {
+  throwIfOfflineSearchAborted(options.signal);
   const store = options.store || createApocalypseStore();
   const storage = options.storage || createOpfsArchiveStorage();
   const config = await store.getConfig();
@@ -1477,20 +1804,35 @@ export async function searchApocalypseArchives(query, options = {}) {
     reportStatus('not_ready');
     return [];
   }
-  const providers = options.providers || [createKiwixZimProvider({ storage })];
+  const providers = options.providers || defaultWikipediaProviders({ storage });
   const results = [];
   const archiveErrors = [];
+  let fallbackStatus = null;
+  let lastProviderStatus = '';
+  const reportProviderStatus = value => {
+    const status = typeof value === 'string' ? value : value?.status;
+    if (status) lastProviderStatus = String(status);
+    if (status === 'title-only-fallback') fallbackStatus = value;
+    try { options.onSearchStatus?.(value); } catch {}
+  };
   for (const record of archives) {
+    throwIfOfflineSearchAborted(options.signal);
     try {
       const provider = providers.find(candidate => candidate.supports(record));
       if (!provider) continue;
-      results.push(...await provider.search(record, query, {
+      const providerResults = await provider.search(record, query, {
         limit: options.searchAllArchives
           ? Math.min(10, Number(options.perArchiveLimit) || 10)
           : options.limit || 3,
-      }));
+        signal: options.signal,
+        onSearchStatus: reportProviderStatus,
+      });
+      throwIfOfflineSearchAborted(options.signal);
+      results.push(...providerResults);
       if (!options.searchAllArchives && results.length >= (options.limit || 3)) break;
     } catch (error) {
+      if (options.signal?.aborted) throwIfOfflineSearchAborted(options.signal);
+      if (error?.name === 'AbortError') throw error;
       const permissionRequired = isFilePermissionError(error, record.target);
       const message = permissionRequired
         ? 'File access requires confirmation. Open Apocalypse Mode and authorize the selected archive file again.'
@@ -1509,10 +1851,14 @@ export async function searchApocalypseArchives(query, options = {}) {
     }
   }
   if (!results.length && archiveErrors.length) throw new Error(archiveErrors[0]);
-  reportStatus(results.length ? 'matched' : 'no_match');
+  if (results.length) reportStatus('matched');
+  else if (!fallbackStatus) reportStatus('no_match');
+  else if (lastProviderStatus !== 'title-only-fallback') reportProviderStatus(fallbackStatus);
   const maximumResults = options.searchAllArchives ? 40 : 10;
   return results.slice(0, Math.max(1, Math.min(maximumResults, Number(options.limit) || 3)));
 }
+import { ZIM_XAPIAN_RUNTIME_BUNDLED, createZimXapianProvider } from './zim-xapian.js';
+import { ZIM_XAPIAN_WORKER_PATH, createZimXapianRuntime } from './zim-xapian-runtime.js';
 
 function cachedKiwixArchive(record, storage, cache) {
   const targetIdentity = record?.target?.kind === 'file-handle'
@@ -1534,6 +1880,35 @@ function cachedKiwixArchive(record, storage, cache) {
   return pending;
 }
 
+// Full-text search when the GPL runtime is bundled, title lookup otherwise. The
+// Xapian provider wraps the title provider rather than replacing it, so an
+// archive with no index, a missing worker factory, or a runtime error still
+// answers.
+export function defaultWikipediaProviders(options = {}) {
+  const storage = options.storage || createOpfsArchiveStorage();
+  const titleProvider = createKiwixZimProvider({ storage, archiveCache: options.archiveCache });
+  if (!ZIM_XAPIAN_RUNTIME_BUNDLED) return [titleProvider];
+  const createWorker = options.createWorker || defaultXapianWorkerFactory();
+  if (!createWorker) return [titleProvider];
+  return [createZimXapianProvider({
+    storage,
+    fallbackProvider: titleProvider,
+    runtime: createZimXapianRuntime({
+      createWorker,
+      hasFullTextIndex: record => titleProvider.hasFullTextIndex(record),
+    }),
+  })];
+}
+
+function defaultXapianWorkerFactory() {
+  const api = globalThis.chrome?.runtime?.getURL
+    ? globalThis.chrome
+    : (globalThis.browser?.runtime?.getURL ? globalThis.browser : null);
+  if (!api || typeof Worker !== 'function') return null;
+  const url = api.runtime.getURL(ZIM_XAPIAN_WORKER_PATH);
+  return () => new Worker(url);
+}
+
 export function createKiwixZimProvider(options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
   const archiveCache = options.archiveCache || SHARED_KIWIX_ARCHIVE_CACHE;
@@ -1542,6 +1917,16 @@ export function createKiwixZimProvider(options = {}) {
     supports(record) {
       return record?.archiveKind === 'wikipedia'
         && (record?.target?.kind === 'opfs' || record?.target?.kind === 'file-handle');
+    },
+    // Lets a caller find out whether full-text search is even possible for this
+    // archive before reaching for a search runtime it would only fall back from.
+    async hasFullTextIndex(record) {
+      try {
+        const archive = await cachedKiwixArchive(record, storage, archiveCache);
+        return typeof archive.hasFullTextIndex === 'function' ? await archive.hasFullTextIndex() : false;
+      } catch {
+        return false;
+      }
     },
     async search(record, query, searchOptions = {}) {
       const archive = await cachedKiwixArchive(record, storage, archiveCache);
@@ -1572,7 +1957,7 @@ export async function readApocalypseArticle(archiveId, path, options = {}) {
   const storage = options.storage || createOpfsArchiveStorage();
   const record = (await store.listArchives()).find(item => item.id === archiveId && item.status === 'ready');
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
-  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  const provider = (options.providers || defaultWikipediaProviders({ storage })).find(candidate => candidate.supports(record));
   if (!provider?.read) throw new Error('This archive cannot be opened by the text reader.');
   return await provider.read(record, path, {
     maxChars: options.maxChars,
@@ -1588,7 +1973,7 @@ export async function readApocalypseImage(archiveId, path, options = {}) {
     : (await (options.store || createApocalypseStore()).listArchives())
       .find(item => item.id === archiveId && item.status === 'ready');
   if (!record) throw new Error('This Wikipedia archive is not installed or is not ready.');
-  const provider = (options.providers || [createKiwixZimProvider({ storage })]).find(candidate => candidate.supports(record));
+  const provider = (options.providers || defaultWikipediaProviders({ storage })).find(candidate => candidate.supports(record));
   if (!provider?.readImage) throw new Error('This archive cannot provide reader images.');
   return await provider.readImage(record, path, { maxBytes: options.maxBytes });
 }

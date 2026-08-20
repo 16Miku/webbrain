@@ -19,6 +19,7 @@
  *   dist/webbrain-chrome-<version>.zip
  *   dist/webbrain-edge-<version>.zip
  *   dist/webbrain-firefox-<version>.zip
+ *   dist/webbrain-<source-name>-corresponding-source.zip
  *
  * <version> is read from package.json at HEAD, and every archived manifest
  * must match it. An uncommitted version bump is rejected instead of creating
@@ -40,9 +41,32 @@ const targets = [
   { packageName: 'firefox', sourceDir: 'firefox' },
 ];
 
+const CORRESPONDING_SOURCE_ROOT = 'dist/corresponding-source';
+
+export function correspondingSourceArchivePath(sourceName) {
+  return `dist/webbrain-${sourceName}-corresponding-source.zip`;
+}
+
+export function assertCorrespondingSourceArchiveEntries(entries, sourceName, trackedFiles, label) {
+  const prefix = `${sourceName}/`;
+  for (const relativePath of trackedFiles) {
+    if (!entries.includes(`${prefix}${relativePath}`)) {
+      throw new Error(`${label} is missing tracked corresponding source ${relativePath}.`);
+    }
+  }
+}
+
 export function assertMatchingArchiveVersion(expected, actual, label) {
   if (actual !== expected) {
     throw new Error(`${label} is ${actual}, but the release package version is ${expected}.`);
+  }
+}
+
+export function assertPackageRootGplLicense(source, label) {
+  const text = String(source || '');
+  if (!/combined work under GPL-3\.0-or-later/.test(text)
+      || !/GNU GENERAL PUBLIC LICENSE\s+Version 3, 29 June 2007/.test(text)) {
+    throw new Error(`${label} must identify the combined package as GPL-3.0-or-later and include GPLv3.`);
   }
 }
 
@@ -150,6 +174,18 @@ function listTreeEntryNamesAtHead(relativePath) {
   ).split(/\r?\n/).filter(Boolean);
 }
 
+function listTreeDirectoryNamesAtHead(relativePath) {
+  return execFileSync(
+    'git',
+    ['ls-tree', '-d', '--name-only', `HEAD:${relativePath}`],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  ).split(/\r?\n/).filter(Boolean);
+}
+
 function runCli() {
   const workingPackage = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const headPackage = readJsonAtHead('package.json');
@@ -163,6 +199,10 @@ function runCli() {
   for (const { sourceDir } of targets) {
     const manifest = readJsonAtHead(`src/${sourceDir}/manifest.json`);
     assertMatchingArchiveVersion(version, manifest.version, `HEAD src/${sourceDir}/manifest.json version`);
+    assertPackageRootGplLicense(
+      readTextAtHead(`src/${sourceDir}/LICENSE`),
+      `HEAD src/${sourceDir}/LICENSE`
+    );
     assertStoreSafeFlagLicenseEntries(
       listTreeEntryNamesAtHead(`src/${sourceDir}`),
       `HEAD src/${sourceDir}`
@@ -191,6 +231,34 @@ function runCli() {
       `dist/webbrain-${packageName}-${version}.zip`
     );
     console.log(`  ✓ dist/webbrain-${packageName}-${version}.zip`);
+  }
+
+  // These sources are a release artifact, not scratch output. Build their ZIPs
+  // from HEAD just like the browser packages so the tagged tree and uploaded
+  // assets describe exactly the same GPL-covered runtime source.
+  for (const sourceName of listTreeDirectoryNamesAtHead(CORRESPONDING_SOURCE_ROOT)) {
+    const sourcePath = `${CORRESPONDING_SOURCE_ROOT}/${sourceName}`;
+    const relativeOut = correspondingSourceArchivePath(sourceName);
+    const out = path.join(root, relativeOut);
+    execFileSync(
+      'git',
+      [
+        'archive',
+        '--format=zip',
+        '-o',
+        out,
+        `--prefix=${sourceName}/`,
+        `HEAD:${sourcePath}`,
+      ],
+      { stdio: 'inherit', cwd: root }
+    );
+    assertCorrespondingSourceArchiveEntries(
+      listZipEntryNames(out),
+      sourceName,
+      listTreeEntryNamesAtHead(sourcePath),
+      relativeOut
+    );
+    console.log(`  ✓ ${relativeOut}`);
   }
 }
 

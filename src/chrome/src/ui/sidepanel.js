@@ -214,7 +214,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
 (async function initOnboarding() {
   // Coachmark setup errors resolve as no-op so the model/safety wizard still runs.
   await pinCoachmarkDismissed.catch(() => {});
-  const stored = await chrome.storage.local.get('onboardingComplete');
+  const stored = await chrome.storage.local.get(['onboardingComplete', 'helpImproveWebBrain']);
   if (stored.onboardingComplete) return;
 
   const overlay = document.getElementById('onboarding');
@@ -232,6 +232,8 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   const providerBody = document.getElementById('ob-provider-body');
   const providerStatus = document.getElementById('ob-provider-status');
   const providerList = document.getElementById('ob-provider-list');
+  const helpImproveChoice = document.getElementById('ob-help-improve');
+  const helpImproveCheckbox = document.getElementById('ob-help-improve-checkbox');
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
@@ -241,6 +243,15 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   let localModelChoices = [];
   let selectedLocalModelIndex = 0;
   let cloudReady = false;
+  let persistedHelpImprove = stored.helpImproveWebBrain !== false;
+  let helpImproveSavePromise = Promise.resolve(true);
+
+  if (helpImproveCheckbox) {
+    helpImproveCheckbox.checked = persistedHelpImprove;
+    helpImproveCheckbox.addEventListener('change', () => {
+      helpImproveSavePromise = persistHelpImprovePreference();
+    });
+  }
 
   async function dismissOnboarding() {
     await chrome.storage.local.set({ onboardingComplete: true }).catch(() => {});
@@ -249,6 +260,28 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
 
   function setProviderStatus(key, params) {
     if (providerStatus) providerStatus.textContent = t(key, params);
+  }
+
+  function setHelpImproveVisible(visible) {
+    helpImproveChoice?.classList.toggle('hidden', !visible);
+  }
+
+  async function persistHelpImprovePreference() {
+    if (!helpImproveCheckbox) return true;
+    const requestedValue = helpImproveCheckbox.checked;
+    helpImproveCheckbox.disabled = true;
+    try {
+      await sendToBackground('set_help_improve_preference', { enabled: requestedValue });
+      persistedHelpImprove = requestedValue;
+      if (cloudReady) showCloudReady();
+      return true;
+    } catch (error) {
+      helpImproveCheckbox.checked = persistedHelpImprove;
+      setProviderStatus('sp.status.error', { msg: error?.message || String(error || 'storage unavailable') });
+      return false;
+    } finally {
+      helpImproveCheckbox.disabled = false;
+    }
   }
 
   function openProviderSettings() {
@@ -283,17 +316,21 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   function showProviderFallback(statusKey = 'ob.tokens.none_status') {
     cloudReady = false;
     localModelChoices = [];
+    const providerUnknown = statusKey === 'ob.tokens.detect_failed';
+    setHelpImproveVisible(providerUnknown);
     if (providerBody) providerBody.textContent = t('ob.tokens.body');
     providerList?.classList.remove('hidden');
     localModels?.classList.add('hidden');
     setProviderStatus(statusKey);
     settingsBtn.textContent = t('ob.btn.settings');
     settingsBtn.disabled = false;
+    skipBtn.disabled = !providerUnknown;
   }
 
   function showLocalChoices(choices) {
     cloudReady = false;
     localModelChoices = choices;
+    setHelpImproveVisible(false);
     selectedLocalModelIndex = 0;
     if (providerBody) providerBody.textContent = t('ob.tokens.local_body');
     if (localModelList) {
@@ -346,13 +383,15 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     setProviderStatus('ob.tokens.local_status', { count: choices.length });
     settingsBtn.textContent = t('ob.btn.use_local');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   function showCloudReady() {
     cloudReady = true;
     localModelChoices = [];
+    setHelpImproveVisible(true);
     if (providerBody) {
-      providerBody.textContent = t('ob.cloud.body');
+      providerBody.textContent = t('ob.cloud.using').trim();
     }
     if (providerStatus) {
       providerStatus.textContent = '';
@@ -363,11 +402,12 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
       changeLink.textContent = t('ob.cloud.change');
       changeLink.addEventListener('click', async (event) => {
         event.preventDefault();
+        if (!await helpImproveSavePromise.catch(() => false)) return;
         openProviderSettings();
         await dismissOnboarding();
       });
       providerStatus.append(
-        document.createTextNode(`${t('ob.cloud.using').trimEnd()} `),
+        document.createTextNode(`${t('st.tab.providers')}: `),
         changeLink,
         document.createTextNode('.')
       );
@@ -376,11 +416,13 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     localModels?.classList.add('hidden');
     settingsBtn.textContent = t('ob.btn.start');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   async function scanLocalModels() {
     localModelChoices = [];
     settingsBtn.disabled = true;
+    skipBtn.disabled = true;
     settingsBtn.textContent = t('ob.btn.detecting');
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
@@ -484,6 +526,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
 
   settingsBtn.addEventListener('click', async () => {
     if (cloudReady) {
+      if (!await helpImproveSavePromise.catch(() => false)) return;
       await dismissOnboarding();
       inputEl?.focus();
       return;
@@ -521,6 +564,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   });
 
   skipBtn.addEventListener('click', async () => {
+    if (!await helpImproveSavePromise.catch(() => false)) return;
     await dismissOnboarding();
   });
 })();

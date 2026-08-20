@@ -186,4 +186,4 @@ The suite stands up the real listener and connects a fake extension speaking the
 
 ## License
 
-MIT
+This independently published package remains MIT-licensed. See [`LICENSE`](LICENSE).

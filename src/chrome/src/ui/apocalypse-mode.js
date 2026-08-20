@@ -6,6 +6,7 @@ import {
 } from '../agent/apocalypse-mode.js';
 import {
   createEmergencyCorpusStore,
+  isEmergencyCorpusRecord,
 } from '../agent/emergency-corpus.js';
 import {
   EMERGENCY_CORPUS_PROVISIONAL_MEASUREMENTS,
@@ -22,6 +23,10 @@ import { createOfflineRagReadinessController } from './offline-rag-readiness.js'
 import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  isShippedWebgpuPreset,
+  webgpuModelDtype,
+  webgpuModelPreset,
 } from '../providers/webgpu.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
@@ -74,6 +79,7 @@ let processingDownload = false;
 let visionDownloadState = null;
 let fixedWebgpuProviderConfigured = false;
 let fixedWebgpuProviderMarkedReady = false;
+let webgpuPresetHydrated = false;
 let visionTestRunning = false;
 let webgpuDownloadStatusRequest = 0;
 let webgpuDownloadState = {
@@ -107,7 +113,7 @@ function publishComponentDownloadState(detail) {
 }
 
 function publishComponentDownloadStates() {
-  const corpusStatus = corpusRecord?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
+  const corpusStatus = corpusUiStatus();
   const corpusTotal = Number(corpusProgress.totalBytes) || Number(corpusRecord?.staging?.totalBytes) || (corpusRecord?.status === 'ready' ? 245 * 1024 * 1024 : 0);
   const corpusReceived = Number(corpusProgress.bytesReceived) || Number(corpusRecord?.staging?.bytesReceived) || (corpusRecord?.status === 'ready' ? corpusTotal : 0);
   publishComponentDownloadState({
@@ -117,7 +123,8 @@ function publishComponentDownloadStates() {
     total: corpusTotal,
     progress: corpusTotal > 0 ? corpusReceived / corpusTotal : (Number(corpusProgress.percent) ? Number(corpusProgress.percent) / 100 : 0),
     updatedAt: Number(corpusRecord?.updatedAt) || Date.now(),
-    detail: corpusStatus === 'indexing' ? t('eb.rag.status.indexing') : '',
+    detail: corpusStatus === 'extracting' ? t('eb.rag.extracting_detail')
+      : corpusStatus === 'indexing' ? t('eb.rag.indexing_detail') : '',
   });
 
   const semanticStatus = semanticState?.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
@@ -294,6 +301,28 @@ function updateEmergencyBoxGate(readinessKind) {
   }
 }
 
+function recordWebgpuTextState(state) {
+  const normalized = normalizeWebgpuDownloadState(state);
+  if (!normalized.modelId) return normalized;
+  const liveStatus = String(state?.status || normalized.status);
+  webgpuTextStateByModel.set(normalized.modelId, {
+    ...normalized,
+    status: WEBGPU_TEXT_BUSY_STATUSES.has(liveStatus) ? liveStatus : normalized.status,
+  });
+  return normalized;
+}
+
+function anyShippedWebgpuTextReady() {
+  if (webgpuDownloadState.ready === true && isShippedWebgpuPreset(webgpuDownloadState.modelId || selectedWebgpuModelId())) {
+    return true;
+  }
+  for (const state of webgpuTextStateByModel.values()) {
+    if (!isShippedWebgpuPreset(state.modelId)) continue;
+    if (state.ready === true || state.status === 'ready') return true;
+  }
+  return false;
+}
+
 function updateOverallModelsReadiness() {
   if (!supportsWebgpuVision || !elements['models-readiness']) return;
   const textStatus = webgpuDownloadState.status;
@@ -302,30 +331,46 @@ function updateOverallModelsReadiness() {
     || (basicWikipediaStartInFlight ? 'starting' : (basicWikipediaStartError || basicWikipediaCatalogError) ? 'error' : 'not-downloaded');
   const corpusStatus = corpusRecord?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
   const semanticStatus = semanticState?.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
+  const textReadyForKit = anyShippedWebgpuTextReady();
+  const textErrorBlocksKit = textStatus === 'error' && !textReadyForKit;
 
   let kind = 'pending';
   let key = 'ap.models.status.incomplete';
   if (snapshot?.enabled !== true) {
     kind = 'disabled';
     key = 'ap.models.status.disabled';
-  } else if (textStatus === 'error' || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
+  } else if (textErrorBlocksKit || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
     kind = 'error';
     key = 'ap.models.status.error';
-  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready') {
+  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready' && !anyOtherWebgpuTextBusy()) {
     kind = 'ready';
     key = 'ap.models.status.ready';
-  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused') {
+  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused' || anyOtherWebgpuTextPaused()) {
     key = 'ap.models.status.paused';
   } else if (['checking', 'downloading', 'stopping'].includes(textStatus)
+    || anyOtherWebgpuTextBusy()
     || ['starting', 'downloading', 'stopping'].includes(visionStatus)
     || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)
-    || ['downloading', 'verifying', 'extracting', 'indexing'].includes(corpusStatus)
+    || ['downloading', 'verifying', 'downloaded', 'extracting', 'indexing'].includes(corpusStatus)
     || ['downloading'].includes(semanticStatus)) {
     key = 'ap.models.status.downloading';
   }
   elements['models-readiness'].dataset.kind = kind;
   elements['models-readiness-label'].textContent = t(key);
-  updateEmergencyBoxGate(kind);
+  const emergencyKind = snapshot?.enabled === true
+    && textReadyForKit
+    && visionStatus === 'ready'
+    && wikipediaStatus === 'ready'
+    && corpusStatus === 'ready'
+    && semanticStatus === 'ready'
+    && !textErrorBlocksKit
+    && visionStatus !== 'error'
+    && wikipediaStatus !== 'error'
+    && corpusStatus !== 'error'
+    && semanticStatus !== 'error'
+    ? 'ready'
+    : kind;
+  updateEmergencyBoxGate(emergencyKind);
 }
 
 function updateWebgpuDownloadPanel() {
@@ -367,9 +412,54 @@ function confirmCompletedModelRemoval(action, status, modelTitleKey) {
   return globalThis.confirm(t('ap.models.confirm_remove', { model: t(modelTitleKey) }));
 }
 
+function selectedWebgpuPreset() {
+  const checked = document.querySelector('[data-webgpu-text-preset]:checked');
+  return webgpuModelPreset(checked?.value) || webgpuModelPreset(WEBGPU_MODEL_ID);
+}
+
+function selectedWebgpuModelId() {
+  return selectedWebgpuPreset()?.id || WEBGPU_MODEL_ID;
+}
+
+function updateWebgpuTextPresetUi() {
+  const preset = selectedWebgpuPreset();
+  const size = document.querySelector('[data-webgpu-text-size]');
+  if (size) size.textContent = `${preset?.size || '1.55 GB'} · WebGPU`;
+  const warning = document.querySelector('[data-webgpu-text-warning]');
+  if (warning) warning.hidden = preset?.id === WEBGPU_MODEL_ID;
+  const copy = document.querySelector('[data-webgpu-text-copy]');
+  if (copy) {
+    const key = preset?.id === WEBGPU_MODEL_ID ? 'ap.webgpu.rag' : 'ap.webgpu.rag.pro';
+    copy.dataset.i18n = key;
+    copy.textContent = t(key);
+  }
+  for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
+    input.checked = input.value === (preset?.id || WEBGPU_MODEL_ID);
+  }
+}
+
+const webgpuTextStateByModel = new Map();
+const WEBGPU_TEXT_BUSY_STATUSES = new Set(['starting', 'queued', 'downloading', 'stopping', 'paused']);
+
+function otherWebgpuTextStates() {
+  const selected = selectedWebgpuModelId();
+  return [...webgpuTextStateByModel.values()].filter(state => state.modelId && state.modelId !== selected);
+}
+
+function anyOtherWebgpuTextBusy() {
+  return otherWebgpuTextStates().some(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status));
+}
+
+function anyOtherWebgpuTextPaused() {
+  return otherWebgpuTextStates().some(state => state.status === 'paused');
+}
+
 function setWebgpuDownloadState(state) {
-  const normalized = normalizeWebgpuDownloadState(state);
-  if (normalized.modelId && normalized.modelId !== WEBGPU_MODEL_ID) return;
+  const normalized = recordWebgpuTextState(state);
+  if (normalized.modelId && normalized.modelId !== selectedWebgpuModelId()) {
+    updateOverallModelsReadiness();
+    return;
+  }
   webgpuDownloadState = normalized;
   updateWebgpuDownloadPanel();
 }
@@ -414,14 +504,20 @@ async function runVisionDownloadAction(action) {
   }
 }
 
-async function ensureFixedWebgpuProvider({ markConfigured = false } = {}) {
-  if (fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) return;
+async function ensureFixedWebgpuProvider({ markConfigured = false, force = false } = {}) {
+  const preset = selectedWebgpuPreset();
+  const model = preset?.id || WEBGPU_MODEL_ID;
+  const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
+  if (!force && fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) {
+    const current = webgpuDownloadState?.modelId;
+    if (current === model) return;
+  }
   await providerCommand('update_provider', {
     providerId: 'webgpu',
     config: {
-      model: WEBGPU_MODEL_ID,
-      dtype: WEBGPU_DTYPE,
-      contextWindow: 16384,
+      model,
+      dtype,
+      contextWindow: preset.contextWindow,
       promptTier: 'compact',
     },
     markConfigured,
@@ -430,17 +526,78 @@ async function ensureFixedWebgpuProvider({ markConfigured = false } = {}) {
   if (markConfigured) fixedWebgpuProviderMarkedReady = true;
 }
 
-async function refreshWebgpuDownloadStatus() {
+async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
   if (!supportsWebgpuVision) return;
   const requestId = ++webgpuDownloadStatusRequest;
   try {
-    await ensureFixedWebgpuProvider();
-    const state = await providerCommand('get_webgpu_download_status');
+    let state = await providerCommand('get_webgpu_download_status');
     if (requestId !== webgpuDownloadStatusRequest) return;
+    let preset = webgpuModelPreset(state?.modelId);
+    if (!preset) {
+      // Apocalypse Mode exposes only shipped presets. Retain an active custom
+      // transfer in the aggregate tracker, then switch the provider to the
+      // checked shipped preset before rendering its controls.
+      setWebgpuDownloadState(state);
+      await ensureFixedWebgpuProvider({ force: true });
+      if (requestId !== webgpuDownloadStatusRequest) return;
+      state = await providerCommand('get_webgpu_download_status');
+      if (requestId !== webgpuDownloadStatusRequest) return;
+      preset = webgpuModelPreset(state?.modelId);
+      if (!preset) throw new Error('Unable to select a shipped WebGPU text preset.');
+    }
+    if (preset) {
+      const selectedId = selectedWebgpuModelId();
+      if (!webgpuPresetHydrated || selectedId === preset.id) {
+        const input = document.querySelector(`[data-webgpu-text-preset][value="${CSS.escape(preset.id)}"]`);
+        if (input) input.checked = true;
+        webgpuPresetHydrated = true;
+      }
+    }
+    updateWebgpuTextPresetUi();
     setWebgpuDownloadState(state);
+    if (probeSibling) await refreshSiblingWebgpuTextStatus(state?.modelId, requestId);
+    if (requestId !== webgpuDownloadStatusRequest) return;
     if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true });
   } catch (error) {
     if (requestId === webgpuDownloadStatusRequest) setWebgpuDownloadState({ status: 'error', error: error.message });
+  }
+}
+
+async function refreshSiblingWebgpuTextStatus(currentModelId, requestId = webgpuDownloadStatusRequest) {
+  const current = String(currentModelId || selectedWebgpuModelId() || '');
+  for (const preset of WEBGPU_MODEL_PRESETS) {
+    if (preset.id === current) continue;
+    if (requestId !== webgpuDownloadStatusRequest) return;
+    const sibling = await providerCommand('get_webgpu_download_status', {
+      model: preset.id,
+      dtype: preset.dtype,
+    }).catch(() => null);
+    if (requestId !== webgpuDownloadStatusRequest) return;
+    if (sibling && !sibling.error) setWebgpuDownloadState(sibling);
+  }
+}
+
+async function onWebgpuTextPresetChange() {
+  recordWebgpuTextState(webgpuDownloadState);
+  webgpuPresetHydrated = true;
+  fixedWebgpuProviderConfigured = false;
+  fixedWebgpuProviderMarkedReady = false;
+  updateWebgpuTextPresetUi();
+  webgpuDownloadState = {
+    ...webgpuDownloadState,
+    status: 'checking',
+    ready: false,
+    modelId: selectedWebgpuModelId(),
+    dtype: selectedWebgpuPreset()?.dtype || WEBGPU_DTYPE,
+    error: '',
+  };
+  updateWebgpuDownloadPanel();
+  updateOverallModelsReadiness();
+  try {
+    await ensureFixedWebgpuProvider();
+    await refreshWebgpuDownloadStatus({ probeSibling: true });
+  } catch (error) {
+    setWebgpuDownloadState({ status: 'error', error: error.message });
   }
 }
 
@@ -638,6 +795,13 @@ async function refreshVisionDownload() {
   renderVisionDownload();
 }
 
+function applyCorpusRecord(record) {
+  if (!isEmergencyCorpusRecord(record)) return false;
+  corpusRecord = record;
+  if (record.staging) corpusProgress = record.staging;
+  return true;
+}
+
 function ragStatusLabel(status) {
   const key = `eb.rag.status.${String(status || 'unavailable')}`;
   const translated = t(key);
@@ -759,7 +923,7 @@ function renderRagComponents() {
 
 async function readEmergencyHostState() {
   const host = await sendEmergencyDownloadCommand('status').catch(() => null);
-  if (host?.corpus) corpusRecord = host.corpus;
+  if (host?.corpus) applyCorpusRecord(host.corpus);
   else corpusRecord = await corpusStore.get().catch(() => null);
   if (host?.semantic) semanticState = host.semantic;
   return host;
@@ -950,6 +1114,9 @@ async function runBasicWikipediaAction(action, sourceButton) {
 document.querySelectorAll('[data-webgpu-download-action]').forEach((button) => {
   button.addEventListener('click', () => runWebgpuDownloadAction(button.dataset.webgpuDownloadAction));
 });
+document.querySelectorAll('[data-webgpu-text-preset]').forEach((input) => {
+  input.addEventListener('change', () => onWebgpuTextPresetChange());
+});
 document.querySelectorAll('[data-vision-download-action]').forEach((button) => {
   button.addEventListener('click', () => runVisionDownloadAction(button.dataset.visionDownloadAction));
 });
@@ -1009,16 +1176,14 @@ runtimeApi.runtime?.onMessage?.addListener?.((message) => {
     return false;
   }
   if (message?.type === EMERGENCY_DOWNLOAD_STATE_MESSAGE) {
-    if (message.corpus) {
-      corpusRecord = message.corpus;
-      if (message.corpus.staging) corpusProgress = message.corpus.staging;
-      renderRagComponents();
+    const previousCorpus = corpusRecord?.status;
+    const previousSemantic = semanticState?.status;
+    const corpusUpdated = message.corpus ? applyCorpusRecord(message.corpus) : false;
+    if (message.semantic) semanticState = message.semantic;
+    if (corpusUpdated || message.semantic) renderRagComponents();
+    if (corpusRecord?.status !== previousCorpus || semanticState?.status !== previousSemantic) {
+      void ragReadiness.refresh().catch(() => {});
     }
-    if (message.semantic) {
-      semanticState = message.semantic;
-      renderRagComponents();
-    }
-    void ragReadiness.refresh().catch(() => {});
     return false;
   }
   return false;
@@ -1053,6 +1218,7 @@ elements.enabled.addEventListener('change', async () => {
 document.addEventListener('wb-locale-changed', () => {
   renderInstalled();
   renderVisionDownload();
+  updateWebgpuTextPresetUi();
   updateWebgpuDownloadPanel();
   renderBasicWikipediaDownload();
   renderRagComponents();
@@ -1080,7 +1246,7 @@ async function poll() {
 
 await Promise.all([
   refresh().catch(error => notice(error.message, 'error')),
-  refreshWebgpuDownloadStatus(),
+  refreshWebgpuDownloadStatus({ probeSibling: true }),
   loadBasicWikipediaAutoStartPreference(),
 ]);
 const params = new URLSearchParams(globalThis.location.search);

@@ -8,7 +8,8 @@ field-reference documents covering medical, survival, education, and
 communication topics.
 
 Standalone WebGPU chat has no tools. Retrieved passages are injected into the
-prompt first; the model answers from that evidence or says it cannot.
+prompt first; the selected local text model (LFM2.5 2.6B by default, or opt-in
+Bonsai 27B) answers from that evidence or says it cannot.
 
 ## What's new
 
@@ -18,9 +19,9 @@ prompt first; the model answers from that evidence or says it cannot.
   field references in multiple languages. Installed Emergency Box PDFs are a
   separate reader shelf and are **not** searched by this RAG path.
 - **Two retrieval engines, not one.** Wikipedia uses the installed Kiwix/ZIM
-  **title index** (`title-only`). Emergency Box uses a prebuilt SQLite **FTS5
-  BM25** index shipped inside the corpus ZIP. Wikipedia is not FTS5, and the
-  optional Xapian ZIM full-text runtime stays GPL-gated and unbundled.
+  **title index** (`title-only`) and, when the archive has a Xapian index, the
+  vendored GPL full-text worker. Emergency Box uses a prebuilt SQLite **FTS5
+  BM25** index shipped inside the corpus ZIP. Wikipedia is not FTS5.
 - **Semantic vector search (Emergency Box only).** An optional int8-quantized
   multilingual E5 model (`Xenova/multilingual-e5-small`, ~140 MB download)
   provides cosine-similarity search over passage embeddings that are also
@@ -61,13 +62,16 @@ prompt first; the model answers from that evidence or says it cannot.
    only. Personal health and first-aid questions search both when they are
    ready. Pronoun follow-ups such as "fix it" after a history article do not
    reuse the previous topic when the new message has its own distinctive terms.
-3. **Search.** Wikipedia hits come from the ZIM title index. Emergency Box hits
+3. **Search.** Wikipedia hits come from Xapian when the archive has an index,
+   otherwise from the ZIM title index. Emergency Box hits
    always use FTS5 when the text pack is `ready`; E5 vectors are used when the
    model and index are available.
 4. **Fuse and budget.** Hits are fused, diversified, and wrapped as untrusted
-   evidence. WebGPU generation is capped (currently 2048 new tokens). If the
-   model spends that budget inside reasoning, WebBrain retries with a shorter
-   evidence prompt rather than inventing an answer.
+   evidence. WebGPU generation is capped (currently 2048 new tokens). LFM2.5
+   strips `<think>` from the visible answer; Bonsai 27B uses a 128-token think
+   budget so reasoning cannot consume the whole decode. If the model spends that
+   budget inside reasoning, WebBrain retries with a shorter evidence prompt
+   rather than inventing an answer.
 5. **Cite locally.** Each kept passage gets a stable token (`[WB-E-…]` or
    Wikipedia equivalent) and a local reader URL. Emergency Box citations add an
    **Open PDF** link only when that catalog PDF is installed.
@@ -84,8 +88,9 @@ agent.js (service worker)
         → offline-rag-worker.js (dedicated Web Worker, owns SQLite Wasm + OPFS SAH pool)
 ```
 
-Wikipedia title search does not go through SQLite. It uses the installed ZIM
-title index from Apocalypse Mode, then the same fusion and citation bridge.
+Wikipedia search does not go through SQLite. Indexed archives use the vendored
+Xapian worker; otherwise Apocalypse Mode's ZIM title index. Both then share the
+same fusion and citation bridge.
 
 The offscreen document also hosts the E5 reranker worker
 (`offline-reranker-worker.js`). The layered proxy pattern exists because Chrome
@@ -104,7 +109,7 @@ MV3 service workers cannot hold OPFS synchronous access handles.
 | `offline-query-stopwords.js` | Packaged ranks.nl stopword lists used before Wikipedia and Emergency search |
 | `emergency-corpus.js` | Transactional lifecycle: resumable HTTP Range downloads, SHA-256 verification, manifest-driven extraction, OPFS storage, Web Lock coordination |
 | `emergency-corpus-release.js` | Release pointer: pinned URL, SHA-256, byte counts, passage counts for the current corpus |
-| `zim-xapian.js` | License-gated adapter for full-text Wikipedia ZIM search (currently blocked pending GPL decision) |
+| `zim-xapian.js` | Adapter for full-text Wikipedia ZIM search via the vendored Xapian/libzim Wasm worker |
 
 ### Storage layout
 
@@ -155,7 +160,8 @@ Documents are chunked into passages of 180–700 tokens (target ~420):
 
 ### Retrieval modes
 
-These modes apply to Emergency Box ranking. Wikipedia remains title-only.
+These modes apply to Emergency Box ranking. Wikipedia uses Xapian full-text when
+the archive has an index, otherwise title lookup.
 
 | Mode | Description |
 | --- | --- |
@@ -168,8 +174,8 @@ These modes apply to Emergency Box ranking. Wikipedia remains title-only.
 - Without E5: Emergency Box falls back to BM25 lexical search
 - Without Emergency Box: searches only Wikipedia sources
 - Without both: reports offline search unavailable
-- Xapian full-text Wikipedia search: blocked pending GPL license decision;
-  title-only search remains available
+- Xapian full-text Wikipedia search: used when the archive has an index;
+  otherwise title-only lookup
 - Empty retrieval: the local model must not invent medical advice
 
 ## Vendor libraries
@@ -189,12 +195,13 @@ user.
 ## Licensing
 
 The Emergency Box corpus, SQLite, fflate, and Transformers.js are all
-permissively licensed and do not affect WebBrain's MIT license.
+permissively licensed and do not independently impose copyleft terms. WebBrain
+33.0.0 and later is nevertheless GPL-3.0-or-later because the distributed
+extension integrates the GPL-licensed Xapian/libzim runtime.
 
-The Xapian/libzim full-text Wikipedia runtime is a separate question. See
-[offline-rag-licensing.md](offline-rag-licensing.md) for the full analysis and
-the three options that must be decided by the repository owner before that
-runtime can be bundled.
+The Xapian/libzim full-text Wikipedia runtime is vendored and GPL. See
+[offline-rag-licensing.md](offline-rag-licensing.md) for the decision record,
+corresponding source, and how release artifacts are conveyed.
 
 ## Further reading
 

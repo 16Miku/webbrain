@@ -2,7 +2,7 @@
 
 This document describes how the WebBrain project is governed, how decisions are made, and how anyone can become more involved over time.
 
-WebBrain is an open-source project released under the MIT License. Our goal is to build a useful, trustworthy, open AI browser agent that anyone can run, inspect, fork, and extend. Governance exists to serve that goal — not the other way around.
+WebBrain 33.0.0 and later is an open-source project released under GPL-3.0-or-later; earlier releases remain under the license that applied when they were published. Our goal is to build a useful, trustworthy, open AI browser agent that anyone can run, inspect, fork, and extend. Governance exists to serve that goal — not the other way around.
 
 ## Roles
 
