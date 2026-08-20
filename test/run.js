@@ -34288,11 +34288,29 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     const end = panel.indexOf('\n}\n\nfunction addMessage', start);
     assert.notEqual(end, -1, `${label}: renderSubscribeError boundary missing`);
     const body = panel.slice(start, end + 2);
+    const subscribeDeclaration = panel.match(/const SUBSCRIBE_ERROR_RE = [^\n]+;/)?.[0] || '';
+    const parserStart = panel.indexOf('function parseSubscribeError(content) {');
+    const parserEnd = panel.indexOf('\n}\n\nfunction openSubscribeUrl', parserStart);
+    assert.notEqual(parserStart, -1, `${label}: billing action parser missing`);
+    assert.notEqual(parserEnd, -1, `${label}: billing action parser boundary missing`);
+    const parseSubscribeError = Function(
+      `${subscribeDeclaration}\n${panel.slice(parserStart, parserEnd + 2)}\nreturn parseSubscribeError;`,
+    )();
+    assert.deepEqual(
+      parseSubscribeError('Paid allowance used.\nUpgrade to WebBrain Plus: https://api.webbrain.one/upgrade?client_reference_id=device'),
+      {
+        url: 'https://api.webbrain.one/upgrade?client_reference_id=device',
+        message: 'Paid allowance used.',
+        action: 'upgrade',
+      },
+      `${label}: paid quota should parse as a Plus upgrade action`,
+    );
     assert.match(body, /textEl\.replaceChildren\(\);/, `${label}: subscribe card should clear via DOM APIs`);
     assert.doesNotMatch(body, /textEl\.innerHTML\s*=\s*'';/, `${label}: subscribe card should not clear via innerHTML`);
     assert.match(body, /msg\.textContent = parsed\.message \|\| t\('sp\.subscribe\.allowance_used'\);/, `${label}: subscribe message must remain textContent`);
     assert.match(body, /actions\.className = 'subscribe-actions';/, `${label}: subscribe actions should share a responsive row`);
-    assert.match(body, /resumeBtn\.textContent = t\('sp\.subscribe\.resume'\);/, `${label}: subscribe card should render a localized resume action`);
+    assert.match(body, /resumeBtn\.textContent = t\(parsed\.action === 'upgrade' \? 'sp\.subscribe\.resume_upgrade' : 'sp\.subscribe\.resume'\);/, `${label}: billing card should render a localized action-specific resume label`);
+    assert.match(body, /btn\.textContent = t\(parsed\.action === 'upgrade' \? 'sp\.subscribe\.upgrade' : 'sp\.subscribe\.btn'\);/, `${label}: billing card should distinguish subscription and Plus upgrades`);
     assert.match(body, /resumeBtn\.dataset\.resumeMode = \['ask', 'act', 'dev'\]\.includes\(resumeMode\)[\s\S]*?\? resumeMode[\s\S]*?: \(textEl\.closest\('\.message\.assistant'\)\?\.dataset\.runMode \|\| agentMode\);/, `${label}: resume action should prefer an explicitly captured failed run mode`);
     assert.match(body, /resumeAfterSubscription\(resumeBtn\)/, `${label}: subscribe card should use the shared resume handler`);
     assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?const mode = \['ask', 'act', 'dev'\]\.includes\(btn\?\.dataset\?\.resumeMode\)[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(\{[\s\S]*?mode,[\s\S]*?foreground: btn\?\.dataset\?\.resumeForeground === 'true',[\s\S]*?\}\);[\s\S]*?\}/, `${label}: subscribe resume should synchronize the visible mode and preserve foreground mode before continuing`);
@@ -37083,6 +37101,8 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(agent, /_normalizeClarifyTimeoutSec/, `${label}: agent should normalize clarify timeout (instant / wait / off)`);
     assert.match(agent, /if \(sec > 1200\) return -1/, `${label}: stored values above 1200 should normalize to Off (-1)`);
     assert.match(agent, /_settleClarification/, `${label}: clarify responses should settle once and clear timers`);
+    assert.match(agent, /noteClarifyInputActivity/, `${label}: custom-answer typing should renew a waited clarify timeout`);
+    assert.match(agent, /onUpdate\('clarify_timeout_extended'/, `${label}: renewed deadlines should be published to the UI`);
     assert.match(agent, /timeoutSec === 0 \? 'auto' : 'timeout'/, `${label}: Instant should use source=auto; waited timeout uses source=timeout`);
     assert.match(agent, /source: autoSource/, `${label}: clarify_auto / settle should pass auto or timeout via autoSource`);
     assert.match(agent, /source === 'timeout'/, `${label}: waited timeout should keep the non-confirmation tool note`);
@@ -37127,9 +37147,10 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     );
     assert.match(
       scheduler,
-      /type === 'clarify' \|\| type === 'clarify_auto'/,
-      `${label}: scheduled clarify_auto updates should carry scheduledJobId`,
+      /type === 'clarify' \|\| type === 'clarify_timeout_extended' \|\| type === 'clarify_auto'/,
+      `${label}: scheduled clarify deadline updates should carry scheduledJobId`,
     );
+    assert.match(scheduler, /type === 'clarify_timeout_extended'[\s\S]*?pendingClarify:[\s\S]*?deadlineTs:/, `${label}: scheduled clarifies should persist renewed deadlines`);
     assert.match(
       panel,
       /isAutoClarify = source === 'timeout' \|\| source === 'auto'/,
@@ -37146,6 +37167,7 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(bg, /if \(sec > 1200\) return -1/, `${label}: background should treat >1200 as Off`);
     assert.match(bg, /clarifyTimeoutSemanticsV2/, `${label}: background should migrate old 0=Off semantics once`);
     assert.match(bg, /CLARIFY_TIMEOUT_OFF_SLIDER = 1205/, `${label}: Off slider sentinel should be 1205`);
+    assert.match(bg, /case 'clarify_input_activity':[\s\S]*?agent\.noteClarifyInputActivity/, `${label}: background should route custom-answer activity to the agent timer`);
 
     assert.match(settingsHtml, /id="range-clarify-timeout"[^>]*min="0"[^>]*max="1205"[^>]*value="60"/, `${label}: settings should expose 0–1205 clarify timeout slider (1205=Off)`);
     assert.match(settings, /clarifyTimeoutSec/, `${label}: settings should persist clarifyTimeoutSec`);
@@ -37157,6 +37179,8 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(panel, /case 'clarify_auto':/, `${label}: sidepanel should handle clarify_auto`);
     assert.match(panel, /lockClarifyCardFromAuto/, `${label}: sidepanel should lock cards on auto-select`);
     assert.match(panel, /dataset\.deadlineTs/, `${label}: clarify cards should persist deadline for restore`);
+    assert.match(panel, /input\.addEventListener\('input',[\s\S]*?keepClarifyAliveWhileTyping/, `${label}: custom-answer input should keep a waited clarify alive`);
+    assert.match(panel, /activeDeadlineTs = Number\(card\.dataset\.deadlineTs\)/, `${label}: countdown should read renewed deadlines`);
     assert.match(panel, /startClarifyCountdown\(card, \{ tabId, clarifyId, deadlineTs, firstOption \}\)/, `${label}: rebind should restart countdown from restored metadata`);
     assert.match(locale, /st\.display\.clarify_timeout\.label/, `${label}: English locale should include clarify timeout label`);
     assert.match(locale, /st\.display\.clarify_timeout\.off/, `${label}: English locale should include Off label`);
@@ -37165,6 +37189,68 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(locale, /above 1200s/, `${label}: English locale should document Off above 1200s`);
     assert.match(locale, /sp\.clarify\.auto_timeout/, `${label}: English locale should include countdown string`);
     assert.match(idLocale, /\{seconds\} dtk/, `${label}: Indonesian countdown should use seconds unit, not bare d`);
+  }
+});
+
+test('clarify custom-answer activity restarts the authoritative waited timeout', async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const originalDateNow = Date.now;
+  let now = 10_000;
+  let nextTimerId = 1;
+  const timers = new Map();
+  globalThis.setTimeout = (callback, delay) => {
+    const id = nextTimerId++;
+    timers.set(id, { callback, delay });
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    timers.delete(id);
+  };
+  Date.now = () => now;
+
+  try {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const agent = new AgentClass({});
+      const tabId = 4810 + index;
+      agent.clarifyTimeoutSec = 5;
+      const updates = [];
+      const resultPromise = agent.executeTool(
+        tabId,
+        'clarify',
+        { question: 'Which option?', options: ['First', 'Something else'] },
+        (type, data) => updates.push({ type, data }),
+      );
+      // executeTool performs one async preflight before reaching clarify.
+      await new Promise(resolve => originalSetTimeout(resolve, 0));
+      const clarify = updates.find((update) => update.type === 'clarify')?.data;
+      assert.ok(clarify?.clarifyId, `${AgentClass.name}: clarify prompt was not emitted`);
+      const firstTimerId = [...timers.keys()][0];
+      assert.equal(timers.get(firstTimerId)?.delay, 5000, `${AgentClass.name}: initial waited timeout was not armed`);
+
+      now += 4000;
+      const renewed = agent.noteClarifyInputActivity(tabId, clarify.clarifyId);
+      assert.equal(renewed?.deadlineTs, now + 5000, `${AgentClass.name}: typing did not renew the full timeout`);
+      assert.equal(timers.has(firstTimerId), false, `${AgentClass.name}: original timeout remained armed while typing`);
+      const renewedTimerId = [...timers.keys()][0];
+      assert.equal(timers.get(renewedTimerId)?.delay, 5000, `${AgentClass.name}: renewed timeout used the wrong delay`);
+      assert.equal(
+        updates.at(-1)?.type,
+        'clarify_timeout_extended',
+        `${AgentClass.name}: renewed deadline was not emitted`,
+      );
+
+      timers.get(renewedTimerId).callback();
+      timers.delete(renewedTimerId);
+      const result = await resultPromise;
+      assert.equal(result.source, 'timeout', `${AgentClass.name}: renewed timer did not preserve waited-timeout semantics`);
+      assert.equal(agent.noteClarifyInputActivity(tabId, clarify.clarifyId), null, `${AgentClass.name}: settled clarify accepted stale typing activity`);
+      now += 1000;
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    Date.now = originalDateNow;
   }
 });
 
@@ -54886,6 +54972,97 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
     ['kimi-for-coding', 'kimi-for-coding-highspeed', 'k3'],
   );
+});
+
+test('WebBrain Cloud 402 formatting and localized billing actions distinguish every quota tier', async () => {
+  for (const [label, Provider, AgentClass] of [
+    ['chrome', OpenAIProviderCh, AgentCh],
+    ['firefox', OpenAIProviderFx, AgentFx],
+  ]) {
+    const provider = new Provider({
+      providerName: 'webbrain-cloud',
+      deviceGuid: 'device-guid',
+    });
+    const subscribe = provider._formatHttpError(402, JSON.stringify({
+      error: { message: 'Free allowance used.', code: 'webbrain_cloud_free_tier_exceeded' },
+      subscribe_url: 'https://buy.stripe.com/base?client_reference_id=device-guid',
+    }));
+    assert.match(subscribe, /Subscribe for more usage: https:\/\/buy\.stripe\.com\/base/, `${label}: free quota should offer subscription checkout`);
+
+    const upgrade = provider._formatHttpError(402, JSON.stringify({
+      error: { message: 'Paid allowance used.', code: 'webbrain_cloud_paid_tier_exceeded' },
+      upgrade_url: 'https://api.webbrain.one/upgrade?client_reference_id=device-guid',
+    }));
+    assert.match(upgrade, /Upgrade to WebBrain Plus: https:\/\/api\.webbrain\.one\/upgrade/, `${label}: base paid quota should offer the Plus upgrade flow`);
+
+    const plusBody = JSON.stringify({
+      error: { message: 'Votre quota Plus quotidien est épuisé.', code: 'webbrain_cloud_plus_tier_exceeded' },
+    });
+    const plus = provider._formatHttpError(402, plusBody);
+    assert.equal(plus, 'Votre quota Plus quotidien est épuisé.', `${label}: Plus exhaustion must not offer a duplicate subscription action`);
+    const plusError = provider._httpError(402, plusBody, 'webbrain-cloud error 402');
+    assert.equal(plusError.code, 'webbrain_cloud_plus_tier_exceeded', `${label}: provider error code should survive HTTP formatting`);
+    assert.equal(new AgentClass({})._isCostAllowanceError(plusError), true, `${label}: localized Plus exhaustion should remain terminal by stable code`);
+  }
+
+  const localeCodes = [
+    'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
+  ];
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+  for (const locale of localeCodes) {
+    const chromeLocale = (await import(pathToFileURL(path.join(ROOT, `src/chrome/src/ui/locales/${locale}.js`)).href)).default;
+    const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
+    for (const key of ['sp.subscribe.upgrade', 'sp.subscribe.resume_upgrade']) {
+      assert.equal(chromeLocale[key], firefoxLocale[key], `${locale}: ${key} should match across browsers`);
+      assert.ok(chromeLocale[key]?.trim(), `${locale}: ${key} should not be empty`);
+      if (locale !== 'en') {
+        assert.notEqual(chromeLocale[key], english[key], `${locale}: ${key} should not fall back to English`);
+      }
+    }
+  }
+});
+
+test('WebBrain Cloud quota errors stay terminal in the main streaming agent loop', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const quotaMessage = 'Votre quota Plus quotidien est épuisé.';
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'webbrain-cloud 1.0',
+      name: 'webbrain-cloud',
+      calls: 0,
+      async *chatStream() {
+        this.calls += 1;
+        const error = new Error(quotaMessage);
+        error.code = 'webbrain_cloud_plus_tier_exceeded';
+        throw error;
+      },
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 5490 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    const updates = [];
+    let traceStatus = null;
+    agent._startTraceRun = async () => `quota_stream_${index}`;
+    agent._endTraceRun = (_tabId, _runId, status) => { traceStatus = status; };
+
+    const final = await agent.processMessageStream(
+      tabId,
+      'Continue the task.',
+      (type, data) => updates.push({ type, data }),
+      'act',
+    );
+
+    assert.equal(final, quotaMessage, `${AgentClass.name}: streaming quota should return the billing message`);
+    assert.equal(traceStatus, 'cost_limit', `${AgentClass.name}: streaming quota should finish as cost_limit`);
+    assert.equal(provider.calls, 1, `${AgentClass.name}: streaming quota should not retry`);
+    assert.equal(updates.filter(update => update.type === 'warning' && update.data?.message === quotaMessage).length, 1, `${AgentClass.name}: streaming quota should emit one actionable warning`);
+    assert.equal(updates.some(update => update.type === 'error'), false, `${AgentClass.name}: streaming quota should not emit generic error UI`);
+    assert.equal(agent.getConversation(tabId, 'act').filter(message => message.role === 'assistant' && message.content === quotaMessage).length, 1, `${AgentClass.name}: streaming quota should persist one assistant billing message`);
+  }
 });
 
 test('new provider auth, endpoint, protocol, and capability contracts are deterministic', () => {

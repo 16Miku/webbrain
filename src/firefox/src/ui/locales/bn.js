@@ -285,6 +285,8 @@ export default {
   'sp.error_prefix': "ত্রুটি: {msg}",
   'sp.subscribe.allowance_used': "দৈনিক বিনামূল্যে WebBrain ক্লাউড ভাতা ব্যবহার করা হয়।",
   'sp.subscribe.btn': "সদস্যতা",
+  'sp.subscribe.upgrade': 'Plus-এ আপগ্রেড করুন',
+  'sp.subscribe.resume_upgrade': 'প্ল্যান আপডেট হয়েছে — আবার চেষ্টা করুন',
   'sp.subscribe.resume': "আমি সাবস্ক্রাইব করেছি — আবার চেষ্টা করুন",
   'sp.stopped_by_user': "[ব্যবহারকারীর দ্বারা থামানো]",
   'sp.stopped_by_user_html': "<em>ব্যবহারকারী দ্বারা থামানো.</em>",

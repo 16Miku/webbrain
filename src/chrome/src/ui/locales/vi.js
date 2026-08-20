@@ -286,6 +286,8 @@ export default {
   'sp.error_prefix': "Lỗi: {msg}",
   'sp.subscribe.allowance_used': "Đã sử dụng trợ cấp đám mây WebBrain miễn phí hàng ngày.",
   'sp.subscribe.btn': "Đăng ký",
+  'sp.subscribe.upgrade': 'Nâng cấp lên Plus',
+  'sp.subscribe.resume_upgrade': 'Gói đã được cập nhật — thử lại',
   'sp.subscribe.resume': "Tôi đã đăng ký - thử lại",
   'sp.stopped_by_user': "[Người dùng đã dừng]",
   'sp.stopped_by_user_html': "<em>Đã bị dừng bởi người dùng.</em>",

@@ -225,6 +225,8 @@ export default {
   'sp.error_prefix': 'Błąd: {msg}',
   'sp.subscribe.allowance_used': 'Wykorzystano dzienny darmowy limit WebBrain Cloud.',
   'sp.subscribe.btn': 'Subskrybuj',
+  'sp.subscribe.upgrade': 'Przejdź na Plus',
+  'sp.subscribe.resume_upgrade': 'Plan zaktualizowany — spróbuj ponownie',
   'sp.subscribe.resume': 'Subskrypcja gotowa — spróbuj ponownie',
   'sp.stopped_by_user': '[Zatrzymane przez użytkownika]',
   'sp.stopped_by_user_html': '<em>Zatrzymane przez użytkownika.</em>',

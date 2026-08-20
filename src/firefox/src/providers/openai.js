@@ -204,14 +204,22 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   _formatHttpError(status, body) {
     const providerName = (this.config.providerName || '').toLowerCase();
     if (status === 402 && providerName === 'webbrain-cloud') {
-      let subscribeUrl = this._webbrainSubscribeUrl();
+      let actionUrl = this._webbrainSubscribeUrl();
+      let actionLabel = 'Subscribe for more usage';
       let message = 'Daily free WebBrain Cloud allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
-        subscribeUrl = parsed.subscribe_url || subscribeUrl;
+        if (parsed.upgrade_url) {
+          actionUrl = parsed.upgrade_url;
+          actionLabel = 'Upgrade to WebBrain Plus';
+        } else if (parsed.subscribe_url) {
+          actionUrl = parsed.subscribe_url;
+        } else if (parsed.error?.code === 'webbrain_cloud_plus_tier_exceeded') {
+          actionUrl = '';
+        }
         message = parsed.error?.message || message;
       } catch { /* keep fallback */ }
-      return `${message}\nSubscribe for more usage: ${subscribeUrl}`;
+      return actionUrl ? `${message}\n${actionLabel}: ${actionUrl}` : message;
     }
     // Ollama enforces an Origin allowlist; browser extensions hit it with a
     // moz-extension:// or chrome-extension:// origin that isn't on the
@@ -225,6 +233,16 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       );
     }
     return body;
+  }
+
+  _httpError(status, body, prefix) {
+    const error = new Error(`${prefix}: ${this._formatHttpError(status, body)}`);
+    error.httpStatus = status;
+    try {
+      const providerCode = JSON.parse(body || '{}')?.error?.code;
+      if (typeof providerCode === 'string' && providerCode) error.code = providerCode;
+    } catch { /* keep the formatted HTTP error without provider metadata */ }
+    return error;
   }
 
   _shouldRequestStreamUsage() {
@@ -727,7 +745,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = (await res.text()).slice(0, 500); } catch {}
-      throw new Error(`${this.name} error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      throw this._httpError(res.status, err, `${this.name} error ${res.status}`);
     }
     let data;
     try { data = await res.json(); } catch {
@@ -752,7 +770,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
     if (!res.ok) {
       const err = await res.text();
-      const streamError = new Error(`${this.name} stream error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      const streamError = this._httpError(res.status, err, `${this.name} stream error ${res.status}`);
       streamError.isResponsesStreamError = true;
       throw streamError;
     }
@@ -897,7 +915,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = (await res.text()).slice(0, 500); } catch {}
-      throw new Error(`${this.name} error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      throw this._httpError(res.status, err, `${this.name} error ${res.status}`);
     }
 
     let data;
@@ -937,7 +955,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`${this.name} stream error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      throw this._httpError(res.status, err, `${this.name} stream error ${res.status}`);
     }
 
     if (!res.body?.getReader) {
