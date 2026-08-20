@@ -1083,7 +1083,7 @@ export default {
   'st.providers.webgpu_download.ready': 'Ready for local chat',
   'st.providers.webgpu_download.error': 'Download needs attention',
   'st.providers.webgpu_download.error_detail': 'Check your connection, then resume the download.',
-  'st.providers.webgpu_download.required': 'Download LFM2.5 2.6B before using WebGPU in standalone chat.',
+  'st.providers.webgpu_download.required': 'Download the selected text model before using WebGPU in standalone chat.',
   'st.providers.webgpu_download.preparing': 'Preparing the model file list… Keep Chrome open.',
   'st.providers.webgpu_download.paused_detail': 'Completed files are cached. Resume when ready.',
   'st.providers.webgpu_download.ready_detail': 'Model files are cached in this browser. Chats run locally.',
@@ -1091,5 +1091,5 @@ export default {
   'st.providers.webgpu_download.pause': 'Pause',
   'st.providers.webgpu_download.resume': 'Resume',
   'st.providers.webgpu_download.stop': 'Stop & remove',
-  'st.providers.webgpu_download.activate_blocked': 'Download LFM2.5 2.6B before using WebGPU in standalone chat.',
+  'st.providers.webgpu_download.activate_blocked': 'Download the selected text model before using WebGPU in standalone chat.',
 };

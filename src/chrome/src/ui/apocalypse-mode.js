@@ -22,6 +22,8 @@ import { createOfflineRagReadinessController } from './offline-rag-readiness.js'
 import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
+  webgpuModelDtype,
+  webgpuModelPreset,
 } from '../providers/webgpu.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
@@ -74,6 +76,7 @@ let processingDownload = false;
 let visionDownloadState = null;
 let fixedWebgpuProviderConfigured = false;
 let fixedWebgpuProviderMarkedReady = false;
+let webgpuPresetHydrated = false;
 let visionTestRunning = false;
 let webgpuDownloadStatusRequest = 0;
 let webgpuDownloadState = {
@@ -311,12 +314,13 @@ function updateOverallModelsReadiness() {
   } else if (textStatus === 'error' || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
     kind = 'error';
     key = 'ap.models.status.error';
-  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready') {
+  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready' && !anyOtherWebgpuTextBusy()) {
     kind = 'ready';
     key = 'ap.models.status.ready';
-  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused') {
+  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused' || anyOtherWebgpuTextPaused()) {
     key = 'ap.models.status.paused';
   } else if (['checking', 'downloading', 'stopping'].includes(textStatus)
+    || anyOtherWebgpuTextBusy()
     || ['starting', 'downloading', 'stopping'].includes(visionStatus)
     || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)
     || ['downloading', 'verifying', 'extracting', 'indexing'].includes(corpusStatus)
@@ -367,9 +371,61 @@ function confirmCompletedModelRemoval(action, status, modelTitleKey) {
   return globalThis.confirm(t('ap.models.confirm_remove', { model: t(modelTitleKey) }));
 }
 
+function selectedWebgpuPreset() {
+  const checked = document.querySelector('[data-webgpu-text-preset]:checked');
+  return webgpuModelPreset(checked?.value) || webgpuModelPreset(WEBGPU_MODEL_ID);
+}
+
+function selectedWebgpuModelId() {
+  return selectedWebgpuPreset()?.id || WEBGPU_MODEL_ID;
+}
+
+function updateWebgpuTextPresetUi() {
+  const preset = selectedWebgpuPreset();
+  const size = document.querySelector('[data-webgpu-text-size]');
+  if (size) size.textContent = `${preset?.size || '1.55 GB'} · WebGPU`;
+  const warning = document.querySelector('[data-webgpu-text-warning]');
+  if (warning) warning.hidden = preset?.id === WEBGPU_MODEL_ID;
+  const copy = document.querySelector('[data-webgpu-text-copy]');
+  if (copy) {
+    const key = preset?.id === WEBGPU_MODEL_ID ? 'ap.webgpu.rag' : 'ap.webgpu.rag.pro';
+    copy.dataset.i18n = key;
+    copy.textContent = t(key);
+  }
+  for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
+    input.checked = input.value === (preset?.id || WEBGPU_MODEL_ID);
+  }
+}
+
+const webgpuTextStateByModel = new Map();
+const WEBGPU_TEXT_BUSY_STATUSES = new Set(['starting', 'queued', 'downloading', 'stopping', 'paused']);
+
+function otherWebgpuTextStates() {
+  const selected = selectedWebgpuModelId();
+  return [...webgpuTextStateByModel.values()].filter(state => state.modelId && state.modelId !== selected);
+}
+
+function anyOtherWebgpuTextBusy() {
+  return otherWebgpuTextStates().some(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status));
+}
+
+function anyOtherWebgpuTextPaused() {
+  return otherWebgpuTextStates().some(state => state.status === 'paused');
+}
+
 function setWebgpuDownloadState(state) {
   const normalized = normalizeWebgpuDownloadState(state);
-  if (normalized.modelId && normalized.modelId !== WEBGPU_MODEL_ID) return;
+  if (normalized.modelId) {
+    const liveStatus = String(state?.status || normalized.status);
+    webgpuTextStateByModel.set(normalized.modelId, {
+      ...normalized,
+      status: WEBGPU_TEXT_BUSY_STATUSES.has(liveStatus) ? liveStatus : normalized.status,
+    });
+  }
+  if (normalized.modelId && normalized.modelId !== selectedWebgpuModelId()) {
+    updateOverallModelsReadiness();
+    return;
+  }
   webgpuDownloadState = normalized;
   updateWebgpuDownloadPanel();
 }
@@ -414,14 +470,20 @@ async function runVisionDownloadAction(action) {
   }
 }
 
-async function ensureFixedWebgpuProvider({ markConfigured = false } = {}) {
-  if (fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) return;
+async function ensureFixedWebgpuProvider({ markConfigured = false, force = false } = {}) {
+  const preset = selectedWebgpuPreset();
+  const model = preset?.id || WEBGPU_MODEL_ID;
+  const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
+  if (!force && fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) {
+    const current = webgpuDownloadState?.modelId;
+    if (current === model) return;
+  }
   await providerCommand('update_provider', {
     providerId: 'webgpu',
     config: {
-      model: WEBGPU_MODEL_ID,
-      dtype: WEBGPU_DTYPE,
-      contextWindow: 16384,
+      model,
+      dtype,
+      contextWindow: preset.contextWindow,
       promptTier: 'compact',
     },
     markConfigured,
@@ -434,13 +496,56 @@ async function refreshWebgpuDownloadStatus() {
   if (!supportsWebgpuVision) return;
   const requestId = ++webgpuDownloadStatusRequest;
   try {
-    await ensureFixedWebgpuProvider();
-    const state = await providerCommand('get_webgpu_download_status');
+    let state = await providerCommand('get_webgpu_download_status');
     if (requestId !== webgpuDownloadStatusRequest) return;
+    let preset = webgpuModelPreset(state?.modelId);
+    if (!preset) {
+      // Apocalypse Mode exposes only shipped presets. Retain an active custom
+      // transfer in the aggregate tracker, then switch the provider to the
+      // checked shipped preset before rendering its controls.
+      setWebgpuDownloadState(state);
+      await ensureFixedWebgpuProvider({ force: true });
+      if (requestId !== webgpuDownloadStatusRequest) return;
+      state = await providerCommand('get_webgpu_download_status');
+      if (requestId !== webgpuDownloadStatusRequest) return;
+      preset = webgpuModelPreset(state?.modelId);
+      if (!preset) throw new Error('Unable to select a shipped WebGPU text preset.');
+    }
+    if (preset) {
+      const selectedId = selectedWebgpuModelId();
+      if (!webgpuPresetHydrated || selectedId === preset.id) {
+        const input = document.querySelector(`[data-webgpu-text-preset][value="${CSS.escape(preset.id)}"]`);
+        if (input) input.checked = true;
+        webgpuPresetHydrated = true;
+      }
+    }
+    updateWebgpuTextPresetUi();
     setWebgpuDownloadState(state);
     if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true });
   } catch (error) {
     if (requestId === webgpuDownloadStatusRequest) setWebgpuDownloadState({ status: 'error', error: error.message });
+  }
+}
+
+async function onWebgpuTextPresetChange() {
+  webgpuPresetHydrated = true;
+  fixedWebgpuProviderConfigured = false;
+  fixedWebgpuProviderMarkedReady = false;
+  updateWebgpuTextPresetUi();
+  webgpuDownloadState = {
+    ...webgpuDownloadState,
+    status: 'checking',
+    ready: false,
+    modelId: selectedWebgpuModelId(),
+    dtype: selectedWebgpuPreset()?.dtype || WEBGPU_DTYPE,
+    error: '',
+  };
+  updateWebgpuDownloadPanel();
+  try {
+    await ensureFixedWebgpuProvider();
+    await refreshWebgpuDownloadStatus();
+  } catch (error) {
+    setWebgpuDownloadState({ status: 'error', error: error.message });
   }
 }
 
@@ -950,6 +1055,9 @@ async function runBasicWikipediaAction(action, sourceButton) {
 document.querySelectorAll('[data-webgpu-download-action]').forEach((button) => {
   button.addEventListener('click', () => runWebgpuDownloadAction(button.dataset.webgpuDownloadAction));
 });
+document.querySelectorAll('[data-webgpu-text-preset]').forEach((input) => {
+  input.addEventListener('change', () => onWebgpuTextPresetChange());
+});
 document.querySelectorAll('[data-vision-download-action]').forEach((button) => {
   button.addEventListener('click', () => runVisionDownloadAction(button.dataset.visionDownloadAction));
 });
@@ -1053,6 +1161,7 @@ elements.enabled.addEventListener('change', async () => {
 document.addEventListener('wb-locale-changed', () => {
   renderInstalled();
   renderVisionDownload();
+  updateWebgpuTextPresetUi();
   updateWebgpuDownloadPanel();
   renderBasicWikipediaDownload();
   renderRagComponents();

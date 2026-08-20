@@ -1,9 +1,10 @@
 /** Shared, download-free readiness and filter UI for offline retrieval. */
 
-import { createApocalypseStore } from '../agent/apocalypse-mode.js';
+import { createApocalypseStore, createKiwixZimProvider } from '../agent/apocalypse-mode.js';
 import { createEmergencyCorpusStore } from '../agent/emergency-corpus.js';
 import { emergencyRetrievalStatus } from '../agent/offline-retrieval.js';
 import { createOfflineSemanticReranker } from '../agent/offline-reranker.js';
+import { ZIM_XAPIAN_RUNTIME_BUNDLED } from '../agent/zim-xapian.js';
 import { t } from './i18n.js';
 
 export const OFFLINE_RAG_FILTERS_KEY = 'webbrainOfflineRagFilters';
@@ -47,11 +48,19 @@ function statusLabel(status) {
   return value === key ? String(status || '') : value;
 }
 
-function wikipediaStatus(archives) {
+export async function wikipediaStatus(archives, options = {}) {
   const wikipedia = (Array.isArray(archives) ? archives : [])
-    .filter(record => record?.archiveKind === 'wikipedia');
-  if (wikipedia.some(record => record.status === 'ready')) return 'title-only-fallback';
-  return 'unavailable';
+    .filter(record => record?.archiveKind === 'wikipedia' && record.status === 'ready');
+  if (!wikipedia.length) return 'unavailable';
+  if (options.runtimeBundled !== true || typeof options.hasFullTextIndex !== 'function') {
+    return 'title-only-fallback';
+  }
+  for (const record of wikipedia) {
+    try {
+      if (await options.hasFullTextIndex(record) === true) return 'ready';
+    } catch { /* An unreadable index remains an honest title-only state. */ }
+  }
+  return 'title-only-fallback';
 }
 
 function installedLanguages(archives, corpus) {
@@ -74,6 +83,7 @@ export function createOfflineRagReadinessController(options = {}) {
   const apocalypseStore = options.apocalypseStore || createApocalypseStore();
   const corpusStore = options.corpusStore || createEmergencyCorpusStore();
   const semanticReranker = options.semanticReranker || createOfflineSemanticReranker();
+  const wikipediaProvider = options.wikipediaProvider || createKiwixZimProvider();
   let filters = loadOfflineRagFilters(options.storage);
   let languages = [];
   let lastState = null;
@@ -144,9 +154,13 @@ export function createOfflineRagReadinessController(options = {}) {
           (options.storage || globalThis.localStorage)?.setItem(OFFLINE_RAG_FILTERS_KEY, JSON.stringify(filters));
         } catch { /* filter pruning still applies for this page */ }
       }
+      const wikipedia = await wikipediaStatus(archives, {
+        runtimeBundled: options.xapianRuntimeBundled ?? ZIM_XAPIAN_RUNTIME_BUNDLED,
+        hasFullTextIndex: record => wikipediaProvider.hasFullTextIndex(record),
+      });
       const generation = await Promise.resolve(options.getGenerationStatus?.()).catch(() => 'error');
       lastState = Object.freeze({
-        wikipedia: wikipediaStatus(archives),
+        wikipedia,
         emergencyBox: emergencyRetrievalStatus(corpus),
         semantic: String(semantic || 'model-missing'),
         generation: String(generation || 'unavailable'),
