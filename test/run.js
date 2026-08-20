@@ -29769,6 +29769,47 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     'kanji-only Japanese queries were translated as if they were Chinese');
   assert.deepEqual(hanTranslationRequest?.targets?.map(target => target.language), ['zho'],
     'a Japanese UI asked the model to translate Japanese kanji back into Japanese');
+  let followOnTranslationRequest = null;
+  let followOnTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'When was he born?' },
+    'When was he born?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng'],
+    },
+    {
+      messages: [
+        { role: 'user', content: 'Sokollu Mehmed Paşa kimdir?', webbrainStandaloneChat: true },
+        { role: 'assistant', content: 'Sokollu Mehmed Paşa was an Ottoman statesman.' },
+      ],
+      async translateWikipediaQuery(request) {
+        followOnTranslationRequest = request;
+        return { eng: 'Sokollu Mehmed Pasha' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          followOnTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(followOnTranslationRequest?.sourceLanguage, 'tur',
+    'a pronoun follow-up kept the English UI language instead of the resolved Turkish topic');
+  assert.deepEqual(followOnTranslationRequest?.targets?.map(target => target.language), ['eng'],
+    'the English archive was excluded from translation because the follow-up was English');
+  assert.equal(followOnTranslationOptions?.queryLanguage, 'tur',
+    'resolved-topic language did not reach offline retrieval');
+  assert.equal(followOnTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'Sokollu Mehmed Pasha',
+    'the English archive searched the raw Turkish spelling instead of the translated topic');
   let healthSources = null;
   let healthSearchQuery = '';
   await agent._applyStandaloneWikipediaRag(

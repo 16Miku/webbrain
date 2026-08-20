@@ -4282,7 +4282,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return '';
   }
 
-  async _standaloneWikipediaQueryTranslations(searchQuery, userQuery, runOptions = {}, options = {}) {
+  async _standaloneWikipediaQueryTranslations(searchQuery, runOptions = {}, options = {}) {
     const selectedSources = Array.isArray(runOptions.offlineRagSources)
       ? runOptions.offlineRagSources.map(value => String(value || '').trim().toLowerCase())
       : [];
@@ -4304,7 +4304,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .filter(value => /^[a-z]{3}$/.test(value)))]
       .slice(0, STANDALONE_WIKIPEDIA_TRANSLATION_TARGET_LIMIT);
     const localeLanguage = offlineWikipediaLanguageForLocale(runOptions.locale || 'en');
-    const sourceLanguage = detectOfflineQueryLanguage(userQuery, { locale: runOptions.locale || 'en' })
+    // Pronoun follow-ups reuse a prior topic whose language may differ from the
+    // latest utterance, so classify the resolved search text, not the user turn.
+    const sourceLanguage = detectOfflineQueryLanguage(searchQuery, { locale: runOptions.locale || 'en' })
       || localeLanguage;
     const translationTargets = targetLanguages.filter(language => language !== sourceLanguage);
     if (!String(searchQuery || '').trim() || !translationTargets.length) {
@@ -4373,7 +4375,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const offlineRetrievalService = options.offlineRetrievalService || this._getStandaloneOfflineRagService();
       const queryTranslations = await this._standaloneWikipediaQueryTranslations(
         searchQuery,
-        query,
         runOptions,
         { ...options, offlineRetrievalService },
       );
