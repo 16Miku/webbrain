@@ -124,6 +124,7 @@ export function createEmergencyDownloadController(options = {}) {
     await waitForJob(corpusJob);
     if (isLiveJob(corpusJob)) return { ok: true, started: false, reason: 'active', ...(await snapshot()) };
     const current = await corpusStore.get().catch(() => null);
+    if (isLiveJob(corpusJob)) return { ok: true, started: false, reason: 'active', ...(await snapshot()) };
     if (current?.status === 'ready' && current.active) {
       return { ok: true, started: false, reason: 'ready', ...(await snapshot()) };
     }
