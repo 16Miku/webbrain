@@ -37101,6 +37101,8 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(agent, /_normalizeClarifyTimeoutSec/, `${label}: agent should normalize clarify timeout (instant / wait / off)`);
     assert.match(agent, /if \(sec > 1200\) return -1/, `${label}: stored values above 1200 should normalize to Off (-1)`);
     assert.match(agent, /_settleClarification/, `${label}: clarify responses should settle once and clear timers`);
+    assert.match(agent, /noteClarifyInputActivity/, `${label}: custom-answer typing should renew a waited clarify timeout`);
+    assert.match(agent, /onUpdate\('clarify_timeout_extended'/, `${label}: renewed deadlines should be published to the UI`);
     assert.match(agent, /timeoutSec === 0 \? 'auto' : 'timeout'/, `${label}: Instant should use source=auto; waited timeout uses source=timeout`);
     assert.match(agent, /source: autoSource/, `${label}: clarify_auto / settle should pass auto or timeout via autoSource`);
     assert.match(agent, /source === 'timeout'/, `${label}: waited timeout should keep the non-confirmation tool note`);
@@ -37145,9 +37147,10 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     );
     assert.match(
       scheduler,
-      /type === 'clarify' \|\| type === 'clarify_auto'/,
-      `${label}: scheduled clarify_auto updates should carry scheduledJobId`,
+      /type === 'clarify' \|\| type === 'clarify_timeout_extended' \|\| type === 'clarify_auto'/,
+      `${label}: scheduled clarify deadline updates should carry scheduledJobId`,
     );
+    assert.match(scheduler, /type === 'clarify_timeout_extended'[\s\S]*?pendingClarify:[\s\S]*?deadlineTs:/, `${label}: scheduled clarifies should persist renewed deadlines`);
     assert.match(
       panel,
       /isAutoClarify = source === 'timeout' \|\| source === 'auto'/,
@@ -37164,6 +37167,7 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(bg, /if \(sec > 1200\) return -1/, `${label}: background should treat >1200 as Off`);
     assert.match(bg, /clarifyTimeoutSemanticsV2/, `${label}: background should migrate old 0=Off semantics once`);
     assert.match(bg, /CLARIFY_TIMEOUT_OFF_SLIDER = 1205/, `${label}: Off slider sentinel should be 1205`);
+    assert.match(bg, /case 'clarify_input_activity':[\s\S]*?agent\.noteClarifyInputActivity/, `${label}: background should route custom-answer activity to the agent timer`);
 
     assert.match(settingsHtml, /id="range-clarify-timeout"[^>]*min="0"[^>]*max="1205"[^>]*value="60"/, `${label}: settings should expose 0–1205 clarify timeout slider (1205=Off)`);
     assert.match(settings, /clarifyTimeoutSec/, `${label}: settings should persist clarifyTimeoutSec`);
@@ -37175,6 +37179,8 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(panel, /case 'clarify_auto':/, `${label}: sidepanel should handle clarify_auto`);
     assert.match(panel, /lockClarifyCardFromAuto/, `${label}: sidepanel should lock cards on auto-select`);
     assert.match(panel, /dataset\.deadlineTs/, `${label}: clarify cards should persist deadline for restore`);
+    assert.match(panel, /input\.addEventListener\('input',[\s\S]*?keepClarifyAliveWhileTyping/, `${label}: custom-answer input should keep a waited clarify alive`);
+    assert.match(panel, /activeDeadlineTs = Number\(card\.dataset\.deadlineTs\)/, `${label}: countdown should read renewed deadlines`);
     assert.match(panel, /startClarifyCountdown\(card, \{ tabId, clarifyId, deadlineTs, firstOption \}\)/, `${label}: rebind should restart countdown from restored metadata`);
     assert.match(locale, /st\.display\.clarify_timeout\.label/, `${label}: English locale should include clarify timeout label`);
     assert.match(locale, /st\.display\.clarify_timeout\.off/, `${label}: English locale should include Off label`);
@@ -37183,6 +37189,68 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(locale, /above 1200s/, `${label}: English locale should document Off above 1200s`);
     assert.match(locale, /sp\.clarify\.auto_timeout/, `${label}: English locale should include countdown string`);
     assert.match(idLocale, /\{seconds\} dtk/, `${label}: Indonesian countdown should use seconds unit, not bare d`);
+  }
+});
+
+test('clarify custom-answer activity restarts the authoritative waited timeout', async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const originalDateNow = Date.now;
+  let now = 10_000;
+  let nextTimerId = 1;
+  const timers = new Map();
+  globalThis.setTimeout = (callback, delay) => {
+    const id = nextTimerId++;
+    timers.set(id, { callback, delay });
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    timers.delete(id);
+  };
+  Date.now = () => now;
+
+  try {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const agent = new AgentClass({});
+      const tabId = 4810 + index;
+      agent.clarifyTimeoutSec = 5;
+      const updates = [];
+      const resultPromise = agent.executeTool(
+        tabId,
+        'clarify',
+        { question: 'Which option?', options: ['First', 'Something else'] },
+        (type, data) => updates.push({ type, data }),
+      );
+      // executeTool performs one async preflight before reaching clarify.
+      await new Promise(resolve => originalSetTimeout(resolve, 0));
+      const clarify = updates.find((update) => update.type === 'clarify')?.data;
+      assert.ok(clarify?.clarifyId, `${AgentClass.name}: clarify prompt was not emitted`);
+      const firstTimerId = [...timers.keys()][0];
+      assert.equal(timers.get(firstTimerId)?.delay, 5000, `${AgentClass.name}: initial waited timeout was not armed`);
+
+      now += 4000;
+      const renewed = agent.noteClarifyInputActivity(tabId, clarify.clarifyId);
+      assert.equal(renewed?.deadlineTs, now + 5000, `${AgentClass.name}: typing did not renew the full timeout`);
+      assert.equal(timers.has(firstTimerId), false, `${AgentClass.name}: original timeout remained armed while typing`);
+      const renewedTimerId = [...timers.keys()][0];
+      assert.equal(timers.get(renewedTimerId)?.delay, 5000, `${AgentClass.name}: renewed timeout used the wrong delay`);
+      assert.equal(
+        updates.at(-1)?.type,
+        'clarify_timeout_extended',
+        `${AgentClass.name}: renewed deadline was not emitted`,
+      );
+
+      timers.get(renewedTimerId).callback();
+      timers.delete(renewedTimerId);
+      const result = await resultPromise;
+      assert.equal(result.source, 'timeout', `${AgentClass.name}: renewed timer did not preserve waited-timeout semantics`);
+      assert.equal(agent.noteClarifyInputActivity(tabId, clarify.clarifyId), null, `${AgentClass.name}: settled clarify accepted stale typing activity`);
+      now += 1000;
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    Date.now = originalDateNow;
   }
 });
 

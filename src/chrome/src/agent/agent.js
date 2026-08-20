@@ -9997,6 +9997,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return true;
   }
 
+  /**
+   * Restart a waited clarify timeout while the user is composing a custom
+   * answer. Instant and Off modes have no renewable deadline.
+   */
+  noteClarifyInputActivity(tabId, clarifyId) {
+    const entry = this._pendingClarifications.get(tabId)?.get(clarifyId);
+    if (!entry || entry.settled || typeof entry.restartTimeout !== 'function') return null;
+    if (!entry.restartTimeout()) return null;
+    const update = {
+      clarifyId,
+      timeoutSec: entry.timeoutSec,
+      deadlineTs: entry.deadlineTs,
+    };
+    try {
+      if (typeof entry.onUpdate === 'function') {
+        entry.onUpdate('clarify_timeout_extended', update);
+      }
+    } catch { /* UI emit must never break the run */ }
+    return update;
+  }
+
   async requireExplicitClarificationAuthorization(tabId) {
     await this._hydrate(tabId);
     return await this._recordClarificationAuthorization(tabId, 'timeout');
@@ -19572,19 +19593,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // 0 = instant auto-select; >0 = wait N s; -1 = Off (wait forever).
       const timeoutSec = this._normalizeClarifyTimeoutSec(this.clarifyTimeoutSec);
       const waitSec = timeoutSec > 0 ? timeoutSec : 0;
-      const deadlineTs = waitSec > 0 ? Date.now() + waitSec * 1000 : 0;
 
       const tabPending = this._pendingClarifications.get(tabId) || new Map();
       this._pendingClarifications.set(tabId, tabPending);
 
       const responsePromise = new Promise((resolve) => {
-        const entry = { resolve, ts: Date.now(), timer: null, settled: false };
+        const entry = {
+          resolve,
+          ts: Date.now(),
+          timer: null,
+          settled: false,
+          timeoutSec: waitSec,
+          deadlineTs: 0,
+          restartTimeout: null,
+          onUpdate,
+        };
         // Arm auto-select when Instant (0) or a positive wait; Off (-1) waits forever.
         // Instant uses source=auto (user intentionally set auto-approve, e.g. headless).
         // A waited timeout uses source=timeout (passive no-reply — not confirmation).
         if (timeoutSec >= 0) {
           const autoSource = timeoutSec === 0 ? 'auto' : 'timeout';
-          entry.timer = setTimeout(() => {
+          const autoSelect = () => {
             entry.timer = null;
             // Prefer the first suggested option; free-text-only prompts get a
             // clear timeout marker so the agent can continue without hanging.
@@ -19597,7 +19626,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               }
             } catch { /* UI emit must never break the run */ }
             this._settleClarification(entry, { answer, source: autoSource });
-          }, waitSec * 1000);
+          };
+          entry.restartTimeout = () => {
+            if (entry.settled || !(entry.timeoutSec > 0)) return false;
+            this._clearClarifyTimer(entry);
+            entry.deadlineTs = Date.now() + entry.timeoutSec * 1000;
+            entry.timer = setTimeout(autoSelect, entry.timeoutSec * 1000);
+            return true;
+          };
+          if (timeoutSec === 0) entry.timer = setTimeout(autoSelect, 0);
+          else entry.restartTimeout();
         }
         tabPending.set(clarifyId, entry);
       });
@@ -19610,7 +19648,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             options,
             reason,
             timeoutSec: waitSec,
-            deadlineTs: deadlineTs || undefined,
+            deadlineTs: tabPending.get(clarifyId)?.deadlineTs || undefined,
           });
         } catch { /* UI emit must never break the run */ }
       }

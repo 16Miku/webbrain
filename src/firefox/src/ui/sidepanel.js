@@ -4767,6 +4767,9 @@ function rebindClarifyCards() {
     card.querySelectorAll('.clarify-input').forEach(input => {
       if (input.dataset.bound) return;
       input.dataset.bound = 'true';
+      input.addEventListener('input', () => {
+        keepClarifyAliveWhileTyping(card, tabId, clarifyId, input);
+      });
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && input.value.trim()) {
           e.preventDefault();
@@ -8657,6 +8660,12 @@ function handleAgentUpdateMessage(msg) {
       lockClarifyCardFromAuto(data);
       break;
 
+    case 'clarify_timeout_extended':
+      // Custom-answer typing renewed the authoritative agent deadline. Keep
+      // this card (and restored copies) on the same countdown.
+      applyClarifyTimeoutExtension(data);
+      break;
+
     case 'upload_picker':
       renderUploadPickerCard(data, msg.tabId ?? currentTabId);
       break;
@@ -8950,6 +8959,9 @@ function renderClarifyCard(data) {
   input.placeholder = options.length
     ? (typeof t === 'function' ? t('sp.clarify.input_placeholder_with_options') : 'Or type a different answer…')
     : (typeof t === 'function' ? t('sp.clarify.input_placeholder') : 'Type your answer…');
+  input.addEventListener('input', () => {
+    keepClarifyAliveWhileTyping(card, tabId, clarifyId, input);
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && input.value.trim()) {
       e.preventDefault();
@@ -8987,6 +8999,10 @@ function renderClarifyCard(data) {
 
 function clearClarifyCountdown(card) {
   if (!card) return;
+  if (card._clarifyActivityTimer) {
+    try { clearTimeout(card._clarifyActivityTimer); } catch {}
+    card._clarifyActivityTimer = null;
+  }
   if (card._clarifyCountdownTimer) {
     try { clearInterval(card._clarifyCountdownTimer); } catch {}
     card._clarifyCountdownTimer = null;
@@ -9013,7 +9029,8 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
       clearClarifyCountdown(card);
       return;
     }
-    const remainingMs = Math.max(0, deadlineTs - Date.now());
+    const activeDeadlineTs = Number(card.dataset.deadlineTs) || deadlineTs;
+    const remainingMs = Math.max(0, activeDeadlineTs - Date.now());
     const remainingSec = Math.ceil(remainingMs / 1000);
     timerEl.textContent = typeof t === 'function'
       ? t('sp.clarify.auto_timeout', { seconds: remainingSec })
@@ -9027,6 +9044,72 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
   };
   tick();
   card._clarifyCountdownTimer = setInterval(tick, 250);
+}
+
+function applyClarifyTimeoutExtension(data) {
+  const clarifyId = String(data?.clarifyId || '');
+  const deadlineTs = Number(data?.deadlineTs);
+  const timeoutSec = Number(data?.timeoutSec);
+  if (!clarifyId || !Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
+  for (const card of document.querySelectorAll('.clarify-card')) {
+    if (String(card.dataset.clarifyId || '') !== clarifyId) continue;
+    if (card.classList.contains('clarify-answered')) continue;
+    const currentDeadlineTs = Number(card.dataset.deadlineTs) || 0;
+    if (deadlineTs < currentDeadlineTs) continue;
+    card.dataset.deadlineTs = String(Math.floor(deadlineTs));
+    if (Number.isFinite(timeoutSec) && timeoutSec > 0) {
+      card.dataset.timeoutSec = String(Math.floor(timeoutSec));
+    }
+    if (!card._clarifyCountdownTimer) {
+      const rawTabId = card.dataset.scheduledTabId ?? card.dataset.tabId;
+      const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
+      const firstOption = card.dataset.firstOption
+        || card.querySelector('.clarify-option')?.dataset?.value
+        || card.querySelector('.clarify-option')?.textContent
+        || '(no response — timed out)';
+      if (tabId != null && !Number.isNaN(tabId)) {
+        startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption });
+      }
+    }
+  }
+  schedulePersist();
+}
+
+/**
+ * Treat custom-answer input as activity, not silence. Renew immediately on
+ * the first keystroke and periodically while typing so the agent cannot
+ * auto-select an option out from under an in-progress answer.
+ */
+function keepClarifyAliveWhileTyping(card, tabId, clarifyId, input) {
+  if (!card || card.classList.contains('clarify-answered') || !input?.value?.length) return;
+  const timeoutSec = Number(card.dataset.timeoutSec);
+  if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) return;
+
+  const sendActivity = () => {
+    card._clarifyActivityTimer = null;
+    if (card.classList.contains('clarify-answered') || !input.value.length) return;
+    const activityTs = Date.now();
+    card._lastClarifyActivitySentAt = activityTs;
+    card.dataset.deadlineTs = String(Math.floor(activityTs + timeoutSec * 1000));
+    schedulePersist();
+    sendToBackground('clarify_input_activity', { tabId, clarifyId })
+      .then((response) => {
+        if (response?.matched) applyClarifyTimeoutExtension(response);
+      })
+      .catch(() => { /* the live run may have settled between keystrokes */ });
+  };
+
+  const now = Date.now();
+  const minIntervalMs = Math.max(250, Math.min(5000, timeoutSec * 500));
+  const lastSentAt = Number(card._lastClarifyActivitySentAt) || 0;
+  const elapsedMs = now - lastSentAt;
+  if (!lastSentAt || elapsedMs >= minIntervalMs) {
+    if (card._clarifyActivityTimer) clearTimeout(card._clarifyActivityTimer);
+    sendActivity();
+    return;
+  }
+  if (card._clarifyActivityTimer) clearTimeout(card._clarifyActivityTimer);
+  card._clarifyActivityTimer = setTimeout(sendActivity, minIntervalMs - elapsedMs);
 }
 
 /**
