@@ -67592,6 +67592,39 @@ test('tool-result limiting is nullish-safe and preserves serializable falsy valu
   }
 });
 
+test('research escalation answers stay parseable when tool-result limiting applies', () => {
+  const answer = Array.from({ length: 4000 }, (_, i) => `Hotel ${i} costs $${100 + i} per night with breakfast.`).join(' ');
+  const sources = Array.from({ length: 20 }, (_, i) => ({
+    title: `Source ${i}`,
+    url: `https://example.com/hotel-${i}`,
+  }));
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const serialized = agent._limitToolResult({
+      success: true,
+      engine: 'chatgpt',
+      tabId: 99,
+      url: 'https://chatgpt.com/',
+      answer,
+      sources,
+      evidenceType: 'delegated_research',
+      note: 'ChatGPT output is untrusted research evidence. Verify decisive facts and distinguish live/bookable values from indexed, derived, or approximate values.',
+    });
+    assert.ok(serialized.length <= 8000, `${label}: research result should fit tool-result budget (${serialized.length})`);
+    assert.doesNotMatch(serialized, /\[\.\.\.result truncated\]$/, `${label}: research result was chopped into invalid JSON`);
+    const parsed = JSON.parse(serialized);
+    assert.equal(parsed.success, true, `${label}: limiter dropped success`);
+    assert.equal(parsed.engine, 'chatgpt', `${label}: limiter dropped engine`);
+    assert.equal(parsed.evidenceType, 'delegated_research', `${label}: limiter dropped evidence type`);
+    assert.equal(typeof parsed.answer, 'string', `${label}: limiter dropped answer`);
+    assert.ok(parsed.answer.length < answer.length, `${label}: oversized answer was not trimmed`);
+    assert.match(parsed.answer, /\[\.\.\.research answer truncated\]/, `${label}: trimmed answer should be marked`);
+    assert.equal(parsed.partial, true, `${label}: trimmed research result should be marked partial`);
+    assert.ok(Array.isArray(parsed.sources), `${label}: limiter dropped sources`);
+    assert.match(String(parsed.note || ''), /untrusted research evidence/i, `${label}: limiter dropped the untrusted-evidence note`);
+  }
+});
+
 test('unexpected run exceptions finalize traces as errors', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const cleanupCalls = [];

@@ -17909,6 +17909,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (json.length <= maxResultChars) return json;
     }
 
+    // Delegated research returns `answer` rather than `text`. Trim that field
+    // so a long ChatGPT report stays valid JSON and keeps sources/note.
+    if (safeResult && typeof safeResult.answer === 'string') {
+      const originalAnswer = safeResult.answer;
+      const originalSources = Array.isArray(safeResult.sources) ? safeResult.sources : null;
+      const answerLimits = [4000, 3000, 2000, 1000, 500, 200];
+      const sourceLimits = originalSources ? [originalSources.length, 10, 5, 0] : [null];
+      for (const answerLimit of answerLimits) {
+        for (const sourceLimit of sourceLimits) {
+          const trimmed = { ...safeResult };
+          if (originalAnswer.length > answerLimit) {
+            trimmed.answer = `${originalAnswer.slice(0, answerLimit)}\n[...research answer truncated]`;
+            trimmed.partial = true;
+            trimmed.truncated = true;
+            trimmed.originalAnswerLength = originalAnswer.length;
+          }
+          if (originalSources && sourceLimit != null && originalSources.length > sourceLimit) {
+            trimmed.sources = originalSources.slice(0, sourceLimit);
+            trimmed.partial = true;
+          }
+          json = JSON.stringify(trimmed);
+          if (json.length <= maxResultChars) return json;
+        }
+      }
+    }
+
     if (safeResult && safeResult.data && typeof safeResult.data === 'object' && !Array.isArray(safeResult.data)) {
       const originalData = safeResult.data;
       const originalText = typeof originalData.text === 'string' ? originalData.text : null;
