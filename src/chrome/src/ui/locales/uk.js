@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'Щоб WebBrain був під рукою, відкрийте розширення Firefox, виберіть шестерню поруч із WebBrain, а потім «Закріпити на панелі інструментів».',
   'install.open_failed_chromium': 'Бічна панель не відкрилася. Натисніть Alt+Shift+W або відкрийте меню розширень браузера й виберіть WebBrain.',
   'install.open_failed_firefox': 'Бічна панель не відкрилася. Відкрийте розширення Firefox і виберіть WebBrain.',
+  'install.showcase.ask.title': "Запитайте будь-яку сторінку. Залиште корисне.",
+  'install.showcase.ask.body': "Чисті відповіді з безладних сторінок. Типово лише читання.",
+  'install.showcase.act.title': "Скажіть браузеру, що робити.",
+  'install.showcase.model.title': "Використовуйте модель, якій довіряєте.",
+  'install.showcase.model.body': "Локально, у хмарі або зі своїми ключами — перемикайте будь-коли.",
+  'install.showcase.apocalypse.body': "Офлайн-знання під вашим контролем. Завантажте необхідне, поки ще можна.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} з {total}',

@@ -50,6 +50,12 @@ export default {
   'install.firefox_pin.body': "Để giữ WebBrain tiện dụng, hãy mở Tiện ích mở rộng Firefox, chọn bánh răng bên cạnh WebBrain, sau đó chọn Ghim vào Thanh công cụ.",
   'install.open_failed_chromium': "Bảng điều khiển bên không mở. Nhấn Alt+Shift+W hoặc mở menu Tiện ích mở rộng của trình duyệt và chọn WebBrain.",
   'install.open_failed_firefox': "Thanh bên không mở. Mở Tiện ích mở rộng Firefox và chọn WebBrain.",
+  'install.showcase.ask.title': "Hỏi bất kỳ trang nào. Lấy phần hữu ích.",
+  'install.showcase.ask.body': "Câu trả lời gọn từ các trang lộn xộn. Mặc định chỉ đọc.",
+  'install.showcase.act.title': "Bảo trình duyệt phải làm gì.",
+  'install.showcase.model.title': "Dùng mô hình bạn tin tưởng.",
+  'install.showcase.model.body': "Cục bộ, đám mây, hoặc khóa của bạn — đổi bất cứ lúc nào.",
+  'install.showcase.apocalypse.body': "Tri thức ngoại tuyến, do bạn kiểm soát. Tải những thứ cần thiết khi vẫn còn kịp.",
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "Đã ngắt kết nối",

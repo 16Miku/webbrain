@@ -50,6 +50,12 @@ export default {
   'install.firefox_pin.body': "WebBrain সহজে রাখতে, Firefox এক্সটেনশন খুলুন, WebBrain এর পাশে গিয়ার নির্বাচন করুন, তারপর টুলবারে পিন করুন।",
   'install.open_failed_chromium': "পাশের প্যানেলটি খোলেনি। Alt+Shift+W টিপুন, অথবা আপনার ব্রাউজারের এক্সটেনশন মেনু খুলুন এবং WebBrain নির্বাচন করুন।",
   'install.open_failed_firefox': "সাইডবার খুলল না। Firefox এক্সটেনশন খুলুন এবং WebBrain নির্বাচন করুন।",
+  'install.showcase.ask.title': "যেকোনো পৃষ্ঠাকে জিজ্ঞাসা করুন। দরকারি অংশটাই রাখুন।",
+  'install.showcase.ask.body': "এলোমেলো পৃষ্ঠা থেকে পরিষ্কার উত্তর। ডিফল্টে শুধু পড়া যায়।",
+  'install.showcase.act.title': "ব্রাউজারকে বলুন কী করতে হবে।",
+  'install.showcase.model.title': "যে মডেলে বিশ্বাস করেন, সেটি ব্যবহার করুন।",
+  'install.showcase.model.body': "লোকাল, ক্লাউড, বা নিজের কী — যেকোনো সময় বদলান।",
+  'install.showcase.apocalypse.body': "অফলাইন জ্ঞান, আপনার নিয়ন্ত্রণে। এখনো পারা যায়, প্রয়োজনীয়গুলো ডাउनलोड করুন।",
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "সংযোগ বিচ্ছিন্ন",

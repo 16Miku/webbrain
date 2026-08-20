@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'เพื่อให้เข้าถึง WebBrain ได้ง่าย ให้เปิดส่วนขยาย Firefox เลือกเฟืองข้าง WebBrain แล้วเลือกปักหมุดไว้บนแถบเครื่องมือ',
   'install.open_failed_chromium': 'แผงด้านข้างไม่เปิด กด Alt+Shift+W หรือเปิดเมนูส่วนขยายของเบราว์เซอร์แล้วเลือก WebBrain',
   'install.open_failed_firefox': 'แถบด้านข้างไม่เปิด เปิดส่วนขยาย Firefox แล้วเลือก WebBrain',
+  'install.showcase.ask.title': "ถามหน้าใดก็ได้ ได้เฉพาะส่วนที่ใช้ได้",
+  'install.showcase.ask.body': "คำตอบที่สะอาดจากหน้ายุ่งเหยิง ค่าเริ่มต้นเป็นแบบอ่านอย่างเดียว",
+  'install.showcase.act.title': "บอกเบราว์เซอร์ว่าต้องทำอะไร",
+  'install.showcase.model.title': "ใช้โมเดลที่คุณไว้ใจ",
+  'install.showcase.model.body': "ภายในเครื่อง คลาวด์ หรือคีย์ของคุณเอง — สลับได้ทุกเมื่อ",
+  'install.showcase.apocalypse.body': "ความรู้แบบออฟไลน์ อยู่ในการควบคุมของคุณ ดาวน์โหลดสิ่งจำเป็นตอนที่ยังทำได้",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} จาก {total}',

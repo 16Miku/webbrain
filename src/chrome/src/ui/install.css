@@ -354,6 +354,7 @@ kbd {
 }
 
 .feature-panel {
+  position: relative;
   width: 100%;
   height: 100%;
   margin: 0;
@@ -369,6 +370,93 @@ kbd {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.feature-copy {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(48%, 24rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 7% 6% 7% 8%;
+  overflow: hidden;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--showcase-wash, #f4f1ea) 97%, transparent) 0%,
+    color-mix(in srgb, var(--showcase-wash, #f4f1ea) 86%, transparent) 68%,
+    transparent 100%
+  );
+  color: #4a5163;
+  pointer-events: none;
+  text-align: start;
+}
+
+.feature-copy h2 {
+  margin: 0;
+  color: #16141c;
+  font-family: var(--display);
+  font-size: clamp(20px, 2.55vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+}
+
+.feature-copy p {
+  margin: 0;
+  max-width: 18.5rem;
+  font-size: clamp(12px, 1.15vw, 15px);
+  line-height: 1.4;
+}
+
+.feature-copy-eyebrow {
+  margin: 0 0 0.15rem;
+  color: #e0b24a;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.feature-panel[data-feature-panel="act"] .feature-copy {
+  right: 0;
+  bottom: auto;
+  width: 100%;
+  min-height: 30%;
+  align-items: center;
+  padding: 6% 8% 8%;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--showcase-wash, #f4f1ea) 97%, transparent) 0%,
+    color-mix(in srgb, var(--showcase-wash, #f4f1ea) 78%, transparent) 72%,
+    transparent 100%
+  );
+  text-align: center;
+}
+
+.feature-panel[data-feature-panel="act"] .feature-copy h2 {
+  max-width: 18ch;
+}
+
+.feature-panel[data-feature-panel="model"] {
+  --showcase-wash: #e8f5ee;
+}
+
+.feature-panel[data-feature-panel="apocalypse"] {
+  --showcase-wash: #1a140c;
+}
+
+.feature-panel[data-feature-panel="apocalypse"] .feature-copy {
+  color: #cbbfa6;
+}
+
+.feature-panel[data-feature-panel="apocalypse"] .feature-copy h2 {
+  color: #f6edd8;
+  font-weight: 600;
 }
 
 .visually-hidden {
@@ -446,6 +534,20 @@ kbd {
 
   .feature-tab {
     min-height: 40px;
+  }
+
+  .feature-copy {
+    width: min(58%, 18rem);
+    padding: 6% 4% 6% 6%;
+  }
+
+  .feature-copy h2 {
+    font-size: clamp(16px, 5.2vw, 24px);
+  }
+
+  .feature-panel[data-feature-panel="act"] .feature-copy {
+    min-height: 26%;
+    padding: 5% 6% 7%;
   }
 }
 

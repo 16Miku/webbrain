@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'Para madaling mabuksan ang WebBrain, buksan ang Firefox Extensions, piliin ang gear sa tabi ng WebBrain, at piliin ang Pin to Toolbar.',
   'install.open_failed_chromium': 'Hindi nabuksan ang side panel. Pindutin ang Alt+Shift+W, o buksan ang Extensions menu ng browser at piliin ang WebBrain.',
   'install.open_failed_firefox': 'Hindi nabuksan ang sidebar. Buksan ang Firefox Extensions at piliin ang WebBrain.',
+  'install.showcase.ask.title': "Tanungin ang anumang page. Kunin ang kapaki-pakinabang.",
+  'install.showcase.ask.body': "Malilinis na sagot mula sa magulong mga page. Read-only bilang default.",
+  'install.showcase.act.title': "Sabihin sa browser kung ano ang gagawin.",
+  'install.showcase.model.title': "Gamitin ang model na pinagkakatiwalaan mo.",
+  'install.showcase.model.body': "Lokal, cloud, o sarili mong keys — palitan anytime.",
+  'install.showcase.apocalypse.body': "Offline na kaalaman, nasa kontrol mo. I-download ang mahahalaga habang pwede pa.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sa {total}',

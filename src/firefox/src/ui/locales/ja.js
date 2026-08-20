@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'WebBrain をすぐ開けるようにするには、Firefox の拡張機能を開き、WebBrain の横にある歯車から「ツールバーにピン留め」を選択します。',
   'install.open_failed_chromium': 'サイドパネルを開けませんでした。Alt+Shift+W を押すか、ブラウザの拡張機能メニューを開いて WebBrain を選択してください。',
   'install.open_failed_firefox': 'サイドバーを開けませんでした。Firefox の拡張機能を開いて WebBrain を選択してください。',
+  'install.showcase.ask.title': "どのページにも質問を。必要な部分だけを。",
+  'install.showcase.ask.body': "散らかったページからきれいな答えを。既定は読み取り専用。",
+  'install.showcase.act.title': "ブラウザにやることを指示。",
+  'install.showcase.model.title': "信頼できるモデルを使う。",
+  'install.showcase.model.body': "ローカル、クラウド、または自分のキー — いつでも切り替え。",
+  'install.showcase.apocalypse.body': "オフラインの知識を、あなたの管理下で。今のうちに必要なものをダウンロード。",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

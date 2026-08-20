@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'لإبقاء WebBrain في متناولك، افتح إضافات Firefox وحدد الترس بجانب WebBrain، ثم اختر التثبيت في شريط الأدوات.',
   'install.open_failed_chromium': 'لم تُفتح اللوحة الجانبية. اضغط Alt+Shift+W أو افتح قائمة إضافات المتصفح واختر WebBrain.',
   'install.open_failed_firefox': 'لم يُفتح الشريط الجانبي. افتح إضافات Firefox واختر WebBrain.',
+  'install.showcase.ask.title': "اسأل أي صفحة. خذ الجزء المفيد.",
+  'install.showcase.ask.body': "إجابات واضحة من صفحات فوضوية. للقراءة فقط افتراضيًا.",
+  'install.showcase.act.title': "أخبر المتصفح بما يجب فعله.",
+  'install.showcase.model.title': "استخدم النموذج الذي تثق به.",
+  'install.showcase.model.body': "محلي، أو سحابي، أو بمفاتيحك — بدّل في أي وقت.",
+  'install.showcase.apocalypse.body': "معرفة دون اتصال، تحت سيطرتك. حمّل الأساسيات ما دمت قادرًا.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} من {total}',

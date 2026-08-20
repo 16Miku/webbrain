@@ -31640,10 +31640,16 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     );
     assert.doesNotMatch(html, /toolbar-rehearsal|extension-menu|pin-target|class="next-step"/, `${label}: install guide must not present fake browser controls or a second pinning lesson`);
     assert.match(html, /class="feature-tabs"[^>]*role="tablist"/, `${label}: install guide should expose the showcase as an accessible tab list`);
+    assert.doesNotMatch(html, /feature-caption-\w+"[^>]*class="visually-hidden"/, `${label}: showcase explanations should be visible to sighted users`);
     for (const feature of ['ask', 'act', 'model', 'apocalypse']) {
       assert.match(html, new RegExp(`data-feature="${feature}"`), `${label}: ${feature} feature tab missing`);
       assert.match(html, new RegExp(`data-feature-panel="${feature}"`), `${label}: ${feature} feature panel missing`);
+      assert.match(html, new RegExp(`id="feature-caption-${feature}" class="feature-copy"`), `${label}: ${feature} showcase copy should overlay the artwork as localizable HTML`);
     }
+    assert.match(html, /data-i18n="install\.showcase\.ask\.title"/, `${label}: Ask showcase headline should be localizable`);
+    assert.match(html, /data-i18n="install\.showcase\.act\.title"/, `${label}: Act showcase headline should be localizable`);
+    assert.match(html, /data-i18n="install\.showcase\.model\.title"/, `${label}: Model showcase headline should be localizable`);
+    assert.match(html, /data-i18n="ap\.subtitle"/, `${label}: Apocalypse showcase headline should reuse the existing localized subtitle`);
     for (const asset of [
       '02-tell-the-browser.png',
       '03-ask-any-page.png',
@@ -31668,6 +31674,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.match(css, /@media \(max-width: 620px\)/, `${label}: install guide should adapt to narrow windows`);
     assert.match(css, /font-family: "Bricolage Grotesque"/, `${label}: install guide should carry the explainer display typography into the product`);
     assert.match(css, /\.feature-panels \{[\s\S]*?aspect-ratio: 8 \/ 5;/, `${label}: showcase should preserve the explainer artwork without distortion`);
+    assert.match(css, /\.feature-copy \{[\s\S]*?position: absolute;/, `${label}: localized showcase copy should overlay the English artwork text`);
     assert.match(css, /\.open-panel-button:disabled/, `${label}: install CTA should visibly communicate its unavailable state`);
     assert.doesNotMatch(css, /\.open-panel-button\.is-open(?:\s|,|\{)/, `${label}: opening the panel should not look like setup completion`);
     assert.doesNotMatch(installJs, /classList\.(?:add|remove)\('is-open'\)/, `${label}: install logic should not apply the retired success-green state`);
@@ -31852,7 +31859,9 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 29, `${filename}: install guide should translate every user-facing string`);
+    assert.equal(installKeys.length, 35, `${filename}: install guide should translate every user-facing string`);
+    assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
+    assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
     assert.ok(chromeLocale['install.pin.skip'], `${filename}: pin coachmark should translate its skip action`);
     assert.ok(chromeLocale['install.open_failed_chromium'], `${filename}: Chromium recovery guidance should be translated`);

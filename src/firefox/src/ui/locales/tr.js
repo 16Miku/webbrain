@@ -112,6 +112,12 @@ export default {
   'install.firefox_pin.body': 'WebBrain’e kolayca ulaşmak için Firefox Eklentileri’ni aç, WebBrain’in yanındaki dişliyi seç ve Araç Çubuğuna Sabitle’yi seç.',
   'install.open_failed_chromium': 'Yan panel açılmadı. Alt+Shift+W’ye bas veya tarayıcının Eklentiler menüsünü açıp WebBrain’i seç.',
   'install.open_failed_firefox': 'Kenar çubuğu açılmadı. Firefox Eklentileri’ni açıp WebBrain’i seç.',
+  'install.showcase.ask.title': "Herhangi bir sayfaya sor. İşe yarayan kısmı al.",
+  'install.showcase.ask.body': "Dağınık sayfalardan temiz yanıtlar. Varsayılan olarak salt okunur.",
+  'install.showcase.act.title': "Tarayıcıya ne yapacağını söyle.",
+  'install.showcase.model.title': "Güvendiğin modeli kullan.",
+  'install.showcase.model.body': "Yerel, bulut veya kendi anahtarların — istediğin an değiştir.",
+  'install.showcase.apocalypse.body': "Çevrimdışı bilgi, senin kontrolünde. Hâlâ yapabilirken gerekli olanları indir.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

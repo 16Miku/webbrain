@@ -50,6 +50,12 @@ export default {
   'install.firefox_pin.body': "WebBrain को संभाल कर रखने के लिए, Firefox एक्सटेंशन खोलें, WebBrain के बगल में गियर का चयन करें, फिर टूलबार पर पिन चुनें।",
   'install.open_failed_chromium': "साइड पैनल नहीं खुला. Alt+Shift+W दबाएँ, या अपने ब्राउज़र का एक्सटेंशन मेनू खोलें और WebBrain चुनें।",
   'install.open_failed_firefox': "साइडबार नहीं खुला. Firefox एक्सटेंशन खोलें और WebBrain चुनें।",
+  'install.showcase.ask.title': "किसी भी पेज से पूछें। काम की बात रखें।",
+  'install.showcase.ask.body': "गंदे पेजों से साफ़ जवाब। डिफ़ॉल्ट रूप से केवल पढ़ने के लिए।",
+  'install.showcase.act.title': "ब्राउज़र को बताएं क्या करना है।",
+  'install.showcase.model.title': "जिस मॉडल पर भरोसा हो, उसे इस्तेमाल करें।",
+  'install.showcase.model.body': "लोकल, क्लाउड, या आपकी अपनी कुंजियाँ — कभी भी बदलें।",
+  'install.showcase.apocalypse.body': "ऑफ़लाइन ज्ञान, आपके नियंत्रण में। जब तक हो सके, ज़रूरी चीज़ें डाउनलोड करें।",
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "विच्छेदित",

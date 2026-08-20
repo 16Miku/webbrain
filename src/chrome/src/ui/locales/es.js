@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'Para tener WebBrain a mano, abre Extensiones de Firefox, selecciona el engranaje junto a WebBrain y elige Fijar a la barra de herramientas.',
   'install.open_failed_chromium': 'El panel lateral no se abrió. Pulsa Alt+Mayús+W o abre el menú Extensiones del navegador y selecciona WebBrain.',
   'install.open_failed_firefox': 'La barra lateral no se abrió. Abre Extensiones de Firefox y selecciona WebBrain.',
+  'install.showcase.ask.title': "Pregunta a cualquier página. Quédate con lo útil.",
+  'install.showcase.ask.body': "Respuestas claras de páginas desordenadas. Solo lectura por defecto.",
+  'install.showcase.act.title': "Dile al navegador qué hacer.",
+  'install.showcase.model.title': "Usa el modelo en el que confías.",
+  'install.showcase.model.body': "Local, en la nube o con tus propias claves — cambia cuando quieras.",
+  'install.showcase.apocalypse.body': "Conocimiento sin conexión, bajo tu control. Descarga lo esencial mientras aún puedes.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} de {total}',
