@@ -54,7 +54,9 @@ export function probeChatGptPage() {
     document.querySelector('[data-testid="stop-button"]'),
     document.querySelector('button[aria-label*="Stop" i]'),
     ...document.querySelectorAll('main button'),
-  ].find((button) => visible(button) && /stop|durdur|arrêter|detener|停止|중지/i.test(String(button.getAttribute('aria-label') || button.title || button.innerText || ''))) || null;
+  ].find((button) => visible(button)
+    && (button.getAttribute('data-testid') === 'stop-button'
+      || /stop|durdur|arrêter|detener|停止|중지/i.test(String(button.getAttribute('aria-label') || button.title || button.innerText || '')))) || null;
   const pageText = String(document.body?.innerText || '').slice(0, 12000);
   return {
     url: location.href,

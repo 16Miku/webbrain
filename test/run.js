@@ -2360,6 +2360,35 @@ test('research escalation accepts only HTTPS ChatGPT page origins', () => {
   }
 });
 
+test('research probe treats the stop-button test id as generating without a localized label', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    const stopButton = {
+      getBoundingClientRect: () => ({ width: 40, height: 40 }),
+      getAttribute(name) {
+        if (name === 'data-testid') return 'stop-button';
+        if (name === 'aria-label') return 'إيقاف';
+        return '';
+      },
+      title: '',
+      innerText: '',
+    };
+    const result = vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
+      location: { href: 'https://chatgpt.com/' },
+      document: {
+        title: 'ChatGPT',
+        body: { innerText: '' },
+        querySelector(sel) {
+          if (sel === '[data-testid="stop-button"]') return stopButton;
+          return null;
+        },
+        querySelectorAll() { return []; },
+      },
+      getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
+    });
+    assert.equal(result.generating, true, `${label}: canonical stop-button test id was ignored for a localized label`);
+  }
+});
+
 test('research submit injection rechecks ChatGPT origin before fill and click', () => {
   for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
     const source = runtime.submitChatGptPrompt.toString();
