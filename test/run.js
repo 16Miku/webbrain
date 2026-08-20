@@ -31592,8 +31592,9 @@ test('sidepanel onboarding makes Cloud improvement use an explicit persisted cho
     assert.match(panel, /catch \(error\) \{[\s\S]*?helpImproveCheckbox\.checked = persistedHelpImprove[\s\S]*?return false;/, `${label}: failed privacy persistence should restore the last saved choice`);
     assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Cloud is active`);
     assert.match(panel, /function showLocalChoices\(choices\) \{[\s\S]*?setHelpImproveVisible\(false\)/, `${label}: the Cloud-only choice should stay out of local-model setup`);
+    assert.match(panel, /function showProviderFallback\([^)]*\) \{[\s\S]*?providerUnknown = statusKey === 'ob\.tokens\.detect_failed'[\s\S]*?setHelpImproveVisible\(providerUnknown\)[\s\S]*?skipBtn\.disabled = !providerUnknown/, `${label}: a failed provider scan should keep Skip gated and show the Cloud disclosure until the active provider is known`);
     assert.match(panel, /async function scanLocalModels\(\) \{[\s\S]*?settingsBtn\.disabled = true;\s*skipBtn\.disabled = true;/, `${label}: Skip should stay disabled until provider detection decides whether the Cloud disclosure applies`);
-    for (const outcome of ['showProviderFallback', 'showLocalChoices', 'showCloudReady']) {
+    for (const outcome of ['showLocalChoices', 'showCloudReady']) {
       assert.match(panel, new RegExp(`function ${outcome}\\([^)]*\\) \\{[\\s\\S]*?skipBtn\\.disabled = false;`), `${label}: ${outcome} should restore Skip after provider detection finishes`);
     }
     assert.match(panel, /if \(cloudReady\) \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Start should not dismiss onboarding before the latest privacy choice is saved`);

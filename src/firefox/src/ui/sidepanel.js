@@ -198,14 +198,15 @@ if (globalThis.browser?.storage?.onChanged) {
   function showProviderFallback(statusKey = 'ob.tokens.none_status') {
     cloudReady = false;
     localModelChoices = [];
-    setHelpImproveVisible(false);
+    const providerUnknown = statusKey === 'ob.tokens.detect_failed';
+    setHelpImproveVisible(providerUnknown);
     if (providerBody) providerBody.textContent = t('ob.tokens.body');
     providerList?.classList.remove('hidden');
     localModels?.classList.add('hidden');
     setProviderStatus(statusKey);
     settingsBtn.textContent = t('ob.btn.settings');
     settingsBtn.disabled = false;
-    skipBtn.disabled = false;
+    skipBtn.disabled = !providerUnknown;
   }
 
   function showLocalChoices(choices) {
