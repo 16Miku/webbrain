@@ -144,7 +144,10 @@ The upstream Makefile has two paths and only one of them is acceptable here.
 
 WebBrain builds the source path. CI must archive every downloaded tarball and
 patch, record its SHA-256, and publish them as the corresponding source beside
-the release.
+the release. The release packager keeps the tracked
+`dist/corresponding-source/` tree in the tagged commit and creates a
+`dist/webbrain-*-corresponding-source.zip` asset from that exact `HEAD`; the
+patch and minor release workflows upload it beside the browser ZIPs.
 
 The Wasm is built from that path and vendored at `src/*/vendor/libzim/`.
 `ZIM_XAPIAN_RUNTIME_BUNDLED` is `true` and `ZIM_XAPIAN_DISTRIBUTION_STATUS` is

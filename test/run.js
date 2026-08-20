@@ -872,8 +872,10 @@ const {
 );
 const {
   assertMatchingArchiveVersion,
+  assertCorrespondingSourceArchiveEntries,
   assertStoreSafeFlagLicenseEntries,
   assertStoreReviewableJavaScript,
+  correspondingSourceArchivePath,
   listZipEntryNames,
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
@@ -14777,6 +14779,9 @@ test('update-changelog: rejects duplicate versions and nested release headings',
 test('minor release installs dependencies and validates rebuilt archives before pushing', () => {
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/minor-release.yml'), 'utf8');
   assert.match(workflow, /- name: Install dependencies\s+run: npm ci/);
+  assert.match(workflow, /rm -f dist\/\*\.zip/);
+  assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
+  assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
 
   const orderedSteps = [
     'Bump minor version',
@@ -14801,6 +14806,9 @@ test('patch release updates the changelog and validates rebuilt archives before 
   assert.match(workflow, /git log --no-merges[\s\S]*?> \.release\/changelog-body\.md/);
   assert.match(workflow, /node scripts\/update-changelog\.mjs[\s\S]*?--notes-file \.release\/changelog-body\.md/);
   assert.match(workflow, /git add[^\n]*CHANGELOG\.md/);
+  assert.match(workflow, /rm -f dist\/\*\.zip/);
+  assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
+  assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
 
   const orderedSteps = [
     'Build patch release notes',
@@ -15009,6 +15017,30 @@ test('build-zip rejects filenames that would disagree with archived manifests', 
   assert.throws(
     () => assertMatchingArchiveVersion('23.0.0', '22.4.5', 'Chrome manifest'),
     /Chrome manifest is 22\.4\.5, but the release package version is 23\.0\.0/
+  );
+});
+
+test('build-zip names and validates the GPL corresponding-source release asset', () => {
+  assert.equal(
+    correspondingSourceArchivePath('zim-xapian-v0.95'),
+    'dist/webbrain-zim-xapian-v0.95-corresponding-source.zip'
+  );
+  const trackedFiles = ['Makefile', 'sbom.json', 'xapian-core-1.4.31.tar.xz'];
+  const completeEntries = trackedFiles.map((entry) => `zim-xapian-v0.95/${entry}`);
+  assert.doesNotThrow(() => assertCorrespondingSourceArchiveEntries(
+    completeEntries,
+    'zim-xapian-v0.95',
+    trackedFiles,
+    'source fixture'
+  ));
+  assert.throws(
+    () => assertCorrespondingSourceArchiveEntries(
+      completeEntries.slice(0, -1),
+      'zim-xapian-v0.95',
+      trackedFiles,
+      'source fixture'
+    ),
+    /source fixture is missing tracked corresponding source xapian-core-1\.4\.31\.tar\.xz/
   );
 });
 

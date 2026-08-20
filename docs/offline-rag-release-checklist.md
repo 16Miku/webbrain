@@ -142,6 +142,8 @@ Run on current stable Chrome and Firefox with a fresh profile for each:
 - [ ] The owner made the explicit GPL/runtime decision in
       `docs/offline-rag-licensing.md`.
 - [ ] If GPL was approved, complete corresponding source, build scripts,
-      notices, SBOM, and package hashes ship with the release.
+      notices, SBOM, and package hashes ship with the release. Confirm the
+      tagged tree retains `dist/corresponding-source/` and the GitHub release
+      includes `webbrain-*-corresponding-source.zip` beside the browser ZIPs.
 - [ ] The repository test suite passes apart from no acknowledged pre-existing
       artifact/environment failures.
