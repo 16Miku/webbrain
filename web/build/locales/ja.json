@@ -113,6 +113,8 @@
   "apocalypse.title": "インターネットがなくても、WebBrain は準備万端です。",
   "apocalypse.heading": "あなたの制御下のオフライン知識",
   "apocalypse.description": "プライベートなローカルチャットに必要な3つの要素（テキストモデル、ビジョンモデル、オフライン版ウィキペディア1つ）をセットアップします。",
+  "apocalypse.video.cta": "動画を見る",
+  "apocalypse.video.close_aria": "アポカリプスモードの動画を閉じる",
   "features.page_understanding.title": "ページ理解",
   "features.page_understanding.desc": "あらゆる Web ページを読んで理解 — 記事、ドキュメント、ダッシュボード、フォーム。現在のページ内容に対して質問し、即座に回答が得られます。",
   "features.agent.title": "フル機能のブラウザエージェント",

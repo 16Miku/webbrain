@@ -113,6 +113,8 @@
   "apocalypse.title": "인터넷이 없어도 WebBrain은 준비되어 있습니다.",
   "apocalypse.heading": "사용자 통제 하에 오프라인 지식",
   "apocalypse.description": "개인 로컬 채팅에 필요한 세 가지 핵심 요소인 텍스트 모델, 비전 모델, 오프라인 위키백과 버전 하나를 설정하세요.",
+  "apocalypse.video.cta": "동영상 보기",
+  "apocalypse.video.close_aria": "아포칼립스 모드 동영상 닫기",
   "features.page_understanding.title": "페이지 이해",
   "features.page_understanding.desc": "어떤 웹 페이지든 읽고 이해합니다 — 기사, 문서, 대시보드, 양식. 현재 페이지 내용에 대해 질문하고 즉시 답을 받으세요.",
   "features.agent.title": "완전한 브라우저 에이전트",

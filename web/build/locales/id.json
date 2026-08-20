@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain siap, bahkan saat internet tidak tersedia.",
   "apocalypse.heading": "Pengetahuan offline, di bawah kendali Anda",
   "apocalypse.description": "Siapkan tiga komponen penting untuk obrolan lokal pribadi: Model Teks, Model Visi, dan satu edisi Wikipedia offline.",
+  "apocalypse.video.cta": "Tonton video kami",
+  "apocalypse.video.close_aria": "Tutup video Mode Apocalypse",
   "features.page_understanding.title": "Pemahaman Halaman",
   "features.page_understanding.desc": "Membaca dan memahami halaman web apa pun — artikel, dokumentasi, dasbor, formulir. Ajukan pertanyaan dan dapatkan jawaban instan dari isi halaman saat ini.",
   "features.agent.title": "Agen Peramban Penuh",

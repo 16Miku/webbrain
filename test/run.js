@@ -31303,12 +31303,27 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
   const localeFiles = fs.readdirSync(path.join(ROOT, 'web/build/locales')).filter(file => file.endsWith('.json'));
   for (const file of localeFiles) {
     const locale = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales', file), 'utf8'));
-    for (const key of ['apocalypse.label', 'apocalypse.title', 'apocalypse.heading', 'apocalypse.description']) {
+    for (const key of ['apocalypse.label', 'apocalypse.title', 'apocalypse.heading', 'apocalypse.description', 'apocalypse.video.cta', 'apocalypse.video.close_aria']) {
       assert.equal(typeof locale[key], 'string', `web/${file}: missing ${key}`);
       assert.ok(locale[key].trim(), `web/${file}: empty ${key}`);
     }
   }
-  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Wikipedia[\s\S]*?First Aid — U\.S\. Army Field Manual/,
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'))['apocalypse.video.cta'], 'Watch our video');
+  assert.match(template, /<a class="apocalypse-cta" href="#download">\{\{t:download\.title\}\}[\s\S]*?<button[\s\S]*?class="apocalypse-video-link"[\s\S]*?id="apocalypse-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="apocalypse-video-dialog"[\s\S]*?>\{\{t:apocalypse\.video\.cta\}\}<\/button>/,
+    'web: Install WebBrain should keep a Watch our video modal trigger underneath');
+  assert.match(template, /<dialog[\s\S]*?id="apocalypse-video-dialog"[\s\S]*?<video id="apocalypse-video"[^>]*data-desktop-src="\/assets\/apocalypse-mode\.mp4"[^>]*data-mobile-src="\/assets\/apocalypse-mode\.mp4"/,
+    'web: Apocalypse Mode should open the same video dialog pattern as the other homepage players');
+  assert.match(template, /function openApocalypseVideo\(\)[\s\S]*?dialog\.showModal\(\)[\s\S]*?video\.play\(\)[\s\S]*?dialog\.addEventListener\('close'[\s\S]*?video\.pause\(\)/,
+    'web: opening the Apocalypse video should play while closing pauses and restores the page');
+  assert.ok(
+    fs.existsSync(path.join(ROOT, 'web/assets/apocalypse-mode.mp4')),
+    'web assets: the Apocalypse Mode video should be bundled',
+  );
+  assert.ok(
+    fs.statSync(path.join(ROOT, 'web/assets/apocalypse-mode.mp4')).size > 100_000,
+    'web assets: the Apocalypse Mode video should not be empty',
+  );
+  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?Watch our video[\s\S]*?WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Wikipedia[\s\S]*?First Aid — U\.S\. Army Field Manual/,
     'web build: generated English homepage should contain the complete Apocalypse Mode showcase');
 });
 

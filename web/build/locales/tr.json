@@ -113,6 +113,8 @@
   "apocalypse.title": "İnternet yokken bile WebBrain hazır.",
   "apocalypse.heading": "Kendi kontrolünüzde çevrimdışı bilgi",
   "apocalypse.description": "Özel yerel sohbet için üç temel bileşeni kurun: Metin Modeli, Görüntü Modeli ve bir çevrimdışı Vikipedi sürümü.",
+  "apocalypse.video.cta": "Videomuzu izle",
+  "apocalypse.video.close_aria": "Kıyamet Modu videosunu kapat",
   "features.page_understanding.title": "Sayfa anlama",
   "features.page_understanding.desc": "Her web sayfasını okur ve anlar — makaleler, belgeler, panolar, formlar. Soru sor, mevcut sayfadan anında yanıt al.",
   "features.agent.title": "Tam tarayıcı ajanı",

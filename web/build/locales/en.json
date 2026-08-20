@@ -113,6 +113,8 @@
   "apocalypse.title": "WebBrain, ready when the internet isn’t.",
   "apocalypse.heading": "Offline knowledge, under your control",
   "apocalypse.description": "Set up the three essentials for private local chat: a Text Model, a Vision Model, and one offline Wikipedia edition.",
+  "apocalypse.video.cta": "Watch our video",
+  "apocalypse.video.close_aria": "Close the Apocalypse Mode video",
   "features.page_understanding.title": "Page Understanding",
   "features.page_understanding.desc": "Reads and comprehends any web page — articles, docs, dashboards, forms. Ask questions and get instant answers from the current page content.",
   "features.agent.title": "Full Browser Agent",
