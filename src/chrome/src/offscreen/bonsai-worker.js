@@ -477,11 +477,7 @@ async function hasStoredGguf(dataUrl) {
   if (!cacheKey || typeof caches === 'undefined') return false;
   try {
     const cache = await caches.open(CACHE_NAME);
-    const cached = await cache.match(cacheKey);
-    if (!cached) return false;
-    await persistGgufToOpfs(dataUrl, cached);
-    await cache.delete(cacheKey).catch(() => {});
-    return Boolean(await opfsWeightResponse(dataUrl));
+    return Boolean(await cache.match(cacheKey));
   } catch {
     return false;
   }

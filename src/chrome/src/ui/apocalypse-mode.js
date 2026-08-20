@@ -23,6 +23,8 @@ import { createOfflineRagReadinessController } from './offline-rag-readiness.js'
 import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  isShippedWebgpuPreset,
   webgpuModelDtype,
   webgpuModelPreset,
 } from '../providers/webgpu.js';
@@ -299,6 +301,28 @@ function updateEmergencyBoxGate(readinessKind) {
   }
 }
 
+function recordWebgpuTextState(state) {
+  const normalized = normalizeWebgpuDownloadState(state);
+  if (!normalized.modelId) return normalized;
+  const liveStatus = String(state?.status || normalized.status);
+  webgpuTextStateByModel.set(normalized.modelId, {
+    ...normalized,
+    status: WEBGPU_TEXT_BUSY_STATUSES.has(liveStatus) ? liveStatus : normalized.status,
+  });
+  return normalized;
+}
+
+function anyShippedWebgpuTextReady() {
+  if (webgpuDownloadState.ready === true && isShippedWebgpuPreset(webgpuDownloadState.modelId || selectedWebgpuModelId())) {
+    return true;
+  }
+  for (const state of webgpuTextStateByModel.values()) {
+    if (!isShippedWebgpuPreset(state.modelId)) continue;
+    if (state.ready === true || state.status === 'ready') return true;
+  }
+  return false;
+}
+
 function updateOverallModelsReadiness() {
   if (!supportsWebgpuVision || !elements['models-readiness']) return;
   const textStatus = webgpuDownloadState.status;
@@ -307,13 +331,15 @@ function updateOverallModelsReadiness() {
     || (basicWikipediaStartInFlight ? 'starting' : (basicWikipediaStartError || basicWikipediaCatalogError) ? 'error' : 'not-downloaded');
   const corpusStatus = corpusRecord?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
   const semanticStatus = semanticState?.status || (semanticDownloadInFlight ? 'downloading' : 'model-missing');
+  const textReadyForKit = anyShippedWebgpuTextReady();
+  const textErrorBlocksKit = textStatus === 'error' && !textReadyForKit;
 
   let kind = 'pending';
   let key = 'ap.models.status.incomplete';
   if (snapshot?.enabled !== true) {
     kind = 'disabled';
     key = 'ap.models.status.disabled';
-  } else if (textStatus === 'error' || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
+  } else if (textErrorBlocksKit || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
     kind = 'error';
     key = 'ap.models.status.error';
   } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready' && !anyOtherWebgpuTextBusy()) {
@@ -331,7 +357,20 @@ function updateOverallModelsReadiness() {
   }
   elements['models-readiness'].dataset.kind = kind;
   elements['models-readiness-label'].textContent = t(key);
-  updateEmergencyBoxGate(kind);
+  const emergencyKind = snapshot?.enabled === true
+    && textReadyForKit
+    && visionStatus === 'ready'
+    && wikipediaStatus === 'ready'
+    && corpusStatus === 'ready'
+    && semanticStatus === 'ready'
+    && !textErrorBlocksKit
+    && visionStatus !== 'error'
+    && wikipediaStatus !== 'error'
+    && corpusStatus !== 'error'
+    && semanticStatus !== 'error'
+    ? 'ready'
+    : kind;
+  updateEmergencyBoxGate(emergencyKind);
 }
 
 function updateWebgpuDownloadPanel() {
@@ -416,14 +455,7 @@ function anyOtherWebgpuTextPaused() {
 }
 
 function setWebgpuDownloadState(state) {
-  const normalized = normalizeWebgpuDownloadState(state);
-  if (normalized.modelId) {
-    const liveStatus = String(state?.status || normalized.status);
-    webgpuTextStateByModel.set(normalized.modelId, {
-      ...normalized,
-      status: WEBGPU_TEXT_BUSY_STATUSES.has(liveStatus) ? liveStatus : normalized.status,
-    });
-  }
+  const normalized = recordWebgpuTextState(state);
   if (normalized.modelId && normalized.modelId !== selectedWebgpuModelId()) {
     updateOverallModelsReadiness();
     return;
@@ -494,7 +526,7 @@ async function ensureFixedWebgpuProvider({ markConfigured = false, force = false
   if (markConfigured) fixedWebgpuProviderMarkedReady = true;
 }
 
-async function refreshWebgpuDownloadStatus() {
+async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
   if (!supportsWebgpuVision) return;
   const requestId = ++webgpuDownloadStatusRequest;
   try {
@@ -523,13 +555,30 @@ async function refreshWebgpuDownloadStatus() {
     }
     updateWebgpuTextPresetUi();
     setWebgpuDownloadState(state);
+    if (probeSibling) await refreshSiblingWebgpuTextStatus(state?.modelId, requestId);
+    if (requestId !== webgpuDownloadStatusRequest) return;
     if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true });
   } catch (error) {
     if (requestId === webgpuDownloadStatusRequest) setWebgpuDownloadState({ status: 'error', error: error.message });
   }
 }
 
+async function refreshSiblingWebgpuTextStatus(currentModelId, requestId = webgpuDownloadStatusRequest) {
+  const current = String(currentModelId || selectedWebgpuModelId() || '');
+  for (const preset of WEBGPU_MODEL_PRESETS) {
+    if (preset.id === current) continue;
+    if (requestId !== webgpuDownloadStatusRequest) return;
+    const sibling = await providerCommand('get_webgpu_download_status', {
+      model: preset.id,
+      dtype: preset.dtype,
+    }).catch(() => null);
+    if (requestId !== webgpuDownloadStatusRequest) return;
+    if (sibling && !sibling.error) setWebgpuDownloadState(sibling);
+  }
+}
+
 async function onWebgpuTextPresetChange() {
+  recordWebgpuTextState(webgpuDownloadState);
   webgpuPresetHydrated = true;
   fixedWebgpuProviderConfigured = false;
   fixedWebgpuProviderMarkedReady = false;
@@ -543,9 +592,10 @@ async function onWebgpuTextPresetChange() {
     error: '',
   };
   updateWebgpuDownloadPanel();
+  updateOverallModelsReadiness();
   try {
     await ensureFixedWebgpuProvider();
-    await refreshWebgpuDownloadStatus();
+    await refreshWebgpuDownloadStatus({ probeSibling: true });
   } catch (error) {
     setWebgpuDownloadState({ status: 'error', error: error.message });
   }
@@ -1196,7 +1246,7 @@ async function poll() {
 
 await Promise.all([
   refresh().catch(error => notice(error.message, 'error')),
-  refreshWebgpuDownloadStatus(),
+  refreshWebgpuDownloadStatus({ probeSibling: true }),
   loadBasicWikipediaAutoStartPreference(),
 ]);
 const params = new URLSearchParams(globalThis.location.search);
