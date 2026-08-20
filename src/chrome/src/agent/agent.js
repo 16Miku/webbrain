@@ -3235,6 +3235,13 @@ export class Agent extends LoopDetector {
   _checkDeliveryObservationStreak(tabId, name, args = {}, result = null, options = {}) {
     const observation = this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
       && !isNetworkMutation(name, args);
+    if (observation && options.discoveredActionableTargets === true) {
+      // A structured observer adding previously unseen action rows is bounded,
+      // app-owned progress. Do not punish list tasks for the read that found the
+      // next work items; later reads of the same controls will not reset again.
+      this.deliveryObservationStreaks.delete(tabId);
+      return { kind: 'none' };
+    }
     if (observation && options.requiredReadProgress === true) {
       // A new page in the runtime-required complete-thread scope is bounded,
       // deterministic progress, not aimless research drift. Let exact trusted
@@ -7311,6 +7318,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             completionStateBeforeTool,
             completionStateAfterTool,
           ),
+          discoveredActionableTargets: Number(progressObserved?.addedPending || 0) > 0,
           requiredReadProgress,
           // Ask research can lose a useful deliverable to the same observation
           // drift as Act/Dev. Any interactive mode that advertises `done`
@@ -7417,7 +7425,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       }
       if (progressObserved) {
-        resultContent += `\n[PROGRESS LEDGER OBSERVED: GitHub stargazers buttons observed=${progressObserved.observedButtons}; added ${progressObserved.addedPending} pending Follow row(s); skipped ${progressObserved.alreadyFollowedSkipped} already-followed row(s) and ${progressObserved.excludedSkipped} excluded row(s). Only rows created from visible Follow buttons need follow action.]`;
+        resultContent += `\n[PROGRESS LEDGER OBSERVED: GitHub follow buttons observed=${progressObserved.observedButtons}; added ${progressObserved.addedPending} pending Follow row(s); skipped ${progressObserved.alreadyFollowedSkipped} already-followed row(s) and ${progressObserved.excludedSkipped} excluded row(s). Only rows created from visible Follow buttons need follow action.]`;
       }
       if (progressAuto) {
         resultContent += '\n' + this._progressAutoRecordedNote(progressAuto.item);
@@ -12308,6 +12316,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _deterministicDeliveryProgressPartial(tabId) {
+    const rows = this._currentTaskLedgerRows(tabId);
+    if (!rows.length) return '';
+    const counts = progressCounts(rows);
+    const summary = [
+      'Browser observation limit reached before the full task scope could be verified.',
+      `Partial progress was preserved from the app-owned ledger: ${counts.total} recorded item(s) — ${counts.processed} processed, ${counts.skipped} skipped, ${counts.failed} failed, ${counts.pending} pending, and ${counts.acted} acted but not fully resolved.`,
+      'No further browser observations or actions were performed after the cutoff.',
+    ].join(' ');
+    return this._appendProgressLedgerToFinal(tabId, summary);
+  }
+
   async _recoverDeliveryCheckpointTurn(
     tabId,
     messages,
@@ -12351,13 +12371,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (stopped) return stopped;
     if (!recovered) {
-      const content = fallbackMessage || (protectedPageRecovery
+      const deterministicPartial = protectedPageRecovery
+        ? ''
+        : this._deterministicDeliveryProgressPartial(tabId);
+      const content = deterministicPartial || fallbackMessage || (protectedPageRecovery
         ? 'Chrome protected this Chrome Web Store page, and WebBrain could not produce a useful answer from the one visual fallback. Leave the page open and continue manually.'
         : 'I gathered information but could not produce a valid partial result after reaching the browser observation limit.');
-      const status = preservedStatus || 'delivery_recovery_failed';
+      const status = preservedStatus || (deterministicPartial ? 'partial' : 'delivery_recovery_failed');
       messages.push({ role: 'assistant', content });
       onUpdate('text', { content, replace: true });
-      onUpdate('error', { message: content });
+      onUpdate(deterministicPartial ? 'warning' : 'error', { message: content });
       onUpdate('run_status', { status, message: content });
       this._persist(tabId);
       return { content, status };
@@ -16136,6 +16159,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _isGithubFollowListUrl(url) {
+    if (this._isGithubStargazersUrl(url)) return true;
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname !== 'github.com') return false;
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts.length >= 3 && parts[0] === 'orgs' && parts[2] === 'followers') return true;
+      return parts.length === 1 && ['followers', 'following'].includes(parsed.searchParams.get('tab') || '');
+    } catch {
+      return false;
+    }
+  }
+
   _mastodonPageContentFromResult(result = {}) {
     if (!result || typeof result !== 'object') return '';
     const candidates = [
@@ -16185,7 +16221,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const pageContent = result.pageContent || result.text || '';
     if (!pageContent || (!pageContent.includes('button "Follow ') && !pageContent.includes('button "Unfollow '))) return null;
     const url = result.url || result.pageUrl || await this._currentUrl(tabId);
-    if (!this._isGithubStargazersUrl(url)) return null;
+    if (!this._isGithubFollowListUrl(url)) return null;
     const pageScope = this._rememberProgressPageScope(tabId, url);
     const session = this._progressSessionForObservation(tabId, { pageScope });
     if (!isProgressActionAllowed(session, 'follow')) return null;
