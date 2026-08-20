@@ -247,7 +247,7 @@ async function ensureBonsaiWorker() {
     bonsaiWorkerReady = null;
   });
   bonsaiWorkerReady = sendBonsaiWorkerMessage('init', {
-    manifestUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/manifest.json'),
+    manifestUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/model-manifest.json'),
     auxUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin'),
     dataUrl: 'https://huggingface.co/prism-ml/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf',
     tokenizerJsonUrl: 'https://huggingface.co/prism-ml/Bonsai-27B-unpacked/resolve/main/tokenizer.json',

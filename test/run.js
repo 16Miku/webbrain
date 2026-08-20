@@ -874,6 +874,7 @@ const {
   assertMatchingArchiveVersion,
   assertCorrespondingSourceArchiveEntries,
   assertPackageRootGplLicense,
+  assertSingleRootExtensionManifest,
   assertStoreSafeFlagLicenseEntries,
   assertStoreReviewableJavaScript,
   correspondingSourceArchivePath,
@@ -15030,6 +15031,32 @@ test('build-zip rejects filenames that would disagree with archived manifests', 
     () => assertMatchingArchiveVersion('23.0.0', '22.4.5', 'Chrome manifest'),
     /Chrome manifest is 22\.4\.5, but the release package version is 23\.0\.0/
   );
+});
+
+test('build-zip rejects nested extension manifests before store upload', () => {
+  assert.doesNotThrow(() => assertSingleRootExtensionManifest(
+    ['manifest.json', 'vendor/model/model-manifest.json'],
+    'valid fixture',
+  ));
+  assert.throws(
+    () => assertSingleRootExtensionManifest(
+      ['manifest.json', 'vendor/model/manifest.json'],
+      'nested fixture',
+    ),
+    /nested fixture must contain exactly one manifest\.json at the package root; found: manifest\.json, vendor\/model\/manifest\.json/,
+  );
+  assert.throws(
+    () => assertSingleRootExtensionManifest(
+      ['vendor/model/manifest.json'],
+      'missing root fixture',
+    ),
+    /missing root fixture must contain exactly one manifest\.json at the package root; found: vendor\/model\/manifest\.json/,
+  );
+  const buildZipSource = fs.readFileSync(path.join(ROOT, 'scripts/build-zip.mjs'), 'utf8');
+  assert.match(buildZipSource, /assertSingleRootExtensionManifest\(sourceEntries,/,
+    'release builds must reject nested manifests before creating ZIPs');
+  assert.match(buildZipSource, /assertSingleRootExtensionManifest\(packageEntries,/,
+    'release builds must inspect the finished ZIP before publishing it');
 });
 
 test('build-zip names and validates the GPL corresponding-source release asset', () => {
@@ -52068,6 +52095,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'an active Vision Model transfer must be abortable without waiting for the model queue');
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /'webgpu-vision-preload'/);
+  assert.match(host, /vendor\/bitgpu\/models\/bonsai-27b-gguf\/model-manifest\.json/);
+  assert.doesNotMatch(host, /bonsai-27b-gguf\/manifest\.json/);
   assert.match(host, /'webgpu-vision-pause'/);
   assert.match(host, /'webgpu-vision-stop'/);
   assert.match(host, /webgpu-vision-download-state/);
@@ -52294,6 +52323,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /createChat/);
   assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/index\.js'/);
   assert.match(bonsaiWorker, /from '\.\.\/\.\.\/vendor\/bitgpu\/chat\.js'/);
+  assert.match(bonsaiWorker, /manifestUrl: workerConfig\.manifestUrl/,
+    'the Bonsai worker must pass the explicitly named packaged manifest to bitgpu');
   assert.match(bonsaiWorker, /cannot hold Bonsai 27B/);
   assert.match(bonsaiWorker, /function textReadyMarkerUrl/);
   assert.match(bonsaiWorker, /function cacheStorageKey/);
@@ -52381,10 +52412,15 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const bitgpuDir = path.join(ROOT, 'src/chrome/vendor/bitgpu');
   assert.match(fs.readFileSync(path.join(bitgpuDir, 'LICENSE'), 'utf8'), /^MIT License/);
   assert.match(fs.readFileSync(path.join(bitgpuDir, 'package.json'), 'utf8'), /"version": "0\.19\.1"/);
-  assert.match(fs.readFileSync(path.join(bitgpuDir, 'index.js'), 'utf8'), /export \{ GpuOutOfMemoryError, WebGPUUnavailableError, createEngine \}/);
+  const bitgpuIndex = fs.readFileSync(path.join(bitgpuDir, 'index.js'), 'utf8');
+  assert.match(bitgpuIndex, /export \{ GpuOutOfMemoryError, WebGPUUnavailableError, createEngine \}/);
+  assert.match(bitgpuIndex, /opts\.manifest \?\? await fetchJson\(opts\.manifestUrl \?\?/,
+    'bitgpu must honor the explicit manifest URL instead of requiring a manifest.json filename');
   assert.match(fs.readFileSync(path.join(bitgpuDir, 'chat.js'), 'utf8'), /createChat/);
-  const bonsaiManifest = JSON.parse(fs.readFileSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/manifest.json'), 'utf8'));
+  const bonsaiManifest = JSON.parse(fs.readFileSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/model-manifest.json'), 'utf8'));
   assert.equal(bonsaiManifest.data_file, 'Bonsai-27B-Q1_0.gguf');
+  assert.equal(fs.existsSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/manifest.json')), false,
+    'Chrome store packages must not contain a second file named manifest.json');
   assert.ok(fs.existsSync(path.join(bitgpuDir, 'models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin')));
   assert.equal(fs.existsSync(path.join(ROOT, 'src/firefox/vendor/bitgpu')), false,
     'Firefox must not package the Chromium-only bitgpu runtime');

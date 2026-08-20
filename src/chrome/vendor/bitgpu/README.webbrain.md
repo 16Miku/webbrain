@@ -13,7 +13,7 @@ kernels.
   `prism-ml/Bonsai-27B-gguf` / `Bonsai-27B-Q1_0.gguf` (~3.8 GB) from Hugging
   Face and caches it in the `bitgpu-models-v1` Cache Storage bucket.
 - Tokenizer JSON is fetched from `prism-ml/Bonsai-27B-unpacked`.
-- The committed `models/bonsai-27b-gguf/manifest.json` and
+- The committed `models/bonsai-27b-gguf/model-manifest.json` and
   `Bonsai-27B-Q1_0.aux.bin` are the tiny sidecar files bitgpu needs so it does
   not reconstruct the GGUF header in the browser.
 
@@ -26,7 +26,7 @@ runtime.
 | --- | --- | --- |
 | `index.js` | `bitgpu` 0.19.1 | `createEngine` + inlined WGSL kernels |
 | `chat.js` | `bitgpu` 0.19.1 | `createChat` (bundles `@huggingface/tokenizers` and `@huggingface/jinja`) |
-| `models/bonsai-27b-gguf/manifest.json` | bitgpu `v0.19.1` models tree | Tensor map for the 27B GGUF |
+| `models/bonsai-27b-gguf/model-manifest.json` | bitgpu `v0.19.1` models tree | Tensor map for the 27B GGUF; renamed so extension ZIPs contain only the root `manifest.json` |
 | `models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin` | bitgpu `v0.19.1` models tree | Lookup tables (1.5 KB) |
 | `LICENSE` | bitgpu 0.19.1 | MIT |
 | `THIRD_PARTY_LICENSES.md` | bitgpu 0.19.1 | Apache-2.0 notices for bundled tokenizer/jinja |

@@ -111,6 +111,18 @@ export function listZipEntryNames(filePath) {
   return entries;
 }
 
+export function assertSingleRootExtensionManifest(entries, label) {
+  const manifests = entries.filter(entry => (
+    String(entry || '').split('/').pop()?.toLowerCase() === 'manifest.json'
+  ));
+  if (manifests.length !== 1 || manifests[0] !== 'manifest.json') {
+    const found = manifests.length ? manifests.join(', ') : 'none';
+    throw new Error(
+      `${label} must contain exactly one manifest.json at the package root; found: ${found}.`
+    );
+  }
+}
+
 export function assertStoreSafeFlagLicenseEntries(entries, label) {
   if (!entries.includes(FLAG_LICENSE_PATH)) {
     throw new Error(`${label} is missing ${FLAG_LICENSE_PATH}.`);
@@ -203,10 +215,9 @@ function runCli() {
       readTextAtHead(`src/${sourceDir}/LICENSE`),
       `HEAD src/${sourceDir}/LICENSE`
     );
-    assertStoreSafeFlagLicenseEntries(
-      listTreeEntryNamesAtHead(`src/${sourceDir}`),
-      `HEAD src/${sourceDir}`
-    );
+    const sourceEntries = listTreeEntryNamesAtHead(`src/${sourceDir}`);
+    assertSingleRootExtensionManifest(sourceEntries, `HEAD src/${sourceDir}`);
+    assertStoreSafeFlagLicenseEntries(sourceEntries, `HEAD src/${sourceDir}`);
     for (const relativePath of STORE_REVIEWED_JAVASCRIPT_PATHS) {
       const archivePath = `src/${sourceDir}/${relativePath}`;
       assertStoreReviewableJavaScript(readTextAtHead(archivePath), `HEAD ${archivePath}`);
@@ -226,10 +237,10 @@ function runCli() {
       ['archive', '--format=zip', '-o', out, `HEAD:src/${sourceDir}`],
       { stdio: 'inherit', cwd: root }
     );
-    assertStoreSafeFlagLicenseEntries(
-      listZipEntryNames(out),
-      `dist/webbrain-${packageName}-${version}.zip`
-    );
+    const packageEntries = listZipEntryNames(out);
+    const packageLabel = `dist/webbrain-${packageName}-${version}.zip`;
+    assertSingleRootExtensionManifest(packageEntries, packageLabel);
+    assertStoreSafeFlagLicenseEntries(packageEntries, packageLabel);
     console.log(`  ✓ dist/webbrain-${packageName}-${version}.zip`);
   }
 

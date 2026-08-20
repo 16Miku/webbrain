@@ -1,5 +1,5 @@
 {
- "version": 2,
+  "version": 2,
  "data_file": "Bonsai-27B-Q1_0.gguf",
  "aux_file": "Bonsai-27B-Q1_0.aux.bin",
  "arch": {
