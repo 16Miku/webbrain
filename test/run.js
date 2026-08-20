@@ -65288,7 +65288,11 @@ test('unexpected run exceptions finalize traces as errors', async () => {
         assert.equal(agent.completionInvariants.has(tabId), false, `${label}/${method}: exception leaked completion state`);
       }
       if (label === 'chrome') {
-        assert.deepEqual(cleanupCalls, [812, 813], 'Chrome error cleanup must release both run paths');
+        assert.deepEqual(
+          [...cleanupCalls].sort((a, b) => a - b),
+          [812, 813],
+          'Chrome error cleanup must release both run paths',
+        );
       }
     } finally {
       if (label === 'chrome') cdpClientCh.cleanupTab = originalCleanup;

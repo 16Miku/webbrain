@@ -222,8 +222,10 @@ export class CDPClient {
    * cleaning up one page must not detach another page's debugger session.
    */
   async cleanupTab(tabId) {
-    await this.disableDevDiagnostics(tabId);
-    await this.disableWebMCP(tabId);
+    // A tab can disappear between these steps. Keep going so a failed protocol
+    // shutdown cannot prevent the final debugger detach.
+    try { await this.disableDevDiagnostics(tabId); } catch {}
+    try { await this.disableWebMCP(tabId); } catch {}
     await this.detach(tabId);
   }
 

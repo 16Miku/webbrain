@@ -14497,7 +14497,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Clear conversation for a tab.
    */
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
-    void cdpClient.cleanupTab(tabId);
+    // Tab removal can race the protocol teardown; the tab is already gone if
+    // cleanup rejects, so there is no useful recovery for this fire-and-forget path.
+    void cdpClient.cleanupTab(tabId).catch(() => {});
     this._cancelPendingPlans(tabId, 'tab closed');
     this._isPdfTabCache.delete(tabId);
     this._lastCdpClickIdent?.delete(tabId);
@@ -25956,7 +25958,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
-      try { await cdpClient.cleanupTab(tabId); } catch {}
+      try {
+        await cdpClient.cleanupTab(tabId);
+      } catch { /* the debugger may already be detached during teardown */ }
     }
   }
 
@@ -27183,7 +27187,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
-      try { await cdpClient.cleanupTab(tabId); } catch {}
+      try {
+        await cdpClient.cleanupTab(tabId);
+      } catch { /* the debugger may already be detached during teardown */ }
     }
   }
 
