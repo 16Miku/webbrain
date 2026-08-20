@@ -51134,7 +51134,50 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'a completed download request must not clear a newer queued resume for the same model');
   assert.match(apocalypseScript, /if \(!preset\)[\s\S]*?setWebgpuDownloadState\(state\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
     'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
-  assert.match(bonsaiWorker, /headers: \{ Range: `bytes=\$\{partial\.size\}-` \}/);
+  const resumeHelpersStart = bonsaiWorker.indexOf('function parseContentRange');
+  const resumeHelpersEnd = bonsaiWorker.indexOf('\n\nasync function fetchGgufForStorage', resumeHelpersStart);
+  assert.ok(resumeHelpersStart >= 0 && resumeHelpersEnd > resumeHelpersStart);
+  const resumeHelpers = vm.runInNewContext(`(() => {
+    ${bonsaiWorker.slice(resumeHelpersStart, resumeHelpersEnd)}
+    return { parseContentRange, partialResumeValidator, partialMatchesResponse };
+  })()`);
+  const strongEtagPartial = { size: 100, total: 200, etag: '"revision-a"', lastModified: '' };
+  const strongEtagValidator = resumeHelpers.partialResumeValidator(strongEtagPartial);
+  assert.deepEqual({ ...strongEtagValidator }, { responseHeader: 'etag', value: '"revision-a"' });
+  const matchingRange = resumeHelpers.parseContentRange('bytes 100-199/200');
+  const rangeResponse = (headers = {}) => ({
+    status: 206,
+    headers: new Headers({ 'content-length': '100', ...headers }),
+  });
+  assert.equal(resumeHelpers.partialMatchesResponse(
+    strongEtagPartial,
+    rangeResponse({ etag: '"revision-a"' }),
+    matchingRange,
+    strongEtagValidator,
+  ), true);
+  assert.equal(resumeHelpers.partialMatchesResponse(
+    strongEtagPartial,
+    rangeResponse(),
+    matchingRange,
+    strongEtagValidator,
+  ), false, 'a resume response must repeat the persisted validator');
+  assert.equal(resumeHelpers.partialMatchesResponse(
+    strongEtagPartial,
+    rangeResponse({ etag: '"revision-b"' }),
+    matchingRange,
+    strongEtagValidator,
+  ), false, 'a changed model revision must not append to the saved partial');
+  assert.equal(resumeHelpers.partialResumeValidator({ etag: '', lastModified: '' }), null,
+    'validator-less partial downloads must restart from byte zero');
+  assert.equal(resumeHelpers.partialResumeValidator({ etag: 'W/"weak"', lastModified: '' }), null,
+    'weak ETags cannot authorize an If-Range resume');
+  assert.deepEqual(
+    { ...resumeHelpers.partialResumeValidator({ etag: 'W/"weak"', lastModified: 'Wed, 20 Aug 2026 09:00:00 GMT' }) },
+    { responseHeader: 'last-modified', value: 'Wed, 20 Aug 2026 09:00:00 GMT' },
+  );
+  assert.match(bonsaiWorker, /Range: `bytes=\$\{partial\.size\}-`[\s\S]*?'If-Range': validator\.value/);
+  assert.match(bonsaiWorker, /if \(!validator\) \{[\s\S]*?removeOpfsWeight\(url\)[\s\S]*?nativeFetch\(url, fetchOptions\)/,
+    'a saved partial without a usable validator must be discarded before a full fetch');
   assert.match(bonsaiWorker, /textDownloadCancelMode === 'pause'[\s\S]*?writeOpfsPartial/);
   const bonsaiReadyCheck = bonsaiWorker.slice(
     bonsaiWorker.indexOf('async function isTextModelReady'),

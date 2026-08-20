@@ -333,9 +333,22 @@ function parseContentRange(value) {
   return { start, end, total };
 }
 
-function partialMatchesResponse(partial, response, range) {
+function partialResumeValidator(partial) {
+  const etag = String(partial?.etag || '').trim();
+  if (etag && !/^W\//i.test(etag)) {
+    return { responseHeader: 'etag', value: etag };
+  }
+  const lastModified = String(partial?.lastModified || '').trim();
+  if (lastModified) {
+    return { responseHeader: 'last-modified', value: lastModified };
+  }
+  return null;
+}
+
+function partialMatchesResponse(partial, response, range, validator) {
   if (response.status !== 206 || !range || range.start !== partial.size) return false;
   if (partial.total > 0 && range.total !== partial.total) return false;
+  if (!validator || response.headers.get(validator.responseHeader) !== validator.value) return false;
   const etag = response.headers.get('etag') || '';
   const lastModified = response.headers.get('last-modified') || '';
   if (partial.etag && etag && partial.etag !== etag) return false;
@@ -355,12 +368,24 @@ async function fetchGgufForStorage(url, signal) {
   const fetchOptions = { signal, redirect: 'follow' };
   if (!partial) return { response: await nativeFetch(url, fetchOptions), offset: 0, expectedTotal: 0 };
 
+  // A byte range is safe only when the server proves it still represents the
+  // same object. Weak ETags cannot be used with If-Range, so fall back to a
+  // persisted Last-Modified value or discard the partial download.
+  const validator = partialResumeValidator(partial);
+  if (!validator) {
+    await removeOpfsWeight(url);
+    return { response: await nativeFetch(url, fetchOptions), offset: 0, expectedTotal: 0 };
+  }
+
   let response = await nativeFetch(url, {
     ...fetchOptions,
-    headers: { Range: `bytes=${partial.size}-` },
+    headers: {
+      Range: `bytes=${partial.size}-`,
+      'If-Range': validator.value,
+    },
   });
   const range = parseContentRange(response.headers.get('content-range'));
-  if (partialMatchesResponse(partial, response, range)) {
+  if (partialMatchesResponse(partial, response, range, validator)) {
     return {
       response,
       offset: partial.size,
