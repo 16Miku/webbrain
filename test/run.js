@@ -49398,8 +49398,6 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
-  assert.match(agentSource, /try \{ await cdpClient\.cleanupTab\(tabId\); \} catch \{\}/);
-  assert.match(agentSource, /_cleanupTab\(tabId, \{ preserveRunGuard = false \} = \{\}\) \{\s*void cdpClient\.cleanupTab\(tabId\);/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /msg\.all === true[\s\S]*disabled: await agent\.disableAllDevDiagnostics\(\)/);
@@ -65241,47 +65239,59 @@ test('tool-result limiting is nullish-safe and preserves serializable falsy valu
 
 test('unexpected run exceptions finalize traces as errors', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
-    for (const method of ['processMessage', 'processMessageStream']) {
-      const provider = {
-        supportsTools: true,
-        supportsVision: false,
-        promptTier: 'full',
-        contextWindow: 128000,
-        model: 'test-model',
-        name: 'test-provider',
-      };
-      const agent = new AgentClass({
-        getActive: () => provider,
-        getVisionProvider: async () => null,
-      });
-      const tabId = method === 'processMessageStream' ? 813 : 812;
-      let ended = null;
-      agent._hydrate = async () => {};
-      agent._manageContext = async () => {};
-      agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
-      agent._plannerIsEnabled = () => true;
-      agent._getTabUrlTitle = async () => ({ tabUrl: 'https://example.com', tabTitle: 'Example' });
-      agent._maybeRunPlannerGate = async () => ({ proceed: true });
-      agent._startTraceRun = async () => {
-        agent.currentRunId.set(tabId, 'run_unexpected_error');
-        return 'run_unexpected_error';
-      };
-      agent._ensureProgressSessionForCurrentTask = async () => {
-        throw new Error('unexpected setup failure');
-      };
-      agent._endTraceRun = (_tabId, runId, status, finalContent) => {
-        ended = { runId, status, finalContent };
-        agent.currentRunId.delete(tabId);
-      };
+    const cleanupCalls = [];
+    const originalCleanup = cdpClientCh.cleanupTab;
+    if (label === 'chrome') {
+      cdpClientCh.cleanupTab = async (tabId) => { cleanupCalls.push(tabId); };
+    }
+    try {
+      for (const method of ['processMessage', 'processMessageStream']) {
+        const provider = {
+          supportsTools: true,
+          supportsVision: false,
+          promptTier: 'full',
+          contextWindow: 128000,
+          model: 'test-model',
+          name: 'test-provider',
+        };
+        const agent = new AgentClass({
+          getActive: () => provider,
+          getVisionProvider: async () => null,
+        });
+        const tabId = method === 'processMessageStream' ? 813 : 812;
+        let ended = null;
+        agent._hydrate = async () => {};
+        agent._manageContext = async () => {};
+        agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+        agent._plannerIsEnabled = () => true;
+        agent._getTabUrlTitle = async () => ({ tabUrl: 'https://example.com', tabTitle: 'Example' });
+        agent._maybeRunPlannerGate = async () => ({ proceed: true });
+        agent._startTraceRun = async () => {
+          agent.currentRunId.set(tabId, 'run_unexpected_error');
+          return 'run_unexpected_error';
+        };
+        agent._ensureProgressSessionForCurrentTask = async () => {
+          throw new Error('unexpected setup failure');
+        };
+        agent._endTraceRun = (_tabId, runId, status, finalContent) => {
+          ended = { runId, status, finalContent };
+          agent.currentRunId.delete(tabId);
+        };
 
-      await assert.rejects(
-        agent[method](tabId, 'continue', () => {}, 'act'),
-        /unexpected setup failure/,
-        `${label}/${method}: unexpected error was swallowed`,
-      );
-      assert.equal(ended?.status, 'error', `${label}/${method}: trace retained a successful status`);
-      assert.equal(ended?.finalContent, 'Error: unexpected setup failure', `${label}/${method}: trace error content missing`);
-      assert.equal(agent.completionInvariants.has(tabId), false, `${label}/${method}: exception leaked completion state`);
+        await assert.rejects(
+          agent[method](tabId, 'continue', () => {}, 'act'),
+          /unexpected setup failure/,
+          `${label}/${method}: unexpected error was swallowed`,
+        );
+        assert.equal(ended?.status, 'error', `${label}/${method}: trace retained a successful status`);
+        assert.equal(ended?.finalContent, 'Error: unexpected setup failure', `${label}/${method}: trace error content missing`);
+        assert.equal(agent.completionInvariants.has(tabId), false, `${label}/${method}: exception leaked completion state`);
+      }
+      if (label === 'chrome') {
+        assert.deepEqual(cleanupCalls, [812, 813], 'Chrome error cleanup must release both run paths');
+      }
+    } finally {
+      if (label === 'chrome') cdpClientCh.cleanupTab = originalCleanup;
     }
   }
 });
