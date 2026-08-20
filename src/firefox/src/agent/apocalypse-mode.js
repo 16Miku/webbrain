@@ -1506,6 +1506,14 @@ export async function searchApocalypseArchives(query, options = {}) {
   const providers = options.providers || defaultWikipediaProviders({ storage });
   const results = [];
   const archiveErrors = [];
+  let fallbackStatus = null;
+  let lastProviderStatus = '';
+  const reportProviderStatus = value => {
+    const status = typeof value === 'string' ? value : value?.status;
+    if (status) lastProviderStatus = String(status);
+    if (status === 'title-only-fallback') fallbackStatus = value;
+    try { options.onSearchStatus?.(value); } catch {}
+  };
   for (const record of archives) {
     try {
       const provider = providers.find(candidate => candidate.supports(record));
@@ -1514,6 +1522,7 @@ export async function searchApocalypseArchives(query, options = {}) {
         limit: options.searchAllArchives
           ? Math.min(10, Number(options.perArchiveLimit) || 10)
           : options.limit || 3,
+        onSearchStatus: reportProviderStatus,
       }));
       if (!options.searchAllArchives && results.length >= (options.limit || 3)) break;
     } catch (error) {
@@ -1535,7 +1544,9 @@ export async function searchApocalypseArchives(query, options = {}) {
     }
   }
   if (!results.length && archiveErrors.length) throw new Error(archiveErrors[0]);
-  reportStatus(results.length ? 'matched' : 'no_match');
+  if (results.length) reportStatus('matched');
+  else if (!fallbackStatus) reportStatus('no_match');
+  else if (lastProviderStatus !== 'title-only-fallback') reportProviderStatus(fallbackStatus);
   const maximumResults = options.searchAllArchives ? 40 : 10;
   return results.slice(0, Math.max(1, Math.min(maximumResults, Number(options.limit) || 3)));
 }

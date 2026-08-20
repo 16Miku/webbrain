@@ -62,6 +62,14 @@ export function assertMatchingArchiveVersion(expected, actual, label) {
   }
 }
 
+export function assertPackageRootGplLicense(source, label) {
+  const text = String(source || '');
+  if (!/combined work under GPL-3\.0-or-later/.test(text)
+      || !/GNU GENERAL PUBLIC LICENSE\s+Version 3, 29 June 2007/.test(text)) {
+    throw new Error(`${label} must identify the combined package as GPL-3.0-or-later and include GPLv3.`);
+  }
+}
+
 const FLAG_LICENSE_PATH = 'icons/flags/LICENSE.flag-icons.txt';
 const REJECTED_FLAG_LICENSE_PATH = 'icons/flags/LICENSE.flag-icons';
 
@@ -191,6 +199,10 @@ function runCli() {
   for (const { sourceDir } of targets) {
     const manifest = readJsonAtHead(`src/${sourceDir}/manifest.json`);
     assertMatchingArchiveVersion(version, manifest.version, `HEAD src/${sourceDir}/manifest.json version`);
+    assertPackageRootGplLicense(
+      readTextAtHead(`src/${sourceDir}/LICENSE`),
+      `HEAD src/${sourceDir}/LICENSE`
+    );
     assertStoreSafeFlagLicenseEntries(
       listTreeEntryNamesAtHead(`src/${sourceDir}`),
       `HEAD src/${sourceDir}`

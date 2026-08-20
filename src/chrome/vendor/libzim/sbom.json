@@ -157,6 +157,18 @@
       "file": "LICENSE.icu.txt",
       "bytes": 25505,
       "sha256": "f3005e195ff74d8812cc1f182a1c446fab678d70a10e3dada497585befee5416"
+    },
+    {
+      "file": "scripts/build-zim-xapian.mjs",
+      "bytes": 23393,
+      "sha256": "1ac6cee415fd68e0783b341eac99356ece56fd7892b63379aa1d2129e21dc3e0",
+      "note": "exact Docker build driver used to produce the shipped WebAssembly runtime"
+    },
+    {
+      "file": "README.md",
+      "bytes": 1107,
+      "sha256": "b9033e9dac3ac50ebeaaf27a3c8c5d0c67e4b46632ac88f223928ee0af377d8e",
+      "note": "standalone prerequisites and rebuild commands"
     }
   ],
   "effectiveReleaseLicense": "GPL-3.0-or-later"

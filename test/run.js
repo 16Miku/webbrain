@@ -873,6 +873,7 @@ const {
 const {
   assertMatchingArchiveVersion,
   assertCorrespondingSourceArchiveEntries,
+  assertPackageRootGplLicense,
   assertStoreSafeFlagLicenseEntries,
   assertStoreReviewableJavaScript,
   correspondingSourceArchivePath,
@@ -15044,6 +15045,16 @@ test('build-zip names and validates the GPL corresponding-source release asset',
   );
 });
 
+test('extension package roots declare the combined GPL release license', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const license = fs.readFileSync(path.join(ROOT, `src/${browser}/LICENSE`), 'utf8');
+    assert.doesNotThrow(
+      () => assertPackageRootGplLicense(license, `${browser} package LICENSE`),
+      `${browser}: package-root LICENSE contradicts the GPL combined-work distribution`,
+    );
+  }
+});
+
 test('build-zip rejects store-obscuring JavaScript constructions', () => {
   assert.doesNotThrow(() => assertStoreReviewableJavaScript(
     "return '<script>' + content + '</script>';\nconst scheme = 'javascript:';",
@@ -26248,6 +26259,37 @@ test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
   }
 });
 
+test('Apocalypse Mode preserves title-only fallback disclosure after an empty search', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const record = {
+      id: 'archive-without-index', status: 'ready', archiveDate: '2026-08-20',
+      target: { kind: 'opfs', key: 'simple.zim' },
+    };
+    let reportedStatus = '';
+    const results = await runtime.searchApocalypseArchives('missing topic', {
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [record]; },
+      },
+      providers: [{
+        supports() { return true; },
+        async search(_record, _query, searchOptions) {
+          assert.equal(typeof searchOptions.onSearchStatus, 'function',
+            `${label}: outer status callback was not forwarded to the provider`);
+          searchOptions.onSearchStatus({
+            status: 'title-only-fallback', archiveId: record.id, reason: 'full-text-index-missing',
+          });
+          return [];
+        },
+      }],
+      onSearchStatus(value) { reportedStatus = value?.status || String(value || ''); },
+    });
+    assert.deepEqual(results, [], `${label}: empty title fallback fabricated a result`);
+    assert.equal(reportedStatus, 'title-only-fallback',
+      `${label}: terminal no_match hid the required title-only fallback disclosure`);
+  }
+});
+
 test('Apocalypse Mode marks unreadable ready archives as actionable errors', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const record = { id: 'corrupt-ready', status: 'ready', archiveDate: '2026-07-17', target: { kind: 'opfs', key: 'corrupt.zim' } };
@@ -27847,6 +27889,31 @@ test('vendored Xapian Wasm artifacts match the recorded SBOM hashes', () => {
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/zim-xapian-runtime.js'), 'utf8'),
     'Chrome and Firefox Xapian runtime drivers diverged',
   );
+});
+
+test('Xapian corresponding source contains the exact build driver and rebuild guide', () => {
+  const sourceDir = path.join(ROOT, 'dist/corresponding-source/zim-xapian-v0.95');
+  const driverPath = path.join(sourceDir, 'scripts/build-zim-xapian.mjs');
+  const guidePath = path.join(sourceDir, 'README.md');
+  assert.equal(
+    fs.readFileSync(driverPath, 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'scripts/build-zim-xapian.mjs'), 'utf8'),
+    'corresponding source does not contain the exact build driver',
+  );
+  const guide = fs.readFileSync(guidePath, 'utf8');
+  assert.match(guide, /node scripts\/build-zim-xapian\.mjs --work \.build\/zim-xapian/,
+    'corresponding source does not include a standalone rebuild command');
+  assert.match(guide, /Docker, Node\.js, and Git/,
+    'corresponding source does not document its build prerequisites');
+  const sbom = JSON.parse(fs.readFileSync(path.join(sourceDir, 'sbom.json'), 'utf8'));
+  for (const relativePath of ['scripts/build-zim-xapian.mjs', 'README.md']) {
+    const entry = sbom.correspondingSource.find(item => item.file === relativePath);
+    assert.ok(entry, `corresponding-source SBOM omits ${relativePath}`);
+    const bytes = fs.readFileSync(path.join(sourceDir, relativePath));
+    assert.equal(bytes.byteLength, entry.bytes, `${relativePath} size does not match the SBOM`);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), entry.sha256,
+      `${relativePath} SHA-256 does not match the SBOM`);
+  }
 });
 
 test('Xapian runtime skips the worker when the archive has no full-text index', async () => {
