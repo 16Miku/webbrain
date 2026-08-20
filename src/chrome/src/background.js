@@ -1167,10 +1167,36 @@ chrome.storage.onChanged.addListener((changes) => {
   if (refreshPrompts) agent._refreshSystemPrompts();
 });
 
+const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';
+
+/**
+ * Run one archive download pass in the offscreen document.
+ *
+ * `Worker` is undefined in an MV3 service worker, so openSyncWriter() can never
+ * succeed here: every wake fell back to createWritable({ keepExistingData:
+ * true }), and Chrome copies the entire archive into a fresh `.crswap` file
+ * each time that runs. The offscreen document can create the dedicated writer
+ * worker, so the durable FileSystemSyncAccessHandle path is taken instead.
+ *
+ * chrome.alarms is not available to offscreen documents, so the next wake is
+ * scheduled here once the pass resolves.
+ */
+async function runApocalypseDownloadPass() {
+  await ensureOffscreen();
+  const response = await chrome.runtime.sendMessage({
+    target: APOCALYPSE_DOWNLOAD_TARGET,
+    command: 'processNext',
+  });
+  if (!response) throw new Error('the offscreen archive host did not respond');
+  if (response.ok !== true) throw new Error(response.error || 'offscreen archive download failed');
+  await apocalypseController.syncDownloadSchedule();
+  return response.result;
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
     const releaseKeepalive = acquireRunKeepalive();
-    apocalypseController.manager.processNext().catch((error) => {
+    runApocalypseDownloadPass().catch((error) => {
       console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
     }).finally(releaseKeepalive);
   } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
@@ -2316,6 +2342,7 @@ async function handleMessage(msg, sender) {
       });
     }
     case 'apocalypse_mode': {
+      if (msg.command === 'process') return await runApocalypseDownloadPass();
       const snapshot = await apocalypseController.handle(msg.command, msg);
       if (msg.command === 'enable') {
         chrome.runtime.sendMessage({

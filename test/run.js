@@ -26564,13 +26564,36 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
     assert.notEqual(start, -1, `${label}: Apocalypse download alarm listener is missing`);
     assert.notEqual(end, -1, `${label}: Apocalypse update alarm boundary is missing`);
     const downloadAlarm = source.slice(start, end);
-    assert.match(downloadAlarm, /processNext\(\)\.catch/, `${label}: unexpected download failures are not logged`);
+    assert.match(downloadAlarm, /(?:processNext|runApocalypseDownloadPass)\(\)\.catch/, `${label}: unexpected download failures are not logged`);
     assert.doesNotMatch(downloadAlarm, /alarms\.create/, `${label}: unexpected download failures still recreate an unbounded alarm`);
     if (label === 'chrome') {
       assert.match(downloadAlarm, /const releaseKeepalive = acquireRunKeepalive\(\)/,
         'chrome: archive download alarm does not acquire the MV3 keepalive');
-      assert.match(downloadAlarm, /processNext\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
+      assert.match(downloadAlarm, /(?:processNext|runApocalypseDownloadPass)\(\)\.catch\([\s\S]*?\.finally\(releaseKeepalive\)/,
         'chrome: archive download alarm does not hold the keepalive until processing settles');
+      // `Worker` is undefined in an MV3 service worker, so openSyncWriter() can
+      // never succeed there and every wake falls back to a swap-file-backed
+      // writable that copies the whole archive. The pass must run in the
+      // offscreen document, where the dedicated writer worker can be created.
+      assert.match(source, /const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';/,
+        'chrome: the offscreen archive target constant is missing');
+      assert.match(source, /async function runApocalypseDownloadPass\(\)[\s\S]*?ensureOffscreen\(\)[\s\S]*?APOCALYPSE_DOWNLOAD_TARGET/,
+        'chrome: archive downloads do not run in the offscreen document');
+      const offscreenPassStart = source.indexOf('async function runApocalypseDownloadPass()');
+      const alarmListenerStart = source.indexOf('chrome.alarms.onAlarm.addListener', offscreenPassStart);
+      const offscreenPass = source.slice(offscreenPassStart, alarmListenerStart);
+      assert.doesNotMatch(offscreenPass, /manager\.processNext\(\)/,
+        'chrome: archive alarm can still fall back to the Worker-less MV3 service worker');
+      assert.match(source, /case 'apocalypse_mode': \{\s*if \(msg\.command === 'process'\) return await runApocalypseDownloadPass\(\);/,
+        'chrome: UI-triggered archive passes do not run in the offscreen document');
+      const offscreenHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/offscreen/offscreen.html'), 'utf8');
+      assert.match(offscreenHtml, /src="apocalypse-download-host\.js"/,
+        'chrome: the offscreen document does not host the archive downloader');
+      const archiveHost = fs.readFileSync(path.join(ROOT, prefix, 'src/offscreen/apocalypse-download-host.js'), 'utf8');
+      assert.match(archiveHost, /createApocalypseController\(chrome, \{[\s\S]*?schedule:/,
+        'chrome: the offscreen archive host must not own alarm scheduling');
+      assert.doesNotMatch(archiveHost, /controller\.handle\(/,
+        'chrome: the offscreen archive host exposes commands beyond the download pass');
     }
   }
 });
