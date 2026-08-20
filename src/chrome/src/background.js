@@ -1181,17 +1181,22 @@ const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';
  * chrome.alarms is not available to offscreen documents, so the next wake is
  * scheduled here once the pass resolves.
  */
+async function sendApocalypseOffscreenCommand(command, payload = {}) {
+  await ensureOffscreen();
+  const response = await chrome.runtime.sendMessage({
+    target: APOCALYPSE_DOWNLOAD_TARGET,
+    command,
+    payload,
+  });
+  if (!response) throw new Error('the offscreen archive host did not respond');
+  if (response.ok !== true) throw new Error(response.error || 'offscreen archive command failed');
+  return response.result;
+}
+
 async function runApocalypseDownloadPass() {
   let passError = null;
   try {
-    await ensureOffscreen();
-    const response = await chrome.runtime.sendMessage({
-      target: APOCALYPSE_DOWNLOAD_TARGET,
-      command: 'processNext',
-    });
-    if (!response) throw new Error('the offscreen archive host did not respond');
-    if (response.ok !== true) throw new Error(response.error || 'offscreen archive download failed');
-    return response.result;
+    return await sendApocalypseOffscreenCommand('processNext');
   } catch (error) {
     passError = error;
     throw error;
@@ -2355,8 +2360,15 @@ async function handleMessage(msg, sender) {
     }
     case 'apocalypse_mode': {
       if (msg.command === 'process') return await runApocalypseDownloadPass();
-      const snapshot = await apocalypseController.handle(msg.command, msg);
+      const offscreenCommand = msg.command === 'pause' || msg.command === 'delete'
+        ? msg.command
+        : msg.command === 'enable' && msg.enabled !== true ? 'disable' : '';
+      const snapshot = offscreenCommand
+        ? await sendApocalypseOffscreenCommand(offscreenCommand, msg)
+        : await apocalypseController.handle(msg.command, msg);
+      if (offscreenCommand) await apocalypseController.syncDownloadSchedule();
       if (msg.command === 'enable') {
+        if (msg.enabled !== true) await apocalypseController.syncUpdateSchedule();
         chrome.runtime.sendMessage({
           type: 'apocalypse-mode-state',
           enabled: snapshot.enabled === true,

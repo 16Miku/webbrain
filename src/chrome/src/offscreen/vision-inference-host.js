@@ -8,6 +8,7 @@ let bonsaiWorker = null;
 let bonsaiWorkerReady = null;
 let nextBonsaiRequestId = 1;
 const pendingBonsaiRequests = new Map();
+let textDownloadStartChain = Promise.resolve();
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
 const WEBGPU_RUNTIME_BITGPU = 'bitgpu';
@@ -190,6 +191,24 @@ async function findActiveTextTransfer(requestedModel) {
   return isActiveTextTransfer(other) ? other : null;
 }
 
+function startExclusiveTextDownload(message) {
+  const operation = textDownloadStartChain.then(async () => {
+    const activeTransfer = await findActiveTextTransfer(message.model);
+    if (activeTransfer && String(activeTransfer.status || '').toLowerCase() !== 'paused') {
+      const model = String(activeTransfer.modelId || 'Another WebGPU model');
+      throw new Error(`${model} is still ${activeTransfer.status || 'downloading'}. Pause it before switching models.`);
+    }
+    return await sendTextWorkerMessage(message.model, 'start-download-text', {
+      modelId: message.model,
+      device: message.device,
+      dtype: message.dtype,
+      requireTools: message.requireTools === true,
+    }, { exclusive: true, runtime: message.runtime });
+  });
+  textDownloadStartChain = operation.catch(() => {});
+  return operation;
+}
+
 function settleBonsaiRequest(data) {
   if (data?.type === 'text-download-state') {
     try {
@@ -333,12 +352,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-download-start') {
-        sendResponse(await sendTextWorkerMessage(message.model, 'start-download-text', {
-          modelId: message.model,
-          device: message.device,
-          dtype: message.dtype,
-          requireTools: message.requireTools === true,
-        }, { exclusive: true, runtime: message.runtime }));
+        sendResponse(await startExclusiveTextDownload(message));
         return;
       }
       if (message.type === 'webgpu-download-pause') {

@@ -25405,6 +25405,63 @@ test('Apocalypse Mode retains actionable metadata when managed-byte deletion fai
   }
 });
 
+test('Apocalypse Mode closes an active archive writer before deleting its OPFS entry', async () => {
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const records = new Map();
+    const config = { enabled: true };
+    const events = [];
+    let clock = 1000;
+    let markFetchStarted;
+    const fetchStarted = new Promise(resolve => { markFetchStarted = resolve; });
+    const store = {
+      async getConfig() { return { ...config }; },
+      async listArchives() { return [...records.values()]; },
+      async getArchive(id) { const record = records.get(id); return record ? { ...record } : null; },
+      async putArchive(record) { records.set(record.id, { ...record }); return record; },
+      async deleteArchive(id) { records.delete(id); },
+    };
+    const storage = {
+      durableWrites: true,
+      async createWriter() {
+        return {
+          async write() {},
+          async close() { events.push('close'); },
+          async abort() { events.push('abort'); },
+        };
+      },
+      async remove() {
+        assert.equal(events.includes('abort'), true, `${label}: OPFS removal raced the active writer handle`);
+        events.push('remove');
+      },
+      async exists() { return false; },
+    };
+    const manager = runtime.createApocalypseArchiveManager({
+      store,
+      storage,
+      fetchImpl: async (_url, options = {}) => await new Promise((resolve, reject) => {
+        markFetchStarted();
+        options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }),
+      randomId: () => 'active-delete',
+      now: () => ++clock,
+      schedule() {},
+    });
+    await manager.install({
+      filename: 'wikipedia.zim', size: 4, pieceLength: 4,
+      pieceHashAlgorithm: 'sha-1', pieceHashes: ['valid'], downloadUrl: 'https://example.test/wikipedia.zim',
+    }, { kind: 'opfs', key: 'wikipedia.zim' });
+
+    const running = manager.processNext();
+    await fetchStarted;
+    assert.equal(await manager.remove('active-delete'), true, `${label}: active archive deletion failed`);
+    const result = await running;
+
+    assert.equal(result.reason, 'cancelled', `${label}: deleting an active writer did not cancel its pass`);
+    assert.deepEqual(events, ['abort', 'remove'], `${label}: archive bytes were removed before the writer closed`);
+    assert.equal(records.has('active-delete'), false, `${label}: active archive metadata survived deletion`);
+  }
+});
+
 test('Apocalypse Mode prevents removing Wikipedia archives, emergency corpus, and emergency resources when enabled unless explicitly disabled first', async () => {
   for (const [label, { ApocalypseMode, EmergencyCorpus, EmergencyBox }] of [
     ['chrome', { ApocalypseMode: ApocalypseModeCh, EmergencyCorpus: EmergencyCorpusCh, EmergencyBox: EmergencyBoxCh }],
@@ -26630,7 +26687,7 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
       // offscreen document, where the dedicated writer worker can be created.
       assert.match(source, /const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';/,
         'chrome: the offscreen archive target constant is missing');
-      assert.match(source, /async function runApocalypseDownloadPass\(\)[\s\S]*?ensureOffscreen\(\)[\s\S]*?APOCALYPSE_DOWNLOAD_TARGET/,
+      assert.match(source, /async function sendApocalypseOffscreenCommand\(command, payload = \{\}\)[\s\S]*?ensureOffscreen\(\)[\s\S]*?APOCALYPSE_DOWNLOAD_TARGET[\s\S]*?async function runApocalypseDownloadPass\(\)[\s\S]*?sendApocalypseOffscreenCommand\('processNext'\)/,
         'chrome: archive downloads do not run in the offscreen document');
       const offscreenPassStart = source.indexOf('async function runApocalypseDownloadPass()');
       const alarmListenerStart = source.indexOf('chrome.alarms.onAlarm.addListener', offscreenPassStart);
@@ -26647,8 +26704,12 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
       const archiveHost = fs.readFileSync(path.join(ROOT, prefix, 'src/offscreen/apocalypse-download-host.js'), 'utf8');
       assert.match(archiveHost, /createApocalypseController\(chrome, \{[\s\S]*?schedule:/,
         'chrome: the offscreen archive host must not own alarm scheduling');
-      assert.doesNotMatch(archiveHost, /controller\.handle\(/,
-        'chrome: the offscreen archive host exposes commands beyond the download pass');
+      assert.match(archiveHost, /const CONTROL_COMMANDS = new Set\(\['pause', 'delete', 'disable'\]\)/,
+        'chrome: archive cancellation controls are not owned by the offscreen downloader');
+      assert.match(archiveHost, /command === 'disable'[\s\S]*?controller\.handle\('enable', \{ enabled: false \}\)[\s\S]*?controller\.handle\(command, payload\)/,
+        'chrome: the offscreen downloader does not route its bounded control commands');
+      assert.match(source, /const offscreenCommand = msg\.command === 'pause' \|\| msg\.command === 'delete'[\s\S]*?msg\.command === 'enable' && msg\.enabled !== true \? 'disable'/,
+        'chrome: pause, delete, and disable can still run in the service-worker controller');
     }
   }
 });
@@ -50684,8 +50745,12 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'start-download-text'/);
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-chat'/);
   assert.match(host, /disposeOtherTextRuntime\('bitgpu'\)/);
-  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?sendTextWorkerMessage\(message\.model, 'start-download-text'/);
   assert.match(host, /exclusive: true, runtime: message\.runtime/);
+  assert.match(host, /function startExclusiveTextDownload\(message\)[\s\S]*?findActiveTextTransfer\(message\.model\)[\s\S]*?status \|\| ''\)\.toLowerCase\(\) !== 'paused'[\s\S]*?Pause it before switching models[\s\S]*?sendTextWorkerMessage\(message\.model, 'start-download-text'/,
+    'switching WebGPU runtimes must reject an active transfer before exclusive disposal can queue behind it');
+  assert.match(host, /textDownloadStartChain = operation\.catch\(\(\) => \{\}\)/,
+    'concurrent WebGPU model starts are not serialized around the cross-runtime transfer check');
+  assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?startExclusiveTextDownload\(message\)/);
   assert.match(host, /isBitgpuTextModel\(message\.model, message\.runtime\)/);
   assert.match(host, /if \(!isBitgpuTextModel\(message\.model, message\.runtime\)\) \{\s*await ensureVisionWorker\(\);/);
   assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);

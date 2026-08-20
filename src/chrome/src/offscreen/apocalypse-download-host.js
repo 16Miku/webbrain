@@ -16,19 +16,23 @@
 import { createApocalypseController } from '../agent/apocalypse-mode.js';
 
 const TARGET = 'offscreen-apocalypse-download';
+const CONTROL_COMMANDS = new Set(['pause', 'delete', 'disable']);
 
 const controller = createApocalypseController(chrome, {
   schedule: () => {},
 });
 
+async function handleArchiveCommand(command, payload = {}) {
+  if (command === 'processNext') return await controller.manager.processNext();
+  if (!CONTROL_COMMANDS.has(command)) throw new Error(`Unsupported archive host command: ${command}`);
+  if (command === 'disable') return await controller.handle('enable', { enabled: false });
+  return await controller.handle(command, payload);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.target !== TARGET) return false;
   const command = String(message.command || '');
-  if (command !== 'processNext') {
-    sendResponse({ ok: false, error: `Unsupported archive host command: ${command}` });
-    return false;
-  }
-  const run = controller.manager.processNext();
+  const run = handleArchiveCommand(command, message.payload);
   run.then(
     result => sendResponse({ ok: true, result: result ?? null }),
     error => sendResponse({ ok: false, error: String(error?.message || error) }),

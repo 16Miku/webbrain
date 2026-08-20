@@ -1361,8 +1361,14 @@ export function createApocalypseArchiveManager(options = {}) {
     ? Math.max(0, Math.floor(configuredWakeBudget))
     : DEFAULT_WAKE_BUDGET_MS;
   const controllers = new Map();
+  const activeWriterStops = new Map();
   let processing = false;
   if (!store || !storage) throw new Error('Apocalypse Mode requires state and archive storage adapters.');
+
+  async function abortActiveWriter(id, reason) {
+    const stop = activeWriterStops.get(id);
+    if (stop) await stop(reason);
+  }
 
   async function cancelledResult() {
     try {
@@ -1395,6 +1401,7 @@ export function createApocalypseArchiveManager(options = {}) {
       await Promise.all(archives.map(async (record) => {
         if (record.status === 'ready' || record.status === 'deleting') return;
         controllers.get(record.id)?.abort();
+        await abortActiveWriter(record.id, new Error('Apocalypse Mode was disabled.'));
         await putArchiveIfCurrent(store, {
           ...record,
           generation: (Number(record.generation) || 0) + 1,
@@ -1442,6 +1449,7 @@ export function createApocalypseArchiveManager(options = {}) {
     const record = await store.getArchive(id);
     if (!record || record.status === 'ready' || record.status === 'deleting') return record;
     controllers.get(id)?.abort();
+    await abortActiveWriter(id, new Error('Archive download was paused.'));
     const next = { ...record, generation: (Number(record.generation) || 0) + 1, status: 'paused', updatedAt: now() };
     const saved = await putArchiveIfCurrent(store, next, {
       status: record.status, generation: record.generation, updatedAt: record.updatedAt,
@@ -1462,13 +1470,20 @@ export function createApocalypseArchiveManager(options = {}) {
   }
 
   async function remove(id, removeOptions = {}) {
-    const record = await store.getArchive(id);
+    let record = await store.getArchive(id);
     if (!record) return false;
-    const config = await store.getConfig();
+    let config = await store.getConfig();
     if (record.status === 'ready' && config?.enabled === true && !removeOptions.allowWhileEnabled && !removeOptions.force) {
       throw new Error('Cannot delete Wikipedia archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
     }
     controllers.get(id)?.abort();
+    await abortActiveWriter(id, new Error('Archive download was deleted.'));
+    record = await store.getArchive(id);
+    if (!record) return false;
+    config = await store.getConfig();
+    if (record.status === 'ready' && config?.enabled === true && !removeOptions.allowWhileEnabled && !removeOptions.force) {
+      throw new Error('Cannot delete Wikipedia archive while Apocalypse Mode is enabled. Disable Apocalypse Mode first.');
+    }
     const deleting = {
       ...record,
       generation: (Number(record.generation) || 0) + 1,
@@ -1536,25 +1551,49 @@ export function createApocalypseArchiveManager(options = {}) {
       record = recovered;
     }
     let writer = null;
+    let writerStopPromise = null;
     let usedWriteSession = false;
     let writeSessionCommitted = false;
     async function abortWriteSession(reason) {
+      if (writerStopPromise) return await writerStopPromise;
       if (!writer) return;
       const activeWriter = writer;
       writer = null;
-      if (typeof activeWriter.abort === 'function') await activeWriter.abort(reason);
-      // abort() discards this session's swap file, but earlier sessions killed
-      // mid-write left theirs behind. Reclaim them now that no writer is open.
-      if (typeof storage.sweepSwapFiles === 'function') {
-        await storage.sweepSwapFiles().catch(() => {});
+      const operation = (async () => {
+        if (typeof activeWriter.abort === 'function') await activeWriter.abort(reason);
+        // abort() discards this session's swap file, but earlier sessions killed
+        // mid-write left theirs behind. Reclaim them now that no writer is open.
+        if (typeof storage.sweepSwapFiles === 'function') {
+          await storage.sweepSwapFiles().catch(() => {});
+        }
+      })();
+      writerStopPromise = operation;
+      try {
+        await operation;
+      } finally {
+        if (writerStopPromise === operation) writerStopPromise = null;
+        if (activeWriterStops.get(record.id) === abortWriteSession) activeWriterStops.delete(record.id);
       }
     }
     async function closeWriteSession() {
+      if (writerStopPromise) {
+        await writerStopPromise;
+        return;
+      }
       if (!writer) return;
       const activeWriter = writer;
       writer = null;
-      await activeWriter.close();
-      writeSessionCommitted = true;
+      const operation = (async () => {
+        await activeWriter.close();
+        writeSessionCommitted = true;
+      })();
+      writerStopPromise = operation;
+      try {
+        await operation;
+      } finally {
+        if (writerStopPromise === operation) writerStopPromise = null;
+        if (activeWriterStops.get(record.id) === abortWriteSession) activeWriterStops.delete(record.id);
+      }
     }
     try {
       if (record.target?.kind === 'file-handle' && typeof storage.ensurePermission === 'function') {
@@ -1562,6 +1601,7 @@ export function createApocalypseArchiveManager(options = {}) {
       }
       if (typeof storage.createWriter === 'function') {
         writer = await storage.createWriter(record.target, record);
+        if (writer) activeWriterStops.set(record.id, abortWriteSession);
         usedWriteSession = storage.durableWrites !== true;
         if (usedWriteSession) {
           const marked = {
@@ -1614,6 +1654,7 @@ export function createApocalypseArchiveManager(options = {}) {
         if (finished && typeof writer.truncate === 'function') await writer.truncate(Number(record.size));
         if (finished || usedWriteSession) await closeWriteSession();
       }
+      if (controller.signal.aborted) return await cancelledResult();
       if (finished && !usedWriteSession && typeof storage.truncate === 'function') {
         await storage.truncate(record.target, Number(record.size));
       }
@@ -1705,6 +1746,7 @@ export function createApocalypseArchiveManager(options = {}) {
       return { processed: false, reason: retrying ? 'retrying' : 'error', archive: next };
     } finally {
       await abortWriteSession(new Error('Archive write session ended before commit.')).catch(() => {});
+      if (activeWriterStops.get(record.id) === abortWriteSession) activeWriterStops.delete(record.id);
       if (controllers.get(record.id) === controller) controllers.delete(record.id);
     }
     } finally {
