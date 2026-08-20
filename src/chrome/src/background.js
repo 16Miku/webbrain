@@ -156,6 +156,9 @@ async function startExplicitVisionModelDownload() {
 }
 
 async function resumeInterruptedVisionPreload() {
+  // load() migrates legacy visionModel consent before readiness decides
+  // whether an interrupted preload is eligible to resume.
+  await providerManager.load();
   return await providerManager.resumeWebgpuVisionDownload();
 }
 Promise.all([

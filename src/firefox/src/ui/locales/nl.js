@@ -917,7 +917,7 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'Systeem',
   'st.providers.compat.value.developer': 'Ontwikkelaar',
-  'st.providers.webbrain_data_use.body': 'Gratis dagelijks WebBrain Cloud-gebruik is inbegrepen. Zolang „Help WebBrain verbeteren“ standaard is ingeschakeld, kunnen geselecteerde Cloud-gesprekken worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Schakel dit uit onder Algemeen om toekomstige Cloud-interacties van dit gebruik uit te sluiten. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> {privacyLink}. Abonneer u voor meer gebruik via {subscribeLink}. Beheer facturering via {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Gratis dagelijks WebBrain Cloud-gebruik is inbegrepen. Zolang „Help WebBrain verbeteren“ standaard is ingeschakeld, kunnen geselecteerde Cloud-gesprekken worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Schakel dit uit onder Algemeen → Geavanceerd om toekomstige Cloud-interacties van dit gebruik uit te sluiten. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> {privacyLink}. Abonneer u voor meer gebruik via {subscribeLink}. Beheer facturering via {accountLink}.',
   'st.providers.ollama_warning.label': 'Ollama FAQ',
   'st.providers.ollama_warning.title': 'Waarom geeft Ollama op localhost 403 terug?',
   'st.providers.ollama_warning.body': 'Recente Ollama-versies kunnen verzoeken weigeren...',

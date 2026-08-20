@@ -697,7 +697,7 @@ export default {
   'st.providers.compat.value.max': "حداکثر",
   'st.providers.compat.value.system': "سیستم",
   'st.providers.compat.value.developer': "توسعه دهنده",
-  'st.providers.webbrain_data_use.body': "استفاده روزانه رایگان از ابر WebBrain گنجانده شده است. در حالی که Help Improve WebBrain به طور پیش‌فرض روشن است، مکالمات انتخابی Cloud ممکن است حفظ شوند و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شوند. آن را به طور کلی خاموش کنید تا تعاملات Cloud آینده را از این کاربردها حذف کنید. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> {privacyLink}. برای استفاده بیشتر، در {subscribeLink} مشترک شوید. صورتحساب را در {accountLink} مدیریت کنید.",
+  'st.providers.webbrain_data_use.body': "استفاده روزانه رایگان از ابر WebBrain گنجانده شده است. در حالی که Help Improve WebBrain به طور پیش‌فرض روشن است، مکالمات انتخابی Cloud ممکن است حفظ شوند و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شوند. آن را در عمومی ← پیشرفته خاموش کنید تا تعاملات Cloud آینده را از این کاربردها حذف کنید. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> {privacyLink}. برای استفاده بیشتر، در {subscribeLink} مشترک شوید. صورتحساب را در {accountLink} مدیریت کنید.",
   'st.providers.webbrain_note.body': "استفاده روزانه رایگان از ابر WebBrain گنجانده شده است. درخواست ها از طریق api.webbrain.one انجام می شود. به‌طور پیش‌فرض، فراداده‌ها را برای سهمیه و اشکال‌زدایی ثبت می‌کنیم، نه متن درخواستی، محتوای صفحه، عکس‌های صفحه، یا پاسخ‌های مدل. {privacyLink}. برای استفاده بیشتر، در {subscribeLink} مشترک شوید. صورتحساب را در {accountLink} مدیریت کنید.",
   'st.providers.webbrain_note.privacy_link': "سیاست حفظ حریم خصوصی",
 

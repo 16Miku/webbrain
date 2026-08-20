@@ -697,7 +697,7 @@ export default {
   'st.providers.compat.value.max': "Máx.",
   'st.providers.compat.value.system': "Sistema",
   'st.providers.compat.value.developer': "Desenvolvedor",
-  'st.providers.webbrain_data_use.body': "O uso diário gratuito da nuvem WebBrain está incluído. Embora Ajudar a melhorar WebBrain esteja ativado por padrão, conversas selecionadas na nuvem podem ser retidas e usadas para avaliação, melhoria, ajuste fino e treinamento. Desative-o em Geral para excluir futuras interações na nuvem desses usos. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> {privacyLink}. Para mais uso, assine em {subscribeLink}. Gerencie o faturamento em {accountLink}.",
+  'st.providers.webbrain_data_use.body': "O uso diário gratuito da nuvem WebBrain está incluído. Embora Ajudar a melhorar WebBrain esteja ativado por padrão, conversas selecionadas na nuvem podem ser retidas e usadas para avaliação, melhoria, ajuste fino e treinamento. Desative-o em Geral → Avançado para excluir futuras interações na nuvem desses usos. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> {privacyLink}. Para mais uso, assine em {subscribeLink}. Gerencie o faturamento em {accountLink}.",
   'st.providers.webbrain_note.body': "O uso diário gratuito da nuvem WebBrain está incluído. As solicitações passam por api.webbrain.one; por padrão, registramos metadados para cota e depuração, e não texto de prompt, conteúdo de página, capturas de tela ou respostas de modelo. {privacyLink}. Para mais uso, assine em {subscribeLink}. Gerencie o faturamento em {accountLink}.",
   'st.providers.webbrain_note.privacy_link': "Política de privacidade",
 

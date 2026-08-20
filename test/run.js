@@ -36106,12 +36106,11 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'select-auto-screenshot',
       'input-cost-session-limit',
       'input-cost-total-limit',
-      'toggle-help-improve',
     ];
     const requestedTailIndexes = requestedTailIds.map((id) => displayPanel.indexOf(`id="${id}"`));
     assert.ok(
       requestedTailIndexes.every((index, position) => position === 0 || requestedTailIndexes[position - 1] < index),
-      `${label}: Auto screenshot and both Cloud allowances should follow LLM request timeout and precede Help Improve WebBrain`,
+      `${label}: Auto screenshot and both Cloud allowances should follow LLM request timeout`,
     );
 
     for (const id of [
@@ -36127,6 +36126,7 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'toggle-api-mutation-observer',
       'toggle-strict-secret',
       'toggle-allow-local-network',
+      'toggle-help-improve',
       'captcha-card',
     ]) {
       const index = displayPanel.indexOf(`id="${id}"`);
@@ -36145,7 +36145,6 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'select-plan-before-act-mode',
       'range-max-steps',
       'range-request-timeout',
-      'toggle-help-improve',
     ]) {
       const index = displayPanel.indexOf(`id="${id}"`);
       assert.notEqual(index, -1, `${label}: ${id} should remain visible in General`);
@@ -36277,7 +36276,7 @@ test('all locales explain CapSolver auto-enablement and key validation', async (
   }
 });
 
-test('Help Improve WebBrain is default-on, persisted, and reloads Cloud request config', () => {
+test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Cloud request config', async () => {
   for (const [label, prefix, runtime] of [
     ['chrome', 'src/chrome', 'chrome'],
     ['firefox', 'src/firefox', 'browser'],
@@ -36289,21 +36288,22 @@ test('Help Improve WebBrain is default-on, persisted, and reloads Cloud request 
     const manager = fs.readFileSync(path.join(ROOT, prefix, 'src/providers/manager.js'), 'utf8');
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
 
-    assert.match(html, /id="toggle-help-improve" checked/, `${label}: Help Improve should be on by default in General`);
+    assert.match(html, /id="toggle-help-improve" checked/, `${label}: Help Improve should be on by default`);
     const helpImproveIndex = html.indexOf('id="toggle-help-improve"');
-    const requestTimeoutIndex = html.indexOf('id="range-request-timeout"');
     const advancedIndex = html.indexOf('<details class="advanced-settings">');
-    assert.ok(requestTimeoutIndex > -1 && requestTimeoutIndex < helpImproveIndex && helpImproveIndex < advancedIndex, `${label}: Help Improve should be the last visible General setting above Advanced`);
+    const advancedEnd = html.indexOf('</details>', advancedIndex);
+    assert.ok(advancedIndex > -1 && helpImproveIndex > advancedIndex && helpImproveIndex < advancedEnd, `${label}: Help Improve should live in General > Advanced`);
     assert.match(settings, /helpImproveToggle\.checked = stored\.helpImproveWebBrain !== false/, `${label}: missing default-on storage hydration`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: helpImproveToggle\\.checked \\}\\)`), `${label}: setting should persist`);
     assert.match(locale, /'st\.display\.help_improve\.label': 'Help Improve WebBrain'/, `${label}: setting label missing`);
     assert.match(locale, /On by default[^']*<u>Local-model and bring-your-own API requests are never collected by WebBrain\.<\/u>/, `${label}: setting disclosure should explain and emphasize its default and scope`);
-    assert.match(locale, /Turn it off in General to exclude future Cloud interactions/, `${label}: provider disclosure should point to the visible General setting`);
+    assert.match(locale, /Turn it off in General → Advanced to exclude future Cloud interactions/, `${label}: provider disclosure should point to General > Advanced`);
     for (const localeFile of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const translatedLocale = fs.readFileSync(path.join(localeDir, localeFile), 'utf8');
+      const translatedMessages = (await import(pathToFileURL(path.join(localeDir, localeFile)).href)).default;
       assert.match(translatedLocale, /["']st\.display\.help_improve\.desc_html["']\s*:\s*["'][^\n]*<u>[^<]+<\/u>/, `${label}/${localeFile}: translated local/BYO exclusion should be underlined`);
-      const providerDisclosure = translatedLocale.match(/["']st\.providers\.webbrain_data_use\.body["']\s*:[^\n]+/)?.[0] || '';
-      assert.doesNotMatch(providerDisclosure, /[→←]/, `${label}/${localeFile}: provider disclosure should no longer point to Advanced`);
+      const providerDisclosure = translatedMessages['st.providers.webbrain_data_use.body'] || '';
+      assert.ok(providerDisclosure.includes(translatedMessages['st.display.advanced']), `${label}/${localeFile}: provider disclosure should name the localized Advanced section`);
       assert.match(providerDisclosure, /<u>[^<]+<\/u>/, `${label}/${localeFile}: provider local/BYO exclusion should also be underlined`);
     }
     assert.match(manager, /const HELP_IMPROVE_WEBBRAIN_KEY = 'helpImproveWebBrain';/, `${label}: provider manager setting key missing`);
@@ -53130,6 +53130,7 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const apocalypseFirefoxScript = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/apocalypse-mode.js'), 'utf8');
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const apocalypseCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs'), 'utf8');
   const apocalypseDocs = fs.readFileSync(path.join(ROOT, 'docs/apocalypse-mode.md'), 'utf8');
@@ -53202,8 +53203,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
   assert.doesNotMatch(background, /persistVisionDownloadState[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY/,
     'download failures must not manage implicit local-vision selection provenance');
-  assert.match(background, /async function resumeInterruptedVisionPreload\(\)[\s\S]*?providerManager\.resumeWebgpuVisionDownload\(\)/,
-    'Chrome startup must resume only an explicitly consented incomplete local-vision preload');
+  const resumeStart = background.indexOf('async function resumeInterruptedVisionPreload()');
+  const resumeEnd = background.indexOf('\n}', resumeStart) + 2;
+  const resumeInterruptedVisionPreload = background.slice(resumeStart, resumeEnd);
+  assert.match(resumeInterruptedVisionPreload, /await providerManager\.load\(\);[\s\S]*?providerManager\.resumeWebgpuVisionDownload\(\)/,
+    'Chrome startup must migrate legacy local-vision consent before resuming an incomplete preload');
   assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
     'local-vision recovery must run with the service-worker startup restoration');
   const startupRecovery = background.slice(
@@ -53330,6 +53334,13 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-vision-download-action="pause"/);
   assert.match(apocalypseHtml, /data-vision-download-action="resume"/);
   assert.match(apocalypseHtml, /data-vision-download-action="stop"/);
+  for (const [label, script] of [
+    ['chrome', apocalypseScript],
+    ['firefox', apocalypseFirefoxScript],
+  ]) {
+    assert.match(script, /actions\.stop\.hidden = !\['starting', 'queued', 'loading', 'downloading', 'paused', 'stopping', 'ready', 'error'\]\.includes\(status\)/,
+      `${label}: queued and loading Vision Model states must keep Stop available`);
+  }
   assert.match(apocalypseHtml, /id="models-readiness"[^>]*data-kind="disabled"[^>]*role="status"/);
   const apocalypseHeader = apocalypseHtml.slice(
     apocalypseHtml.indexOf('<header>'),

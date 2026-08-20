@@ -773,7 +773,7 @@ function renderVisionDownload() {
   actions.pause.hidden = !visionFallbackExplicitlyEnabled
     || !['queued', 'starting', 'downloading', 'loading'].includes(status);
   actions.resume.hidden = !visionFallbackExplicitlyEnabled || status !== 'paused';
-  actions.stop.hidden = !['starting', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
+  actions.stop.hidden = !['starting', 'queued', 'loading', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
   actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
   for (const button of Object.values(actions)) button.disabled = status === 'stopping';
 

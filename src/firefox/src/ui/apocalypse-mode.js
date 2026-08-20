@@ -319,7 +319,7 @@ function updateOverallModelsReadiness() {
   } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused') {
     key = 'ap.models.status.paused';
   } else if (['checking', 'downloading', 'stopping'].includes(textStatus)
-    || ['starting', 'downloading', 'stopping'].includes(visionStatus)
+    || ['starting', 'queued', 'loading', 'downloading', 'stopping'].includes(visionStatus)
     || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)
     || ['downloading', 'verifying', 'downloaded', 'extracting', 'indexing'].includes(corpusStatus)
     || ['downloading'].includes(semanticStatus)) {
@@ -592,7 +592,7 @@ function renderVisionDownload() {
   const state = visionDownloadState || {};
   const status = state.status || 'not-downloaded';
   const progress = Math.max(0, Math.min(100, Number(state.progress) || 0));
-  const active = status === 'starting' || status === 'downloading';
+  const active = ['starting', 'queued', 'loading', 'downloading'].includes(status);
   elements['vision-model-status'].dataset.kind = status === 'ready' || status === 'error'
     ? status
     : '';
@@ -606,9 +606,9 @@ function renderVisionDownload() {
     document.querySelector(`[data-vision-download-action="${action}"]`),
   ]));
   actions.start.hidden = snapshot?.enabled !== true || !['idle', 'not-downloaded', 'error'].includes(status);
-  actions.pause.hidden = !['starting', 'downloading'].includes(status);
+  actions.pause.hidden = !['starting', 'queued', 'loading', 'downloading'].includes(status);
   actions.resume.hidden = status !== 'paused';
-  actions.stop.hidden = !['starting', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
+  actions.stop.hidden = !['starting', 'queued', 'loading', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
   actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
   for (const button of Object.values(actions)) button.disabled = status === 'stopping';
 
@@ -617,13 +617,13 @@ function renderVisionDownload() {
   } else if (status === 'error') {
     const message = String(state.error || '').trim();
     elements['vision-model-status'].textContent = `${t('ap.status.error')}${message ? ` · ${message}` : ''}`;
-  } else if (status === 'downloading') {
+  } else if (status === 'downloading' || status === 'loading') {
     elements['vision-model-status'].textContent = `${t('ap.status.downloading')} · ${Math.round(progress)}%`;
   } else if (status === 'paused') {
     elements['vision-model-status'].textContent = `${t('ap.status.paused')} · ${Math.round(progress)}%`;
   } else if (status === 'stopping') {
     elements['vision-model-status'].textContent = t('st.providers.webgpu_download.stopping');
-  } else if (status === 'starting') {
+  } else if (status === 'starting' || status === 'queued') {
     elements['vision-model-status'].textContent = t('ap.status.queued');
   } else if (snapshot?.enabled) {
     elements['vision-model-status'].textContent = t('st.providers.webgpu_download.not_downloaded');

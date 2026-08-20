@@ -684,7 +684,7 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'System',
   'st.providers.compat.value.developer': 'Developer',
-  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Cloud usage is included. While Help Improve WebBrain is on by default, selected Cloud conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General to exclude future Cloud interactions from those uses. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Cloud usage is included. While Help Improve WebBrain is on by default, selected Cloud conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Cloud interactions from those uses. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.body': 'Free daily WebBrain Cloud usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Privacy policy',
 
