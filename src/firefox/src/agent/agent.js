@@ -742,17 +742,31 @@ export class Agent extends LoopDetector {
       : { provider: null, route: 'none', rawImage: false };
   }
 
+  _throwIfAborted(signal) {
+    if (!signal?.aborted) return;
+    if (signal.reason instanceof Error) throw signal.reason;
+    const error = new Error('The operation was aborted.');
+    error.name = 'AbortError';
+    throw error;
+  }
+
   async _withVisionDeadline(operation) {
+    const controller = new AbortController();
     let timeoutId = null;
+    const timeoutError = new Error(`Vision request timed out after ${VISION_SUB_CALL_TIMEOUT_MS}ms.`);
+    timeoutError.code = 'vision_timeout';
     const timeout = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
-        const error = new Error(`Vision request timed out after ${VISION_SUB_CALL_TIMEOUT_MS}ms.`);
-        error.code = 'vision_timeout';
-        reject(error);
+        try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
+        reject(timeoutError);
       }, VISION_SUB_CALL_TIMEOUT_MS);
     });
+    const started = Promise.resolve(
+      typeof operation === 'function' ? operation(controller.signal) : operation,
+    );
+    started.catch(() => {});
     try {
-      return await Promise.race([operation, timeout]);
+      return await Promise.race([started, timeout]);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
@@ -1962,9 +1976,11 @@ export class Agent extends LoopDetector {
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
     const before = await this._checkCostAllowance(provider, costState);
     if (before) throw this._costAllowanceError(before);
+    this._throwIfAborted(options?.signal);
     const result = await provider.chat(messages, requestContext
       ? this._cloudGenerationOptions(provider, options, requestContext)
       : options);
+    this._throwIfAborted(options?.signal);
     if (result && typeof result.content === 'string') {
       result.content = Agent._stripReasoningTags(result.content);
     }
@@ -7574,12 +7590,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     costState = null,
     maxTokens,
     retryMaxTokens,
+    signal = null,
     isUsable = (result) => !!String(result?.content || '').trim(),
   }) {
     const request = (tokenLimit, reasoningControl) => this._chatWithCostAllowance(
       vision,
       messages,
-      visionGenerationOptions(tokenLimit, { reasoningControl }),
+      {
+        ...visionGenerationOptions(tokenLimit, { reasoningControl }),
+        ...(signal ? { signal } : {}),
+      },
       costState,
       { tabId, generationName: 'vision' },
     );
@@ -7638,7 +7658,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ],
         },
       ];
-      const { result: res, attempts } = await this._withVisionDeadline(this._chatVisionWithCompatibilityRetry(
+      const { result: res, attempts } = await this._withVisionDeadline(signal => this._chatVisionWithCompatibilityRetry(
         vision,
         messages,
         {
@@ -7646,6 +7666,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           costState: effectiveCostState,
           maxTokens: 800,
           retryMaxTokens: 1600,
+          signal,
           isUsable: (result) => !!Agent._cleanVisionDescription(result?.content || ''),
         },
       ));

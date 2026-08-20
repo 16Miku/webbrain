@@ -126,6 +126,25 @@ function fetchTargetsActiveVisionModel(input) {
   return safeDecodedUrl(url).includes(`/${activeVisionDownloadRequest.modelId}/`);
 }
 
+async function isVisionModelCached(modelId) {
+  const normalized = String(modelId || '').trim();
+  if (!normalized) return false;
+  if (typeof caches === 'undefined') return null;
+  const modelPath = `/${normalized}/`;
+  try {
+    for (const name of await caches.keys()) {
+      if (!/transformers/i.test(name)) continue;
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        if (safeDecodedUrl(request.url).includes(modelPath)) return true;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return false;
+}
+
 async function controlledFetch(input, init = {}) {
   if (!nativeFetch) throw new Error('Fetch is unavailable in the WebGPU worker.');
   if (textDownloadAbortController && fetchTargetsActiveTextModel(input)) {
@@ -351,7 +370,7 @@ async function disposeAllRuntimes() {
   await disposeTextRuntime();
 }
 
-async function getVisionRuntime(modelId, dtype, device) {
+async function getVisionRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
   const key = `vision|${modelId}|${device}|${JSON.stringify(dtype)}`;
   if (visionRuntime && visionRuntimeKey === key) return visionRuntime;
   if (visionRuntimeLoadPromise) {
@@ -361,6 +380,11 @@ async function getVisionRuntime(modelId, dtype, device) {
   }
 
   const loadPromise = (async () => {
+    if (localFilesOnly && (await isVisionModelCached(modelId)) === false) {
+      const error = new Error(`${modelId} is not cached locally.`);
+      error.code = 'vision_model_not_downloaded';
+      throw error;
+    }
     const library = await loadLibrary();
     const { AutoModelForImageTextToText, AutoProcessor } = library;
     if (!AutoModelForImageTextToText || !AutoProcessor) {
@@ -368,14 +392,26 @@ async function getVisionRuntime(modelId, dtype, device) {
     }
     await disposeVisionRuntime();
     const progress_callback = event => postProgress(modelId, event);
-    const [processorResult, modelResult] = await Promise.allSettled([
-      AutoProcessor.from_pretrained(modelId, { progress_callback }),
-      AutoModelForImageTextToText.from_pretrained(modelId, {
-        device,
-        dtype,
-        progress_callback,
-      }),
-    ]);
+    const previousAllowLocalModels = library.env?.allowLocalModels;
+    if (localFilesOnly && library.env) library.env.allowLocalModels = true;
+    let processorResult;
+    let modelResult;
+    try {
+      [processorResult, modelResult] = await Promise.allSettled([
+        AutoProcessor.from_pretrained(modelId, {
+          progress_callback,
+          local_files_only: localFilesOnly,
+        }),
+        AutoModelForImageTextToText.from_pretrained(modelId, {
+          device,
+          dtype,
+          progress_callback,
+          local_files_only: localFilesOnly,
+        }),
+      ]);
+    } finally {
+      if (localFilesOnly && library.env) library.env.allowLocalModels = previousAllowLocalModels;
+    }
     if (processorResult.status === 'rejected' || modelResult.status === 'rejected') {
       const loaded = [processorResult, modelResult]
         .filter(result => result.status === 'fulfilled')
@@ -840,7 +876,7 @@ async function runVision(payload, requestId) {
       error.name = 'AbortError';
       throw error;
     }
-    const runtime = await getVisionRuntime(modelId, dtype, device);
+    const runtime = await getVisionRuntime(modelId, dtype, device, { localFilesOnly: true });
     const { messages, imageUrl } = prepareMultimodalMessages(payload?.messages);
     const prompt = runtime.processor.apply_chat_template(messages, {
       add_generation_prompt: true,

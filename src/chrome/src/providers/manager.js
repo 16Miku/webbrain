@@ -17,6 +17,7 @@ import {
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  hasWebgpuVisionCache,
   webgpuModelDisplayName,
   webgpuModelDtype,
   webgpuModelPreset,
@@ -1240,16 +1241,46 @@ export class ProviderManager {
     const storedStatus = WEBGPU_VISION_STATUSES.has(normalizedStateStatus)
       ? normalizedStateStatus
       : 'not-downloaded';
-    const status = enabled && modelMatches ? storedStatus : 'disabled';
+    let status = enabled && modelMatches ? storedStatus : 'disabled';
+    let progress = Math.max(0, Math.min(100, Number(state.progress) || 0));
+    let loaded = Math.max(0, Number(state.loaded) || 0);
+    let total = Math.max(0, Number(state.total) || 0);
+    let error = String(state.error || '').slice(0, 500);
+    let updatedAt = Math.max(0, Number(state.updatedAt) || 0);
+    if (status === 'ready') {
+      const cached = await hasWebgpuVisionCache(WEBGPU_VISION_MODEL_ID);
+      if (cached === false) {
+        status = 'not-downloaded';
+        progress = 0;
+        loaded = 0;
+        total = 0;
+        error = 'Cached vision artifacts are missing.';
+        updatedAt = Date.now();
+        try {
+          await chrome.storage.local.set({
+            [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
+              ...state,
+              modelId: WEBGPU_VISION_MODEL_ID,
+              status: 'not-downloaded',
+              progress: 0,
+              loaded: 0,
+              total: 0,
+              error,
+              updatedAt,
+            },
+          });
+        } catch {}
+      }
+    }
     return {
       enabled,
       consented,
       status,
-      progress: Math.max(0, Math.min(100, Number(state.progress) || 0)),
-      loaded: Math.max(0, Number(state.loaded) || 0),
-      total: Math.max(0, Number(state.total) || 0),
-      error: String(state.error || '').slice(0, 500),
-      updatedAt: Math.max(0, Number(state.updatedAt) || 0),
+      progress,
+      loaded,
+      total,
+      error,
+      updatedAt,
       modelId: WEBGPU_VISION_MODEL_ID,
     };
   }
@@ -1316,9 +1347,6 @@ export class ProviderManager {
   /** Explicitly enable the Chrome-only local vision fallback and start its cache fill. */
   async enableAndPreloadWebgpuVision() {
     const provider = new WebGPUVisionProvider();
-    const stored = await chrome.storage.local.get([
-      WEBGPU_VISION_DOWNLOAD_STATE_KEY,
-    ]);
     const probe = await provider.testConnection();
     if (!probe.ok) return probe;
 
@@ -1328,8 +1356,8 @@ export class ProviderManager {
     });
     await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
 
-    const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
-    if (state?.status === 'ready' && state?.modelId === WEBGPU_VISION_MODEL_ID) {
+    const readiness = await this.getWebgpuVisionReadiness();
+    if (readiness.status === 'ready') {
       return { ok: true, started: false, ready: true };
     }
 

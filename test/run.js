@@ -52318,6 +52318,64 @@ test('local vision defaults off and migration requires re-consent without deleti
   }
 });
 
+test('local vision readiness probes cache before advertising a ready fallback', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousCaches = globalThis.caches;
+  const state = {
+    [WEBGPU_VISION_ENABLED_KEY]: true,
+    [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+    [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    },
+  };
+  const storage = {
+    local: {
+      get: async keys => {
+        if (!keys) return { ...state };
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.filter(key => Object.hasOwn(state, key)).map(key => [key, state[key]]));
+      },
+      set: async patch => Object.assign(state, patch),
+    },
+  };
+  try {
+    globalThis.chrome = { storage };
+    globalThis.caches = {
+      keys: async () => ['transformers-cache'],
+      open: async () => ({
+        keys: async () => [],
+      }),
+    };
+    const manager = new ProviderManagerCh();
+    assert.equal(await manager.getLocalVisionFallbackProvider(), null,
+      'stale ready storage must not route screenshots after cache eviction');
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'not-downloaded');
+    assert.equal((await manager.getWebgpuVisionReadiness()).status, 'not-downloaded');
+
+    state[WEBGPU_VISION_DOWNLOAD_STATE_KEY] = {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    };
+    globalThis.caches = {
+      keys: async () => ['transformers-cache'],
+      open: async () => ({
+        keys: async () => [{ url: `https://huggingface.co/${WEBGPU_VISION_MODEL_ID}/onnx/model.onnx` }],
+      }),
+    };
+    const cached = await manager.getLocalVisionFallbackProvider();
+    assert.ok(cached instanceof WebGPUVisionProvider);
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'ready');
+  } finally {
+    if (previousCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = previousCaches;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('Apocalypse text download fixes the LFM preset and avoids duplicate starts', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
@@ -52505,7 +52563,11 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeAllRuntimes\)/);
   assert.match(worker, /type === 'preload'[\s\S]*?preloadVisionModel\(payload, request\)/);
-  assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime[\s\S]*?await disposeVisionRuntime/);
+  assert.match(worker, /async function getVisionRuntime[\s\S]*?local_files_only: localFilesOnly/);
+  assert.match(worker, /getVisionRuntime\(modelId, dtype, device, \{ localFilesOnly: true \}\)/,
+    'automatic screenshot inference must not download missing local vision weights');
+  assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime\(modelId, dtype, device\)[\s\S]*?await disposeVisionRuntime/,
+    'explicit preload remains the only local vision download path');
   assert.match(worker, /type === 'pause-vision-download'[\s\S]*?pauseVisionDownload/);
   assert.match(worker, /type === 'stop-vision-download'[\s\S]*?stopVisionDownload[\s\S]*?clearVisionModelCache/);
   assert.match(worker, /clearVisionModelCache[\s\S]*?cache\.delete\(request\)/);
@@ -52585,8 +52647,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   for (const [label, source] of [['chrome', chromeAgent], ['firefox', firefoxAgent]]) {
     assert.match(source, /VISION_SUB_CALL_TIMEOUT_MS = 90_000/,
       `${label}: dedicated vision timeout is missing`);
-    assert.match(source, /_withVisionDeadline\(this\._chatVisionWithCompatibilityRetry/,
+    assert.match(source, /_withVisionDeadline\(signal => this\._chatVisionWithCompatibilityRetry/,
       `${label}: compatibility retries are not inside one total deadline`);
+    assert.match(source, /controller\.abort\(timeoutError\)/,
+      `${label}: dedicated vision deadline must abort the in-flight provider request`);
     assert.match(source, /async _applyAttachments[\s\S]*?does not support document attachments[\s\S]*?_describeScreenshot/,
       `${label}: mixed attachments must preflight documents before staged screenshot vision`);
   }
@@ -93102,6 +93166,68 @@ test('dedicated vision deadlines are enforced in Chrome and Firefox', async () =
         error => error?.code === 'vision_timeout' && /90000ms/.test(error.message),
         `${label}: hung vision request did not reach the shared deadline`,
       );
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test('dedicated vision deadline aborts the in-flight provider request', async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const scheduled = new Set();
+  try {
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 90_000) return originalSetTimeout(callback, delay, ...args);
+      const token = {
+        cancelled: false,
+        fire() {
+          if (!this.cancelled) callback(...args);
+        },
+      };
+      scheduled.add(token);
+      return token;
+    };
+    globalThis.clearTimeout = token => {
+      if (scheduled.has(token)) token.cancelled = true;
+      else originalClearTimeout(token);
+    };
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      let seenSignal = null;
+      let recordedUsage = false;
+      scheduled.clear();
+      const vision = {
+        config: { model: 'remote-vision', baseUrl: 'https://vision.example/v1', category: 'cloud' },
+        async chat(_messages, options) {
+          seenSignal = options.signal;
+          await new Promise(resolve => {
+            options.signal.addEventListener('abort', resolve, { once: true });
+          });
+          return { content: 'late caption', usage: { total_tokens: 12 } };
+        },
+      };
+      const agent = new AgentClass({});
+      agent._recordCostUsage = async () => {
+        recordedUsage = true;
+        return null;
+      };
+      const pending = agent._describeScreenshot(
+        label === 'chrome' ? 2991 : 2992,
+        'data:image/png;base64,AA==',
+        'timeout_abort',
+        null,
+        { provider: vision, route: 'explicit_override', rawImage: false },
+      );
+      for (let i = 0; i < 30 && !seenSignal; i++) await Promise.resolve();
+      assert.ok(seenSignal, `${label}: vision chat did not receive a deadline signal`);
+      assert.equal(seenSignal.aborted, false, `${label}: vision request was aborted before its deadline`);
+      for (const token of scheduled) token.fire();
+      const described = await pending;
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(described, null, `${label}: timed-out vision should not return a description`);
+      assert.equal(seenSignal.aborted, true, `${label}: provider chat did not receive an aborted signal`);
+      assert.equal(recordedUsage, false, `${label}: timed-out vision still recorded cost`);
     }
   } finally {
     globalThis.setTimeout = originalSetTimeout;
