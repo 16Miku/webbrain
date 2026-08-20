@@ -2986,26 +2986,35 @@ function clearProviderLoadedModels(id) {
   if (datalistEl) datalistEl.innerHTML = '';
 }
 
+const providerModelLoadGenerations = new Map();
+
 async function loadProviderModels(id) {
   let datalistEl = document.getElementById(`models-${id}`);
   if (!datalistEl) return;
+  const generation = (providerModelLoadGenerations.get(id) || 0) + 1;
+  providerModelLoadGenerations.set(id, generation);
+  const isCurrent = () => providerModelLoadGenerations.get(id) === generation;
   clearProviderLoadedModels(id);
   try {
     await saveProvider(id, { showFlash: false, markConfigured: false });
   } catch (e) {
+    if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
+  if (!isCurrent()) return;
   setProviderLoadModelsStatus(id, t('st.providers.loading'));
   let res;
   try {
     res = await sendToBackground('list_provider_models', { providerId: id });
   } catch (e) {
+    if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
+  if (!isCurrent()) return;
   datalistEl = document.getElementById(`models-${id}`);
   if (!datalistEl) return;
   if (res?.ok) {
