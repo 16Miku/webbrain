@@ -273,6 +273,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     try {
       await sendToBackground('set_help_improve_preference', { enabled: requestedValue });
       persistedHelpImprove = requestedValue;
+      if (cloudReady) showCloudReady();
       return true;
     } catch (error) {
       helpImproveCheckbox.checked = persistedHelpImprove;
