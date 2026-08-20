@@ -2079,12 +2079,13 @@ export class Agent extends LoopDetector {
   }
 
   _isCostAllowanceError(err) {
-    // WebBrain Cloud's free-tier 402 is also an allowance terminal, but it
-    // originates in the provider rather than _costAllowanceError(). Treat it
+    // WebBrain Cloud's quota 402s are also allowance terminals, but they
+    // originate in the provider rather than _costAllowanceError(). Treat them
     // like the local cost cap so the agent does not retry it and then emit a
     // second generic error card beside the actionable Subscribe prompt.
     return err?.code === 'WB_COST_ALLOWANCE'
-      || /Subscribe for more usage:\s*https?:\/\/\S+/i.test(String(err?.message || ''));
+      || /^webbrain_cloud_(?:free|paid|plus)_tier_exceeded$/i.test(String(err?.code || ''))
+      || /(?:Subscribe for more usage|Upgrade to WebBrain Plus):\s*https?:\/\/\S+/i.test(String(err?.message || ''));
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
@@ -27832,6 +27833,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch (e) {
         const caughtMessage = formatErrorMessage(e);
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
+        if (this._isCostAllowanceError(e)) {
+          messages.push({ role: 'assistant', content: caughtMessage });
+          onUpdate('warning', { message: caughtMessage });
+          this._persist(tabId);
+          return finish(caughtMessage, 'cost_limit');
+        }
         if (!streamEmittedOutput && !visionFallbackAttempted) {
           const fallbackMessages = await this._visionFallbackMessages(tabId, currentStreamRequestMessages, costState, e);
           if (fallbackMessages) {

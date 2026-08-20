@@ -9853,10 +9853,9 @@ function appendVerboseToolResult(name, result) {
 // UI Helpers
 // ==========================================================================
 
-// WebBrain Cloud returns a 402 with a trailing "Subscribe for more usage: <url>"
-// line once the free daily allowance runs out. Detect that shape so we can turn
-// the bare URL into a real Subscribe button instead of making the user copy it.
-const SUBSCRIBE_ERROR_RE = /Subscribe for more usage:\s*(https?:\/\/\S+)/i;
+// WebBrain Cloud returns a 402 with one trailing billing action. Keep the
+// matcher narrow so ordinary subscription text is not converted into billing UI.
+const SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
 const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 const COST_ALLOWANCE_BUMP_USD = 10;
 
@@ -9933,9 +9932,9 @@ function parseSubscribeError(content) {
   const m = content.match(SUBSCRIBE_ERROR_RE);
   if (!m) return null;
   // Strip trailing punctuation that markdown/markup might have appended.
-  const url = m[1].replace(/[)\].,"'>]+$/, '');
+  const url = m[2].replace(/[)\].,"'>]+$/, '');
   const message = content.slice(0, m.index).replace(/\s+$/, '').trim();
-  return { url, message };
+  return { url, message, action: /^Upgrade/i.test(m[1]) ? 'upgrade' : 'subscribe' };
 }
 
 function openSubscribeUrl(url) {
@@ -9967,7 +9966,8 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'subscribe-btn';
-  btn.textContent = t('sp.subscribe.btn');
+  btn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.upgrade' : 'sp.subscribe.btn');
+  if (parsed.action === 'upgrade') btn.classList.add('subscribe-upgrade-btn');
   btn.dataset.subscribeUrl = parsed.url;
   btn.dataset.bound = 'true';
   btn.addEventListener('click', () => openSubscribeUrl(btn.dataset.subscribeUrl));
@@ -9976,7 +9976,7 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const resumeBtn = document.createElement('button');
   resumeBtn.type = 'button';
   resumeBtn.className = 'subscribe-resume-btn';
-  resumeBtn.textContent = t('sp.subscribe.resume');
+  resumeBtn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.resume_upgrade' : 'sp.subscribe.resume');
   resumeBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
     ? resumeMode
     : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);

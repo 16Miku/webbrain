@@ -286,6 +286,8 @@ export default {
   'sp.error_prefix': 'Error: {msg}',
   'sp.subscribe.allowance_used': 'Daily free WebBrain Cloud allowance used.',
   'sp.subscribe.btn': 'Subscribe',
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'I’ve subscribed — retry',
   'sp.stopped_by_user': '[Stopped by user]',
   'sp.stopped_by_user_html': '<em>Stopped by user.</em>',

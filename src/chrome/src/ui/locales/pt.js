@@ -286,6 +286,8 @@ export default {
   'sp.error_prefix': "Erro: {msg}",
   'sp.subscribe.allowance_used': "Diário gratuito WebBrain Limite de nuvem usado.",
   'sp.subscribe.btn': "Inscrever-se",
+  'sp.subscribe.upgrade': 'Fazer upgrade para o Plus',
+  'sp.subscribe.resume_upgrade': 'Plano atualizado — tentar novamente',
   'sp.subscribe.resume': "Eu me inscrevi – tente novamente",
   'sp.stopped_by_user': "[Interrompido pelo usuário]",
   'sp.stopped_by_user_html': "<em>Parado pelo usuário.</em>",

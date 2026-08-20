@@ -34288,11 +34288,29 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     const end = panel.indexOf('\n}\n\nfunction addMessage', start);
     assert.notEqual(end, -1, `${label}: renderSubscribeError boundary missing`);
     const body = panel.slice(start, end + 2);
+    const subscribeDeclaration = panel.match(/const SUBSCRIBE_ERROR_RE = [^\n]+;/)?.[0] || '';
+    const parserStart = panel.indexOf('function parseSubscribeError(content) {');
+    const parserEnd = panel.indexOf('\n}\n\nfunction openSubscribeUrl', parserStart);
+    assert.notEqual(parserStart, -1, `${label}: billing action parser missing`);
+    assert.notEqual(parserEnd, -1, `${label}: billing action parser boundary missing`);
+    const parseSubscribeError = Function(
+      `${subscribeDeclaration}\n${panel.slice(parserStart, parserEnd + 2)}\nreturn parseSubscribeError;`,
+    )();
+    assert.deepEqual(
+      parseSubscribeError('Paid allowance used.\nUpgrade to WebBrain Plus: https://api.webbrain.one/upgrade?client_reference_id=device'),
+      {
+        url: 'https://api.webbrain.one/upgrade?client_reference_id=device',
+        message: 'Paid allowance used.',
+        action: 'upgrade',
+      },
+      `${label}: paid quota should parse as a Plus upgrade action`,
+    );
     assert.match(body, /textEl\.replaceChildren\(\);/, `${label}: subscribe card should clear via DOM APIs`);
     assert.doesNotMatch(body, /textEl\.innerHTML\s*=\s*'';/, `${label}: subscribe card should not clear via innerHTML`);
     assert.match(body, /msg\.textContent = parsed\.message \|\| t\('sp\.subscribe\.allowance_used'\);/, `${label}: subscribe message must remain textContent`);
     assert.match(body, /actions\.className = 'subscribe-actions';/, `${label}: subscribe actions should share a responsive row`);
-    assert.match(body, /resumeBtn\.textContent = t\('sp\.subscribe\.resume'\);/, `${label}: subscribe card should render a localized resume action`);
+    assert.match(body, /resumeBtn\.textContent = t\(parsed\.action === 'upgrade' \? 'sp\.subscribe\.resume_upgrade' : 'sp\.subscribe\.resume'\);/, `${label}: billing card should render a localized action-specific resume label`);
+    assert.match(body, /btn\.textContent = t\(parsed\.action === 'upgrade' \? 'sp\.subscribe\.upgrade' : 'sp\.subscribe\.btn'\);/, `${label}: billing card should distinguish subscription and Plus upgrades`);
     assert.match(body, /resumeBtn\.dataset\.resumeMode = \['ask', 'act', 'dev'\]\.includes\(resumeMode\)[\s\S]*?\? resumeMode[\s\S]*?: \(textEl\.closest\('\.message\.assistant'\)\?\.dataset\.runMode \|\| agentMode\);/, `${label}: resume action should prefer an explicitly captured failed run mode`);
     assert.match(body, /resumeAfterSubscription\(resumeBtn\)/, `${label}: subscribe card should use the shared resume handler`);
     assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?const mode = \['ask', 'act', 'dev'\]\.includes\(btn\?\.dataset\?\.resumeMode\)[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(\{[\s\S]*?mode,[\s\S]*?foreground: btn\?\.dataset\?\.resumeForeground === 'true',[\s\S]*?\}\);[\s\S]*?\}/, `${label}: subscribe resume should synchronize the visible mode and preserve foreground mode before continuing`);
@@ -54886,6 +54904,97 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
     ['kimi-for-coding', 'kimi-for-coding-highspeed', 'k3'],
   );
+});
+
+test('WebBrain Cloud 402 formatting and localized billing actions distinguish every quota tier', async () => {
+  for (const [label, Provider, AgentClass] of [
+    ['chrome', OpenAIProviderCh, AgentCh],
+    ['firefox', OpenAIProviderFx, AgentFx],
+  ]) {
+    const provider = new Provider({
+      providerName: 'webbrain-cloud',
+      deviceGuid: 'device-guid',
+    });
+    const subscribe = provider._formatHttpError(402, JSON.stringify({
+      error: { message: 'Free allowance used.', code: 'webbrain_cloud_free_tier_exceeded' },
+      subscribe_url: 'https://buy.stripe.com/base?client_reference_id=device-guid',
+    }));
+    assert.match(subscribe, /Subscribe for more usage: https:\/\/buy\.stripe\.com\/base/, `${label}: free quota should offer subscription checkout`);
+
+    const upgrade = provider._formatHttpError(402, JSON.stringify({
+      error: { message: 'Paid allowance used.', code: 'webbrain_cloud_paid_tier_exceeded' },
+      upgrade_url: 'https://api.webbrain.one/upgrade?client_reference_id=device-guid',
+    }));
+    assert.match(upgrade, /Upgrade to WebBrain Plus: https:\/\/api\.webbrain\.one\/upgrade/, `${label}: base paid quota should offer the Plus upgrade flow`);
+
+    const plusBody = JSON.stringify({
+      error: { message: 'Votre quota Plus quotidien est épuisé.', code: 'webbrain_cloud_plus_tier_exceeded' },
+    });
+    const plus = provider._formatHttpError(402, plusBody);
+    assert.equal(plus, 'Votre quota Plus quotidien est épuisé.', `${label}: Plus exhaustion must not offer a duplicate subscription action`);
+    const plusError = provider._httpError(402, plusBody, 'webbrain-cloud error 402');
+    assert.equal(plusError.code, 'webbrain_cloud_plus_tier_exceeded', `${label}: provider error code should survive HTTP formatting`);
+    assert.equal(new AgentClass({})._isCostAllowanceError(plusError), true, `${label}: localized Plus exhaustion should remain terminal by stable code`);
+  }
+
+  const localeCodes = [
+    'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
+  ];
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+  for (const locale of localeCodes) {
+    const chromeLocale = (await import(pathToFileURL(path.join(ROOT, `src/chrome/src/ui/locales/${locale}.js`)).href)).default;
+    const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
+    for (const key of ['sp.subscribe.upgrade', 'sp.subscribe.resume_upgrade']) {
+      assert.equal(chromeLocale[key], firefoxLocale[key], `${locale}: ${key} should match across browsers`);
+      assert.ok(chromeLocale[key]?.trim(), `${locale}: ${key} should not be empty`);
+      if (locale !== 'en') {
+        assert.notEqual(chromeLocale[key], english[key], `${locale}: ${key} should not fall back to English`);
+      }
+    }
+  }
+});
+
+test('WebBrain Cloud quota errors stay terminal in the main streaming agent loop', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const quotaMessage = 'Votre quota Plus quotidien est épuisé.';
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'webbrain-cloud 1.0',
+      name: 'webbrain-cloud',
+      calls: 0,
+      async *chatStream() {
+        this.calls += 1;
+        const error = new Error(quotaMessage);
+        error.code = 'webbrain_cloud_plus_tier_exceeded';
+        throw error;
+      },
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 5490 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    const updates = [];
+    let traceStatus = null;
+    agent._startTraceRun = async () => `quota_stream_${index}`;
+    agent._endTraceRun = (_tabId, _runId, status) => { traceStatus = status; };
+
+    const final = await agent.processMessageStream(
+      tabId,
+      'Continue the task.',
+      (type, data) => updates.push({ type, data }),
+      'act',
+    );
+
+    assert.equal(final, quotaMessage, `${AgentClass.name}: streaming quota should return the billing message`);
+    assert.equal(traceStatus, 'cost_limit', `${AgentClass.name}: streaming quota should finish as cost_limit`);
+    assert.equal(provider.calls, 1, `${AgentClass.name}: streaming quota should not retry`);
+    assert.equal(updates.filter(update => update.type === 'warning' && update.data?.message === quotaMessage).length, 1, `${AgentClass.name}: streaming quota should emit one actionable warning`);
+    assert.equal(updates.some(update => update.type === 'error'), false, `${AgentClass.name}: streaming quota should not emit generic error UI`);
+    assert.equal(agent.getConversation(tabId, 'act').filter(message => message.role === 'assistant' && message.content === quotaMessage).length, 1, `${AgentClass.name}: streaming quota should persist one assistant billing message`);
+  }
 });
 
 test('new provider auth, endpoint, protocol, and capability contracts are deterministic', () => {
