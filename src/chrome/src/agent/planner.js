@@ -588,6 +588,9 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
 export function buildPlannerSystemPrompt(opts = {}) {
   let prompt = opts.allowApi ? `${PLANNER_SYSTEM_PROMPT}\n${PLANNER_API_REPLAY_RULE}` : PLANNER_SYSTEM_PROMPT;
   prompt += `\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.`;
+  if (opts.researchEscalationEnabled === true) {
+    prompt += '\n- Research escalation is available for materially complex read-only research subtasks. If it would substantially improve speed or quality, plan an explicit clarify consent step followed by delegate_research; only the exact user-approved prompt may be shared. Do not use it for ordinary browsing, private/account data, mutations, purchases, bookings, or high-stakes decisions.';
+  }
   const catalog = Array.isArray(opts.skillCatalog) ? opts.skillCatalog : [];
   if (catalog.length) {
     const lines = catalog.map((skill) => {
@@ -607,7 +610,10 @@ export function buildPlannerSystemPrompt(opts = {}) {
 }
 
 export function buildPlannerIntentSystemPrompt(opts = {}) {
-  return `${PLANNER_INTENT_SYSTEM_PROMPT}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.`;
+  const researchRule = opts.researchEscalationEnabled === true
+    ? '\n- A complex read-only research subtask may use explicit clarify consent followed by delegate_research; never delegate private data or consequential actions.'
+    : '';
+  return `${PLANNER_INTENT_SYSTEM_PROMPT}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}`;
 }
 
 /**

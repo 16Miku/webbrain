@@ -340,6 +340,13 @@ async function loadSiteAdapters() {
 }
 loadSiteAdapters();
 
+async function loadResearchEscalation() {
+  const stored = await browser.storage.local.get(['researchEscalationEnabled', 'researchEscalationEngine']);
+  agent.researchEscalationEnabled = stored.researchEscalationEnabled !== false;
+  agent.researchEscalationEngine = String(stored.researchEscalationEngine || 'chatgpt');
+}
+const researchEscalationReady = loadResearchEscalation().catch(() => {});
+
 async function loadStrictSecretMode() {
   const stored = await browser.storage.local.get('strictSecretMode');
   if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
@@ -965,6 +972,15 @@ browser.storage.onChanged.addListener((changes) => {
   }
   if (changes.useSiteAdapters) {
     agent.useSiteAdapters = changes.useSiteAdapters.newValue;
+    refreshPrompts = true;
+  }
+  if (changes.researchEscalationEnabled || changes.researchEscalationEngine) {
+    if (changes.researchEscalationEnabled) {
+      agent.researchEscalationEnabled = changes.researchEscalationEnabled.newValue !== false;
+    }
+    if (changes.researchEscalationEngine) {
+      agent.researchEscalationEngine = String(changes.researchEscalationEngine.newValue || 'chatgpt');
+    }
     refreshPrompts = true;
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
@@ -1985,6 +2001,7 @@ async function handleMessage(msg, sender) {
     await alwaysAllowApiMutationsReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
+    await researchEscalationReady;
   }
 
   switch (msg.action) {
@@ -2655,6 +2672,7 @@ async function handleMessage(msg, sender) {
         loadClarifyTimeout(),
         loadAutoScreenshot(),
         loadSiteAdapters(),
+        loadResearchEscalation(),
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
         loadProfile(),

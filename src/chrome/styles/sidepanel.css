@@ -3735,6 +3735,19 @@ html[data-standalone="true"] #mode-toggle {
   line-height: 1.4;
 }
 
+.clarify-research-request {
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-style: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .permission-education-hint {
   display: flex;
   flex-direction: column;

@@ -668,6 +668,7 @@ const {
   Capability: CapabilityCh,
   CAPABILITY_LABEL: CAPABILITY_LABEL_CH,
   capabilityFor: capabilityForCh,
+  capabilitiesFor: capabilitiesForCh,
   PermissionManager: PermissionManagerCh,
   normalizeHost: normalizeHostCh,
   hostForCapability: hostForCapabilityCh,
@@ -1045,6 +1046,12 @@ const { Agent: AgentCh } = await import(
 );
 const { Agent: AgentFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/agent.js').replace(/\\/g, '/')
+);
+const ResearchEscalationCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/research-escalation.js').replace(/\\/g, '/')
+);
+const ResearchEscalationFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/research-escalation.js').replace(/\\/g, '/')
 );
 const MessageRecipientGuardCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/message-recipient-guard.js').replace(/\\/g, '/')
@@ -2297,6 +2304,113 @@ test('set_checked is exposed and permission-gated as a click in both browser age
     assert.ok(tool, `${label}: set_checked tool is missing`);
     assert.deepEqual(tool.function.parameters.required, ['ref_id', 'checked']);
     assert.equal(capabilityFn('set_checked', { ref_id: 'ref_1', checked: true }), Capabilities.CLICK);
+  }
+});
+
+test('research escalation is default-on, tier-complete, and removable by setting', () => {
+  for (const [label, prefix, getTools, configTransfer] of [
+    ['chrome', 'src/chrome', getToolsForModeCh, ConfigTransferCh],
+    ['firefox', 'src/firefox', getToolsForModeFx, ConfigTransferFx],
+  ]) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const toggleIndex = settingsHtml.indexOf('id="toggle-research-escalation"');
+    const advancedIndex = settingsHtml.indexOf('<details class="advanced-settings">');
+    assert.ok(toggleIndex >= 0 && toggleIndex < advancedIndex, `${label}: research escalation should be the final non-Advanced General setting`);
+    assert.doesNotMatch(settingsHtml.slice(toggleIndex, advancedIndex), /class="setting-row"/, `${label}: another General setting appears after research escalation`);
+    assert.match(settingsHtml, /id="toggle-research-escalation" checked/, `${label}: research escalation toggle should render on by default`);
+    assert.match(settingsJs, /researchEscalationToggle\.checked = stored\.researchEscalationEnabled !== false/, `${label}: missing default-on storage hydration`);
+    assert.match(settingsJs, /researchEscalationEngine: 'chatgpt'/, `${label}: settings should retain the future engine preference`);
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEnabled, true, `${label}: portable config should preserve the default-on preference`);
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.researchEscalationEngine, 'chatgpt', `${label}: portable config should preserve the current engine`);
+    assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('researchEscalationEnabled'), `${label}: config export/import omitted the preference`);
+    assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('researchEscalationEngine'), `${label}: config export/import omitted the engine`);
+    for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full']]) {
+      const enabled = getTools(mode, { tier, researchEscalationEnabled: true });
+      assert.ok(enabled.some(tool => tool.function.name === 'delegate_research'), `${label}: ${mode}/${tier} did not expose research escalation`);
+      const disabled = getTools(mode, { tier, researchEscalationEnabled: false });
+      assert.equal(disabled.some(tool => tool.function.name === 'delegate_research'), false, `${label}: disabled research escalation remained exposed`);
+    }
+  }
+});
+
+test('research escalation requires navigate, type, and click on fixed ChatGPT host', () => {
+  for (const [label, classify, hostFor, Capabilities] of [
+    ['chrome', capabilitiesForCh, hostForCapabilityCh, CapabilityCh],
+    ['firefox', capabilitiesFor, hostForCapability, Capability],
+  ]) {
+    assert.deepEqual(classify('delegate_research', {}), [Capabilities.NAVIGATE, Capabilities.TYPE, Capabilities.CLICK], `${label}: research capability contract changed`);
+    for (const capability of [Capabilities.NAVIGATE, Capabilities.TYPE, Capabilities.CLICK]) {
+      assert.equal(hostFor(capability, {}, 'https://attacker.example/', 'delegate_research'), 'chatgpt.com', `${label}: research host was not fixed`);
+    }
+  }
+});
+
+test('research escalation accepts only HTTPS ChatGPT page origins', () => {
+  for (const [label, runtime] of [['chrome', ResearchEscalationCh], ['firefox', ResearchEscalationFx]]) {
+    assert.match(runtime.RESEARCH_ESCALATION_SYSTEM_NOTE, /use its available web\/research tools and return direct source links/i, `${label}: delegated prompt guidance does not request sourced web research`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://chatgpt.com/'), true, `${label}: canonical origin rejected`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://foo.chatgpt.com/c/1'), true, `${label}: ChatGPT subdomain rejected`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('http://chatgpt.com/'), false, `${label}: insecure origin accepted`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://chatgpt.com.attacker.example/'), false, `${label}: suffix-spoof origin accepted`);
+    assert.equal(runtime.isAllowedResearchEscalationUrl('https://attacker.example/?next=chatgpt.com'), false, `${label}: query-spoof origin accepted`);
+  }
+});
+
+test('research escalation authorization is exact, one-use, and conversation-scoped', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.conversationIds.set(17, 'conversation-a');
+    const token = agent._issueResearchEscalationAuthorization(17, 'Compare four hotels', 'chatgpt');
+    const first = agent._researchEscalationAuthorization(17, token);
+    assert.equal(first.ok, true, `${label}: fresh authorization rejected`);
+    assert.equal(first.entry.request, 'Compare four hotels');
+    assert.equal(agent._researchEscalationAuthorization(18, token).ok, false, `${label}: token escaped its tab`);
+    assert.equal(agent._researchEscalationAuthorization(17, token, { consume: true }).ok, true, `${label}: token could not be consumed`);
+    assert.equal(agent._researchEscalationAuthorization(17, token).ok, false, `${label}: consumed token was reusable`);
+    const otherConversation = agent._issueResearchEscalationAuthorization(17, 'Research', 'chatgpt');
+    agent.conversationIds.set(17, 'conversation-b');
+    assert.equal(agent._researchEscalationAuthorization(17, otherConversation).ok, false, `${label}: token escaped its conversation`);
+  }
+});
+
+test('research escalation clarify ignores Instant and issues a token only on explicit approval', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.conversationIds.set(23, 'research-conversation');
+    agent.clarifyTimeoutSec = 0;
+    let prompt = null;
+    const result = await agent.executeTool(23, 'clarify', {
+      question: 'Delegate this research subtask?',
+      options: ['Keep researching here', 'Use ChatGPT'],
+      purpose: 'research_escalation',
+      require_explicit_answer: true,
+      research_request: 'Compare four hotels for three-night stays.',
+      approve_option: 'Use ChatGPT',
+    }, (type, data) => {
+      if (type !== 'clarify') return;
+      prompt = data;
+      queueMicrotask(() => agent.submitClarifyResponse(23, data.clarifyId, 'Use ChatGPT', 'option'));
+    });
+    assert.equal(prompt?.timeoutSec, 0, `${label}: explicit research clarification armed Instant`);
+    assert.equal(prompt?.requireExplicitAnswer, true, `${label}: UI was not told to wait explicitly`);
+    assert.equal(prompt?.researchEscalation?.request, 'Compare four hotels for three-night stays.');
+    assert.equal(result.researchEscalationApproved, true, `${label}: explicit option did not approve research`);
+    assert.ok(result.authorization_token, `${label}: explicit approval did not issue a token`);
+
+    const denied = await agent.executeTool(23, 'clarify', {
+      question: 'Delegate another research subtask?',
+      options: ['Keep researching here', 'Use ChatGPT'],
+      purpose: 'research_escalation',
+      research_request: 'Research a different topic.',
+      approve_option: 'Use ChatGPT',
+    }, (type, data) => {
+      if (type === 'clarify') {
+        queueMicrotask(() => agent.submitClarifyResponse(23, data.clarifyId, 'Keep researching here', 'option'));
+      }
+    });
+    assert.equal(denied.researchEscalationApproved, false, `${label}: safe option approved research`);
+    assert.equal(denied.authorization_token, null, `${label}: denial issued a token`);
   }
 });
 
@@ -8269,7 +8383,7 @@ test('import_config_patch background handler merges against live provider storag
       const {
         parseConfigImport, parseConfigPatchImport, mergeConfigPatchSettings,
         providerManager, agent,
-        loadMaxSteps, loadClarifyTimeout, loadAutoScreenshot, loadSiteAdapters,
+        loadMaxSteps, loadClarifyTimeout, loadAutoScreenshot, loadSiteAdapters, loadResearchEscalation,
         loadScreenshotRedaction, loadStrictSecretMode, loadWebMCPEnabled, loadProfile,
         syncAgentUserMemoryFromStorage, loadCustomSkills, loadCaptchaSolver,
         loadPlanBeforeAct, loadPlanReviewSettings, loadApiMutationObserverSetting,
@@ -8318,6 +8432,7 @@ test('import_config_patch background handler merges against live provider storag
       loadClarifyTimeout: noop,
       loadAutoScreenshot: noop,
       loadSiteAdapters: noop,
+      loadResearchEscalation: noop,
       loadScreenshotRedaction: noop,
       loadStrictSecretMode: noop,
       loadWebMCPEnabled: noop,

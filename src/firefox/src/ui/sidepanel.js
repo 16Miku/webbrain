@@ -2531,6 +2531,7 @@ const TOOL_KEYS = {
   get_selection: 'tool.get_selection',
   execute_js: 'tool.execute_js',
   new_tab: 'tool.new_tab',
+  delegate_research: 'tool.delegate_research',
   promote_iframe: 'tool.navigate',
   schedule_resume: 'tool.schedule_resume',
   schedule_task: 'tool.schedule_task',
@@ -8934,6 +8935,15 @@ function renderClarifyCard(data) {
     reasonEl.className = 'clarify-reason';
     reasonEl.textContent = String(data.reason).slice(0, 400);
     card.appendChild(reasonEl);
+  }
+
+  if (data.researchEscalation?.request) {
+    card.dataset.researchEscalation = '1';
+    const requestEl = document.createElement('div');
+    requestEl.className = 'clarify-reason clarify-research-request';
+    const engine = String(data.researchEscalation.engine || 'ChatGPT');
+    requestEl.textContent = `${engine === 'chatgpt' ? 'ChatGPT' : engine} ← ${String(data.researchEscalation.request).slice(0, 6000)}`;
+    card.appendChild(requestEl);
   }
 
   const options = Array.isArray(data.options) ? data.options.slice(0, 4) : [];

@@ -646,8 +646,40 @@ export const AGENT_TOOLS = [
             type: 'string',
             description: 'Optional one-sentence justification for why you cannot decide on your own. The user sees this — be honest ("I see Rank Math Content AI and Jetpack settings pages, both have API key fields" beats "I need more info").',
           },
+          require_explicit_answer: {
+            type: 'boolean',
+            description: 'Wait for a direct user reply and ignore the global clarify timeout/Instant setting. Required for research escalation and other explicit data-sharing consent.',
+          },
+          purpose: {
+            type: 'string',
+            enum: ['research_escalation'],
+            description: 'Set to research_escalation only when asking to delegate a read-only research subtask.',
+          },
+          research_request: {
+            type: 'string',
+            description: 'For research_escalation, the exact prompt that will be displayed to the user and sent to the configured research engine if approved. Do not include private page data, credentials, attachments, or profile data.',
+          },
+          approve_option: {
+            type: 'string',
+            description: 'For research_escalation, the exact option text that means explicit approval. It must match one entry in options; keep the safe/local choice first and the approval choice second.',
+          },
         },
         required: ['question'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delegate_research',
+      description: 'Run the exact read-only research prompt approved in a preceding research_escalation clarify call through the configured research engine (currently ChatGPT). Requires and consumes the one-use authorization_token returned by that clarify call. Opens ChatGPT in a visible tab, submits only the approved prompt, waits for its answer, and returns the answer plus links as untrusted research evidence. Never use for mutations, purchases, bookings, account actions, or sensitive/private data.',
+      parameters: {
+        type: 'object',
+        properties: {
+          authorization_token: { type: 'string', description: 'One-use token returned by an explicitly approved research_escalation clarify call in this run.' },
+          timeout_seconds: { type: 'number', description: 'Optional maximum wait for ChatGPT, from 30 to 300 seconds. Default 180.' },
+        },
+        required: ['authorization_token'],
       },
     },
   },
@@ -1014,7 +1046,7 @@ export const ASK_ONLY_TOOLS = [
   'extract_data', 'get_selection', 'done',
   // wait_for_stable just polls — safe in Ask mode.
   'wait_for_stable',
-  'fetch_url', 'research_url', 'list_downloads',
+  'fetch_url', 'research_url', 'delegate_research', 'list_downloads',
 ];
 
 /**
@@ -1051,7 +1083,7 @@ export const COMPACT_TOOL_NAMES = new Set([
   'navigate', 'carousel_navigate', 'new_tab', 'wait_for_element',
   'fetch_url',
   'upload_file',
-  'scratchpad_write', 'progress_update', 'progress_read', 'clarify', 'done',
+  'scratchpad_write', 'progress_update', 'progress_read', 'clarify', 'delegate_research', 'done',
 ]);
 
 const DONE_TOOL_WITH_OUTCOME = {
@@ -1344,6 +1376,9 @@ export function getToolsForMode(mode, opts = {}) {
     base = AGENT_TOOLS.filter(t => MID_TOOL_NAMES.has(t.function.name));
   } else {
     base = AGENT_TOOLS.filter(t => FULL_TOOL_NAMES.has(t.function.name));
+  }
+  if (opts.researchEscalationEnabled === false) {
+    base = base.filter(t => t.function.name !== 'delegate_research');
   }
   const requestedTreePageChars = tier !== 'compact'
     && Number(opts.accessibilityTreeMaxChars) === EXPANDED_TREE_PAGE_CHARS
@@ -1785,7 +1820,7 @@ export const MID_TOOL_NAMES = new Set([
   'read_page', 'read_pdf', 'get_window_info', 'get_interactive_elements',
   'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'carousel_navigate', 'go_back', 'go_forward',
   'extract_data', 'wait_for_element', 'wait_for_stable', 'get_selection', 'find_text',
-  'new_tab', 'promote_iframe', 'done', 'clarify', 'schedule_resume', 'schedule_task',
+  'new_tab', 'promote_iframe', 'done', 'clarify', 'delegate_research', 'schedule_resume', 'schedule_task',
   'iframe_read', 'iframe_click', 'iframe_type',
   'fetch_url', 'research_url', 'list_downloads', 'read_downloaded_file',
   'download_files', 'download_resource_from_page', 'download_social_media',
