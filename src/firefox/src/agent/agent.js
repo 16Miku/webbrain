@@ -16302,8 +16302,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const request = normalizeResearchRequest(authorization?.request);
     if (!request) return { success: false, error: 'The approved research request is empty.' };
     const timeoutSeconds = Math.max(30, Math.min(300, Math.floor(Number(args?.timeout_seconds) || 180)));
-    let sourceTab = null;
-    try { sourceTab = await browser.tabs.get(tabId); } catch {}
+    let sourceTab;
+    try {
+      sourceTab = await browser.tabs.get(tabId);
+    } catch {
+      return {
+        success: false,
+        cancelled: true,
+        engine,
+        error: 'The source tab was closed before research could start. Nothing was submitted.',
+      };
+    }
     let researchTab;
     try {
       researchTab = await browser.tabs.create({
@@ -16320,6 +16329,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const researchTabId = researchTab.id;
     this._bindResearchEscalationTab(tabId, researchTabId);
     try {
+    // Binding first closes the tabs.create race: once the mapping exists,
+    // source-tab cleanup can abort this helper while the revalidation runs.
+    try {
+      sourceTab = await browser.tabs.get(tabId);
+    } catch {
+      try { await browser.tabs.remove(researchTabId); } catch {}
+      return {
+        success: false,
+        cancelled: true,
+        tabId: researchTabId,
+        engine,
+        error: 'The source tab was closed before research could start. Nothing was submitted.',
+      };
+    }
     try { await this._addToWebBrainGroup(sourceTab, researchTabId); } catch {}
     try { onUpdate?.('thinking', { note: 'Researching with ChatGPT…' }); } catch {}
 

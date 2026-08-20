@@ -1378,7 +1378,8 @@ export function getToolsForMode(mode, opts = {}) {
     base = AGENT_TOOLS.filter(t => FULL_TOOL_NAMES.has(t.function.name));
   }
   if (opts.researchEscalationEnabled === false) {
-    base = base.filter(t => t.function.name !== 'delegate_research');
+    base = base.filter(t => t.function.name !== 'delegate_research'
+      && !(normalizedMode === 'ask' && t.function.name === 'clarify'));
   }
   const requestedTreePageChars = tier !== 'compact'
     && Number(opts.accessibilityTreeMaxChars) === EXPANDED_TREE_PAGE_CHARS

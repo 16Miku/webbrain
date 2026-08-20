@@ -2334,6 +2334,11 @@ test('research escalation is default-on, tier-complete, and removable by setting
       }
       const disabled = getTools(mode, { tier, researchEscalationEnabled: false });
       assert.equal(disabled.some(tool => tool.function.name === 'delegate_research'), false, `${label}: disabled research escalation remained exposed`);
+      assert.equal(
+        disabled.some(tool => tool.function.name === 'clarify'),
+        mode !== 'ask',
+        `${label}: disabled research escalation must hide Ask clarification without removing normal ${mode} clarification`,
+      );
     }
   }
 });
@@ -2571,6 +2576,65 @@ test('research escalation cleanup of the source tab aborts the ChatGPT wait', ()
     assert.equal(agent.abortFlags.get(17), true, `${label}: closing the source tab did not abort the source run`);
     assert.equal(agent.abortFlags.get(99), true, `${label}: closing the source tab did not abort the helper`);
     assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed source tab`);
+  }
+});
+
+test('research escalation fails closed when its source tab disappears during helper setup', async () => {
+  for (const [label, AgentClass, apiName] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const previousApi = globalThis[apiName];
+    const agent = new AgentClass({});
+    let createCalls = 0;
+    let pageFunctionCalls = 0;
+    agent._executeResearchPageFunction = async () => {
+      pageFunctionCalls += 1;
+      throw new Error('a closed source must never reach ChatGPT');
+    };
+    try {
+      globalThis[apiName] = {
+        tabs: {
+          get: async () => { throw new Error('source tab closed'); },
+          create: async () => { createCalls += 1; return { id: 99 }; },
+        },
+      };
+      const missingBeforeCreate = await agent._runResearchEscalation(
+        17,
+        { engine: 'chatgpt', request: 'Compare four hotels.' },
+      );
+      assert.equal(missingBeforeCreate.success, false, `${label}: missing source was accepted before helper creation`);
+      assert.equal(missingBeforeCreate.cancelled, true, `${label}: missing source was not reported as cancelled`);
+      assert.match(missingBeforeCreate.error, /source tab was closed[\s\S]*nothing was submitted/i, `${label}: fail-closed result was unclear`);
+      assert.equal(createCalls, 0, `${label}: ChatGPT opened after the initial source lookup failed`);
+
+      let sourceReads = 0;
+      const removedTabs = [];
+      globalThis[apiName] = {
+        tabs: {
+          get: async () => {
+            sourceReads += 1;
+            if (sourceReads === 1) return { id: 17, windowId: 3, index: 4 };
+            throw new Error('source tab closed during helper creation');
+          },
+          create: async () => { createCalls += 1; return { id: 99 }; },
+          remove: async (tabId) => { removedTabs.push(tabId); },
+        },
+      };
+      const missingAfterCreate = await agent._runResearchEscalation(
+        17,
+        { engine: 'chatgpt', request: 'Compare four hotels.' },
+      );
+      assert.equal(missingAfterCreate.success, false, `${label}: vanished source was accepted after helper creation`);
+      assert.equal(missingAfterCreate.cancelled, true, `${label}: helper-setup race was not reported as cancelled`);
+      assert.match(missingAfterCreate.error, /nothing was submitted/i, `${label}: helper-setup race did not promise fail-closed behavior`);
+      assert.deepEqual(removedTabs, [99], `${label}: orphaned ChatGPT helper was not closed`);
+      assert.equal(agent.researchEscalationSourceTab(99), null, `${label}: failed helper mapping leaked`);
+      assert.equal(pageFunctionCalls, 0, `${label}: approved prompt reached ChatGPT after its source closed`);
+    } finally {
+      if (previousApi === undefined) delete globalThis[apiName];
+      else globalThis[apiName] = previousApi;
+    }
   }
 });
 
