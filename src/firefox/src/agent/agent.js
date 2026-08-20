@@ -21483,6 +21483,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch (e) {
         const caughtMessage = formatErrorMessage(e);
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
+        if (this._isCostAllowanceError(e)) {
+          messages.push({ role: 'assistant', content: caughtMessage });
+          onUpdate('warning', { message: caughtMessage });
+          this._persist(tabId);
+          return finish(caughtMessage, 'cost_limit');
+        }
         if (!streamEmittedOutput && !visionFallbackAttempted) {
           const fallbackMessages = await this._visionFallbackMessages(tabId, currentStreamRequestMessages, costState, e);
           if (fallbackMessages) {

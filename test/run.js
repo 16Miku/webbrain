@@ -54937,6 +54937,48 @@ test('WebBrain Cloud 402 formatting and localized billing actions distinguish ev
   }
 });
 
+test('WebBrain Cloud quota errors stay terminal in the main streaming agent loop', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const quotaMessage = 'Votre quota Plus quotidien est épuisé.';
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'webbrain-cloud 1.0',
+      name: 'webbrain-cloud',
+      calls: 0,
+      async *chatStream() {
+        this.calls += 1;
+        const error = new Error(quotaMessage);
+        error.code = 'webbrain_cloud_plus_tier_exceeded';
+        throw error;
+      },
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 5490 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    const updates = [];
+    let traceStatus = null;
+    agent._startTraceRun = async () => `quota_stream_${index}`;
+    agent._endTraceRun = (_tabId, _runId, status) => { traceStatus = status; };
+
+    const final = await agent.processMessageStream(
+      tabId,
+      'Continue the task.',
+      (type, data) => updates.push({ type, data }),
+      'act',
+    );
+
+    assert.equal(final, quotaMessage, `${AgentClass.name}: streaming quota should return the billing message`);
+    assert.equal(traceStatus, 'cost_limit', `${AgentClass.name}: streaming quota should finish as cost_limit`);
+    assert.equal(provider.calls, 1, `${AgentClass.name}: streaming quota should not retry`);
+    assert.equal(updates.filter(update => update.type === 'warning' && update.data?.message === quotaMessage).length, 1, `${AgentClass.name}: streaming quota should emit one actionable warning`);
+    assert.equal(updates.some(update => update.type === 'error'), false, `${AgentClass.name}: streaming quota should not emit generic error UI`);
+    assert.equal(agent.getConversation(tabId, 'act').filter(message => message.role === 'assistant' && message.content === quotaMessage).length, 1, `${AgentClass.name}: streaming quota should persist one assistant billing message`);
+  }
+});
+
 test('new provider auth, endpoint, protocol, and capability contracts are deterministic', () => {
   for (const [label, OpenAIProvider, VertexProvider, PM] of [
     ['chrome', OpenAIProviderCh, VertexAnthropicProviderCh, ProviderManagerCh],
