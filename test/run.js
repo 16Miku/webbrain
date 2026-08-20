@@ -27841,6 +27841,8 @@ test('shared offline retrieval honors source/language filters and never download
     });
     assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
       `${label}: selected archive languages were not searched before the source language`);
+    assert.deepEqual(wikipediaSearchOptions.at(-1)?.queriesByLanguage, { tur: 'Türkiye başkenti' },
+      `${label}: translated per-language Wikipedia queries were not forwarded`);
     await service.search('Türkiye başkenti nedir?', {
       sources: ['wikipedia'],
       languages: ['eng', 'tur'],
@@ -27848,8 +27850,6 @@ test('shared offline retrieval honors source/language filters and never download
     });
     assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
       `${label}: a selected source language was not searched before the other archive filters`);
-    assert.deepEqual(wikipediaSearchOptions.at(-1)?.queriesByLanguage, { tur: 'Türkiye başkenti' },
-      `${label}: translated per-language Wikipedia queries were not forwarded`);
     service.close();
 
     let rerankCalls = 0;
