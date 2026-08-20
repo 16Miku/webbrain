@@ -28159,13 +28159,19 @@ test('Emergency corpus recovery and cancellation prune orphaned staging index pa
   }
 });
 
-test('Emergency download controller returns before the corpus transfer finishes', async () => {
+test('Emergency download controller returns early and deduplicates concurrent corpus starts', async () => {
   for (const browser of ['chrome', 'firefox']) {
     const { createEmergencyDownloadController } = await import(pathToFileURL(path.join(
       ROOT, `src/${browser}/src/agent/emergency-download-controller.js`,
     )).href);
     let releaseDownload;
     const held = new Promise(resolve => { releaseDownload = resolve; });
+    let releaseInitialReads;
+    const initialReadsHeld = new Promise(resolve => { releaseInitialReads = resolve; });
+    let initialReadsStarted;
+    const bothInitialReadsStarted = new Promise(resolve => { initialReadsStarted = resolve; });
+    let holdInitialReads = false;
+    let corpusReads = 0;
     let downloadCalls = 0;
     const controller = createEmergencyDownloadController({
       requireApocalypse: false,
@@ -28176,7 +28182,14 @@ test('Emergency download controller returns before the corpus transfer finishes'
         version: 'test',
       },
       corpusStore: {
-        async get() { return { status: 'downloading', staging: { bytesReceived: 10, totalBytes: 100 } }; },
+        async get() {
+          corpusReads += 1;
+          if (holdInitialReads && corpusReads <= 2) {
+            if (corpusReads === 2) initialReadsStarted();
+            await initialReadsHeld;
+          }
+          return { status: 'downloading', staging: { bytesReceived: 10, totalBytes: 100 } };
+        },
         async put(record) { return record; },
       },
       corpusStorage: {},
@@ -28201,13 +28214,24 @@ test('Emergency download controller returns before the corpus transfer finishes'
       },
       broadcast() {},
     });
-    const started = await controller.handle('start_corpus');
+    await controller.recover();
+    corpusReads = 0;
+    holdInitialReads = true;
+    const firstStart = controller.handle('start_corpus');
+    const secondStart = controller.handle('start_corpus');
+    await bothInitialReadsStarted;
+    releaseInitialReads();
+    const results = await Promise.all([firstStart, secondStart]);
+    const started = results.find(result => result.started === true);
+    const duplicate = results.find(result => result.started === false);
+    assert.equal(results.filter(result => result.started === true).length, 1,
+      `${browser}: concurrent start_corpus calls did not choose exactly one transfer`);
     assert.equal(started.ok, true, `${browser}: start_corpus failed`);
     assert.equal(started.started, true, `${browser}: start_corpus did not begin in the background`);
     assert.equal(downloadCalls, 1, `${browser}: corpus download was not started`);
     assert.notEqual(started.corpus?.status, 'ready', `${browser}: start_corpus waited for the archive to finish`);
-    const duplicate = await controller.handle('start_corpus');
     assert.equal(duplicate.started, false, `${browser}: a second start_corpus launched another transfer`);
+    assert.equal(duplicate.reason, 'active', `${browser}: duplicate start did not report the active transfer`);
     releaseDownload();
     await new Promise(resolve => setTimeout(resolve, 0));
   }
