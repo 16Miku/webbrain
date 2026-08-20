@@ -582,7 +582,7 @@ export default {
   'st.display.plan_review_threshold.label': "Revise abaixo da confiança",
   'st.display.plan_review_threshold.desc': "Quando a revisão do plano usa o limite de confiança, os planos com essa pontuação ou acima dela são aprovados e executados automaticamente.",
   'st.display.auto_screenshot.label': "Captura de tela automática",
-  'st.display.auto_screenshot.desc': "Capture automaticamente uma captura de tela da janela de visualização depois que o agente atuar na página, para que os modelos com capacidade de visão possam ver o que mudou. Custa mais tokens. Desativado silenciosamente se o modelo ativo não suportar imagens.",
+  "st.display.auto_screenshot.desc": "Capture automaticamente a janela de visualização depois que o agente atuar na página, para que a rota de visão selecionada veja o que mudou. Isso consome mais tokens. Se a visão estiver indisponível, o enriquecimento será ignorado e a tarefa continuará com um aviso de status.",
   'st.display.auto_screenshot.off': "Desligado",
   'st.display.auto_screenshot.navigation': "Na navegação",
   'st.display.auto_screenshot.state_change': "Na mudança de estado (padrão)",

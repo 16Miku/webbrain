@@ -252,7 +252,7 @@ export default {
   'st.display.site_adapters.label': 'サイトアダプター',
   'st.display.site_adapters.desc': '主要サイト（GitHub、Gmail、Stripe、AWS など）向けに、人手で用意した短いガイダンスをエージェントの最初のメッセージに注入します。よくある行き詰まりを避けるのに役立ちます。マッチしたサイトでの最初のターンにわずかなトークンコストが加わります。',
   'st.display.auto_screenshot.label': '自動スクリーンショット',
-  'st.display.auto_screenshot.desc': 'エージェントがページを操作したあとに自動でビューポートのスクリーンショットを取得し、画像認識対応モデルが変化を見られるようにします。トークン消費が増えます。画像非対応モデルでは静かに無効化されます。',
+  "st.display.auto_screenshot.desc": "エージェントがページを操作した後にビューポートのスクリーンショットを自動取得し、選択された画像認識ルートで変化を確認できるようにします。トークン消費が増えます。画像認識が利用できない場合は補足処理を省略し、状態通知を表示してタスクを続行します。",
   'st.display.auto_screenshot.off': 'オフ',
   'st.display.auto_screenshot.navigation': '遷移時',
   'st.display.auto_screenshot.state_change': '状態変化時（デフォルト）',

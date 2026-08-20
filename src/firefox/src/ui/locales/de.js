@@ -577,7 +577,7 @@ export default {
   'st.display.plan_review_threshold.label': 'Unterhalb dieser Konfidenz überprüfen',
   'st.display.plan_review_threshold.desc': 'Wenn die Planüberprüfung die Konfidenzschwelle verwendet, werden Pläne mit diesem Score oder höher automatisch genehmigt und ausgeführt.',
   'st.display.auto_screenshot.label': 'Automatischer Screenshot',
-  'st.display.auto_screenshot.desc': 'Erstellt automatisch einen Viewport-Screenshot, nachdem der Agent auf der Seite agiert hat.',
+  "st.display.auto_screenshot.desc": "Erstellt automatisch einen Viewport-Screenshot, nachdem der Agent auf der Seite gehandelt hat, damit die ausgewählte Bildverarbeitungsroute die Änderung sehen kann. Das kostet mehr Tokens. Ist keine Bildverarbeitung verfügbar, wird die Anreicherung übersprungen und die Aufgabe mit einem Statushinweis fortgesetzt.",
   'st.display.auto_screenshot.off': 'Aus',
   'st.display.auto_screenshot.navigation': 'Bei Navigation',
   'st.display.auto_screenshot.state_change': 'Bei Zustandsänderung (Standard)',

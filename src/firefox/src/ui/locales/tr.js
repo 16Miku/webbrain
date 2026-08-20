@@ -288,7 +288,7 @@ export default {
   'st.display.site_adapters.label': 'Site uyarlayıcıları',
   'st.display.site_adapters.desc': 'Bilinen yüksek trafikli siteler (GitHub, Gmail, Stripe, AWS vb.) için kısa, el ile hazırlanmış yönlendirmeleri aracının ilk mesajına ekler. Aracının sık rastlanan çıkmazlardan kaçınmasına yardımcı olur. Eşleşen sitelerdeki konuşmaların ilk turunda küçük bir token maliyeti ekler.',
   'st.display.auto_screenshot.label': 'Otomatik ekran görüntüsü',
-  'st.display.auto_screenshot.desc': 'Aracı sayfada bir işlem yaptıktan sonra görüntüleme alanının bir ekran görüntüsünü otomatik olarak alır, böylece görme yeteneğine sahip modeller neyin değiştiğini görebilir. Daha fazla token tüketir. Aktif model görüntüyü desteklemiyorsa sessizce devre dışı kalır.',
+  "st.display.auto_screenshot.desc": "Aracı sayfada işlem yaptıktan sonra görüntüleme alanının ekran görüntüsünü otomatik olarak alır; böylece seçilen görüntü rotası değişikliği görebilir. Daha fazla token tüketir. Görüntü işleme kullanılamıyorsa zenginleştirme atlanır ve görev bir durum bildirimiyle devam eder.",
   'st.display.auto_screenshot.off': 'Kapalı',
   'st.display.auto_screenshot.navigation': 'Gezinmede',
   'st.display.auto_screenshot.state_change': 'Durum değiştiğinde (varsayılan)',

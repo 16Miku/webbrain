@@ -252,7 +252,7 @@ export default {
   'st.display.site_adapters.label': 'Mga site adapter',
   'st.display.site_adapters.desc': 'Mag-inject ng maikling, manu-manong inihandang gabay para sa mga kilalang high-traffic na site (GitHub, Gmail, Stripe, AWS, atbp.) sa unang mensahe ng ahente. Tumutulong sa ahente na maiwasan ang mga karaniwang dead-end. Nagdadagdag ng kaunting token cost sa unang turn ng mga pag-uusap sa mga tugmang site.',
   'st.display.auto_screenshot.label': 'Auto-screenshot',
-  'st.display.auto_screenshot.desc': 'Awtomatikong kumuha ng screenshot ng viewport pagkatapos kumilos ang ahente sa pahina, para makita ng mga modelong sumusuporta sa bisyon kung ano ang nagbago. Mas marami itong gagamiting token. Tahimik na hindi naka-enable kapag ang aktibong modelo ay hindi sumusuporta sa imahe.',
+  "st.display.auto_screenshot.desc": "Awtomatikong kumuha ng screenshot ng viewport pagkatapos kumilos ang ahente sa pahina para makita ng napiling vision route ang pagbabago. Mas maraming token ang gagamitin nito. Kung walang vision, lalaktawan ang enrichment at magpapatuloy ang gawain na may status notice.",
   'st.display.auto_screenshot.off': 'Naka-off',
   'st.display.auto_screenshot.navigation': 'Kapag nag-navigate',
   'st.display.auto_screenshot.state_change': 'Kapag nagbago ang state (default)',

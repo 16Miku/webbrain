@@ -252,7 +252,7 @@ export default {
   'st.display.site_adapters.label': '사이트 어댑터',
   'st.display.site_adapters.desc': '잘 알려진 고트래픽 사이트(GitHub, Gmail, Stripe, AWS 등)를 위한 짧은 사람 작성 가이드를 에이전트의 첫 메시지에 주입합니다. 흔한 막다른 길을 피하는 데 도움이 됩니다. 매칭된 사이트에서 대화의 첫 턴에 약간의 토큰 비용이 더해집니다.',
   'st.display.auto_screenshot.label': '자동 스크린샷',
-  'st.display.auto_screenshot.desc': '에이전트가 페이지에서 동작한 뒤 뷰포트 스크린샷을 자동으로 캡처해, 비전 지원 모델이 변화 상황을 볼 수 있게 합니다. 토큰을 더 많이 소모합니다. 활성 모델이 이미지를 지원하지 않으면 조용히 비활성화됩니다.',
+  "st.display.auto_screenshot.desc": "에이전트가 페이지에서 동작한 뒤 뷰포트 스크린샷을 자동으로 캡처하여 선택된 비전 경로가 변경 사항을 볼 수 있게 합니다. 토큰을 더 사용합니다. 비전을 사용할 수 없으면 보강을 건너뛰고 상태 알림과 함께 작업을 계속합니다.",
   'st.display.auto_screenshot.off': '끔',
   'st.display.auto_screenshot.navigation': '이동 시',
   'st.display.auto_screenshot.state_change': '상태 변경 시 (기본값)',

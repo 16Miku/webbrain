@@ -252,7 +252,7 @@ export default {
   'st.display.site_adapters.label': 'Penyesuai laman',
   'st.display.site_adapters.desc': 'Suntikkan panduan ringkas yang disusun secara manual untuk laman trafik tinggi yang dikenali (GitHub, Gmail, Stripe, AWS, dll.) ke dalam mesej pertama ejen. Membantu ejen mengelak jalan buntu yang biasa. Menambah sedikit kos token pada giliran pertama perbualan di laman yang sepadan.',
   'st.display.auto_screenshot.label': 'Tangkapan skrin auto',
-  'st.display.auto_screenshot.desc': 'Tangkap tangkapan skrin viewport secara automatik selepas ejen bertindak pada halaman, supaya model yang menyokong penglihatan dapat melihat apa yang berubah. Menggunakan lebih banyak token. Dimatikan secara senyap jika model aktif tidak menyokong imej.',
+  "st.display.auto_screenshot.desc": "Tangkap tangkapan skrin viewport secara automatik selepas ejen bertindak pada halaman supaya laluan penglihatan yang dipilih dapat melihat perubahan. Ini menggunakan lebih banyak token. Jika penglihatan tidak tersedia, pengayaan dilangkau dan tugas diteruskan dengan notis status.",
   'st.display.auto_screenshot.off': 'Mati',
   'st.display.auto_screenshot.navigation': 'Apabila navigasi',
   'st.display.auto_screenshot.state_change': 'Apabila keadaan berubah (lalai)',

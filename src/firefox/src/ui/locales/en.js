@@ -583,7 +583,7 @@ export default {
   'st.display.plan_review_threshold.label': 'Review below confidence',
   'st.display.plan_review_threshold.desc': 'When plan review uses the confidence threshold, plans at or above this score auto-approve and run.',
   'st.display.auto_screenshot.label': 'Auto-screenshot',
-  'st.display.auto_screenshot.desc': 'Automatically capture a viewport screenshot after the agent acts on the page, so vision-capable models can see what changed. Costs more tokens. Disabled silently if the active model doesn\'t support images.',
+  "st.display.auto_screenshot.desc": "Automatically capture a viewport screenshot after the agent acts on the page, so the selected vision route can see what changed. Costs more tokens. If vision is unavailable, enrichment is skipped and the task continues with a status notice.",
   'st.display.auto_screenshot.off': 'Off',
   'st.display.auto_screenshot.navigation': 'On navigation',
   'st.display.auto_screenshot.state_change': 'On state change (default)',
