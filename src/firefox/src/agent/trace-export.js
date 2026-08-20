@@ -226,11 +226,20 @@ export function tracesToMarkdown(runsWithEvents, {
         const outcome = d.error ? `failed: ${oneLine(d.error)}` : 'succeeded';
         const details = [oneLine(d.context), oneLine(d.visionRoute), oneLine(d.model), oneLine(d.captureId), Number.isFinite(d.latencyMs) ? `${d.latencyMs} ms` : '']
           .filter(Boolean).join(' · ');
-        md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}${d.fallbackReason ? ` · fallback=${oneLine(d.fallbackReason)}` : ''}\n`;
+        md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}${d.errorCode ? ` · code=${oneLine(d.errorCode)}` : ''}${d.recoveryOutcome ? ` · recovery=${oneLine(d.recoveryOutcome)}` : ''}${d.fallbackReason ? ` · fallback=${oneLine(d.fallbackReason)}` : ''}\n`;
       } else if (ev.kind === 'vision_route') {
         const details = [oneLine(d.context), oneLine(d.visionRoute), oneLine(d.model), oneLine(d.captureId)]
           .filter(Boolean).join(' · ');
         md += `- 👁 Vision route${details ? `: ${details}` : ''}${d.fallbackReason ? ` · fallback=${oneLine(d.fallbackReason)}` : ''}\n`;
+      } else if (ev.kind === 'note' && d.note === 'vision_status') {
+        const status = d.extra || {};
+        const progress = Number.isFinite(Number(status.progress)) ? `${Math.round(Number(status.progress))}%` : '';
+        const bytes = Number(status.total) > 0
+          ? `${Math.round(Number(status.loaded || 0) / 1024 / 1024)}/${Math.round(Number(status.total) / 1024 / 1024)} MB`
+          : '';
+        const details = [oneLine(status.context), oneLine(status.visionRoute), oneLine(status.status), progress, bytes]
+          .filter(Boolean).join(' · ');
+        md += `- 👁 Vision status${details ? `: ${details}` : ''}${status.error ? ` · error=${oneLine(status.error)}` : ''}\n`;
       } else if (ev.kind === 'note' && d.note === 'planner_attempt_failed') {
         const attempt = Number(d.extra?.attempt) || 1;
         const phase = oneLine(d.extra?.phase || 'planner');

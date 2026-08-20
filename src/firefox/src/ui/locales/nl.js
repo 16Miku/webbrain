@@ -556,7 +556,7 @@ export default {
   'st.display.plan_review_threshold.label': 'Beoordeel onder vertrouwen',
   'st.display.plan_review_threshold.desc': 'Wanneer planbeoordeling de vertrouwensdrempel gebruikt...',
   'st.display.auto_screenshot.label': 'Automatische schermafbeelding',
-  'st.display.auto_screenshot.desc': 'Maak automatisch een viewport-schermafbeelding nadat de agent heeft gehandeld...',
+  "st.display.auto_screenshot.desc": "Maak automatisch een schermafbeelding van de viewport nadat de agent op de pagina heeft gehandeld, zodat de gekozen visieroute de wijziging kan zien. Dit kost meer tokens. Als visie niet beschikbaar is, wordt de verrijking overgeslagen en gaat de taak verder met een statusmelding.",
   'st.display.auto_screenshot.off': 'Uit',
   'st.display.auto_screenshot.navigation': 'Bij navigatie',
   'st.display.auto_screenshot.state_change': 'Bij statustwijziging (standaard)',

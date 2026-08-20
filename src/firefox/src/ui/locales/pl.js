@@ -400,7 +400,7 @@ export default {
   'st.display.site_adapters.label': 'Adaptery witryn',
   'st.display.site_adapters.desc': 'Wstrzykuj krótkie, ręcznie przygotowane wskazówki dla znanych witryn o dużym ruchu (GitHub, Gmail, Stripe, AWS itp.) do pierwszej wiadomości agenta. Pomaga agentowi unikać typowych ślepych zaułków. Dodaje niewielki koszt tokenów w pierwszej turze rozmów na dopasowanych witrynach.',
   'st.display.auto_screenshot.label': 'Automatyczny zrzut ekranu',
-  'st.display.auto_screenshot.desc': 'Automatycznie przechwytuj zrzut widocznego obszaru po działaniu agenta na stronie, aby modele obsługujące wizję widziały, co się zmieniło. Kosztuje więcej tokenów. Wyłączane po cichu, jeśli aktywny model nie obsługuje obrazów.',
+  "st.display.auto_screenshot.desc": "Automatycznie przechwytuj zrzut widocznego obszaru po działaniu agenta na stronie, aby wybrana trasa wizyjna mogła zobaczyć zmianę. Zużywa to więcej tokenów. Jeśli wizja jest niedostępna, wzbogacanie jest pomijane, a zadanie jest kontynuowane z komunikatem o stanie.",
   'st.display.auto_screenshot.off': 'Wyłączone',
   'st.display.auto_screenshot.navigation': 'Przy nawigacji',
   'st.display.auto_screenshot.state_change': 'Przy zmianie stanu (domyślnie)',

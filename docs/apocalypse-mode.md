@@ -12,18 +12,17 @@ not enable Apocalypse Mode, query the Kiwix catalog, or store article text.
 Open the **☢ Apocalypse Mode** link beside **Support** in the Settings header to
 opt in.
 
-On supported Chromium browsers, enabling Apocalypse Mode also enables the
-local LFM2.5-VL vision fallback and immediately starts caching its approximately
-770 MB model from Hugging Face in the background. The management page shows
-that progress, and the download continues if the page is closed as long as
-Chrome remains open. Wikipedia archives still require their own confirmation.
-The local **text** model defaults to LFM2.5 2.6B (about 1.55 GB) and that
-download starts automatically. Bonsai 27B is an opt-in second preset
-(about 3.8 GB, 16 GB+ RAM/VRAM recommended) and is never auto-downloaded.
-WebBrain checks hardware WebGPU support before selecting the local provider. If
-that check or an automatically started download fails, any configured remote
-vision provider becomes active again. Disabling local vision in Settings is an
-explicit opt-out and is not undone when the service worker restarts.
+On supported Chromium browsers, local LFM2.5-VL vision is an optional fallback.
+Apocalypse Mode never enables or downloads it. The dedicated **Use local
+fallback** control in **Settings → Multimodal → Vision** checks WebGPU support,
+records explicit consent, and starts caching the approximately 770 MB model
+from Hugging Face. The download continues in the background, but screenshot
+operations report its status and never wait for it. Wikipedia archives still
+require their own confirmation. The local **text** model defaults to LFM2.5
+2.6B (about 1.55 GB), and that download starts automatically when Apocalypse
+Mode is enabled. Bonsai 27B is an opt-in second preset (about 3.8 GB, 16 GB+
+RAM/VRAM recommended) and is never auto-downloaded. Disabling local vision
+preserves its cache and any configured remote vision provider.
 
 Archive language is selected independently from WebBrain's interface language.
 The management page reads Kiwix's current OPDS catalog and offers a language plus
@@ -72,8 +71,8 @@ current entry.
 - Catalog downloads continue in the background after the management page is
   closed. Reopen Apocalypse Mode to inspect progress or pause the download.
 - The Chromium-only local vision model uses the browser's Transformers cache.
-  After the automatic download completes, its GPU allocations are released
-  until WebBrain actually needs local screenshot analysis.
+  After its explicitly requested download completes, its GPU allocations are
+  released until WebBrain actually needs local screenshot analysis.
 - An installed archive that later becomes unreadable because of corruption,
   eviction, or a revoked file grant moves from ready to an actionable error;
   WebBrain reports the read failure instead of misreporting an empty search.

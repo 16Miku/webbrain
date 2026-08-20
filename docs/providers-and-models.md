@@ -422,15 +422,19 @@ The user can configure a separate vision provider for screenshot description. Th
 
 ```js
 const vision = await providerManager.getVisionProvider();
-// Returns a dedicated OpenAI-compatible or in-browser vision provider, or null
+// Returns the explicit dedicated OpenAI-compatible vision provider, or null.
+// Screenshot callers use resolveVisionRoute(activeProvider) to consider raw
+// active-provider vision and the explicitly enabled, ready local fallback.
 ```
 
 On Chromium, **Settings -> Multimodal -> Vision** also offers a one-click
 in-browser fallback. It runs `LiquidAI/LFM2.5-VL-450M-ONNX` through WebGPU in a
 dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. The
 model is not present in the general provider catalog and never receives agent
-tools or planning turns. First use downloads approximately 770 MB of model
-data from Hugging Face into the browser cache. That download runs in Chrome's
+tools or planning turns. Local vision is disabled by default and neither
+Apocalypse Mode nor a screenshot operation can enable it or start its download.
+The dedicated control probes WebGPU, records versioned consent, and then downloads
+approximately 770 MB of model data from Hugging Face into the browser cache. The download runs in Chrome's
 offscreen extension worker, so the user may switch tabs or close Settings while
 it continues, but must keep Chrome running. Screenshots stay on-device and
 only the generated description is passed to the active provider. The local
@@ -439,6 +443,15 @@ OpenAI-compatible vision endpoint, so it can be disabled without losing that
 endpoint or its credentials. Disabling it releases the loaded model and GPU
 resources while retaining the browser-cached download. Firefox does not expose
 this option because its build has no MV3 offscreen document.
+
+Screenshot routing is deterministic: an explicit dedicated vision endpoint,
+then a vision-capable active provider receiving raw pixels, then an explicitly
+enabled and already-ready local fallback. If none is ready, inspection returns a
+recoverable availability result; automatic screenshots skip enrichment and let
+the task continue. Screenshot tools never wait for a model download. Dedicated
+and local description calls have a 90-second total deadline, worker startup has
+a 15-second deadline, and a local timeout cancels generation before recreating a
+worker that does not settle within five seconds.
 
 ### Transcription Provider
 

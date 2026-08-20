@@ -249,7 +249,7 @@ export default {
   'st.display.site_adapters.label': 'Adaptor situs',
   'st.display.site_adapters.desc': 'Sisipkan panduan singkat yang dibuat manual untuk situs trafik tinggi yang dikenal (GitHub, Gmail, Stripe, AWS, dll.) ke pesan pertama agen. Membantu agen menghindari jalan buntu yang umum. Menambah sedikit biaya token pada giliran pertama percakapan di situs yang cocok.',
   'st.display.auto_screenshot.label': 'Tangkapan layar otomatis',
-  'st.display.auto_screenshot.desc': 'Ambil tangkapan layar viewport secara otomatis setelah agen bertindak pada halaman, agar model yang mendukung visi dapat melihat apa yang berubah. Memakan lebih banyak token. Akan dinonaktifkan diam-diam jika model aktif tidak mendukung gambar.',
+  "st.display.auto_screenshot.desc": "Ambil tangkapan layar viewport secara otomatis setelah agen bertindak pada halaman, agar rute visi yang dipilih dapat melihat perubahan. Ini memakai lebih banyak token. Jika visi tidak tersedia, pengayaan dilewati dan tugas berlanjut dengan pemberitahuan status.",
   'st.display.auto_screenshot.off': 'Nonaktif',
   'st.display.auto_screenshot.navigation': 'Saat navigasi',
   'st.display.auto_screenshot.state_change': 'Saat perubahan status (bawaan)',

@@ -542,7 +542,7 @@ export default {
   "st.display.plan_review_threshold.label": "בדוק מתחת לרמת הביטחון",
   "st.display.plan_review_threshold.desc": "כאשר סקירת התוכנית משתמשת בסף האמון, תוכניות בעלות ציון זה או מעליה מאושרות אוטומטית ומופעלות.",
   "st.display.auto_screenshot.label": "צילום מסך אוטומטי",
-  "st.display.auto_screenshot.desc": "צלם אוטומטית צילום מסך של נקודת מבט לאחר שהסוכן פועל בדף, כך שמודלים בעלי יכולת ראייה יוכלו לראות מה השתנה. עולה יותר אסימונים. מושבת בשקט אם הדגם הפעיל אינו תומך בתמונות.",
+  "st.display.auto_screenshot.desc": "צלם אוטומטית צילום מסך של אזור התצוגה לאחר שהסוכן פועל בדף, כדי שמסלול הראייה שנבחר יוכל לראות מה השתנה. הפעולה צורכת יותר אסימונים. אם הראייה אינה זמינה, ההעשרה מדולגת והמשימה ממשיכה עם הודעת מצב.",
   "st.display.auto_screenshot.off": "כבוי",
   "st.display.auto_screenshot.navigation": "על ניווט",
   "st.display.auto_screenshot.state_change": "בשינוי מצב (ברירת מחדל)",

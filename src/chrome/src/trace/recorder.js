@@ -297,7 +297,7 @@ export function recordStreaming(runId, step, payload = {}) {
  */
 export function recordVisionSubCall(runId, {
   step, context, visionRoute, captureId, fallbackReason,
-  model, baseUrl, description, latencyMs, error,
+  model, baseUrl, description, latencyMs, error, errorCode, recoveryOutcome,
 }) {
   return _appendEvent(runId, 'vision_sub_call', {
     step: step || null,
@@ -310,6 +310,8 @@ export function recordVisionSubCall(runId, {
     description: description || null,
     latencyMs: latencyMs || null,
     error: error || null,
+    errorCode: errorCode || null,
+    recoveryOutcome: recoveryOutcome || null,
   });
 }
 

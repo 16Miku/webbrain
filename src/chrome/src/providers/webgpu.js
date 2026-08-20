@@ -36,12 +36,15 @@ export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloade
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
 export const WEBGPU_VISION_ENABLED_KEY = 'webgpuVisionEnabled';
-// Present only while an Apocalypse-triggered selection is awaiting a model
-// preload result. The service worker may roll back that automatic choice on
-// failure, while a later explicit Settings choice clears this provenance.
+// Legacy provenance key retained only so the one-time consent migration can
+// remove selections made automatically by older Apocalypse Mode builds.
 export const WEBGPU_VISION_AUTO_SELECTED_KEY = 'webgpuVisionAutoSelected';
+export const WEBGPU_VISION_CONSENT_VERSION_KEY = 'webgpuVisionConsentVersion';
+export const WEBGPU_VISION_CONSENT_VERSION = 1;
 export const WEBGPU_VISION_DOWNLOAD_STATE_KEY = 'webgpuVisionDownloadState';
 export const WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE = 'webgpu-vision-download-state';
+export const WEBGPU_WORKER_INIT_TIMEOUT_MS = 15_000;
+export const WEBGPU_VISION_INFERENCE_TIMEOUT_MS = 90_000;
 export const WEBGPU_VISION_DTYPE = Object.freeze({
   embed_tokens: 'fp16',
   vision_encoder: 'fp16',
@@ -107,24 +110,41 @@ export function webgpuModelRequiresToolTemplate(modelId) {
 }
 
 class WebGPUOffscreenProvider extends BaseLLMProvider {
-  async _dispatch(message) {
+  async _dispatch(message, { timeoutMs = 0 } = {}) {
     await ensureOffscreen();
     return await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        callback(value);
+      };
+      const timeoutId = timeoutMs > 0
+        ? setTimeout(() => {
+          const error = new Error(`In-browser WebGPU request timed out after ${timeoutMs}ms (${message?.type || 'unknown'}).`);
+          error.code = 'webgpu_request_timeout';
+          finish(reject, error);
+        }, timeoutMs)
+        : null;
       try {
         chrome.runtime.sendMessage(message, (response) => {
           const lastError = chrome.runtime.lastError;
-          if (lastError) reject(new Error(lastError.message));
-          else resolve(response);
+          if (lastError) finish(reject, new Error(lastError.message));
+          else finish(resolve, response);
         });
       } catch (error) {
-        reject(error);
+        finish(reject, error);
       }
     });
   }
 
   async _testWebGPU() {
     try {
-      const response = await this._dispatch({ type: 'webgpu-probe' });
+      const response = await this._dispatch(
+        { type: 'webgpu-probe' },
+        { timeoutMs: WEBGPU_WORKER_INIT_TIMEOUT_MS },
+      );
       if (!response || response.error) {
         return { ok: false, error: response?.error || 'offscreen probe failed' };
       }
@@ -342,9 +362,23 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
   }
 
   async chat(messages, options = {}) {
-    const stored = await chrome.storage.local.get(WEBGPU_VISION_ENABLED_KEY);
-    if (stored[WEBGPU_VISION_ENABLED_KEY] !== true) {
-      throw new Error('The local Vision Model is disabled. Enable or download it in Apocalypse Mode before using screenshots.');
+    const stored = await chrome.storage.local.get([
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_CONSENT_VERSION_KEY,
+      WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+    ]);
+    if (stored[WEBGPU_VISION_ENABLED_KEY] !== true
+        || stored[WEBGPU_VISION_CONSENT_VERSION_KEY] !== WEBGPU_VISION_CONSENT_VERSION) {
+      const error = new Error('The local Vision Model is disabled. Enable it explicitly in Settings before using screenshots.');
+      error.code = 'vision_model_disabled';
+      throw error;
+    }
+    const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
+    if (state?.modelId !== this.model || state?.status !== 'ready') {
+      const error = new Error(`The local Vision Model is not ready (${state?.status || 'not-downloaded'}).`);
+      error.code = `vision_model_${state?.status || 'not_downloaded'}`.replace(/-/g, '_');
+      error.visionStatus = state || null;
+      throw error;
     }
     const response = await this._dispatch({
       type: 'webgpu-vision-chat',
@@ -356,9 +390,12 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
         maxTokens: options.maxTokens,
         ...(options.webbrainVisionProbe === true ? { visionProbe: true } : {}),
       },
-    });
+    }, { timeoutMs: WEBGPU_VISION_INFERENCE_TIMEOUT_MS });
     if (!response || response.error) {
-      throw new Error(`In-browser vision: ${response?.error || 'no response from the inference worker'}`);
+      const error = new Error(`In-browser vision: ${response?.error || 'no response from the inference worker'}`);
+      error.code = response?.code || 'vision_worker_error';
+      error.recovery = response?.recovery || null;
+      throw error;
     }
     return {
       content: String(response.content || ''),
@@ -381,7 +418,7 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
         model: this.model,
         device: this.device,
         dtype: this.dtype,
-      });
+      }, { timeoutMs: WEBGPU_WORKER_INIT_TIMEOUT_MS });
       return response?.error
         ? { ok: false, error: response.error }
         : { ok: true, started: response?.started !== false, ready: response?.ready === true };
@@ -395,7 +432,7 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
       const response = await this._dispatch({
         type: 'webgpu-vision-pause',
         model: this.model,
-      });
+      }, { timeoutMs: WEBGPU_WORKER_INIT_TIMEOUT_MS });
       return response?.error
         ? { ok: false, error: response.error }
         : { ok: true, ...response };
@@ -410,7 +447,7 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
         type: 'webgpu-vision-stop',
         model: this.model,
         dtype: this.dtype,
-      });
+      }, { timeoutMs: 45_000 });
       return response?.error
         ? { ok: false, error: response.error }
         : { ok: true, ...response };
@@ -426,7 +463,10 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
   /** Release GPU/model allocations while preserving downloaded model files. */
   async dispose() {
     try {
-      const response = await this._dispatch({ type: 'webgpu-vision-dispose' });
+      const response = await this._dispatch(
+        { type: 'webgpu-vision-dispose' },
+        { timeoutMs: WEBGPU_WORKER_INIT_TIMEOUT_MS },
+      );
       return response?.error
         ? { ok: false, error: response.error }
         : { ok: true, disposed: response?.disposed !== false };

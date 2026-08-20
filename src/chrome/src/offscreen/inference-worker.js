@@ -45,6 +45,9 @@ let textDownloadCancelMode = '';
 let activeVisionDownloadRequest = null;
 let queuedVisionDownload = null;
 let visionDownloadAbortController = null;
+const activeVisionGenerations = new Map();
+const queuedVisionGenerations = new Set();
+const cancelledVisionGenerations = new Set();
 let lastTextProgressPostAt = 0;
 let webGpuAdapterProbePromise = null;
 let webGpuAdapterSummary = '';
@@ -466,7 +469,11 @@ function pauseVisionDownload(modelId) {
     visionDownloadAbortController?.abort();
   }
   const target = targetActive ? active : targetQueued ? queued : { modelId: normalizedModelId };
-  return visionDownloadState(target, 'paused');
+  return {
+    ...visionDownloadState(target, 'paused'),
+    targetsQueued: Boolean(targetQueued),
+    targetsActive: Boolean(targetActive),
+  };
 }
 
 function stopVisionDownload(modelId) {
@@ -813,7 +820,7 @@ function createVisionProbeImage(RawImage) {
   return new RawImage(data, width, height, channels);
 }
 
-async function runVision(payload) {
+async function runVision(payload, requestId) {
   const modelId = String(payload?.modelId || '').trim();
   if (!modelId) throw new Error('No vision model was specified.');
   const device = payload?.device || 'webgpu';
@@ -822,28 +829,49 @@ async function runVision(payload) {
     vision_encoder: 'fp16',
     decoder_model_merged: 'q4',
   };
-  const runtime = await getVisionRuntime(modelId, dtype, device);
-  const { messages, imageUrl } = prepareMultimodalMessages(payload?.messages);
-  const prompt = runtime.processor.apply_chat_template(messages, {
-    add_generation_prompt: true,
-  });
-  const image = payload?.options?.visionProbe === true
-    ? createVisionProbeImage(runtime.library.RawImage)
-    : await runtime.library.load_image(imageUrl);
-  const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
-  const requestedTokens = Number(payload?.options?.maxTokens);
-  const maxNewTokens = Number.isFinite(requestedTokens)
-    ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
-    : 800;
-  const outputs = await runtime.model.generate({
-    ...inputs,
-    do_sample: false,
-    max_new_tokens: maxNewTokens,
-  });
-  const inputLength = inputs.input_ids.dims.at(-1);
-  const generated = outputs.slice(null, [inputLength, null]);
-  const decoded = runtime.processor.batch_decode(generated, { skip_special_tokens: true });
-  return String(decoded?.[0] || '').trim();
+  const library = await loadLibrary();
+  const stoppingCriteria = library.InterruptableStoppingCriteria
+    ? new library.InterruptableStoppingCriteria()
+    : null;
+  if (stoppingCriteria) activeVisionGenerations.set(requestId, stoppingCriteria);
+  try {
+    if (cancelledVisionGenerations.has(requestId)) {
+      const error = new Error('Vision generation was cancelled.');
+      error.name = 'AbortError';
+      throw error;
+    }
+    const runtime = await getVisionRuntime(modelId, dtype, device);
+    const { messages, imageUrl } = prepareMultimodalMessages(payload?.messages);
+    const prompt = runtime.processor.apply_chat_template(messages, {
+      add_generation_prompt: true,
+    });
+    const image = payload?.options?.visionProbe === true
+      ? createVisionProbeImage(runtime.library.RawImage)
+      : await runtime.library.load_image(imageUrl);
+    const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
+    const requestedTokens = Number(payload?.options?.maxTokens);
+    const maxNewTokens = Number.isFinite(requestedTokens)
+      ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
+      : 800;
+    const outputs = await runtime.model.generate({
+      ...inputs,
+      do_sample: false,
+      max_new_tokens: maxNewTokens,
+      ...(stoppingCriteria ? { stopping_criteria: [stoppingCriteria] } : {}),
+    });
+    if (cancelledVisionGenerations.has(requestId)) {
+      const error = new Error('Vision generation was cancelled.');
+      error.name = 'AbortError';
+      throw error;
+    }
+    const inputLength = inputs.input_ids.dims.at(-1);
+    const generated = outputs.slice(null, [inputLength, null]);
+    const decoded = runtime.processor.batch_decode(generated, { skip_special_tokens: true });
+    return String(decoded?.[0] || '').trim();
+  } finally {
+    activeVisionGenerations.delete(requestId);
+    cancelledVisionGenerations.delete(requestId);
+  }
 }
 
 function normalizeTextToolCall(toolCall) {
@@ -1015,6 +1043,17 @@ export async function clearVisionModelCache(modelId) {
 self.addEventListener('message', async event => {
   const { id, type, payload } = event.data || {};
   try {
+    if (type === 'cancel') {
+      const requestId = Number(payload?.requestId);
+      const cancellable = Number.isFinite(requestId)
+        && (queuedVisionGenerations.has(requestId) || activeVisionGenerations.has(requestId));
+      if (cancellable) {
+        cancelledVisionGenerations.add(requestId);
+        activeVisionGenerations.get(requestId)?.interrupt?.();
+      }
+      self.postMessage({ id, ok: true, cancelled: cancellable, requestId });
+      return;
+    }
     if (type === 'init') {
       workerConfig = payload;
       self.postMessage({ id, ok: true });
@@ -1131,14 +1170,24 @@ self.addEventListener('message', async event => {
         cancelMode: '',
       };
       queuedVisionDownload = request;
-      const state = await enqueueModelOperation(() => preloadVisionModel(payload, request));
+      self.postMessage({ type: 'vision-preload-state', modelId, status: 'queued' });
+      const state = await enqueueModelOperation(() => {
+        self.postMessage({ type: 'vision-preload-state', modelId, status: 'loading' });
+        return preloadVisionModel(payload, request);
+      });
       if (queuedVisionDownload === request) queuedVisionDownload = null;
       self.postMessage({ id, ok: true, ...state });
       return;
     }
     if (type === 'chat') {
-      const content = await enqueueModelOperation(() => runVision(payload));
-      self.postMessage({ id, ok: true, content, raw: { model: payload?.modelId || '' } });
+      queuedVisionGenerations.add(id);
+      try {
+        const content = await enqueueModelOperation(() => runVision(payload, id));
+        self.postMessage({ id, ok: true, content, raw: { model: payload?.modelId || '' } });
+      } finally {
+        queuedVisionGenerations.delete(id);
+        cancelledVisionGenerations.delete(id);
+      }
       return;
     }
     if (type === 'text-chat') {

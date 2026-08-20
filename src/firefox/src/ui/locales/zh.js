@@ -249,7 +249,7 @@ export default {
   'st.display.site_adapters.label': '站点适配器',
   'st.display.site_adapters.desc': '为已知的高流量站点（GitHub、Gmail、Stripe、AWS 等）在代理首条消息中注入简短的人工指引。帮助代理避开常见的死胡同。会在匹配站点的首轮对话增加少量 token 成本。',
   'st.display.auto_screenshot.label': '自动截图',
-  'st.display.auto_screenshot.desc': '代理对页面操作后自动截取视口截图，让支持视觉的模型看到变化。会消耗更多 token。如果当前模型不支持图像，会静默禁用。',
+  "st.display.auto_screenshot.desc": "代理对页面操作后自动截取视口截图，让所选视觉路由看到变化。会消耗更多 token。如果视觉不可用，将跳过视觉增强，并显示状态通知后继续任务。",
   'st.display.auto_screenshot.off': '关闭',
   'st.display.auto_screenshot.navigation': '导航时',
   'st.display.auto_screenshot.state_change': '状态变化时（默认）',

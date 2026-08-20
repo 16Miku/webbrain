@@ -12,6 +12,8 @@ import {
   WEBGPU_MODEL_ID,
   WEBGPU_RUNTIME_BITGPU,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_CONSENT_VERSION,
+  WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
@@ -103,6 +105,9 @@ const DUPLICATE_BLANK_CONFIG_KEYS = [
 const OLLAMA_VISION_MODES = new Set(['auto', 'on', 'off']);
 const OLLAMA_VISION_METADATA_TIMEOUT_MS = 3000;
 const VISION_METADATA_TIMEOUT_MS = 3000;
+const WEBGPU_VISION_STATUSES = new Set([
+  'not-downloaded', 'queued', 'downloading', 'loading', 'ready', 'paused', 'error',
+]);
 
 /**
  * Manages LLM provider instances and persists configuration.
@@ -131,7 +136,17 @@ export class ProviderManager {
    * defaults do not stay visible forever for existing users.
    */
   async load() {
-    const data = await chrome.storage.local.get(['providers', 'activeProvider', WEBBRAIN_DEVICE_GUID_KEY, HELP_IMPROVE_WEBBRAIN_KEY]);
+    const data = await chrome.storage.local.get([
+      'providers',
+      'activeProvider',
+      'visionModel',
+      WEBBRAIN_DEVICE_GUID_KEY,
+      HELP_IMPROVE_WEBBRAIN_KEY,
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_AUTO_SELECTED_KEY,
+      WEBGPU_VISION_CONSENT_VERSION_KEY,
+    ]);
+    await this._migrateWebgpuVisionConsent(data);
     const rawStoredOllama = data.providers?.ollama;
     const ollamaVisionConfigMigrated = !!rawStoredOllama && (
       !OLLAMA_VISION_MODES.has(rawStoredOllama.visionMode)
@@ -221,6 +236,38 @@ export class ProviderManager {
       this.providers.set(id, this._createProvider(id, config));
     }
     if (providerStateMigrated) await this.save();
+  }
+
+  async _migrateWebgpuVisionConsent(data = {}) {
+    if (data[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION) {
+      if (data[WEBGPU_VISION_AUTO_SELECTED_KEY] != null) {
+        await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
+        delete data[WEBGPU_VISION_AUTO_SELECTED_KEY];
+      }
+      return;
+    }
+
+    const legacyExplicitSelection = data.visionModel?.type === 'webgpu';
+    if (legacyExplicitSelection) {
+      await chrome.storage.local.set({
+        [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+        [WEBGPU_VISION_ENABLED_KEY]: true,
+      });
+    }
+    const removals = [];
+    if (data[WEBGPU_VISION_AUTO_SELECTED_KEY] != null) removals.push(WEBGPU_VISION_AUTO_SELECTED_KEY);
+    if (legacyExplicitSelection) removals.push('visionModel');
+    else if (data[WEBGPU_VISION_ENABLED_KEY] != null) removals.push(WEBGPU_VISION_ENABLED_KEY);
+    if (removals.length) await chrome.storage.local.remove(removals);
+
+    if (legacyExplicitSelection) {
+      data[WEBGPU_VISION_CONSENT_VERSION_KEY] = WEBGPU_VISION_CONSENT_VERSION;
+    } else {
+      delete data[WEBGPU_VISION_CONSENT_VERSION_KEY];
+    }
+    data[WEBGPU_VISION_ENABLED_KEY] = legacyExplicitSelection;
+    delete data[WEBGPU_VISION_AUTO_SELECTED_KEY];
+    if (legacyExplicitSelection) delete data.visionModel;
   }
 
   /**
@@ -1166,17 +1213,45 @@ export class ProviderManager {
     }
   }
 
-  /** Return the Chrome-only Apocalypse/LiquidAI fallback, if enabled. */
+  /** Return the Chrome-only LiquidAI fallback, but only when explicitly enabled and ready. */
   async getLocalVisionFallbackProvider() {
     try {
-      const stored = await chrome.storage.local.get(['visionModel', WEBGPU_VISION_ENABLED_KEY]);
-      if (stored[WEBGPU_VISION_ENABLED_KEY] === true || stored.visionModel?.type === 'webgpu') {
+      const readiness = await this.getWebgpuVisionReadiness();
+      if (readiness.enabled && readiness.consented && readiness.status === 'ready') {
         return new WebGPUVisionProvider();
       }
     } catch (e) {
       console.warn('[providers] getLocalVisionFallbackProvider failed:', e);
     }
     return null;
+  }
+
+  async getWebgpuVisionReadiness() {
+    const stored = await chrome.storage.local.get([
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_CONSENT_VERSION_KEY,
+      WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+    ]);
+    const consented = stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION;
+    const enabled = consented && stored[WEBGPU_VISION_ENABLED_KEY] === true;
+    const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY] || {};
+    const modelMatches = !state.modelId || state.modelId === WEBGPU_VISION_MODEL_ID;
+    const normalizedStateStatus = state.status === 'starting' ? 'queued' : state.status;
+    const storedStatus = WEBGPU_VISION_STATUSES.has(normalizedStateStatus)
+      ? normalizedStateStatus
+      : 'not-downloaded';
+    const status = enabled && modelMatches ? storedStatus : 'disabled';
+    return {
+      enabled,
+      consented,
+      status,
+      progress: Math.max(0, Math.min(100, Number(state.progress) || 0)),
+      loaded: Math.max(0, Number(state.loaded) || 0),
+      total: Math.max(0, Number(state.total) || 0),
+      error: String(state.error || '').slice(0, 500),
+      updatedAt: Math.max(0, Number(state.updatedAt) || 0),
+      modelId: WEBGPU_VISION_MODEL_ID,
+    };
   }
 
   /**
@@ -1190,8 +1265,32 @@ export class ProviderManager {
       return { provider: activeProvider, route: 'active_raw', rawImage: true };
     }
     const fallback = await this.getLocalVisionFallbackProvider();
-    if (fallback) return { provider: fallback, route: 'local_fallback', rawImage: false };
-    return { provider: null, route: 'none', rawImage: false };
+    if (fallback) {
+      const visionStatus = await this.getWebgpuVisionReadiness().catch(() => ({
+        enabled: true,
+        consented: true,
+        status: 'ready',
+        progress: 100,
+        loaded: 0,
+        total: 0,
+        error: '',
+        updatedAt: 0,
+        modelId: WEBGPU_VISION_MODEL_ID,
+      }));
+      return {
+        provider: fallback,
+        route: 'local_fallback',
+        rawImage: false,
+        visionStatus,
+      };
+    }
+    const visionStatus = await this.getWebgpuVisionReadiness();
+    return {
+      provider: null,
+      route: visionStatus.enabled ? 'local_fallback_unavailable' : 'none',
+      rawImage: false,
+      visionStatus,
+    };
   }
 
   /** Backward-compatible name for the intentional external override only. */
@@ -1214,48 +1313,50 @@ export class ProviderManager {
     }
   }
 
-  /** Enable the Chrome-only local vision fallback and start its durable cache fill. */
-  async enableAndPreloadWebgpuVision({ automatic = true } = {}) {
+  /** Explicitly enable the Chrome-only local vision fallback and start its cache fill. */
+  async enableAndPreloadWebgpuVision() {
     const provider = new WebGPUVisionProvider();
     const stored = await chrome.storage.local.get([
-      WEBGPU_VISION_ENABLED_KEY,
       WEBGPU_VISION_DOWNLOAD_STATE_KEY,
     ]);
-    const wasEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true;
     const probe = await provider.testConnection();
     if (!probe.ok) return probe;
 
-    const automaticallySelected = automatic && !wasEnabled;
-    if (automaticallySelected) {
-      await chrome.storage.local.set({
-        [WEBGPU_VISION_ENABLED_KEY]: true,
-        [WEBGPU_VISION_AUTO_SELECTED_KEY]: true,
-      });
-    } else {
-      if (!wasEnabled) await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
-      // Any user-triggered Start or Resume adopts the selection explicitly,
-      // even when an earlier automatic preload had already enabled it.
-      if (!automatic) await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
-    }
+    await chrome.storage.local.set({
+      [WEBGPU_VISION_ENABLED_KEY]: true,
+      [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+    });
+    await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
 
     const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
     if (state?.status === 'ready' && state?.modelId === WEBGPU_VISION_MODEL_ID) {
-      if (automaticallySelected) await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
       return { ok: true, started: false, ready: true };
     }
 
-    const result = await provider.preload();
-    if (!result.ok && automaticallySelected) {
-      await chrome.storage.local.remove([
-        WEBGPU_VISION_ENABLED_KEY,
-        WEBGPU_VISION_AUTO_SELECTED_KEY,
-      ]);
-    }
-    return result;
+    return provider.preload();
   }
 
   async startWebgpuVisionDownload() {
-    return this.enableAndPreloadWebgpuVision({ automatic: false });
+    const readiness = await this.getWebgpuVisionReadiness();
+    if (!readiness.enabled || !readiness.consented) {
+      return {
+        ok: false,
+        recoverable: true,
+        code: 'vision_consent_required',
+        error: 'Enable local vision with “Use local fallback” in Settings first.',
+        visionStatus: readiness,
+      };
+    }
+    if (readiness.status === 'ready') return { ok: true, started: false, ready: true };
+    return new WebGPUVisionProvider().preload();
+  }
+
+  async resumeWebgpuVisionDownload() {
+    const readiness = await this.getWebgpuVisionReadiness();
+    if (!readiness.enabled || !['queued', 'downloading', 'loading'].includes(readiness.status)) {
+      return { ok: true, resumed: false, ...readiness };
+    }
+    return new WebGPUVisionProvider().preload();
   }
 
   async pauseWebgpuVisionDownload() {

@@ -1,10 +1,8 @@
 import { ProviderManager } from './providers/manager.js';
 import {
   WEBGPU_MODEL_ID,
-  WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
-  WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   isShippedWebgpuPreset,
   webgpuModelDisplayName,
@@ -130,17 +128,6 @@ function normalizeVisionDownloadState(state) {
 async function persistVisionDownloadState(state) {
   const normalized = normalizeVisionDownloadState(state);
   await chrome.storage.local.set({ [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: normalized });
-  if (normalized.status === 'error') {
-    const stored = await chrome.storage.local.get(WEBGPU_VISION_AUTO_SELECTED_KEY);
-    if (stored[WEBGPU_VISION_AUTO_SELECTED_KEY] === true) {
-      await chrome.storage.local.remove([
-        WEBGPU_VISION_ENABLED_KEY,
-        WEBGPU_VISION_AUTO_SELECTED_KEY,
-      ]);
-    }
-  } else if (normalized.status === 'ready') {
-    await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
-  }
   return normalized;
 }
 
@@ -153,7 +140,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-async function enableApocalypseVisionModel() {
+async function startExplicitVisionModelDownload() {
   const result = await providerManager.enableAndPreloadWebgpuVision();
   if (result?.ok) return result;
   await persistVisionDownloadState({
@@ -169,15 +156,7 @@ async function enableApocalypseVisionModel() {
 }
 
 async function resumeInterruptedVisionPreload() {
-  const stored = await chrome.storage.local.get([
-    WEBGPU_VISION_ENABLED_KEY,
-    WEBGPU_VISION_DOWNLOAD_STATE_KEY,
-  ]);
-  const state = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
-  const incomplete = state?.modelId === WEBGPU_VISION_MODEL_ID
-    && (state.status === 'starting' || state.status === 'downloading');
-  if (stored[WEBGPU_VISION_ENABLED_KEY] !== true || !incomplete) return { resumed: false };
-  return await enableApocalypseVisionModel();
+  return await providerManager.resumeWebgpuVisionDownload();
 }
 Promise.all([
   apocalypseController.syncUpdateSchedule(),
@@ -2374,12 +2353,8 @@ async function handleMessage(msg, sender) {
           enabled: snapshot.enabled === true,
         }).catch(() => {});
         if (msg.enabled === true) {
-          // The shared worker serializes model operations. Start the text
-          // transfer first so it is acknowledged immediately, then queue the
-          // vision preload behind it without blocking this enable response.
           const textModel = await providerManager.enableAndStartWebgpuTextDownload();
-          const visionModel = await enableApocalypseVisionModel();
-          return { ...snapshot, textModel, visionModel };
+          return { ...snapshot, textModel };
         }
       }
       return snapshot;
@@ -3485,6 +3460,13 @@ async function handleMessage(msg, sender) {
 
     case 'test_vision_provider': {
       return await providerManager.testVisionProvider();
+    }
+    case 'enable_webgpu_vision': {
+      const settingsUrl = chrome.runtime.getURL('src/ui/settings.html');
+      if (String(sender?.url || '').split('#')[0] !== settingsUrl) {
+        return { ok: false, code: 'vision_consent_required', error: 'Local vision can only be enabled from Settings.' };
+      }
+      return await startExplicitVisionModelDownload();
     }
     case 'start_webgpu_vision_download': {
       return await providerManager.startWebgpuVisionDownload();

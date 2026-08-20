@@ -249,7 +249,7 @@ export default {
   'st.display.site_adapters.label': 'Adaptadores de sitio',
   'st.display.site_adapters.desc': 'Inyecta orientación breve y cuidada para sitios de alto tráfico conocidos (GitHub, Gmail, Stripe, AWS, etc.) en el primer mensaje del agente. Ayuda al agente a evitar callejones sin salida comunes. Añade un pequeño coste en tokens en el primer turno de las conversaciones en sitios coincidentes.',
   'st.display.auto_screenshot.label': 'Captura automática',
-  'st.display.auto_screenshot.desc': 'Captura automáticamente una imagen de la ventana tras cada acción del agente, para que los modelos con visión vean qué ha cambiado. Consume más tokens. Se desactiva silenciosamente si el modelo activo no admite imágenes.',
+  "st.display.auto_screenshot.desc": "Captura automáticamente una imagen de la ventana después de que el agente actúe en la página, para que la ruta de visión seleccionada vea qué cambió. Consume más tokens. Si la visión no está disponible, se omite el enriquecimiento y la tarea continúa con un aviso de estado.",
   'st.display.auto_screenshot.off': 'Desactivada',
   'st.display.auto_screenshot.navigation': 'Al navegar',
   'st.display.auto_screenshot.state_change': 'Al cambiar de estado (por defecto)',
