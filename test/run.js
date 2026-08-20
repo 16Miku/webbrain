@@ -29376,6 +29376,31 @@ test('lexical retrieval keeps infant technique ahead of adult technique for a ba
   }
 });
 
+test('offline query language keeps unambiguous script hints over the UI locale', async () => {
+  for (const label of ['chrome', 'firefox']) {
+    const { detectOfflineQueryLanguage } = await import(pathToFileURL(path.join(
+      ROOT, `src/${label}/src/agent/offline-query-stopwords.js`,
+    )).href);
+    const en = { locale: 'en' };
+    assert.equal(detectOfflineQueryLanguage('Москва', en), 'rus',
+      `${label}: Cyrillic proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('القاهرة', en), 'ara',
+      `${label}: Arabic proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('España', en), 'spa',
+      `${label}: Spanish ñ did not identify the query`);
+    assert.equal(detectOfflineQueryLanguage('São Paulo', en), 'por',
+      `${label}: Portuguese ã did not identify the query`);
+    assert.equal(detectOfflineQueryLanguage('Straße', en), 'deu',
+      `${label}: German ß did not identify the query`);
+    assert.equal(detectOfflineQueryLanguage('दिल्ली', en), 'hin',
+      `${label}: Devanagari proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('Київ', en), 'ukr',
+      `${label}: Ukrainian-specific letters lost to the general Cyrillic fallback`);
+    assert.notEqual(detectOfflineQueryLanguage('öffnen das Fenster', en), 'tur',
+      `${label}: shared ö was treated as a Turkish language id`);
+  }
+});
+
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const statusFor = async (enabled, archives) => {

@@ -1542,6 +1542,13 @@ const DIRECT_QUERY_LANGUAGE_HINTS = Object.freeze([
   { re: /[ğışĞİŞ]/u, language: 'tur' },
   { re: /[їєґЇЄҐ]/u, language: 'ukr' },
   { re: /[đơưĐƠƯ]/u, language: 'vie' },
+  { re: /[ñ¿¡]/iu, language: 'spa' },
+  { re: /[ãõ]/iu, language: 'por' },
+  { re: /ß/u, language: 'deu' },
+  { re: /[\u0600-\u06ff]/u, language: 'ara' },
+  { re: /[\u0900-\u097f]/u, language: 'hin' },
+  // After Ukrainian-specific letters. Shared ö/ü/é/ç stay out of this table.
+  { re: /[\u0400-\u04ff]/u, language: 'rus' },
 ]);
 
 const QUERY_LANGUAGE_MARKERS = Object.freeze({
