@@ -4,6 +4,24 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.0.7] - 2026-08-20
+
+### Changed
+- feat: make research escalation explicit opt-in
+- fix: close research escalation consent races
+- fix: bound actionable discovery resets
+- fix: preserve progress at observation limit
+- fix: keep long ChatGPT research answers as valid JSON
+- fix: ignore null research mappings and abort closed source tabs
+- fix: keep research mapping out of ordinary side-panel tabs
+- fix: stop research wait when the ChatGPT tab closes
+- fix: cancel research wait when ChatGPT helper tab closes
+- fix: treat ChatGPT stop-button test id as generating
+- fix: keep research Stop on the source run
+- fix: recheck ChatGPT origin before research submit
+- fix: expose research consent in ask mode
+- feat: add consent-gated research escalation
+
 ## [33.0.6] - 2026-08-20
 
 ### Changed
