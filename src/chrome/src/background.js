@@ -3333,6 +3333,17 @@ async function handleMessage(msg, sender) {
     case 'run_scheduled_job_now':
       return await scheduler.runNow(msg.jobId);
 
+    case 'clarify_input_activity': {
+      // Keep a waited clarify open while the user is composing the custom
+      // "Something else" answer. The agent owns the authoritative timer.
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'No tab ID' };
+      const clarifyId = String(msg.clarifyId || '');
+      if (!clarifyId) return { ok: false, error: 'clarifyId required' };
+      const update = agent.noteClarifyInputActivity(tabId, clarifyId);
+      return { ok: !!update, matched: !!update, ...update };
+    }
+
     case 'clarify_response': {
       // Side panel posts the user's answer to a pending clarify() tool
       // call. The agent's executeTool() handler is awaiting this exact

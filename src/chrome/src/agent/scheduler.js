@@ -1619,6 +1619,26 @@ export class ScheduledJobManager {
         }).catch((e) => {
           console.warn('[WebBrain] failed to mark scheduled job as waiting for input:', e);
         });
+      } else if (type === 'clarify_timeout_extended') {
+        const clarifyId = String(data?.clarifyId || '');
+        const deadlineTs = Number(data?.deadlineTs);
+        const timeoutSec = Number(data?.timeoutSec);
+        if (clarifyId && Number.isFinite(deadlineTs) && deadlineTs > 0) {
+          this._updateJobIf(job.id, (prev) => (
+            prev.status === 'needs_user_input'
+            && String(prev.pendingClarify?.clarifyId || '') === clarifyId
+          ), (prev) => ({
+            pendingClarify: {
+              ...prev.pendingClarify,
+              deadlineTs: Math.floor(deadlineTs),
+              ...(Number.isFinite(timeoutSec) && timeoutSec > 0
+                ? { timeoutSec: Math.min(1200, Math.floor(timeoutSec)) }
+                : {}),
+            },
+          })).catch((e) => {
+            console.warn('[WebBrain] failed to extend scheduled clarify timeout:', e);
+          });
+        }
       } else if (type === 'clarify_auto') {
         // Auto-timeout settled the clarify; the agent is running again. Clear
         // needs_user_input / pendingClarify so the job UI and rehydrated cards
@@ -1640,7 +1660,7 @@ export class ScheduledJobManager {
       }
       // Tag scheduled clarify prompts (and their auto-timeout follow-ups) with
       // the job id so the sidepanel can scope cards and lock on timeout.
-      const withJob = (type === 'clarify' || type === 'clarify_auto')
+      const withJob = (type === 'clarify' || type === 'clarify_timeout_extended' || type === 'clarify_auto')
         ? { ...data, scheduledJobId: job.id }
         : data;
       this.sendUpdate(tabId, type, withJob);
