@@ -235,12 +235,13 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     return this._testWebGPU();
   }
 
-  async downloadStatus() {
+  async downloadStatus(options = {}) {
+    const target = this._textDownloadTarget(options);
     const response = await this._dispatch({
       type: 'webgpu-download-status',
-      model: this.model,
-      runtime: webgpuModelRuntime(this.model),
-      dtype: this.dtype,
+      model: target.model,
+      runtime: target.runtime,
+      dtype: target.dtype,
     });
     if (!response || response.error) {
       throw new Error(response?.error || 'Unable to read the WebGPU model download status.');

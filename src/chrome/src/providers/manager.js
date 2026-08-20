@@ -1278,8 +1278,8 @@ export class ProviderManager {
     return provider;
   }
 
-  async getWebgpuDownloadStatus() {
-    return this._webgpuProvider().downloadStatus();
+  async getWebgpuDownloadStatus(msg = {}) {
+    return this._webgpuProvider().downloadStatus(msg);
   }
 
   /** Configure a shipped Apocalypse text preset and start LFM's cache fill. */

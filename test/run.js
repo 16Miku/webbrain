@@ -50607,9 +50607,20 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       messages: [{ role: 'user', content: 'Hello' }],
       options: { maxTokens: 123, tools },
     });
+    const siblingStatus = await generalProvider.downloadStatus({
+      model: WEBGPU_BONSAI27_MODEL_ID,
+      dtype: 'q1',
+    });
+    assert.equal(siblingStatus.ready, true);
+    assert.deepEqual(sentMessages[3], {
+      type: 'webgpu-download-status',
+      model: WEBGPU_BONSAI27_MODEL_ID,
+      runtime: 'bitgpu',
+      dtype: 'q1',
+    });
     const textDisposed = await generalProvider.dispose();
     assert.deepEqual(textDisposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[3], { type: 'webgpu-dispose' });
+    assert.deepEqual(sentMessages[4], { type: 'webgpu-dispose' });
 
     const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
@@ -50628,7 +50639,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const result = await provider.chat(messages, { maxTokens: 321 });
     assert.equal(result.content, 'A settings page is visible.');
     assert.equal(result.toolCalls, null);
-    assert.deepEqual(sentMessages[4], {
+    assert.deepEqual(sentMessages[5], {
       type: 'webgpu-vision-chat',
       model: WEBGPU_VISION_MODEL_ID,
       device: 'webgpu',
@@ -50639,13 +50650,13 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
 
     const disposed = await manager.disposeWebgpuVisionRuntime();
     assert.deepEqual(disposed, { ok: true, disposed: true });
-    assert.deepEqual(sentMessages[5], { type: 'webgpu-vision-dispose' });
+    assert.deepEqual(sentMessages[6], { type: 'webgpu-vision-dispose' });
 
     manager.providers.set('webgpu', generalProvider);
     manager.providers.set('remote', { config: { type: 'openai', model: 'remote-model' } });
     manager.activeProviderId = 'webgpu';
     await manager.setActive('remote');
-    assert.deepEqual(sentMessages[6], { type: 'webgpu-dispose' });
+    assert.deepEqual(sentMessages[7], { type: 'webgpu-dispose' });
 
     textModelReady = false;
     await assert.rejects(
@@ -51232,8 +51243,14 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'the basic Wikipedia card must select its exact catalog archive');
   assert.match(apocalypseScript, /const ready = wikipedia[\s\S]*?if \(ready\.length\) return ready\[0\]/,
     'a verified replacement Wikipedia edition must continue to satisfy aggregate readiness');
-  assert.match(apocalypseScript, /updateEmergencyBoxGate\(kind\)/,
-    'aggregate readiness must update the Emergency Box gate');
+  assert.match(apocalypseScript, /updateEmergencyBoxGate\(emergencyKind\)/,
+    'Emergency Box must stay available when any shipped text model is still on disk');
+  assert.match(apocalypseScript, /function anyShippedWebgpuTextReady\(\)/,
+    'Emergency Box must treat Minimal and Basic as interchangeable text-model readiness');
+  assert.match(apocalypseScript, /function refreshSiblingWebgpuTextStatus/,
+    'Apocalypse Mode must probe the unselected shipped text model without switching to it');
+  assert.match(apocalypseScript, /recordWebgpuTextState\(webgpuDownloadState\)/,
+    'switching Minimal/Basic must remember the previous text model before clearing the selected panel');
   for (const state of ['ready', 'downloading', 'paused', 'incomplete', 'disabled', 'error']) {
     assert.match(apocalypseScript, new RegExp(`ap\\.models\\.status\\.${state}`),
       `aggregate model readiness is missing its ${state} state`);
@@ -51268,6 +51285,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseScript, /webgpuPresetHydrated/);
   assert.match(apocalypseScript, /normalized\.modelId !== selectedWebgpuModelId\(\)/);
   assert.match(apocalypseScript, /function anyOtherWebgpuTextBusy/);
+  assert.match(background, /getWebgpuDownloadStatus\(msg\)/,
+    'download-status probes must be able to inspect an unselected shipped text model');
   assert.match(apocalypseScript, /ap\.webgpu\.rag\.pro/);
   assert.match(apocalypseHtml, /data-webgpu-text-copy/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);

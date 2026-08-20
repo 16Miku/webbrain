@@ -3464,7 +3464,7 @@ async function handleMessage(msg, sender) {
     }
 
     case 'get_webgpu_download_status':
-      return await providerManager.getWebgpuDownloadStatus();
+      return await providerManager.getWebgpuDownloadStatus(msg);
     case 'start_webgpu_download':
       return await providerManager.startWebgpuDownload(msg);
     case 'pause_webgpu_download':
