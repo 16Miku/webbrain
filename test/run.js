@@ -19414,6 +19414,16 @@ test('getToolsForMode: compact mode restricts act tools in both browsers', () =>
   }
 });
 
+test('getToolsForMode: bounded accessibility maxChars uses an integer schema', () => {
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    const accessibility = getTools('act', { tier: 'compact' })
+      .find(tool => tool.function.name === 'get_accessibility_tree');
+    const maxChars = accessibility?.function.parameters.properties.maxChars;
+    assert.equal(maxChars?.type, 'integer', `[${label}] bitgpu requires integer bounds`);
+    assert.equal(maxChars?.maximum, 6000, `[${label}] compact tree bound drifted`);
+  }
+});
+
 test('compact Act exposes a self-targeting upload workflow without a general selector tool', () => {
   for (const [label, getTools, prompt] of [
     ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ACT_COMPACT_CH],
