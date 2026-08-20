@@ -9869,6 +9869,50 @@ test('delivery checkpoints escalate at eight and reset only after meaningful pro
     assert.match(forcedDelivery.warning, /call done exactly once/i, `${label}: terminal instruction missing`);
     assert.match(forcedDelivery.warning, /partial or failed/i, `${label}: recovery outcomes must exclude success`);
 
+    const discoveryTab = `${tab}-discovery`;
+    for (let i = 0; i < 4; i++) {
+      agent._checkDeliveryObservationStreak(discoveryTab, 'get_accessibility_tree', {}, { success: true }, enforced);
+    }
+    const discovery = agent._checkDeliveryObservationStreak(
+      discoveryTab,
+      'get_accessibility_tree',
+      {},
+      { success: true },
+      { ...enforced, discoveredActionableTargets: true },
+    );
+    assert.equal(discovery.kind, 'none', `${label}: newly discovered action targets should count as progress`);
+    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: first target discovery should reset the observation streak`);
+    let repeatedDiscovery = null;
+    for (let page = 2; page <= 9; page++) {
+      repeatedDiscovery = agent._checkDeliveryObservationStreak(
+        discoveryTab,
+        'get_accessibility_tree',
+        { page },
+        { success: true },
+        { ...enforced, discoveredActionableTargets: true },
+      );
+    }
+    assert.equal(repeatedDiscovery.kind, 'deliver', `${label}: repeated target discovery should remain bounded`);
+    assert.equal(repeatedDiscovery.count, 8, `${label}: repeated target discovery should reach forced delivery`);
+    agent._checkDeliveryObservationStreak(
+      discoveryTab,
+      'click_ax',
+      { ref: 'ref_follow' },
+      { success: true },
+      { ...enforced, consequential: true },
+    );
+    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: consequential action should rearm the discovery reset`);
+    assert.equal(agent.deliveryActionableDiscoveryResets.has(discoveryTab), false, `${label}: consequential action should restore the one-shot discovery reset`);
+    const discoveryAfterAction = agent._checkDeliveryObservationStreak(
+      discoveryTab,
+      'get_accessibility_tree',
+      { page: 10 },
+      { success: true },
+      { ...enforced, discoveredActionableTargets: true },
+    );
+    assert.equal(discoveryAfterAction.kind, 'none', `${label}: discovery after consequential progress should reset again`);
+    assert.equal(agent.deliveryObservationStreaks.has(discoveryTab), false, `${label}: rearmed discovery should restart from zero`);
+
     const requiredReadTab = `${tab}-required-read`;
     for (let page = 1; page <= 12; page++) {
       const requiredRead = agent._checkDeliveryObservationStreak(
@@ -9964,6 +10008,7 @@ test('delivery checkpoint enforcement is wired into both agent loops', () => {
     assert.match(source, /deliveryCheck\.kind === 'nudge'/, `${browserName}: warning must reach the model`);
     assert.match(source, /deliveryCheck\.kind === 'deliver'[\s\S]{0,900}?action: 'deliver'/, `${browserName}: second checkpoint must leave the browser loop`);
     assert.match(source, /batchResult\.action === 'deliver'[\s\S]{0,300}?_recoverDeliveryCheckpointTurn/, `${browserName}: caller must enter done-only recovery`);
+    assert.match(source, /discoveredActionableTargets:\s*Number\(progressObserved\?\.addedPending \|\| 0\) > 0/, `${browserName}: newly observed progress rows must reset delivery drift`);
     assert.match(source, /this\.deliveryObservationStreaks\.delete\(tabId\)/, `${browserName}: run cleanup must clear state`);
   }
 });
@@ -10275,6 +10320,52 @@ test('delivery recovery rejects plain text or success and shows a runtime blocke
       assert.equal(updates.some(update => update.type === 'text' && update.data?.content === fallback), true, `${label}: runtime blocker was not rendered`);
       assert.equal(updates.some(update => /keep researching|Everything is complete/.test(update.data?.content || '')), false, `${label}: invalid model output leaked to the user`);
     }
+  }
+});
+
+test('delivery recovery preserves a deterministic ledger partial when the model output is invalid', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const tabId = label === 'chrome' ? 918 : 919;
+    const messages = [
+      { role: 'system', content: 'ordinary agent prompt' },
+      { role: 'user', content: 'Follow every user on the current page.' },
+    ];
+    const agent = new AgentClass({});
+    const updates = [];
+    agent._persist = () => {};
+    agent.conversations.set(tabId, messages);
+    const seeded = agent._progressUpdate(tabId, {
+      items: [
+        { id: 'alice', label: 'alice', action: 'follow', status: 'processed' },
+        { id: 'bob', label: 'bob', action: 'follow', status: 'pending' },
+        { id: 'carol', label: 'carol', action: 'follow', status: 'acted' },
+      ],
+    });
+    assert.equal(seeded.success, true, `${label}: test ledger did not seed`);
+    agent._chatWithCostAllowance = async () => ({ content: 'I will continue.', toolCalls: [] });
+
+    const recovery = await agent._recoverDeliveryCheckpointTurn(
+      tabId,
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { model: 'test-model' },
+      {},
+      null,
+      8,
+      'generic fallback should not be used when ledger progress exists',
+    );
+
+    assert.equal(recovery.status, 'partial', `${label}: deterministic ledger recovery should be partial`);
+    assert.match(recovery.content, /Partial progress was preserved from the app-owned ledger/i);
+    assert.match(recovery.content, /3 recorded item\(s\).*1 processed.*1 pending.*1 acted/i);
+    assert.match(recovery.content, /- processed: alice/);
+    assert.match(recovery.content, /- pending: bob/);
+    assert.match(recovery.content, /- acted: carol/);
+    assert.doesNotMatch(recovery.content, /generic fallback should not be used|I will continue/);
+    assert.equal(updates.some(update => update.type === 'warning'), true, `${label}: deterministic partial should be surfaced as a warning`);
+    assert.equal(updates.some(update => update.type === 'error'), false, `${label}: useful deterministic partial should not be reported as an error`);
+    assert.equal(updates.some(update => update.type === 'run_status' && update.data?.status === 'partial'), true, `${label}: partial run status missing`);
+    assert.equal(messages.at(-1)?.content, recovery.content, `${label}: deterministic partial was not persisted`);
   }
 });
 
@@ -66517,6 +66608,50 @@ test('agent records GitHub stargazer observations into the progress ledger', asy
     assert.equal(byId.get('ChJus').status, 'skipped');
     assert.equal(byId.get('myxvisual').status, 'skipped');
     assert.equal(byId.get('rafi').status, 'pending');
+  }
+});
+
+test('agent records GitHub organization follower observations as actionable progress', async () => {
+  const page = `
+    button "Follow alice" [ref_51]
+    button "Unfollow bob" [ref_52]
+    button "Follow carol" [ref_53]
+  `;
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = label === 'chrome' ? 920 : 921;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Follow every user on this organization followers page.' },
+    ]);
+    agent._currentUrl = async () => 'https://github.com/orgs/thebrowsercompany/followers?page=2';
+    agent._progressUpdate(tabId, {
+      items: [{ id: 'seed-user', label: 'seed-user', action: 'follow', status: 'processed' }],
+    }, { sessionId: `followers-${label}` });
+
+    const result = { success: true, pageContent: page };
+    const note = await agent._recordProgressObservation(tabId, 'get_accessibility_tree', result);
+    assert.equal(note.observedButtons, 3, `${label}: follower buttons were not observed`);
+    assert.equal(note.addedPending, 2, `${label}: new follower targets were not recorded`);
+    assert.deepEqual(
+      agent._currentTaskLedgerRows(tabId).map(row => [row.id, row.status]),
+      [['seed-user', 'processed'], ['alice', 'pending'], ['carol', 'pending']],
+      `${label}: organization follower ledger mismatch`,
+    );
+
+    const enforced = { enforceTerminal: true };
+    for (let i = 0; i < 4; i++) {
+      agent._checkDeliveryObservationStreak(tabId, 'get_accessibility_tree', {}, { success: true }, enforced);
+    }
+    const checkpoint = agent._checkDeliveryObservationStreak(
+      tabId,
+      'get_accessibility_tree',
+      {},
+      result,
+      { ...enforced, discoveredActionableTargets: note.addedPending > 0 },
+    );
+    assert.equal(checkpoint.kind, 'none', `${label}: actionable follower discovery triggered delivery drift`);
+    assert.equal(agent.deliveryObservationStreaks.has(tabId), false, `${label}: actionable follower discovery did not reset drift`);
   }
 });
 
