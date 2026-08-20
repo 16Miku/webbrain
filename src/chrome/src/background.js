@@ -3319,6 +3319,13 @@ async function handleMessage(msg, sender) {
     }
 
     // --- Provider Management ---
+    case 'set_help_improve_preference': {
+      if (typeof msg.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      await chrome.storage.local.set({ helpImproveWebBrain: msg.enabled });
+      await providerManager.load();
+      return { ok: true, enabled: msg.enabled };
+    }
+
     case 'get_providers': {
       const providers = providerManager.getAll();
       delete providers.webgpu;

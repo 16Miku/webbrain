@@ -153,7 +153,7 @@ if (globalThis.browser?.storage?.onChanged) {
     const requestedValue = helpImproveCheckbox.checked;
     helpImproveCheckbox.disabled = true;
     try {
-      await browser.storage.local.set({ helpImproveWebBrain: requestedValue });
+      await sendToBackground('set_help_improve_preference', { enabled: requestedValue });
       persistedHelpImprove = requestedValue;
       return true;
     } catch (error) {

@@ -31582,11 +31582,13 @@ test('sidepanel onboarding makes Cloud improvement use an explicit persisted cho
     const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
 
     assert.match(html, /id="ob-help-improve"[\s\S]*?id="ob-help-improve-checkbox" checked[\s\S]*?data-i18n="st\.display\.help_improve\.label"[\s\S]*?data-i18n-html="st\.display\.help_improve\.desc_html"/, `${label}: final onboarding step should expose the canonical Help Improve checkbox and disclosure`);
     assert.match(panel, /storage\.local\.get\(\['onboardingComplete', 'helpImproveWebBrain'\]\)/, `${label}: onboarding should hydrate completion and privacy state together`);
     assert.match(panel, /persistedHelpImprove = stored\.helpImproveWebBrain !== false/, `${label}: onboarding should preserve the existing default-on preference`);
-    assert.match(panel, new RegExp(`await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: requestedValue \\}\\)`), `${label}: onboarding checkbox should persist through the canonical setting key`);
+    assert.match(panel, /await sendToBackground\('set_help_improve_preference', \{ enabled: requestedValue \}\)/, `${label}: onboarding should persist the preference through an acknowledged background operation`);
+    assert.match(background, new RegExp(`case 'set_help_improve_preference':[\\s\\S]*?typeof msg\\.enabled !== 'boolean'[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: msg\\.enabled \\}\\);[\\s\\S]*?await providerManager\\.load\\(\\);[\\s\\S]*?return \\{ ok: true, enabled: msg\\.enabled \\};`), `${label}: the background acknowledgement should follow both preference persistence and provider reload`);
     assert.match(panel, /catch \(error\) \{[\s\S]*?helpImproveCheckbox\.checked = persistedHelpImprove[\s\S]*?return false;/, `${label}: failed privacy persistence should restore the last saved choice`);
     assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Cloud is active`);
     assert.match(panel, /function showLocalChoices\(choices\) \{[\s\S]*?setHelpImproveVisible\(false\)/, `${label}: the Cloud-only choice should stay out of local-model setup`);

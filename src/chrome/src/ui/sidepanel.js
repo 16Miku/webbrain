@@ -271,7 +271,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     const requestedValue = helpImproveCheckbox.checked;
     helpImproveCheckbox.disabled = true;
     try {
-      await chrome.storage.local.set({ helpImproveWebBrain: requestedValue });
+      await sendToBackground('set_help_improve_preference', { enabled: requestedValue });
       persistedHelpImprove = requestedValue;
       return true;
     } catch (error) {

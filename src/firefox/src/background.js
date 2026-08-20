@@ -2855,6 +2855,13 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
 
+    case 'set_help_improve_preference': {
+      if (typeof msg.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      await browser.storage.local.set({ helpImproveWebBrain: msg.enabled });
+      await providerManager.load();
+      return { ok: true, enabled: msg.enabled };
+    }
+
     case 'get_providers': {
       return { providers: providerManager.getAll(), active: providerManager.activeProviderId };
     }
