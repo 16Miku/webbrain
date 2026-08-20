@@ -4289,14 +4289,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (selectedSources.length && !selectedSources.includes('wikipedia')) {
       return { sourceLanguage: '', queries: {}, status: 'skipped' };
     }
-    let targetValues = Array.isArray(runOptions.offlineRagLanguages)
+    const selectedLanguages = Array.isArray(runOptions.offlineRagLanguages)
       ? runOptions.offlineRagLanguages : [];
-    if (!targetValues.length && typeof options.offlineRetrievalService?.status === 'function') {
+    let readyLanguages = null;
+    if (typeof options.offlineRetrievalService?.status === 'function') {
       try {
         const status = await options.offlineRetrievalService.status({ signal: options.signal });
-        targetValues = Array.isArray(status?.wikipediaLanguages) ? status.wikipediaLanguages : [];
+        if (Array.isArray(status?.wikipediaLanguages)) {
+          readyLanguages = status.wikipediaLanguages;
+        }
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
+      }
+    }
+    let targetValues = selectedLanguages;
+    if (readyLanguages !== null) {
+      if (!targetValues.length) {
+        targetValues = readyLanguages;
+      } else {
+        const readySet = new Set(readyLanguages
+          .map(value => String(value || '').trim().toLowerCase())
+          .filter(value => /^[a-z]{3}$/.test(value)));
+        targetValues = targetValues.filter(value =>
+          readySet.has(String(value || '').trim().toLowerCase()));
       }
     }
     const targetLanguages = [...new Set(targetValues

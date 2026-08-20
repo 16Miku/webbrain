@@ -1500,8 +1500,8 @@ const LANGUAGE_KEY_TO_WIKIPEDIA_LANGUAGE = Object.freeze({
 });
 
 const LOCALE_TO_WIKIPEDIA_LANGUAGE = Object.freeze({
-  ar: 'ara', bn: 'ben', de: 'deu', en: 'eng', es: 'spa', fa: 'fas', fr: 'fra',
-  he: 'heb', hi: 'hin', id: 'ind', ja: 'jpn', ko: 'kor', ms: 'msa', nl: 'nld',
+  ar: 'ara', bg: 'bul', bn: 'ben', de: 'deu', en: 'eng', es: 'spa', fa: 'fas', fr: 'fra',
+  he: 'heb', hi: 'hin', id: 'ind', ja: 'jpn', ko: 'kor', mr: 'mar', ms: 'msa', nl: 'nld',
   pl: 'pol', pt: 'por', ru: 'rus', th: 'tha', tl: 'tgl', tr: 'tur', uk: 'ukr',
   ur: 'urd', vi: 'vie', zh: 'zho',
 });
@@ -1544,9 +1544,7 @@ const DIRECT_QUERY_LANGUAGE_HINTS = Object.freeze([
   { re: /[ñ¿¡]/iu, language: 'spa' },
   { re: /[ãõ]/iu, language: 'por' },
   { re: /ß/u, language: 'deu' },
-  { re: /[\u0900-\u097f]/u, language: 'hin' },
-  // After Ukrainian-specific letters. Shared ö/ü/é/ç stay out of this table.
-  { re: /[\u0400-\u04ff]/u, language: 'rus' },
+  { re: /ळ/u, language: 'mar' },
 ]);
 
 const ARABIC_SCRIPT_RE = /[\u0600-\u06ff]/u;
@@ -1556,6 +1554,10 @@ const ARABIC_SCRIPT_LOCALES = new Set(['ara', 'fas', 'urd']);
 const HAN_RE = /[\u4e00-\u9fff\uf900-\ufaff]/u;
 const KANA_RE = /[\u3040-\u30ff]/u;
 const HAN_SCRIPT_LOCALES = new Set(['jpn', 'zho']);
+const CYRILLIC_RE = /[\u0400-\u04ff]/u;
+const DEVANAGARI_RE = /[\u0900-\u097f]/u;
+const CYRILLIC_SCRIPT_LOCALES = new Set(['bul', 'rus', 'ukr']);
+const DEVANAGARI_SCRIPT_LOCALES = new Set(['hin', 'mar']);
 const CJK_FACTUAL_MARKER_RE = /[何誰吗嗎呢뭐]|哪里|哪裡|什么|什麼|为什么|為什麼|どこ|なぜ|どうして|어디|왜/;
 
 function detectArabicScriptQueryLanguage(text, locale) {
@@ -1573,6 +1575,18 @@ function detectHanScriptQueryLanguage(text, locale) {
   const localeLanguage = offlineWikipediaLanguageForLocale(locale);
   if (HAN_SCRIPT_LOCALES.has(localeLanguage)) return localeLanguage;
   return 'zho';
+}
+
+function sharedScriptLanguageFallback(text, localeLanguage) {
+  if (CYRILLIC_RE.test(text)) {
+    if (CYRILLIC_SCRIPT_LOCALES.has(localeLanguage)) return localeLanguage;
+    return 'rus';
+  }
+  if (DEVANAGARI_RE.test(text)) {
+    if (DEVANAGARI_SCRIPT_LOCALES.has(localeLanguage)) return localeLanguage;
+    return 'hin';
+  }
+  return localeLanguage;
 }
 
 const QUERY_LANGUAGE_MARKERS = Object.freeze({
@@ -1632,7 +1646,10 @@ export function detectOfflineQueryLanguage(value, options = {}) {
   const ranked = [...scores.entries()]
     .filter(([language]) => language)
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-  const fallback = offlineWikipediaLanguageForLocale(options.locale);
+  const fallback = sharedScriptLanguageFallback(
+    text,
+    offlineWikipediaLanguageForLocale(options.locale),
+  );
   if (!ranked.length) return fallback;
   if (ranked[0][1] >= 2 && ranked[0][1] > (ranked[1]?.[1] || 0)) return ranked[0][0];
   if (fallback && scores.has(fallback)) return fallback;

@@ -29423,6 +29423,18 @@ test('offline query language keeps unambiguous script hints over the UI locale',
       `${label}: Devanagari proper nouns fell back to the English UI locale`);
     assert.equal(detectOfflineQueryLanguage('Київ', en), 'ukr',
       `${label}: Ukrainian-specific letters lost to the general Cyrillic fallback`);
+    assert.equal(detectOfflineQueryLanguage('Какво е България?', { locale: 'bg' }), 'bul',
+      `${label}: a Bulgarian locale did not disambiguate shared Cyrillic`);
+    assert.equal(detectOfflineQueryLanguage('Какво е България?', en), 'bul',
+      `${label}: Bulgarian stopwords lost to the generic Russian Cyrillic hint`);
+    assert.equal(detectOfflineQueryLanguage('महाराष्ट्र काय आहे', { locale: 'mr' }), 'mar',
+      `${label}: a Marathi locale did not disambiguate shared Devanagari`);
+    assert.equal(detectOfflineQueryLanguage('महाराष्ट्र काय आहे', en), 'mar',
+      `${label}: Marathi stopwords lost to the generic Hindi Devanagari hint`);
+    assert.equal(detectOfflineQueryLanguage('दिल्ली', { locale: 'mr' }), 'mar',
+      `${label}: a Marathi locale still classified Devanagari as Hindi`);
+    assert.equal(detectOfflineQueryLanguage('केळी', en), 'mar',
+      `${label}: Marathi-specific ळ did not distinguish Marathi from Hindi`);
     assert.notEqual(detectOfflineQueryLanguage('öffnen das Fenster', en), 'tur',
       `${label}: shared ö was treated as a Turkish language id`);
     assert.equal(detectOfflineQueryLanguage('富士山', { locale: 'ja' }), 'jpn',
@@ -29810,6 +29822,68 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     'resolved-topic language did not reach offline retrieval');
   assert.equal(followOnTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'Sokollu Mehmed Pasha',
     'the English archive searched the raw Turkish spelling instead of the translated topic');
+  let disabledTranslationCalled = false;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng', 'tur'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery() {
+        disabledTranslationCalled = true;
+        return { tur: 'Türkiye başkenti' };
+      },
+      offlineRetrievalService: {
+        async status() { return { wikipediaLanguages: [] }; },
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'disabled', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(disabledTranslationCalled, false,
+    'explicit language filters still translated after Apocalypse Mode was disabled');
+  let readyFilterTranslationRequest = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur', 'swa'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        readyFilterTranslationRequest = request;
+        return { tur: 'Türkiye başkenti' };
+      },
+      offlineRetrievalService: {
+        async status() { return { wikipediaLanguages: ['eng', 'tur'] }; },
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(readyFilterTranslationRequest?.targets?.map(target => target.language), ['tur'],
+    'explicit language filters were not intersected with ready archive languages');
   let healthSources = null;
   let healthSearchQuery = '';
   await agent._applyStandaloneWikipediaRag(
