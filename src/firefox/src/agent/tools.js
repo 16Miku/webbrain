@@ -1046,7 +1046,7 @@ export const ASK_ONLY_TOOLS = [
   'extract_data', 'get_selection', 'done',
   // wait_for_stable just polls — safe in Ask mode.
   'wait_for_stable',
-  'fetch_url', 'research_url', 'delegate_research', 'list_downloads',
+  'fetch_url', 'research_url', 'clarify', 'delegate_research', 'list_downloads',
 ];
 
 /**

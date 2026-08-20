@@ -2328,6 +2328,9 @@ test('research escalation is default-on, tier-complete, and removable by setting
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full']]) {
       const enabled = getTools(mode, { tier, researchEscalationEnabled: true });
       assert.ok(enabled.some(tool => tool.function.name === 'delegate_research'), `${label}: ${mode}/${tier} did not expose research escalation`);
+      if (mode === 'ask') {
+        assert.ok(enabled.some(tool => tool.function.name === 'clarify'), `${label}: Ask mode exposed delegation without its consent step`);
+      }
       const disabled = getTools(mode, { tier, researchEscalationEnabled: false });
       assert.equal(disabled.some(tool => tool.function.name === 'delegate_research'), false, `${label}: disabled research escalation remained exposed`);
     }
@@ -19792,7 +19795,7 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
       assert.equal(mid.includes(name), true, `[${label}] mid act should expose ${name}`);
       assert.equal(full.includes(name), true, `[${label}] full act should expose ${name}`);
     }
-    assert.equal(ask.includes('clarify'), false, `[${label}] ask should not expose clarify`);
+    assert.equal(ask.includes('clarify'), true, `[${label}] ask should expose clarify for consent-gated research delegation`);
     assert.equal(compact.includes('clarify'), true, `[${label}] compact act should expose clarify`);
     assert.equal(mid.includes('clarify'), true, `[${label}] mid act should expose clarify`);
     assert.equal(full.includes('clarify'), true, `[${label}] full act should expose clarify`);
@@ -19988,7 +19991,8 @@ test('test/llm payload builders support Dev mode and preserve Ask cleanup', () =
     useSiteAdapters: false,
   });
   const chromeAskNames = new Set(chromeAsk.tools.map(t => t.function.name));
-  for (const name of ['read_page_source', 'inspect_element_styles', 'clarify', 'get_shadow_dom', 'shadow_dom_query', 'get_frames']) {
+  assert.equal(chromeAskNames.has('clarify'), true, 'test/llm ask payload should include clarify for research consent');
+  for (const name of ['read_page_source', 'inspect_element_styles', 'get_shadow_dom', 'shadow_dom_query', 'get_frames']) {
     assert.equal(chromeAskNames.has(name), false, `test/llm ask payload should exclude ${name}`);
     assert.doesNotMatch(chromeAsk.messages[0].content, new RegExp(`\\b${name}\\b`), `test/llm ask prompt should not mention ${name}`);
   }

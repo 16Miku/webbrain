@@ -1196,7 +1196,7 @@ export const ASK_ONLY_TOOLS = [
   // Read-only network tools — safe in Ask mode because they don't modify
   // the active page or take destructive actions. They DO send the user's
   // cookies though, so they have access to authenticated read endpoints.
-  'fetch_url', 'research_url', 'delegate_research', 'list_downloads',
+  'fetch_url', 'research_url', 'clarify', 'delegate_research', 'list_downloads',
 ];
 
 /**
