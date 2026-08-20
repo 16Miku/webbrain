@@ -26637,6 +26637,8 @@ test('Apocalypse Mode alarm listeners do not recreate unbounded outer retries', 
       const offscreenPass = source.slice(offscreenPassStart, alarmListenerStart);
       assert.doesNotMatch(offscreenPass, /manager\.processNext\(\)/,
         'chrome: archive alarm can still fall back to the Worker-less MV3 service worker');
+      assert.match(offscreenPass, /finally \{[\s\S]*?syncDownloadSchedule\(\)/,
+        'chrome: a failed offscreen archive pass does not re-arm the one-shot download alarm');
       assert.match(source, /case 'apocalypse_mode': \{\s*if \(msg\.command === 'process'\) return await runApocalypseDownloadPass\(\);/,
         'chrome: UI-triggered archive passes do not run in the offscreen document');
       const offscreenHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/offscreen/offscreen.html'), 'utf8');
@@ -50824,6 +50826,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(bonsaiWorker, /tools: tools\.length \? tools : undefined/);
   assert.match(bonsaiWorker, /function normalizeBitgpuToolCalls/);
   assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
+  assert.match(bonsaiWorker, /if \(queuedTextDownload === request\) queuedTextDownload = null/,
+    'a completed download request must not clear a newer queued resume for the same model');
   assert.match(apocalypseScript, /if \(!preset\)[\s\S]*?setWebgpuDownloadState\(state\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
     'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
   assert.match(bonsaiWorker, /headers: \{ Range: `bytes=\$\{partial\.size\}-` \}/);

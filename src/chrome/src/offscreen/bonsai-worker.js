@@ -891,7 +891,7 @@ self.addEventListener('message', async (event) => {
       }).catch((error) => {
         if (!acknowledged) self.postMessage({ id, ok: false, error: error?.message || String(error) });
       }).finally(() => {
-        if (queuedTextDownload?.key === request.key) queuedTextDownload = null;
+        if (queuedTextDownload === request) queuedTextDownload = null;
       });
       return;
     }

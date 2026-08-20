@@ -1182,15 +1182,27 @@ const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';
  * scheduled here once the pass resolves.
  */
 async function runApocalypseDownloadPass() {
-  await ensureOffscreen();
-  const response = await chrome.runtime.sendMessage({
-    target: APOCALYPSE_DOWNLOAD_TARGET,
-    command: 'processNext',
-  });
-  if (!response) throw new Error('the offscreen archive host did not respond');
-  if (response.ok !== true) throw new Error(response.error || 'offscreen archive download failed');
-  await apocalypseController.syncDownloadSchedule();
-  return response.result;
+  let passError = null;
+  try {
+    await ensureOffscreen();
+    const response = await chrome.runtime.sendMessage({
+      target: APOCALYPSE_DOWNLOAD_TARGET,
+      command: 'processNext',
+    });
+    if (!response) throw new Error('the offscreen archive host did not respond');
+    if (response.ok !== true) throw new Error(response.error || 'offscreen archive download failed');
+    return response.result;
+  } catch (error) {
+    passError = error;
+    throw error;
+  } finally {
+    try {
+      await apocalypseController.syncDownloadSchedule();
+    } catch (scheduleError) {
+      if (!passError) throw scheduleError;
+      console.warn('[WebBrain] Failed to re-arm the Apocalypse archive download:', scheduleError);
+    }
+  }
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
