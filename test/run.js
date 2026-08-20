@@ -43150,6 +43150,49 @@ test('CDP shares in-flight attaches and registers debugger listeners once across
   }
 });
 
+test('CDP cleanup releases only the requested tab session', async () => {
+  const originalChrome = globalThis.chrome;
+  const createDebuggerEvent = () => {
+    const listeners = new Set();
+    return {
+      addListener(listener) { listeners.add(listener); },
+      removeListener(listener) { listeners.delete(listener); },
+    };
+  };
+  const attachCallbacks = [];
+  const detachedTabIds = [];
+  globalThis.chrome = {
+    runtime: { lastError: null },
+    debugger: {
+      onEvent: createDebuggerEvent(),
+      onDetach: createDebuggerEvent(),
+      attach(_target, _version, callback) { attachCallbacks.push(callback); },
+      detach(target, callback) {
+        detachedTabIds.push(target.tabId);
+        callback();
+      },
+    },
+  };
+
+  try {
+    const cdp = new CDPClient();
+    const first = cdp.attach(12);
+    const second = cdp.attach(13);
+    attachCallbacks.shift()();
+    attachCallbacks.shift()();
+    await Promise.all([first, second]);
+
+    await cdp.cleanupTab(12);
+
+    assert.deepEqual(detachedTabIds, [12]);
+    assert.equal(cdp.sessions.has(12), false);
+    assert.equal(cdp.sessions.has(13), true);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('CDP input dispatchers never call the nonexistent Input.enable command', async () => {
   const cdp = new CDPClient();
   const commands = [];
@@ -49355,6 +49398,8 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
+  assert.match(agentSource, /try \{ await cdpClient\.cleanupTab\(tabId\); \} catch \{\}/);
+  assert.match(agentSource, /_cleanupTab\(tabId, \{ preserveRunGuard = false \} = \{\}\) \{\s*void cdpClient\.cleanupTab\(tabId\);/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /msg\.all === true[\s\S]*disabled: await agent\.disableAllDevDiagnostics\(\)/);

@@ -823,7 +823,8 @@ export class Agent extends LoopDetector {
     // override retain the old Page.bringToFront behavior for their lifetime.
     this._foregroundCaptureTabs = new Set();
     // Focus emulation is enabled lazily for background screenshot paths. CDP
-    // sessions outlive individual runs, so every run cleanup must disable it.
+    // sessions are released at the end of each run, so every run cleanup must
+    // still disable focus emulation before releasing the session.
     this._focusEmulatedTabs = new Set();
     this.completionInvariants = new Map(); // tabId -> run-scoped post-action verification state
     this._completionRunCounter = 0;
@@ -8988,7 +8989,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    *
    * Focus emulation makes background pages report themselves as focused and
    * active without activating their tab. It is scoped to the current run and
-   * disabled in the run's finally block because debugger sessions persist.
+   * disabled in the run's finally block before its debugger session is released.
    * Cloud runs and /foreground deliberately retain the old activation path.
    */
   async _preparePageForCapture(tabId) {
@@ -14496,8 +14497,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Clear conversation for a tab.
    */
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
-    void cdpClient.disableDevDiagnostics(tabId);
-    void cdpClient.disableWebMCP(tabId);
+    void cdpClient.cleanupTab(tabId);
     this._cancelPendingPlans(tabId, 'tab closed');
     this._isPdfTabCache.delete(tabId);
     this._lastCdpClickIdent?.delete(tabId);
@@ -25956,6 +25956,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
+      try { await cdpClient.cleanupTab(tabId); } catch {}
     }
   }
 
@@ -27182,6 +27183,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
+      try { await cdpClient.cleanupTab(tabId); } catch {}
     }
   }
 

@@ -215,6 +215,19 @@ export class CDPClient {
   }
 
   /**
+   * Release all CDP state owned by a tab.
+   *
+   * Callers should use this at run and tab lifecycles instead of disabling one
+   * protocol feature at a time. The operation is intentionally tab-scoped:
+   * cleaning up one page must not detach another page's debugger session.
+   */
+  async cleanupTab(tabId) {
+    await this.disableDevDiagnostics(tabId);
+    await this.disableWebMCP(tabId);
+    await this.detach(tabId);
+  }
+
+  /**
    * Send a CDP command and get the result.
    */
   async sendCommand(tabId, method, params = {}, sessionId = '') {

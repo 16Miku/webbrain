@@ -32,7 +32,7 @@ Differences below.)
 | Permission | Risk | Mitigation |
 |---|---|---|
 | `<all_urls>` | Content script injection anywhere — the agent can read and interact with any page the user visits | The user must explicitly switch to an action mode (Act or Dev) before clicks/types/navigation. Ask mode is read-only. The agent never auto-activates on new tabs. |
-| `debugger` | CDP access provides trusted events and full DOM/network control on any tab | The debugger is only attached during active agent runs and detached on completion/abort. |
+| `debugger` | CDP access provides trusted events and full DOM/network control on any tab | The debugger is attached only to the target tab during an active agent run and detached during run cleanup, abort cleanup, or tab removal. |
 | `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is off by default; when enabled, it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. |
 | `downloads` | Can save files to the user's Downloads folder without prompting | Only the agent's explicit download-capable tool calls (`download_files`, `download_file`, `download_resource_from_page`, `download_social_media`, download-job skill tools) use this, and each is gated by the capability × origin permission prompt. |
 | `alarms` | Can wake scheduled jobs in future browser sessions | `schedule_resume` / `schedule_task` are gated; the user-authored `/watch` slash command can also create a page-bound 30–120 second conditional poll. |
