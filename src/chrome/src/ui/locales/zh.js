@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': '要让 WebBrain 随手可用，请打开 Firefox 扩展，选择 WebBrain 旁的齿轮，然后选择“固定到工具栏”。',
   'install.open_failed_chromium': '侧边栏未打开。请按 Alt+Shift+W，或打开浏览器的扩展程序菜单并选择 WebBrain。',
   'install.open_failed_firefox': '侧边栏未打开。请打开 Firefox 扩展并选择 WebBrain。',
+  'install.showcase.ask.title': "向任意页面提问。只要有用的部分。",
+  'install.showcase.ask.body': "从杂乱页面得到干净答案。默认只读。",
+  'install.showcase.act.title': "告诉浏览器该做什么。",
+  'install.showcase.model.title': "使用你信任的模型。",
+  'install.showcase.model.body': "本地、云端或自带密钥 — 随时切换。",
+  'install.showcase.apocalypse.body': "离线知识，由你掌控。趁现在还能下载，把必需内容备好。",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

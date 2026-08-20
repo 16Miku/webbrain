@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'WebBrain을 쉽게 열려면 Firefox 확장 기능을 열고 WebBrain 옆의 톱니바퀴를 선택한 다음 도구 모음에 고정을 선택하세요.',
   'install.open_failed_chromium': '사이드 패널이 열리지 않았습니다. Alt+Shift+W를 누르거나 브라우저의 확장 기능 메뉴를 열어 WebBrain을 선택하세요.',
   'install.open_failed_firefox': '사이드바가 열리지 않았습니다. Firefox 확장 기능을 열어 WebBrain을 선택하세요.',
+  'install.showcase.ask.title': "어떤 페이지든 질문하세요. 유용한 부분만 받으세요.",
+  'install.showcase.ask.body': "복잡한 페이지에서 깔끔한 답변. 기본은 읽기 전용.",
+  'install.showcase.act.title': "브라우저에게 할 일을 말하세요.",
+  'install.showcase.model.title': "신뢰하는 모델을 사용하세요.",
+  'install.showcase.model.body': "로컬, 클라우드, 또는 내 키 — 언제든 전환.",
+  'install.showcase.apocalypse.body': "오프라인 지식, 당신이 통제합니다. 아직 가능할 때 필수를 내려받으세요.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

@@ -77,6 +77,12 @@ export default {
   'install.firefox_pin.body': 'Agar WebBrain mudah dijangkau, buka Ekstensi Firefox, pilih roda gigi di samping WebBrain, lalu pilih Sematkan ke Bilah Alat.',
   'install.open_failed_chromium': 'Panel samping tidak terbuka. Tekan Alt+Shift+W, atau buka menu Ekstensi browser lalu pilih WebBrain.',
   'install.open_failed_firefox': 'Bilah samping tidak terbuka. Buka Ekstensi Firefox lalu pilih WebBrain.',
+  'install.showcase.ask.title': "Tanyakan halaman apa pun. Ambil bagian yang berguna.",
+  'install.showcase.ask.body': "Jawaban bersih dari halaman berantakan. Hanya baca secara default.",
+  'install.showcase.act.title': "Suruh browser melakukan tugasnya.",
+  'install.showcase.model.title': "Gunakan model yang Anda percayai.",
+  'install.showcase.model.body': "Lokal, cloud, atau kunci Anda sendiri — ganti kapan saja.",
+  'install.showcase.apocalypse.body': "Pengetahuan luring, di bawah kendali Anda. Unduh yang penting selagi masih bisa.",
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} dari {total}',

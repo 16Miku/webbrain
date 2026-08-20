@@ -37,13 +37,43 @@
         <p id="shortcut-hint" class="shortcut-hint" data-i18n-html="install.open.shortcut_html">Or press <kbd>Alt</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>W</kbd> anytime.</p>
       </div>
 
-      <aside class="next-step" aria-labelledby="next-step-title">
-        <div class="next-step-rule" aria-hidden="true">
-          <span></span>
+      <aside class="feature-showcase" aria-labelledby="install-title">
+        <div class="feature-tabs" role="tablist" aria-label="WebBrain">
+          <button id="feature-tab-ask" class="feature-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="feature-panel-ask" data-feature="ask" data-i18n="sp.mode.ask">Ask</button>
+          <button id="feature-tab-act" class="feature-tab" type="button" role="tab" aria-selected="false" aria-controls="feature-panel-act" tabindex="-1" data-feature="act" data-i18n="sp.mode.act">Act</button>
+          <button id="feature-tab-model" class="feature-tab" type="button" role="tab" aria-selected="false" aria-controls="feature-panel-model" tabindex="-1" data-feature="model" data-i18n="st.provider.field.model">Model</button>
+          <button id="feature-tab-apocalypse" class="feature-tab" type="button" role="tab" aria-selected="false" aria-controls="feature-panel-apocalypse" tabindex="-1" data-feature="apocalypse" data-i18n="ap.title">Apocalypse Mode</button>
         </div>
-        <div class="next-step-copy">
-          <p id="next-step-title" class="next-step-label" data-i18n="install.eyebrow">One small setup step</p>
-          <p id="next-step-body" data-i18n="install.pin.next">After the side panel opens, use the pin in its header to add WebBrain to your browser toolbar.</p>
+
+        <div class="feature-panels">
+          <figure id="feature-panel-ask" class="feature-panel" role="tabpanel" aria-labelledby="feature-tab-ask" aria-describedby="feature-caption-ask" data-feature-panel="ask">
+            <img src="install-assets/03-ask-any-page.png" alt="" aria-hidden="true">
+            <figcaption id="feature-caption-ask" class="feature-copy">
+              <h2 data-i18n="install.showcase.ask.title">Ask any page. Get the useful part.</h2>
+              <p data-i18n="install.showcase.ask.body">Clean answers from messy pages. Read-only by default.</p>
+            </figcaption>
+          </figure>
+          <figure id="feature-panel-act" class="feature-panel" role="tabpanel" aria-labelledby="feature-tab-act" aria-describedby="feature-caption-act" data-feature-panel="act" hidden>
+            <img src="install-assets/02-tell-the-browser.png" alt="" aria-hidden="true">
+            <figcaption id="feature-caption-act" class="feature-copy">
+              <h2 data-i18n="install.showcase.act.title">Tell the browser what to do.</h2>
+            </figcaption>
+          </figure>
+          <figure id="feature-panel-model" class="feature-panel" role="tabpanel" aria-labelledby="feature-tab-model" aria-describedby="feature-caption-model" data-feature-panel="model" hidden>
+            <img src="install-assets/04-any-llm.png" alt="" aria-hidden="true">
+            <figcaption id="feature-caption-model" class="feature-copy">
+              <h2 data-i18n="install.showcase.model.title">Use the model you trust.</h2>
+              <p data-i18n="install.showcase.model.body">Local, cloud, or your own keys — switch anytime.</p>
+            </figcaption>
+          </figure>
+          <figure id="feature-panel-apocalypse" class="feature-panel" role="tabpanel" aria-labelledby="feature-tab-apocalypse" aria-describedby="feature-caption-apocalypse" data-feature-panel="apocalypse" hidden>
+            <img src="install-assets/08-apocalypse-mode.png" alt="" aria-hidden="true">
+            <figcaption id="feature-caption-apocalypse" class="feature-copy">
+              <p class="feature-copy-eyebrow" data-i18n="ap.title">Apocalypse Mode</p>
+              <h2 data-i18n="ap.subtitle">WebBrain, ready when the internet isn’t.</h2>
+              <p data-i18n="install.showcase.apocalypse.body">Offline knowledge, under your control. Download the essentials while you still can.</p>
+            </figcaption>
+          </figure>
         </div>
       </aside>
     </section>

@@ -115,6 +115,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 16px;
+  overflow-y: auto;
   animation: fadeIn 0.3s ease;
 }
 
@@ -403,6 +404,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;
+  margin: auto;
+  padding-block: 16px;
 }
 
 .ob-step-indicator {
@@ -484,6 +487,19 @@ body {
   font-style: italic;
 }
 
+.ob-browser-pin-note {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+}
+
 .ob-permission-note {
   margin-top: 12px;
   line-height: 1.5;
@@ -556,6 +572,56 @@ body {
   font-size: 12px;
   line-height: 1.4;
   text-align: left;
+}
+
+.ob-provider-status.hidden,
+.ob-help-improve.hidden {
+  display: none;
+}
+
+.ob-help-improve {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-secondary));
+  text-align: left;
+}
+
+.ob-help-improve-control {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.ob-help-improve-control input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.ob-help-improve-control input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.ob-help-improve-description {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ob-help-improve-description a {
+  color: var(--accent) !important;
 }
 
 .ob-local-models {
@@ -724,6 +790,12 @@ body {
 
 .ob-skip:hover {
   color: var(--text-secondary);
+}
+
+.ob-skip:disabled {
+  color: var(--text-muted);
+  cursor: wait;
+  opacity: 0.5;
 }
 
 .ob-skip.hidden {

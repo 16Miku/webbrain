@@ -31578,6 +31578,42 @@ test('sidepanel awaits onboarding completion persistence before hiding', () => {
   }
 });
 
+test('sidepanel onboarding makes Cloud improvement use an explicit persisted choice', () => {
+  for (const [label, prefix, runtime] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+
+    assert.match(html, /id="ob-help-improve"[\s\S]*?id="ob-help-improve-checkbox" aria-describedby="ob-help-improve-description" checked[\s\S]*?data-i18n="st\.display\.help_improve\.label"[\s\S]*?id="ob-help-improve-description"[\s\S]*?data-i18n-html="st\.display\.help_improve\.desc_html"/, `${label}: final onboarding step should expose the canonical Help Improve checkbox and disclosure`);
+    assert.match(panel, /storage\.local\.get\(\['onboardingComplete', 'helpImproveWebBrain'\]\)/, `${label}: onboarding should hydrate completion and privacy state together`);
+    assert.match(panel, /persistedHelpImprove = stored\.helpImproveWebBrain !== false/, `${label}: onboarding should preserve the existing default-on preference`);
+    assert.match(panel, /await sendToBackground\('set_help_improve_preference', \{ enabled: requestedValue \}\);\s*persistedHelpImprove = requestedValue;\s*if \(cloudReady\) showCloudReady\(\);/, `${label}: a successful privacy retry should restore Cloud status instead of leaving the error visible`);
+    assert.match(background, new RegExp(`case 'set_help_improve_preference':[\\s\\S]*?typeof msg\\.enabled !== 'boolean'[\\s\\S]*?await ${runtime}\\.storage\\.local\\.get\\('helpImproveWebBrain'\\)[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: msg\\.enabled \\}\\);[\\s\\S]*?await providerManager\\.load\\(\\);[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: previousEnabled \\}\\)\\.catch\\(\\(\\) => \\{\\}\\)[\\s\\S]*?return \\{ ok: true, enabled: msg\\.enabled \\};`), `${label}: a failed provider reload should roll back the stored privacy preference before the write is treated as failed`);
+    assert.match(panel, /catch \(error\) \{[\s\S]*?helpImproveCheckbox\.checked = persistedHelpImprove[\s\S]*?return false;/, `${label}: failed privacy persistence should restore the last saved choice`);
+    assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Cloud is active`);
+    assert.match(panel, /function showLocalChoices\(choices\) \{[\s\S]*?setHelpImproveVisible\(false\)/, `${label}: the Cloud-only choice should stay out of local-model setup`);
+    assert.match(panel, /function showProviderFallback\([^)]*\) \{[\s\S]*?providerUnknown = statusKey === 'ob\.tokens\.detect_failed'[\s\S]*?setHelpImproveVisible\(providerUnknown\)[\s\S]*?skipBtn\.disabled = !providerUnknown/, `${label}: a failed provider scan should keep Skip gated and show the Cloud disclosure until the active provider is known`);
+    assert.match(panel, /async function scanLocalModels\(\) \{[\s\S]*?settingsBtn\.disabled = true;\s*skipBtn\.disabled = true;/, `${label}: Skip should stay disabled until provider detection decides whether the Cloud disclosure applies`);
+    for (const outcome of ['showLocalChoices', 'showCloudReady']) {
+      assert.match(panel, new RegExp(`function ${outcome}\\([^)]*\\) \\{[\\s\\S]*?skipBtn\\.disabled = false;`), `${label}: ${outcome} should restore Skip after provider detection finishes`);
+    }
+    assert.match(panel, /if \(cloudReady\) \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Start should not dismiss onboarding before the latest privacy choice is saved`);
+    assert.match(panel, /skipBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?if \(!await helpImproveSavePromise\.catch\(\(\) => false\)\) return;[\s\S]*?await dismissOnboarding\(\)/, `${label}: Skip should not dismiss onboarding before the latest privacy choice is saved`);
+    assert.match(css, /\.ob-help-improve-control input \{[\s\S]*?accent-color: var\(--accent\)/, `${label}: the privacy choice should remain a recognizable native checkbox`);
+    assert.match(css, /\.ob-skip:disabled \{[\s\S]*?cursor: wait;/, `${label}: disabled Skip should communicate that provider detection is still running`);
+    assert.match(css, /\.onboarding \{[\s\S]*?overflow-y: auto;/, `${label}: longer localized privacy copy should remain reachable in short panels`);
+  }
+
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.html'), 'utf8');
+  const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.html'), 'utf8');
+  assert.doesNotMatch(chromeHtml, /class="ob-browser-pin-note"/, 'chrome: the existing real-toolbar coachmark should remain the only pin lesson');
+  assert.match(firefoxHtml, /class="ob-browser-pin-note"[^>]*data-i18n="install\.firefox_pin\.body"/, 'firefox: native toolbar pin guidance should move into the sidebar onboarding');
+});
+
 test('first install opens a browser-aware panel launcher without fake toolbar controls', async () => {
   for (const [label, prefix, runtime] of [
     ['chrome', 'src/chrome', 'chrome'],
@@ -31607,7 +31643,30 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       /openButton\.addEventListener\('click',[\s\S]*?openButton\.disabled = false;/,
       `${label}: install CTA should become interactive only after the click handler is bound`,
     );
-    assert.doesNotMatch(html, /toolbar-rehearsal|extension-menu|pin-target/, `${label}: install guide must not present fake browser controls`);
+    assert.doesNotMatch(html, /toolbar-rehearsal|extension-menu|pin-target|class="next-step"/, `${label}: install guide must not present fake browser controls or a second pinning lesson`);
+    assert.match(html, /class="feature-tabs"[^>]*role="tablist"/, `${label}: install guide should expose the showcase as an accessible tab list`);
+    assert.doesNotMatch(html, /feature-caption-\w+"[^>]*class="visually-hidden"/, `${label}: showcase explanations should be visible to sighted users`);
+    for (const feature of ['ask', 'act', 'model', 'apocalypse']) {
+      assert.match(html, new RegExp(`data-feature="${feature}"`), `${label}: ${feature} feature tab missing`);
+      assert.match(html, new RegExp(`data-feature-panel="${feature}"`), `${label}: ${feature} feature panel missing`);
+      assert.match(html, new RegExp(`id="feature-caption-${feature}" class="feature-copy"`), `${label}: ${feature} showcase copy should overlay the artwork as localizable HTML`);
+    }
+    assert.match(html, /data-i18n="install\.showcase\.ask\.title"/, `${label}: Ask showcase headline should be localizable`);
+    assert.match(html, /data-i18n="install\.showcase\.act\.title"/, `${label}: Act showcase headline should be localizable`);
+    assert.match(html, /data-i18n="install\.showcase\.model\.title"/, `${label}: Model showcase headline should be localizable`);
+    assert.match(html, /data-i18n="ap\.subtitle"/, `${label}: Apocalypse showcase headline should reuse the existing localized subtitle`);
+    for (const asset of [
+      '02-tell-the-browser.png',
+      '03-ask-any-page.png',
+      '04-any-llm.png',
+      '08-apocalypse-mode.png',
+      'fonts/bricolage-grotesque-var.woff2',
+      'fonts/instrument-sans-var.woff2',
+      'fonts/geist-mono-var.woff2',
+    ]) {
+      assert.ok(fs.existsSync(path.join(ROOT, prefix, 'src/ui/install-assets', asset)), `${label}: packaged showcase asset missing: ${asset}`);
+    }
+    assert.doesNotMatch(html, /06-launch-offer|07-social-proof/, `${label}: first-use showcase should not include pricing or social proof`);
     if (label === 'firefox') {
       assert.match(html, /data-build="firefox"/, 'firefox: the install page should identify its build');
       assert.match(
@@ -31617,15 +31676,20 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       );
     }
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, `${label}: install guide should respect reduced motion`);
-    assert.match(css, /@media \(max-width: 760px\)/, `${label}: install guide should adapt to narrow windows`);
+    assert.match(css, /@media \(max-width: 620px\)/, `${label}: install guide should adapt to narrow windows`);
+    assert.match(css, /font-family: "Bricolage Grotesque"/, `${label}: install guide should carry the explainer display typography into the product`);
+    assert.match(css, /\.feature-panels \{[\s\S]*?aspect-ratio: 8 \/ 5;/, `${label}: showcase should preserve the explainer artwork without distortion`);
+    assert.match(css, /\.feature-copy \{[\s\S]*?position: absolute;/, `${label}: localized showcase copy should overlay the English artwork text`);
     assert.match(css, /\.open-panel-button:disabled/, `${label}: install CTA should visibly communicate its unavailable state`);
     assert.doesNotMatch(css, /\.open-panel-button\.is-open(?:\s|,|\{)/, `${label}: opening the panel should not look like setup completion`);
     assert.doesNotMatch(installJs, /classList\.(?:add|remove)\('is-open'\)/, `${label}: install logic should not apply the retired success-green state`);
+    assert.doesNotMatch(installJs, /advanceInstallGuide|install\.pin\.title/, `${label}: opening the panel should not replace the feature showcase with pin instructions`);
     assert.match(
       installJs,
-      /Promise\.resolve\(opening\)\.then\(\(\) => \{[\s\S]*?advanceInstallGuide\(\{ guide \}\);[\s\S]*?reportInstalledPanelOpened\(\{ build, tabId: installTab\?\.id \}\)[\s\S]*?\}\)\.catch/,
-      `${label}: a successful panel open should advance the guide before background bookkeeping`,
+      /Promise\.resolve\(opening\)\.then\(\(\) => \{[\s\S]*?reportInstalledPanelOpened\(\{ build, tabId: installTab\?\.id \}\)[\s\S]*?\}\)\.catch/,
+      `${label}: a successful panel open should preserve the showcase while completing background bookkeeping`,
     );
+    assert.match(installJs, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/, `${label}: showcase tabs should support standard keyboard navigation`);
 
     assert.equal(
       await installModule.detectBrowser({ userAgent: 'Mozilla/5.0 Chrome/140.0 Safari/537.36 Edg/140.0' }),
@@ -31669,29 +31733,30 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       `${label}: unidentified Chromium forks should receive safe generic guidance`,
     );
     assert.equal(installModule.getBrowserGuide('firefox').openKey, 'install.open_sidebar', `${label}: Firefox should use native sidebar wording`);
-    assert.equal(installModule.getBrowserGuide('firefox').nextKey, 'install.firefox_pin.body', `${label}: Firefox should keep its native toolbar-pin instructions`);
     assert.equal(installModule.getBrowserGuide('firefox').failureKey, 'install.open_failed_firefox', `${label}: Firefox should receive its native recovery instructions`);
-    assert.equal(installModule.getBrowserGuide('vivaldi').nextKey, 'install.pin.next', `${label}: Chromium install pages should preview the pin step without coachmark-only spatial copy`);
     assert.equal(installModule.getBrowserGuide('vivaldi').failureKey, 'install.open_failed_chromium', `${label}: Chromium browsers should receive shortcut and Extensions-menu recovery`);
 
-    const guideCopy = {
-      'install.pin.title': 'Pin WebBrain',
-      [installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome').nextKey]: 'Browser-specific next step',
+    const classSet = new Set();
+    const featureTabs = ['ask', 'act', 'model', 'apocalypse'].map((feature) => ({
+      dataset: { feature },
+      classList: { toggle(name, on) { if (on) classSet.add(`${feature}:${name}`); else classSet.delete(`${feature}:${name}`); } },
+      setAttribute(name, value) { this[name] = value; },
+      tabIndex: feature === 'ask' ? 0 : -1,
+    }));
+    const featurePanels = ['ask', 'act', 'model', 'apocalypse'].map((feature) => ({
+      dataset: { featurePanel: feature },
+      hidden: feature !== 'ask',
+    }));
+    const showcaseDocument = {
+      querySelectorAll(selector) {
+        return selector === '[data-feature]' ? featureTabs : featurePanels;
+      },
     };
-    const guideNodes = {
-      'install-title': { dataset: { i18n: 'install.installed' }, textContent: 'WebBrain installed' },
-      'install-intro': { dataset: { i18n: 'install.open_panel.body' }, textContent: 'Open WebBrain' },
-    };
-    const guideAdvanced = installModule.advanceInstallGuide({
-      guide: installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome'),
-      documentLike: { getElementById: (id) => guideNodes[id] || null },
-      translate: (key) => guideCopy[key],
-    });
-    assert.equal(guideAdvanced, true, `${label}: successful open should advance the install guide`);
-    assert.equal(guideNodes['install-title'].textContent, 'Pin WebBrain', `${label}: successful open should replace the stale installed heading`);
-    assert.equal(guideNodes['install-intro'].textContent, 'Browser-specific next step', `${label}: successful open should show native next-step guidance`);
-    assert.equal(guideNodes['install-title'].dataset.i18n, 'install.pin.title', `${label}: locale refresh should preserve the advanced heading`);
-    assert.equal(guideNodes['install-intro'].dataset.i18n, installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome').nextKey, `${label}: locale refresh should preserve the browser-specific guidance`);
+    assert.equal(installModule.selectInstallFeature('apocalypse', { documentLike: showcaseDocument }), true, `${label}: Apocalypse Mode should be selectable`);
+    assert.equal(featureTabs[3]['aria-selected'], 'true', `${label}: selected feature tab should expose its state`);
+    assert.equal(featureTabs[0].tabIndex, -1, `${label}: roving tab stop should leave the old feature`);
+    assert.equal(featurePanels[3].hidden, false, `${label}: selected Apocalypse Mode artwork should become visible`);
+    assert.equal(featurePanels[0].hidden, true, `${label}: previous feature artwork should be hidden`);
 
     const calls = [];
     const messages = [];
@@ -31773,7 +31838,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   assert.match(chromePanelHtml, /id="pin-coachmark-done"[\s\S]*?id="pin-coachmark-skip"/, 'chrome: pin coachmark should provide confirm and explicit skip actions');
   assert.doesNotMatch(firefoxPanelHtml, /id="pin-coachmark"/, 'firefox: sidebar should not point at a Chromium-only panel pin');
   assert.match(chromePanelJs, /sidePanel\?\.getLayout\?\.\(\)/, 'chrome: coachmark should read the real left/right side-panel layout when supported');
-  assert.match(chromePanelJs, /await pinCoachmarkDismissed\.catch\(\(\)\s*=>\s*\{\}\);[\s\S]*?storage\.local\.get\('onboardingComplete'\)/, 'chrome: product onboarding should wait until the pin coachmark is dismissed');
+  assert.match(chromePanelJs, /await pinCoachmarkDismissed\.catch\(\(\)\s*=>\s*\{\}\);[\s\S]*?storage\.local\.get\(\['onboardingComplete', 'helpImproveWebBrain'\]\)/, 'chrome: product onboarding should wait until the pin coachmark is dismissed before loading setup and privacy state');
   assert.match(chromePanelJs, /initPinCoachmark[\s\S]*?catch\s*\{[\s\S]*?\}[\s\S]*?\}\)\(\)/, 'chrome: pin coachmark setup failures must not reject into onboarding');
   assert.match(chromePanelJs, /for \(const layer of backgroundLayers\) \{[\s\S]*?layer\.inert = true/, 'chrome: modal coachmark should make the rest of the panel inert');
   assert.match(chromePanelJs, /for \(const \[layer, wasInert\] of backgroundInertState\) \{[\s\S]*?layer\.inert = wasInert/, 'chrome: modal coachmark should restore prior inert state on dismissal');
@@ -31799,8 +31864,9 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 29, `${filename}: install guide should translate every user-facing string`);
-    assert.ok(chromeLocale['install.pin.next'], `${filename}: install page should translate its non-spatial pin preview`);
+    assert.equal(installKeys.length, 35, `${filename}: install guide should translate every user-facing string`);
+    assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
+    assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
     assert.ok(chromeLocale['install.pin.skip'], `${filename}: pin coachmark should translate its skip action`);
     assert.ok(chromeLocale['install.open_failed_chromium'], `${filename}: Chromium recovery guidance should be translated`);
@@ -31815,7 +31881,6 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   const englishLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
   assert.match(englishLocale['install.pin.body'], /side panel header/i, 'chrome: pin guidance should identify the pin in the side-panel header');
   assert.match(englishLocale['install.pin.body'], /browser toolbar/i, 'chrome: pin guidance should separately explain the toolbar icon that pinning adds');
-  assert.doesNotMatch(englishLocale['install.pin.next'], /\babove\b/i, 'chrome: install-page preview should not use coachmark-only spatial language');
   assert.match(englishLocale['install.open_failed_chromium'], /Alt\+Shift\+W[\s\S]*Extensions/i, 'chrome: failed open should offer shortcut and Extensions-menu recovery');
   assert.match(englishLocale['install.open_failed_firefox'], /Firefox Extensions/i, 'firefox: failed open should point to Firefox Extensions');
 });

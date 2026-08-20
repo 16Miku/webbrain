@@ -50,6 +50,12 @@ export default {
   'install.firefox_pin.body': 'To keep WebBrain handy, open Firefox Extensions, select the gear beside WebBrain, then choose Pin to Toolbar.',
   'install.open_failed_chromium': 'The side panel did not open. Press Alt+Shift+W, or open your browser’s Extensions menu and select WebBrain.',
   'install.open_failed_firefox': 'The sidebar did not open. Open Firefox Extensions and select WebBrain.',
+  'install.showcase.ask.title': 'Ask any page. Get the useful part.',
+  'install.showcase.ask.body': 'Clean answers from messy pages. Read-only by default.',
+  'install.showcase.act.title': 'Tell the browser what to do.',
+  'install.showcase.model.title': 'Use the model you trust.',
+  'install.showcase.model.body': 'Local, cloud, or your own keys — switch anytime.',
+  'install.showcase.apocalypse.body': 'Offline knowledge, under your control. Download the essentials while you still can.',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': 'Disconnected',

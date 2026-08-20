@@ -50,6 +50,12 @@ export default {
   'install.firefox_pin.body': "برای دستی نگه داشتن WebBrain، افزونه های Firefox را باز کنید، چرخ دنده کنار WebBrain را انتخاب کنید، سپس پین به نوار ابزار را انتخاب کنید.",
   'install.open_failed_chromium': "پانل کناری باز نشد. Alt+Shift+W را فشار دهید یا منوی Extensions مرورگر خود را باز کرده و WebBrain را انتخاب کنید.",
   'install.open_failed_firefox': "نوار کناری باز نشد. Firefox Extensions را باز کرده و WebBrain را انتخاب کنید.",
+  'install.showcase.ask.title': "از هر صفحه‌ای بپرسید. بخش مفید را بگیرید.",
+  'install.showcase.ask.body': "پاسخ‌های تمیز از صفحه‌های شلوغ. به‌طور پیش‌فرض فقط خواندنی.",
+  'install.showcase.act.title': "به مرورگر بگویید چه کار کند.",
+  'install.showcase.model.title': "از مدلی استفاده کنید که به آن اعتماد دارید.",
+  'install.showcase.model.body': "محلی، ابری، یا کلیدهای خودتان — هر زمان عوض کنید.",
+  'install.showcase.apocalypse.body': "دانش آفلاین، تحت کنترل شما. ضروریات را تا می‌توانید دانلود کنید.",
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "قطع شد",
