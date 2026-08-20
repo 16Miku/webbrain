@@ -2513,6 +2513,28 @@ test('research escalation Stop on the ChatGPT tab aborts the source run', () => 
   }
 });
 
+test('research escalation source mapping ignores nullish run state', () => {
+  for (const [label, source] of [['chrome', sidepanelSources[0]], ['firefox', sidepanelSources[1]]]) {
+    assert.match(source, /function researchEscalationSourceTabIdFromState\(state\)/, `${label}: helper missing`);
+    assert.equal(
+      source.split('const sourceTabId = researchEscalationSourceTabIdFromState(state);').length - 1,
+      2,
+      `${label}: init and switchToTab should both use the null-safe helper`,
+    );
+    const start = source.indexOf('function researchEscalationSourceTabIdFromState(');
+    const end = source.indexOf('\n}\n', start);
+    assert.ok(start >= 0 && end > start, `${label}: helper body missing`);
+    const fromState = Function(`${source.slice(start, end + 2)}\nreturn researchEscalationSourceTabIdFromState;`)();
+    assert.equal(fromState(null), null, `${label}: missing state became a tab id`);
+    assert.equal(fromState({}), null, `${label}: missing mapping became a tab id`);
+    assert.equal(fromState({ researchEscalationSourceTabId: null }), null, `${label}: null mapping became tab 0`);
+    assert.equal(fromState({ researchEscalationSourceTabId: undefined }), null, `${label}: undefined mapping became a tab id`);
+    assert.equal(fromState({ researchEscalationSourceTabId: '' }), null, `${label}: empty mapping became tab 0`);
+    assert.equal(fromState({ researchEscalationSourceTabId: 17 }), 17, `${label}: helper mapping should stay numeric`);
+    assert.equal(fromState({ researchEscalationSourceTabId: '17' }), 17, `${label}: string helper mapping should stay numeric`);
+  }
+});
+
 test('research escalation cleanup of the ChatGPT tab aborts the source run', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -2537,6 +2559,17 @@ test('research escalation cleanup of the ChatGPT tab aborts the source run', asy
       if (previousApi === undefined) delete globalThis[apiName];
       else globalThis[apiName] = previousApi;
     }
+  }
+});
+
+test('research escalation cleanup of the source tab aborts the ChatGPT wait', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent._bindResearchEscalationTab(17, 99);
+    agent._cleanupTab(17);
+    assert.equal(agent.abortFlags.get(17), true, `${label}: closing the source tab did not abort the source run`);
+    assert.equal(agent.abortFlags.get(99), true, `${label}: closing the source tab did not abort the helper`);
+    assert.equal(agent._researchEscalationAborted(17, 99), true, `${label}: wait loop would ignore a closed source tab`);
   }
 });
 

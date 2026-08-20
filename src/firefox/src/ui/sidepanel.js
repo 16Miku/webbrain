@@ -2092,6 +2092,13 @@ function sameTabId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
+function researchEscalationSourceTabIdFromState(state) {
+  const raw = state?.researchEscalationSourceTabId;
+  if (raw == null || raw === '') return null;
+  const sourceTabId = Number(raw);
+  return Number.isFinite(sourceTabId) ? sourceTabId : null;
+}
+
 function normalizePlanReviewTabId(tabId = currentTabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) ? numericTabId : null;
@@ -3973,8 +3980,8 @@ async function init() {
   let initialTabId = tab?.id;
   try {
     const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
-    const sourceTabId = Number(state?.researchEscalationSourceTabId);
-    if (Number.isFinite(sourceTabId)) initialTabId = sourceTabId;
+    const sourceTabId = researchEscalationSourceTabIdFromState(state);
+    if (sourceTabId != null) initialTabId = sourceTabId;
   } catch {}
   currentTabId = initialTabId;
   renderedTabId = currentTabId;
@@ -4132,8 +4139,8 @@ async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
   try {
     const state = await sendToBackground('agent_run_state', { tabId: newTabId });
-    const sourceTabId = Number(state?.researchEscalationSourceTabId);
-    if (Number.isFinite(sourceTabId)
+    const sourceTabId = researchEscalationSourceTabIdFromState(state);
+    if (sourceTabId != null
         && (sameTabId(currentTabId, sourceTabId)
           || sameTabId(renderedTabId, sourceTabId)
           || isTabProcessing(sourceTabId)
