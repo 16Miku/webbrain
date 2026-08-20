@@ -195,7 +195,9 @@ user.
 ## Licensing
 
 The Emergency Box corpus, SQLite, fflate, and Transformers.js are all
-permissively licensed and do not affect WebBrain's MIT license.
+permissively licensed and do not independently impose copyleft terms. WebBrain
+33.0.0 and later is nevertheless GPL-3.0-or-later because the distributed
+extension integrates the GPL-licensed Xapian/libzim runtime.
 
 The Xapian/libzim full-text Wikipedia runtime is vendored and GPL. See
 [offline-rag-licensing.md](offline-rag-licensing.md) for the decision record,

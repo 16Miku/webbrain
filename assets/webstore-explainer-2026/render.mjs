@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -140,7 +140,7 @@ function hero(light = false) {
           Automate. <span style="opacity:0.85;">Any LLM.</span>
         </div>
         <div style="display:flex; gap:10px; margin-top:30px;">
-          ${['Chromium browsers and Firefox', 'Local or cloud models', 'MIT licensed'].map((c) => `
+          ${['Chromium browsers and Firefox', 'Local or cloud models', 'GPL-3.0+ licensed'].map((c) => `
             <span style="padding:11px 16px; border:1px solid var(--border); background:var(--panel);
               border-radius:999px; font-family:var(--mono); font-size:13.5px; font-weight:650;
               letter-spacing:0.05em; text-transform:uppercase; color:var(--muted);">${c}</span>`).join('')}
@@ -159,7 +159,7 @@ function hero(light = false) {
 }
 
 /* ---------- 02 TELL THE BROWSER (command front and center) ---------- */
-function actScene() {
+function actScene(onboarding = false) {
   const steps = [
     ['done', 'Found the flight search form'],
     ['done', 'Typed “Istanbul (IST)”'],
@@ -169,12 +169,15 @@ function actScene() {
   return {
     scale: 1.08,
     file: '02-tell-the-browser.png',
+    onboarding,
     theme: 'act',
     body: `
       <div class="stack">
-      <div style="text-align:center;">
-        <h1 style="margin:0; font-size:58px;">Tell the browser what to do.</h1>
-      </div>
+      ${onboarding
+        ? '<div aria-hidden="true" style="height:61px;"></div>'
+        : `<div style="text-align:center;">
+            <h1 style="margin:0; font-size:58px;">Tell the browser what to do.</h1>
+          </div>`}
 
       <!-- The command, front and center -->
       <div style="width:940px; margin:40px auto 0; display:flex; align-items:center; gap:16px;
@@ -246,20 +249,21 @@ function actScene() {
 }
 
 /* ---------- 03 ASK ANY PAGE (cropped to the answer panel) ---------- */
-function askScene() {
+function askScene(onboarding = false) {
   // Source 1280x800. Relevant UI: sidebar below header x 905-1280, y 122-474. Scale 1.62.
   const s = 1.62;
   const x = 906, y = 122, w = 374, h = 352;
   return {
     scale: 1.03,
     file: '03-ask-any-page.png',
+    onboarding,
     theme: 'read',
     body: `
       <div style="display:grid; grid-template-columns: 480px 1fr; gap:48px; align-items:center; height:100%;">
-        <div>
+        <div>${onboarding ? '' : `
           <h1>Ask any page.<br>Get the useful part.</h1>
           <div class="sub">Clean answers from messy pages. Read-only by default.</div>
-        </div>
+        `}</div>
         <div style="display:flex; justify-content:center;">
           <div class="crop-frame" style="width:${w * s}px; height:${h * s}px; transform:rotate(1.1deg); background:#252838;">
             <img src="${assets.ask}" style="width:${1280 * s}px; margin-left:${-x * s}px; margin-top:${-y * s}px;" alt="">
@@ -270,7 +274,7 @@ function askScene() {
 }
 
 /* ---------- 04 ANY LLM (large provider rows, cropped to their useful content) ---------- */
-function modelsScene() {
+function modelsScene(onboarding = false) {
   // Source 1472x976. Each provider card is isolated so the screenshot's beige
   // backdrop disappears. The left 924px carries the useful identity/model data;
   // the masked edge lets it fade naturally into the slide rather than looking cut.
@@ -285,10 +289,11 @@ function modelsScene() {
   return {
     scale: 1.04,
     file: '04-any-llm.png',
+    onboarding,
     theme: 'provider',
     body: `
       <div style="display:grid; grid-template-columns: 430px 1fr; gap:28px; align-items:center; height:100%;">
-        <div>
+        <div>${onboarding ? '' : `
           <h1>Use the model you trust.</h1>
           <div class="sub">Local, cloud, or your own keys &mdash; switch anytime.</div>
           <div style="display:inline-flex; align-items:center; margin-top:38px; padding:11px 20px;
@@ -296,7 +301,7 @@ function modelsScene() {
             color:var(--muted); font-size:15px; font-weight:700; box-shadow:0 8px 24px rgba(24,52,90,0.06);">
             100+ providers are supported!
           </div>
-        </div>
+        `}</div>
         <div style="display:grid; gap:10px; justify-content:start; align-content:center;">
           ${rowStarts.map((y, index) => `
             <div style="position:relative; width:${displayW}px; height:${displayH}px; overflow:hidden;
@@ -397,7 +402,7 @@ function proofScene() {
     [icon('<path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.2.3a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2ZM9 13.2c-3.4 0-6.6 1.75-6.6 3.9V20h13.2v-2.9c0-2.15-3.2-3.9-6.6-3.9Zm7.2.2c-.62 0-1.2.05-1.74.14 1.2.94 1.94 2.11 1.94 3.56V20h5.2v-2.5c0-1.9-2.5-3.1-5.4-3.1Z"/>', 'var(--accent)'),
       '45+', 'contributors'],
     [icon('<path d="M12 2.4c.6 0 1.1.5 1.1 1.1v.9l6.4 1.2a1 1 0 0 1-.18 1.98l-.5-.02 2.6 5.9c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.55-5.8-3.67-.68V18.6h3.3a1.1 1.1 0 1 1 0 2.2H7.6a1.1 1.1 0 1 1 0-2.2h3.3V6.81l-3.67.68 2.55 5.8c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.6-5.9-.5.02a1 1 0 0 1-.18-1.98l6.4-1.2v-.9c0-.6.5-1.1 1.1-1.1Zm5.82 7.7-1.5 3.42h3l-1.5-3.42Zm-11.64 0-1.5 3.42h3l-1.5-3.42Z"/>', 'var(--accent)'),
-      'MIT', 'licensed, free forever'],
+      'GPL-3.0+', 'open-source forever'],
   ];
   // Decorative contributor avatars: initials over a fixed palette.
   const avatars = [
@@ -461,7 +466,7 @@ function proofScene() {
 }
 
 /* ---------- 08 APOCALYPSE MODE ---------- */
-function apocalypseScene(nuke = false) {
+function apocalypseScene({ nuke = false, onboarding = false } = {}) {
   const modules = [
     ['T', 'Text Model', 'ON DEVICE · 2.6B', 'LOCAL'],
     ['V', 'Vision Model', 'ON DEVICE · SCREENSHOTS', 'LOCAL'],
@@ -471,10 +476,11 @@ function apocalypseScene(nuke = false) {
   return {
     scale: 1.08,
     file: nuke ? '09-apocalypse-mode-nuke.png' : '08-apocalypse-mode.png',
+    onboarding,
     theme: 'apocalypse',
     body: `
       <div style="display:grid; grid-template-columns:440px 1fr; gap:48px; align-items:center; height:100%; padding-left:16px;">
-        <div>
+        <div>${onboarding ? '' : `
           <div style="display:inline-flex; align-items:center; gap:10px; margin-bottom:20px;">
             ${nuke ? '' : '<span style="width:10px; height:10px; border-radius:99px; background:var(--accent2); box-shadow:0 0 12px var(--accent2), 0 0 24px rgba(247,189,95,0.3);"></span>'}
             <span style="font-family:var(--mono); font-size:15px; font-weight:650; color:var(--accent);
@@ -484,7 +490,7 @@ function apocalypseScene(nuke = false) {
           <div class="sub" style="font-size:25px; margin-top:24px; color:var(--muted); max-width:420px;">
             Offline knowledge, under your control. Download the essentials while you still can.
           </div>
-        </div>
+        `}</div>
         <div style="display:flex; justify-content:center;">
           <div style="width:440px; background:rgba(0,0,0,0.45); border:1px solid var(--border);
             border-radius:22px; padding:0; overflow:hidden; box-shadow:var(--shadow);">
@@ -524,8 +530,11 @@ function apocalypseScene(nuke = false) {
 const scenes = [
   hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
   apocalypseScene(),
-  apocalypseScene(true),
+  apocalypseScene({ nuke: true }),
   hero(true), planScene(true),
+  // The install page renders localized HTML over these copy-free variants.
+  // Keep the Web Store artwork above unchanged: its English copy is intentional.
+  actScene(true), askScene(true), modelsScene(true), apocalypseScene({ onboarding: true }),
 ];
 
 function html(scene) {
@@ -539,7 +548,10 @@ async function renderAll() {
   await mkdir(DIR, { recursive: true });
   const browser = await chromium.launch();
   const only = new Set((process.env.ONLY ?? '').split(',').map((name) => name.trim()).filter(Boolean));
-  for (const scene of scenes.filter((candidate) => only.size === 0 || only.has(candidate.file))) {
+  for (const scene of scenes.filter((candidate) => {
+    const renderName = candidate.onboarding ? `onboarding/${candidate.file}` : candidate.file;
+    return only.size === 0 || only.has(renderName);
+  })) {
     const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
     await page.setContent(html(scene), { waitUntil: 'load' });
     await page.evaluate(async () => {
@@ -549,9 +561,19 @@ async function renderAll() {
       })));
       await document.fonts.ready;
     });
-    await page.screenshot({ path: path.join(DIR, scene.file) });
+    const outputPaths = scene.onboarding
+      ? ['chrome', 'firefox'].map((browserName) => path.join(
+          ROOT, 'src', browserName, 'src', 'ui', 'install-assets', scene.file,
+        ))
+      : [path.join(DIR, scene.file)];
+    await mkdir(path.dirname(outputPaths[0]), { recursive: true });
+    await page.screenshot({ path: outputPaths[0] });
+    for (const outputPath of outputPaths.slice(1)) {
+      await mkdir(path.dirname(outputPath), { recursive: true });
+      await copyFile(outputPaths[0], outputPath);
+    }
     await page.close();
-    console.log('rendered', scene.file);
+    console.log('rendered', scene.onboarding ? `onboarding/${scene.file}` : scene.file);
   }
   await browser.close();
 }

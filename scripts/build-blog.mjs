@@ -1590,7 +1590,7 @@ ${sharedHead({
 ${post.bodyHtml}
 
     <div class="author-box">
-      Written by <a href="${escAttr(post.authorUrl)}" target="_blank" rel="noopener">${escHtml(post.author)}</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+      Written by <a href="${escAttr(post.authorUrl)}" target="_blank" rel="noopener">${escHtml(post.author)}</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
     </div>
   </article>
 

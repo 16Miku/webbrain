@@ -160,8 +160,8 @@
     },
     {
       "file": "scripts/build-zim-xapian.mjs",
-      "bytes": 28097,
-      "sha256": "be4cb17a7ee8e810f72d6405eeb4e9beac358ee477d0e7617211a15437620736",
+      "bytes": 28104,
+      "sha256": "06d7a105531c7af42296c066f6608fcaa5865c064104aa25333f4814872b11c2",
       "note": "exact Docker build driver used to produce the shipped WebAssembly runtime"
     },
     {

@@ -15060,6 +15060,38 @@ test('extension package roots declare the combined GPL release license', () => {
   }
 });
 
+test('version 33 licensing boundary is consistent across project metadata and FAQ copy', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+  assert.equal(packageJson.version, '33.0.0');
+  assert.equal(packageJson.license, 'GPL-3.0-or-later');
+  assert.equal(packageLock.version, '33.0.0');
+  assert.equal(packageLock.packages[''].license, 'GPL-3.0-or-later');
+
+  for (const browser of ['chrome', 'firefox']) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${browser}/manifest.json`), 'utf8'));
+    assert.equal(manifest.version, '33.0.0', `${browser}: manifest version should match the GPL transition release`);
+  }
+
+  const rootLicense = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
+  assert.match(rootLicense, /WebBrain 33\.0\.0 and later/);
+  assert.match(rootLicense, /GNU GENERAL PUBLIC LICENSE\s+Version 3/);
+  assert.match(rootLicense, /releases before 33\.0\.0 remain available under the MIT License/i);
+  assert.match(fs.readFileSync(path.join(ROOT, 'LICENSES/MIT.txt'), 'utf8'), /^MIT License/);
+
+  for (const subproject of ['mcp-server', 'lmstudio-plugin']) {
+    const metadata = JSON.parse(fs.readFileSync(path.join(ROOT, subproject, 'package.json'), 'utf8'));
+    assert.equal(metadata.license, 'MIT', `${subproject}: independent package should retain its stated license`);
+    assert.match(fs.readFileSync(path.join(ROOT, subproject, 'LICENSE'), 'utf8'), /^MIT License/);
+  }
+
+  const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
+  assert.equal(english['faq.offline_licensing.q'], 'Why is WebBrain 33.0.0 and later GPL-licensed?');
+  assert.match(english['faq.offline_licensing.a_html'], /bundles and integrates the GPL-licensed Xapian\/libzim WebAssembly runtime/);
+  assert.match(english['faq.offline_licensing.a_html'], /releases before 33\.0\.0 remain MIT-licensed/i);
+  assert.doesNotMatch(english['faq.offline_licensing.a_html'], /open licensing question/i);
+});
+
 test('build-zip rejects store-obscuring JavaScript constructions', () => {
   assert.doesNotThrow(() => assertStoreReviewableJavaScript(
     "return '<script>' + content + '</script>';\nconst scheme = 'javascript:';",
@@ -32252,7 +32284,9 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.match(css, /@media \(max-width: 620px\)/, `${label}: install guide should adapt to narrow windows`);
     assert.match(css, /font-family: "Bricolage Grotesque"/, `${label}: install guide should carry the explainer display typography into the product`);
     assert.match(css, /\.feature-panels \{[\s\S]*?aspect-ratio: 8 \/ 5;/, `${label}: showcase should preserve the explainer artwork without distortion`);
-    assert.match(css, /\.feature-copy \{[\s\S]*?position: absolute;/, `${label}: localized showcase copy should overlay the English artwork text`);
+    assert.match(css, /\.feature-copy \{[\s\S]*?position: absolute;/, `${label}: localized showcase copy should overlay the copy-free artwork`);
+    assert.match(css, /\.shortcut-hint \{[\s\S]*?font-size: 14px;[\s\S]*?font-weight: 520;/, `${label}: keyboard shortcut guidance should remain comfortably readable`);
+    assert.match(css, /kbd \{[\s\S]*?padding: 3px 7px;[\s\S]*?font-size: 11px;[\s\S]*?font-weight: 650;/, `${label}: shortcut keycaps should carry clear visual emphasis`);
     assert.match(css, /\.open-panel-button:disabled/, `${label}: install CTA should visibly communicate its unavailable state`);
     assert.doesNotMatch(css, /\.open-panel-button\.is-open(?:\s|,|\{)/, `${label}: opening the panel should not look like setup completion`);
     assert.doesNotMatch(installJs, /classList\.(?:add|remove)\('is-open'\)/, `${label}: install logic should not apply the retired success-green state`);
@@ -32383,6 +32417,23 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
         { type: 'WB_INSTALL_PANEL_OPENED', tabId: 42 },
       ], 'firefox: a successful install-page open should request background group bookkeeping');
     }
+  }
+
+  const explainerRenderer = fs.readFileSync(path.join(ROOT, 'assets/webstore-explainer-2026/render.mjs'), 'utf8');
+  assert.match(explainerRenderer, /actScene\(true\), askScene\(true\), modelsScene\(true\), apocalypseScene\(\{ onboarding: true \}\)/, 'install showcase should render dedicated copy-free artwork');
+  assert.match(explainerRenderer, /scene\.onboarding[\s\S]*?'install-assets'/, 'copy-free artwork should be written only to extension install assets');
+  assert.match(explainerRenderer, /candidate\.onboarding \? `onboarding\/\$\{candidate\.file\}` : candidate\.file/, 'onboarding-only renders should be independently selectable without replacing Web Store screenshots');
+  for (const asset of [
+    '02-tell-the-browser.png',
+    '03-ask-any-page.png',
+    '04-any-llm.png',
+    '08-apocalypse-mode.png',
+  ]) {
+    const storeArtwork = fs.readFileSync(path.join(ROOT, 'assets/webstore-explainer-2026', asset));
+    const chromeArtwork = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install-assets', asset));
+    const firefoxArtwork = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/install-assets', asset));
+    assert.ok(chromeArtwork.equals(firefoxArtwork), `${asset}: Chrome and Firefox should package the same copy-free artwork`);
+    assert.ok(!chromeArtwork.equals(storeArtwork), `${asset}: onboarding artwork must not reuse or replace the English Web Store screenshot`);
   }
 
   const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');

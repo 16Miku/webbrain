@@ -57,7 +57,7 @@
       "name": "Is WebBrain a free alternative to Claude's browser plugin?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. WebBrain provides similar AI browser agent capabilities — reading pages, extracting data, clicking buttons, filling forms, and automating multi-step workflows. Unlike Claude's proprietary browser plugin which requires a Claude Pro subscription and only works with Anthropic's models, WebBrain is completely free, open-source (MIT license), and supports multiple LLM providers including local models that run entirely on your machine."
+        "text": "Yes. WebBrain provides similar AI browser agent capabilities — reading pages, extracting data, clicking buttons, filling forms, and automating multi-step workflows. Unlike Claude's proprietary browser plugin which requires a Claude Pro subscription and only works with Anthropic's models, WebBrain is completely free, open-source (GPL-3.0-or-later license), and supports multiple LLM providers including local models that run entirely on your machine."
       }
     },
     {
@@ -278,10 +278,10 @@
     },
     {
       "@type": "Question",
-      "name": "Does the offline RAG feature affect WebBrain's MIT license?",
+      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license. There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the licensing decision record for details."
+        "text": "WebBrain releases before 33.0.0 remain MIT-licensed. WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
       }
     },
     {
@@ -297,7 +297,7 @@
       "name": "Can I contribute to WebBrain?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Absolutely! WebBrain is MIT-licensed and welcomes contributions. Check out the GitHub repository for issues, feature requests, and contribution guidelines."
+        "text": "Absolutely! WebBrain is GPL-3.0-or-later-licensed and welcomes contributions. Check out the GitHub repository for issues, feature requests, and contribution guidelines."
       }
     }
   ]
@@ -549,7 +549,7 @@
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>Is WebBrain a free alternative to Claude&#39;s browser plugin?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Yes. WebBrain provides similar AI browser agent capabilities — reading pages, extracting data, clicking buttons, filling forms, and automating multi-step workflows. Unlike Claude's proprietary browser plugin which requires a Claude Pro subscription and only works with Anthropic's models, WebBrain is completely free, open-source (MIT license), and supports multiple LLM providers including local models that run entirely on your machine.</p></div>
+        <div class="faq-answer"><p>Yes. WebBrain provides similar AI browser agent capabilities — reading pages, extracting data, clicking buttons, filling forms, and automating multi-step workflows. Unlike Claude's proprietary browser plugin which requires a Claude Pro subscription and only works with Anthropic's models, WebBrain is completely free, open-source (GPL-3.0-or-later license), and supports multiple LLM providers including local models that run entirely on your machine.</p></div>
       </details>
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>How does WebBrain compare to OpenClaw, Browser-Use, and other AI agent frameworks?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -569,7 +569,7 @@
       </details>
       <details class="faq-question" id="contribute" data-faq-item>
         <summary><span>Can I contribute to WebBrain?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Absolutely! WebBrain is MIT-licensed and welcomes contributions. Check out the <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub repository</a> for issues, feature requests, and contribution guidelines.</p></div>
+        <div class="faq-answer"><p>Absolutely! WebBrain is GPL-3.0-or-later-licensed and welcomes contributions. Check out the <a href="https://github.com/webbrain-one/webbrain" target="_blank">GitHub repository</a> for issues, feature requests, and contribution guidelines.</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
@@ -692,8 +692,8 @@
         <div class="faq-answer"><p>No. WebBrain does not send raw HTML or a raw DOM dump by default. It starts with the page URL and title, matching site guidance, and an optional viewport screenshot when vision is enabled.</p><p>When a task needs page content, WebBrain reads it on demand as a reduced semantic accessibility tree or extracted text. Reads are visibility-filtered where appropriate, character-capped, and paginated. Raw page-source access is available only in Dev mode.</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Does the offline RAG feature affect WebBrain&#39;s MIT license?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>No. The Emergency Box corpus is public domain, and the vendored libraries used for offline search (SQLite, fflate, Transformers.js, ONNX Runtime) are all permissively licensed under MIT or Apache-2.0. None of these change WebBrain's MIT license.</p><p>There is one open licensing question: full-text Wikipedia search via the Xapian/libzim WebAssembly runtime. That runtime is GPL-licensed, and bundling it would require a repository-owner decision on GPL compliance, corresponding source publication, and any impact on WebBrain's license. Until that decision is made, full-text Wikipedia ZIM search is not included — title-only search remains available instead. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain releases before 33.0.0 remain MIT-licensed. WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
       </details>
     </section>
     </main>

@@ -110,13 +110,19 @@ Decision/reference: branch `gpld`
 
 ### Licensing strategy for the combined work
 
-MIT and GPL do not coexist inside one distributed package. MIT code can be taken
-into a GPL work and the result is GPL, so the strategy is:
+MIT-licensed code can be incorporated into a GPL work, but a combined work that
+integrates GPL components must be distributed under compatible GPL terms. The
+project therefore uses this version boundary:
 
-- The repository stays MIT. Every file that is MIT today remains MIT, and
-  downstream users can take those files under MIT.
-- Any **release artifact** that bundles the Xapian/libzim Wasm is conveyed under
-  **GPL-3.0-or-later**. That covers the Chrome, Edge, and Firefox packages.
+- WebBrain **33.0.0 and later**, including the repository and Chrome, Edge, and
+  Firefox packages, is conveyed under **GPL-3.0-or-later**.
+- Releases before 33.0.0 remain available under the MIT license that applied
+  when they were published. The historical text is retained at
+  [`LICENSES/MIT.txt`](../LICENSES/MIT.txt).
+- Independently published subprojects can retain a different license when they
+  are separate works and carry their own license notice. The MCP server and
+  LM Studio plugin remain MIT-licensed under their local `LICENSE` files.
+- Third-party files remain governed by their own notices.
 
 GPL-3.0 is the resolved version because javascript-libzim is GPL-3.0-or-later
 while libzim and Xapian are GPL-2.0-or-later, and "or later" lets both move up.
@@ -127,7 +133,7 @@ release, because the whole strategy rests on it.
 
 A user disabling Apocalypse Mode does not change the license of what was
 distributed. If the Wasm is in the package, the package is GPL. Shipping an
-MIT-only build would require a separate artifact without the Wasm, not a
+permissively licensed build would require a separate artifact without the Wasm, not a
 settings toggle.
 
 ### Build provenance: use the source path, not the prebuilt one

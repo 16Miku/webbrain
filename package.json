@@ -1,6 +1,6 @@
 {
   "name": "webbrain",
-  "version": "32.2.3",
+  "version": "33.0.0",
   "description": "Open-source AI browser agent \u2014 chat with pages, automate tasks, multi-provider LLM support.",
   "private": true,
   "type": "module",
@@ -37,5 +37,5 @@
     "type": "git",
     "url": "https://github.com/webbrain-one/webbrain.git"
   },
-  "license": "MIT"
+  "license": "GPL-3.0-or-later"
 }

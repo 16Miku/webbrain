@@ -132,7 +132,7 @@ BM25 评分权重：`body` 7、`search_terms` 1、`locator` 0.6、`collection` 2
 
 ## 许可证
 
-紧急语料库、SQLite、fflate 和 Transformers.js 均为宽松许可证，不影响 WebBrain 的 MIT 许可证。
+紧急语料库、SQLite、fflate 和 Transformers.js 均采用宽松许可证，本身不会引入 copyleft 条款。尽管如此，WebBrain 33.0.0 及更高版本仍采用 GPL-3.0-or-later，因为发布的扩展集成了采用 GPL 许可证的 Xapian/libzim 运行时。
 
 Xapian/libzim Wikipedia 全文运行时已 vendored，许可证为 GPL。详见 [offline-rag-licensing.md](offline-rag-licensing.md)。
 

@@ -208,7 +208,9 @@ les données de corpus sont téléchargés par l'utilisateur.
 ## Licence
 
 Le corpus Emergency Box, SQLite, fflate et Transformers.js sont tous sous
-licences permissives et n'affectent pas la licence MIT de WebBrain.
+licences permissives et n'imposent pas eux-mêmes de copyleft. WebBrain 33.0.0
+et les versions ultérieures sont néanmoins sous GPL-3.0-or-later, car
+l'extension distribuée intègre le runtime Xapian/libzim sous GPL.
 
 Le runtime Xapian/libzim pour la recherche full-text Wikipedia est vendored et
 GPL. Voir [offline-rag-licensing.md](offline-rag-licensing.md) pour la décision,

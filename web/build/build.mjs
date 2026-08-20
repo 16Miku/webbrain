@@ -372,7 +372,7 @@ function buildSoftwareJsonLd(dict, locale) {
     downloadUrl: 'https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb',
     softwareVersion: dict['meta.software_version'],
     author: { '@type': 'Person', name: 'Emre Sokullu', url: 'https://emresokullu.com' },
-    license: 'https://opensource.org/licenses/MIT',
+    license: 'https://www.gnu.org/licenses/gpl-3.0.html',
     isAccessibleForFree: true,
     image: LOGO_IMAGE_URL,
     screenshot: SOCIAL_IMAGE_URL,

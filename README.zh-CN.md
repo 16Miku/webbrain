@@ -20,7 +20,7 @@
   <a href="README.fr.md">Français</a> ·
   <a href="docs/zh-CN/">文档</a> ·
   <a href="https://webbrain.one">官网</a> ·
-  <a href="LICENSE">MIT 许可证</a>
+  <a href="LICENSE">GPL-3.0-or-later</a>
 </p>
 
 ![WebBrain 阅读页面、填写表单并下载文件](assets/webbrain-demo.gif)
@@ -261,4 +261,9 @@ lms clone webbrain/web-tools
 
 ## 许可证
 
-MIT — 由 [Emre Sokullu](https://emresokullu.com) 构建
+WebBrain 33.0.0 及更高版本采用 [GPL-3.0-or-later](LICENSE) 许可证，因为发布的
+浏览器扩展捆绑并集成了采用 GPL 许可证的 Xapian/libzim WebAssembly 运行时。
+33.0.0 之前发布的版本仍采用其发布时适用的 MIT 许可证；历史许可证文本保存在
+[LICENSES/MIT.txt](LICENSES/MIT.txt)。
+
+由 [Emre Sokullu](https://emresokullu.com) 构建。

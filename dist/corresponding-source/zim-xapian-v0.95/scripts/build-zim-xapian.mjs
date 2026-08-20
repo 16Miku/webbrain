@@ -604,8 +604,8 @@ ${rows}${fallback}
 ## License
 
 This runtime is GPL. Any release artifact that bundles it is conveyed under
-**GPL-3.0-or-later**, which is why the store packages carry that license even
-though the repository itself stays MIT. Complete corresponding source for these
+**GPL-3.0-or-later**. WebBrain 33.0.0 and later uses that license because the
+distributed extension integrates this runtime. Complete corresponding source for these
 binaries is published as a \`webbrain-zim-xapian-*-corresponding-source.zip\`
 release asset and must accompany every release.
 

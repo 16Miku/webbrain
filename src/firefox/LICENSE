@@ -1,12 +1,13 @@
-WebBrain release-package license notice
+WebBrain 33.0.0 release-package license notice
 
 Copyright (c) 2026 Emre Sokullu
 
-This packaged browser extension includes the vendored Xapian/libzim WebAssembly
-runtime and is conveyed as a combined work under GPL-3.0-or-later. Individual
-repository source files remain available under the notices attached to those
-files and the repository-level LICENSE. Complete corresponding source for the
-vendored runtime is published alongside each WebBrain release.
+This packaged browser extension includes and integrates the vendored
+Xapian/libzim WebAssembly runtime and is conveyed as a
+combined work under GPL-3.0-or-later. WebBrain releases before 33.0.0 remain available under the
+MIT License that applied when they were published. Third-party files remain
+governed by their own notices. Complete corresponding source for the vendored
+runtime is published alongside each WebBrain release.
 
 The unmodified GNU GPL version 3 license text follows.
 
