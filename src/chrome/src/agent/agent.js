@@ -2084,7 +2084,8 @@ export class Agent extends LoopDetector {
     // like the local cost cap so the agent does not retry it and then emit a
     // second generic error card beside the actionable Subscribe prompt.
     return err?.code === 'WB_COST_ALLOWANCE'
-      || /(?:Subscribe for more usage|Upgrade to WebBrain Plus):\s*https?:\/\/\S+|Daily WebBrain Plus allowance used/i.test(String(err?.message || ''));
+      || /^webbrain_cloud_(?:free|paid|plus)_tier_exceeded$/i.test(String(err?.code || ''))
+      || /(?:Subscribe for more usage|Upgrade to WebBrain Plus):\s*https?:\/\/\S+/i.test(String(err?.message || ''));
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {

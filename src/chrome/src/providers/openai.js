@@ -235,6 +235,16 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return body;
   }
 
+  _httpError(status, body, prefix) {
+    const error = new Error(`${prefix}: ${this._formatHttpError(status, body)}`);
+    error.httpStatus = status;
+    try {
+      const providerCode = JSON.parse(body || '{}')?.error?.code;
+      if (typeof providerCode === 'string' && providerCode) error.code = providerCode;
+    } catch { /* keep the formatted HTTP error without provider metadata */ }
+    return error;
+  }
+
   _shouldRequestStreamUsage() {
     const providerName = (this.config.providerName || '').toLowerCase();
     if (this.config.category === 'local') return false;
@@ -735,7 +745,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = (await res.text()).slice(0, 500); } catch {}
-      throw new Error(`${this.name} error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      throw this._httpError(res.status, err, `${this.name} error ${res.status}`);
     }
     let data;
     try { data = await res.json(); } catch {
@@ -760,7 +770,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
     if (!res.ok) {
       const err = await res.text();
-      const streamError = new Error(`${this.name} stream error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      const streamError = this._httpError(res.status, err, `${this.name} stream error ${res.status}`);
       streamError.isResponsesStreamError = true;
       throw streamError;
     }
@@ -905,7 +915,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = (await res.text()).slice(0, 500); } catch {}
-      throw new Error(`${this.name} error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      throw this._httpError(res.status, err, `${this.name} error ${res.status}`);
     }
 
     let data;
@@ -945,7 +955,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`${this.name} stream error ${res.status}: ${this._formatHttpError(res.status, err)}`);
+      throw this._httpError(res.status, err, `${this.name} stream error ${res.status}`);
     }
 
     if (!res.body?.getReader) {

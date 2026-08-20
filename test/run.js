@@ -54888,8 +54888,11 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   );
 });
 
-test('WebBrain Cloud 402 formatting distinguishes subscribe, Plus upgrade, and Plus exhaustion', () => {
-  for (const [label, Provider] of [['chrome', OpenAIProviderCh], ['firefox', OpenAIProviderFx]]) {
+test('WebBrain Cloud 402 formatting and localized billing actions distinguish every quota tier', async () => {
+  for (const [label, Provider, AgentClass] of [
+    ['chrome', OpenAIProviderCh, AgentCh],
+    ['firefox', OpenAIProviderFx, AgentFx],
+  ]) {
     const provider = new Provider({
       providerName: 'webbrain-cloud',
       deviceGuid: 'device-guid',
@@ -54906,10 +54909,31 @@ test('WebBrain Cloud 402 formatting distinguishes subscribe, Plus upgrade, and P
     }));
     assert.match(upgrade, /Upgrade to WebBrain Plus: https:\/\/api\.webbrain\.one\/upgrade/, `${label}: base paid quota should offer the Plus upgrade flow`);
 
-    const plus = provider._formatHttpError(402, JSON.stringify({
-      error: { message: 'Daily WebBrain Plus allowance used.', code: 'webbrain_cloud_plus_tier_exceeded' },
-    }));
-    assert.equal(plus, 'Daily WebBrain Plus allowance used.', `${label}: Plus exhaustion must not offer a duplicate subscription action`);
+    const plusBody = JSON.stringify({
+      error: { message: 'Votre quota Plus quotidien est épuisé.', code: 'webbrain_cloud_plus_tier_exceeded' },
+    });
+    const plus = provider._formatHttpError(402, plusBody);
+    assert.equal(plus, 'Votre quota Plus quotidien est épuisé.', `${label}: Plus exhaustion must not offer a duplicate subscription action`);
+    const plusError = provider._httpError(402, plusBody, 'webbrain-cloud error 402');
+    assert.equal(plusError.code, 'webbrain_cloud_plus_tier_exceeded', `${label}: provider error code should survive HTTP formatting`);
+    assert.equal(new AgentClass({})._isCostAllowanceError(plusError), true, `${label}: localized Plus exhaustion should remain terminal by stable code`);
+  }
+
+  const localeCodes = [
+    'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
+  ];
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+  for (const locale of localeCodes) {
+    const chromeLocale = (await import(pathToFileURL(path.join(ROOT, `src/chrome/src/ui/locales/${locale}.js`)).href)).default;
+    const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
+    for (const key of ['sp.subscribe.upgrade', 'sp.subscribe.resume_upgrade']) {
+      assert.equal(chromeLocale[key], firefoxLocale[key], `${locale}: ${key} should match across browsers`);
+      assert.ok(chromeLocale[key]?.trim(), `${locale}: ${key} should not be empty`);
+      if (locale !== 'en') {
+        assert.notEqual(chromeLocale[key], english[key], `${locale}: ${key} should not fall back to English`);
+      }
+    }
   }
 });
 
