@@ -409,11 +409,12 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
 export async function pixelateDataUrl(dataUrl, regions, opts = {}) {
   if (!dataUrl || !Array.isArray(regions) || regions.length === 0) return dataUrl;
   const block = Number.isFinite(opts.block) && opts.block > 0 ? Math.floor(opts.block) : 10;
+  let bmp = null;
   try {
     const mime = /^data:(image\/[a-z]+);base64,/.exec(dataUrl)?.[1] || 'image/png';
     const resp = await fetch(dataUrl);
     const blob = await resp.blob();
-    const bmp = await createImageBitmap(blob);
+    bmp = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(bmp.width, bmp.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) return dataUrl;
@@ -445,5 +446,7 @@ export async function pixelateDataUrl(dataUrl, regions, opts = {}) {
     return `data:${mime};base64,${btoa(bin)}`;
   } catch {
     return dataUrl;
+  } finally {
+    try { bmp?.close?.(); } catch {}
   }
 }

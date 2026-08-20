@@ -293,7 +293,16 @@
       });
     }
 
-    recorder.start(2000); // 2s timeslices → ondataavailable every 2s
+    try {
+      recorder.start(2000); // 2s timeslices → ondataavailable every 2s
+    } catch (e) {
+      try {
+        if (recorder.state !== 'inactive') recorder.stop();
+      } catch {}
+      await releaseSession(activeSession);
+      if (session === activeSession) session = null;
+      throw new Error(`Failed to start recorder: ${e.message || e}`);
+    }
     log('recorder started', { source, mimeType: chosenMime, video, mic: !!micStream });
     return {
       ok: true,
