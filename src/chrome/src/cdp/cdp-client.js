@@ -215,6 +215,34 @@ export class CDPClient {
   }
 
   /**
+   * Release run-scoped CDP state while preserving a Dev-diagnostics owner.
+   *
+   * Dev diagnostics intentionally span turns so console and network activity
+   * produced between Dev requests remains available. WebMCP, by contrast, is
+   * run-scoped and must be closed before a later turn can discover a fresh
+   * page-owned catalog.
+   */
+  async cleanupRun(tabId) {
+    try { await this.disableWebMCP(tabId); } catch {}
+    if (!this.devDiagnostics.has(tabId)) await this.detach(tabId);
+  }
+
+  /**
+   * Release all CDP state owned by a tab or conversation.
+   *
+   * Unlike run cleanup, this drains mode-scoped diagnostics as well. The
+   * operation is intentionally tab-scoped: cleaning up one page must not
+   * detach another page's debugger session.
+   */
+  async cleanupTab(tabId) {
+    // A tab can disappear between these steps. Keep going so a failed protocol
+    // shutdown cannot prevent the final debugger detach.
+    try { await this.disableDevDiagnostics(tabId); } catch {}
+    try { await this.disableWebMCP(tabId); } catch {}
+    await this.detach(tabId);
+  }
+
+  /**
    * Send a CDP command and get the result.
    */
   async sendCommand(tabId, method, params = {}, sessionId = '') {
@@ -350,11 +378,16 @@ export class CDPClient {
   }
 
   _newWebMCPSession(tabId) {
+    // Conversation history can retain an opaque tool ID after this registry is
+    // torn down. Give every registry generation its own random namespace so a
+    // stale ID can never alias whichever page tool registers first next time.
+    const toolIdPrefix = globalThis.crypto.randomUUID().replace(/-/g, '');
     return {
       tabId,
       closed: false,
       enabled: false,
       enablingPromise: null,
+      toolIdPrefix,
       nextToolId: 1,
       toolsById: new Map(),
       idsByKey: new Map(),
@@ -557,7 +590,7 @@ export class CDPClient {
       let toolId = state.idsByKey.get(key);
       if (!toolId) {
         if (state.toolsById.size >= WEBMCP_MAX_REGISTERED_TOOLS) continue;
-        toolId = `wmcp_${state.nextToolId.toString(36)}`;
+        toolId = `wmcp_${state.toolIdPrefix}${state.nextToolId.toString(36)}`;
         state.nextToolId++;
         state.idsByKey.set(key, toolId);
       }

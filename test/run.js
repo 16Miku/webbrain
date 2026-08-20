@@ -43150,6 +43150,68 @@ test('CDP shares in-flight attaches and registers debugger listeners once across
   }
 });
 
+test('CDP cleanup preserves mode-scoped Dev diagnostics and releases only the requested tab', async () => {
+  const originalChrome = globalThis.chrome;
+  const createDebuggerEvent = () => {
+    const listeners = new Set();
+    return {
+      addListener(listener) { listeners.add(listener); },
+      removeListener(listener) { listeners.delete(listener); },
+    };
+  };
+  const attachCallbacks = [];
+  const detachedTabIds = [];
+  globalThis.chrome = {
+    runtime: { lastError: null },
+    debugger: {
+      onEvent: createDebuggerEvent(),
+      onDetach: createDebuggerEvent(),
+      attach(_target, _version, callback) { attachCallbacks.push(callback); },
+      detach(target, callback) {
+        detachedTabIds.push(target.tabId);
+        callback();
+      },
+    },
+  };
+
+  try {
+    const cdp = new CDPClient();
+    const first = cdp.attach(12);
+    const second = cdp.attach(13);
+    attachCallbacks.shift()();
+    attachCallbacks.shift()();
+    await Promise.all([first, second]);
+
+    const diagnostics = {
+      handlers: [],
+      console: [{ text: 'between turns' }],
+      network: [],
+      networkByRequestId: new Map(),
+    };
+    cdp.devDiagnostics.set(13, diagnostics);
+
+    await cdp.cleanupRun(13);
+
+    assert.deepEqual(detachedTabIds, []);
+    assert.equal(cdp.sessions.has(13), true);
+    assert.equal(cdp.devDiagnostics.get(13), diagnostics);
+    assert.equal(diagnostics.console[0].text, 'between turns');
+
+    await cdp.cleanupTab(12);
+
+    assert.deepEqual(detachedTabIds, [12]);
+    assert.equal(cdp.sessions.has(12), false);
+    assert.equal(cdp.sessions.has(13), true);
+
+    await cdp.cleanupTab(13);
+    assert.deepEqual(detachedTabIds, [12, 13]);
+    assert.equal(cdp.devDiagnostics.has(13), false);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('CDP input dispatchers never call the nonexistent Input.enable command', async () => {
   const cdp = new CDPClient();
   const commands = [];
@@ -44836,6 +44898,44 @@ test('a rejected hydrate releases the run marker instead of wedging the tab', as
         `${label} ${entry}: the tab must stay runnable, not report an in-progress run`,
       );
     }
+  }
+});
+
+test('Chrome keeps the same-tab run guard until asynchronous CDP cleanup finishes', async () => {
+  const originalCleanupRun = cdpClientCh.cleanupRun;
+  try {
+    for (const [index, entry] of ['processMessage', 'processMessageStream'].entries()) {
+      const tabId = 4243 + index;
+      const agent = new AgentCh({});
+      let cleanupStartedResolve;
+      let releaseCleanupResolve;
+      const cleanupStarted = new Promise(resolve => { cleanupStartedResolve = resolve; });
+      const releaseCleanup = new Promise(resolve => { releaseCleanupResolve = resolve; });
+      agent._hydrate = async () => {};
+      agent._beginReadCompleteness = async () => `read_${entry}`;
+      agent._restoreCapturePolicyAfterRun = async () => {};
+      agent._processMessageInner = async () => 'done';
+      agent._processMessageStreamInner = async () => 'done';
+      cdpClientCh.cleanupRun = async (cleanupTabId) => {
+        assert.equal(cleanupTabId, tabId);
+        cleanupStartedResolve();
+        await releaseCleanup;
+      };
+
+      const run = agent[entry](tabId, 'hello', () => {}, 'ask');
+      await cleanupStarted;
+      assert.equal(agent.isRunning(tabId), true, `${entry}: cleanup released the run guard early`);
+      await assert.rejects(
+        agent[entry](tabId, 'overlap', () => {}, 'ask'),
+        /already in progress/,
+        `${entry}: a second run entered while CDP cleanup was pending`,
+      );
+      releaseCleanupResolve();
+      assert.equal(await run, 'done');
+      assert.equal(agent.isRunning(tabId), false, `${entry}: completed cleanup retained the run guard`);
+    }
+  } finally {
+    cdpClientCh.cleanupRun = originalCleanupRun;
   }
 });
 
@@ -47885,6 +47985,26 @@ test('CDP WebMCP discovery uses opaque IDs, tracks frames, and invokes asynchron
   assert.equal(await cdp.disableAllWebMCP(), 1);
   assert.equal(cdp.webMcpSessions.has(42), false);
   assert.ok(commands.some(command => command.method === 'WebMCP.disable'));
+});
+
+test('CDP WebMCP registry generations never reuse opaque tool IDs', async () => {
+  const cdp = new CDPClient();
+  const first = cdp._newWebMCPSession(42);
+  cdp._storeWebMCPTools(first, [{ name: 'first_tool', frameId: 'main' }]);
+  const staleToolId = [...first.toolsById.keys()][0];
+
+  const second = cdp._newWebMCPSession(42);
+  cdp._storeWebMCPTools(second, [{ name: 'different_tool', frameId: 'main' }]);
+  const currentToolId = [...second.toolsById.keys()][0];
+  cdp.webMcpSessions.set(42, second);
+  cdp.enableWebMCP = async () => second;
+
+  assert.notEqual(currentToolId, staleToolId, 'a fresh registry must use a distinct opaque namespace');
+  assert.equal(
+    await cdp.getWebMCPToolContext(42, staleToolId),
+    null,
+    'an ID retained in conversation history must not bind to a different page tool',
+  );
 });
 
 test('CDP WebMCP recovers tools registered in child frames before enable', async () => {
@@ -65196,47 +65316,63 @@ test('tool-result limiting is nullish-safe and preserves serializable falsy valu
 
 test('unexpected run exceptions finalize traces as errors', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
-    for (const method of ['processMessage', 'processMessageStream']) {
-      const provider = {
-        supportsTools: true,
-        supportsVision: false,
-        promptTier: 'full',
-        contextWindow: 128000,
-        model: 'test-model',
-        name: 'test-provider',
-      };
-      const agent = new AgentClass({
-        getActive: () => provider,
-        getVisionProvider: async () => null,
-      });
-      const tabId = method === 'processMessageStream' ? 813 : 812;
-      let ended = null;
-      agent._hydrate = async () => {};
-      agent._manageContext = async () => {};
-      agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
-      agent._plannerIsEnabled = () => true;
-      agent._getTabUrlTitle = async () => ({ tabUrl: 'https://example.com', tabTitle: 'Example' });
-      agent._maybeRunPlannerGate = async () => ({ proceed: true });
-      agent._startTraceRun = async () => {
-        agent.currentRunId.set(tabId, 'run_unexpected_error');
-        return 'run_unexpected_error';
-      };
-      agent._ensureProgressSessionForCurrentTask = async () => {
-        throw new Error('unexpected setup failure');
-      };
-      agent._endTraceRun = (_tabId, runId, status, finalContent) => {
-        ended = { runId, status, finalContent };
-        agent.currentRunId.delete(tabId);
-      };
+    const cleanupCalls = [];
+    const originalCleanup = cdpClientCh.cleanupRun;
+    if (label === 'chrome') {
+      cdpClientCh.cleanupRun = async (tabId) => { cleanupCalls.push(tabId); };
+    }
+    try {
+      for (const method of ['processMessage', 'processMessageStream']) {
+        const provider = {
+          supportsTools: true,
+          supportsVision: false,
+          promptTier: 'full',
+          contextWindow: 128000,
+          model: 'test-model',
+          name: 'test-provider',
+        };
+        const agent = new AgentClass({
+          getActive: () => provider,
+          getVisionProvider: async () => null,
+        });
+        const tabId = method === 'processMessageStream' ? 813 : 812;
+        let ended = null;
+        agent._hydrate = async () => {};
+        agent._manageContext = async () => {};
+        agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+        agent._plannerIsEnabled = () => true;
+        agent._getTabUrlTitle = async () => ({ tabUrl: 'https://example.com', tabTitle: 'Example' });
+        agent._maybeRunPlannerGate = async () => ({ proceed: true });
+        agent._startTraceRun = async () => {
+          agent.currentRunId.set(tabId, 'run_unexpected_error');
+          return 'run_unexpected_error';
+        };
+        agent._ensureProgressSessionForCurrentTask = async () => {
+          throw new Error('unexpected setup failure');
+        };
+        agent._endTraceRun = (_tabId, runId, status, finalContent) => {
+          ended = { runId, status, finalContent };
+          agent.currentRunId.delete(tabId);
+        };
 
-      await assert.rejects(
-        agent[method](tabId, 'continue', () => {}, 'act'),
-        /unexpected setup failure/,
-        `${label}/${method}: unexpected error was swallowed`,
-      );
-      assert.equal(ended?.status, 'error', `${label}/${method}: trace retained a successful status`);
-      assert.equal(ended?.finalContent, 'Error: unexpected setup failure', `${label}/${method}: trace error content missing`);
-      assert.equal(agent.completionInvariants.has(tabId), false, `${label}/${method}: exception leaked completion state`);
+        await assert.rejects(
+          agent[method](tabId, 'continue', () => {}, 'act'),
+          /unexpected setup failure/,
+          `${label}/${method}: unexpected error was swallowed`,
+        );
+        assert.equal(ended?.status, 'error', `${label}/${method}: trace retained a successful status`);
+        assert.equal(ended?.finalContent, 'Error: unexpected setup failure', `${label}/${method}: trace error content missing`);
+        assert.equal(agent.completionInvariants.has(tabId), false, `${label}/${method}: exception leaked completion state`);
+      }
+      if (label === 'chrome') {
+        assert.deepEqual(
+          [...cleanupCalls].sort((a, b) => a - b),
+          [812, 813],
+          'Chrome error cleanup must release both run paths',
+        );
+      }
+    } finally {
+      if (label === 'chrome') cdpClientCh.cleanupRun = originalCleanup;
     }
   }
 });
@@ -85578,6 +85714,61 @@ test('saved workflow clarify telemetry redacts form field values', () => {
   assert.equal(redacted.submitConfirmation.summary, '[workflow form summary redacted]');
   assert.equal(redacted.submitConfirmation.fields[0].value, '[workflow parameter redacted]');
   assert.doesNotMatch(JSON.stringify(redacted), /runtime secret/);
+});
+
+test('Chrome saved-workflow replay awaits CDP cleanup before releasing its run claim', async () => {
+  const tabId = 26989;
+  const workflow = {
+    id: 'workflow_cdp_cleanup',
+    name: 'CDP cleanup',
+    start: { origin: 'https://example.com', pathFamily: '/form' },
+    steps: [{
+      id: 'step_1',
+      tool: 'navigate',
+      args: { url: 'https://example.com/next' },
+      scope: { origin: 'https://example.com', pathFamily: '/form' },
+      expected: { kind: 'url_changed' },
+    }],
+  };
+  const agent = new AgentCh({ getActive: () => ({ model: 'test-model' }) });
+  const originalCleanupRun = cdpClientCh.cleanupRun;
+  let currentUrl = 'https://example.com/form';
+  let cleanupCalls = 0;
+  let cleanupStartedResolve;
+  let releaseCleanupResolve;
+  const cleanupStarted = new Promise(resolve => { cleanupStartedResolve = resolve; });
+  const releaseCleanup = new Promise(resolve => { releaseCleanupResolve = resolve; });
+  agent._hydrate = async () => {};
+  agent._persist = () => {};
+  agent.ensureConversationId = async () => 'conversation_cdp_cleanup';
+  agent._currentUrl = async () => currentUrl;
+  agent._executeToolBatch = async (_tabId, calls, _messages, onUpdate) => {
+    const tool = calls[0].function.name;
+    currentUrl = 'https://example.com/next';
+    onUpdate('tool_result', { name: tool, result: { success: true } });
+    return { action: 'continue' };
+  };
+  agent._endSavedWorkflowTraceRun = async () => {};
+  cdpClientCh.cleanupRun = async (cleanupTabId) => {
+    assert.equal(cleanupTabId, tabId);
+    cleanupCalls++;
+    cleanupStartedResolve();
+    await releaseCleanup;
+  };
+
+  try {
+    const replay = agent.replaySavedWorkflow(tabId, workflow);
+    await cleanupStarted;
+    assert.equal(agent.isRunning(tabId), true, 'saved replay released its run claim before CDP cleanup');
+    releaseCleanupResolve();
+    const result = await replay;
+    assert.equal(result.status, 'completed');
+    assert.equal(cleanupCalls, 1, 'successful deterministic replay must clean up its CDP state');
+    assert.equal(agent.isRunning(tabId), false);
+  } finally {
+    releaseCleanupResolve();
+    cdpClientCh.cleanupRun = originalCleanupRun;
+  }
 });
 
 for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
