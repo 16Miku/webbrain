@@ -88,7 +88,7 @@ build/lib/libzstd.a :
 	
 build/lib/libicudata.so : 
 	# Version not yet available in dev.kiwix.org
-	wget -N https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz
+	[ -f icu4c-73_2-src.tgz ] || wget -N https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz
 	tar xf icu4c-*-src.tgz
 	# It's no use trying to compile examples
 	sed -i -e 's/^SUBDIRS =\(.*\)$$(DATASUBDIR) $$(EXTRA) $$(SAMPLE) $$(TEST)\(.*\)/SUBDIRS =\1\2/' icu/source/Makefile.in

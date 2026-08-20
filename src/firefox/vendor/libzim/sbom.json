@@ -94,8 +94,8 @@
     },
     {
       "file": "Makefile",
-      "bytes": 15494,
-      "sha256": "1fbaa0c5d6ddb360108fff430c122c5d6b34e648bd6d964a95f426ce5b3c5300",
+      "bytes": 15524,
+      "sha256": "3ffccb37eb78b227c12ab88671e85058be55390e8eba4d01fbc94c0891c5f75d",
       "note": "contains the in-place libzim patches applied before compilation"
     },
     {
@@ -160,14 +160,14 @@
     },
     {
       "file": "scripts/build-zim-xapian.mjs",
-      "bytes": 23393,
-      "sha256": "1ac6cee415fd68e0783b341eac99356ece56fd7892b63379aa1d2129e21dc3e0",
+      "bytes": 28097,
+      "sha256": "be4cb17a7ee8e810f72d6405eeb4e9beac358ee477d0e7617211a15437620736",
       "note": "exact Docker build driver used to produce the shipped WebAssembly runtime"
     },
     {
       "file": "README.md",
-      "bytes": 1107,
-      "sha256": "b9033e9dac3ac50ebeaaf27a3c8c5d0c67e4b46632ac88f223928ee0af377d8e",
+      "bytes": 1493,
+      "sha256": "99f32e682d001a1056d62cc56f7680a45fc59e3af9ae8222c1b8c09b8b174316",
       "note": "standalone prerequisites and rebuild commands"
     }
   ],

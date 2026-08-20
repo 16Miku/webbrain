@@ -4,9 +4,10 @@
  * Reproducible source build of the Xapian/libzim WebAssembly runtime.
  *
  * Runs on any host with Docker (Windows, macOS, Linux). Everything compiles
- * inside the pinned Emscripten image, so the host only needs Docker, Node, and
- * git. No GPU is involved: this is a CPU-bound C++ cross-compile, and it wants
- * cores and RAM, not a graphics card.
+ * inside the pinned Emscripten image, so the host only needs Docker and Node.
+ * Git and network source downloads are needed only for the explicit
+ * --download-source fallback. No GPU is involved: this is a CPU-bound C++
+ * cross-compile, and it wants cores and RAM, not a graphics card.
  *
  * It deliberately does NOT use upstream's `libzim_release` target, which
  * downloads a prebuilt libzim tarball. WebBrain cannot provide corresponding
@@ -17,6 +18,7 @@
  *   node scripts/build-zim-xapian.mjs --keep          # resume, reusing what already built
  *   node scripts/build-zim-xapian.mjs --work <dir>    # build outside the repo
  *   node scripts/build-zim-xapian.mjs --link-opt 1    # pin the final optimizer level
+ *   node scripts/build-zim-xapian.mjs --download-source # explicit network fallback
  *
  * Expect roughly 40-90 minutes on a fast machine: ICU and Xapian dominate.
  *
@@ -36,6 +38,7 @@ const buildDriverPath = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(buildDriverPath), '..');
 const dryRun = process.argv.includes('--dry-run');
 const keepWorkTree = process.argv.includes('--keep');
+const downloadSourceFallback = process.argv.includes('--download-source');
 const workOverride = (() => {
   const index = process.argv.indexOf('--work');
   return index >= 0 && process.argv[index + 1] ? path.resolve(process.argv[index + 1]) : '';
@@ -86,6 +89,25 @@ const vendorDirectories = [
   path.join(root, 'src', 'firefox', 'vendor', 'libzim'),
 ];
 const correspondingSourceDir = path.join(root, 'dist', 'corresponding-source', `zim-xapian-${PIN.tag}`);
+const archivedSourceBundle = existsSync(path.join(root, 'sbom.json'))
+  && existsSync(path.join(root, 'Makefile'))
+  ? root
+  : '';
+const ARCHIVED_SOURCE_INPUTS = Object.freeze([
+  { file: `icu4c-${PIN.icu.replace('.', '_')}-src.tgz` },
+  { file: `libzim-${PIN.libzim}.tar.xz` },
+  { file: `xapian-core-${PIN.xapian}.tar.xz` },
+  { file: `xz-${PIN.xz}.tar.gz` },
+  { file: `zlib-${PIN.zlib}.tar.gz` },
+  { file: `zstd-${PIN.zstd}.tar.gz` },
+  { file: 'Makefile' },
+  { file: 'libzim_bindings.cpp' },
+  { file: 'prejs_file_api.js' },
+  { file: 'postjs_file_api.js' },
+  { file: 'emscripten-crosscompile.ini' },
+  { file: 'Dockerfile', target: path.join('docker', 'Dockerfile') },
+  { file: 'LICENSE.javascript-libzim.txt', target: 'LICENSE' },
+]);
 
 function log(message) {
   process.stdout.write(`${message}\n`);
@@ -151,17 +173,78 @@ function preflight() {
       : 'The Docker daemon is not running. Start Docker Desktop and try again.');
   }
   log(`  daemon: ${String(daemon.stdout || '').trim()}`);
-  try {
-    execFileSync('git', ['--version'], { stdio: 'ignore' });
-  } catch {
-    fail('git is not on PATH.');
+  if (!archivedSourceBundle || downloadSourceFallback) {
+    try {
+      execFileSync('git', ['--version'], { stdio: 'ignore' });
+    } catch {
+      fail('git is not on PATH. Install it to use the --download-source fallback.');
+    }
   }
   // The container writes as the invoking user on POSIX so build outputs are not
   // left root-owned. Windows containers have no equivalent and need no mapping.
   log(`  host: ${process.platform}${process.platform === 'win32' ? ' (no uid mapping needed)' : ''}`);
 }
 
+function verifiedArchivedSourceInputs(directory) {
+  let sbom;
+  try {
+    sbom = JSON.parse(readFileSync(path.join(directory, 'sbom.json'), 'utf8'));
+  } catch (error) {
+    fail(`The archived corresponding-source SBOM is unreadable: ${error?.message || error}`);
+  }
+  if (sbom?.upstream?.commit !== PIN.commit) {
+    fail(`Archived source commit mismatch.\n  expected ${PIN.commit}\n  actual   ${sbom?.upstream?.commit || '(missing)'}`);
+  }
+  const manifest = new Map((Array.isArray(sbom.correspondingSource) ? sbom.correspondingSource : [])
+    .map(record => [record?.file, record]));
+  return ARCHIVED_SOURCE_INPUTS.map((input) => {
+    const record = manifest.get(input.file);
+    const source = path.join(directory, input.file);
+    if (!record || !existsSync(source)) fail(`Archived build input is missing: ${input.file}`);
+    const bytes = statSync(source).size;
+    const digest = sha256(source);
+    if (bytes !== record.bytes || digest !== record.sha256) {
+      fail(`Archived build input failed SBOM verification: ${input.file}`);
+    }
+    return { ...input, source, bytes, sha256: digest };
+  });
+}
+
+function initializeArchivedWorkTree(inputs) {
+  mkdirSync(workTree, { recursive: true });
+  for (const input of inputs) {
+    const target = path.join(workTree, input.target || input.file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(input.source, target);
+  }
+  writeFileSync(path.join(workTree, 'package.json'), '{"private":true}\n');
+  mkdirSync(path.join(workTree, 'tests', 'prototype'), { recursive: true });
+}
+
+function verifyArchivedWorkTree(inputs) {
+  for (const input of inputs) {
+    const target = path.join(workTree, input.target || input.file);
+    if (!existsSync(target) || statSync(target).size !== input.bytes || sha256(target) !== input.sha256) {
+      fail(`Work-tree input differs from the archived corresponding source: ${input.target || input.file}`);
+    }
+  }
+}
+
+function guardIcuSourceDownload() {
+  const makefile = path.join(workTree, 'Makefile');
+  const contents = readFileSync(makefile, 'utf8');
+  const download = 'wget -N https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz';
+  const guarded = `[ -f icu4c-73_2-src.tgz ] || ${download}`;
+  if (contents.includes(guarded)) return;
+  if (!contents.includes(download)) fail('The ICU source download rule changed unexpectedly.');
+  writeFileSync(makefile, contents.replace(download, guarded));
+}
+
 function fetchSource() {
+  const useArchivedSource = Boolean(archivedSourceBundle) && !downloadSourceFallback;
+  const archivedInputs = useArchivedSource
+    ? verifiedArchivedSourceInputs(archivedSourceBundle)
+    : null;
   if (existsSync(workTree) && !keepWorkTree) {
     // A fresh clone is the right default for a build whose output has to be
     // reproducible, but say what is being thrown away: the dependency compile
@@ -174,16 +257,29 @@ function fetchSource() {
   }
   if (!existsSync(workTree)) {
     mkdirSync(path.dirname(workTree), { recursive: true });
-    run('git', ['clone', '--branch', PIN.tag, '--depth', '1', PIN.repository, workTree]);
+    if (useArchivedSource) {
+      log(`  initializing from verified archived inputs in ${archivedSourceBundle}`);
+      if (!dryRun) initializeArchivedWorkTree(archivedInputs);
+    } else {
+      if (archivedSourceBundle) log('  --download-source selected; ignoring archived inputs and using the network fallback');
+      run('git', ['clone', '--branch', PIN.tag, '--depth', '1', PIN.repository, workTree]);
+    }
   } else {
     log(`  reusing ${workTree}`);
   }
   if (dryRun) return;
+  if (useArchivedSource) {
+    verifyArchivedWorkTree(archivedInputs);
+    guardIcuSourceDownload();
+    log(`  archived inputs verified for commit ${PIN.commit}`);
+    return;
+  }
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workTree, encoding: 'utf8' }).trim();
   if (head !== PIN.commit) {
     fail(`Pinned commit mismatch.\n  expected ${PIN.commit}\n  actual   ${head}\nRefusing to build an unpinned tree.`);
   }
   log(`  commit verified: ${head}`);
+  guardIcuSourceDownload();
 }
 
 function dockerMount(hostPath) {
@@ -403,21 +499,32 @@ javascript-libzim ${PIN.tag} at commit
 
 ## Rebuild
 
-Install Docker, Node.js, and Git. From the root of this extracted directory run:
+Install Docker and Node.js. From the root of this extracted directory run:
 
 \`\`\`sh
 node scripts/build-zim-xapian.mjs --work .build/zim-xapian
 \`\`\`
 
 On Windows, run from WSL2 and place \`--work\` on the WSL filesystem to avoid
-Docker bind-mount clock skew. The driver verifies the pinned upstream commit,
-builds the pinned Emscripten image, compiles libzim/Xapian and dependencies from
-source, retries the final Wasm optimizer down to \`-O1\` if necessary, and writes
-the runtime plus refreshed SBOM records under \`src/{chrome,firefox}/vendor/libzim/\`.
+Docker bind-mount clock skew. By default the driver verifies the files beside
+it against \`sbom.json\` and copies those archived inputs into the work tree, so
+the published source archive—not a fresh network clone—is what gets built. It
+then builds the pinned Emscripten image, compiles libzim/Xapian and dependencies
+from source, retries the final Wasm optimizer down to \`-O1\` if necessary, and
+writes the runtime plus refreshed SBOM records under
+\`src/{chrome,firefox}/vendor/libzim/\`.
+
+If the archived inputs are deliberately unavailable, install Git and explicitly
+allow the upstream/dependency download fallback:
+
+\`\`\`sh
+node scripts/build-zim-xapian.mjs --work .build/zim-xapian --download-source
+\`\`\`
 
 Inside a full WebBrain checkout, \`npm run build:zim-xapian\` invokes the same
-driver. The source archives in this directory are the immutable inputs retained
-with the release; their sizes and SHA-256 hashes are recorded in \`sbom.json\`.
+driver. The source archives in this directory are the immutable default inputs
+retained with the release; their sizes and SHA-256 hashes are recorded in
+\`sbom.json\`.
 `;
 }
 

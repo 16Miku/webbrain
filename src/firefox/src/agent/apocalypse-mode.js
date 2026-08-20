@@ -697,10 +697,12 @@ export async function openKiwixZim(source, metadata = {}) {
     const results = [];
     const locatedCandidates = [];
     const normalizedQuery = String(query || '').trim().replace(/\s+/g, '_').toLowerCase();
-    for (const path of queryPaths(query)) {
-      const located = await findPaths(path, Math.max(24, limit * 8));
-      locatedCandidates.push(...located);
-      if (located.some(entry => String(entry.url || '').toLowerCase() === normalizedQuery)) break;
+    for (const namespace of ['C', 'A']) {
+      for (const path of queryPaths(query)) {
+        const located = await findPaths(path, Math.max(24, limit * 8), namespace);
+        locatedCandidates.push(...located);
+        if (located.some(entry => String(entry.url || '').toLowerCase() === normalizedQuery)) break;
+      }
     }
     const resolvedCandidates = [];
     for (const located of locatedCandidates) {
@@ -713,7 +715,8 @@ export async function openKiwixZim(source, metadata = {}) {
         : entry);
     }
     for (const entry of rankZimTitleCandidates(resolvedCandidates, query, limit)) {
-      if (!entry || entry.namespace !== 'C' || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) continue;
+      if (!entry || !['C', 'A'].includes(entry.namespace)
+        || !String(mimeTypes[entry.mimeType] || '').startsWith('text/html')) continue;
       const bytes = await clusterBlob(entry.clusterIndex, entry.blobIndex);
       const excerpt = relevantPassage(decodeHtmlText(new TextDecoder().decode(bytes)), query);
       if (!excerpt) continue;

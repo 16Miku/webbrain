@@ -27976,16 +27976,28 @@ test('Xapian corresponding source contains the exact build driver and rebuild gu
   const sourceDir = path.join(ROOT, 'dist/corresponding-source/zim-xapian-v0.95');
   const driverPath = path.join(sourceDir, 'scripts/build-zim-xapian.mjs');
   const guidePath = path.join(sourceDir, 'README.md');
+  const driver = fs.readFileSync(driverPath, 'utf8');
   assert.equal(
-    fs.readFileSync(driverPath, 'utf8'),
+    driver,
     fs.readFileSync(path.join(ROOT, 'scripts/build-zim-xapian.mjs'), 'utf8'),
     'corresponding source does not contain the exact build driver',
   );
   const guide = fs.readFileSync(guidePath, 'utf8');
   assert.match(guide, /node scripts\/build-zim-xapian\.mjs --work \.build\/zim-xapian/,
     'corresponding source does not include a standalone rebuild command');
-  assert.match(guide, /Docker, Node\.js, and Git/,
-    'corresponding source does not document its build prerequisites');
+  assert.match(guide, /Install Docker and Node\.js/,
+    'corresponding source does not document its default build prerequisites');
+  assert.match(driver, /archivedSourceBundle[\s\S]*?verifiedArchivedSourceInputs[\s\S]*?initializeArchivedWorkTree/,
+    'standalone driver does not initialize from the archived corresponding source');
+  assert.match(driver, /downloadSourceFallback[\s\S]*?--download-source selected/,
+    'network source retrieval is not an explicit fallback');
+  assert.match(driver, /Archived build input failed SBOM verification/,
+    'standalone driver does not authenticate archived inputs against the SBOM');
+  assert.match(guide, /published source archive[^]*what gets built[^]*--download-source/,
+    'standalone guide does not explain archived inputs and the explicit network fallback');
+  const archivedMakefile = fs.readFileSync(path.join(sourceDir, 'Makefile'), 'utf8');
+  assert.match(archivedMakefile, /\[ -f icu4c-73_2-src\.tgz \] \|\| wget -N/,
+    'archived ICU source still requires its dependency host even when the tarball is present');
   const sbom = JSON.parse(fs.readFileSync(path.join(sourceDir, 'sbom.json'), 'utf8'));
   for (const relativePath of ['scripts/build-zim-xapian.mjs', 'README.md']) {
     const entry = sbom.correspondingSource.find(item => item.file === relativePath);
@@ -28849,6 +28861,9 @@ test('ZIM reader reports whether an archive carries a Xapian full-text index', a
     const legacyArticle = await legacy.readArticle('Alan_Turing');
     assert.match(legacyArticle.text, /English mathematician/i,
       `${label}: a legacy Xapian hit could not open its matching A-namespace article`);
+    const legacyFallback = await legacy.search('Alan Turing');
+    assert.equal(legacyFallback[0]?.path, 'Alan_Turing',
+      `${label}: title-only fallback did not search the legacy A namespace`);
 
     // Repeat calls must not re-scan the directory on every query.
     assert.equal(await modern.hasFullTextIndex(), true, `${label}: the memoized probe changed its answer`);
