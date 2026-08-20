@@ -278,6 +278,8 @@ export default {
   'sp.error_prefix': 'Fout: {msg}',
   'sp.subscribe.allowance_used': 'Dagelijkse gratis WebBrain Cloud-tegoed gebruikt.',
   'sp.subscribe.btn': 'Abonneren',
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'Ik heb geabonneerd — opnieuw proberen',
   'sp.stopped_by_user': '[Gestopt door gebruiker]',
   'sp.stopped_by_user_html': '<em>Gestopt door gebruiker.</em>',

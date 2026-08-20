@@ -286,6 +286,8 @@ export default {
   'sp.error_prefix': "خطا: {msg}",
   'sp.subscribe.allowance_used': "روزانه رایگان WebBrain کمک هزینه ابر استفاده می شود.",
   'sp.subscribe.btn': "مشترک شوید",
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': "مشترک شدم - دوباره امتحان کنید",
   'sp.stopped_by_user': "[توقف کاربر]",
   'sp.stopped_by_user_html': "<em>توسط کاربر متوقف شد.</em>",

@@ -1921,12 +1921,12 @@ export class Agent extends LoopDetector {
   }
 
   _isCostAllowanceError(err) {
-    // WebBrain Cloud's free-tier 402 is also an allowance terminal, but it
-    // originates in the provider rather than _costAllowanceError(). Treat it
+    // WebBrain Cloud's quota 402s are also allowance terminals, but they
+    // originate in the provider rather than _costAllowanceError(). Treat them
     // like the local cost cap so the agent does not retry it and then emit a
     // second generic error card beside the actionable Subscribe prompt.
     return err?.code === 'WB_COST_ALLOWANCE'
-      || /Subscribe for more usage:\s*https?:\/\/\S+/i.test(String(err?.message || ''));
+      || /(?:Subscribe for more usage|Upgrade to WebBrain Plus):\s*https?:\/\/\S+|Daily WebBrain Plus allowance used/i.test(String(err?.message || ''));
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {

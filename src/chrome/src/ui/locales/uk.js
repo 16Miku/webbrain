@@ -179,6 +179,8 @@ export default {
   'sp.error_prefix': 'Помилка: {msg}',
   'sp.subscribe.allowance_used': 'Безкоштовний денний ліміт WebBrain Cloud вичерпано.',
   'sp.subscribe.btn': 'Оформити підписку',
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'Підписку оформлено — повторити',
   'sp.stopped_by_user': '[Зупинено користувачем]',
   'sp.stopped_by_user_html': '<em>Зупинено користувачем.</em>',

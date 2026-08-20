@@ -179,6 +179,8 @@ export default {
   'sp.error_prefix': 'Erreur : {msg}',
   'sp.subscribe.allowance_used': 'Quota quotidien gratuit de WebBrain Cloud épuisé.',
   'sp.subscribe.btn': 'S’abonner',
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'Abonnement effectué — réessayer',
   'sp.stopped_by_user': '[Arrêté par l\'utilisateur]',
   'sp.stopped_by_user_html': '<em>Arrêté par l\'utilisateur.</em>',

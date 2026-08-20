@@ -285,6 +285,8 @@ export default {
   'sp.error_prefix': "त्रुटि: {msg}",
   'sp.subscribe.allowance_used': "दैनिक निःशुल्क WebBrain क्लाउड भत्ता का उपयोग किया जाता है।",
   'sp.subscribe.btn': "सदस्यता लें",
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': "मैंने सदस्यता ले ली है - पुनः प्रयास करें",
   'sp.stopped_by_user': "[उपयोगकर्ता द्वारा रोका गया]",
   'sp.stopped_by_user_html': "<em>उपयोगकर्ता द्वारा रोका गया.</em>",

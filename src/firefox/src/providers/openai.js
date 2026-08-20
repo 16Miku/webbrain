@@ -204,14 +204,22 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   _formatHttpError(status, body) {
     const providerName = (this.config.providerName || '').toLowerCase();
     if (status === 402 && providerName === 'webbrain-cloud') {
-      let subscribeUrl = this._webbrainSubscribeUrl();
+      let actionUrl = this._webbrainSubscribeUrl();
+      let actionLabel = 'Subscribe for more usage';
       let message = 'Daily free WebBrain Cloud allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
-        subscribeUrl = parsed.subscribe_url || subscribeUrl;
+        if (parsed.upgrade_url) {
+          actionUrl = parsed.upgrade_url;
+          actionLabel = 'Upgrade to WebBrain Plus';
+        } else if (parsed.subscribe_url) {
+          actionUrl = parsed.subscribe_url;
+        } else if (parsed.error?.code === 'webbrain_cloud_plus_tier_exceeded') {
+          actionUrl = '';
+        }
         message = parsed.error?.message || message;
       } catch { /* keep fallback */ }
-      return `${message}\nSubscribe for more usage: ${subscribeUrl}`;
+      return actionUrl ? `${message}\n${actionLabel}: ${actionUrl}` : message;
     }
     // Ollama enforces an Origin allowlist; browser extensions hit it with a
     // moz-extension:// or chrome-extension:// origin that isn't on the

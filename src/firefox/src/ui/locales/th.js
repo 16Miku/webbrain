@@ -179,6 +179,8 @@ export default {
   'sp.error_prefix': 'ข้อผิดพลาด: {msg}',
   'sp.subscribe.allowance_used': 'ใช้โควตารายวันฟรีของ WebBrain Cloud หมดแล้ว',
   'sp.subscribe.btn': 'สมัครสมาชิก',
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'สมัครแล้ว — ลองอีกครั้ง',
   'sp.stopped_by_user': '[ผู้ใช้หยุด]',
   'sp.stopped_by_user_html': '<em>ผู้ใช้หยุดแล้ว</em>',

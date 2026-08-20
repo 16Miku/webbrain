@@ -295,6 +295,8 @@ export default {
   'sp.error_prefix': 'Fehler: {msg}',
   'sp.subscribe.allowance_used': 'Tägliches kostenloses WebBrain Cloud-Kontingent aufgebraucht.',
   'sp.subscribe.btn': 'Abonnieren',
+  'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'Ich habe abonniert — erneut versuchen',
   'sp.stopped_by_user': '[Vom Benutzer gestoppt]',
   'sp.stopped_by_user_html': '<em>Vom Benutzer gestoppt.</em>',
