@@ -2780,6 +2780,20 @@
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(45,212,191,0.05));
+      color: inherit;
+      text-decoration: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .faq-bridge:hover,
+    .faq-bridge:focus-visible {
+      border-color: var(--accent);
+      box-shadow: 0 10px 28px var(--shadow-card);
+      text-decoration: none;
+      color: inherit;
+    }
+    .faq-bridge:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 3px;
     }
     .faq-bridge-mark {
       width: 32px;
@@ -2793,11 +2807,12 @@
       font-weight: 800;
     }
     .faq-bridge strong { font-size: 14px; }
-    .faq-bridge a { color: var(--accent2); font-size: 13px; font-weight: 700; }
-    .faq-bridge a:hover { color: var(--text); text-decoration: none; }
+    .faq-bridge-cta { color: var(--accent2); font-size: 13px; font-weight: 700; }
+    .faq-bridge:hover .faq-bridge-cta,
+    .faq-bridge:focus-visible .faq-bridge-cta { color: var(--text); }
     @media (max-width: 560px) {
       .faq-bridge { grid-template-columns: auto 1fr; }
-      .faq-bridge a { grid-column: 2; }
+      .faq-bridge-cta { grid-column: 2; }
     }
 
     /* ================================================================
@@ -3831,11 +3846,11 @@
       </div>
     </div>
   </div>
-  <aside class="faq-bridge" id="faq" aria-label="Câu hỏi thường gặp">
+  <a class="faq-bridge" id="faq" href="/docs/vi/faq/">
     <span class="faq-bridge-mark" aria-hidden="true">?</span>
     <strong>Câu hỏi thường gặp</strong>
-    <a href="/docs/vi/faq/">Câu hỏi thường gặp <span aria-hidden="true">→</span></a>
-  </aside>
+    <span class="faq-bridge-cta">Câu hỏi thường gặp <span aria-hidden="true">→</span></span>
+  </a>
 </section>
 
 <!-- SPREAD THE WORD / OPEN SOURCE -->
