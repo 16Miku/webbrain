@@ -27,7 +27,7 @@ export const AGENT_TOOLS = [
         properties: {
           filter: { type: 'string', enum: ['all', 'visible', 'interactive'], description: 'Which nodes to include. "visible" (in-viewport, visible) is a good default. "interactive" shows only clickable/typeable things. "all" traverses the entire DOM.' },
           maxDepth: { type: 'number', description: 'Max tree depth to descend (default 15).' },
-          maxChars: { type: 'number', maximum: STANDARD_TREE_PAGE_CHARS, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Capable non-Compact providers with at least 64k context advertise a 12000 maximum for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.' },
+          maxChars: { type: 'integer', maximum: STANDARD_TREE_PAGE_CHARS, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Capable non-Compact providers with at least 64k context advertise a 12000 maximum for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.' },
           ref_id: { type: 'string', description: 'Optional. Anchor at a previously-seen ref_id instead of document.body.' },
           page: { type: 'number', description: 'Optional 1-based chunk number for any tree filter. When a result returns hasMore:true, reuse the exact continuationArgs so filter, maxDepth, and maxChars remain stable.' },
           tree_revision: { type: 'string', description: 'Opaque tree snapshot revision returned inside continuationArgs for page 2 and later. Omit it when starting or restarting page 1; otherwise never invent or modify it and reuse the exact continuationArgs.' },

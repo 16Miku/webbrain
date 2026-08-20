@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (loaded model) | Auto metadata / override |
 | `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
 | `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
-| `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (tested default) or experimental custom HF repo | No |
+| `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (default) or opt-in Bonsai 27B; experimental custom HF ONNX repos | No |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
@@ -149,24 +149,35 @@ duplicate request.
 ### Local Providers
 
 On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider. Its
-model selector offers the tested
-[`LiquidAI/LFM2.5-2.6B-ONNX`](https://huggingface.co/LiquidAI/LFM2.5-2.6B-ONNX/)
-preset or a custom Hugging Face repository. Custom repositories have not been
-tested and are likely not to work. They must be compatible with Transformers.js
-text generation, provide a `q4f16` ONNX variant, and use a chat template that
-accepts `tools`; WebBrain validates the template after loading and rejects
-incompatible repositories. The selected model runs through the packaged
-Transformers.js 4.2 runtime in a dedicated extension Worker. The provider is
-text-only and defaults to the Compact prompt tier with a conservative 16k
-practical context setting. LFM2.5 2.6B downloads about 1.55 GB and uses its
-official pure
+Apocalypse text picker offers two shipped presets:
+
+- [`LiquidAI/LFM2.5-2.6B-ONNX`](https://huggingface.co/LiquidAI/LFM2.5-2.6B-ONNX/)
+  (`q4f16`, about 1.55 GB) through the packaged Transformers.js 4.2 / ONNX
+  Runtime Web GPU worker. This remains the default. Enabling Apocalypse Mode
+  starts this download automatically.
+- [`prism-ml/Bonsai-27B-gguf`](https://huggingface.co/prism-ml/Bonsai-27B-gguf)
+  (`Q1_0`, about 3.8 GB) through a dedicated vendored [bitgpu](https://github.com/stfurkan/bitgpu)
+  worker. Bonsai is opt-in: WebBrain never auto-downloads the 27B weights.
+  It needs a high-end GPU (16 GB+ RAM/VRAM recommended). GPU-resident LFM and
+  Bonsai sessions are never live at the same time; disk caches may coexist.
+
+Custom Hugging Face repositories have not been tested and are likely not to
+work. They must be compatible with Transformers.js text generation, provide a
+`q4f16` ONNX variant, and use a chat template that accepts `tools`; WebBrain
+validates the template after loading and rejects incompatible repositories.
+Do not point Transformers.js at the Bonsai GGUF — 27B is not an ONNX pipeline.
+
+The provider is text-only and defaults to the Compact prompt tier with a
+conservative 16k practical context setting. LFM2.5 2.6B uses its official pure
 reasoning template; WebBrain keeps text before `</think>` out of the visible
-answer and reports an error if reasoning exhausts the output budget. Each
-repository is cached separately in Chrome. **Test Connection**
-checks only the packaged runtime and hardware WebGPU adapter, so it does not
-trigger a model download. There is no API key, base URL, localhost server, or
-OpenAI-compatible endpoint. Firefox does not expose the card because its build
-does not package the Chromium MV3 offscreen/WebGPU runtime.
+answer and reports an error if reasoning exhausts the output budget. Bonsai
+uses bitgpu `think: true` with a 128-token think budget and the same
+post-think visible-answer UX. Each repository is cached separately in Chrome.
+**Test Connection** checks only the packaged runtime and hardware WebGPU
+adapter, so it does not trigger a model download. There is no API key, base
+URL, localhost server, or OpenAI-compatible endpoint. Firefox does not expose
+the card because its build does not package the Chromium MV3 offscreen/WebGPU
+runtime.
 
 Nine local endpoint providers are enabled by default. The model runtimes need no
 API key unless the server was started with auth; the generic proxy card requires

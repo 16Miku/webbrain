@@ -6,6 +6,8 @@ import {
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  isShippedWebgpuPreset,
+  webgpuModelDisplayName,
 } from './providers/webgpu.js';
 import { Agent } from './agent/agent.js';
 import {
@@ -21,7 +23,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
-import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -181,6 +183,15 @@ Promise.all([
   apocalypseController.syncUpdateSchedule(),
   apocalypseController.syncDownloadSchedule(),
   resumeInterruptedVisionPreload(),
+  // Reclaim `.crswap` files left behind by writable streams that never closed
+  // (service worker torn down mid-write, cancelled download, crashed tab).
+  // OPFS does not garbage collect these, and with keepExistingData: true each
+  // one is a full copy of the archive it was writing.
+  sweepOpfsSwapFiles().then(({ removed, bytes }) => {
+    if (removed > 0) {
+      console.info(`[WebBrain] Reclaimed ${removed} orphaned OPFS swap file(s), ${(bytes / 1024 ** 3).toFixed(2)} GB.`);
+    }
+  }),
 ]).catch((error) => {
   console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
@@ -1156,10 +1167,53 @@ chrome.storage.onChanged.addListener((changes) => {
   if (refreshPrompts) agent._refreshSystemPrompts();
 });
 
+const APOCALYPSE_DOWNLOAD_TARGET = 'offscreen-apocalypse-download';
+
+/**
+ * Run one archive download pass in the offscreen document.
+ *
+ * `Worker` is undefined in an MV3 service worker, so openSyncWriter() can never
+ * succeed here: every wake fell back to createWritable({ keepExistingData:
+ * true }), and Chrome copies the entire archive into a fresh `.crswap` file
+ * each time that runs. The offscreen document can create the dedicated writer
+ * worker, so the durable FileSystemSyncAccessHandle path is taken instead.
+ *
+ * chrome.alarms is not available to offscreen documents, so the next wake is
+ * scheduled here once the pass resolves.
+ */
+async function sendApocalypseOffscreenCommand(command, payload = {}) {
+  await ensureOffscreen();
+  const response = await chrome.runtime.sendMessage({
+    target: APOCALYPSE_DOWNLOAD_TARGET,
+    command,
+    payload,
+  });
+  if (!response) throw new Error('the offscreen archive host did not respond');
+  if (response.ok !== true) throw new Error(response.error || 'offscreen archive command failed');
+  return response.result;
+}
+
+async function runApocalypseDownloadPass() {
+  let passError = null;
+  try {
+    return await sendApocalypseOffscreenCommand('processNext');
+  } catch (error) {
+    passError = error;
+    throw error;
+  } finally {
+    try {
+      await apocalypseController.syncDownloadSchedule();
+    } catch (scheduleError) {
+      if (!passError) throw scheduleError;
+      console.warn('[WebBrain] Failed to re-arm the Apocalypse archive download:', scheduleError);
+    }
+  }
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
     const releaseKeepalive = acquireRunKeepalive();
-    apocalypseController.manager.processNext().catch((error) => {
+    runApocalypseDownloadPass().catch((error) => {
       console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
     }).finally(releaseKeepalive);
   } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
@@ -1843,8 +1897,8 @@ async function standaloneRunProviderId(msg) {
   }
   const config = providerManager.getAll().webgpu;
   const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
-  if (config?.model !== WEBGPU_MODEL_ID || download?.ready !== true) {
-    throw new Error('Download LFM2.5 2.6B in Apocalypse Mode before using WebGPU in standalone chat.');
+  if (!isShippedWebgpuPreset(config?.model) || download?.ready !== true) {
+    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_MODEL_ID)} in Apocalypse Mode before using WebGPU in standalone chat.`);
   }
   return providerId;
 }
@@ -2305,8 +2359,16 @@ async function handleMessage(msg, sender) {
       });
     }
     case 'apocalypse_mode': {
-      const snapshot = await apocalypseController.handle(msg.command, msg);
+      if (msg.command === 'process') return await runApocalypseDownloadPass();
+      const offscreenCommand = msg.command === 'pause' || msg.command === 'delete'
+        ? msg.command
+        : msg.command === 'enable' && msg.enabled !== true ? 'disable' : '';
+      const snapshot = offscreenCommand
+        ? await sendApocalypseOffscreenCommand(offscreenCommand, msg)
+        : await apocalypseController.handle(msg.command, msg);
+      if (offscreenCommand) await apocalypseController.syncDownloadSchedule();
       if (msg.command === 'enable') {
+        if (msg.enabled !== true) await apocalypseController.syncUpdateSchedule();
         chrome.runtime.sendMessage({
           type: 'apocalypse-mode-state',
           enabled: snapshot.enabled === true,
@@ -3332,7 +3394,7 @@ async function handleMessage(msg, sender) {
       return {
         ok: true,
         enabled: apocalypse?.enabled === true,
-        ready: config?.model === WEBGPU_MODEL_ID && download?.ready === true,
+        ready: isShippedWebgpuPreset(config?.model) && download?.ready === true,
         status: download?.status || 'not-downloaded',
       };
     }
@@ -3388,11 +3450,11 @@ async function handleMessage(msg, sender) {
     case 'get_webgpu_download_status':
       return await providerManager.getWebgpuDownloadStatus();
     case 'start_webgpu_download':
-      return await providerManager.startWebgpuDownload();
+      return await providerManager.startWebgpuDownload(msg);
     case 'pause_webgpu_download':
       return await providerManager.pauseWebgpuDownload();
     case 'stop_webgpu_download':
-      return await providerManager.stopWebgpuDownload();
+      return await providerManager.stopWebgpuDownload(msg);
 
     case 'test_vision_provider': {
       return await providerManager.testVisionProvider();

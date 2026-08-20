@@ -9,8 +9,9 @@ publics couvrant des domaines médicaux, de survie, d'éducation et de
 communication.
 
 Le chat WebGPU autonome n'a aucun outil. Les passages récupérés sont d'abord
-injectés dans le prompt ; le modèle répond à partir de ces preuves ou
-indique qu'il ne peut pas.
+injectés dans le prompt ; le modèle de texte local sélectionné (LFM2.5 2.6B par
+défaut, ou Bonsai 27B en option) répond à partir de ces preuves ou indique
+qu'il ne peut pas.
 
 ## Nouveautés
 
@@ -81,9 +82,11 @@ indique qu'il ne peut pas.
    disponibles.
 4. **Fusionner et budgéter.** Les résultats sont fusionnés, diversifiés et
    encapsulés comme preuves non fiables. La génération WebGPU est plafonnée
-   (actuellement 2048 nouveaux jetons). Si le modèle épuise ce budget dans son
-   raisonnement, WebBrain réessaie avec un prompt de preuves plus court plutôt
-   que d'inventer une réponse.
+   (actuellement 2048 nouveaux jetons). LFM2.5 retire `<think>` de la réponse
+   visible ; Bonsai 27B utilise un budget de raisonnement de 128 jetons pour
+   que le raisonnement ne consomme pas tout le décodage. Si le modèle épuise
+   ce budget dans son raisonnement, WebBrain réessaie avec un prompt de
+   preuves plus court plutôt que d'inventer une réponse.
 5. **Citer localement.** Chaque passage conservé reçoit un jeton stable
    (`[WB-E-…]` ou équivalent Wikipedia) et une URL de lecteur local. Les
    citations Emergency Box ajoutent un lien **Open PDF** seulement lorsque ce

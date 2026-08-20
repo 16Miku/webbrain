@@ -13,7 +13,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
-import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController } from './agent/apocalypse-mode.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
 import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
 import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
 import { getSharedOfflineSemanticReranker } from './agent/offline-semantic-runtime.js';
@@ -113,6 +113,15 @@ function emergencyDownloadController() {
 Promise.all([
   apocalypseController.syncUpdateSchedule(),
   apocalypseController.syncDownloadSchedule(),
+  // Reclaim `.crswap` files left behind by writable streams that never closed
+  // (background page torn down mid-write, cancelled download, crashed tab).
+  // OPFS does not garbage collect these, and with keepExistingData: true each
+  // one is a full copy of the archive it was writing.
+  sweepOpfsSwapFiles().then(({ removed, bytes }) => {
+    if (removed > 0) {
+      console.info(`[WebBrain] Reclaimed ${removed} orphaned OPFS swap file(s), ${(bytes / 1024 ** 3).toFixed(2)} GB.`);
+    }
+  }),
 ]).catch((error) => {
   console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
 });

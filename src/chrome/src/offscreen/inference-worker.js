@@ -24,6 +24,7 @@ const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 const TEXT_DOWNLOAD_EVENT = 'text-download-state';
 const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
 const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
+const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048;
 function createWebGpuTextSessionOptions() {
   return {
@@ -77,9 +78,17 @@ function sameTextModel(leftModelId, leftDtype, rightModelId, rightDtype) {
   return textModelKey(leftModelId, leftDtype) === textModelKey(rightModelId, rightDtype);
 }
 
+function assertOnnxTextModel(modelId) {
+  const normalized = String(modelId || '').trim();
+  if (!normalized) throw new Error('No text-generation model was specified.');
+  if (normalized === WEBGPU_BONSAI27_MODEL_ID || /\.gguf$/i.test(normalized)) {
+    throw new Error(`${normalized} is a GGUF checkpoint and cannot be loaded with Transformers.js. Use the Bonsai WebGPU runtime.`);
+  }
+  return normalized;
+}
+
 function assertTextDownloadCanStart(payload) {
-  const modelId = String(payload?.modelId || '').trim();
-  if (!modelId) throw new Error('No text-generation model was specified.');
+  const modelId = assertOnnxTextModel(payload?.modelId);
   const dtype = payload?.dtype || 'q4f16';
   const conflictsWithTransfer = textDownloadState.modelId
     && !sameTextModel(textDownloadState.modelId, textDownloadState.dtype, modelId, dtype)
@@ -478,6 +487,7 @@ function stopVisionDownload(modelId) {
 }
 
 async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
+  assertOnnxTextModel(modelId);
   const key = `text|${modelId}|${device}|${JSON.stringify(dtype)}`;
   if (textRuntime && textRuntimeKey === key) return textRuntime;
   if (textRuntimeLoadPromise) {
@@ -582,8 +592,7 @@ async function getTextDownloadStatus(modelId, dtype) {
 }
 
 async function downloadTextModel(payload, { onStarted } = {}) {
-  const modelId = String(payload?.modelId || '').trim();
-  if (!modelId) throw new Error('No text-generation model was specified.');
+  const modelId = assertOnnxTextModel(payload?.modelId);
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
   const tracksDifferentTransfer = textDownloadState.modelId
@@ -918,8 +927,7 @@ export function splitThinking(content, { openingTagInPrompt = false } = {}) {
 }
 
 async function runText(payload) {
-  const modelId = String(payload?.modelId || '').trim();
-  if (!modelId) throw new Error('No text-generation model was specified.');
+  const modelId = assertOnnxTextModel(payload?.modelId);
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
   const usesLfm25ReasoningTemplate = modelId === WEBGPU_LFM25_MODEL_ID;

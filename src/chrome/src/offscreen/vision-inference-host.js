@@ -4,6 +4,15 @@ let visionWorker = null;
 let visionWorkerReady = null;
 let nextVisionRequestId = 1;
 const pendingVisionRequests = new Map();
+let bonsaiWorker = null;
+let bonsaiWorkerReady = null;
+let nextBonsaiRequestId = 1;
+const pendingBonsaiRequests = new Map();
+let textDownloadStartChain = Promise.resolve();
+const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
+const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
+const WEBGPU_RUNTIME_BITGPU = 'bitgpu';
+const TEXT_TRANSFER_STATUSES = new Set(['starting', 'queued', 'downloading', 'paused', 'stopping']);
 const VISION_DOWNLOAD_STATE_MESSAGE = 'webgpu-vision-download-state';
 const visionDownloadFiles = new Map();
 let visionDownloadState = null;
@@ -152,6 +161,121 @@ function detachVisionPreload(cancelMode) {
   visionPreloadLifecycle = null;
 }
 
+function isBitgpuTextModel(modelId, runtime) {
+  if (String(runtime || '').trim() === WEBGPU_RUNTIME_BITGPU) return true;
+  return String(modelId || '').trim() === WEBGPU_BONSAI27_MODEL_ID;
+}
+
+function isActiveTextTransfer(state) {
+  return TEXT_TRANSFER_STATUSES.has(String(state?.status || '').toLowerCase());
+}
+
+async function probeExistingTextWorkerStatus(modelId) {
+  try {
+    if (isBitgpuTextModel(modelId)) {
+      if (!bonsaiWorker) return null;
+      return await sendBonsaiWorkerMessage('text-download-status', { modelId });
+    }
+    if (!visionWorker) return null;
+    return await sendVisionWorkerMessage('text-download-status', { modelId });
+  } catch {
+    return null;
+  }
+}
+
+async function findActiveTextTransfer(requestedModel) {
+  const otherModel = isBitgpuTextModel(requestedModel)
+    ? WEBGPU_LFM25_MODEL_ID
+    : WEBGPU_BONSAI27_MODEL_ID;
+  const other = await probeExistingTextWorkerStatus(otherModel);
+  return isActiveTextTransfer(other) ? other : null;
+}
+
+function startExclusiveTextDownload(message) {
+  const operation = textDownloadStartChain.then(async () => {
+    const activeTransfer = await findActiveTextTransfer(message.model);
+    if (activeTransfer && String(activeTransfer.status || '').toLowerCase() !== 'paused') {
+      const model = String(activeTransfer.modelId || 'Another WebGPU model');
+      throw new Error(`${model} is still ${activeTransfer.status || 'downloading'}. Pause it before switching models.`);
+    }
+    return await sendTextWorkerMessage(message.model, 'start-download-text', {
+      modelId: message.model,
+      device: message.device,
+      dtype: message.dtype,
+      requireTools: message.requireTools === true,
+    }, { exclusive: true, runtime: message.runtime });
+  });
+  textDownloadStartChain = operation.catch(() => {});
+  return operation;
+}
+
+function settleBonsaiRequest(data) {
+  if (data?.type === 'text-download-state') {
+    try {
+      chrome.runtime.sendMessage({ type: 'webgpu-text-download-state', state: data.state }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch {}
+    return;
+  }
+  const pending = pendingBonsaiRequests.get(data?.id);
+  if (!pending) return;
+  pendingBonsaiRequests.delete(data.id);
+  if (data.ok) pending.resolve(data);
+  else pending.reject(new Error(data.error || 'Bonsai worker failed.'));
+}
+
+function sendBonsaiWorkerMessage(type, payload = {}) {
+  const id = nextBonsaiRequestId++;
+  return new Promise((resolve, reject) => {
+    pendingBonsaiRequests.set(id, { resolve, reject });
+    bonsaiWorker.postMessage({ id, type, payload });
+  });
+}
+
+async function ensureBonsaiWorker() {
+  if (bonsaiWorkerReady) return bonsaiWorkerReady;
+  bonsaiWorker = new Worker(chrome.runtime.getURL('src/offscreen/bonsai-worker.js'), {
+    type: 'module',
+  });
+  bonsaiWorker.addEventListener('message', event => settleBonsaiRequest(event.data));
+  bonsaiWorker.addEventListener('error', event => {
+    const error = new Error(event?.message || 'Bonsai worker crashed.');
+    for (const pending of pendingBonsaiRequests.values()) pending.reject(error);
+    pendingBonsaiRequests.clear();
+    bonsaiWorker = null;
+    bonsaiWorkerReady = null;
+  });
+  bonsaiWorkerReady = sendBonsaiWorkerMessage('init', {
+    manifestUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/manifest.json'),
+    auxUrl: chrome.runtime.getURL('vendor/bitgpu/models/bonsai-27b-gguf/Bonsai-27B-Q1_0.aux.bin'),
+    dataUrl: 'https://huggingface.co/prism-ml/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf',
+    tokenizerJsonUrl: 'https://huggingface.co/prism-ml/Bonsai-27B-unpacked/resolve/main/tokenizer.json',
+    tokenizerConfigUrl: 'https://huggingface.co/prism-ml/Bonsai-27B-unpacked/resolve/main/tokenizer_config.json',
+  });
+  return bonsaiWorkerReady;
+}
+
+async function disposeOtherTextRuntime(keepRuntime) {
+  if (keepRuntime !== 'onnx' && visionWorker) {
+    try { await sendVisionWorkerMessage('dispose-text'); } catch { /* ONNX text session may already be empty */ }
+  }
+  if (keepRuntime !== 'bitgpu' && bonsaiWorker) {
+    try { await sendBonsaiWorkerMessage('dispose-text'); } catch { /* Bonsai session may already be empty */ }
+  }
+}
+
+async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = false, runtime } = {}) {
+  if (isBitgpuTextModel(modelId, runtime) || isBitgpuTextModel(payload.modelId, payload.runtime)) {
+    if (exclusive) await disposeOtherTextRuntime('bitgpu');
+    await ensureBonsaiWorker();
+    return sendBonsaiWorkerMessage(type, payload);
+  }
+  if (exclusive) await disposeOtherTextRuntime('onnx');
+  await ensureVisionWorker();
+  return sendVisionWorkerMessage(type, payload);
+}
+
 function sendVisionWorkerMessage(type, payload = {}) {
   const id = nextVisionRequestId++;
   return new Promise((resolve, reject) => {
@@ -202,41 +326,47 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!WEBGPU_MESSAGE_TYPES.has(message?.type)) return false;
   (async () => {
     try {
-      await ensureVisionWorker();
+      // Bonsai is GGUF/bitgpu. Never boot Transformers.js for those messages —
+      // that runtime always fetches config.json, which the GGUF repo does not have.
+      if (!isBitgpuTextModel(message.model, message.runtime)) {
+        await ensureVisionWorker();
+      }
       if (message.type === 'webgpu-vision-preload') {
+        await ensureVisionWorker();
         const started = startVisionPreload(message);
         sendResponse({ ok: true, started });
         return;
       }
       if (message.type === 'webgpu-probe' || message.type === 'webgpu-vision-probe') {
+        await ensureVisionWorker();
         sendResponse(await sendVisionWorkerMessage('probe'));
         return;
       }
       if (message.type === 'webgpu-download-status') {
-        sendResponse(await sendVisionWorkerMessage('text-download-status', {
+        const status = await sendTextWorkerMessage(message.model, 'text-download-status', {
           modelId: message.model,
           dtype: message.dtype,
-        }));
+        }, { runtime: message.runtime });
+        const activeTransfer = await findActiveTextTransfer(message.model);
+        sendResponse(activeTransfer ? { ...status, activeTransfer } : status);
         return;
       }
       if (message.type === 'webgpu-download-start') {
-        sendResponse(await sendVisionWorkerMessage('start-download-text', {
-          modelId: message.model,
-          device: message.device,
-          dtype: message.dtype,
-          requireTools: message.requireTools === true,
-        }));
+        sendResponse(await startExclusiveTextDownload(message));
         return;
       }
       if (message.type === 'webgpu-download-pause') {
-        sendResponse(await sendVisionWorkerMessage('pause-text-download'));
+        const paused = [];
+        if (visionWorker) paused.push(await sendVisionWorkerMessage('pause-text-download'));
+        if (bonsaiWorker) paused.push(await sendBonsaiWorkerMessage('pause-text-download'));
+        sendResponse(paused.find(state => state?.status === 'paused') || paused[0] || { ok: true, status: 'paused' });
         return;
       }
       if (message.type === 'webgpu-download-stop') {
-        sendResponse(await sendVisionWorkerMessage('stop-text-download', {
+        sendResponse(await sendTextWorkerMessage(message.model, 'stop-text-download', {
           modelId: message.model,
           dtype: message.dtype,
-        }));
+        }, { runtime: message.runtime }));
         return;
       }
       if (message.type === 'webgpu-vision-pause') {
@@ -290,18 +420,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-dispose') {
-        sendResponse(await sendVisionWorkerMessage('dispose-text'));
+        const disposed = [];
+        if (visionWorker) disposed.push(await sendVisionWorkerMessage('dispose-text'));
+        if (bonsaiWorker) disposed.push(await sendBonsaiWorkerMessage('dispose-text'));
+        sendResponse(disposed[0] || { ok: true, disposed: true });
         return;
       }
       if (message.type === 'webgpu-chat') {
-        sendResponse(await sendVisionWorkerMessage('text-chat', {
+        sendResponse(await sendTextWorkerMessage(message.model, 'text-chat', {
           modelId: message.model,
           device: message.device,
           dtype: message.dtype,
           requireTools: message.requireTools === true,
           messages: message.messages || [],
           options: message.options || {},
-        }));
+        }, { exclusive: true, runtime: message.runtime }));
         return;
       }
       const response = await sendVisionWorkerMessage('chat', {
