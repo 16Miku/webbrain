@@ -133,6 +133,8 @@ export async function retrieveOfflineRagForPrompt(queryValue, options = {}) {
     semanticQuery: options.semanticQuery,
     sources: options.sources,
     languages: options.languages,
+    queryLanguage: options.queryLanguage,
+    wikipediaQueriesByLanguage: options.wikipediaQueriesByLanguage,
     limit: options.limit,
     signal: options.signal,
     onSearchStatus: options.onSearchStatus,

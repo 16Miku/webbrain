@@ -113,6 +113,22 @@ that include an index (`X/fulltext/xapian` or the older
 has to name the article title. See `docs/offline-rag-licensing.md` for the
 decision, the release licensing strategy, and the reproducible -O2 source build.
 
+Standalone retrieval detects the question language from script, multilingual
+query words, and the interface locale fallback. A matching installed archive is
+searched before newer archives in other languages. The user's language filters
+remain authoritative: an empty filter searches every installed language, while
+selected ISO 639-3 codes exclude other-language passages from the final evidence.
+
+When the question language differs from the installed Wikipedia archive
+languages that will be searched, the already-downloaded WebGPU text model first
+produces short search keyword translations for those archive languages. This
+works both with the default "all installed languages" setting and explicit
+language filters. The translations are bounded, validated as data, and used only
+as per-archive Xapian queries; they are never stored as conversation messages. A
+failed or malformed translation causes no download and falls back to the
+original query. This improves cross-language lookup but remains dependent on the
+selected text model's language ability.
+
 `hasFullTextIndex()` on the reader reports whether an archive carries an index at
 all, checking both the current `X/fulltext/xapian` entry and the older
 `Z//fulltextIndex/xapian` one. Every catalog edition has one. A manually imported

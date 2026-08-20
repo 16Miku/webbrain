@@ -24314,7 +24314,9 @@ test('Apocalypse Mode falls back to the official static Kiwix catalog', async ()
 function minimalWikipediaZimFixture(options = {}) {
   const encoder = new TextEncoder();
   const language = options.language || 'eng';
-  const sourceLanguage = ({ ben: 'bn', tgl: 'tl' })[language] || language.slice(0, 2);
+  const sourceLanguage = ({ ben: 'bn', tgl: 'tl', tur: 'tr' })[language] || language.slice(0, 2);
+  const articlePath = options.articlePath || 'Alan_Turing';
+  const articleTitle = options.articleTitle || articlePath.replace(/_/g, ' ');
   const imageAssets = Array.isArray(options.imageAssets) ? options.imageAssets : [];
   const mimeTypes = ['text/html', 'text/plain'];
   for (const asset of imageAssets) {
@@ -24338,7 +24340,7 @@ function minimalWikipediaZimFixture(options = {}) {
       }]
       : []),
     {
-      namespace: articleNamespace, url: 'Alan_Turing', title: 'Alan Turing', mimeType: 0,
+      namespace: articleNamespace, url: articlePath, title: articleTitle, mimeType: 0,
       contents: options.articleHtml || '<!doctype html><html><body><p>Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.</p></body></html>',
     },
     ...Object.entries(metadata).map(([url, contents]) => ({ namespace: 'M', url, title: url, mimeType: 1, contents })),
@@ -26476,6 +26478,39 @@ test('Apocalypse Mode exposes a pluggable archive provider seam', async () => {
   }
 });
 
+test('Apocalypse Mode retrieves Turkish text from a real ZIM fixture', async () => {
+  for (const [label, runtime, retrieval] of [
+    ['chrome', ApocalypseModeCh, OfflineRetrievalCh],
+    ['firefox', ApocalypseModeFx, OfflineRetrievalFx],
+  ]) {
+    const archive = minimalWikipediaZimFixture({
+      language: 'tur',
+      articlePath: 'Türkiye',
+      articleTitle: 'Türkiye',
+      articleHtml: '<!doctype html><html lang="tr"><body><p>Türkiye Cumhuriyeti, başkenti Ankara olan bir ülkedir.</p></body></html>',
+    });
+    const record = {
+      id: 'trwiki-fixture', archiveKind: 'wikipedia', status: 'ready', language: 'tur',
+      archiveDate: '2026-08-20', title: 'Türkçe Vikipedi', target: { kind: 'opfs', key: 'trwiki.zim' },
+    };
+    const storage = { async open() { return archive; } };
+    const records = await runtime.searchApocalypseArchives('Türkiye', {
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return [record]; },
+      },
+      storage,
+      providers: [runtime.createKiwixZimProvider({ storage })],
+    });
+    assert.equal(records[0]?.language, 'tur', `${label}: Turkish archive language was lost`);
+    assert.match(records[0]?.excerpt || '', /başkenti Ankara/, `${label}: Turkish UTF-8 article text was not retrieved`);
+    assert.equal(records[0]?.url, 'https://tr.wikipedia.org/wiki/T%C3%BCrkiye', `${label}: Turkish canonical URL was not preserved`);
+    const hits = await retrieval.wikipediaRecordsToRagHits(records, { digestHex: async () => '1'.repeat(64) });
+    assert.equal(hits[0]?.language, 'tur', `${label}: Turkish ZIM result did not enter the RAG pipeline`);
+    assert.match(hits[0]?.text || '', /Türkiye Cumhuriyeti/, `${label}: Turkish RAG passage changed`);
+  }
+});
+
 test('Apocalypse Mode forwards cancellation without corrupting archive state', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const record = {
@@ -27739,14 +27774,25 @@ test('shared offline retrieval honors source/language filters and never download
       readerUrl: 'webbrain-reader://emergency-box/cjk?passage=cjk%3Aone', lexicalRank: 1,
     };
     const wikipediaProviders = [{ id: 'test-xapian-provider' }];
+    const wikipediaSearchOptions = [];
     const service = runtime.createOfflineRetrievalService({
       emergencyStore: {
         async get() {
           return { status: 'ready', active: { indexPath: 'sqlite/ready.sqlite3', version: 'v1' } };
         },
       },
+      wikipediaStore: {
+        async listArchives() {
+          return [
+            { archiveKind: 'wikipedia', status: 'ready', language: 'tur' },
+            { archiveKind: 'wikipedia', status: 'ready', language: 'eng' },
+            { archiveKind: 'wikipedia', status: 'downloading', language: 'swa' },
+          ];
+        },
+      },
       indexClient: { async searchEmergency() { return [emergencyHit]; } },
       searchWikipedia: async (_query, options) => {
+        wikipediaSearchOptions.push(options);
         assert.equal(options.searchAllArchives, true, `${label}: RAG did not request every selected archive`);
         assert.equal(options.providers, wikipediaProviders, `${label}: configured ZIM providers were not forwarded`);
         return [{
@@ -27759,6 +27805,23 @@ test('shared offline retrieval honors source/language filters and never download
       digestHex: async () => 'b'.repeat(64),
       semanticReranker: { async rerank() { throw new Error('embedder missing'); } },
     });
+    assert.deepEqual((await service.status()).wikipediaLanguages, ['eng', 'tur'],
+      `${label}: retrieval status did not expose the ready installed archive languages`);
+    const disabledService = runtime.createOfflineRetrievalService({
+      emergencyStore: { async get() { return null; } },
+      wikipediaStore: {
+        async getConfig() { return { enabled: false }; },
+        async listArchives() {
+          return [
+            { archiveKind: 'wikipedia', status: 'ready', language: 'tur' },
+            { archiveKind: 'wikipedia', status: 'ready', language: 'eng' },
+          ];
+        },
+      },
+    });
+    assert.deepEqual((await disabledService.status()).wikipediaLanguages, [],
+      `${label}: disabled Apocalypse Mode still advertised Wikipedia translation targets`);
+    disabledService.close();
     const cjkOnly = await service.search('呼吸道', { languages: ['zho'], sources: ['wikipedia', 'emergency-box'] });
     assert.equal(cjkOnly.hits.length, 1, `${label}: language filter did not exclude English Wikipedia`);
     assert.equal(cjkOnly.hits[0].sourceKind, 'emergency-box');
@@ -27767,6 +27830,26 @@ test('shared offline retrieval honors source/language filters and never download
     const wikipediaOnly = await service.search('airway', { sources: ['wikipedia'], languages: ['eng'] });
     assert.equal(wikipediaOnly.hits[0]?.sourceKind, 'wikipedia');
     assert.match(wikipediaOnly.hits[0]?.readerUrl || '', /^webbrain-reader:\/\/wikipedia\/archive-1\?/);
+    await service.search('Türkiye başkenti nedir?', { sources: ['wikipedia'] });
+    assert.equal(wikipediaSearchOptions.at(-1)?.preferredLanguages?.[0], 'tur',
+      `${label}: Turkish query detection did not prefer the Turkish archive`);
+    await service.search('What is the capital of Turkey?', {
+      sources: ['wikipedia'],
+      languages: ['tur'],
+      queryLanguage: 'eng',
+      wikipediaQueriesByLanguage: { tur: 'Türkiye başkenti' },
+    });
+    assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
+      `${label}: selected archive languages were not searched before the source language`);
+    await service.search('Türkiye başkenti nedir?', {
+      sources: ['wikipedia'],
+      languages: ['eng', 'tur'],
+      queryLanguage: 'tur',
+    });
+    assert.deepEqual(wikipediaSearchOptions.at(-1)?.preferredLanguages, ['tur', 'eng'],
+      `${label}: a selected source language was not searched before the other archive filters`);
+    assert.deepEqual(wikipediaSearchOptions.at(-1)?.queriesByLanguage, { tur: 'Türkiye başkenti' },
+      `${label}: translated per-language Wikipedia queries were not forwarded`);
     service.close();
 
     let rerankCalls = 0;
@@ -27909,12 +27992,20 @@ test('Chrome MV3 standalone retrieval uses the worker-capable offscreen host and
   const result = await service.search('Who is Sokullu?', {
     sources: ['emergency-box', 'invalid', 'wikipedia'],
     languages: ['ENG', '../bad'],
+    semanticQuery: 'Who is Sokullu?',
+    queryLanguage: 'ENG',
+    wikipediaQueriesByLanguage: { tur: 'Sokollu kimdir', '../bad': 'ignored' },
     limit: 500,
   });
   assert.equal(result, expected, 'offscreen proxy did not return the host retrieval result');
   assert.equal(ensureCalls, 1, 'offscreen retrieval did not ensure its worker-capable host');
   assert.deepEqual(messages[0]?.options, {
-    sources: ['emergency-box', 'wikipedia'], languages: ['eng'], limit: 12,
+    sources: ['emergency-box', 'wikipedia'],
+    languages: ['eng'],
+    semanticQuery: 'Who is Sokullu?',
+    queryLanguage: 'eng',
+    wikipediaQueriesByLanguage: { tur: 'Sokollu kimdir' },
+    limit: 12,
   }, 'offscreen proxy did not bound its structured retrieval payload');
 
   let resolveSearch;
@@ -28465,6 +28556,32 @@ test('Apocalypse RAG search checks every ready archive while ordinary title sear
     searched.length = 0;
     await runtime.searchApocalypseArchives('match', { store, providers: [provider], limit: 1 });
     assert.deepEqual(searched, ['archive-a'], `${label}: ordinary search lost its bounded early exit`);
+
+    const multilingualRecords = [
+      { id: 'english-newer', status: 'ready', language: 'eng', archiveDate: '2026-08-01' },
+      { id: 'turkish-older', status: 'ready', language: 'tur', archiveDate: '2026-01-01' },
+    ];
+    const multilingualSearches = [];
+    await runtime.searchApocalypseArchives('capital Turkey', {
+      store: {
+        async getConfig() { return { enabled: true }; },
+        async listArchives() { return multilingualRecords; },
+      },
+      providers: [{
+        supports() { return true; },
+        async search(record, query) {
+          multilingualSearches.push({ archiveId: record.id, query });
+          return [];
+        },
+      }],
+      searchAllArchives: true,
+      preferredLanguages: ['tur'],
+      queriesByLanguage: { tur: 'Türkiye başkenti' },
+    });
+    assert.deepEqual(multilingualSearches, [
+      { archiveId: 'turkish-older', query: 'Türkiye başkenti' },
+      { archiveId: 'english-newer', query: 'capital Turkey' },
+    ], `${label}: detected language preference or translated per-archive query was ignored`);
   }
 });
 
@@ -28908,6 +29025,22 @@ test('standalone WebGPU local RAG retrieves compact attributed Wikipedia passage
     assert.equal(runtime.shouldRetrieveLocalWikipedia("how can i patch my dog's yara"), false, `${label}: first-person practical advice triggered encyclopedia retrieval`);
     assert.equal(runtime.shouldRetrieveLocalWikipedia("it's a cut"), false, `${label}: a conversational follow-up triggered a title search`);
     assert.equal(runtime.shouldRetrieveLocalWikipedia('and?'), false, `${label}: a context-only continuation triggered an archive search`);
+    assert.equal(
+      runtime.shouldRetrieveLocalWikipedia('Türkiye Cumhuriyeti hangi tarihte kurulmuştur ve ilk cumhurbaşkanı kimdir bunu ayrıntılı biçimde anlat'),
+      true,
+      `${label}: a longer Turkish factual request without a question mark skipped offline retrieval`,
+    );
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('Bana bir e-posta yaz'), false,
+      `${label}: a Turkish writing request triggered local retrieval`);
+    assert.equal(
+      runtime.shouldRetrieveLocalWikipedia('Nasıl daha yaratıcı bir şiir yazabilirim bana birkaç yöntem göster'),
+      false,
+      `${label}: a personal Turkish writing request triggered retrieval because nasıl is a factual marker`,
+    );
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('今日はどうですか'), false,
+      `${label}: ordinary Japanese conversation triggered local retrieval`);
+    assert.equal(runtime.shouldRetrieveLocalWikipedia('富士山'), true,
+      `${label}: a Japanese encyclopedia topic skipped offline retrieval`);
     assert.equal(runtime.localWikipediaSearchQuery("who's sokollu"), 'sokollu', `${label}: contracted identity question was not reduced to its subject`);
     assert.equal(
       runtime.localWikipediaSearchQuery("what's his zodiac sign?", { fallbackTopic: 'sokollu' }),
@@ -29279,6 +29412,59 @@ test('lexical retrieval keeps infant technique ahead of adult technique for a ba
   }
 });
 
+test('offline query language keeps unambiguous script hints over the UI locale', async () => {
+  for (const label of ['chrome', 'firefox']) {
+    const { detectOfflineQueryLanguage } = await import(pathToFileURL(path.join(
+      ROOT, `src/${label}/src/agent/offline-query-stopwords.js`,
+    )).href);
+    const en = { locale: 'en' };
+    assert.equal(detectOfflineQueryLanguage('Москва', en), 'rus',
+      `${label}: Cyrillic proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('القاهرة', en), 'ara',
+      `${label}: Arabic proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('تهران پایتخت ایران است', { locale: 'fa' }), 'fas',
+      `${label}: Persian text with a Persian locale was classified as Arabic`);
+    assert.equal(detectOfflineQueryLanguage('تهران پایتخت ایران است', en), 'fas',
+      `${label}: Persian-specific letters still fell through to Arabic`);
+    assert.equal(detectOfflineQueryLanguage('یہ پاکستان ہے', { locale: 'ur' }), 'urd',
+      `${label}: Urdu yeh-barree did not distinguish Urdu from Arabic`);
+    assert.equal(detectOfflineQueryLanguage('España', en), 'spa',
+      `${label}: Spanish ñ did not identify the query`);
+    assert.equal(detectOfflineQueryLanguage('São Paulo', en), 'por',
+      `${label}: Portuguese ã did not identify the query`);
+    assert.equal(detectOfflineQueryLanguage('Straße', en), 'deu',
+      `${label}: German ß did not identify the query`);
+    assert.equal(detectOfflineQueryLanguage('दिल्ली', en), 'hin',
+      `${label}: Devanagari proper nouns fell back to the English UI locale`);
+    assert.equal(detectOfflineQueryLanguage('Київ', en), 'ukr',
+      `${label}: Ukrainian-specific letters lost to the general Cyrillic fallback`);
+    assert.equal(detectOfflineQueryLanguage('Какво е България?', { locale: 'bg' }), 'bul',
+      `${label}: a Bulgarian locale did not disambiguate shared Cyrillic`);
+    assert.equal(detectOfflineQueryLanguage('Какво е България?', en), 'bul',
+      `${label}: Bulgarian stopwords lost to the generic Russian Cyrillic hint`);
+    assert.equal(detectOfflineQueryLanguage('महाराष्ट्र काय आहे', { locale: 'mr' }), 'mar',
+      `${label}: a Marathi locale did not disambiguate shared Devanagari`);
+    assert.equal(detectOfflineQueryLanguage('महाराष्ट्र काय आहे', en), 'mar',
+      `${label}: Marathi stopwords lost to the generic Hindi Devanagari hint`);
+    assert.equal(detectOfflineQueryLanguage('दिल्ली', { locale: 'mr' }), 'mar',
+      `${label}: a Marathi locale still classified Devanagari as Hindi`);
+    assert.equal(detectOfflineQueryLanguage('केळी', en), 'mar',
+      `${label}: Marathi-specific ळ did not distinguish Marathi from Hindi`);
+    assert.notEqual(detectOfflineQueryLanguage('öffnen das Fenster', en), 'tur',
+      `${label}: shared ö was treated as a Turkish language id`);
+    assert.equal(detectOfflineQueryLanguage('富士山', { locale: 'ja' }), 'jpn',
+      `${label}: kanji-only Japanese queries were classified as Chinese`);
+    assert.equal(detectOfflineQueryLanguage('東京都', { locale: 'ja' }), 'jpn',
+      `${label}: a Japanese locale did not disambiguate shared Han characters`);
+    assert.equal(detectOfflineQueryLanguage('富士山', { locale: 'zh' }), 'zho',
+      `${label}: a Chinese locale lost the generic Han fallback`);
+    assert.equal(detectOfflineQueryLanguage('富士山', en), 'zho',
+      `${label}: Han-only queries in an English UI should still fall back to Chinese`);
+    assert.equal(detectOfflineQueryLanguage('富士山です', en), 'jpn',
+      `${label}: kana no longer identified Japanese when mixed with kanji`);
+  }
+});
+
 test('Apocalypse archive search reports disabled, missing, and not-ready states separately', async () => {
   for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
     const statusFor = async (enabled, archives) => {
@@ -29392,7 +29578,7 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
     { role: 'user', content: 'and?', webbrainStandaloneChat: true },
     { role: 'assistant', content: 'He served as grand vizier.' },
   ];
-  assert.equal(agent._standaloneWikipediaPriorTopic(apocalypseHistory), 'sokollu',
+  assert.equal(agent._standaloneWikipediaPriorTopic(apocalypseHistory).topic, 'sokollu',
     'context-only continuation displaced the last factual subject');
   let followUpSearchQuery = '';
   const followUpEnriched = { role: 'user', content: "what's his zodiac sign?" };
@@ -29443,6 +29629,357 @@ test('standalone WebGPU uses a compact tool-free chat profile with no browser co
   );
   assert.deepEqual(entitySources, ['wikipedia'],
     'generic encyclopedic query unnecessarily scanned the Emergency corpus');
+  let translationRequest = null;
+  let translatedSearchOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur', 'swa'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        translationRequest = request;
+        return { tur: 'Türkiye başkenti', swa: 'mji mkuu wa Uturuki' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          translatedSearchOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(translationRequest?.sourceLanguage, 'eng',
+    'cross-language Wikipedia expansion did not detect the English source query');
+  assert.deepEqual(translationRequest?.targets?.map(target => target.language), ['tur', 'swa'],
+    'cross-language Wikipedia expansion did not cover every selected archive language');
+  assert.equal(translationRequest?.targets?.[0]?.name, 'Turkish',
+    'cross-language Wikipedia expansion did not label a known archive language');
+  assert.ok(translationRequest?.targets?.[1]?.name,
+    'cross-language Wikipedia expansion did not label an arbitrary ISO 639-3 archive language');
+  assert.equal(translatedSearchOptions?.queryLanguage, 'eng',
+    'detected query language did not reach offline retrieval');
+  assert.deepEqual(translatedSearchOptions?.wikipediaQueriesByLanguage, {
+    tur: 'Türkiye başkenti',
+    swa: 'mji mkuu wa Uturuki',
+  }, 'translated keywords did not reach each per-language archive query');
+  let allInstalledTranslationRequest = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: [],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        allInstalledTranslationRequest = request;
+        return { tur: 'Türkiye başkenti' };
+      },
+      offlineRetrievalService: {
+        async status() { return { wikipediaLanguages: ['eng', 'tur'] }; },
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(allInstalledTranslationRequest?.targets, [{ language: 'tur', name: 'Turkish' }],
+    'default all-installed retrieval did not expand the query for a different-language archive');
+  let malformedTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur', 'swa'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery() {
+        return { tur: { query: 'Türkiye başkenti' }, swa: ['mji mkuu', 'wa Uturuki'] };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          malformedTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(malformedTranslationOptions?.wikipediaQueriesByLanguage, {},
+    'non-string translation values replaced the original archive query');
+  let nestedJsonTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery() {
+        return '{"tur":{"query":"Türkiye başkenti"}}';
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          nestedJsonTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(nestedJsonTranslationOptions?.wikipediaQueriesByLanguage, {},
+    'nested JSON translation objects were coerced into archive queries');
+  let hanTranslationRequest = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: '富士山' },
+    '富士山',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'ja',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['jpn', 'zho'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        hanTranslationRequest = request;
+        return {};
+      },
+      offlineRetrievalService: {
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(hanTranslationRequest?.sourceLanguage, 'jpn',
+    'kanji-only Japanese queries were translated as if they were Chinese');
+  assert.deepEqual(hanTranslationRequest?.targets?.map(target => target.language), ['zho'],
+    'a Japanese UI asked the model to translate Japanese kanji back into Japanese');
+  let followOnTranslationRequest = null;
+  let followOnTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'When was he born?' },
+    'When was he born?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng'],
+    },
+    {
+      messages: [
+        { role: 'user', content: 'Sokollu Mehmed Paşa kimdir?', webbrainStandaloneChat: true },
+        { role: 'assistant', content: 'Sokollu Mehmed Paşa was an Ottoman statesman.' },
+      ],
+      async translateWikipediaQuery(request) {
+        followOnTranslationRequest = request;
+        return { eng: 'Sokollu Mehmed Pasha' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          followOnTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(followOnTranslationRequest?.sourceLanguage, 'tur',
+    'a pronoun follow-up kept the English UI language instead of the resolved Turkish topic');
+  assert.deepEqual(followOnTranslationRequest?.targets?.map(target => target.language), ['eng'],
+    'the English archive was excluded from translation because the follow-up was English');
+  assert.equal(followOnTranslationOptions?.queryLanguage, 'tur',
+    'resolved-topic language did not reach offline retrieval');
+  assert.equal(followOnTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'Sokollu Mehmed Pasha',
+    'the English archive searched the raw Turkish spelling instead of the translated topic');
+  let frenchTranslationRequest = null;
+  let frenchTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: "Quelle est la capitale de l'Allemagne ?" },
+    "Quelle est la capitale de l'Allemagne ?",
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        frenchTranslationRequest = request;
+        return { eng: 'capital of Germany' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          frenchTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(frenchTranslationRequest?.sourceLanguage, 'fra',
+    'a French question lost its language after search-term stripping');
+  assert.deepEqual(frenchTranslationRequest?.targets?.map(target => target.language), ['eng'],
+    'the English archive was excluded because the stripped French query looked English');
+  assert.equal(frenchTranslationOptions?.queryLanguage, 'fra',
+    'original-turn French language did not reach offline retrieval');
+  assert.equal(frenchTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'capital of Germany',
+    'the English archive searched the stripped French terms instead of the translation');
+  let frenchFollowOnTranslationRequest = null;
+  let frenchFollowOnTranslationOptions = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'When was it founded?' },
+    'When was it founded?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng'],
+    },
+    {
+      messages: [
+        { role: 'user', content: "Quelle est la capitale de l'Allemagne ?", webbrainStandaloneChat: true },
+        { role: 'assistant', content: 'Berlin is the capital of Germany.' },
+      ],
+      async translateWikipediaQuery(request) {
+        frenchFollowOnTranslationRequest = request;
+        return { eng: 'capital of Germany' };
+      },
+      offlineRetrievalService: {
+        async search(_query, options) {
+          frenchFollowOnTranslationOptions = options;
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(frenchFollowOnTranslationRequest?.sourceLanguage, 'fra',
+    'a follow-up over a stripped French topic used the English UI language');
+  assert.deepEqual(frenchFollowOnTranslationRequest?.targets?.map(target => target.language), ['eng'],
+    'the English archive was excluded because the resolved French topic looked English');
+  assert.equal(frenchFollowOnTranslationRequest?.query, "capitale l'Allemagne",
+    'the follow-up did not search the resolved French topic');
+  assert.equal(frenchFollowOnTranslationOptions?.queryLanguage, 'fra',
+    'prior-turn French language did not reach offline retrieval');
+  assert.equal(frenchFollowOnTranslationOptions?.wikipediaQueriesByLanguage?.eng, 'capital of Germany',
+    'the English archive searched the stripped French topic instead of the translation');
+  let disabledTranslationCalled = false;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['eng', 'tur'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery() {
+        disabledTranslationCalled = true;
+        return { tur: 'Türkiye başkenti' };
+      },
+      offlineRetrievalService: {
+        async status() { return { wikipediaLanguages: [] }; },
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'disabled', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.equal(disabledTranslationCalled, false,
+    'explicit language filters still translated after Apocalypse Mode was disabled');
+  let readyFilterTranslationRequest = null;
+  await agent._applyStandaloneWikipediaRag(
+    { role: 'user', content: 'What is the capital of Turkey?' },
+    'What is the capital of Turkey?',
+    {
+      standaloneChat: true,
+      providerId: 'webgpu',
+      locale: 'en',
+      offlineRagSources: ['wikipedia'],
+      offlineRagLanguages: ['tur', 'swa'],
+    },
+    {
+      messages: [],
+      async translateWikipediaQuery(request) {
+        readyFilterTranslationRequest = request;
+        return { tur: 'Türkiye başkenti' };
+      },
+      offlineRetrievalService: {
+        async status() { return { wikipediaLanguages: ['eng', 'tur'] }; },
+        async search() {
+          return {
+            hits: [], candidates: [], rankingMode: 'lexical-fallback',
+            statuses: { wikipedia: 'ready', emergencyBox: 'skipped', semantic: 'model-missing' },
+            errors: {},
+          };
+        },
+      },
+    },
+  );
+  assert.deepEqual(readyFilterTranslationRequest?.targets?.map(target => target.language), ['tur'],
+    'explicit language filters were not intersected with ready archive languages');
   let healthSources = null;
   let healthSearchQuery = '';
   await agent._applyStandaloneWikipediaRag(
