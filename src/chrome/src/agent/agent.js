@@ -822,9 +822,9 @@ export class Agent extends LoopDetector {
     // it. Managed cloud runs and the explicit /foreground compatibility
     // override retain the old Page.bringToFront behavior for their lifetime.
     this._foregroundCaptureTabs = new Set();
-    // Focus emulation is enabled lazily for background screenshot paths. CDP
-    // sessions are released at the end of each run, so every run cleanup must
-    // still disable focus emulation before releasing the session.
+    // Focus emulation is enabled lazily for background screenshot paths. Every
+    // run cleanup must disable it before releasing its CDP ownership, even
+    // when mode-scoped Dev diagnostics keep the shared session attached.
     this._focusEmulatedTabs = new Set();
     this.completionInvariants = new Map(); // tabId -> run-scoped post-action verification state
     this._completionRunCounter = 0;
@@ -8989,7 +8989,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    *
    * Focus emulation makes background pages report themselves as focused and
    * active without activating their tab. It is scoped to the current run and
-   * disabled in the run's finally block before its debugger session is released.
+   * disabled in the run's finally block before its debugger ownership is released.
    * Cloud runs and /foreground deliberately retain the old activation path.
    */
   async _preparePageForCapture(tabId) {
@@ -19266,7 +19266,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try {
             this._clearCompletionInvariant(tabId, completionRunToken);
           } finally {
-            this._runningTabs.delete(tabId);
+            try {
+              await cdpClient.cleanupRun(tabId);
+            } catch { /* the debugger may already be detached during teardown */ }
+            finally {
+              this._runningTabs.delete(tabId);
+            }
           }
         }
       }
@@ -25952,15 +25957,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._userAttachmentHandles.delete(tabId);
       this._runUpdateCallbacks.delete(tabId);
-      this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._resetChromeProtectedGalleryRunState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
       try {
-        await cdpClient.cleanupTab(tabId);
+        await cdpClient.cleanupRun(tabId);
       } catch { /* the debugger may already be detached during teardown */ }
+      finally {
+        this._runningTabs.delete(tabId);
+      }
     }
   }
 
@@ -27181,15 +27188,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._userAttachmentHandles.delete(tabId);
       this._runUpdateCallbacks.delete(tabId);
-      this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._resetChromeProtectedGalleryRunState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
       try {
-        await cdpClient.cleanupTab(tabId);
+        await cdpClient.cleanupRun(tabId);
       } catch { /* the debugger may already be detached during teardown */ }
+      finally {
+        this._runningTabs.delete(tabId);
+      }
     }
   }
 
