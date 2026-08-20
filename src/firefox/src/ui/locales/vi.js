@@ -582,7 +582,7 @@ export default {
   'st.display.plan_review_threshold.label': "Xem xét độ tin cậy dưới đây",
   'st.display.plan_review_threshold.desc': "Khi đánh giá kế hoạch sử dụng ngưỡng tin cậy, các kế hoạch ở mức hoặc cao hơn điểm này sẽ tự động phê duyệt và chạy.",
   'st.display.auto_screenshot.label': "Ảnh chụp màn hình tự động",
-  'st.display.auto_screenshot.desc': "Tự động chụp ảnh màn hình khung nhìn sau khi tác nhân thực hiện hành động trên trang, để những mô hình có khả năng thị giác có thể thấy những gì đã thay đổi. Tốn nhiều token hơn. Bị tắt âm thầm nếu kiểu máy đang hoạt động không hỗ trợ hình ảnh.",
+  "st.display.auto_screenshot.desc": "Tự động chụp ảnh màn hình khung nhìn sau khi tác nhân thao tác trên trang để tuyến thị giác đã chọn thấy được thay đổi. Việc này tốn nhiều token hơn. Nếu thị giác không khả dụng, phần làm giàu sẽ bị bỏ qua và tác vụ tiếp tục với thông báo trạng thái.",
   'st.display.auto_screenshot.off': "Tắt",
   'st.display.auto_screenshot.navigation': "Trên điều hướng",
   'st.display.auto_screenshot.state_change': "Khi thay đổi trạng thái (mặc định)",
@@ -683,7 +683,7 @@ export default {
   'st.providers.compat.value.max': "Tối đa",
   'st.providers.compat.value.system': "Hệ thống",
   'st.providers.compat.value.developer': "Nhà phát triển",
-  'st.providers.webbrain_data_use.body': "Đã bao gồm việc sử dụng Đám mây WebBrain miễn phí hàng ngày. Mặc dù Trợ giúp cải thiện WebBrain được bật theo mặc định, nhưng các cuộc hội thoại trên Đám mây đã chọn có thể được giữ lại và sử dụng để đánh giá, cải tiến, tinh chỉnh và đào tạo. Nói chung, hãy tắt tính năng này để loại trừ các tương tác trên Đám mây trong tương lai khỏi những mục đích sử dụng đó. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> {privacyLink}. Để sử dụng nhiều hơn, hãy đăng ký tại {subscribeLink}. Quản lý thanh toán tại {accountLink}.",
+  'st.providers.webbrain_data_use.body': "Đã bao gồm việc sử dụng Đám mây WebBrain miễn phí hàng ngày. Mặc dù Trợ giúp cải thiện WebBrain được bật theo mặc định, nhưng các cuộc hội thoại trên Đám mây đã chọn có thể được giữ lại và sử dụng để đánh giá, cải tiến, tinh chỉnh và đào tạo. Hãy tắt tính năng này trong Chung → Nâng cao để loại trừ các tương tác trên Đám mây trong tương lai khỏi những mục đích sử dụng đó. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> {privacyLink}. Để sử dụng nhiều hơn, hãy đăng ký tại {subscribeLink}. Quản lý thanh toán tại {accountLink}.",
   'st.providers.webbrain_note.body': "Đã bao gồm việc sử dụng Đám mây WebBrain miễn phí hàng ngày. Yêu cầu đi qua api.webbrain.one; theo mặc định, chúng tôi ghi lại siêu dữ liệu để lấy hạn mức và gỡ lỗi, chứ không phải văn bản nhắc nhở, nội dung trang, ảnh chụp màn hình hoặc phản hồi mô hình. {privacyLink}. Để sử dụng nhiều hơn, hãy đăng ký tại {subscribeLink}. Quản lý thanh toán tại {accountLink}.",
   'st.providers.webbrain_note.privacy_link': "Chính sách bảo mật",
 

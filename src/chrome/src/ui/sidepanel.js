@@ -9035,6 +9035,14 @@ function handleAgentUpdateMessage(msg) {
       scrollToBottom();
       break;
 
+    case 'tool_progress':
+      if (data?.message) showActivity(data.message);
+      if (currentAssistantEl && data?.message) {
+        updateActiveToolProgress(data.name, data.message);
+      }
+      scrollToBottom();
+      break;
+
     case 'tool_result':
       if (currentAssistantEl) {
         if (verboseMode) {
@@ -10073,6 +10081,22 @@ function appendCompactStep(toolName, args) {
   details.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.input_label'))}</div><div class="detail-args">${escapeHtml(JSON.stringify(args, null, 2))}</div>`;
   container.appendChild(details);
   bindCompactStepDetailsToggle(toggle);
+}
+
+function updateActiveToolProgress(toolName, message) {
+  if (!currentAssistantEl || !message) return;
+  if (verboseMode) {
+    const content = currentAssistantEl.querySelector('.message-content');
+    const active = Array.from(content?.querySelectorAll('.tool-call[data-awaiting-result="true"]') || [])
+      .reverse()
+      .find(el => !toolName || el.dataset.toolName === toolName);
+    const label = active?.querySelector('.tool-call-name');
+    if (label) label.textContent = ` ${message}`;
+    return;
+  }
+  const active = findLastActiveCompactStep(toolName);
+  const label = active?.querySelector('.step-label');
+  if (label) label.textContent = message;
 }
 
 function markLastStepDone(toolName, result) {

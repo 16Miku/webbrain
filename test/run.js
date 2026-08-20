@@ -912,11 +912,14 @@ const {
   WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_CONSENT_VERSION,
+  WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   normalizeWebgpuModelId,
+  webgpuVisionReadyMarkerUrl,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
 );
@@ -7073,6 +7076,32 @@ test('trace export: proves visual delivery without exporting pixels or OCR text'
           captureId: 'capture-7',
         },
       },
+      {
+        runId: 'visual-proof', seq: 5, kind: 'note',
+        data: {
+          note: 'vision_status',
+          extra: {
+            context: 'auto_screenshot',
+            visionRoute: 'local_fallback_unavailable',
+            status: 'downloading',
+            progress: 42,
+            loaded: 323 * 1024 * 1024,
+            total: 770 * 1024 * 1024,
+          },
+        },
+      },
+      {
+        runId: 'visual-proof', seq: 6, kind: 'vision_sub_call',
+        data: {
+          context: 'full_page_screenshot',
+          visionRoute: 'local_fallback',
+          model: 'vision-sidecar',
+          latencyMs: 90_000,
+          error: 'Vision request timed out.',
+          errorCode: 'vision_timeout',
+          recoveryOutcome: 'worker_cancellation_requested',
+        },
+      },
     ],
   }];
   for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
@@ -7081,6 +7110,8 @@ test('trace export: proves visual delivery without exporting pixels or OCR text'
     assert.match(markdown, /Visual capture: inspect_viewport capture/, `${label}: capture status missing`);
     assert.match(markdown, /Vision sub-call \(inspect_viewport · local_fallback · vision-sidecar · capture-7 · 42 ms\): succeeded · fallback=image_payload_rejected/, `${label}: fallback route evidence missing`);
     assert.match(markdown, /Vision route: initial_user_message · active_raw · webbrain-cloud · capture-7/, `${label}: raw active-provider route evidence missing`);
+    assert.match(markdown, /Vision status: auto_screenshot · local_fallback_unavailable · downloading · 42% · 323\/770 MB/, `${label}: readiness progress evidence missing`);
+    assert.match(markdown, /Vision sub-call \(full_page_screenshot · local_fallback · vision-sidecar · 90000 ms\): failed: Vision request timed out\. · code=vision_timeout · recovery=worker_cancellation_requested/, `${label}: timeout recovery evidence missing`);
     assert.match(markdown, /Model request: 4 messages · 12 tools · 1 image block · 0 document blocks/, `${label}: model media counts missing`);
     assert.doesNotMatch(markdown, /PRIVATE_PIXELS|PRIVATE OCR DESCRIPTION/, `${label}: private visual content leaked`);
   }
@@ -20710,6 +20741,203 @@ test('inspect_viewport charges the screenshot budget only when a model receives 
   }
 });
 
+test('inspect_viewport returns local-vision readiness immediately without capturing or dispatching', async () => {
+  const updates = [];
+  const visionStatus = {
+    enabled: true,
+    consented: true,
+    status: 'downloading',
+    progress: 42,
+    loaded: 323 * 1024 * 1024,
+    total: 770 * 1024 * 1024,
+    error: '',
+    updatedAt: Date.now(),
+  };
+  const agent = new AgentCh({
+    getActive: () => ({ name: 'text-only', supportsVision: false }),
+    resolveVisionRoute: async () => ({
+      provider: null,
+      route: 'local_fallback_unavailable',
+      rawImage: false,
+      visionStatus,
+    }),
+  });
+  agent._captureViewportProbe = async () => {
+    throw new Error('capture must not run while local vision is downloading');
+  };
+  const result = await agent.executeTool(47, 'inspect_viewport', {}, (type, data) => updates.push({ type, data }));
+  assert.equal(result.success, false);
+  assert.equal(result.recoverable, true);
+  assert.equal(result.code, 'vision_model_downloading');
+  assert.deepEqual(result.visionStatus, visionStatus);
+  assert.ok(updates.some(update => update.type === 'tool_progress' && /42%/.test(update.data.message)));
+  assert.equal(agent.autoScreenshotCount.get(47), undefined);
+
+  const automaticUpdates = [];
+  const route = {
+    provider: null,
+    route: 'local_fallback_unavailable',
+    rawImage: false,
+    visionStatus,
+  };
+  assert.equal(agent._emitVisionUnavailableNotice(
+    48,
+    route,
+    (type, data) => automaticUpdates.push({ type, data }),
+  ), true);
+  assert.equal(agent._emitVisionUnavailableNotice(
+    48,
+    route,
+    (type, data) => automaticUpdates.push({ type, data }),
+  ), false);
+  assert.deepEqual(automaticUpdates.map(update => update.type), ['tool_call', 'tool_progress', 'tool_result']);
+  assert.equal(automaticUpdates[2].data.result.code, 'vision_model_downloading');
+});
+
+test('staged screenshots use the shared vision route while ordinary uploads keep active-provider semantics', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sidecar = { name: 'vision-sidecar', config: { model: 'sidecar-vl', baseUrl: 'https://vision.test/v1' } };
+    const agent = new AgentClass({
+      resolveVisionRoute: async () => ({
+        provider: sidecar,
+        route: 'explicit_override',
+        rawImage: false,
+      }),
+    });
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    let descriptions = 0;
+    agent._describeScreenshot = async (_tabId, dataUrl, context, _costState, route, onProgress) => {
+      descriptions++;
+      assert.match(dataUrl, /^data:image\/png;base64,/);
+      assert.equal(context, 'staged_screenshot');
+      assert.equal(route.provider, sidecar);
+      onProgress?.({ phase: 'describing', message: 'describing staged screenshot' });
+      return { model: 'sidecar-vl', text: 'A receipt total is visible.' };
+    };
+    const updates = [];
+    const enriched = { role: 'user', content: 'Read the staged capture.' };
+    const result = await agent._applyAttachments(enriched, [{
+      kind: 'image',
+      name: 'staged.png',
+      dataUrl: 'data:image/png;base64,U1RBR0VE',
+      source: 'slash_screenshot',
+      stagedAttachmentId: `staged-${label}`,
+    }], { name: 'text-only', supportsVision: false }, {
+      tabId: label === 'chrome' ? 481 : 482,
+      onUpdate: (type, data) => updates.push({ type, data }),
+    });
+    assert.equal(result.ok, true, `${label}: staged screenshot route failed`);
+    assert.equal(descriptions, 1, `${label}: staged screenshot did not use its sidecar`);
+    assert.equal(enriched.content.some(block => block?.type === 'image_url'), false,
+      `${label}: raw staged pixels leaked to a text-only active provider`);
+    assert.match(JSON.stringify(enriched.content), /UNTRUSTED page content/);
+    assert.match(JSON.stringify(enriched.content), /receipt total/);
+    assert.deepEqual(updates.map(update => update.type), ['tool_call', 'tool_progress', 'tool_result']);
+
+    const upload = { role: 'user', content: 'Read this upload.' };
+    const uploadResult = await agent._applyAttachments(upload, [{
+      kind: 'image',
+      name: 'upload.png',
+      dataUrl: 'data:image/png;base64,VVBMT0FE',
+      source: 'user_upload',
+    }], { name: 'text-only', supportsVision: false }, { tabId: 483 });
+    assert.equal(uploadResult.ok, false, `${label}: ordinary upload unexpectedly used screenshot routing`);
+  }
+
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    let shrinkCalled = false;
+    const unavailable = new AgentClass({
+      resolveVisionRoute: async () => ({ provider: null, route: 'none', rawImage: false }),
+    });
+    unavailable._shrinkImageForBudget = async () => {
+      shrinkCalled = true;
+      throw new Error('a staged screenshot without a vision provider must not reach image processing');
+    };
+    const enriched = { role: 'user', content: 'Read this staged capture.' };
+    const result = await unavailable._applyAttachments(enriched, [{
+      kind: 'image',
+      dataUrl: 'data:image/png;base64,U1RBR0VE',
+      source: 'slash_screenshot',
+    }], { name: 'text-only', supportsVision: false }, { tabId: label === 'chrome' ? 485 : 486 });
+    assert.equal(result.ok, false, `${label}: missing staged vision provider bypassed rejection`);
+    assert.equal(shrinkCalled, false, `${label}: unavailable staged route processed raw pixels`);
+    assert.equal(enriched.content, 'Read this staged capture.', `${label}: unavailable staged route appended raw pixels`);
+  }
+
+  let shrinkCalled = false;
+  const visionStatus = {
+    enabled: true,
+    consented: true,
+    status: 'downloading',
+    progress: 42,
+    loaded: 323 * 1024 * 1024,
+    total: 770 * 1024 * 1024,
+    error: '',
+    updatedAt: Date.now(),
+  };
+  const unavailable = new AgentCh({
+    resolveVisionRoute: async () => ({
+      provider: null,
+      route: 'local_fallback_unavailable',
+      rawImage: false,
+      visionStatus,
+    }),
+  });
+  unavailable._shrinkImageForBudget = async () => {
+    shrinkCalled = true;
+    throw new Error('unavailable staged screenshot must not be processed');
+  };
+  const unavailableResult = await unavailable._applyAttachments(
+    { role: 'user', content: 'Read it.' },
+    [{ kind: 'image', dataUrl: 'data:image/png;base64,U1RBR0VE', source: 'slash_screenshot' }],
+    { name: 'text-only', supportsVision: false },
+    { tabId: 484, onUpdate() {} },
+  );
+  assert.equal(unavailableResult.ok, false);
+  assert.equal(unavailableResult.code, 'vision_model_downloading');
+  assert.equal(shrinkCalled, false);
+});
+
+test('attachments: mixed staged screenshots preflight unsupported files before vision', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sidecar = { name: 'vision-sidecar', config: { model: 'sidecar-vl', baseUrl: 'https://vision.test/v1' } };
+    const agent = new AgentClass({
+      resolveVisionRoute: async () => ({
+        provider: sidecar,
+        route: 'explicit_override',
+        rawImage: false,
+      }),
+    });
+    let descriptions = 0;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    agent._describeScreenshot = async () => {
+      descriptions++;
+      throw new Error(`${label}: staged screenshot vision ran before mixed-attachment preflight`);
+    };
+    const enriched = { role: 'user', content: 'Read these files.' };
+    const result = await agent._applyAttachments(enriched, [
+      {
+        kind: 'image',
+        name: 'staged.png',
+        dataUrl: 'data:image/png;base64,U1RBR0VE',
+        source: 'slash_screenshot',
+      },
+      {
+        kind: 'document',
+        name: 'invoice.pdf',
+        dataUrl: 'data:application/pdf;base64,JVBERi0=',
+      },
+    ], { name: 'text-only', supportsVision: false, supportsDocuments: false }, {
+      tabId: label === 'chrome' ? 487 : 488,
+      onUpdate() {},
+    });
+    assert.equal(result.ok, false, `${label}: mixed unsupported document should fail closed`);
+    assert.match(result.error, /document attachments/, `${label}: rejection should name the unsupported document`);
+    assert.equal(descriptions, 0, `${label}: vision sub-call ran before attachment preflight`);
+    assert.equal(enriched.content, 'Read these files.', `${label}: rejected mixed attachments mutated the message`);
+  }
+});
+
 test('LLM trace media counts distinguish actual image and document blocks', () => {
   const messages = [
     { role: 'user', content: 'plain' },
@@ -27523,12 +27751,14 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     assert.match(pageScript, /command\('process'\)\.catch\([\s\S]*?(?:await refresh\(\)|Promise\.all\(\[refresh\(\))/,
       `${prefix}: status polling does not refresh independently of download processing`);
     if (prefix === 'src/chrome') {
-      assert.match(backgroundScript, /enableAndPreloadWebgpuVision/, 'chrome: enabling Apocalypse Mode does not start the local vision download');
       const enableStart = backgroundScript.indexOf('if (msg.enabled === true)');
       const textDownloadStart = backgroundScript.indexOf('enableAndStartWebgpuTextDownload()', enableStart);
-      const visionDownloadStart = backgroundScript.indexOf('enableApocalypseVisionModel()', textDownloadStart);
-      assert.ok(enableStart >= 0 && textDownloadStart > enableStart && visionDownloadStart > textDownloadStart,
-        'chrome: enabling Apocalypse Mode must start local chat before queueing local vision');
+      const enableEnd = backgroundScript.indexOf("case 'cloud_run':", textDownloadStart);
+      const apocalypseEnable = backgroundScript.slice(enableStart, enableEnd);
+      assert.ok(enableStart >= 0 && textDownloadStart > enableStart,
+        'chrome: enabling Apocalypse Mode must start local chat');
+      assert.doesNotMatch(apocalypseEnable, /enableAndPreloadWebgpuVision|startExplicitVisionModelDownload|WEBGPU_VISION_ENABLED_KEY/,
+        'chrome: enabling Apocalypse Mode must not enable, consent to, or download local vision');
       assert.match(pageHtml, /id="webgpu-provider-card"[^>]*hidden/, 'chrome: the WebGPU provider block is missing from Apocalypse Mode');
       const heroStart = pageHtml.indexOf('<section class="card hero">');
       const textModel = pageHtml.indexOf('id="webgpu-provider-card"', heroStart);
@@ -27536,13 +27766,13 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
       const basicWikipedia = pageHtml.indexOf('id="basic-wikipedia-card"', heroStart);
       const heroEnd = pageHtml.indexOf('</section>', basicWikipedia);
       assert.ok(heroStart >= 0 && textModel > heroStart && visionModel > textModel && basicWikipedia > visionModel && heroEnd > basicWikipedia,
-        'chrome: the three basic downloads must be stacked text, vision, then Simple English Wikipedia inside the hero');
+        'chrome: text, optional vision, and Simple English Wikipedia must stay stacked inside the hero');
       assert.match(pageHtml, /data-model-kind="text"[\s\S]*?<svg[\s\S]*?data-webgpu-download-panel/,
         'chrome: the text model is missing its icon or download box');
       assert.match(pageHtml, /\.local-models\s*\{[^}]*grid-column:1\s*\/\s*-1[^}]*width:100%/,
-        'chrome: the three basic download cards do not use the full setup row');
+        'chrome: the local model cards do not use the full setup row');
       assert.match(pageHtml, /<section class="card hero">[\s\S]*?<div class="hero-overview">[\s\S]*?<div class="hero-copy">[\s\S]*?<\/div>\s*<label class="toggle"[\s\S]*?<\/div>\s*<div class="local-models">[\s\S]*?id="basic-wikipedia-card"/,
-        'chrome: the setup overview and three basic download cards do not share one enclosing box');
+        'chrome: the setup overview and local model cards do not share one enclosing box');
       assert.match(pageScript, /const track = panel\.querySelector\('\[data-webgpu-download-track\]'\);\s*track\.hidden = state\.status === 'ready';/,
         'chrome: the completed Text Model still shows its download progress track');
       assert.doesNotMatch(pageHtml, /id="webgpu-test"/,
@@ -32077,9 +32307,19 @@ test('Apocalypse Mode translation blocks cover every canonical key with matching
   const apocalypseTranslations = (await import(
     pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-translations.mjs')).href
   )).default;
+  const firefoxCopy = (await import(
+    pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales/apocalypse-copy.mjs')).href
+  )).default;
+  const firefoxTranslations = (await import(
+    pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales/apocalypse-translations.mjs')).href
+  )).default;
   const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
   const canonicalKeys = Object.keys(apocalypseCopy);
   const placeholdersIn = (value) => [...new Set(String(value).match(/\{[a-z]+\}/g) || [])].sort();
+
+  assert.deepEqual(firefoxCopy, apocalypseCopy, 'Chrome and Firefox Apocalypse copy must stay mirrored');
+  assert.deepEqual(firefoxTranslations, apocalypseTranslations,
+    'Chrome and Firefox Apocalypse translations must stay mirrored');
 
   for (const locale of localeCodes) {
     const block = apocalypseTranslations[locale];
@@ -32095,6 +32335,9 @@ test('Apocalypse Mode translation blocks cover every canonical key with matching
         (placeholder) => !placeholdersIn(translated).includes(placeholder),
       );
       assert.deepEqual(dropped, [], `${locale}: ${key} dropped placeholder(s): ${dropped.join(', ')}`);
+    }
+    for (const key of ['ap.hero.consent', 'ap.vision.auto', 'ap.vision.waiting']) {
+      assert.doesNotMatch(block[key], /\?{2,}/, `${locale}: ${key} contains damaged Unicode text`);
     }
   }
 });
@@ -32168,6 +32411,30 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
         assert.notEqual(locale[key], englishCopy[key], `${browser}/${filename}: ${key} is still English fallback copy`);
       }
     }
+  }
+});
+
+test('vision Settings copy is explicit, bounded, and mirrored across every locale', async () => {
+  for (const filename of fs.readdirSync(path.join(ROOT, 'src/chrome/src/ui/locales'))
+    .filter(name => name.endsWith('.js')).sort()) {
+    const chromeLocale = (await import(pathToFileURL(
+      path.join(ROOT, 'src/chrome/src/ui/locales', filename),
+    ).href)).default;
+    const firefoxLocale = (await import(pathToFileURL(
+      path.join(ROOT, 'src/firefox/src/ui/locales', filename),
+    ).href)).default;
+    const label = filename.replace(/\.js$/, '');
+
+    assert.equal(chromeLocale['st.display.auto_screenshot.desc'], firefoxLocale['st.display.auto_screenshot.desc'],
+      `${label}: automatic screenshot policy copy diverged across browsers`);
+    assert.ok(chromeLocale['st.display.auto_screenshot.desc']?.trim(),
+      `${label}: automatic screenshot policy copy is missing`);
+    assert.match(chromeLocale['st.vision.local.desc'], /WebGPU/,
+      `${label}: local vision copy does not identify the explicit hardware probe`);
+    assert.match(chromeLocale['st.vision.local.desc'], /770/,
+      `${label}: local vision copy omits the explicit download size`);
+    assert.doesNotMatch(chromeLocale['st.vision.local.testing'], /770|Hugging Face/,
+      `${label}: testing copy still claims that inference can initiate a download`);
   }
 });
 
@@ -35839,12 +36106,11 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'select-auto-screenshot',
       'input-cost-session-limit',
       'input-cost-total-limit',
-      'toggle-help-improve',
     ];
     const requestedTailIndexes = requestedTailIds.map((id) => displayPanel.indexOf(`id="${id}"`));
     assert.ok(
       requestedTailIndexes.every((index, position) => position === 0 || requestedTailIndexes[position - 1] < index),
-      `${label}: Auto screenshot and both Cloud allowances should follow LLM request timeout and precede Help Improve WebBrain`,
+      `${label}: Auto screenshot and both Cloud allowances should follow LLM request timeout`,
     );
 
     for (const id of [
@@ -35860,6 +36126,7 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'toggle-api-mutation-observer',
       'toggle-strict-secret',
       'toggle-allow-local-network',
+      'toggle-help-improve',
       'captcha-card',
     ]) {
       const index = displayPanel.indexOf(`id="${id}"`);
@@ -35878,7 +36145,6 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'select-plan-before-act-mode',
       'range-max-steps',
       'range-request-timeout',
-      'toggle-help-improve',
     ]) {
       const index = displayPanel.indexOf(`id="${id}"`);
       assert.notEqual(index, -1, `${label}: ${id} should remain visible in General`);
@@ -36010,7 +36276,7 @@ test('all locales explain CapSolver auto-enablement and key validation', async (
   }
 });
 
-test('Help Improve WebBrain is default-on, persisted, and reloads Cloud request config', () => {
+test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Cloud request config', async () => {
   for (const [label, prefix, runtime] of [
     ['chrome', 'src/chrome', 'chrome'],
     ['firefox', 'src/firefox', 'browser'],
@@ -36022,21 +36288,22 @@ test('Help Improve WebBrain is default-on, persisted, and reloads Cloud request 
     const manager = fs.readFileSync(path.join(ROOT, prefix, 'src/providers/manager.js'), 'utf8');
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
 
-    assert.match(html, /id="toggle-help-improve" checked/, `${label}: Help Improve should be on by default in General`);
+    assert.match(html, /id="toggle-help-improve" checked/, `${label}: Help Improve should be on by default`);
     const helpImproveIndex = html.indexOf('id="toggle-help-improve"');
-    const requestTimeoutIndex = html.indexOf('id="range-request-timeout"');
     const advancedIndex = html.indexOf('<details class="advanced-settings">');
-    assert.ok(requestTimeoutIndex > -1 && requestTimeoutIndex < helpImproveIndex && helpImproveIndex < advancedIndex, `${label}: Help Improve should be the last visible General setting above Advanced`);
+    const advancedEnd = html.indexOf('</details>', advancedIndex);
+    assert.ok(advancedIndex > -1 && helpImproveIndex > advancedIndex && helpImproveIndex < advancedEnd, `${label}: Help Improve should live in General > Advanced`);
     assert.match(settings, /helpImproveToggle\.checked = stored\.helpImproveWebBrain !== false/, `${label}: missing default-on storage hydration`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: helpImproveToggle\\.checked \\}\\)`), `${label}: setting should persist`);
     assert.match(locale, /'st\.display\.help_improve\.label': 'Help Improve WebBrain'/, `${label}: setting label missing`);
     assert.match(locale, /On by default[^']*<u>Local-model and bring-your-own API requests are never collected by WebBrain\.<\/u>/, `${label}: setting disclosure should explain and emphasize its default and scope`);
-    assert.match(locale, /Turn it off in General to exclude future Cloud interactions/, `${label}: provider disclosure should point to the visible General setting`);
+    assert.match(locale, /Turn it off in General → Advanced to exclude future Cloud interactions/, `${label}: provider disclosure should point to General > Advanced`);
     for (const localeFile of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const translatedLocale = fs.readFileSync(path.join(localeDir, localeFile), 'utf8');
+      const translatedMessages = (await import(pathToFileURL(path.join(localeDir, localeFile)).href)).default;
       assert.match(translatedLocale, /["']st\.display\.help_improve\.desc_html["']\s*:\s*["'][^\n]*<u>[^<]+<\/u>/, `${label}/${localeFile}: translated local/BYO exclusion should be underlined`);
-      const providerDisclosure = translatedLocale.match(/["']st\.providers\.webbrain_data_use\.body["']\s*:[^\n]+/)?.[0] || '';
-      assert.doesNotMatch(providerDisclosure, /[→←]/, `${label}/${localeFile}: provider disclosure should no longer point to Advanced`);
+      const providerDisclosure = translatedMessages['st.providers.webbrain_data_use.body'] || '';
+      assert.ok(providerDisclosure.includes(translatedMessages['st.display.advanced']), `${label}/${localeFile}: provider disclosure should name the localized Advanced section`);
       assert.match(providerDisclosure, /<u>[^<]+<\/u>/, `${label}/${localeFile}: provider local/BYO exclusion should also be underlined`);
     }
     assert.match(manager, /const HELP_IMPROVE_WEBBRAIN_KEY = 'helpImproveWebBrain';/, `${label}: provider manager setting key missing`);
@@ -52086,6 +52353,12 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
               model: 'remote-vision',
             },
             [WEBGPU_VISION_ENABLED_KEY]: localEnabled,
+            [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+            [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
+              modelId: WEBGPU_VISION_MODEL_ID,
+              status: 'ready',
+              progress: 100,
+            },
           }),
           set: async () => {},
         },
@@ -52265,6 +52538,7 @@ test('vision routing keeps LiquidAI behind explicit overrides and active raw vis
   const fallback = await manager.resolveVisionRoute(activeText);
   assert.equal(fallback.route, 'local_fallback');
   assert.equal(fallback.provider, local);
+  assert.equal(fallback.visionStatus.status, 'ready');
   assert.equal(localLookups, 1);
 
   manager.getVisionOverrideProvider = async () => override;
@@ -52291,6 +52565,16 @@ test('initial vision-route evidence is buffered until the trace run starts', () 
       model: 'cloud-vision',
       fallbackReason: null,
     }]);
+    agent._recordVisionSubCallTrace(tabId, {
+      context: 'staged_screenshot',
+      visionRoute: 'explicit_override',
+      model: 'sidecar-vl',
+      latencyMs: 90_000,
+      error: 'Vision request timed out.',
+      errorCode: 'vision_timeout',
+      recoveryOutcome: 'request_deadline_elapsed',
+    });
+    assert.equal(agent.pendingVisionSubCallTraces.get(tabId)?.[0]?.errorCode, 'vision_timeout');
   }
 });
 
@@ -52339,7 +52623,7 @@ test('image-specific active-provider rejection converts the retained capture onc
   }
 });
 
-test('Apocalypse vision probes before automatic selection and rolls back failed starts', async () => {
+test('local vision records explicit consent only through its dedicated start workflow', async () => {
   const previousChrome = globalThis.chrome;
   const storageState = {
     visionModel: {
@@ -52393,7 +52677,8 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
       'webgpu-vision-preload',
     ]);
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
-    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_CONSENT_VERSION_KEY], WEBGPU_VISION_CONSENT_VERSION);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
 
     const explicitResume = await manager.startWebgpuVisionDownload();
     assert.equal(explicitResume.ok, true);
@@ -52402,6 +52687,7 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
       'an explicit Vision Model resume must adopt and preserve the enabled selection');
 
     delete storageState[WEBGPU_VISION_ENABLED_KEY];
+    delete storageState[WEBGPU_VISION_CONSENT_VERSION_KEY];
     delete storageState[WEBGPU_VISION_AUTO_SELECTED_KEY];
     sentMessages.length = 0;
     hasWebGPU = false;
@@ -52409,30 +52695,44 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
     assert.equal(unsupported.ok, false);
     assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe']);
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
+    assert.equal(storageState[WEBGPU_VISION_CONSENT_VERSION_KEY], undefined,
+      'a failed WebGPU probe must not record local-vision consent');
 
     sentMessages.length = 0;
     hasWebGPU = true;
     preloadResponse = { ok: false, error: 'download dispatch failed' };
-    const failedAutomaticStart = await manager.enableAndPreloadWebgpuVision();
-    assert.equal(failedAutomaticStart.ok, false);
-    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], undefined);
-    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
-
-    storageState[WEBGPU_VISION_ENABLED_KEY] = true;
-    sentMessages.length = 0;
     const failedExplicitStart = await manager.enableAndPreloadWebgpuVision();
     assert.equal(failedExplicitStart.ok, false);
+    assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(storageState[WEBGPU_VISION_CONSENT_VERSION_KEY], WEBGPU_VISION_CONSENT_VERSION);
+    assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+
+    sentMessages.length = 0;
+    const failedExplicitRetry = await manager.enableAndPreloadWebgpuVision();
+    assert.equal(failedExplicitRetry.ok, false);
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true,
       'an existing explicit local selection must not be rolled back as an automatic choice');
     assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
 
     preloadResponse = { ok: true, started: true };
     delete storageState[WEBGPU_VISION_ENABLED_KEY];
-    const explicitStart = await manager.startWebgpuVisionDownload();
+    delete storageState[WEBGPU_VISION_CONSENT_VERSION_KEY];
+    sentMessages.length = 0;
+    const consentRequired = await manager.startWebgpuVisionDownload();
+    assert.equal(consentRequired.ok, false);
+    assert.equal(consentRequired.code, 'vision_consent_required');
+    assert.equal(sentMessages.length, 0,
+      'a generic download start must not probe, consent, or download before the Settings workflow');
+    const explicitStart = await manager.enableAndPreloadWebgpuVision();
     assert.equal(explicitStart.ok, true);
     assert.equal(storageState[WEBGPU_VISION_ENABLED_KEY], true);
     assert.equal(storageState[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined,
       'a user-started Vision Model download must not be marked as an automatic selection');
+    storageState[WEBGPU_VISION_DOWNLOAD_STATE_KEY] = {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    };
     const selectedLocalProvider = await manager.getLocalVisionFallbackProvider();
     assert.ok(selectedLocalProvider instanceof WebGPUVisionProvider);
     const paused = await manager.pauseWebgpuVisionDownload();
@@ -52460,6 +52760,204 @@ test('Apocalypse vision probes before automatic selection and rolls back failed 
       'webgpu-vision-stop',
     ]);
   } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('local vision provider bounds an unanswered extension callback and ignores a late response', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousSetTimeout = globalThis.setTimeout;
+  const previousClearTimeout = globalThis.clearTimeout;
+  let deadline = null;
+  let lateCallback = null;
+  const deadlineToken = {};
+  try {
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay === 15_000) {
+        deadline = () => callback(...args);
+        return deadlineToken;
+      }
+      return previousSetTimeout(callback, delay, ...args);
+    };
+    globalThis.clearTimeout = token => {
+      if (token !== deadlineToken) previousClearTimeout(token);
+    };
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(_message, callback) { lateCallback = callback; },
+      },
+    };
+    const pending = new WebGPUVisionProvider().testConnection();
+    for (let pass = 0; pass < 8 && !deadline; pass++) await Promise.resolve();
+    assert.equal(typeof deadline, 'function');
+    deadline();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.match(result.error, /timed out after 15000ms/);
+    lateCallback?.({ ok: true, hasWebGPU: true });
+    await Promise.resolve();
+    assert.equal(result.ok, false, 'a late extension response changed the settled timeout result');
+  } finally {
+    globalThis.setTimeout = previousSetTimeout;
+    globalThis.clearTimeout = previousClearTimeout;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('local vision defaults off and migration requires re-consent without deleting cache or remote config', async () => {
+  const previousChrome = globalThis.chrome;
+  const state = {};
+  const sentMessages = [];
+  try {
+    globalThis.chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          callback?.({ ok: true });
+        },
+      },
+      storage: {
+        local: {
+          get: async keys => {
+            if (!keys) return { ...state };
+            const requested = Array.isArray(keys) ? keys : [keys];
+            return Object.fromEntries(requested.filter(key => Object.hasOwn(state, key)).map(key => [key, state[key]]));
+          },
+          set: async patch => Object.assign(state, patch),
+          remove: async keys => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete state[key];
+          },
+        },
+      },
+    };
+
+    const fresh = new ProviderManagerCh();
+    assert.deepEqual(await fresh.getWebgpuVisionReadiness(), {
+      enabled: false,
+      consented: false,
+      status: 'disabled',
+      progress: 0,
+      loaded: 0,
+      total: 0,
+      error: '',
+      updatedAt: 0,
+      modelId: WEBGPU_VISION_MODEL_ID,
+    });
+    assert.equal(await fresh.getLocalVisionFallbackProvider(), null);
+    assert.deepEqual(sentMessages, [], 'a fresh readiness check must not create a worker or start a download');
+
+    Object.assign(state, {
+      visionModel: { type: 'openai', baseUrl: 'https://vision.example/v1', model: 'remote-vision', apiKey: 'keep-me' },
+      [WEBGPU_VISION_ENABLED_KEY]: true,
+      [WEBGPU_VISION_AUTO_SELECTED_KEY]: true,
+      [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: { modelId: WEBGPU_VISION_MODEL_ID, status: 'ready', progress: 100 },
+    });
+    await fresh._migrateWebgpuVisionConsent({ ...state });
+    assert.equal(state[WEBGPU_VISION_ENABLED_KEY], undefined);
+    assert.equal(state[WEBGPU_VISION_AUTO_SELECTED_KEY], undefined);
+    assert.equal(state[WEBGPU_VISION_CONSENT_VERSION_KEY], undefined,
+      'ambiguous historical enablement must not become explicit consent');
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'ready', 'cached model readiness must be preserved');
+    assert.equal(state.visionModel.apiKey, 'keep-me', 'remote vision configuration must be preserved');
+
+    state.visionModel = { type: 'webgpu' };
+    await fresh._migrateWebgpuVisionConsent({ ...state });
+    assert.equal(state[WEBGPU_VISION_ENABLED_KEY], true);
+    assert.equal(state[WEBGPU_VISION_CONSENT_VERSION_KEY], WEBGPU_VISION_CONSENT_VERSION);
+    assert.equal(state.visionModel, undefined, 'the legacy explicit local selection must leave the portable slot');
+
+    state[WEBGPU_VISION_DOWNLOAD_STATE_KEY] = { modelId: WEBGPU_VISION_MODEL_ID, status: 'downloading', progress: 42 };
+    fresh.getVisionOverrideProvider = async () => null;
+    const unavailable = await fresh.resolveVisionRoute({ name: 'text-only', supportsVision: false });
+    assert.equal(unavailable.provider, null);
+    assert.equal(unavailable.route, 'local_fallback_unavailable');
+    assert.equal(unavailable.visionStatus.status, 'downloading');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('local vision readiness probes cache before advertising a ready fallback', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousCaches = globalThis.caches;
+  const state = {
+    [WEBGPU_VISION_ENABLED_KEY]: true,
+    [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+    [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    },
+  };
+  const storage = {
+    local: {
+      get: async keys => {
+        if (!keys) return { ...state };
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.filter(key => Object.hasOwn(state, key)).map(key => [key, state[key]]));
+      },
+      set: async patch => Object.assign(state, patch),
+    },
+  };
+  try {
+    globalThis.chrome = { storage };
+    globalThis.caches = {
+      keys: async () => ['transformers-cache'],
+      open: async () => ({
+        match: async () => undefined,
+      }),
+    };
+    const manager = new ProviderManagerCh();
+    assert.equal(await manager.getLocalVisionFallbackProvider(), null,
+      'stale ready storage must not route screenshots after cache eviction');
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'not-downloaded');
+    assert.equal((await manager.getWebgpuVisionReadiness()).status, 'not-downloaded');
+
+    state[WEBGPU_VISION_DOWNLOAD_STATE_KEY] = {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    };
+    globalThis.caches = {
+      keys: async () => ['transformers-cache'],
+      open: async () => ({
+        match: async request => {
+          const url = typeof request === 'string' ? request : request.url;
+          return url.includes(`/${WEBGPU_VISION_MODEL_ID}/`) ? {} : undefined;
+        },
+      }),
+    };
+    assert.equal(await manager.getLocalVisionFallbackProvider(), null,
+      'a leftover config or weight file must not advertise a complete vision cache');
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'not-downloaded');
+
+    state[WEBGPU_VISION_DOWNLOAD_STATE_KEY] = {
+      modelId: WEBGPU_VISION_MODEL_ID,
+      status: 'ready',
+      progress: 100,
+    };
+    const markerUrl = webgpuVisionReadyMarkerUrl(WEBGPU_VISION_MODEL_ID);
+    globalThis.caches = {
+      keys: async () => ['transformers-cache'],
+      open: async () => ({
+        match: async request => {
+          const url = typeof request === 'string' ? request : request.url;
+          return url === markerUrl ? { ok: true } : undefined;
+        },
+      }),
+    };
+    const cached = await manager.getLocalVisionFallbackProvider();
+    assert.ok(cached instanceof WebGPUVisionProvider);
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'ready');
+  } finally {
+    if (previousCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = previousCaches;
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
   }
@@ -52632,11 +53130,17 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const apocalypseScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const apocalypseFirefoxScript = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/apocalypse-mode.js'), 'utf8');
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const apocalypseCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs'), 'utf8');
+  const apocalypseDocs = fs.readFileSync(path.join(ROOT, 'docs/apocalypse-mode.md'), 'utf8');
   const emergencyCopy = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/emergency-copy.mjs'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
   const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  const chromePanel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
+  const firefoxPanel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
   assert.match(worker, /AutoProcessor\.from_pretrained/);
   assert.match(worker, /apply_chat_template/);
@@ -52647,7 +53151,16 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeAllRuntimes\)/);
   assert.match(worker, /type === 'preload'[\s\S]*?preloadVisionModel\(payload, request\)/);
-  assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime[\s\S]*?await disposeVisionRuntime/);
+  assert.match(worker, /async function getVisionRuntime[\s\S]*?local_files_only: localFilesOnly/);
+  assert.match(worker, /getVisionRuntime\(modelId, dtype, device, \{ localFilesOnly: true \}\)/,
+    'automatic screenshot inference must not download missing local vision weights');
+  assert.match(worker, /async function markVisionModelReady/);
+  assert.match(worker, /webgpu-vision-ready\//,
+    'a completed Vision Model preload must write a ready marker, not infer completeness from any cached file');
+  assert.match(worker, /queued: queued && !active/,
+    'cancel acknowledgements must distinguish queued vision inference from an active generation');
+  assert.match(worker, /async function preloadRuntime[\s\S]*?await getVisionRuntime\(modelId, dtype, device\)[\s\S]*?await disposeVisionRuntime/,
+    'explicit preload remains the only local vision download path');
   assert.match(worker, /type === 'pause-vision-download'[\s\S]*?pauseVisionDownload/);
   assert.match(worker, /type === 'stop-vision-download'[\s\S]*?stopVisionDownload[\s\S]*?clearVisionModelCache/);
   assert.match(worker, /clearVisionModelCache[\s\S]*?cache\.delete\(request\)/);
@@ -52657,6 +53170,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'a paused or stopped queued Vision Model preload must be invalidated before execution');
   assert.match(worker, /visionDownloadAbortController[\s\S]*?\.abort\(\)/,
     'an active Vision Model transfer must be abortable without waiting for the model queue');
+  assert.match(worker, /InterruptableStoppingCriteria[\s\S]*?stopping_criteria[\s\S]*?type === 'cancel'/,
+    'local vision generation must support correlated cooperative interruption');
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /'webgpu-vision-preload'/);
   assert.match(host, /vendor\/bitgpu\/models\/bonsai-27b-gguf\/model-manifest\.json/);
@@ -52686,9 +53201,13 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'late progress must not update state after vision preload settles');
   assert.match(background, /message\?\.type !== WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE/);
   assert.match(background, /sender\?\.url[\s\S]*?VISION_OFFSCREEN_URL/);
-  assert.match(background, /normalized\.status === 'error'[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY[\s\S]*?WEBGPU_VISION_ENABLED_KEY/);
-  assert.match(background, /async function resumeInterruptedVisionPreload\(\)[\s\S]*?WEBGPU_VISION_ENABLED_KEY[\s\S]*?state\.status === 'starting'[\s\S]*?state\.status === 'downloading'[\s\S]*?enableApocalypseVisionModel\(\)/,
-    'Chrome startup must resume an enabled, incomplete local-vision preload');
+  assert.doesNotMatch(background, /persistVisionDownloadState[\s\S]*?WEBGPU_VISION_AUTO_SELECTED_KEY/,
+    'download failures must not manage implicit local-vision selection provenance');
+  const resumeStart = background.indexOf('async function resumeInterruptedVisionPreload()');
+  const resumeEnd = background.indexOf('\n}', resumeStart) + 2;
+  const resumeInterruptedVisionPreload = background.slice(resumeStart, resumeEnd);
+  assert.match(resumeInterruptedVisionPreload, /await providerManager\.load\(\);[\s\S]*?providerManager\.resumeWebgpuVisionDownload\(\)/,
+    'Chrome startup must migrate legacy local-vision consent before resuming an incomplete preload');
   assert.match(background, /Promise\.all\(\[[\s\S]*?syncDownloadSchedule\(\)[\s\S]*?resumeInterruptedVisionPreload\(\)/,
     'local-vision recovery must run with the service-worker startup restoration');
   const startupRecovery = background.slice(
@@ -52697,6 +53216,48 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   );
   assert.doesNotMatch(startupRecovery, /apocalypseController\.handle\('status'\)/,
     'service-worker startup must not override a later local-vision opt-out');
+  const apocalypseEnable = background.slice(
+    background.indexOf("case 'apocalypse_mode':"),
+    background.indexOf("case 'cloud_run':"),
+  );
+  assert.match(apocalypseEnable, /enableAndStartWebgpuTextDownload/);
+  assert.doesNotMatch(apocalypseEnable, /Vision|vision|startExplicitVisionModelDownload/,
+    'enabling Apocalypse Mode must not enable, consent to, or download local vision');
+  assert.match(host, /const WORKER_INITIALIZATION_TIMEOUT_MS = 15_000/);
+  assert.match(host, /const VISION_INFERENCE_TIMEOUT_MS = 90_000/);
+  assert.match(host, /const CANCELLATION_GRACE_PERIOD_MS = 5_000/);
+  assert.match(host, /const DOWNLOAD_STALL_TIMEOUT_MS = 2 \* 60_000/);
+  assert.match(host, /const DOWNLOAD_ABSOLUTE_TIMEOUT_MS = 30 \* 60_000/);
+  assert.match(host, /requestVisionCancellation[\s\S]*?timedOutVisionRequests[\s\S]*?resetVisionWorker/,
+    'timed-out local inference must cancel and force a clean worker after its grace period');
+  assert.match(host, /queued === true[\s\S]*?active !== true[\s\S]*?graceTimer/,
+    'a cancelled queued vision request must not recreate the worker still running text generation');
+  assert.match(host, /data\.status === 'loading'[\s\S]{0,180}armAbsoluteDeadline/,
+    'the absolute vision download deadline must start when loading begins, not while queued');
+  assert.match(host, /rejectPendingVisionRequests[\s\S]*?pendingVisionRequests\.clear\(\)/,
+    'worker recovery must reject and clear the poisoned request queue');
+  assert.match(chromeAgent, /preparedVisionRoute = await this\._resolveVisionRoute[\s\S]*?visionStatus[\s\S]*?return this\._localVisionUnavailableResult[\s\S]*?let dataUrl = null/,
+    'inspect_viewport must return readiness before any screenshot capture');
+  assert.match(chromeAgent, /_emitVisionUnavailableNotice[\s\S]*?visionStatusNotices[\s\S]*?tool_progress[\s\S]*?tool_result/,
+    'automatic screenshots must emit one readiness notice and continue without enrichment');
+  assert.match(chromeAgent, /full_page_screenshot[\s\S]*?_recordVisionRouteTrace[\s\S]*?method: 'save_only'[\s\S]*?visionStatus[\s\S]*?_localVisionUnavailableResult/,
+    'full-page screenshots must preserve save-only behavior while exposing unavailable vision');
+  assert.match(background, /case 'enable_webgpu_vision':[\s\S]*?settings\.html[\s\S]*?startExplicitVisionModelDownload/,
+    'only the dedicated Settings page may record first-time local-vision consent');
+  for (const [label, source] of [['chrome', chromeAgent], ['firefox', firefoxAgent]]) {
+    assert.match(source, /VISION_SUB_CALL_TIMEOUT_MS = 90_000/,
+      `${label}: dedicated vision timeout is missing`);
+    assert.match(source, /_withVisionDeadline\(signal => this\._chatVisionWithCompatibilityRetry/,
+      `${label}: compatibility retries are not inside one total deadline`);
+    assert.match(source, /controller\.abort\(timeoutError\)/,
+      `${label}: dedicated vision deadline must abort the in-flight provider request`);
+    assert.match(source, /async _applyAttachments[\s\S]*?does not support document attachments[\s\S]*?_describeScreenshot/,
+      `${label}: mixed attachments must preflight documents before staged screenshot vision`);
+  }
+  for (const [label, source] of [['chrome', chromePanel], ['firefox', firefoxPanel]]) {
+    assert.match(source, /case 'tool_progress':[\s\S]*?updateActiveToolProgress/,
+      `${label}: side panel cannot refresh an in-flight tool step`);
+  }
   assert.match(worker, /let visionRuntime = null/);
   assert.match(worker, /let textRuntime = null/);
   const visionLoader = worker.slice(worker.indexOf('async function getVisionRuntime'), worker.indexOf('async function getTextRuntime'));
@@ -52747,6 +53308,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
   assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?sendVisionWorkerMessage\('stop-vision-download'/);
+  assert.match(host, /message\.type === 'webgpu-vision-stop'[\s\S]*?pauseResponse\?\.targetsQueued[\s\S]*?targetsQueued: true/,
+    'Stop must preserve a queued preload fast path after pause dequeues it');
+  assert.match(worker, /type === 'stop-vision-download'[\s\S]*?stopped\.targetsQueued \|\| payload\?\.targetsQueued === true/,
+    'stop-vision-download must honor a host-reported queued preload after pause');
   assert.match(host, /message\.type === 'webgpu-vision-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-vision'\)/);
   assert.match(host, /message\.type === 'webgpu-dispose'[\s\S]*?sendVisionWorkerMessage\('dispose-text'\)/);
   assert.match(worker, /type === 'start-download-text'/);
@@ -52754,10 +53319,12 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /function assertToolCapableTextRuntime/);
   assert.match(ensure, /'WORKERS'/, 'offscreen document should declare its Worker purpose');
   assert.match(settingsScript, /\[WEBGPU_VISION_ENABLED_KEY\]: true/);
+  assert.match(settingsScript, /enable_webgpu_vision/);
+  assert.match(settingsScript, /WEBGPU_VISION_CONSENT_VERSION_KEY/);
   assert.match(settingsScript, /addEventListener\('focus'[\s\S]{0,180}loadVisionConfig/);
   assert.match(settingsScript, /changes\[WEBGPU_VISION_ENABLED_KEY\][\s\S]{0,100}loadVisionConfig/);
-  assert.match(settingsScript, /chrome\.storage\.local\.remove\(WEBGPU_VISION_AUTO_SELECTED_KEY\)/,
-    'an explicit local-vision selection must clear automatic-selection provenance');
+  assert.match(settingsScript, /WEBGPU_VISION_AUTO_SELECTED_KEY/,
+    'local-vision settings migration must clear automatic-selection provenance');
   assert.match(settingsScript, /dispose_webgpu_vision/);
   assert.match(apocalypseHtml, /id="webgpu-provider-card"[^>]*hidden/);
   assert.match(apocalypseHtml, /data-webgpu-download-action="start"/);
@@ -52767,6 +53334,13 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-vision-download-action="pause"/);
   assert.match(apocalypseHtml, /data-vision-download-action="resume"/);
   assert.match(apocalypseHtml, /data-vision-download-action="stop"/);
+  for (const [label, script] of [
+    ['chrome', apocalypseScript],
+    ['firefox', apocalypseFirefoxScript],
+  ]) {
+    assert.match(script, /actions\.stop\.hidden = !\['starting', 'queued', 'loading', 'downloading', 'paused', 'stopping', 'ready', 'error'\]\.includes\(status\)/,
+      `${label}: queued and loading Vision Model states must keep Stop available`);
+  }
   assert.match(apocalypseHtml, /id="models-readiness"[^>]*data-kind="disabled"[^>]*role="status"/);
   const apocalypseHeader = apocalypseHtml.slice(
     apocalypseHtml.indexOf('<header>'),
@@ -52779,8 +53353,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
       `${id} must be shown beside aggregate readiness in the Apocalypse Mode header`);
   }
   assert.match(apocalypseScript, /function updateOverallModelsReadiness\(\)/);
-  assert.match(apocalypseScript, /webgpuDownloadState\.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready'/,
-    'aggregate readiness must require text, vision, and Simple English Wikipedia');
+  assert.match(apocalypseScript, /webgpuDownloadState\.ready === true && wikipediaStatus === 'ready'/,
+    'aggregate readiness must require text and Simple English Wikipedia');
+  assert.doesNotMatch(apocalypseScript, /webgpuDownloadState\.ready === true && visionStatus === 'ready'/,
+    'optional local vision must not block Apocalypse readiness');
   assert.match(apocalypseScript, /basicWikipediaCatalogItem = selectBasicWikipediaArchive\(supported\)/,
     'the basic Wikipedia card must select its exact catalog archive');
   assert.match(apocalypseScript, /const ready = wikipedia[\s\S]*?if \(ready\.length\) return ready\[0\]/,
@@ -52812,6 +53388,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
       `aggregate model readiness is missing its ${state} state`);
   }
   assert.match(apocalypseScript, /get_webgpu_download_status/);
+  assert.match(apocalypseScript, /visionFallbackExplicitlyEnabled[\s\S]*?settings\.html#multimodal/,
+    'Apocalypse Mode must route first-time local-vision enablement to its dedicated Settings control');
   assert.match(apocalypseScript, /webgpu-text-download-state/);
   assert.doesNotMatch(settingsScript, /data-webgpu-download-action=/,
     'the WebGPU provider download block must live on Apocalypse Mode, not Settings');
@@ -52855,7 +53433,10 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow[\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
-  assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
+  assert.match(englishLocale, /Selecting “Use local fallback” checks WebGPU, records your consent,[\s\S]*Tasks report its status and never wait for it; keep Chrome open/);
+  assert.match(apocalypseCopy, /Local vision is optional and never starts automatically/);
+  assert.match(apocalypseDocs, /Apocalypse Mode never enables or downloads it/);
+  assert.doesNotMatch(apocalypseDocs, /enabling Apocalypse Mode also enables[\s\S]{0,80}vision/i);
   assert.match(englishLocale, /Download it in Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
@@ -52990,14 +53571,312 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
     'Firefox must not package the Chromium-only bitgpu runtime');
 });
 
+test('vision inference host enforces deadlines and recreates poisoned workers', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+
+  function createHarness(initialBehavior = {}) {
+    const behavior = {
+      hangInitCount: 0,
+      hangChatCount: 0,
+      preloadMode: 'ready',
+      cooperativePause: false,
+      ...initialBehavior,
+    };
+    let listener = null;
+    let now = 0;
+    let nextTimerId = 1;
+    const timers = new Map();
+    const workers = [];
+    const workerMessages = [];
+    const runtimeMessages = [];
+
+    const drain = async () => {
+      for (let pass = 0; pass < 12; pass++) await Promise.resolve();
+    };
+    const fakeSetTimeout = (callback, delay = 0, ...args) => {
+      const id = nextTimerId++;
+      timers.set(id, { at: now + Math.max(0, Number(delay) || 0), callback, args });
+      return id;
+    };
+    const fakeClearTimeout = id => timers.delete(id);
+    const advance = async (duration) => {
+      const target = now + duration;
+      while (true) {
+        const due = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= target)
+          .sort((left, right) => left[1].at - right[1].at || left[0] - right[0])[0];
+        if (!due) break;
+        const [id, timer] = due;
+        timers.delete(id);
+        now = timer.at;
+        timer.callback(...timer.args);
+        await drain();
+      }
+      now = target;
+      await drain();
+    };
+
+    class FakeWorker {
+      constructor() {
+        this.index = workers.length + 1;
+        this.listeners = { message: [], error: [] };
+        this.preloadId = null;
+        this.preloadModelId = '';
+        this.terminated = false;
+        workers.push(this);
+      }
+
+      addEventListener(type, callback) {
+        this.listeners[type]?.push(callback);
+      }
+
+      emit(data) {
+        Promise.resolve().then(() => {
+          if (this.terminated) return;
+          for (const callback of this.listeners.message) callback({ data });
+        });
+      }
+
+      postMessage(message) {
+        workerMessages.push({ worker: this.index, message: structuredClone(message) });
+        const { id, type, payload = {} } = message;
+        if (type === 'init') {
+          if (behavior.hangInitCount > 0) {
+            behavior.hangInitCount--;
+            return;
+          }
+          this.emit({ id, ok: true });
+          return;
+        }
+        if (type === 'probe') {
+          this.emit({ id, ok: true, hasWebGPU: true, isFallbackAdapter: false, libraryVersion: 'test' });
+          return;
+        }
+        if (type === 'chat') {
+          if (behavior.hangChatCount > 0) {
+            behavior.hangChatCount--;
+            return;
+          }
+          this.emit({ id, ok: true, content: 'recovered vision', raw: { model: payload.modelId } });
+          return;
+        }
+        if (type === 'cancel') {
+          this.emit({
+            id,
+            ok: true,
+            cancelled: true,
+            requestId: payload.requestId,
+            queued: behavior.cancelQueued === true,
+            active: behavior.cancelQueued !== true,
+          });
+          return;
+        }
+        if (type === 'preload') {
+          this.preloadId = id;
+          this.preloadModelId = payload.modelId;
+          this.preloadQueued = behavior.preloadMode === 'hang-queued';
+          this.emit({ type: 'vision-preload-state', modelId: payload.modelId, status: 'queued' });
+          if (behavior.preloadMode !== 'hang-queued') {
+            this.emit({ type: 'vision-preload-state', modelId: payload.modelId, status: 'loading' });
+          }
+          if (behavior.preloadMode === 'ready') {
+            this.emit({ id, ok: true, status: 'ready', ready: true, modelId: payload.modelId });
+            this.preloadId = null;
+            this.preloadQueued = false;
+          }
+          return;
+        }
+        if (type === 'pause-vision-download') {
+          const targetsQueued = this.preloadId !== null && this.preloadQueued;
+          const targetsActive = this.preloadId !== null && !this.preloadQueued;
+          this.emit({ id, ok: true, status: 'paused', targetsActive, targetsQueued });
+          if (targetsQueued) {
+            this.preloadId = null;
+            this.preloadQueued = false;
+          }
+          if (targetsActive && behavior.cooperativePause) {
+            this.emit({
+              id: this.preloadId,
+              ok: true,
+              status: 'paused',
+              ready: false,
+              modelId: this.preloadModelId,
+            });
+            this.preloadId = null;
+          }
+          return;
+        }
+        if (type === 'stop-vision-download') {
+          if (behavior.hangStopUnlessQueued && payload?.targetsQueued !== true) return;
+          this.emit({ id, ok: true, status: 'not-downloaded', ready: false, deletedEntries: 3 });
+          return;
+        }
+        if (type === 'clear-cache') {
+          this.emit({ id, ok: true, modelId: payload.modelId, deletedEntries: 3 });
+          return;
+        }
+        this.emit({ id, ok: true });
+      }
+
+      terminate() {
+        this.terminated = true;
+      }
+    }
+
+    class ClockDate extends Date {
+      static now() { return now; }
+    }
+
+    const chrome = {
+      runtime: {
+        lastError: null,
+        getURL: relative => `chrome-extension://test/${relative}`,
+        onMessage: {
+          addListener(callback) { listener = callback; },
+        },
+        sendMessage(message, callback) {
+          runtimeMessages.push(structuredClone(message));
+          callback?.({ ok: true });
+          return Promise.resolve({ ok: true });
+        },
+      },
+    };
+    const context = vm.createContext({
+      chrome,
+      Worker: FakeWorker,
+      setTimeout: fakeSetTimeout,
+      clearTimeout: fakeClearTimeout,
+      Date: ClockDate,
+      console: { debug() {}, warn() {}, error() {} },
+      structuredClone,
+    });
+    vm.runInContext(source, context, { filename: 'vision-inference-host.js' });
+    assert.equal(typeof listener, 'function');
+
+    const dispatch = (message) => new Promise((resolve) => {
+      assert.equal(listener(message, {}, resolve), true);
+    });
+    return { behavior, workers, workerMessages, runtimeMessages, dispatch, advance, drain };
+  }
+
+  const init = createHarness({ hangInitCount: 1 });
+  const hungInit = init.dispatch({ type: 'webgpu-vision-probe', model: WEBGPU_VISION_MODEL_ID });
+  await init.drain();
+  await init.advance(15_000);
+  const initTimeout = await hungInit;
+  assert.equal(initTimeout.ok, false);
+  assert.equal(initTimeout.code, 'vision_worker_init_timeout');
+  assert.equal(init.workers[0].terminated, true, 'hung initialization did not recreate the worker');
+  const initRetry = await init.dispatch({ type: 'webgpu-vision-probe', model: WEBGPU_VISION_MODEL_ID });
+  assert.equal(initRetry.ok, true, 'a request after initialization recovery did not succeed');
+
+  const inference = createHarness({ hangChatCount: 1 });
+  const hungInference = inference.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
+  await inference.drain();
+  await inference.advance(90_000);
+  const inferenceTimeout = await hungInference;
+  assert.equal(inferenceTimeout.code, 'vision_inference_timeout');
+  assert.equal(inferenceTimeout.recovery, 'cancellation_requested');
+  assert.ok(inference.workerMessages.some(({ message }) => message.type === 'cancel'),
+    'hung inference was not sent a correlated cancellation request');
+  await inference.advance(5_000);
+  assert.equal(inference.workers[0].terminated, true,
+    'inference that ignored cancellation did not recreate the worker after the grace period');
+  const inferenceRetry = await inference.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
+  assert.equal(inferenceRetry.content, 'recovered vision',
+    'a timed-out inference poisoned the next serialized request');
+
+  const queuedInference = createHarness({ hangChatCount: 1, cancelQueued: true });
+  const hungQueuedInference = queuedInference.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
+  await queuedInference.drain();
+  await queuedInference.advance(90_000);
+  const queuedTimeout = await hungQueuedInference;
+  assert.equal(queuedTimeout.code, 'vision_inference_timeout');
+  await queuedInference.advance(5_000);
+  assert.equal(queuedInference.workers[0].terminated, false,
+    'cancelling a queued vision inference must not reset the worker still running text generation');
+
+  const stalledDownload = createHarness({ preloadMode: 'hang-loading' });
+  const preloadStarted = await stalledDownload.dispatch({
+    type: 'webgpu-vision-preload',
+    model: WEBGPU_VISION_MODEL_ID,
+    dtype: { decoder_model_merged: 'q4' },
+  });
+  assert.equal(preloadStarted.started, true);
+  await stalledDownload.drain();
+  await stalledDownload.advance(2 * 60_000);
+  assert.equal(stalledDownload.workers[0].terminated, true,
+    'a download with no byte progress exceeded the stall deadline without recovery');
+  assert.ok(stalledDownload.runtimeMessages.some(message =>
+    message.state?.status === 'error' && /no byte progress/.test(message.state.error)));
+
+  const absoluteDownload = createHarness({ preloadMode: 'hang-queued' });
+  await absoluteDownload.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  await absoluteDownload.drain();
+  await absoluteDownload.advance(30 * 60_000);
+  assert.equal(absoluteDownload.workers[0].terminated, false,
+    'a queued vision preload must not reset the shared worker before loading starts');
+
+  const progressingDownload = createHarness({ preloadMode: 'hang-loading' });
+  await progressingDownload.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  await progressingDownload.drain();
+  for (let elapsed = 0, loaded = 0; elapsed < 30 * 60_000; elapsed += 90_000) {
+    loaded += 1;
+    progressingDownload.workers[0].emit({
+      type: 'progress',
+      modelId: WEBGPU_VISION_MODEL_ID,
+      file: 'model.onnx',
+      loaded,
+      total: 1000,
+      progress: loaded / 10,
+    });
+    await progressingDownload.drain();
+    await progressingDownload.advance(90_000);
+  }
+  assert.equal(progressingDownload.workers[0].terminated, true,
+    'an active vision download must still hit the 30-minute absolute deadline');
+  assert.ok(progressingDownload.runtimeMessages.some(message =>
+    message.state?.status === 'error' && /exceeded/.test(message.state.error)));
+
+  const pause = createHarness({ preloadMode: 'hang-loading' });
+  await pause.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  const pauseRequest = pause.dispatch({ type: 'webgpu-vision-pause', model: WEBGPU_VISION_MODEL_ID });
+  await pause.drain();
+  await pause.advance(5_000);
+  assert.equal((await pauseRequest).status, 'paused');
+  assert.equal(pause.workers[0].terminated, true,
+    'Pause did not force-reset an active loader that ignored cooperative cancellation');
+
+  const stop = createHarness({ preloadMode: 'hang-loading' });
+  await stop.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  const stopRequest = stop.dispatch({ type: 'webgpu-vision-stop', model: WEBGPU_VISION_MODEL_ID });
+  await stop.drain();
+  await stop.advance(5_000);
+  const stopped = await stopRequest;
+  assert.equal(stopped.deletedEntries, 3);
+  assert.equal(stop.workers[0].terminated, true,
+    'Stop did not force-reset an active loader that ignored cooperative cancellation');
+  assert.ok(stop.runtimeMessages.some(message => message.state?.status === 'not-downloaded'));
+
+  const queuedStop = createHarness({ preloadMode: 'hang-queued', hangStopUnlessQueued: true });
+  await queuedStop.dispatch({ type: 'webgpu-vision-preload', model: WEBGPU_VISION_MODEL_ID });
+  const queuedStopped = await queuedStop.dispatch({ type: 'webgpu-vision-stop', model: WEBGPU_VISION_MODEL_ID });
+  assert.equal(queuedStopped.deletedEntries, 3, 'queued Stop must clear cache without waiting on the model queue');
+  assert.ok(queuedStop.workerMessages.some(({ message }) => (
+    message.type === 'stop-vision-download' && message.payload?.targetsQueued === true
+  )), 'queued Stop must preserve the worker fast path after pause dequeues the preload');
+});
+
 test('Vision Model removal deletes only its cache entries', async () => {
   const previousSelf = globalThis.self;
   const previousCaches = globalThis.caches;
   const visionBase = `https://huggingface.co/${WEBGPU_VISION_MODEL_ID}/resolve/main/`;
   const textBase = `https://huggingface.co/${WEBGPU_MODEL_ID}/resolve/main/`;
+  const markerUrl = `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(WEBGPU_VISION_MODEL_ID)}`;
   const cacheEntries = new Map([
     [`${visionBase}config.json`, true],
     [`${visionBase}onnx/model_q4.onnx`, true],
+    [markerUrl, true],
     [`${textBase}config.json`, true],
     ['https://huggingface.co/another/model/resolve/main/config.json', true],
   ]);
@@ -53018,9 +53897,11 @@ test('Vision Model removal deletes only its cache entries', async () => {
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?vision-cache-scope-test`;
     const { clearVisionModelCache } = await import(workerUrl);
     const result = await clearVisionModelCache(WEBGPU_VISION_MODEL_ID);
-    assert.equal(result.deletedEntries, 2);
+    assert.equal(result.deletedEntries, 3);
     assert.equal(cacheEntries.has(`${visionBase}config.json`), false);
     assert.equal(cacheEntries.has(`${visionBase}onnx/model_q4.onnx`), false);
+    assert.equal(cacheEntries.has(markerUrl), false,
+      'removing the Vision Model must delete its ready marker');
     assert.equal(cacheEntries.has(`${textBase}config.json`), true,
       'removing the Vision Model must preserve the Text Model cache');
     assert.equal(cacheEntries.has('https://huggingface.co/another/model/resolve/main/config.json'), true);
@@ -92981,6 +93862,100 @@ test('dedicated vision retries without unsupported LM Studio reasoning controls'
     assert.equal(optionsSeen[1].extraBody.reasoning_effort, undefined);
     assert.equal(optionsSeen[1].extraBody.reasoning_tokens, undefined);
     assert.deepEqual(optionsSeen[1].extraBody, {});
+  }
+});
+
+test('dedicated vision deadlines are enforced in Chrome and Firefox', async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const scheduled = new Set();
+  try {
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 90_000) return originalSetTimeout(callback, delay, ...args);
+      const token = { cancelled: false };
+      scheduled.add(token);
+      queueMicrotask(() => {
+        if (!token.cancelled) callback(...args);
+      });
+      return token;
+    };
+    globalThis.clearTimeout = token => {
+      if (scheduled.has(token)) token.cancelled = true;
+      else originalClearTimeout(token);
+    };
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const agent = new AgentClass({});
+      await assert.rejects(
+        agent._withVisionDeadline(new Promise(() => {})),
+        error => error?.code === 'vision_timeout' && /90000ms/.test(error.message),
+        `${label}: hung vision request did not reach the shared deadline`,
+      );
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test('dedicated vision deadline aborts the in-flight provider request', async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const scheduled = new Set();
+  try {
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 90_000) return originalSetTimeout(callback, delay, ...args);
+      const token = {
+        cancelled: false,
+        fire() {
+          if (!this.cancelled) callback(...args);
+        },
+      };
+      scheduled.add(token);
+      return token;
+    };
+    globalThis.clearTimeout = token => {
+      if (scheduled.has(token)) token.cancelled = true;
+      else originalClearTimeout(token);
+    };
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      let seenSignal = null;
+      let recordedUsage = false;
+      scheduled.clear();
+      const vision = {
+        config: { model: 'remote-vision', baseUrl: 'https://vision.example/v1', category: 'cloud' },
+        async chat(_messages, options) {
+          seenSignal = options.signal;
+          await new Promise(resolve => {
+            options.signal.addEventListener('abort', resolve, { once: true });
+          });
+          return { content: 'late caption', usage: { total_tokens: 12 } };
+        },
+      };
+      const agent = new AgentClass({});
+      agent._recordCostUsage = async () => {
+        recordedUsage = true;
+        return null;
+      };
+      const pending = agent._describeScreenshot(
+        label === 'chrome' ? 2991 : 2992,
+        'data:image/png;base64,AA==',
+        'timeout_abort',
+        null,
+        { provider: vision, route: 'explicit_override', rawImage: false },
+      );
+      for (let i = 0; i < 30 && !seenSignal; i++) await Promise.resolve();
+      assert.ok(seenSignal, `${label}: vision chat did not receive a deadline signal`);
+      assert.equal(seenSignal.aborted, false, `${label}: vision request was aborted before its deadline`);
+      for (const token of scheduled) token.fire();
+      const described = await pending;
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      assert.equal(described, null, `${label}: timed-out vision should not return a description`);
+      assert.equal(seenSignal.aborted, true, `${label}: provider chat did not receive an aborted signal`);
+      assert.equal(recordedUsage, false, `${label}: timed-out vision still recorded cost`);
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
   }
 });
 

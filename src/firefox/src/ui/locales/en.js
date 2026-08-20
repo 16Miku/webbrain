@@ -583,7 +583,7 @@ export default {
   'st.display.plan_review_threshold.label': 'Review below confidence',
   'st.display.plan_review_threshold.desc': 'When plan review uses the confidence threshold, plans at or above this score auto-approve and run.',
   'st.display.auto_screenshot.label': 'Auto-screenshot',
-  'st.display.auto_screenshot.desc': 'Automatically capture a viewport screenshot after the agent acts on the page, so vision-capable models can see what changed. Costs more tokens. Disabled silently if the active model doesn\'t support images.',
+  "st.display.auto_screenshot.desc": "Automatically capture a viewport screenshot after the agent acts on the page, so the selected vision route can see what changed. Costs more tokens. If vision is unavailable, enrichment is skipped and the task continues with a status notice.",
   'st.display.auto_screenshot.off': 'Off',
   'st.display.auto_screenshot.navigation': 'On navigation',
   'st.display.auto_screenshot.state_change': 'On state change (default)',
@@ -684,7 +684,7 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'System',
   'st.providers.compat.value.developer': 'Developer',
-  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Cloud usage is included. While Help Improve WebBrain is on by default, selected Cloud conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General to exclude future Cloud interactions from those uses. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Cloud usage is included. While Help Improve WebBrain is on by default, selected Cloud conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Cloud interactions from those uses. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.body': 'Free daily WebBrain Cloud usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Privacy policy',
 

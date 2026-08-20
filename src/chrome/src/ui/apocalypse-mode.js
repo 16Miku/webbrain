@@ -24,6 +24,9 @@ import {
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
+  WEBGPU_VISION_CONSENT_VERSION,
+  WEBGPU_VISION_CONSENT_VERSION_KEY,
+  WEBGPU_VISION_ENABLED_KEY,
   isShippedWebgpuPreset,
   webgpuModelDtype,
   webgpuModelPreset,
@@ -77,6 +80,7 @@ let semanticDownloadInFlight = false;
 let polling = false;
 let processingDownload = false;
 let visionDownloadState = null;
+let visionFallbackExplicitlyEnabled = false;
 let fixedWebgpuProviderConfigured = false;
 let fixedWebgpuProviderMarkedReady = false;
 let webgpuPresetHydrated = false;
@@ -326,7 +330,6 @@ function anyShippedWebgpuTextReady() {
 function updateOverallModelsReadiness() {
   if (!supportsWebgpuVision || !elements['models-readiness']) return;
   const textStatus = webgpuDownloadState.status;
-  const visionStatus = visionDownloadState?.status || 'not-downloaded';
   const wikipediaStatus = basicWikipediaRecord()?.status
     || (basicWikipediaStartInFlight ? 'starting' : (basicWikipediaStartError || basicWikipediaCatalogError) ? 'error' : 'not-downloaded');
   const corpusStatus = corpusRecord?.status || (corpusDownloadInFlight ? 'downloading' : 'not-installed');
@@ -339,17 +342,16 @@ function updateOverallModelsReadiness() {
   if (snapshot?.enabled !== true) {
     kind = 'disabled';
     key = 'ap.models.status.disabled';
-  } else if (textErrorBlocksKit || visionStatus === 'error' || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
+  } else if (textErrorBlocksKit || wikipediaStatus === 'error' || corpusStatus === 'error' || semanticStatus === 'error') {
     kind = 'error';
     key = 'ap.models.status.error';
-  } else if (webgpuDownloadState.ready === true && visionStatus === 'ready' && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready' && !anyOtherWebgpuTextBusy()) {
+  } else if (webgpuDownloadState.ready === true && wikipediaStatus === 'ready' && corpusStatus === 'ready' && semanticStatus === 'ready' && !anyOtherWebgpuTextBusy()) {
     kind = 'ready';
     key = 'ap.models.status.ready';
-  } else if (textStatus === 'paused' || visionStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused' || anyOtherWebgpuTextPaused()) {
+  } else if (textStatus === 'paused' || wikipediaStatus === 'paused' || corpusStatus === 'paused' || semanticStatus === 'paused' || anyOtherWebgpuTextPaused()) {
     key = 'ap.models.status.paused';
   } else if (['checking', 'downloading', 'stopping'].includes(textStatus)
     || anyOtherWebgpuTextBusy()
-    || ['starting', 'downloading', 'stopping'].includes(visionStatus)
     || ['starting', 'queued', 'downloading', 'retrying'].includes(wikipediaStatus)
     || ['downloading', 'verifying', 'downloaded', 'extracting', 'indexing'].includes(corpusStatus)
     || ['downloading'].includes(semanticStatus)) {
@@ -359,12 +361,10 @@ function updateOverallModelsReadiness() {
   elements['models-readiness-label'].textContent = t(key);
   const emergencyKind = snapshot?.enabled === true
     && textReadyForKit
-    && visionStatus === 'ready'
     && wikipediaStatus === 'ready'
     && corpusStatus === 'ready'
     && semanticStatus === 'ready'
     && !textErrorBlocksKit
-    && visionStatus !== 'error'
     && wikipediaStatus !== 'error'
     && corpusStatus !== 'error'
     && semanticStatus !== 'error'
@@ -465,6 +465,10 @@ function setWebgpuDownloadState(state) {
 }
 
 async function runVisionDownloadAction(action) {
+  if ((action === 'start' || action === 'resume') && !visionFallbackExplicitlyEnabled) {
+    globalThis.location.href = runtimeApi.runtime.getURL('src/ui/settings.html#multimodal');
+    return;
+  }
   const actionMap = {
     start: 'start_webgpu_vision_download',
     resume: 'start_webgpu_vision_download',
@@ -747,23 +751,29 @@ function renderVisionDownload() {
   const state = visionDownloadState || {};
   const status = state.status || 'not-downloaded';
   const progress = Math.max(0, Math.min(100, Number(state.progress) || 0));
-  const active = status === 'starting' || status === 'downloading';
+  const active = ['queued', 'starting', 'downloading', 'loading'].includes(status);
   elements['vision-model-status'].dataset.kind = status === 'ready' || status === 'error'
     ? status
     : '';
   elements['vision-model-progress'].hidden = !active;
   elements['vision-model-progress'].value = progress;
-  elements['vision-model-test'].disabled = status !== 'ready' || visionTestRunning;
+  elements['vision-model-test'].disabled = !visionFallbackExplicitlyEnabled || status !== 'ready' || visionTestRunning;
   if (status !== 'ready' && !visionTestRunning) setModelTestResult(elements['vision-model-test-result']);
 
   const actions = Object.fromEntries(['start', 'pause', 'resume', 'stop'].map(action => [
     action,
     document.querySelector(`[data-vision-download-action="${action}"]`),
   ]));
-  actions.start.hidden = snapshot?.enabled !== true || !['idle', 'not-downloaded', 'error'].includes(status);
-  actions.pause.hidden = !['starting', 'downloading'].includes(status);
-  actions.resume.hidden = status !== 'paused';
-  actions.stop.hidden = !['starting', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
+  actions.start.hidden = visionFallbackExplicitlyEnabled
+    ? !['idle', 'not-downloaded', 'error'].includes(status)
+    : false;
+  actions.start.textContent = t(visionFallbackExplicitlyEnabled
+    ? 'st.providers.webgpu_download.start'
+    : 'st.vision.local.enable');
+  actions.pause.hidden = !visionFallbackExplicitlyEnabled
+    || !['queued', 'starting', 'downloading', 'loading'].includes(status);
+  actions.resume.hidden = !visionFallbackExplicitlyEnabled || status !== 'paused';
+  actions.stop.hidden = !['starting', 'queued', 'loading', 'downloading', 'paused', 'stopping', 'ready', 'error'].includes(status);
   actions.stop.textContent = t(status === 'ready' ? 'ap.models.remove' : 'st.providers.webgpu_download.stop');
   for (const button of Object.values(actions)) button.disabled = status === 'stopping';
 
@@ -773,12 +783,17 @@ function renderVisionDownload() {
     const message = String(state.error || '').trim();
     elements['vision-model-status'].textContent = `${t('ap.status.error')}${message ? ` · ${message}` : ''}`;
   } else if (status === 'downloading') {
-    elements['vision-model-status'].textContent = `${t('ap.status.downloading')} · ${Math.round(progress)}%`;
+    const loadedMb = Math.round(Number(state.loaded || 0) / 1024 / 1024);
+    const totalMb = Math.round(Number(state.total || 0) / 1024 / 1024);
+    const bytes = totalMb > 0 ? ` · ${loadedMb}/${totalMb} MB` : '';
+    elements['vision-model-status'].textContent = `${t('ap.status.downloading')} · ${Math.round(progress)}%${bytes}`;
+  } else if (status === 'loading') {
+    elements['vision-model-status'].textContent = t('ap.status.downloading');
   } else if (status === 'paused') {
     elements['vision-model-status'].textContent = `${t('ap.status.paused')} · ${Math.round(progress)}%`;
   } else if (status === 'stopping') {
     elements['vision-model-status'].textContent = t('st.providers.webgpu_download.stopping');
-  } else if (status === 'starting') {
+  } else if (status === 'queued' || status === 'starting') {
     elements['vision-model-status'].textContent = t('ap.status.queued');
   } else if (snapshot?.enabled) {
     elements['vision-model-status'].textContent = t('st.providers.webgpu_download.not_downloaded');
@@ -790,8 +805,14 @@ function renderVisionDownload() {
 
 async function refreshVisionDownload() {
   if (!supportsWebgpuVision) return;
-  const stored = await runtimeApi.storage.local.get(WEBGPU_VISION_DOWNLOAD_STATE_KEY);
+  const stored = await runtimeApi.storage.local.get([
+    WEBGPU_VISION_DOWNLOAD_STATE_KEY,
+    WEBGPU_VISION_ENABLED_KEY,
+    WEBGPU_VISION_CONSENT_VERSION_KEY,
+  ]);
   visionDownloadState = stored[WEBGPU_VISION_DOWNLOAD_STATE_KEY] || null;
+  visionFallbackExplicitlyEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true
+    && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION;
   renderVisionDownload();
 }
 
@@ -1226,8 +1247,17 @@ document.addEventListener('wb-locale-changed', () => {
   updateOverallModelsReadiness();
 });
 runtimeApi.storage?.onChanged?.addListener?.((changes, area) => {
-  if (!supportsWebgpuVision || area !== 'local' || !changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) return;
-  visionDownloadState = changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY].newValue || null;
+  if (!supportsWebgpuVision || area !== 'local') return;
+  if (!changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]
+      && !changes[WEBGPU_VISION_ENABLED_KEY]
+      && !changes[WEBGPU_VISION_CONSENT_VERSION_KEY]) return;
+  if (changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) {
+    visionDownloadState = changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY].newValue || null;
+  }
+  if (changes[WEBGPU_VISION_ENABLED_KEY] || changes[WEBGPU_VISION_CONSENT_VERSION_KEY]) {
+    void refreshVisionDownload().catch(() => {});
+    return;
+  }
   renderVisionDownload();
 });
 

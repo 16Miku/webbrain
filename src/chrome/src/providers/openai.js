@@ -131,6 +131,17 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return !!this.config.useCompactPrompt;
   }
 
+  _chatAbortOptions(options = {}) {
+    return options.signal ? { signal: options.signal } : {};
+  }
+
+  _rethrowAbortedChat(error, options = {}) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error ? options.signal.reason : error;
+    }
+    if (error?.name === 'AbortError') throw error;
+  }
+
   _headers() {
     const headers = { 'Content-Type': 'application/json' };
     const providerName = (this.config.providerName || '').toLowerCase();
@@ -738,8 +749,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         method: 'POST',
         headers: this._headers(),
         body: JSON.stringify(this._responsesBody(messages, options, false)),
+        ...this._chatAbortOptions(options),
       });
     } catch (e) {
+      this._rethrowAbortedChat(e, options);
       throw new Error(`${this.name} network error — could not reach ${url} (${e.message}). Is the server running?`);
     }
     if (!res.ok) {
@@ -907,8 +920,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         method: 'POST',
         headers: this._headers(),
         body: JSON.stringify(body),
+        ...this._chatAbortOptions(options),
       });
     } catch (e) {
+      this._rethrowAbortedChat(e, options);
       throw new Error(`${this.name} network error — could not reach ${url} (${e.message}). Is the server running?`);
     }
 

@@ -45,6 +45,9 @@ let textDownloadCancelMode = '';
 let activeVisionDownloadRequest = null;
 let queuedVisionDownload = null;
 let visionDownloadAbortController = null;
+const activeVisionGenerations = new Map();
+const queuedVisionGenerations = new Set();
+const cancelledVisionGenerations = new Set();
 let lastTextProgressPostAt = 0;
 let webGpuAdapterProbePromise = null;
 let webGpuAdapterSummary = '';
@@ -121,6 +124,36 @@ function fetchTargetsActiveVisionModel(input) {
   if (!activeVisionDownloadRequest?.modelId) return false;
   const url = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
   return safeDecodedUrl(url).includes(`/${activeVisionDownloadRequest.modelId}/`);
+}
+
+function visionReadyMarkerUrl(modelId) {
+  return `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(String(modelId || '').trim())}`;
+}
+
+async function isVisionModelCached(modelId) {
+  const normalized = String(modelId || '').trim();
+  if (!normalized) return false;
+  if (typeof caches === 'undefined') return null;
+  const markerUrl = visionReadyMarkerUrl(normalized);
+  try {
+    for (const name of await caches.keys()) {
+      if (!/transformers/i.test(name)) continue;
+      const cache = await caches.open(name);
+      if (await cache.match(markerUrl)) return true;
+    }
+  } catch {
+    return null;
+  }
+  return false;
+}
+
+async function markVisionModelReady(modelId) {
+  const normalized = String(modelId || '').trim();
+  if (!normalized || typeof caches === 'undefined') return;
+  const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+  await cache.put(visionReadyMarkerUrl(normalized), new Response(JSON.stringify({ modelId: normalized }), {
+    headers: { 'content-type': 'application/json' },
+  }));
 }
 
 async function controlledFetch(input, init = {}) {
@@ -348,7 +381,7 @@ async function disposeAllRuntimes() {
   await disposeTextRuntime();
 }
 
-async function getVisionRuntime(modelId, dtype, device) {
+async function getVisionRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
   const key = `vision|${modelId}|${device}|${JSON.stringify(dtype)}`;
   if (visionRuntime && visionRuntimeKey === key) return visionRuntime;
   if (visionRuntimeLoadPromise) {
@@ -358,6 +391,11 @@ async function getVisionRuntime(modelId, dtype, device) {
   }
 
   const loadPromise = (async () => {
+    if (localFilesOnly && (await isVisionModelCached(modelId)) === false) {
+      const error = new Error(`${modelId} is not cached locally.`);
+      error.code = 'vision_model_not_downloaded';
+      throw error;
+    }
     const library = await loadLibrary();
     const { AutoModelForImageTextToText, AutoProcessor } = library;
     if (!AutoModelForImageTextToText || !AutoProcessor) {
@@ -365,14 +403,26 @@ async function getVisionRuntime(modelId, dtype, device) {
     }
     await disposeVisionRuntime();
     const progress_callback = event => postProgress(modelId, event);
-    const [processorResult, modelResult] = await Promise.allSettled([
-      AutoProcessor.from_pretrained(modelId, { progress_callback }),
-      AutoModelForImageTextToText.from_pretrained(modelId, {
-        device,
-        dtype,
-        progress_callback,
-      }),
-    ]);
+    const previousAllowLocalModels = library.env?.allowLocalModels;
+    if (localFilesOnly && library.env) library.env.allowLocalModels = true;
+    let processorResult;
+    let modelResult;
+    try {
+      [processorResult, modelResult] = await Promise.allSettled([
+        AutoProcessor.from_pretrained(modelId, {
+          progress_callback,
+          local_files_only: localFilesOnly,
+        }),
+        AutoModelForImageTextToText.from_pretrained(modelId, {
+          device,
+          dtype,
+          progress_callback,
+          local_files_only: localFilesOnly,
+        }),
+      ]);
+    } finally {
+      if (localFilesOnly && library.env) library.env.allowLocalModels = previousAllowLocalModels;
+    }
     if (processorResult.status === 'rejected' || modelResult.status === 'rejected') {
       const loaded = [processorResult, modelResult]
         .filter(result => result.status === 'fulfilled')
@@ -437,9 +487,11 @@ async function preloadVisionModel(payload, request) {
   visionDownloadAbortController = controller;
   try {
     await preloadRuntime(payload);
-    return visionDownloadState(request, request.cancelMode === 'stop'
+    const status = request.cancelMode === 'stop'
       ? 'not-downloaded'
-      : request.cancelMode === 'pause' ? 'paused' : 'ready');
+      : request.cancelMode === 'pause' ? 'paused' : 'ready';
+    if (status === 'ready') await markVisionModelReady(request.modelId);
+    return visionDownloadState(request, status);
   } catch (error) {
     if (request.cancelMode || controller.signal.aborted) {
       return visionDownloadState(request, request.cancelMode === 'stop' ? 'not-downloaded' : 'paused');
@@ -466,7 +518,11 @@ function pauseVisionDownload(modelId) {
     visionDownloadAbortController?.abort();
   }
   const target = targetActive ? active : targetQueued ? queued : { modelId: normalizedModelId };
-  return visionDownloadState(target, 'paused');
+  return {
+    ...visionDownloadState(target, 'paused'),
+    targetsQueued: Boolean(targetQueued),
+    targetsActive: Boolean(targetActive),
+  };
 }
 
 function stopVisionDownload(modelId) {
@@ -813,7 +869,7 @@ function createVisionProbeImage(RawImage) {
   return new RawImage(data, width, height, channels);
 }
 
-async function runVision(payload) {
+async function runVision(payload, requestId) {
   const modelId = String(payload?.modelId || '').trim();
   if (!modelId) throw new Error('No vision model was specified.');
   const device = payload?.device || 'webgpu';
@@ -822,28 +878,49 @@ async function runVision(payload) {
     vision_encoder: 'fp16',
     decoder_model_merged: 'q4',
   };
-  const runtime = await getVisionRuntime(modelId, dtype, device);
-  const { messages, imageUrl } = prepareMultimodalMessages(payload?.messages);
-  const prompt = runtime.processor.apply_chat_template(messages, {
-    add_generation_prompt: true,
-  });
-  const image = payload?.options?.visionProbe === true
-    ? createVisionProbeImage(runtime.library.RawImage)
-    : await runtime.library.load_image(imageUrl);
-  const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
-  const requestedTokens = Number(payload?.options?.maxTokens);
-  const maxNewTokens = Number.isFinite(requestedTokens)
-    ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
-    : 800;
-  const outputs = await runtime.model.generate({
-    ...inputs,
-    do_sample: false,
-    max_new_tokens: maxNewTokens,
-  });
-  const inputLength = inputs.input_ids.dims.at(-1);
-  const generated = outputs.slice(null, [inputLength, null]);
-  const decoded = runtime.processor.batch_decode(generated, { skip_special_tokens: true });
-  return String(decoded?.[0] || '').trim();
+  const library = await loadLibrary();
+  const stoppingCriteria = library.InterruptableStoppingCriteria
+    ? new library.InterruptableStoppingCriteria()
+    : null;
+  if (stoppingCriteria) activeVisionGenerations.set(requestId, stoppingCriteria);
+  try {
+    if (cancelledVisionGenerations.has(requestId)) {
+      const error = new Error('Vision generation was cancelled.');
+      error.name = 'AbortError';
+      throw error;
+    }
+    const runtime = await getVisionRuntime(modelId, dtype, device, { localFilesOnly: true });
+    const { messages, imageUrl } = prepareMultimodalMessages(payload?.messages);
+    const prompt = runtime.processor.apply_chat_template(messages, {
+      add_generation_prompt: true,
+    });
+    const image = payload?.options?.visionProbe === true
+      ? createVisionProbeImage(runtime.library.RawImage)
+      : await runtime.library.load_image(imageUrl);
+    const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
+    const requestedTokens = Number(payload?.options?.maxTokens);
+    const maxNewTokens = Number.isFinite(requestedTokens)
+      ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
+      : 800;
+    const outputs = await runtime.model.generate({
+      ...inputs,
+      do_sample: false,
+      max_new_tokens: maxNewTokens,
+      ...(stoppingCriteria ? { stopping_criteria: [stoppingCriteria] } : {}),
+    });
+    if (cancelledVisionGenerations.has(requestId)) {
+      const error = new Error('Vision generation was cancelled.');
+      error.name = 'AbortError';
+      throw error;
+    }
+    const inputLength = inputs.input_ids.dims.at(-1);
+    const generated = outputs.slice(null, [inputLength, null]);
+    const decoded = runtime.processor.batch_decode(generated, { skip_special_tokens: true });
+    return String(decoded?.[0] || '').trim();
+  } finally {
+    activeVisionGenerations.delete(requestId);
+    cancelledVisionGenerations.delete(requestId);
+  }
 }
 
 function normalizeTextToolCall(toolCall) {
@@ -998,15 +1075,19 @@ export async function clearVisionModelCache(modelId) {
   if (!normalizedModelId) throw new Error('No vision model was specified.');
   await disposeVisionRuntime();
   const modelPath = `/${normalizedModelId}/`;
+  const markerUrl = visionReadyMarkerUrl(normalizedModelId);
   let deletedEntries = 0;
   if (typeof caches !== 'undefined') {
     for (const name of await caches.keys()) {
       if (!/transformers/i.test(name)) continue;
       const cache = await caches.open(name);
       for (const request of await cache.keys()) {
-        if (!safeDecodedUrl(request.url).includes(modelPath)) continue;
-        if (await cache.delete(request)) deletedEntries++;
+        const url = safeDecodedUrl(request.url);
+        if (url.includes(modelPath) || request.url === markerUrl) {
+          if (await cache.delete(request)) deletedEntries++;
+        }
       }
+      if (await cache.delete(markerUrl)) deletedEntries++;
     }
   }
   return { modelId: normalizedModelId, deletedEntries };
@@ -1015,6 +1096,25 @@ export async function clearVisionModelCache(modelId) {
 self.addEventListener('message', async event => {
   const { id, type, payload } = event.data || {};
   try {
+    if (type === 'cancel') {
+      const requestId = Number(payload?.requestId);
+      const queued = queuedVisionGenerations.has(requestId);
+      const active = activeVisionGenerations.has(requestId);
+      const cancellable = Number.isFinite(requestId) && (queued || active);
+      if (cancellable) {
+        cancelledVisionGenerations.add(requestId);
+        activeVisionGenerations.get(requestId)?.interrupt?.();
+      }
+      self.postMessage({
+        id,
+        ok: true,
+        cancelled: cancellable,
+        requestId,
+        queued: queued && !active,
+        active,
+      });
+      return;
+    }
     if (type === 'init') {
       workerConfig = payload;
       self.postMessage({ id, ok: true });
@@ -1088,8 +1188,10 @@ self.addEventListener('message', async event => {
       const stopped = stopVisionDownload(modelId);
       // A queued preload owns no live vision operation. Clear its model-specific
       // cache immediately so Stop is not trapped behind an unrelated text-model
-      // transfer in the shared WebGPU operation queue.
-      const result = stopped.targetsQueued && !stopped.hasActiveVision
+      // transfer in the shared WebGPU operation queue. The host may also pass
+      // targetsQueued after pause already dequeued that preload.
+      const targetsQueued = stopped.targetsQueued || payload?.targetsQueued === true;
+      const result = targetsQueued && !stopped.hasActiveVision
         ? await clearVisionModelCache(modelId)
         : await enqueueModelOperation(() => clearVisionModelCache(modelId));
       self.postMessage({
@@ -1131,14 +1233,24 @@ self.addEventListener('message', async event => {
         cancelMode: '',
       };
       queuedVisionDownload = request;
-      const state = await enqueueModelOperation(() => preloadVisionModel(payload, request));
+      self.postMessage({ type: 'vision-preload-state', modelId, status: 'queued' });
+      const state = await enqueueModelOperation(() => {
+        self.postMessage({ type: 'vision-preload-state', modelId, status: 'loading' });
+        return preloadVisionModel(payload, request);
+      });
       if (queuedVisionDownload === request) queuedVisionDownload = null;
       self.postMessage({ id, ok: true, ...state });
       return;
     }
     if (type === 'chat') {
-      const content = await enqueueModelOperation(() => runVision(payload));
-      self.postMessage({ id, ok: true, content, raw: { model: payload?.modelId || '' } });
+      queuedVisionGenerations.add(id);
+      try {
+        const content = await enqueueModelOperation(() => runVision(payload, id));
+        self.postMessage({ id, ok: true, content, raw: { model: payload?.modelId || '' } });
+      } finally {
+        queuedVisionGenerations.delete(id);
+        cancelledVisionGenerations.delete(id);
+      }
       return;
     }
     if (type === 'text-chat') {

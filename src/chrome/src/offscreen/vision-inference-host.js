@@ -20,6 +20,104 @@ let visionDownloadStateTimer = null;
 let visionPreloadPromise = null;
 let visionPreloadKey = '';
 let visionPreloadLifecycle = null;
+const timedOutVisionRequests = new Map();
+const WORKER_INITIALIZATION_TIMEOUT_MS = 15_000;
+const VISION_INFERENCE_TIMEOUT_MS = 90_000;
+const CANCELLATION_GRACE_PERIOD_MS = 5_000;
+const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60_000;
+const DOWNLOAD_ABSOLUTE_TIMEOUT_MS = 30 * 60_000;
+
+function deadlineError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function clearVisionPreloadTimers(lifecycle = visionPreloadLifecycle) {
+  if (!lifecycle) return;
+  if (lifecycle.stallTimer) clearTimeout(lifecycle.stallTimer);
+  if (lifecycle.absoluteTimer) clearTimeout(lifecycle.absoluteTimer);
+  lifecycle.stallTimer = null;
+  lifecycle.absoluteTimer = null;
+}
+
+function rejectPendingVisionRequests(error) {
+  for (const pending of pendingVisionRequests.values()) {
+    if (pending.timeoutId) clearTimeout(pending.timeoutId);
+    pending.reject(error);
+  }
+  pendingVisionRequests.clear();
+}
+
+function resetVisionWorker(error = new Error('Vision worker was reset.')) {
+  const staleWorker = visionWorker;
+  visionWorker = null;
+  visionWorkerReady = null;
+  try { staleWorker?.terminate(); } catch {}
+  rejectPendingVisionRequests(error);
+  for (const timedOut of timedOutVisionRequests.values()) {
+    if (timedOut.graceTimer) clearTimeout(timedOut.graceTimer);
+  }
+  timedOutVisionRequests.clear();
+}
+
+function requestVisionCancellation(requestId, worker, timeoutError) {
+  if (!worker || worker !== visionWorker) return;
+  const cancelId = nextVisionRequestId++;
+  const timedOut = { worker, graceTimer: null, requestId, cancelId };
+  timedOutVisionRequests.set(requestId, timedOut);
+  timedOutVisionRequests.set(cancelId, timedOut);
+  timedOut.graceTimer = setTimeout(() => {
+    const current = timedOutVisionRequests.get(requestId);
+    if (current !== timedOut) return;
+    timedOutVisionRequests.delete(requestId);
+    timedOutVisionRequests.delete(cancelId);
+    resetVisionWorker(deadlineError(
+      'vision_worker_recreated',
+      `${timeoutError.message} Cancellation did not settle within ${CANCELLATION_GRACE_PERIOD_MS}ms; the worker was recreated.`,
+    ));
+  }, CANCELLATION_GRACE_PERIOD_MS);
+  try {
+    worker.postMessage({
+      id: cancelId,
+      type: 'cancel',
+      payload: { requestId },
+    });
+  } catch {}
+}
+
+function armVisionDownloadTimers(lifecycle, modelId) {
+  if (!lifecycle) return;
+  const fail = (code, message) => {
+    if (visionPreloadLifecycle !== lifecycle || lifecycle.cancelMode) return;
+    lifecycle.cancelMode = 'timeout';
+    clearVisionPreloadTimers(lifecycle);
+    publishVisionDownloadState({
+      modelId,
+      status: 'error',
+      progress: visionDownloadState?.progress || 0,
+      loaded: visionDownloadState?.loaded || 0,
+      total: visionDownloadState?.total || 0,
+      error: message,
+    }, true);
+    resetVisionWorker(deadlineError(code, message));
+  };
+  const resetStall = () => {
+    if (lifecycle.stallTimer) clearTimeout(lifecycle.stallTimer);
+    lifecycle.stallTimer = setTimeout(() => fail(
+      'vision_download_stalled',
+      `Local vision download made no byte progress for ${DOWNLOAD_STALL_TIMEOUT_MS}ms.`,
+    ), DOWNLOAD_STALL_TIMEOUT_MS);
+  };
+  lifecycle.resetStall = resetStall;
+  lifecycle.armAbsoluteDeadline = () => {
+    if (!lifecycle || lifecycle.absoluteTimer || lifecycle.cancelMode) return;
+    lifecycle.absoluteTimer = setTimeout(() => fail(
+      'vision_download_timeout',
+      `Local vision download exceeded ${DOWNLOAD_ABSOLUTE_TIMEOUT_MS}ms.`,
+    ), DOWNLOAD_ABSOLUTE_TIMEOUT_MS);
+  };
+}
 
 function publishVisionDownloadState(state, immediate = false) {
   visionDownloadState = {
@@ -60,6 +158,11 @@ function updateVisionDownloadProgress(data) {
     aggregateLoaded += entry.loaded;
     aggregateTotal += entry.total;
   }
+  if (visionPreloadLifecycle && aggregateLoaded > (visionPreloadLifecycle.lastLoaded || 0)) {
+    visionPreloadLifecycle.lastLoaded = aggregateLoaded;
+    visionPreloadLifecycle.hasProgress = true;
+    visionPreloadLifecycle.resetStall?.();
+  }
   const eventProgress = Math.max(0, Math.min(100, Number(data?.progress) || 0));
   publishVisionDownloadState({
     modelId: data?.modelId,
@@ -92,11 +195,45 @@ function settleVisionRequest(data) {
     updateVisionDownloadProgress(data);
     return;
   }
+  if (data?.type === 'vision-preload-state') {
+    if (!progressMatchesActiveVisionModel(data, visionDownloadState?.modelId, visionPreloadPromise)) return;
+    if (data.status === 'loading') {
+      visionPreloadLifecycle?.armAbsoluteDeadline?.();
+      visionPreloadLifecycle?.resetStall?.();
+    }
+    publishVisionDownloadState({
+      modelId: data.modelId,
+      status: data.status === 'loading' ? 'loading' : 'queued',
+      progress: visionDownloadState?.progress || 0,
+      loaded: visionDownloadState?.loaded || 0,
+      total: visionDownloadState?.total || 0,
+    }, true);
+    return;
+  }
+  const timedOut = timedOutVisionRequests.get(data?.id);
+  if (timedOut) {
+    if (data?.id === timedOut.cancelId && data?.queued === true && data?.active !== true) {
+      if (timedOut.graceTimer) clearTimeout(timedOut.graceTimer);
+      timedOutVisionRequests.delete(timedOut.requestId);
+      timedOutVisionRequests.delete(timedOut.cancelId);
+      return;
+    }
+    if (data?.id !== timedOut.requestId) return;
+    if (timedOut.graceTimer) clearTimeout(timedOut.graceTimer);
+    timedOutVisionRequests.delete(timedOut.requestId);
+    if (timedOut.cancelId) timedOutVisionRequests.delete(timedOut.cancelId);
+    return;
+  }
   const pending = pendingVisionRequests.get(data?.id);
   if (!pending) return;
   pendingVisionRequests.delete(data.id);
+  if (pending.timeoutId) clearTimeout(pending.timeoutId);
   if (data.ok) pending.resolve(data);
-  else pending.reject(new Error(data.error || 'Vision worker failed.'));
+  else {
+    const error = new Error(data.error || 'Vision worker failed.');
+    error.code = data.code || 'vision_worker_error';
+    pending.reject(error);
+  }
 }
 
 function startVisionPreload(message) {
@@ -105,9 +242,10 @@ function startVisionPreload(message) {
   if (visionPreloadPromise && visionPreloadKey === key) return false;
   visionDownloadFiles.clear();
   publishVisionDownloadState({ modelId, status: 'starting', progress: 0 }, true);
-  const lifecycle = { cancelMode: '' };
+  const lifecycle = { cancelMode: '', lastLoaded: 0, hasProgress: false, stallTimer: null, absoluteTimer: null };
   visionPreloadKey = key;
   visionPreloadLifecycle = lifecycle;
+  armVisionDownloadTimers(lifecycle, modelId);
   const operation = sendVisionWorkerMessage('preload', {
     modelId,
     device: message?.device,
@@ -123,9 +261,9 @@ function startVisionPreload(message) {
       total: status === 'not-downloaded' ? 0 : visionDownloadState?.total || 0,
     }, true);
     return response;
-  }).catch((error) => {
+  }, { timeoutMs: 0 }).catch((error) => {
     if (lifecycle.cancelMode === 'stop') return;
-    if (lifecycle.cancelMode) {
+    if (lifecycle.cancelMode === 'pause') {
       publishVisionDownloadState({
         modelId,
         status: 'paused',
@@ -135,6 +273,7 @@ function startVisionPreload(message) {
       }, true);
       return;
     }
+    if (lifecycle.cancelMode === 'timeout') return;
     publishVisionDownloadState({
       modelId,
       status: 'error',
@@ -144,6 +283,7 @@ function startVisionPreload(message) {
       error: error?.message || String(error),
     }, true);
   }).finally(() => {
+    clearVisionPreloadTimers(lifecycle);
     if (visionPreloadPromise === operation) {
       visionPreloadPromise = null;
       visionPreloadKey = '';
@@ -155,10 +295,28 @@ function startVisionPreload(message) {
 }
 
 function detachVisionPreload(cancelMode) {
-  if (visionPreloadLifecycle) visionPreloadLifecycle.cancelMode = cancelMode;
+  if (visionPreloadLifecycle) {
+    visionPreloadLifecycle.cancelMode = cancelMode;
+    clearVisionPreloadTimers(visionPreloadLifecycle);
+  }
   visionPreloadPromise = null;
   visionPreloadKey = '';
   visionPreloadLifecycle = null;
+}
+
+async function waitForVisionPreloadSettlement(operation) {
+  if (!operation) return true;
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      operation.then(() => true, () => true),
+      new Promise(resolve => {
+        timeoutId = setTimeout(() => resolve(false), CANCELLATION_GRACE_PERIOD_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function isBitgpuTextModel(modelId, runtime) {
@@ -276,33 +434,70 @@ async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = 
   return sendVisionWorkerMessage(type, payload);
 }
 
-function sendVisionWorkerMessage(type, payload = {}) {
+function defaultVisionWorkerTimeout(type) {
+  if (type === 'init') return WORKER_INITIALIZATION_TIMEOUT_MS;
+  if (type === 'chat') return VISION_INFERENCE_TIMEOUT_MS;
+  if (type === 'preload' || type === 'text-chat' || type === 'download-text' || type === 'start-download-text') return 0;
+  return WORKER_INITIALIZATION_TIMEOUT_MS;
+}
+
+function sendVisionWorkerMessage(type, payload = {}, { timeoutMs = defaultVisionWorkerTimeout(type) } = {}) {
   const id = nextVisionRequestId++;
+  const worker = visionWorker;
+  if (!worker) return Promise.reject(new Error('Vision worker is unavailable.'));
   return new Promise((resolve, reject) => {
-    pendingVisionRequests.set(id, { resolve, reject });
-    visionWorker.postMessage({ id, type, payload });
+    let timeoutId = null;
+    if (timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        const pending = pendingVisionRequests.get(id);
+        if (!pending) return;
+        pendingVisionRequests.delete(id);
+        const code = type === 'init' ? 'vision_worker_init_timeout' : type === 'chat' ? 'vision_inference_timeout' : 'vision_worker_message_timeout';
+        const error = deadlineError(code, `Vision worker ${type} request timed out after ${timeoutMs}ms.`);
+        reject(error);
+        if (type === 'chat') requestVisionCancellation(id, worker, error);
+        else if (type === 'init' || type === 'pause-vision-download' || type === 'stop-vision-download') {
+          resetVisionWorker(error);
+        }
+      }, timeoutMs);
+    }
+    pendingVisionRequests.set(id, { resolve, reject, timeoutId, type, worker });
+    try {
+      worker.postMessage({ id, type, payload });
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      pendingVisionRequests.delete(id);
+      reject(error);
+    }
   });
 }
 
 async function ensureVisionWorker() {
   if (visionWorkerReady) return visionWorkerReady;
-  visionWorker = new Worker(chrome.runtime.getURL('src/offscreen/inference-worker.js'), {
+  const worker = new Worker(chrome.runtime.getURL('src/offscreen/inference-worker.js'), {
     type: 'module',
   });
-  visionWorker.addEventListener('message', event => settleVisionRequest(event.data));
-  visionWorker.addEventListener('error', event => {
+  visionWorker = worker;
+  worker.addEventListener('message', event => {
+    if (visionWorker !== worker) return;
+    settleVisionRequest(event.data);
+  });
+  worker.addEventListener('error', event => {
+    if (visionWorker !== worker) return;
     const error = new Error(event?.message || 'Vision worker crashed.');
-    for (const pending of pendingVisionRequests.values()) pending.reject(error);
-    pendingVisionRequests.clear();
-    visionWorker = null;
-    visionWorkerReady = null;
+    resetVisionWorker(error);
   });
   visionWorkerReady = sendVisionWorkerMessage('init', {
     transformersUrl: chrome.runtime.getURL('vendor/transformers/transformers.web.js'),
     wasmMjsUrl: chrome.runtime.getURL('vendor/transformers/ort-wasm-simd-threaded.asyncify.mjs'),
     wasmUrl: chrome.runtime.getURL('vendor/transformers/ort-wasm-simd-threaded.asyncify.wasm'),
-  });
-  return visionWorkerReady;
+  }, { timeoutMs: WORKER_INITIALIZATION_TIMEOUT_MS });
+  try {
+    return await visionWorkerReady;
+  } catch (error) {
+    if (visionWorker === worker) resetVisionWorker(error);
+    throw error;
+  }
 }
 
 const WEBGPU_MESSAGE_TYPES = new Set([
@@ -370,10 +565,33 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-vision-pause') {
+        const operation = visionPreloadPromise;
+        if (visionPreloadLifecycle) {
+          visionPreloadLifecycle.cancelMode = 'pause';
+          clearVisionPreloadTimers(visionPreloadLifecycle);
+        }
+        let response;
+        try {
+          response = await sendVisionWorkerMessage('pause-vision-download', {
+            modelId: message.model,
+          }, { timeoutMs: CANCELLATION_GRACE_PERIOD_MS });
+        } catch (error) {
+          if (error?.code !== 'vision_worker_message_timeout') throw error;
+          response = {
+            ok: true,
+            status: 'paused',
+            targetsActive: true,
+            workerRecreated: true,
+            recovery: 'worker_recreated',
+          };
+        }
+        if (response?.targetsActive && !(await waitForVisionPreloadSettlement(operation))) {
+          resetVisionWorker(deadlineError(
+            'vision_download_pause_forced_reset',
+            'Local vision loading did not pause cooperatively; the worker was recreated.',
+          ));
+        }
         detachVisionPreload('pause');
-        const response = await sendVisionWorkerMessage('pause-vision-download', {
-          modelId: message.model,
-        });
         publishVisionDownloadState({
           modelId: message.model,
           status: 'paused',
@@ -385,7 +603,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-vision-stop') {
-        detachVisionPreload('stop');
+        const operation = visionPreloadPromise;
+        if (visionPreloadLifecycle) {
+          visionPreloadLifecycle.cancelMode = 'stop';
+          clearVisionPreloadTimers(visionPreloadLifecycle);
+        }
         publishVisionDownloadState({
           modelId: message.model,
           status: 'stopping',
@@ -393,10 +615,42 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           loaded: visionDownloadState?.loaded || 0,
           total: visionDownloadState?.total || 0,
         }, true);
-        const response = await sendVisionWorkerMessage('stop-vision-download', {
-          modelId: message.model,
-          dtype: message.dtype,
-        });
+        let pauseResponse;
+        try {
+          pauseResponse = await sendVisionWorkerMessage('pause-vision-download', {
+            modelId: message.model,
+          }, { timeoutMs: CANCELLATION_GRACE_PERIOD_MS });
+        } catch (error) {
+          if (error?.code !== 'vision_worker_message_timeout') throw error;
+          pauseResponse = {
+            ok: true,
+            status: 'stopping',
+            targetsActive: true,
+            workerRecreated: true,
+            recovery: 'worker_recreated',
+          };
+        }
+        let response;
+        if (pauseResponse?.targetsActive) {
+          if (!(await waitForVisionPreloadSettlement(operation))) {
+            resetVisionWorker(deadlineError(
+              'vision_download_stop_forced_reset',
+              'Local vision loading did not stop cooperatively; the worker was recreated.',
+            ));
+          }
+          await ensureVisionWorker();
+          response = await sendVisionWorkerMessage('clear-cache', { modelId: message.model });
+        } else {
+          // pause-vision-download dequeues a queued preload. Tell Stop so it
+          // still takes the immediate cache-clear path instead of waiting
+          // behind an unrelated text-model transfer.
+          response = await sendVisionWorkerMessage('stop-vision-download', {
+            modelId: message.model,
+            dtype: message.dtype,
+            ...(pauseResponse?.targetsQueued ? { targetsQueued: true } : {}),
+          });
+        }
+        detachVisionPreload('stop');
         visionDownloadFiles.clear();
         publishVisionDownloadState({
           modelId: message.model,
@@ -447,7 +701,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       publishVisionDownloadState({ modelId: message.model, status: 'ready', progress: 100 }, true);
       sendResponse(response);
     } catch (error) {
-      sendResponse({ ok: false, error: error?.message || String(error) });
+      sendResponse({
+        ok: false,
+        error: error?.message || String(error),
+        code: error?.code || 'webgpu_request_failed',
+        recovery: error?.code === 'vision_inference_timeout' ? 'cancellation_requested' : undefined,
+      });
     }
   })();
   return true;
