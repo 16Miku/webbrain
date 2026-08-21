@@ -348,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Keamanan — baca ini:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Teks yang Anda masukkan di sini disimpan <strong>dalam bentuk teks biasa</strong> di penyimpanan lokal peramban Anda. Teks ini <strong>tidak</strong> dikirim ke proyek WebBrain — tetapi <strong>dikirim</strong> ke penyedia LLM yang Anda konfigurasikan pada setiap giliran, sebagai bagian dari prompt sistem.</li><li><strong>Jangan masukkan kata sandi untuk akun penting</strong> di sini (Google, Apple, iCloud, perbankan, SSO kantor, email utama). Akun-akun itu seharusnya memakai 2FA dan tidak perlu Anda serahkan ke agen.</li><li>Kasus penggunaan yang dimaksud adalah <strong>kata sandi sekali pakai</strong> yang Anda gunakan kembali untuk pendaftaran situs berisiko rendah (newsletter, uji coba gratis, akun forum).</li><li>Jika profil peramban ini suatu saat disusupi, penyerang yang memiliki akses disk dapat membaca teks ini. Buat seminimal mungkin.</li></ul>',
 
   'tr.title': 'Jejak WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} proses',
   'tr.run': '{n} proses',
   'tr.btn.refresh': '↻ Segarkan',

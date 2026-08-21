@@ -333,6 +333,8 @@ export default {
   'st.profile.security_html': '<strong>安全提示 — 请阅读：</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>你在这里输入的文本以<strong>明文</strong>保存在浏览器的本地存储中。它<strong>不会</strong>被发送到 WebBrain 项目 — 但<strong>会</strong>在每一轮作为系统提示的一部分发送给你所配置的 LLM 提供商。</li><li><strong>不要在这里放重要账户的密码</strong>（Google、Apple、iCloud、银行、工作 SSO、主邮箱）。这些账户应启用 2FA，也本就不该交给代理。</li><li>适合此处的是你用于低风险注册（时事通讯、免费试用、论坛账户）的<strong>一次性密码</strong>。</li><li>如果此浏览器配置文件被攻破，能访问磁盘的攻击者就能读到此文本。请尽量精简。</li></ul>',
 
   'tr.title': 'WebBrain 轨迹',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} 次运行',
   'tr.run': '{n} 次运行',
   'tr.btn.refresh': '↻ 刷新',

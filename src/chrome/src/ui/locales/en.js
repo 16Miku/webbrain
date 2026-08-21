@@ -941,6 +941,8 @@ export default {
 
   // --- Traces page -------------------------------------------------------
   'tr.title': 'WebBrain Traces',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} runs',
   'tr.run': '{n} run',
   'tr.btn.refresh': '↻ Refresh',

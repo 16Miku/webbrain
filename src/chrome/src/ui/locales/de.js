@@ -935,6 +935,8 @@ export default {
   'hist.confirm_clear_all': 'ALLE gespeicherten Gespräche löschen? Dies kann nicht rückgängig gemacht werden.',
   // --- Traces ---
   'tr.title': 'WebBrain Traces',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} Durchläufe',
   'tr.run': '{n} Durchlauf',
   'tr.btn.refresh': '↻ Aktualisieren',

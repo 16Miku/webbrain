@@ -791,6 +791,8 @@ export default {
   "hist.confirm_delete": "למחוק את השיחה השמורה הזו?",
   "hist.confirm_clear_all": "למחוק את כל השיחות השמורות? לא ניתן לבטל פעולה זו.",
   "tr.title": "WebBrain עקבות",
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   "tr.runs": "{n} פועל",
   "tr.run": "{n} לָרוּץ",
   "tr.btn.refresh": "↻ רענן",

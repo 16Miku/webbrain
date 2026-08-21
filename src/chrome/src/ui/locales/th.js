@@ -348,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>ความปลอดภัย — โปรดอ่าน:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>ข้อความที่คุณกรอกที่นี่ถูกเก็บ <strong>เป็นข้อความธรรมดา</strong> ใน local storage ของเบราว์เซอร์ มัน <strong>จะไม่</strong> ถูกส่งไปยังโปรเจกต์ WebBrain — แต่ <strong>จะถูกส่ง</strong> ไปยังผู้ให้บริการ LLM ที่คุณตั้งค่าไว้ในทุกเทิร์น ในฐานะส่วนหนึ่งของ system prompt</li><li><strong>อย่าใส่รหัสผ่านของบัญชีสำคัญ</strong> ที่นี่ (Google, Apple, iCloud, ธนาคาร, SSO ที่ทำงาน, อีเมลหลัก) บัญชีเหล่านั้นควรใช้ 2FA และไม่ควรมอบให้เอเจนต์อยู่แล้ว</li><li>กรณีใช้งานที่ตั้งใจคือ <strong>รหัสผ่านใช้แล้วทิ้ง</strong> ที่คุณใช้ซ้ำสำหรับการสมัครเว็บไซต์เสี่ยงต่ำ (จดหมายข่าว ทดลองใช้ฟรี บัญชีฟอรัม)</li><li>หากโปรไฟล์เบราว์เซอร์นี้ถูกบุกรุก ผู้โจมตีที่เข้าถึงดิสก์ได้จะอ่านข้อความนี้ได้ ควรเก็บให้น้อยที่สุด</li></ul>',
 
   'tr.title': 'Traces ของ WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} ครั้ง',
   'tr.run': '{n} ครั้ง',
   'tr.btn.refresh': '↻ รีเฟรช',

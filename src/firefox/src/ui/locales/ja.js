@@ -333,6 +333,8 @@ export default {
   'st.profile.security_html': '<strong>セキュリティ — 必ずお読みください：</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>ここに入力したテキストはブラウザのローカルストレージに<strong>平文</strong>で保存されます。WebBrain プロジェクトへは<strong>送信されません</strong>が、設定済みの LLM プロバイダーへはシステム prompt の一部として毎ターン<strong>送信されます</strong>。</li><li>重要アカウント（Google、Apple、iCloud、銀行、社内 SSO、メインのメール）のパスワードは<strong>絶対にここに入れないでください</strong>。それらは 2FA を有効にすべきで、そもそもエージェントに渡すべきではありません。</li><li>意図された使い方は、低リスクの登録（メルマガ、無料体験、フォーラム）で使い回す<strong>使い捨てパスワード</strong>です。</li><li>このブラウザプロファイルが侵害された場合、ディスクにアクセスできる攻撃者はこのテキストを読み取れます。最小限にとどめてください。</li></ul>',
 
   'tr.title': 'WebBrain トレース',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} 件の実行',
   'tr.run': '{n} 件の実行',
   'tr.btn.refresh': '↻ 更新',

@@ -348,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Безопасность — прочтите:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Введённый здесь текст хранится <strong>в открытом виде</strong> в локальном хранилище браузера. Он <strong>не</strong> отправляется в проект WebBrain — но <strong>отправляется</strong> на каждом ходу как часть системного prompt тому LLM-провайдеру, которого вы настроили.</li><li><strong>Не размещайте здесь пароли от важных аккаунтов</strong> (Google, Apple, iCloud, банк, рабочий SSO, основная почта). Эти аккаунты должны быть с 2FA, и их в любом случае не стоит передавать агенту.</li><li>Целевой сценарий — <strong>одноразовый пароль</strong>, который вы повторно используете для регистраций с низкими ставками (рассылки, бесплатные пробные периоды, аккаунты на форумах).</li><li>Если этот профиль браузера будет скомпрометирован, атакующий с доступом к диску сможет прочитать этот текст. Держите его минимальным.</li></ul>',
 
   'tr.title': 'Трассы WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': 'запусков: {n}',
   'tr.run': 'запуск: {n}',
   'tr.btn.refresh': '↻ Обновить',

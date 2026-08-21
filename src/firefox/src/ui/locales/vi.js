@@ -916,6 +916,8 @@ export default {
 
   // --- Traces page -------------------------------------------------------
   'tr.title': "Dấu vết WebBrain",
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': "{n} chạy",
   'tr.run': "Chạy {n}",
   'tr.btn.refresh': "↻ Làm mới",

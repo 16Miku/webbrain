@@ -348,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Keselamatan — sila baca:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Teks yang anda masukkan di sini disimpan <strong>sebagai teks biasa</strong> dalam storan tempatan pelayar anda. Ia <strong>tidak</strong> dihantar kepada projek WebBrain — tetapi <strong>dihantar</strong> kepada pembekal LLM yang anda konfigurasikan pada setiap giliran, sebagai sebahagian daripada system prompt.</li><li><strong>Jangan letakkan kata laluan untuk akaun penting</strong> di sini (Google, Apple, iCloud, perbankan, SSO kerja, e-mel utama). Akaun-akaun itu sepatutnya menggunakan 2FA dan anda sememangnya tidak perlu menyerahkannya kepada ejen.</li><li>Kes penggunaan yang dimaksudkan ialah <strong>kata laluan pakai buang</strong> yang anda guna semula untuk pendaftaran laman berisiko rendah (surat berita, percubaan percuma, akaun forum).</li><li>Jika profil pelayar ini diceroboh, penyerang yang mempunyai akses cakera boleh membaca teks ini. Kekalkan ia seminimum mungkin.</li></ul>',
 
   'tr.title': 'Jejak WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} larian',
   'tr.run': '{n} larian',
   'tr.btn.refresh': '↻ Muat semula',

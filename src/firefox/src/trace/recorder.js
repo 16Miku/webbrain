@@ -24,7 +24,7 @@ const DB_VERSION = 2;
 // up to 500 KB before the head is clamped with a truncation marker. Keeps an
 // opt-in debugging tier from exhausting IndexedDB on a single long run.
 const LOSSILESS_RESULT_CAP = 200_000;
-const LOSSILESS_MESSAGES_CAP = 500_000;
+const LOSSILESS_REQUEST_CAP = 500_000;
 
 let _dbPromise = null;
 function openDB() {
@@ -121,6 +121,60 @@ async function _peekSeq(db, runId) {
   return result;
 }
 
+const _runStateLoads = new Map();
+
+async function _ensureRunState(runId, db = null) {
+  if (!runId) return null;
+  const existing = _runState.get(runId);
+  if (existing) return existing;
+  const pending = _runStateLoads.get(runId);
+  if (pending) return pending;
+  const load = (async () => {
+    try {
+      const resolvedDb = db || await openDB();
+      const seq = await _peekSeq(resolvedDb, runId);
+      const flags = await peekRunFlags(resolvedDb, runId);
+      const state = { seq, forced: flags.forced, lossless: flags.lossless };
+      _runState.set(runId, state);
+      return state;
+    } catch { return null; }
+  })();
+  _runStateLoads.set(runId, load);
+  try { return await load; }
+  finally { if (_runStateLoads.get(runId) === load) _runStateLoads.delete(runId); }
+}
+
+function boundedToolNames(tools) {
+  return Array.isArray(tools)
+    ? tools.slice(0, 100).map(tool => String(tool?.function?.name || '?').slice(0, 120))
+    : [];
+}
+
+function clampLosslessRequest(messages, tools) {
+  const request = { messages: messages ?? null, tools: tools ?? null };
+  let serialized;
+  try { serialized = JSON.stringify(request); } catch { serialized = null; }
+  if (!serialized) {
+    return {
+      messages: { _truncated: true, length: null, head: '(unserializable request)', toolNames: boundedToolNames(tools) },
+      tools: null,
+    };
+  }
+  if (serialized.length <= LOSSILESS_REQUEST_CAP) return { messages, tools };
+  // Keep one bounded head of the combined request. Tool names remain visible
+  // even when the head ends before the dynamic tool catalog.
+  const headCap = Math.max(1, LOSSILESS_REQUEST_CAP - 2048);
+  return {
+    messages: {
+      _truncated: true,
+      length: serialized.length,
+      head: serialized.slice(0, headCap),
+      toolNames: boundedToolNames(tools),
+    },
+    tools: null,
+  };
+}
+
 function _newSeq(runId) {
   const st = _runState.get(runId);
   if (!st) return 0;
@@ -176,7 +230,7 @@ export async function startRun(meta) {
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
       attachments: normalizeTraceAttachments(meta.attachments),
-      lossless,
+      ...(lossless ? { lossless: true } : {}),
       stepCount: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
@@ -196,17 +250,7 @@ async function _appendEvent(runId, kind, data) {
   if (!(await tracingEnabled())) return;
   try {
     const db = await openDB();
-    if (!_runState.has(runId)) {
-      // Recover from SW eviction; restore the lossless tier decision from the
-      // durable run record so it survives a worker restart mid-run.
-      const seq = await _peekSeq(db, runId);
-      let lossless = false;
-      try {
-        const record = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
-        lossless = record?.lossless === true;
-      } catch {}
-      _runState.set(runId, { seq, lossless });
-    }
+    await _ensureRunState(runId, db);
     const seq = _newSeq(runId);
     const ev = makeEvent(runId, seq, kind, data);
     if (!ev) {
@@ -222,25 +266,20 @@ async function _appendEvent(runId, kind, data) {
   }
 }
 
-export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
+export async function recordLLMRequest(runId, step, payload, provenanceInput = null) {
   // Lossless tier (opt-in): persist the request's full message/tool shape for
   // deep debugging and request reconstruction. Clamped so one oversized
   // request cannot exhaust IndexedDB; the marker mirrors the tool-result
   // truncation convention ({ _truncated, length, head }).
-  if (_runState.get(runId)?.lossless === true && provenanceInput) {
-    let messages = provenanceInput.messages || null;
-    if (messages !== null) {
-      const serialized = JSON.stringify(messages);
-      if (serialized && serialized.length > LOSSILESS_MESSAGES_CAP) {
-        messages = { _truncated: true, length: serialized.length, head: serialized.slice(0, LOSSILESS_MESSAGES_CAP) };
-      }
-    }
+  const state = await _ensureRunState(runId);
+  if (state?.lossless === true && provenanceInput) {
+    const { messages, tools } = clampLosslessRequest(provenanceInput.messages || null, provenanceInput.tools || null);
     return _appendEvent(runId, 'llm_request', {
       step,
       ...payload,
       lossless: true,
       messages,
-      tools: provenanceInput.tools || null,
+      tools,
     });
   }
   // Default tier: never persist full prompts, message text, tool schemas, or
@@ -283,11 +322,12 @@ export function recordLLMResponse(runId, step, { content, toolCalls, usage, late
   });
 }
 
-export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
+export async function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   // Truncate very large tool results (a11y trees can be huge). Keep the first
   // 20KB verbatim by default — plenty for debugging flow — and 200KB in the
   // opt-in lossless tier; note the truncation either way.
-  const cap = _runState.get(runId)?.lossless === true ? LOSSILESS_RESULT_CAP : 20_000;
+  const state = await _ensureRunState(runId);
+  const cap = state?.lossless === true ? LOSSILESS_RESULT_CAP : 20_000;
   let shortResult = result;
   try {
     const s = typeof result === 'string' ? result : JSON.stringify(result);
@@ -310,15 +350,7 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
   if (!dataUrl) return;
   try {
     const db = await openDB();
-    if (!_runState.has(runId)) {
-      const seq = await _peekSeq(db, runId);
-      let lossless = false;
-      try {
-        const record = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
-        lossless = record?.lossless === true;
-      } catch {}
-      _runState.set(runId, { seq, lossless });
-    }
+    await _ensureRunState(runId, db);
     const seq = _newSeq(runId);
     // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
     let blob = null;

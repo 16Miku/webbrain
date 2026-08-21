@@ -333,6 +333,8 @@ export default {
   'st.profile.security_html': '<strong>Seguridad — basahin ito:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Ang teksto na inilagay mo dito ay iniimbak <strong>bilang plain text</strong> sa local storage ng iyong browser. <strong>Hindi</strong> ito ipinapadala sa proyektong WebBrain — ngunit <strong>ipinapadala</strong> ito sa kung anong LLM provider ang iyong na-configure sa bawat turn, bilang bahagi ng system prompt.</li><li><strong>Huwag maglagay ng mga password para sa mahahalagang account</strong> dito (Google, Apple, iCloud, banking, work SSO, pangunahing email). Dapat gumamit ng 2FA ang mga account na iyon at hindi mo naman dapat ipinapasa sa isang ahente.</li><li>Ang inilaang gamit ay <strong>isahang-gamit na password</strong> na ginagamit mo sa mga low-stakes na site signup (newsletter, libreng trial, forum account).</li><li>Kung sakaling ma-compromise ang browser profile na ito, ang isang attacker na may disk access ay makakabasa ng tekstong ito. Panatilihin itong minimal.</li></ul>',
 
   'tr.title': 'Mga Trace ng WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} run',
   'tr.run': '{n} run',
   'tr.btn.refresh': '↻ I-refresh',

@@ -348,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Sécurité — à lire :</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Le texte que vous saisissez ici est stocké <strong>en clair</strong> dans le stockage local de votre navigateur. Il n\'est <strong>pas</strong> transmis au projet WebBrain — mais il <strong>est</strong> envoyé au fournisseur de LLM que vous avez configuré à chaque tour, dans le cadre du prompt système.</li><li><strong>Ne mettez pas ici les mots de passe de comptes importants</strong> (Google, Apple, iCloud, banque, SSO professionnel, e-mail principal). Ces comptes devraient utiliser la 2FA et vous ne devriez pas avoir à les confier à un agent.</li><li>Un <strong>mot de passe jetable</strong> que vous réutilisez pour des inscriptions peu sensibles (newsletters, essais gratuits, comptes de forum) est l\'usage prévu.</li><li>Si ce profil de navigateur est un jour compromis, un attaquant ayant accès au disque pourra lire ce texte. Gardez-le au minimum.</li></ul>',
 
   'tr.title': 'Traces WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} exécutions',
   'tr.run': '{n} exécution',
   'tr.btn.refresh': '↻ Actualiser',

@@ -33,12 +33,15 @@ const UNKNOWN_EVENTS_NOTE = (n) => `_Note: ${n} unknown event(s) skipped._`;
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{8,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
-  /\b(?:api[_-]?key|apikey|token|password|passwd|secret)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}/gi,
 ];
 
 function maskSecrets(text) {
   let out = String(text ?? '');
   for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '[redacted]');
+  out = out
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:api[_ -]?key|access[_ -]?token|token|secret|password|passwd)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|token|key)=)[^&\s]+/gi, '$1[redacted]');
   return out;
 }
 
@@ -46,6 +49,14 @@ function maskSecrets(text) {
 // masked preview per message so the export stays readable without dumping
 // every token of a 500 KB request.
 function renderLosslessRequest(messages, tools) {
+  if (messages?._truncated === true) {
+    const total = Number(messages.length) || 0;
+    const head = truncate(oneLine(maskSecrets(messages.head || '')), LOSSILESS_MESSAGE_PREVIEW_LIMIT);
+    const toolNames = Array.isArray(messages.toolNames) ? messages.toolNames : [];
+    const lines = [`request truncated (${humanSize(total)} total): ${head || '(head unavailable)'}`];
+    if (toolNames.length) lines.push(`tools: ${toolNames.join(', ')}`);
+    return `\n${lines.join('\n')}`;
+  }
   const list = Array.isArray(messages) ? messages : [];
   if (!list.length) return ' (empty request log)';
   const lines = [];
@@ -64,6 +75,8 @@ function renderLosslessRequest(messages, tools) {
   if (list.length > 12) lines.push(`… +${list.length - 12} more message(s) omitted`);
   if (Array.isArray(tools) && tools.length) {
     lines.push(`tools: ${tools.map(tool => oneLine(tool?.function?.name || '?')).join(', ')}`);
+  } else if (tools?._truncated === true && Array.isArray(tools.toolNames) && tools.toolNames.length) {
+    lines.push(`tools: ${tools.toolNames.join(', ')}`);
   }
   return `\n${lines.join('\n')}`;
 }

@@ -8882,12 +8882,17 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /async function losslessTraceEnabled\(\)/, `${browser}: losslessTraceEnabled missing`);
     assert.match(recorderSource, /const lossless = meta\.lossless === true \|\| await losslessTraceEnabled\(\);/, `${browser}: tier decision missing in startRun`);
-    assert.match(recorderSource, /lossless,\n/, `${browser}: run record does not stamp the tier`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true \} : \{\}\)/, `${browser}: run record does not stamp the tier`);
     assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
-    assert.match(recorderSource, /const LOSSILESS_MESSAGES_CAP = 500_000;/, `${browser}: lossless messages cap missing`);
-    assert.match(recorderSource, /_runState\.get\(runId\)\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
-    assert.match(recorderSource, /_runState\.get\(runId\)\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000/, `${browser}: tool-result cap does not branch on tier`);
+    assert.match(recorderSource, /const LOSSILESS_REQUEST_CAP = 500_000;/, `${browser}: lossless request cap missing`);
+    assert.match(recorderSource, /await _ensureRunState\(runId\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
+    assert.match(recorderSource, /await _ensureRunState\(runId\)[\s\S]*?state\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000/, `${browser}: tool-result cap does not branch on tier`);
     assert.match(recorderSource, /peekRunFlags|lossless: record\?\.lossless === true|lossless = record\?\.lossless === true/, `${browser}: SW-eviction recovery does not restore the tier`);
+    assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
+    assert.match(recorderSource, /async function recordLLMRequest[\s\S]*?await _ensureRunState\(runId\)[\s\S]*?state\?\.lossless === true/, `${browser}: request tier is checked before SW recovery`);
+    assert.match(recorderSource, /async function recordToolCall[\s\S]*?await _ensureRunState\(runId\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool tier is checked before SW recovery`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
+    assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
   }
@@ -8919,7 +8924,7 @@ test('trace lossless tier: export renders masked request previews only for lossl
         messageCount: 2, toolsCount: 1, lossless: true,
         messages: [
           { role: 'system', content: 'You are WebBrain.' },
-          { role: 'user', content: 'api_key=sk-secret1234567890 and Bearer tok1234567890' },
+          { role: 'user', content: '{"password":"hunter2abc", "api_key":"value12345"} api_key=sk-secret1234567890 and Bearer tok1234567890' },
         ],
         tools: [{ function: { name: 'click' } }],
       },
@@ -8931,6 +8936,18 @@ test('trace lossless tier: export renders masked request previews only for lossl
     assert.match(markdown, /tools: click/, `${label}: lossless tool list missing`);
     assert.doesNotMatch(markdown, /sk-secret1234567890|tok1234567890/, `${label}: lossless export leaked secrets`);
     assert.match(markdown, /\[redacted\]/, `${label}: lossless export has no redaction marker`);
+
+    const truncated = serialize([{ run: losslessRun, events: [{
+      kind: 'llm_request',
+      data: {
+        messageCount: 1, toolsCount: 2, lossless: true,
+        messages: { _truncated: true, length: 750000, head: '{"messages":[{"role":"user","content":"partial"}' , toolNames: ['click', 'type_text'] },
+        tools: null,
+      },
+    }] }]).markdown;
+    assert.match(truncated, /truncated/i, `${label}: truncated request marker was rendered as empty`);
+    assert.match(truncated, /partial/, `${label}: truncated request head was omitted`);
+    assert.match(truncated, /tools: click, type_text/, `${label}: truncated request tool names were omitted`);
   }
   // Default tier: no message preview even when a request payload exists.
   const defaultRun = {
@@ -8951,6 +8968,19 @@ test('trace lossless tier: default-tier privacy guard survives in both builds', 
   const firefoxRecorder = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/recorder.js'), 'utf8');
   assert.match(chromeRecorder, /Default tier: never persist full prompts, message text, tool schemas, or[\s\S]*?tool names here\./, 'chrome default tier lost its privacy comment guard');
   assert.match(firefoxRecorder, /Default tier: never persist full prompts, message text, tool schemas, or[\s\S]*?tool names here\./, 'firefox default tier lost its privacy comment guard');
+});
+
+test('trace lossless tier: Traces UI identifies sensitive runs before export', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.html`), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/locales/en.js`), 'utf8');
+    assert.match(traces, /run\.lossless === true/, `${browser}: run list does not surface lossless traces`);
+    assert.match(traces, /tr\.lossless\.warning/, `${browser}: selected lossless run has no export warning`);
+    assert.match(html, /lossless-badge|lossless-warning/, `${browser}: no lossless trace styling exists`);
+    assert.match(locale, /tr\.lossless\.badge/, `${browser}: lossless badge locale missing`);
+    assert.match(locale, /tr\.lossless\.warning/, `${browser}: lossless warning locale missing`);
+  }
 });
 
 test('trace recorder: DB v2 adds lineage indexes and startRun stores lineage fields', () => {

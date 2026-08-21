@@ -937,6 +937,8 @@ export default {
 
   // --- Traces page -------------------------------------------------------
   'tr.title': "WebBrain Rastreamentos",
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': "{n} é executado",
   'tr.run': "{n} executado",
   'tr.btn.refresh': "↻ Atualizar",

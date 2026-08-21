@@ -387,6 +387,8 @@ export default {
   'st.profile.security_html': '<strong>Güvenlik — lütfen oku:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Buraya yazdığın metin tarayıcının yerel depolamasında <strong>düz metin olarak</strong> saklanır. <strong>WebBrain projesine iletilmez</strong> — fakat yapılandırdığın LLM sağlayıcısına her turda sistem isteminin bir parçası olarak <strong>gönderilir</strong>.</li><li><strong>Önemli hesapların parolalarını buraya koyma</strong> (Google, Apple, iCloud, bankacılık, iş SSO\'su, birincil e-posta). Bu hesaplar 2FA kullanmalı ve zaten bir aracıya teslim edilmemeli.</li><li>Düşük riskli site kayıtları (bültenler, ücretsiz denemeler, forum hesapları) için kullandığın <strong>tek kullanımlık bir parola</strong> hedeflenen kullanım durumudur.</li><li>Bu tarayıcı profili ele geçirilirse, diske erişebilen bir saldırgan bu metni okuyabilir. Asgaride tut.</li></ul>',
 
   'tr.title': 'WebBrain İzleri',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} çalışma',
   'tr.run': '{n} çalışma',
   'tr.btn.refresh': '↻ Yenile',

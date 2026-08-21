@@ -837,6 +837,8 @@ export default {
   'hist.confirm_delete': 'Dit opgeslagen gesprek verwijderen?',
   'hist.confirm_clear_all': 'Alle opgeslagen gesprekken verwijderen? Dit kan niet ongedaan worden gemaakt.',
   'tr.title': 'WebBrain Traces',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} uitvoeringen',
   'tr.run': '{n} uitvoering',
   'tr.btn.refresh': '↻ Vernieuwen',

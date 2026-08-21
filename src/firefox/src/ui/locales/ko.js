@@ -333,6 +333,8 @@ export default {
   'st.profile.security_html': '<strong>보안 — 반드시 읽어주세요:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>여기에 입력한 텍스트는 브라우저 로컬 저장소에 <strong>평문</strong>으로 저장됩니다. WebBrain 프로젝트로는 <strong>전송되지 않지만</strong>, 설정한 LLM 제공자에게는 시스템 prompt의 일부로 매 턴 <strong>전송됩니다</strong>.</li><li>중요한 계정(Google, Apple, iCloud, 은행, 회사 SSO, 주 이메일)의 비밀번호는 <strong>여기에 넣지 마세요</strong>. 이런 계정은 2FA를 사용해야 하며 애초에 에이전트에게 넘길 일이 없어야 합니다.</li><li>의도된 사용 사례는 저위험 사이트 가입(뉴스레터, 무료 체험, 포럼 계정)에 재사용하는 <strong>일회용 비밀번호</strong>입니다.</li><li>이 브라우저 프로필이 침해되면 디스크에 접근할 수 있는 공격자가 이 텍스트를 읽을 수 있습니다. 최소한으로 유지하세요.</li></ul>',
 
   'tr.title': 'WebBrain 트레이스',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '실행 {n}건',
   'tr.run': '실행 {n}건',
   'tr.btn.refresh': '↻ 새로고침',

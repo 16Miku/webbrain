@@ -348,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>الأمان — اقرأ هذا:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>النص الذي تُدخله هنا يُخزَّن <strong>بصيغة نصية واضحة</strong> في التخزين المحلي للمتصفح. <strong>لا</strong> يُرسَل إلى مشروع WebBrain — لكنه <strong>يُرسَل</strong> إلى مزوّد LLM الذي ضبطته في كل دور، كجزء من prompt النظام.</li><li><strong>لا تضع كلمات مرور حسابات مهمة</strong> هنا (Google، Apple، iCloud، البنوك، SSO العمل، البريد الرئيسي). هذه الحسابات يجب أن تستخدم المصادقة الثنائية، ولا يجدر بك تسليمها لوكيل أصلًا.</li><li>الاستخدام المقصود هو <strong>كلمة مرور للاستعمال لمرة واحدة</strong> تعيد استخدامها لتسجيلات منخفضة الأهمية (النشرات البريدية، التجارب المجانية، حسابات المنتديات).</li><li>إذا اختُرق هذا الملف الشخصي للمتصفح يومًا، فإن مهاجمًا يملك الوصول إلى القرص قادر على قراءة هذا النص. أبقِه في حدّه الأدنى.</li></ul>',
 
   'tr.title': 'تتبّعات WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} عملية تشغيل',
   'tr.run': '{n} عملية تشغيل',
   'tr.btn.refresh': '↻ تحديث',

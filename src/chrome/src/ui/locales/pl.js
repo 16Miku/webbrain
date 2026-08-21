@@ -588,6 +588,8 @@ export default {
   'st.captcha.balance_fail': 'Niepowodzenie: {error}',
   'st.captcha.security_html': '<strong>Uwaga:</strong> klucz API jest przechowywany <strong>w postaci jawnej</strong> w lokalnej pamięci przeglądarki. CapSolver obciąża Twoje konto za każde rozwiązanie; agent wywoła go tylko, gdy CAPTCHA faktycznie zablokuje krok (maksymalnie raz na napotkanie — nie ponawia po niepowodzeniu). Regulaminy niektórych witryn zabraniają automatycznego rozwiązywania CAPTCHA; kieruj się własnym osądem.',
   'tr.title': 'Ślady WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} wykonań',
   'tr.run': '{n} wykonanie',
   'tr.btn.refresh': '↻ Odśwież',

@@ -916,6 +916,8 @@ export default {
 
   // --- Traces page -------------------------------------------------------
   'tr.title': "WebBrain ট্রেস",
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': "{n} চলে",
   'tr.run': "{n} রান",
   'tr.btn.refresh': "↻ রিফ্রেশ করুন",
