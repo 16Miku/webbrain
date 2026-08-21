@@ -60,6 +60,14 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
+    /* Brain mark next to the wordmark. The gradient text fill above only
+       touches glyphs, so the logo keeps its own colors in both themes. */
+    .brand-mark {
+      width: 22px;
+      height: 22px;
+      vertical-align: -4px;
+      margin-right: 8px;
+    }
     .spacer { flex: 1; }
     .pill {
       background: var(--bg2);
@@ -382,7 +390,7 @@
 </head>
 <body>
   <header>
-    <h1 data-i18n="hist.title"></h1>
+    <h1><img class="brand-mark" src="../../icons/icon128.png" alt="" aria-hidden="true"><span data-i18n="hist.title"></span></h1>
     <button id="count-pill" class="pill" type="button" aria-disabled="true"></button>
     <div class="spacer"></div>
     <button id="btn-refresh" data-i18n="hist.btn.refresh" data-i18n-title="hist.btn.refresh.title"></button>
