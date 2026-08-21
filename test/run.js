@@ -8861,6 +8861,98 @@ test('trace run header: mirrors are identical and browser-neutral', () => {
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'run header must not touch storage');
 });
 
+// trace lossless tier — opt-in full-request recording
+// ────────────────────────────────────────────────────────────────────────
+
+console.log('\ntrace lossless tier');
+
+const RUNTIME_CONFIG_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/runtime-config.js').replace(/\\/g, '/'));
+
+test('trace lossless tier: runtime-config accepts the boolean and defaults stay off', () => {
+  const normalized = RUNTIME_CONFIG_CH.normalizeRuntimeTraceConfig({ lossless_trace: true });
+  assert.equal(normalized.lossless_trace, true, 'lossless_trace boolean not allowlisted');
+  const off = RUNTIME_CONFIG_CH.normalizeRuntimeTraceConfig({ lossless_trace: false });
+  assert.equal(off.lossless_trace, false, 'lossless_trace false should survive');
+  const junk = RUNTIME_CONFIG_CH.normalizeRuntimeTraceConfig({ lossless_trace: 'yes' });
+  assert.equal(junk.lossless_trace, undefined, 'non-boolean lossless_trace must be rejected');
+});
+
+test('trace lossless tier: recorder branches on the tier and clamps payloads', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    assert.match(recorderSource, /async function losslessTraceEnabled\(\)/, `${browser}: losslessTraceEnabled missing`);
+    assert.match(recorderSource, /const lossless = meta\.lossless === true \|\| await losslessTraceEnabled\(\);/, `${browser}: tier decision missing in startRun`);
+    assert.match(recorderSource, /lossless,\n/, `${browser}: run record does not stamp the tier`);
+    assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
+    assert.match(recorderSource, /const LOSSILESS_MESSAGES_CAP = 500_000;/, `${browser}: lossless messages cap missing`);
+    assert.match(recorderSource, /_runState\.get\(runId\)\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
+    assert.match(recorderSource, /_runState\.get\(runId\)\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000/, `${browser}: tool-result cap does not branch on tier`);
+    assert.match(recorderSource, /peekRunFlags|lossless: record\?\.lossless === true|lossless = record\?\.lossless === true/, `${browser}: SW-eviction recovery does not restore the tier`);
+    // Default tier must keep the content-free provenance path.
+    assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
+  }
+});
+
+test('trace lossless tier: settings UI wires the toggle and the disclosure', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.html`), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.js`), 'utf8');
+    const enLocale = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/locales/en.js`), 'utf8');
+    assert.match(settingsHtml, /id="toggle-lossless-tracing"/, `${browser}: settings HTML toggle missing`);
+    assert.match(settingsHtml, /st\.display\.lossless_tracing\.label/, `${browser}: settings HTML label key missing`);
+    assert.match(settingsJs, /losslessTracingToggle\.checked = stored\.losslessTrace === true/, `${browser}: settings JS does not load the key`);
+    assert.match(settingsJs, /storage\.local\.set\(\{ losslessTrace: losslessTracingToggle\.checked \}\)/, `${browser}: settings JS does not persist the key`);
+    assert.match(settingsJs, /losslessTracingToggle\.disabled = tracingToggle\.checked !== true/, `${browser}: lossless toggle is not gated on tracing`);
+    assert.match(enLocale, /st\.display\.lossless_tracing\.label/, `${browser}: en locale label missing`);
+    assert.match(enLocale, /writes your conversation content locally/, `${browser}: en locale disclosure missing`);
+  }
+});
+
+test('trace lossless tier: export renders masked request previews only for lossless runs', () => {
+  const losslessRun = {
+    runId: 'r_lossless', userMessage: 'hello', status: 'done', webbrainVersion: '',
+  };
+  const losslessEvents = [
+    {
+      runId: 'r_lossless', seq: 1, ts: 1, kind: 'llm_request',
+      data: {
+        messageCount: 2, toolsCount: 1, lossless: true,
+        messages: [
+          { role: 'system', content: 'You are WebBrain.' },
+          { role: 'user', content: 'api_key=sk-secret1234567890 and Bearer tok1234567890' },
+        ],
+        tools: [{ function: { name: 'click' } }],
+      },
+    },
+  ];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize([{ run: losslessRun, events: losslessEvents }]);
+    assert.match(markdown, /\*\*user:\*\*/, `${label}: lossless message preview missing`);
+    assert.match(markdown, /tools: click/, `${label}: lossless tool list missing`);
+    assert.doesNotMatch(markdown, /sk-secret1234567890|tok1234567890/, `${label}: lossless export leaked secrets`);
+    assert.match(markdown, /\[redacted\]/, `${label}: lossless export has no redaction marker`);
+  }
+  // Default tier: no message preview even when a request payload exists.
+  const defaultRun = {
+    runId: 'r_default', userMessage: 'hello', status: 'done', webbrainVersion: '',
+  };
+  const defaultEvents = [
+    {
+      runId: 'r_default', seq: 1, ts: 1, kind: 'llm_request',
+      data: { messageCount: 2, toolsCount: 0, promptProvenance: { systemPromptVariant: 'ask' } },
+    },
+  ];
+  const { markdown } = tracesToMarkdown([{ run: defaultRun, events: defaultEvents }]);
+  assert.doesNotMatch(markdown, /\*\*system:\*\*|\*\*user:\*\*/, 'default tier export must not render messages');
+});
+
+test('trace lossless tier: default-tier privacy guard survives in both builds', () => {
+  const chromeRecorder = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/recorder.js'), 'utf8');
+  const firefoxRecorder = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/recorder.js'), 'utf8');
+  assert.match(chromeRecorder, /Default tier: never persist full prompts, message text, tool schemas, or[\s\S]*?tool names here\./, 'chrome default tier lost its privacy comment guard');
+  assert.match(firefoxRecorder, /Default tier: never persist full prompts, message text, tool schemas, or[\s\S]*?tool names here\./, 'firefox default tier lost its privacy comment guard');
+});
+
 test('trace recorder: DB v2 adds lineage indexes and startRun stores lineage fields', () => {
   for (const browser of ['chrome', 'firefox']) {
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
@@ -18874,7 +18966,9 @@ test('cloud runs force trace capture without changing the interactive opt-in def
   assert.match(agentSource, /force:\s*runOptions\?\.cloudRun === true/);
   assert.match(recorderSource, /if \(!forced && !\(await tracingEnabled\(\)\)\) return null/);
   assert.match(recorderSource, /tracingEnabledForRun\(runId\)/);
-  assert.match(recorderSource, /forced:\s*await isForcedTraceRun\(runId\)/);
+  // The forced flag is restored from the durable run record after SW eviction
+  // (peekRunFlags), keeping forced-capture semantics without an in-memory map.
+  assert.match(recorderSource, /forced: flags\.forced, lossless: flags\.lossless/);
 });
 
 test('cloud trace keeps CAPTCHA frame/vendor diagnostics after the rolling update window drops the event', async () => {

@@ -20,6 +20,12 @@ import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
 const DB_NAME = 'webbrain_traces';
 const DB_VERSION = 2;
 
+// Lossless tier bounds: tool results up to 200 KB verbatim, request payloads
+// up to 500 KB before the head is clamped with a truncation marker. Keeps an
+// opt-in debugging tier from exhausting IndexedDB on a single long run.
+const LOSSILESS_RESULT_CAP = 200_000;
+const LOSSILESS_MESSAGES_CAP = 500_000;
+
 let _dbPromise = null;
 function openDB() {
   if (_dbPromise) return _dbPromise;
@@ -82,6 +88,16 @@ async function tracingEnabled() {
   } catch { return false; }
 }
 
+// Opt-in lossless tier: same event pipeline, full request payloads instead of
+// content-free provenance. Read once per run at startRun; never per event.
+async function losslessTraceEnabled() {
+  try {
+    if (typeof indexedDB === 'undefined') return false;
+    const { losslessTrace } = await chrome.storage.local.get(['losslessTrace']);
+    return losslessTrace === true;
+  } catch { return false; }
+}
+
 async function isForcedTraceRun(runId) {
   if (!runId) return false;
   if (_runState.get(runId)?.forced === true) return true;
@@ -92,6 +108,17 @@ async function isForcedTraceRun(runId) {
     );
     return record?.forced === true;
   } catch { return false; }
+}
+
+// Restore per-run flags after SW eviction from the durable run record so the
+// lossless tier decision survives a worker restart mid-run.
+async function peekRunFlags(db, runId) {
+  try {
+    const record = await promisifyReq(
+      tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
+    );
+    return { forced: record?.forced === true, lossless: record?.lossless === true };
+  } catch { return { forced: false, lossless: false }; }
 }
 
 async function tracingEnabledForRun(runId) {
@@ -145,6 +172,9 @@ export async function startRun(meta = {}) {
     const db = await openDB();
     const runId = meta.runId || `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const lineage = normalizeRunHeader(meta) || {};
+    // Tier is decided once per run: explicit caller override wins, otherwise
+    // the opt-in setting. Never forced for local runs by default.
+    const lossless = meta.lossless === true || await losslessTraceEnabled();
     const record = {
       runId,
       // Stable per-conversation id so the Traces UI can group sibling runs
@@ -172,6 +202,7 @@ export async function startRun(meta = {}) {
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
       attachments: normalizeTraceAttachments(meta.attachments),
+      lossless,
       forced,
       stepCount: 0,
       totalInputTokens: 0,
@@ -179,7 +210,7 @@ export async function startRun(meta = {}) {
       finalContent: null,
     };
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
-    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced });
+    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless });
     return runId;
   } catch (e) {
     console.warn('[trace] startRun failed:', e);
@@ -195,7 +226,8 @@ async function _appendEvent(runId, kind, data) {
     if (!_runState.has(runId)) {
       // Recover from SW eviction.
       const seq = await _peekSeq(db, runId);
-      _runState.set(runId, { seq, forced: await isForcedTraceRun(runId) });
+      const flags = await peekRunFlags(db, runId);
+      _runState.set(runId, { seq, forced: flags.forced, lossless: flags.lossless });
     }
     const seq = _newSeq(runId);
     const ev = makeEvent(runId, seq, kind, data);
@@ -213,8 +245,29 @@ async function _appendEvent(runId, kind, data) {
 }
 
 export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
-  // Never persist full prompts, message text, tool schemas, or tool names here.
-  // The optional fourth argument is reduced to content-free provenance only.
+  // Lossless tier (opt-in): persist the request's full message/tool shape for
+  // deep debugging and request reconstruction. Clamped so one oversized
+  // request cannot exhaust IndexedDB; the marker mirrors the tool-result
+  // truncation convention ({ _truncated, length, head }).
+  if (_runState.get(runId)?.lossless === true && provenanceInput) {
+    let messages = provenanceInput.messages || null;
+    if (messages !== null) {
+      const serialized = JSON.stringify(messages);
+      if (serialized && serialized.length > LOSSILESS_MESSAGES_CAP) {
+        messages = { _truncated: true, length: serialized.length, head: serialized.slice(0, LOSSILESS_MESSAGES_CAP) };
+      }
+    }
+    return _appendEvent(runId, 'llm_request', {
+      step,
+      ...payload,
+      lossless: true,
+      messages,
+      tools: provenanceInput.tools || null,
+    });
+  }
+  // Default tier: never persist full prompts, message text, tool schemas, or
+  // tool names here. The optional fourth argument is reduced to content-free
+  // provenance only.
   let promptProvenance = null;
   if (provenanceInput) {
     try {
@@ -254,13 +307,14 @@ export function recordLLMResponse(runId, step, { content, toolCalls, usage, late
 
 export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   // Truncate very large tool results (a11y trees can be huge). Keep the first
-  // 20KB verbatim and note the truncation — plenty for debugging flow, and
-  // the model response still has the full thing in context anyway.
+  // 20KB verbatim by default — plenty for debugging flow — and 200KB in the
+  // opt-in lossless tier; note the truncation either way.
+  const cap = _runState.get(runId)?.lossless === true ? LOSSILESS_RESULT_CAP : 20_000;
   let shortResult = result;
   try {
     const s = typeof result === 'string' ? result : JSON.stringify(result);
-    if (s && s.length > 20_000) {
-      shortResult = { _truncated: true, length: s.length, head: s.slice(0, 20_000) };
+    if (s && s.length > cap) {
+      shortResult = { _truncated: true, length: s.length, head: s.slice(0, cap) };
     }
   } catch {}
   return _appendEvent(runId, 'tool', {
@@ -280,7 +334,8 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
     const db = await openDB();
     if (!_runState.has(runId)) {
       const seq = await _peekSeq(db, runId);
-      _runState.set(runId, { seq, forced: await isForcedTraceRun(runId) });
+      const flags = await peekRunFlags(db, runId);
+      _runState.set(runId, { seq, forced: flags.forced, lossless: flags.lossless });
     }
     const seq = _newSeq(runId);
     // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).

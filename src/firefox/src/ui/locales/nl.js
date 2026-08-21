@@ -566,6 +566,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Elke stap',
   'st.display.tracing.label': 'Traces opslaan (voor modelvergelijking)',
   'st.display.tracing.desc_html': 'Sla elke uitvoering op in lokale IndexedDB... <a href="traces.html" target="_blank" style="color:var(--accent);">Traces openen →</a>',
+  'st.display.lossless_tracing.label': 'Volledige verzoekdetails opnemen (debuglaag)',
+  'st.display.lossless_tracing.desc_html': 'Bewaart ook de volledige prompts, berichten en tool-schema\'s van elk LLM-verzoek in plaats van inhoudsloze samenvattingen, en houdt tot 200 KB van elk toolresultaat. Maakt diepgaand debuggen en reconstructie van verzoeken mogelijk. Standaard uit omdat het de inhoud van uw gesprek lokaal opslaat en veel meer schijfruimte gebruikt. Vereist dat tracerecordering aan staat.',
   'st.display.cost_session_limit.label': 'Cloudkostensessietegoed',
   'st.display.cost_session_limit.desc': 'Stopt cloud- en OpenRouter-uitvoeringen voordat nog een betaald modelaanroep plaatsvindt...',
   'st.display.cost_total_limit.label': 'Cloudkostentotaaltegoed',

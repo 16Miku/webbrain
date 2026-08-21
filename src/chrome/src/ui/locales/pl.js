@@ -419,6 +419,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Przy każdym kroku',
   'st.display.tracing.label': 'Rejestruj ślady (do porównywania modeli)',
   'st.display.tracing.desc_html': 'Zapisuj każde wykonanie (żądania LLM, odpowiedzi, wywołania narzędzi, zrzuty ekranu) w lokalnej bazie IndexedDB, aby móc je analizować i porównywać modele obok siebie. Otwiera się w osobnej karcie Ślady. Domyślnie wyłączone, ponieważ dodaje zapisy na dysk przy każdym kroku. <a href="traces.html" target="_blank" style="color:var(--accent);">Otwórz stronę Ślady →</a>',
+  'st.display.lossless_tracing.label': 'Zapisuj pełne szczegóły żądań (poziom debugowania)',
+  'st.display.lossless_tracing.desc_html': 'Zapisuje również pełne prompty, wiadomości i schematy narzędzi każdego żądania LLM zamiast podsumowań bez treści oraz przechowuje do 200 KB każdego wyniku narzędzia. Umożliwia głębokie debugowanie i rekonstrukcję żądań. Wyłączone domyślnie, ponieważ zapisuje treść rozmowy lokalnie i zużywa znacznie więcej miejsca. Wymaga włączonego zapisu śladów.',
   'st.display.cost_session_limit.label': 'Limit kosztów chmury na sesję',
   'st.display.cost_session_limit.desc': 'Zatrzymuje wykonania w chmurze i OpenRouter przed kolejnym płatnym wywołaniem modelu, gdy ta sesja osiągnie zgłoszony lub szacowany limit kosztów. Domyślnie 10 USD.',
   'st.display.cost_total_limit.label': 'Całkowity limit kosztów chmury',

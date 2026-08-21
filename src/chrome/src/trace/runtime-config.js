@@ -17,6 +17,7 @@ const BOOLEAN_FIELDS = Object.freeze([
   'selection_grounded',
   'standalone_chat_profile',
   'standalone_webgpu_profile',
+  'lossless_trace',
 ]);
 
 // Bounds keep the payload sane, not to re-validate settings: each range is a

@@ -267,6 +267,8 @@ export default {
   'st.display.auto_screenshot.every_step': '매 단계',
   'st.display.tracing.label': '트레이스 기록 (모델 비교용)',
   'st.display.tracing.desc_html': '모든 실행(LLM 요청, 응답, 도구 호출, 스크린샷)을 로컬 IndexedDB에 보관하여 모델을 나란히 검사하고 비교할 수 있게 합니다. 별도의 트레이스 탭에서 열립니다. 매 단계마다 디스크 쓰기가 늘어나므로 기본값은 꺼짐입니다. <a href="traces.html" target="_blank" style="color:var(--accent);">트레이스 페이지 열기 →</a>',
+  'st.display.lossless_tracing.label': '요청 전체 세부정보 기록(디버그 계층)',
+  'st.display.lossless_tracing.desc_html': '각 LLM 요청의 전체 프롬프트·메시지·도구 스키마를 내용 없는 요약 대신 저장하고, 각 도구 결과를 최대 200KB까지 보관합니다. 심층 디버깅과 요청 재구성이 가능합니다. 대화 내용을 로컬에 기록하고 디스크를 훨씬 더 사용하므로 기본적으로 꺼져 있습니다. 트레이스 기록이 켜져 있어야 합니다.',
   'st.display.allow_local_network.label': '에이전트의 로컬 네트워크 접근 허용',
   'st.display.allow_local_network.desc': '에이전트의 fetch_url 도구가 루프백(127.0.0.1, localhost)과 사설/RFC1918 주소(10.x, 192.168.x, 172.16–31.x)에 접근할 수 있게 합니다. 로컬 개발 서버, 인트라넷 도구, 자체 호스팅 API에 유용합니다. 기본값은 끔 — 꺼져 있으면 prompt 주입된 페이지가 에이전트로 하여금 로컬 네트워크를 탐색하게 만들 수 없습니다. 클라우드 메타데이터 주소(169.254.169.254)와 *.internal/*.local 호스트명은 켜진 상태에서도 차단됩니다.',
   'st.display.notify_sound.label': '완료 알림음',

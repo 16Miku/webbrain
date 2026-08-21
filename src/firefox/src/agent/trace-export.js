@@ -22,8 +22,51 @@ import { isKnownKind } from '../trace/event-model.js';
 
 const ARGS_LIMIT = 300;
 const RESULT_LIMIT = 600;
+const LOSSILESS_MESSAGE_PREVIEW_LIMIT = 2000;
 const FOOTER = '_Screenshot pixels and vision descriptions are omitted here — see the Traces page for the complete record._';
 const UNKNOWN_EVENTS_NOTE = (n) => `_Note: ${n} unknown event(s) skipped._`;
+
+// Credential masking for the opt-in lossless tier. Exports of lossless runs
+// contain real request content, so obvious secret shapes are masked before
+// they reach a Markdown file — the same spirit as the strict-redaction path
+// used elsewhere, kept pure and browser-neutral here.
+const SECRET_PATTERNS = [
+  /\bsk-[A-Za-z0-9_-]{8,}/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
+  /\b(?:api[_-]?key|apikey|token|password|passwd|secret)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}/gi,
+];
+
+function maskSecrets(text) {
+  let out = String(text ?? '');
+  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '[redacted]');
+  return out;
+}
+
+// Lossless requests carry the full message/tool shape. Render a bounded,
+// masked preview per message so the export stays readable without dumping
+// every token of a 500 KB request.
+function renderLosslessRequest(messages, tools) {
+  const list = Array.isArray(messages) ? messages : [];
+  if (!list.length) return ' (empty request log)';
+  const lines = [];
+  for (const message of list.slice(0, 12)) {
+    const role = oneLine(message?.role || '?');
+    const content = maskSecrets(
+      typeof message?.content === 'string'
+        ? message.content
+        : (Array.isArray(message.content)
+          ? message.content.map(block => block?.text || block?.image_url?.url || '').join(' ')
+          : ''),
+    );
+    const body = content ? truncate(oneLine(content), LOSSILESS_MESSAGE_PREVIEW_LIMIT) : '(no text)';
+    lines.push(`**${role}:** ${body}`);
+  }
+  if (list.length > 12) lines.push(`… +${list.length - 12} more message(s) omitted`);
+  if (Array.isArray(tools) && tools.length) {
+    lines.push(`tools: ${tools.map(tool => oneLine(tool?.function?.name || '?')).join(', ')}`);
+  }
+  return `\n${lines.join('\n')}`;
+}
 
 function oneLine(t) { return String(t ?? '').replace(/\s+/g, ' ').trim(); }
 function humanSize(n) { return n >= 1024 ? `${(n / 1024).toFixed(1)}kb` : `${n}b`; }
@@ -202,7 +245,7 @@ export function tracesToMarkdown(runsWithEvents, {
           Number.isFinite(d.imageBlockCount) ? `${d.imageBlockCount} image block${d.imageBlockCount === 1 ? '' : 's'}` : '',
           Number.isFinite(d.documentBlockCount) ? `${d.documentBlockCount} document block${d.documentBlockCount === 1 ? '' : 's'}` : '',
         ].filter(Boolean).join(' · ');
-        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderLocalWikipediaRag(d.localWikipediaRag)}${renderPromptProvenance(d.promptProvenance)}\n`;
+        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderLocalWikipediaRag(d.localWikipediaRag)}${renderPromptProvenance(d.promptProvenance)}${d.lossless === true ? renderLosslessRequest(d.messages, d.tools) : ''}\n`;
       } else if (ev.kind === 'llm_response') {
         const content = String(d.content || '').trim();
         if (!content) continue;

@@ -589,6 +589,8 @@ export default {
   'st.display.auto_screenshot.every_step': "Cada passo",
   'st.display.tracing.label': "Registrar rastreamentos (para comparação de modelos)",
   'st.display.tracing.desc_html': "Persista cada execução (solicitações LLM, respostas, chamadas de ferramentas, capturas de tela) no IndexedDB local para que você possa inspecionar e comparar modelos lado a lado. Abre em uma guia Traces separada. Desativado por padrão porque adiciona gravações de disco por etapa. <a href=\"traces.html\" target=\"_blank\" style=\"color:var(--accent);\">Abra a página Traces →</a>",
+  'st.display.lossless_tracing.label': 'Registrar detalhes completos da solicitação (nível de depuração)',
+  'st.display.lossless_tracing.desc_html': 'Também persiste os prompts, mensagens e esquemas de ferramentas completos de cada solicitação LLM em vez de resumos sem conteúdo, e mantém até 200 KB de cada resultado de ferramenta. Permite depuração profunda e reconstrução de solicitações. Desativado por padrão porque grava o conteúdo da sua conversa localmente e usa muito mais disco. Exige que o registro de rastros esteja ativado.',
   'st.display.cost_session_limit.label': "Subsídio de sessão de custo na nuvem",
   'st.display.cost_session_limit.desc': "Interrompe a nuvem e OpenRouter é executado antes de outra chamada de modelo pago quando esta sessão atinge o limite de custo relatado ou estimado. Padrão $ 10.",
   'st.display.cost_total_limit.label': "Permissão total de custos de nuvem",

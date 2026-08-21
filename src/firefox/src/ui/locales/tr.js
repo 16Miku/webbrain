@@ -295,6 +295,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Her adımda',
   'st.display.tracing.label': 'İzleri kaydet (model karşılaştırması için)',
   'st.display.tracing.desc_html': 'Her çalışmayı (LLM istekleri, yanıtlar, araç çağrıları, ekran görüntüleri) yerel IndexedDB\'de saklar, böylece modelleri yan yana inceleyip karşılaştırabilirsin. Ayrı bir İzler sekmesinde açılır. Her adımda diske yazdığı için varsayılan olarak kapalıdır. <a href="traces.html" target="_blank" style="color:var(--accent);">İzler sayfasını aç →</a>',
+  'st.display.lossless_tracing.label': 'Tüm istek ayrıntılarını kaydet (hata ayıklama katmanı)',
+  'st.display.lossless_tracing.desc_html': 'Her LLM isteğinin tam prompt, mesaj ve araç şemalarını içeriksiz özetler yerine de kalıcı olarak kaydeder ve her araç sonucundan en fazla 200 KB tutar. Derin hata ayıklama ve istek yeniden yapılandırmasını sağlar. Varsayılan olarak kapalıdır çünkü konuşma içeriğinizi yerel olarak yazar ve çok daha fazla disk kullanır. İz kaydının açık olmasını gerektirir.',
   'st.display.allow_local_network.label': 'Aracının yerel ağa erişmesine izin ver',
   'st.display.allow_local_network.desc': 'Aracının fetch_url aracının loopback (127.0.0.1, localhost) ve özel/RFC1918 adreslerine (10.x, 192.168.x, 172.16–31.x) ulaşmasına izin verir. Yerel geliştirme sunucuları, intranet araçları veya kendi sunucundaki API\'lar için kullanışlıdır. Varsayılan olarak kapalıdır — kapalıyken, prompt-injection içeren sayfalar aracıyı yerel ağını taramaya yönlendiremez. Bulut meta-veri adresleri (169.254.169.254) ve *.internal/*.local ana makine adları açıkken bile engellenir.',
   'st.display.notify_sound.label': 'Tamamlama sesi',

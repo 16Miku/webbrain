@@ -573,6 +573,8 @@ export default {
   "st.display.auto_screenshot.every_step": "כל צעד",
   "st.display.tracing.label": "הקלטת עקבות (להשוואת מודלים)",
   "st.display.tracing.desc_html": "תתמיד בכל ריצה (LLM בקשות, תגובות, קריאות לכלים, צילומי מסך) לתוך IndexedDB המקומי כדי שתוכל לבדוק ולהשוות מודלים זה לצד זה. נפתח בלשונית Traces נפרדת. כבוי כברירת מחדל מכיוון שהוא מוסיף כתיבה בדיסק בכל שלב. <a href=\"traces.html\" target=\"_blank\" style=\"color:var(--accent);\">פתח את דף העקבות →</a>",
+  "st.display.lossless_tracing.label": "רישום פרטי בקשה מלאים (שכבת דיבאג)",
+  "st.display.lossless_tracing.desc_html": "שומר גם את ההנחיות, ההודעות והמבנים המלאים של כל בקשת LLM במקום סיכומים חסרי תוכן, ומחזיק עד 200KB מכל תוצאת כלי. מאפשר ניפוי שגיאות מעמיק ושחזור בקשות. כבוי כברירת מחדל משום שהוא כותב את תוכן השיחה שלך מקומית ומשתמש בהרבה יותר מקום. דורש שהקלטת מעקב תהיה פעילה.",
   "st.display.cost_session_limit.label": "קצבת הפגישה בעלות ענן",
   "st.display.cost_session_limit.desc": "מפסיק ענן ו OpenRouter פועל לפני שיחת מודל בתשלום נוספת ברגע שההפעלה הזו מגיעה לקצבת העלות המדווחת או המשוערת. ברירת מחדל 10 $.",
   "st.display.cost_total_limit.label": "הקצבה כוללת של עלות ענן",

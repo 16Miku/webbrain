@@ -589,6 +589,8 @@ export default {
   'st.display.auto_screenshot.every_step': "Mỗi bước",
   'st.display.tracing.label': "Ghi lại dấu vết (để so sánh mô hình)",
   'st.display.tracing.desc_html': "Duy trì mọi lần chạy (yêu cầu LLM, phản hồi, lệnh gọi công cụ, ảnh chụp màn hình) vào IndexedDB cục bộ để bạn có thể kiểm tra và so sánh các mô hình song song. Mở trong tab Dấu vết riêng biệt. Tắt theo mặc định vì nó thêm ghi vào đĩa mỗi bước. <a href=\"traces.html\" target=\"_blank\" style=\"color:var(--accent);\">Mở trang Dấu vết →</a>",
+  'st.display.lossless_tracing.label': 'Ghi lại chi tiết đầy đủ của yêu cầu (lớp gỡ lỗi)',
+  'st.display.lossless_tracing.desc_html': 'Cũng lưu trữ đầy đủ prompt, tin nhắn và cấu trúc công cụ của mỗi yêu cầu LLM thay vì bản tóm tắt không nội dung, đồng thời giữ tối đa 200 KB mỗi kết quả công cụ. Cho phép gỡ lỗi sâu và dựng lại yêu cầu. Tắt theo mặc định vì ghi nội dung hội thoại cục bộ và tốn nhiều dung lượng hơn. Yêu cầu bật tính năng ghi trace.',
   'st.display.cost_session_limit.label': "Phụ cấp phiên chi phí đám mây",
   'st.display.cost_session_limit.desc': "Dừng đám mây và OpenRouter chạy trước một lệnh gọi mô hình trả phí khác sau khi phiên này đạt đến mức chi phí được báo cáo hoặc ước tính. Mặc định là 10$.",
   'st.display.cost_total_limit.label': "Tổng phụ cấp chi phí đám mây",
