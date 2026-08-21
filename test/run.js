@@ -40098,6 +40098,56 @@ test('sidepanel keeps scheduled job action errors on the initiating tab', () => 
   }
 });
 
+test('sidepanel renders one created message per scheduled job', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const start = panel.indexOf('function renderScheduledJobCreatedMessage(job) {');
+    const end = panel.indexOf('\n}\n\nasync function handleScheduledJobEvent', start);
+    assert.notEqual(start, -1, `${label}: scheduled created-message renderer missing`);
+    assert.notEqual(end, -1, `${label}: scheduled created-message renderer boundary missing`);
+
+    const rendered = [];
+    const messagesEl = {
+      querySelectorAll() { return rendered; },
+    };
+    const renderCreated = Function(
+      'messagesEl',
+      'addMessage',
+      'systemHtml',
+      'tSystemHtml',
+      'scheduledJobTitle',
+      'formatScheduledTime',
+      `${panel.slice(start, end + 2)}\nreturn renderScheduledJobCreatedMessage;`,
+    )(
+      messagesEl,
+      (_role, content) => {
+        const element = { content, dataset: {} };
+        rendered.push(element);
+        return element;
+      },
+      (value) => value,
+      (_key, values) => `${values.title}|${values.time}`,
+      (job) => job.title,
+      (value) => value,
+    );
+
+    const first = { id: 'task_1', title: 'Follow up', scheduledAt: '2026-08-20T14:53:00.000Z' };
+    renderCreated(first);
+    renderCreated(first);
+    renderCreated({ ...first, id: 'task_2' });
+
+    assert.equal(rendered.length, 2, `${label}: duplicate created events should reuse the existing message`);
+    assert.deepEqual(
+      rendered.map((element) => element.dataset.scheduledCreatedJobId),
+      ['task_1', 'task_2'],
+      `${label}: rendered messages should retain their job identity across chat persistence`,
+    );
+  }
+});
+
 test('background awaits context-menu prompt clear before agent chat starts', () => {
   for (const [label, bgRel] of [
     ['chrome', 'src/chrome/src/background.js'],

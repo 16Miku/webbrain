@@ -3021,6 +3021,26 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
   }
 }
 
+function renderScheduledJobCreatedMessage(job) {
+  const jobId = job?.id ? String(job.id) : '';
+  if (jobId) {
+    const alreadyRendered = Array.from(
+      messagesEl?.querySelectorAll?.('.message.system[data-scheduled-created-job-id]') || [],
+    ).some((message) => message.dataset.scheduledCreatedJobId === jobId);
+    if (alreadyRendered) return null;
+  }
+
+  const title = scheduledJobTitle(job);
+  const message = addMessage('system', systemHtml(tSystemHtml('sp.scheduled.created', {
+    title,
+    time: formatScheduledTime(job.nextRunAt || job.scheduledAt),
+  })));
+  // Runtime delivery and restored chat can converge on the same presentation
+  // event. Persist the job identity in the DOM so remounts remain idempotent.
+  if (jobId) message.dataset.scheduledCreatedJobId = jobId;
+  return message;
+}
+
 async function handleScheduledJobEvent(data, tabId) {
   refreshScheduledJobs({ tabId: currentTabId });
   const event = data?.event;
@@ -3048,7 +3068,7 @@ async function handleScheduledJobEvent(data, tabId) {
 
   const title = scheduledJobTitle(job);
   if (event === 'created') {
-    addMessage('system', systemHtml(tSystemHtml('sp.scheduled.created', { title, time: formatScheduledTime(job.nextRunAt || job.scheduledAt) })));
+    renderScheduledJobCreatedMessage(job);
   } else if (event === 'running') {
     clearActiveChatPayloadForTab(runTabId);
     setTabProcessing(runTabId, true);
