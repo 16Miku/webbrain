@@ -2875,6 +2875,35 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
   }
 }
 
+function renderScheduledJobCreatedMessage(job, preferredMessage = null, root = messagesEl) {
+  const jobId = job?.id ? String(job.id) : '';
+  if (jobId) {
+    const alreadyRendered = Array.from(
+      root?.querySelectorAll?.('.message.system[data-scheduled-created-job-id]') || [],
+    ).find((message) => message.dataset.scheduledCreatedJobId === jobId);
+    if (alreadyRendered) {
+      if (preferredMessage && preferredMessage !== alreadyRendered) preferredMessage.remove();
+      return alreadyRendered;
+    }
+  }
+
+  const title = scheduledJobTitle(job);
+  const createdParams = {
+    title,
+    time: formatScheduledTime(job.nextRunAt || job.scheduledAt),
+  };
+  const createdHtml = preferredMessage
+    ? tSystemHtml('sp.schedule_form.created', createdParams)
+    : tSystemHtml('sp.scheduled.created', createdParams);
+  const message = preferredMessage || addMessage('system', systemHtml(createdHtml));
+  const textEl = preferredMessage?.querySelector('.message-text');
+  if (textEl) textEl.innerHTML = createdHtml;
+  // Runtime delivery and restored chat can converge on the same presentation
+  // event. Persist the job identity in the DOM so remounts remain idempotent.
+  if (jobId) message.dataset.scheduledCreatedJobId = jobId;
+  return message;
+}
+
 async function handleScheduledJobEvent(data, tabId) {
   refreshScheduledJobs({ tabId: currentTabId });
   const event = data?.event;
@@ -2902,7 +2931,7 @@ async function handleScheduledJobEvent(data, tabId) {
 
   const title = scheduledJobTitle(job);
   if (event === 'created') {
-    addMessage('system', systemHtml(tSystemHtml('sp.scheduled.created', { title, time: formatScheduledTime(job.nextRunAt || job.scheduledAt) })));
+    renderScheduledJobCreatedMessage(job);
   } else if (event === 'running') {
     clearActiveChatPayloadForTab(runTabId);
     setTabProcessing(runTabId, true);
@@ -3105,20 +3134,21 @@ async function submitScheduleComposer(e, form) {
     if (res?.success === false || res?.ok === false || !res?.scheduledAt) {
       throw new Error(res?.error || 'Could not create scheduled job.');
     }
-    const createdHtml = tSystemHtml('sp.schedule_form.created', {
-      title,
-      time: formatScheduledTime(res.scheduledAt),
-    });
     if (currentTabId !== tabId) {
-      replaceCachedScheduleComposer(tabId, form.dataset.composerId, createdHtml);
+      replaceCachedScheduleComposer(tabId, form.dataset.composerId, {
+        id: res.jobId,
+        title,
+        scheduledAt: res.scheduledAt,
+      });
       return;
     }
     const msgEl = form.closest('.message');
     form.remove();
-    const textEl = msgEl?.querySelector('.message-text');
-    if (textEl) {
-      textEl.innerHTML = createdHtml;
-    }
+    renderScheduledJobCreatedMessage({
+      id: res.jobId,
+      title,
+      scheduledAt: res.scheduledAt,
+    }, msgEl);
     await refreshScheduledJobs({ tabId });
   } catch (err) {
     if (currentTabId !== tabId) {
@@ -3142,16 +3172,17 @@ function bindScheduleComposer(form) {
   form.addEventListener('submit', (e) => submitScheduleComposer(e, form));
 }
 
-function replaceCachedScheduleComposer(tabId, composerId, html) {
+function replaceCachedScheduleComposer(tabId, composerId, job) {
   const cached = tabChats.get(tabId);
   if (typeof cached !== 'string' || !composerId) return;
   const wrapper = document.createElement('div');
   wrapper.innerHTML = cached;
   const form = wrapper.querySelector(`form.schedule-composer[data-composer-id="${composerId}"]`);
-  const textEl = form?.closest('.message')?.querySelector('.message-text');
-  if (!form || !textEl) return;
+  const msgEl = form?.closest('.message');
+  const textEl = msgEl?.querySelector('.message-text');
+  if (!form || !msgEl || !textEl) return;
   form.remove();
-  textEl.innerHTML = html;
+  renderScheduledJobCreatedMessage(job, msgEl, wrapper);
   persistTabChat(tabId, wrapper.innerHTML);
 }
 

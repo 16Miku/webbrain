@@ -31921,7 +31921,7 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /currentAssistantEl\.dataset\?\.scheduledJobId === scheduledJobId/, `${label}: scheduled clarify submission should not steal an unrelated active reply`);
     assert.match(panel, /res\?\.success === false \|\| res\?\.ok === false \|\| !res\?\.scheduledAt/, `${label}: schedule form should reject failed create responses before showing success`);
     assert.match(panel, /async function getCurrentScheduleUrl\(tabId = currentTabId\)/, `${label}: schedule URL lookup should accept a captured tab id`);
-    assert.match(panel, /function replaceCachedScheduleComposer\(tabId, composerId, html\) \{[\s\S]*?form\.remove\(\);[\s\S]*?textEl\.innerHTML = html;[\s\S]*?\}/, `${label}: completed off-tab schedule creates should update cached composer HTML`);
+    assert.match(panel, /function replaceCachedScheduleComposer\(tabId, composerId, job\) \{[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage\(job, msgEl, wrapper\);[\s\S]*?persistTabChat\(tabId, wrapper\.innerHTML\);[\s\S]*?\}/, `${label}: completed off-tab schedule creates should reconcile cached composer messages by job id`);
     assert.match(panel, /function updateCachedScheduleComposerError\(tabId, composerId, message\) \{[\s\S]*?form\.schedule-composer\[data-composer-id="\$\{composerId\}"\][\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = message \|\| '';[\s\S]*?\}/, `${label}: failed off-tab schedule creates should re-enable cached composers with the error`);
     assert.match(panel, /async function renderScheduleComposer\(prefillPrompt = '', tabId = currentTabId\)/, `${label}: schedule form should capture the requested tab`);
     assert.match(panel, /const initialScheduleUrl = await getCurrentScheduleUrl\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;[\s\S]*?addMessage\('system', t\('sp\.schedule_form\.opened'\)\)/, `${label}: schedule form should resolve target defaults before rendering and drop stale tab switches`);
@@ -31932,7 +31932,7 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /function bindScheduleComposer\(form\) \{[\s\S]*?form\.dataset\.bound = 'true';[\s\S]*?form\.addEventListener\('submit', \(e\) => submitScheduleComposer\(e, form\)\);[\s\S]*?\}/, `${label}: schedule composer listeners should be reusable after serialized restore`);
     assert.match(panel, /bindScheduleComposer\(form\);[\s\S]*?content\.appendChild\(form\)/, `${label}: initial schedule composer render should use the reusable binder`);
     assert.match(panel, /create_scheduled_job'[\s\S]*?\{\s*tabId,[\s\S]*?job:/, `${label}: schedule form should create jobs for the captured tab`);
-    assert.match(panel, /const createdHtml = tSystemHtml\('sp\.schedule_form\.created'[\s\S]*?if \(currentTabId !== tabId\) \{[\s\S]*?replaceCachedScheduleComposer\(tabId, form\.dataset\.composerId, createdHtml\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?form\.remove\(\);/, `${label}: schedule form should update hidden cached composers instead of leaving stale disabled forms`);
+    assert.match(panel, /if \(currentTabId !== tabId\) \{[\s\S]*?replaceCachedScheduleComposer\(tabId, form\.dataset\.composerId, \{[\s\S]*?id: res\.jobId,[\s\S]*?scheduledAt: res\.scheduledAt,[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage/, `${label}: schedule form should reconcile hidden and visible composer confirmations by job id`);
     assert.match(panel, /catch \(err\) \{[\s\S]*?if \(currentTabId !== tabId\) \{[\s\S]*?updateCachedScheduleComposerError\(tabId, form\.dataset\.composerId, err\.message\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = err\.message;/, `${label}: schedule form failures should update hidden cached composers instead of leaving disabled forms`);
     assert.match(panel, /renderScheduleComposer\(payload, tabId\)/, `${label}: /schedule should pass the initiating tab into the async composer`);
     assert.match(panel, /urlInput\.value = initialScheduleUrl/, `${label}: schedule form should prefill URL targets from the active tab`);
@@ -40095,6 +40095,88 @@ test('sidepanel keeps scheduled job action errors on the initiating tab', () => 
     assert.notEqual(catchGuardIdx, -1, `${label}: scheduled job action thrown errors should be tab-scoped`);
     assert.equal(captureIdx < sendIdx && sendIdx < responseGuardIdx && responseGuardIdx < responseErrorIdx, true, `${label}: response errors must be guarded after the async action returns`);
     assert.equal(sendIdx < catchIdx && catchIdx < catchGuardIdx, true, `${label}: thrown errors must be guarded after the async action returns`);
+  }
+});
+
+test('sidepanel renders one created message per scheduled job', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const start = panel.indexOf('function renderScheduledJobCreatedMessage(job, preferredMessage = null, root = messagesEl) {');
+    const end = panel.indexOf('\n}\n\nasync function handleScheduledJobEvent', start);
+    assert.notEqual(start, -1, `${label}: scheduled created-message renderer missing`);
+    assert.notEqual(end, -1, `${label}: scheduled created-message renderer boundary missing`);
+
+    const rendered = [];
+    const fakeMessage = (content = '') => {
+      const textEl = { innerHTML: content };
+      const element = {
+        content,
+        dataset: {},
+        querySelector(selector) { return selector === '.message-text' ? textEl : null; },
+        remove() {
+          const index = rendered.indexOf(element);
+          if (index >= 0) rendered.splice(index, 1);
+        },
+      };
+      return element;
+    };
+    const messagesEl = {
+      querySelectorAll() { return rendered; },
+    };
+    const renderCreated = Function(
+      'messagesEl',
+      'addMessage',
+      'systemHtml',
+      'tSystemHtml',
+      'scheduledJobTitle',
+      'formatScheduledTime',
+      `${panel.slice(start, end + 2)}\nreturn renderScheduledJobCreatedMessage;`,
+    )(
+      messagesEl,
+      (_role, content) => {
+        const element = fakeMessage(content);
+        rendered.push(element);
+        return element;
+      },
+      (value) => value,
+      (_key, values) => `${values.title}|${values.time}`,
+      (job) => job.title,
+      (value) => value,
+    );
+
+    const first = { id: 'task_1', title: 'Follow up', scheduledAt: '2026-08-20T14:53:00.000Z' };
+    renderCreated(first);
+    const eventFirstComposer = fakeMessage('schedule form');
+    rendered.push(eventFirstComposer);
+    renderCreated(first, eventFirstComposer);
+
+    assert.equal(rendered.length, 1, `${label}: an event-first composer confirmation should reuse the event message`);
+
+    rendered.length = 0;
+    const composerFirst = fakeMessage('schedule form');
+    rendered.push(composerFirst);
+    renderCreated(first, composerFirst);
+    renderCreated(first);
+    renderCreated({ ...first, id: 'task_2' });
+
+    assert.equal(rendered.length, 2, `${label}: duplicate created events should reuse the existing message`);
+    assert.deepEqual(
+      rendered.map((element) => element.dataset.scheduledCreatedJobId),
+      ['task_1', 'task_2'],
+      `${label}: rendered messages should retain their job identity across chat persistence`,
+    );
+
+    const submitStart = panel.indexOf('async function submitScheduleComposer(e, form) {');
+    const submitEnd = panel.indexOf('\n}\n\nfunction bindScheduleComposer', submitStart);
+    const submitBody = panel.slice(submitStart, submitEnd);
+    assert.match(
+      submitBody,
+      /renderScheduledJobCreatedMessage\(\{\s*id: res\.jobId,[\s\S]*?title,[\s\S]*?scheduledAt: res\.scheduledAt,[\s\S]*?\}, msgEl\);/,
+      `${label}: schedule composer success should reconcile with the created event by job id`,
+    );
   }
 });
 
