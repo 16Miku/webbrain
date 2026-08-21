@@ -3021,11 +3021,11 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
   }
 }
 
-function renderScheduledJobCreatedMessage(job, preferredMessage = null) {
+function renderScheduledJobCreatedMessage(job, preferredMessage = null, root = messagesEl) {
   const jobId = job?.id ? String(job.id) : '';
   if (jobId) {
     const alreadyRendered = Array.from(
-      messagesEl?.querySelectorAll?.('.message.system[data-scheduled-created-job-id]') || [],
+      root?.querySelectorAll?.('.message.system[data-scheduled-created-job-id]') || [],
     ).find((message) => message.dataset.scheduledCreatedJobId === jobId);
     if (alreadyRendered) {
       if (preferredMessage && preferredMessage !== alreadyRendered) preferredMessage.remove();
@@ -3327,22 +3327,8 @@ function replaceCachedScheduleComposer(tabId, composerId, job) {
   const msgEl = form?.closest('.message');
   const textEl = msgEl?.querySelector('.message-text');
   if (!form || !msgEl || !textEl) return;
-  const jobId = job?.id ? String(job.id) : '';
-  const alreadyRendered = jobId
-    ? Array.from(wrapper.querySelectorAll('.message.system[data-scheduled-created-job-id]'))
-      .find((message) => message.dataset.scheduledCreatedJobId === jobId)
-    : null;
-  if (alreadyRendered && alreadyRendered !== msgEl) {
-    msgEl.remove();
-    persistTabChat(tabId, wrapper.innerHTML);
-    return;
-  }
   form.remove();
-  textEl.innerHTML = tSystemHtml('sp.schedule_form.created', {
-    title: scheduledJobTitle(job),
-    time: formatScheduledTime(job.nextRunAt || job.scheduledAt),
-  });
-  if (jobId) msgEl.dataset.scheduledCreatedJobId = jobId;
+  renderScheduledJobCreatedMessage(job, msgEl, wrapper);
   persistTabChat(tabId, wrapper.innerHTML);
 }
 

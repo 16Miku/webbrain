@@ -31921,7 +31921,7 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /currentAssistantEl\.dataset\?\.scheduledJobId === scheduledJobId/, `${label}: scheduled clarify submission should not steal an unrelated active reply`);
     assert.match(panel, /res\?\.success === false \|\| res\?\.ok === false \|\| !res\?\.scheduledAt/, `${label}: schedule form should reject failed create responses before showing success`);
     assert.match(panel, /async function getCurrentScheduleUrl\(tabId = currentTabId\)/, `${label}: schedule URL lookup should accept a captured tab id`);
-    assert.match(panel, /function replaceCachedScheduleComposer\(tabId, composerId, job\) \{[\s\S]*?form\.remove\(\);[\s\S]*?textEl\.innerHTML = tSystemHtml\('sp\.schedule_form\.created'[\s\S]*?msgEl\.dataset\.scheduledCreatedJobId = jobId;[\s\S]*?\}/, `${label}: completed off-tab schedule creates should update and identify cached composer messages`);
+    assert.match(panel, /function replaceCachedScheduleComposer\(tabId, composerId, job\) \{[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage\(job, msgEl, wrapper\);[\s\S]*?persistTabChat\(tabId, wrapper\.innerHTML\);[\s\S]*?\}/, `${label}: completed off-tab schedule creates should reconcile cached composer messages by job id`);
     assert.match(panel, /function updateCachedScheduleComposerError\(tabId, composerId, message\) \{[\s\S]*?form\.schedule-composer\[data-composer-id="\$\{composerId\}"\][\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = message \|\| '';[\s\S]*?\}/, `${label}: failed off-tab schedule creates should re-enable cached composers with the error`);
     assert.match(panel, /async function renderScheduleComposer\(prefillPrompt = '', tabId = currentTabId\)/, `${label}: schedule form should capture the requested tab`);
     assert.match(panel, /const initialScheduleUrl = await getCurrentScheduleUrl\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;[\s\S]*?addMessage\('system', t\('sp\.schedule_form\.opened'\)\)/, `${label}: schedule form should resolve target defaults before rendering and drop stale tab switches`);
@@ -40104,7 +40104,7 @@ test('sidepanel renders one created message per scheduled job', () => {
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    const start = panel.indexOf('function renderScheduledJobCreatedMessage(job, preferredMessage = null) {');
+    const start = panel.indexOf('function renderScheduledJobCreatedMessage(job, preferredMessage = null, root = messagesEl) {');
     const end = panel.indexOf('\n}\n\nasync function handleScheduledJobEvent', start);
     assert.notEqual(start, -1, `${label}: scheduled created-message renderer missing`);
     assert.notEqual(end, -1, `${label}: scheduled created-message renderer boundary missing`);
