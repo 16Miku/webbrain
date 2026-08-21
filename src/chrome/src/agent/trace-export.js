@@ -18,9 +18,12 @@
  *   each with its ordered event list.
  */
 
+import { isKnownKind } from '../trace/event-model.js';
+
 const ARGS_LIMIT = 300;
 const RESULT_LIMIT = 600;
 const FOOTER = '_Screenshot pixels and vision descriptions are omitted here — see the Traces page for the complete record._';
+const UNKNOWN_EVENTS_NOTE = (n) => `_Note: ${n} unknown event(s) skipped._`;
 
 function oneLine(t) { return String(t ?? '').replace(/\s+/g, ' ').trim(); }
 function humanSize(n) { return n >= 1024 ? `${(n / 1024).toFixed(1)}kb` : `${n}b`; }
@@ -170,6 +173,7 @@ export function tracesToMarkdown(runsWithEvents, {
   if (exportVersion) md += `_Exported with WebBrain v${exportVersion}_\n\n`;
   let turnCount = 0;
   let toolCount = 0;
+  let unknownEventCount = 0;
 
   for (const entry of runs) {
     if (!entry || !entry.run) continue;
@@ -256,6 +260,10 @@ export function tracesToMarkdown(runsWithEvents, {
         md += `- 📚 ${renderLocalWikipediaRag(d.extra).replace(/^ · /, '')}\n`;
       } else if (ev.kind === 'note' && /screenshot|vision|attachment|visual/i.test(String(d.note || ''))) {
         md += `- ℹ️ ${oneLine(d.note)}\n`;
+      } else if (!isKnownKind(ev.kind)) {
+        // Unknown kinds are skipped (never rendered) but counted, so an
+        // exporter from a newer build cannot silently lose events.
+        unknownEventCount += 1;
       }
     }
     const finalContent = String(run.finalContent || '').trim();
@@ -269,6 +277,7 @@ export function tracesToMarkdown(runsWithEvents, {
     const line = oneLine(note);
     if (line) md += `_Note: ${line}_\n`;
   }
+  if (unknownEventCount > 0) md += `${UNKNOWN_EVENTS_NOTE(unknownEventCount)}\n`;
   md += `${FOOTER}\n`;
-  return { markdown: md, turnCount, toolCount };
+  return { markdown: md, turnCount, toolCount, unknownEventCount };
 }

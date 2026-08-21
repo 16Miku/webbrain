@@ -8099,6 +8099,112 @@ test('Ask and managed cloud classify communication read scope across languages',
   }
 });
 
+// trace event model — shared kind catalog and envelope validation
+// ────────────────────────────────────────────────────────────────────────
+
+console.log('\ntrace event model');
+
+const EVENT_MODEL_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/event-model.js').replace(/\\/g, '/'));
+const EVENT_MODEL_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/event-model.js').replace(/\\/g, '/'));
+
+test('trace event model: catalog covers every kind the recorder writes', () => {
+  const kinds = EVENT_MODEL_CH.EVENT_KINDS;
+  for (const kind of kinds) {
+    assert.equal(EVENT_MODEL_CH.isKnownKind(kind), true, `catalog entry ${kind} not recognized`);
+    assert.equal(EVENT_MODEL_CH.isIgnorableKind(kind), false, `catalog entry ${kind} should not be ignorable yet`);
+  }
+  assert.deepEqual(EVENT_MODEL_CH.IGNORABLE_KINDS, [], 'ignorable catalog should start empty');
+  for (const browser of ['chrome', 'firefox']) {
+    const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    const used = [
+      ...[...recorderSource.matchAll(/_appendEvent\(runId, '([a-z_]+)'/g)].map(m => m[1]),
+      ...[...recorderSource.matchAll(/makeEvent\(runId, seq, '([a-z_]+)'/g)].map(m => m[1]),
+    ];
+    assert.ok(used.length >= 9, `${browser}: recorder event kinds not found (${used.length})`);
+    for (const kind of used) {
+      assert.ok(kinds.includes(kind), `${browser}: recorder uses uncatalogued kind '${kind}'`);
+    }
+  }
+});
+
+test('trace event model: makeEvent validates kinds and JSON round-trip', () => {
+  const { makeEvent } = EVENT_MODEL_CH;
+  const ev = makeEvent('run_x', 1, 'llm_request', { step: 0 });
+  assert.equal(ev.runId, 'run_x');
+  assert.equal(ev.seq, 1);
+  assert.equal(ev.kind, 'llm_request');
+  assert.deepEqual(ev.data, { step: 0 });
+  assert.equal(ev.ignorable, undefined, 'non-ignorable kinds must not carry the flag');
+  assert.equal(typeof ev.ts, 'number', 'envelope must carry a timestamp');
+  assert.equal(makeEvent('run_x', 2, 'not_a_kind', {}), null, 'unknown kind must be rejected');
+  const circular = {}; circular.self = circular;
+  assert.equal(makeEvent('run_x', 3, 'note', circular), null, 'unserializable data must be rejected');
+  assert.equal(makeEvent('run_x', 4, 'note', { big: 1n }), null, 'BigInt data must be rejected');
+  assert.deepEqual(makeEvent('run_x', 5, 'note', null).data, null, 'null data must be preserved as null');
+  assert.deepEqual(makeEvent('run_x', 6, 'note', undefined).data, null, 'undefined data must normalize to null');
+});
+
+test('trace event model: validateEventLog detects gaps and unknown kinds', () => {
+  const { validateEventLog } = EVENT_MODEL_CH;
+  assert.deepEqual(validateEventLog([]), { ok: true, firstGap: null, unknownKinds: [] }, 'empty log is valid');
+  assert.equal(validateEventLog([{ seq: 1, kind: 'note' }, { seq: 2, kind: 'error' }]).ok, true, 'contiguous log is valid');
+  const gap = validateEventLog([{ seq: 1, kind: 'note' }, { seq: 3, kind: 'note' }]);
+  assert.equal(gap.ok, false, 'gap must invalidate the log');
+  assert.equal(gap.firstGap, 2, 'first missing seq not reported');
+  const unknown = validateEventLog([{ seq: 1, kind: 'mystery' }]);
+  assert.equal(unknown.ok, false, 'unknown kind must invalidate the log');
+  assert.deepEqual(unknown.unknownKinds, ['mystery'], 'unknown kind not listed');
+  assert.equal(unknown.firstGap, null, 'unknown kinds must not count as gaps');
+});
+
+test('trace event model: mirrors are identical and browser-neutral', () => {
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/event-model.js'), 'utf8');
+  const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/event-model.js'), 'utf8');
+  assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox event model drifted');
+  assert.deepEqual(EVENT_MODEL_FX.EVENT_KINDS, EVENT_MODEL_CH.EVENT_KINDS);
+  assert.equal(EVENT_MODEL_FX.TRACE_FORMAT_VERSION, EVENT_MODEL_CH.TRACE_FORMAT_VERSION);
+  assert.equal(EVENT_MODEL_CH.TRACE_FORMAT_VERSION, 1, 'first trace format version');
+  assert.doesNotMatch(chromeSource, /chrome\./, 'event model must not depend on chrome APIs');
+  assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'event model must not touch storage');
+});
+
+test('trace recorder: writes go through the event model and stamp the format version', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    assert.match(recorderSource, /import \{ TRACE_FORMAT_VERSION, makeEvent \} from '\.\/event-model\.js';/, `${browser}: recorder does not import the event model`);
+    assert.match(recorderSource, /traceFormatVersion: TRACE_FORMAT_VERSION/, `${browser}: run record does not stamp the format version`);
+    assert.match(recorderSource, /const ev = makeEvent\(runId, seq, kind, data\);/, `${browser}: event writes bypass the envelope`);
+    assert.match(recorderSource, /dropped invalid event/, `${browser}: invalid-event drop is not surfaced`);
+    assert.match(recorderSource, /const marker = makeEvent\(runId, seq, 'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
+  }
+});
+
+test('trace export: unknown kinds are skipped and counted in both builds', () => {
+  const run = { runId: 'r1', userMessage: 'hello', status: 'done', webbrainVersion: '' };
+  const events = [
+    { runId: 'r1', seq: 1, ts: 1, kind: 'llm_request', data: { messageCount: 2, toolsCount: 0 } },
+    { runId: 'r1', seq: 2, ts: 2, kind: 'future_kind', data: { x: 1 } },
+  ];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown, toolCount, unknownEventCount } = serialize([{ run, events }]);
+    assert.equal(toolCount, 0, `${label}: known tool count unaffected`);
+    assert.equal(unknownEventCount, 1, `${label}: unknown event not counted`);
+    assert.match(markdown, /1 unknown event\(s\) skipped/, `${label}: unknown skip note missing`);
+    assert.doesNotMatch(markdown, /future_kind/, `${label}: unknown event payload leaked into markdown`);
+  }
+  assert.equal(tracesToMarkdown([]).unknownEventCount, 0, 'empty export must report zero unknown events');
+});
+
+test('trace UI: unknown kinds render a placeholder instead of the generic note view', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const tracesSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    assert.match(tracesSource, /import \{ isKnownKind, isIgnorableKind \} from '\.\.\/trace\/event-model\.js';/, `${browser}: Traces UI does not consult the event model`);
+    assert.match(tracesSource, /Unknown event · \$\{escapeHtml\(ev\.kind\)\}/, `${browser}: unknown-kind placeholder missing`);
+    assert.match(tracesSource, /if \(!isKnownKind\(ev\.kind\)\)/, `${browser}: known-kind distinction missing`);
+    assert.match(tracesSource, /if \(isIgnorableKind\(ev\.kind\)\) return '';/, `${browser}: ignorable collapse missing`);
+  }
+});
+
 test('accessibility-tree schema and prompts preserve exact whole-document continuations', () => {
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');

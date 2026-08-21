@@ -7,6 +7,7 @@ import {
   listRuns, getRun, getRunEvents, getScreenshot,
   deleteRun, clearAllRuns,
 } from '../trace/recorder.js';
+import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 
@@ -285,6 +286,9 @@ async function buildRunView(run, events, compact, objectUrls = new Set()) {
 }
 
 function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
+  // Kind-level collapse for events recorded as ignorable. The catalog is
+  // empty today; the check keeps the behavior defined for future kinds.
+  if (isIgnorableKind(ev.kind)) return '';
   const ts = new Date(ev.ts).toLocaleTimeString();
   const stepBadge = ev.data?.step != null ? `<span class="step">${escapeHtml(t('tr.event.step', { step: ev.data.step }))}</span>` : '';
   switch (ev.kind) {
@@ -413,6 +417,16 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
           <div class="event note">
             <div class="event-head"><span class="kind">Local Wikipedia retrieval</span>${stepBadge}<span class="latency">${ts}</span></div>
             <span class="tool-args">On-device model request · ${queries} ${queries === 1 ? 'query' : 'queries'} · no network access</span>
+          </div>`;
+      }
+      if (!isKnownKind(ev.kind)) {
+        // Unknown kind from a newer build: keep the event visible instead of
+        // letting it vanish silently, but label it as unknown so the lack of
+        // rich rendering is obvious.
+        return `
+          <div class="event unknown">
+            <div class="event-head"><span class="kind">Unknown event · ${escapeHtml(ev.kind)}</span>${stepBadge}<span class="latency">${ts}</span></div>
+            <pre>${escapeHtml(JSON.stringify(ev.data, null, 2))}</pre>
           </div>`;
       }
       return `
