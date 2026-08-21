@@ -56,7 +56,8 @@ function terminalTool(messages) {
   if (!results.length) return null;
   const paired = results.map(result => ({ result, call: calls.get(result.tool_call_id) })).filter(item => item.call);
   const selected = [...paired].reverse().find(item => (
-    (item.call?.function?.name || item.call?.name) === 'done'
+    ['done', 'done_json'].includes(item.call?.function?.name || item.call?.name)
+    && parseResult(item.result.content)?.done === true
   )) || paired.at(-1);
   if (!selected) return null;
   const call = selected.call;
@@ -106,8 +107,18 @@ export function buildTerminalRuntimeEvent({
   };
 }
 
+function localStorageArea() {
+  const api = (typeof browser !== 'undefined' && browser?.storage)
+    ? browser
+    : ((typeof chrome !== 'undefined' && chrome?.storage) ? chrome : null);
+  if (!api?.storage?.local?.get || !api.storage.local.set) {
+    throw new Error('Extension local storage is unavailable');
+  }
+  return api.storage.local;
+}
+
 async function readOutbox() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY]);
+  const stored = await localStorageArea().get([STORAGE_KEY]);
   return Array.isArray(stored?.[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
 }
 
@@ -115,7 +126,7 @@ function updateOutbox(update) {
   const next = storageQueue.catch(() => {}).then(async () => {
     const current = await readOutbox();
     const value = await update(current);
-    await chrome.storage.local.set({ [STORAGE_KEY]: value.slice(-MAX_OUTBOX_EVENTS) });
+    await localStorageArea().set({ [STORAGE_KEY]: value.slice(-MAX_OUTBOX_EVENTS) });
     return value;
   });
   storageQueue = next;

@@ -183,7 +183,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), Math.max(250, timeoutMs)) : null;
     try {
-      const response = await fetchWithFallback(`${this.baseUrl}/improvement/runtime-events`, {
+      const response = await fetchWithTimeout(`${this.baseUrl}/improvement/runtime-events`, {
         method: 'POST',
         headers: this._headers(),
         body: JSON.stringify({ session_id: String(sessionId || ''), events }),

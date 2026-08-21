@@ -8198,6 +8198,60 @@ test('Cloud terminal runtime envelope pairs the terminal done call with its exec
   }
 });
 
+test('Cloud terminal runtime envelope prefers completed done_json over trailing skipped tools', () => {
+  const messages = [
+    { role: 'user', content: 'Return structured output' },
+    {
+      role: 'assistant',
+      tool_calls: [
+        { id: 'call_done_json', function: { name: 'done_json', arguments: '{"result":{"ok":true}}' } },
+        { id: 'call_trailing', function: { name: 'click', arguments: '{"ref_id":"e2"}' } },
+      ],
+    },
+    { role: 'tool', tool_call_id: 'call_done_json', content: '{"success":true,"done":true,"doneJson":true,"result":{"ok":true}}' },
+    { role: 'tool', tool_call_id: 'call_trailing', content: '{"success":false,"skipped":true}' },
+  ];
+  for (const [label, runtime] of [['chrome', CLOUD_RUNTIME_OUTBOX_CH], ['firefox', CLOUD_RUNTIME_OUTBOX_FX]]) {
+    const item = runtime.buildTerminalRuntimeEvent({
+      runId: `run-done-json-${label}`,
+      status: 'done',
+      finalContent: '{"ok":true}',
+      messages,
+      browserTarget: label,
+    });
+    assert.equal(item.event.data.terminal_tool.call_id, 'call_done_json', `${label}: trailing skipped tool replaced done_json`);
+    assert.equal(item.event.data.terminal_tool.name, 'done_json', `${label}: done_json was not treated as terminal`);
+    assert.equal(item.event.data.terminal_tool.status, 'succeeded');
+  }
+});
+
+test('Cloud terminal runtime envelope ignores blocked done attempts when later tools execute', () => {
+  const messages = [
+    { role: 'user', content: 'Complete the task' },
+    {
+      role: 'assistant',
+      tool_calls: [{ id: 'call_blocked_done', function: { name: 'done', arguments: '{"outcome":"success"}' } }],
+    },
+    { role: 'tool', tool_call_id: 'call_blocked_done', content: '{"success":false,"blockedDone":true}' },
+    {
+      role: 'assistant',
+      tool_calls: [{ id: 'call_recovery', function: { name: 'click', arguments: '{"ref_id":"e3"}' } }],
+    },
+    { role: 'tool', tool_call_id: 'call_recovery', content: '{"success":true}' },
+  ];
+  for (const [label, runtime] of [['chrome', CLOUD_RUNTIME_OUTBOX_CH], ['firefox', CLOUD_RUNTIME_OUTBOX_FX]]) {
+    const item = runtime.buildTerminalRuntimeEvent({
+      runId: `run-blocked-done-${label}`,
+      status: 'error',
+      finalContent: 'Stopped later',
+      messages,
+      browserTarget: label,
+    });
+    assert.equal(item.event.data.terminal_tool.call_id, 'call_recovery', `${label}: blocked done replaced later execution`);
+    assert.equal(item.event.data.terminal_tool.name, 'click');
+  }
+});
+
 test('Cloud terminal runtime outbox persists retryable failures and removes acknowledged events', async () => {
   const originalChrome = globalThis.chrome;
   const storage = {};
@@ -8245,6 +8299,51 @@ test('Cloud terminal runtime outbox persists retryable failures and removes ackn
   }
 });
 
+test('Firefox Cloud runtime outbox uses the promise-based browser storage namespace', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  let chromeCalls = 0;
+  globalThis.browser = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get() { chromeCalls++; throw new Error('callback-only chrome namespace used'); },
+        set() { chromeCalls++; throw new Error('callback-only chrome namespace used'); },
+      },
+    },
+  };
+  try {
+    const item = {
+      event_id: 'run-firefox-storage:1:terminal_runtime',
+      event: { runId: 'run-firefox-storage', seq: 1, ts: 1, kind: 'terminal_runtime', data: {} },
+    };
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_FX.enqueueCloudRuntimeEvent('conv-firefox', item), true);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_FX.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_FX.flushCloudRuntimeOutbox({
+      config: { providerName: 'webbrain-cloud' },
+      async sendRuntimeEvents() { return { ok: true, retryable: false, status: 202 }; },
+    }), 1);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_FX.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 0);
+    assert.equal(chromeCalls, 0, 'Firefox outbox touched the callback-based chrome namespace');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('Cloud terminal runtime outbox never overwrites queued data after a storage read failure', async () => {
   const originalChrome = globalThis.chrome;
   let writes = 0;
@@ -8268,6 +8367,40 @@ test('Cloud terminal runtime outbox never overwrites queued data after a storage
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Firefox Cloud runtime delivery uses its available fetch transport', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  let request = null;
+  globalThis.browser = {
+    storage: {
+      local: { async get() { return {}; } },
+      onChanged: { addListener() {} },
+    },
+  };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return { ok: true, status: 202 };
+  };
+  try {
+    const provider = new OpenAIProviderFx({
+      providerName: 'webbrain-cloud',
+      baseUrl: 'https://cloud.example/v1',
+      deviceGuid: 'device-test',
+      helpImproveWebBrain: true,
+    });
+    const result = await provider.sendRuntimeEvents('conv-firefox', [{ event_id: 'event-1', event: {} }], { timeoutMs: 500 });
+    assert.deepEqual(result, { ok: true, retryable: false, status: 202 });
+    assert.equal(request?.url, 'https://cloud.example/v1/improvement/runtime-events');
+    assert.equal(request?.options?.method, 'POST');
+    assert.equal(JSON.parse(request?.options?.body || '{}').session_id, 'conv-firefox');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
   }
 });
 
