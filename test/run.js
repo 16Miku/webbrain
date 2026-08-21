@@ -25510,6 +25510,64 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
   }
 });
 
+test('every WebBrain page signs its header with the extension logo', () => {
+  // The suite pages carry their own marks (a nuclear trefoil, W, PDF, TXT), so the
+  // WebBrain lockup is what tells a reader whose product those marks belong to.
+  const apocalypsePages = [
+    'emergency-box.html',
+    'wikipedia-library.html',
+    'wikipedia-reader.html',
+    'emergency-communication.html',
+    'emergency-pdf.html',
+    'emergency-text.html',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+
+    const kit = fs.readFileSync(path.join(uiDir, 'apocalypse-kit.css'), 'utf8');
+    assert.match(kit, /\.kit-brand \{[\s\S]*?font:[^;]*var\(--font-mono\)/,
+      `${browser}: the Apocalypse Kit does not style the shared WebBrain eyebrow`);
+    assert.doesNotMatch(kit, /\.kit-brand \{[^}]*border:/,
+      `${browser}: a boxed signature reads as a third button beside Back`);
+    assert.match(kit, /@media \(max-width:700px\) \{[\s\S]*?\.kit-brand-mode \{ display:none; \}/,
+      `${browser}: the eyebrow does not shed the mode name on a narrow topbar`);
+    assert.match(kit, /\.document-heading a\.kit-brand \{ color:var\(--muted\)/,
+      `${browser}: the PDF reader paints the signature like one of its heading links`);
+
+    for (const page of apocalypsePages) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, /<a class="kit-brand" href="apocalypse-mode\.html"[\s\S]*?src="\.\.\/\.\.\/icons\/icon128\.png"[\s\S]*?WebBrain[\s\S]*?data-i18n="ap\.title"[\s\S]*?<\/a>/,
+        `${browser}: ${page} does not carry the WebBrain lockup back to Apocalypse Mode`);
+      assert.match(html, /<div class="(?:title-block|document-heading)">\s*<a class="kit-brand"/,
+        `${browser}: ${page} does not sit the signature above its own page title`);
+    }
+
+    // The hub already names the mode in its h1 and must not link to itself.
+    const hub = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.html'), 'utf8');
+    assert.match(hub, /<div class="header-copy"><span class="kit-brand"><img class="kit-brand-logo" src="\.\.\/\.\.\/icons\/icon128\.png"[^>]*><span class="kit-brand-name">WebBrain<\/span><\/span><h1 data-i18n="ap\.title">/,
+      `${browser}: Apocalypse Mode does not sign the title it already names`);
+    assert.doesNotMatch(hub, /<a class="kit-brand"/,
+      `${browser}: Apocalypse Mode links its own brand lockup back to itself`);
+
+    // Settings, History, and Traces put the logo inside the gradient title. The
+    // translated text has to stay in its own element: applyDOMTranslations writes
+    // textContent, which would drop an <img> sibling inside the same node.
+    for (const [page, key] of [['history.html', 'hist.title'], ['traces.html', 'tr.title']]) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, new RegExp(`<h1><img class="brand-mark" src="\\.\\./\\.\\./icons/icon128\\.png"[^>]*><span data-i18n="${key.replace('.', '\\.')}"></span></h1>`),
+        `${browser}: ${page} does not show the WebBrain logo beside a separately translated title`);
+    }
+    const settings = fs.readFileSync(path.join(uiDir, 'settings.html'), 'utf8');
+    assert.match(settings, /<h1><img class="brand-mark" src="\.\.\/\.\.\/icons\/icon128\.png"[^>]*><a id="settings-title-link"[^>]*data-i18n="st\.title"><\/a><\/h1>/,
+      `${browser}: Settings does not show the WebBrain logo beside its title link`);
+    for (const page of ['settings.html', 'history.html', 'traces.html']) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, /\.brand-mark \{[\s\S]*?width: \d+px;/,
+        `${browser}: ${page} ships the title logo without sizing it`);
+    }
+  }
+});
+
 test('Apocalypse download tracker follows every offline transfer from its pages and Settings', () => {
   const pages = [
     'apocalypse-mode.html',
