@@ -2,6 +2,7 @@ import { normalizeRuntimeTraceConfig } from './runtime-config.js';
 import { buildPromptTraceProvenance } from './prompt-provenance.js';
 import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
+import { normalizeErrorCode } from './error-codes.js';
 import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
 
 /**
@@ -108,6 +109,23 @@ async function losslessTraceEnabled() {
 // on the first write of each wake cycle via `_peekSeq`.
 
 const _runState = new Map(); // runId -> { seq, model, providerId, ... }
+const _runWriteQueues = new Map(); // runId -> serialized event-write promise
+
+function _queueRunWrite(runId, write) {
+  if (!runId) return Promise.resolve();
+  const previous = _runWriteQueues.get(runId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(write);
+  _runWriteQueues.set(runId, current);
+  current.finally(() => {
+    if (_runWriteQueues.get(runId) === current) _runWriteQueues.delete(runId);
+  }).catch(() => {});
+  return current;
+}
+
+async function _flushRunWrites(runId) {
+  const pending = _runWriteQueues.get(runId);
+  if (pending) await pending.catch(() => {});
+}
 
 async function _peekSeq(db, runId) {
   // Find the max seq already in the events store for this runId.
@@ -119,6 +137,17 @@ async function _peekSeq(db, runId) {
     cursor.onerror = () => resolve(0);
   });
   return result;
+}
+
+// Restore per-run flags after worker eviction from the durable run record so
+// the lossless tier decision survives a worker restart mid-run.
+async function peekRunFlags(db, runId) {
+  try {
+    const record = await promisifyReq(
+      tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
+    );
+    return { lossless: record?.lossless === true };
+  } catch { return { lossless: false }; }
 }
 
 const _runStateLoads = new Map();
@@ -134,7 +163,7 @@ async function _ensureRunState(runId, db = null) {
       const resolvedDb = db || await openDB();
       const seq = await _peekSeq(resolvedDb, runId);
       const flags = await peekRunFlags(resolvedDb, runId);
-      const state = { seq, forced: flags.forced, lossless: flags.lossless };
+      const state = { seq, lossless: flags.lossless };
       _runState.set(runId, state);
       return state;
     } catch { return null; }
@@ -245,8 +274,7 @@ export async function startRun(meta) {
   }
 }
 
-async function _appendEvent(runId, kind, data) {
-  if (!runId) return;
+async function _appendEventNow(runId, kind, data) {
   if (!(await tracingEnabled())) return;
   try {
     const db = await openDB();
@@ -266,11 +294,14 @@ async function _appendEvent(runId, kind, data) {
   }
 }
 
+function _appendEvent(runId, kind, data) {
+  return _queueRunWrite(runId, () => _appendEventNow(runId, kind, data));
+}
+
 export async function recordLLMRequest(runId, step, payload, provenanceInput = null) {
   // Lossless tier (opt-in): persist the request's full message/tool shape for
-  // deep debugging and request reconstruction. Clamped so one oversized
-  // request cannot exhaust IndexedDB; the marker mirrors the tool-result
-  // truncation convention ({ _truncated, length, head }).
+  // deep debugging and request reconstruction. Clamp oversized requests so
+  // one request cannot exhaust IndexedDB.
   const state = await _ensureRunState(runId);
   if (state?.lossless === true && provenanceInput) {
     const { messages, tools } = clampLosslessRequest(provenanceInput.messages || null, provenanceInput.tools || null);
@@ -283,8 +314,8 @@ export async function recordLLMRequest(runId, step, payload, provenanceInput = n
     });
   }
   // Default tier: never persist full prompts, message text, tool schemas, or
-  // tool names here. The optional fourth argument is reduced to content-free
-  // provenance only.
+  // tool names here.
+  // The optional fourth argument is reduced to content-free provenance only.
   let promptProvenance = null;
   if (provenanceInput) {
     try {
@@ -344,38 +375,60 @@ export async function recordToolCall(runId, step, { name, args, result, latencyM
   });
 }
 
-export async function recordScreenshot(runId, step, dataUrl, caption = '') {
-  if (!runId) return;
-  if (!(await tracingEnabled())) return;
-  if (!dataUrl) return;
-  try {
-    const db = await openDB();
-    await _ensureRunState(runId, db);
-    const seq = _newSeq(runId);
-    // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
-    let blob = null;
+export function recordScreenshot(runId, step, dataUrl, caption = '') {
+  return _queueRunWrite(runId, async () => {
+    if (!(await tracingEnabled())) return;
+    if (!dataUrl) return;
     try {
-      const resp = await fetch(dataUrl);
-      blob = await resp.blob();
-    } catch {
-      // Fall back to storing the data URL as text.
+      const db = await openDB();
+      await _ensureRunState(runId, db);
+      const seq = _newSeq(runId);
+      // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
+      let blob = null;
+      try {
+        const resp = await fetch(dataUrl);
+        blob = await resp.blob();
+      } catch {
+        // Fall back to storing the data URL as text.
+      }
+      const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
+      await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
+      // Also record a lightweight marker in the events log so the timeline
+      // renders screenshots in order with everything else.
+      const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
+      if (marker) {
+        await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
+      }
+      return seq;
+    } catch (e) {
+      console.warn('[trace] recordScreenshot failed:', e);
     }
-    const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
-    await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
-    // Also record a lightweight marker in the events log so the timeline
-    // renders screenshots in order with everything else.
-    const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
-    if (marker) {
-      await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
-    }
-    return seq;
-  } catch (e) {
-    console.warn('[trace] recordScreenshot failed:', e);
-  }
+  });
 }
 
-export function recordError(runId, step, phase, message) {
-  return _appendEvent(runId, 'error', { step, phase, message: formatErrorMessage(message) });
+export function recordError(runId, step, phase, message, code) {
+  const data = { step, phase, message: formatErrorMessage(message) };
+  if (code) data.code = normalizeErrorCode(code);
+  return _appendEvent(runId, 'error', data);
+}
+
+// Turn/step boundary events: one turn per user message plus final answer, one
+// step per LLM request. They give the event log explicit lifecycle structure —
+// "which step failed, with what code" — instead of deriving it from payloads.
+export function recordTurnStart(runId, step, payload = {}) {
+  return _appendEvent(runId, 'turn_start', { step, ...payload });
+}
+
+export function recordTurnEnd(runId, step, payload = {}) {
+  return _appendEvent(runId, 'turn_end', { step, ...payload });
+}
+
+export function recordStepStart(runId, step, payload = {}) {
+  return _appendEvent(runId, 'step_start', { step, ...payload });
+}
+
+export function recordStepEnd(runId, step, payload = {}) {
+  return _appendEvent(runId, 'step_end', { step, ...payload });
 }
 
 /**
@@ -430,8 +483,46 @@ export function recordNote(runId, step, note, extra = null) {
   return _appendEvent(runId, 'note', { step, note, extra });
 }
 
+async function _retryCount(db, runId, step) {
+  let count = 0;
+  await new Promise((resolve) => {
+    const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
+    const req = idx.openCursor(IDBKeyRange.only(runId));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve();
+      const event = cursor.value;
+      if (event?.kind === 'note'
+          && event.data?.note === 'llm_retry'
+          && event.data?.step === step) count += 1;
+      cursor.continue();
+    };
+    req.onerror = () => resolve();
+  });
+  return count;
+}
+
+export function recordLLMRetry(runId, step, { delayMs = 0, code = 'UNKNOWN' } = {}) {
+  return _queueRunWrite(runId, async () => {
+    if (!(await tracingEnabled())) return;
+    try {
+      const db = await openDB();
+      await _ensureRunState(runId, db);
+      const attempt = (await _retryCount(db, runId, step)) + 1;
+      return _appendEventNow(runId, 'note', {
+        step,
+        note: 'llm_retry',
+        extra: { attempt, delayMs, code: normalizeErrorCode(code) },
+      });
+    } catch (e) {
+      console.warn('[trace] recordLLMRetry failed:', e);
+    }
+  });
+}
+
 export async function endRun(runId, { status = 'done', finalContent = null } = {}) {
   if (!runId) return;
+  await _flushRunWrites(runId);
   if (!(await tracingEnabled())) return;
   try {
     const db = await openDB();
@@ -478,6 +569,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     console.warn('[trace] endRun failed:', e);
   } finally {
     _runState.delete(runId);
+    _runWriteQueues.delete(runId);
   }
 }
 

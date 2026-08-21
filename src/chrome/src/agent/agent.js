@@ -2238,6 +2238,41 @@ export class Agent extends LoopDetector {
       || /(?:Subscribe for more usage|Upgrade to WebBrain Plus):\s*https?:\/\/\S+/i.test(String(err?.message || ''));
   }
 
+  // Classify a provider failure for the trace record. Trace-only: used at
+  // recordError/step_end call sites so the log carries a stable code; agent
+  // behavior never routes on the result.
+  _traceErrorCodeFor(error) {
+    if (this._isCostAllowanceError(error)) return 'COST_LIMIT';
+    const message = String(error?.message || '').toLowerCase();
+    const status = Number(error?.status);
+    const providerCode = String(error?.code || error?.type || '').toLowerCase();
+    if (status === 401 || status === 403 || /invalid.*credential|api\s*key|unauthorized|authentication/i.test(`${providerCode} ${message}`)) return 'INVALID_CREDENTIAL';
+    if (/quota|insufficient[_\s-]*funds|billing[_\s-]*limit/i.test(`${providerCode} ${message}`)) return 'QUOTA';
+    if (status === 429 || /rate[_\s-]*limit|too many requests/i.test(`${providerCode} ${message}`)) return 'RATE_LIMIT';
+    if (this._isContextOverflow(message) || /context[_\s-]*(?:length|window)|max(?:imum)?[_\s-]*tokens?/i.test(providerCode)) return 'CONTEXT_WINDOW_EXCEEDED';
+    if (/\b(?:empty|no) response\b|\bmissing completion\b|\binvalid output\b/i.test(message)) return 'EMPTY_RESPONSE';
+    return 'TRANSPORT';
+  }
+
+  _traceStepEndForResult(result, extra = {}) {
+    const hasContent = typeof result?.content === 'string' && result.content.trim().length > 0;
+    const hasToolCalls = Array.isArray(result?.toolCalls) && result.toolCalls.length > 0;
+    return hasContent || hasToolCalls
+      ? { ok: true, ...extra }
+      : { ok: false, code: 'EMPTY_RESPONSE', ...extra };
+  }
+
+  _traceTurnEndPayload(status, failureCode = null) {
+    const reason = String(status || 'done');
+    const inferredCode = reason === 'cost_limit'
+      ? 'COST_LIMIT'
+      : (['empty_output', 'incomplete_output', 'placeholder_output', 'required_tool_missing'].includes(reason)
+          ? 'EMPTY_RESPONSE'
+          : (reason === 'error' ? 'UNKNOWN' : null));
+    const code = failureCode || inferredCode;
+    return { status: reason, reason, ...(code ? { code } : {}) };
+  }
+
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
     const before = await this._checkCostAllowance(provider, costState);
     if (before) throw this._costAllowanceError(before);
@@ -10730,6 +10765,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return null;
     }
     if (runId) {
+      trace.recordTurnStart(runId, 0, { mode });
       this.currentRunId.set(tabId, runId);
       const pendingVisionRoutes = this.pendingVisionRouteTraces.get(tabId) || [];
       this.pendingVisionRouteTraces.delete(tabId);
@@ -10756,11 +10792,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * No-op when runId is falsy. Shared by the streaming and non-streaming
    * message paths so the teardown stays in one place. (#9)
    */
-  _endTraceRun(tabId, runId, status, finalContent) {
+  async _endTraceRun(tabId, runId, status, finalContent) {
     if (!runId) return;
     try {
-      const r = trace.endRun(runId, { status, finalContent });
-      if (r && typeof r.then === 'function') r.catch(() => {});
+      await trace.endRun(runId, { status, finalContent });
     } catch {}
     this.currentRunId.delete(tabId);
   }
@@ -27128,6 +27163,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let finalResponse = '';
     let messageCompletion = null;
     let _traceStatus = 'done'; // updated on early exits
+    let traceFailureCode = null;
+    let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let askStreamingTraceWrite = Promise.resolve();
     let shouldOrderInteractiveAskTrace = false;
     const queueAskStreamingTraceWrite = (write) => {
@@ -27505,7 +27542,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       steps++;
+      lastTraceStep = steps;
       onUpdate('thinking', { step: steps });
+      if (runId) trace.recordStepStart(runId, steps, {});
 
       let result;
       try {
@@ -27559,11 +27598,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeResponseTrace);
           else writeResponseTrace();
         }
+        if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result));
       } catch (e) {
         this._logDebug({ type: 'llm_error', step: steps, error: e.message });
         if (this._isCostAllowanceError(e)) {
           finalResponse = e.message;
           _traceStatus = 'cost_limit';
+          traceFailureCode = 'COST_LIMIT';
+          if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
           messages.push({ role: 'assistant', content: finalResponse });
           onUpdate('warning', { message: finalResponse });
           break;
@@ -27571,6 +27613,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // If context overflow, trim aggressively and retry once
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
+          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: 'CONTEXT_WINDOW_EXCEEDED' });
           emergencyTrimMessagesForRun();
           try {
             const useTools = provider.supportsTools && tools.length > 0;
@@ -27579,15 +27622,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._logDebug({ type: 'llm_request_retry', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
             result = await chatMainTurn(prunedMessages, chatOpts, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
+            if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result, { retried: true }));
           } catch (e2) {
             this._logDebug({ type: 'llm_error_retry', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
+              traceFailureCode = 'COST_LIMIT';
+              if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
               messages.push({ role: 'assistant', content: finalResponse });
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            const retryCode = this._traceErrorCodeFor(e2);
+            traceFailureCode = retryCode;
+            _traceStatus = 'error';
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: retryCode });
             onUpdate('error', { message: `Context still too large after trimming: ${e2.message}` });
             finalResponse = 'The conversation got too long. Please start a new conversation (click the + button).';
             messages.push({ role: 'assistant', content: finalResponse });
@@ -27602,8 +27652,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               standaloneWebgpuBudgetRecoveryAttempted = true;
               onUpdate('warning', { message: 'The on-device model ran out of reasoning budget; retrying with a shorter prompt.' });
               this._persist(tabId);
+              if (runId) {
+                const retryCode = this._traceErrorCodeFor(e);
+                trace.recordStepEnd(runId, steps, { ok: false, code: retryCode });
+                await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: retryCode });
+              }
               continue;
             }
+            traceFailureCode = this._traceErrorCodeFor(e);
+            _traceStatus = 'error';
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
             onUpdate('error', { message: e.message });
             finalResponse = `Error communicating with LLM: ${e.message}`;
             messages.push({ role: 'assistant', content: finalResponse });
@@ -27611,21 +27669,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           // Retry once after a short delay for transient errors (rate limits, network).
           this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
+          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 2000, code: this._traceErrorCodeFor(e) });
           await new Promise(r => setTimeout(r, 2000));
           try {
             const useTools2 = provider.supportsTools && tools.length > 0;
             const chatOpts2 = { tools: useTools2 ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
             result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
+            if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result, { retried: true }));
           } catch (e2) {
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
+              traceFailureCode = 'COST_LIMIT';
+              if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
               messages.push({ role: 'assistant', content: finalResponse });
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            traceFailureCode = this._traceErrorCodeFor(e2);
+            _traceStatus = 'error';
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
             onUpdate('error', { message: e2.message });
             finalResponse = `Error communicating with LLM: ${e2.message}`;
             messages.push({ role: 'assistant', content: finalResponse });
@@ -27829,6 +27894,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             content: this._emptyOutputRecoveryNudge(mode),
           });
           this._persist(tabId);
+          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: 'EMPTY_RESPONSE' });
           continue; // give the model one more turn to recover
         }
         const scheduledResume = await this._scheduleAutoProgressResume(tabId, onUpdate);
@@ -27842,6 +27908,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Second empty in a row: give up with a transparent message.
         finalResponse = '[Agent emitted no output and no tool call, even after a recovery nudge. This usually means the task exceeded the current model\'s capability or context budget. Try a stronger model, raise the step limit in settings, or break the task into smaller parts.]';
         _traceStatus = 'empty_output';
+        traceFailureCode = 'EMPTY_RESPONSE';
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -27957,6 +28024,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         finalResponse = 'The on-device model ended its response unexpectedly twice. Please try again.';
         _traceStatus = 'incomplete_output';
+        traceFailureCode = 'EMPTY_RESPONSE';
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
         onUpdate('warning', { message: finalResponse });
@@ -27995,9 +28063,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
+      traceFailureCode = this._traceErrorCodeFor(error);
       finalResponse = `Error: ${message}`;
       if (runId) {
-        const writeErrorTrace = () => trace.recordError(runId, null, 'agent', message);
+        const writeErrorTrace = () => trace.recordError(runId, null, 'agent', message, traceFailureCode);
         if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeErrorTrace);
         else writeErrorTrace();
       }
@@ -28005,7 +28074,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } finally {
       this.currentCostState.delete(tabId);
       await askStreamingTraceWrite;
-      this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
+      if (runId) await trace.recordTurnEnd(
+        runId,
+        lastTraceStep,
+        this._traceTurnEndPayload(_traceStatus, traceFailureCode),
+      );
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
     }
   }
 
@@ -28214,10 +28288,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     let runId = null;
     let finalResponse = '';
+    let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let _traceStatus = 'done';
+    let traceFailureCode = null;
     const finish = (response, status = _traceStatus) => {
       finalResponse = response || '';
       _traceStatus = status;
+      traceFailureCode = traceFailureCode
+        || this._traceTurnEndPayload(status).code
+        || null;
       return response;
     };
 
@@ -28382,7 +28461,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       steps++;
+      lastTraceStep = steps;
       onUpdate('thinking', { step: steps });
+      if (runId) trace.recordStepStart(runId, steps, {});
+      let traceStepClosed = false;
+      const closeTraceStep = (payload) => {
+        if (traceStepClosed) return Promise.resolve();
+        traceStepClosed = true;
+        return runId ? trace.recordStepEnd(runId, steps, payload) : Promise.resolve();
+      };
 
       try {
         streamEmittedOutput = false;
@@ -28407,6 +28494,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messages.push({ role: 'assistant', content: beforeCost });
           onUpdate('warning', { message: beforeCost });
           this._persist(tabId);
+          traceFailureCode = 'COST_LIMIT';
+          await closeTraceStep({ ok: false, code: 'COST_LIMIT' });
           return finish(beforeCost, 'cost_limit');
         }
         let costStopMessage = '';
@@ -28455,6 +28544,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         fullText = Agent._stripReasoningTags(fullText);
+        closeTraceStep(this._traceStepEndForResult({
+          content: fullText,
+          toolCalls: hasToolCalls ? Object.values(toolCallsAccumulator) : [],
+        }));
 
         // Match the non-streaming standalone profile: reinterpret LFM's
         // invented Google markup as one local Wikipedia lookup and clear any
@@ -28520,6 +28613,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             messages.push({ role: 'assistant', content: costStopMessage });
             onUpdate('warning', { message: costStopMessage });
             this._persist(tabId);
+            traceFailureCode = 'COST_LIMIT';
+            closeTraceStep({ ok: false, code: 'COST_LIMIT' });
             return finish(costStopMessage, 'cost_limit');
           }
           const toolCalls = Object.values(toolCallsAccumulator);
@@ -28563,6 +28658,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (batchResult.action === 'abort') {
             return finish(batchResult.value, 'cancelled');
           }
+          closeTraceStep({ ok: true });
           continue;
         }
 
@@ -28574,6 +28670,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messages.push({ role: 'assistant', content: costStopMessage });
           onUpdate('warning', { message: costStopMessage });
           this._persist(tabId);
+          traceFailureCode = 'COST_LIMIT';
+          closeTraceStep({ ok: false, code: 'COST_LIMIT' });
           return finish(costStopMessage, 'cost_limit');
         }
         if (!fullText || !fullText.trim()) {
@@ -28584,6 +28682,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               content: this._emptyOutputRecoveryNudge(mode),
             });
             this._persist(tabId);
+            if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: 'EMPTY_RESPONSE' });
             continue;
           }
           const scheduledResume = await this._scheduleAutoProgressResume(tabId, onUpdate);
@@ -28596,6 +28695,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
+          traceFailureCode = 'EMPTY_RESPONSE';
+          closeTraceStep({ ok: false, code: 'EMPTY_RESPONSE' });
           return finish(failMsg, 'empty_output');
         }
         if (this._isActionMode(mode) && this._isCompressionPlaceholderResponse(fullText)) {
@@ -28719,6 +28820,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('text', { content: incompleteFailure, replace: true });
           onUpdate('warning', { message: incompleteFailure });
           this._persist(tabId);
+          traceFailureCode = 'EMPTY_RESPONSE';
+          closeTraceStep({ ok: false, code: 'EMPTY_RESPONSE' });
           return finish(incompleteFailure, 'incomplete_output');
         }
         const repairedFullText = repairAssistantDisplayText(fullText);
@@ -28747,15 +28850,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
         this._persist(tabId);
+        closeTraceStep({ ok: true });
         return finish(fullText);
 
       } catch (e) {
         const caughtMessage = formatErrorMessage(e);
+        const stepErrorCode = this._traceErrorCodeFor(e);
+        await closeTraceStep({ ok: false, code: stepErrorCode });
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
         if (this._isCostAllowanceError(e)) {
           messages.push({ role: 'assistant', content: caughtMessage });
           onUpdate('warning', { message: caughtMessage });
           this._persist(tabId);
+          traceFailureCode = 'COST_LIMIT';
           return finish(caughtMessage, 'cost_limit');
         }
         if (!streamEmittedOutput && !visionFallbackAttempted) {
@@ -28767,6 +28874,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               code: 'vision_local_fallback_retry',
               message: 'The active provider rejected the image; retrying once from the retained capture using a local LiquidAI description.',
             });
+            if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: stepErrorCode });
             continue;
           }
         }
@@ -28777,6 +28885,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           standaloneWebgpuBudgetRecoveryAttempted = true;
           onUpdate('warning', { message: 'The on-device model ran out of reasoning budget; retrying with a shorter prompt.' });
           this._persist(tabId);
+          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: stepErrorCode });
           continue;
         }
         // If context overflow, trim and retry
@@ -28784,12 +28893,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
           emergencyTrimMessagesForRun();
           this._persist(tabId);
+          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: 'CONTEXT_WINDOW_EXCEEDED' });
           continue; // retry the loop with trimmed context
         }
         onUpdate('error', { message: caughtMessage });
         const errMsg = `Error: ${caughtMessage}`;
         messages.push({ role: 'assistant', content: errMsg });
         this._persist(tabId);
+        traceFailureCode = stepErrorCode;
         return finish(errMsg, 'error');
       }
     }
@@ -28806,11 +28917,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
+      traceFailureCode = this._traceErrorCodeFor(error);
       finalResponse = `Error: ${message}`;
-      if (runId) trace.recordError(runId, null, 'agent', message);
+      if (runId) {
+        trace.recordError(runId, null, 'agent', message, traceFailureCode);
+      }
       throw error;
     } finally {
-      this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
+      if (runId) await trace.recordTurnEnd(
+        runId,
+        lastTraceStep,
+        this._traceTurnEndPayload(_traceStatus, traceFailureCode),
+      );
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
     }
   }
 }
