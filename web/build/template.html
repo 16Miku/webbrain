@@ -1876,12 +1876,11 @@
       letter-spacing: .16em;
     }
     .apocalypse-kicker-mark {
-      width: 11px;
-      height: 11px;
-      border: 2px solid currentColor;
-      border-radius: 50%;
-      box-shadow: 0 0 0 4px rgba(240, 167, 47, .13);
-      animation: apocalypseSignal 2.8s ease-in-out infinite;
+      display: inline-block;
+      font-size: 26px;
+      line-height: 1;
+      font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+      vertical-align: -3px;
     }
     @keyframes apocalypseSignal {
       0%, 100% { box-shadow: 0 0 0 4px rgba(240, 167, 47, .13); }
@@ -3543,7 +3542,7 @@
 <section class="section apocalypse-section" id="apocalypse" aria-labelledby="apocalypse-title">
   <div class="apocalypse-shell">
     <div class="apocalypse-copy">
-      <div class="apocalypse-kicker"><span class="apocalypse-kicker-mark" aria-hidden="true"></span>{{t:apocalypse.label}}</div>
+      <div class="apocalypse-kicker"><span class="apocalypse-kicker-mark" aria-hidden="true">☢</span>{{t:apocalypse.label}}</div>
       <h2 id="apocalypse-title">{{t:apocalypse.title}}</h2>
       <p class="apocalypse-lead"><strong>{{t:apocalypse.heading}}</strong>{{t:apocalypse.description}}</p>
       <div class="apocalypse-actions">

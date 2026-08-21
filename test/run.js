@@ -34069,6 +34069,9 @@ test('new locale dictionaries contain translated copy and preserve functional to
   };
   const slashCommand = /(?<![A-Za-z0-9])\/(?:help|schedule|progress|scratchpad|memory|workflow|allow-api|dangerously-skip-permissions|compact|verbose|reset|screenshot|record|export|import|profile|vision|ask|act|dev|plan)(?:\s+--(?:help|list|append|clear|add|forget|save|run|delete|full-page|full-screen|hide-recording-indicator|transcribe|traces|config|file))?/g;
   const extract = (value, pattern) => [...String(value).matchAll(pattern)].map((match) => match[0]).sort();
+  // A standalone `&amp;` is the word "and", which locales render with their own
+  // conjunction. Every other entity still has to survive translation intact.
+  const dropProseAmpersands = (value) => String(value).replace(/(^|\s)&amp;(?=\s|$)/g, '$1');
   const assertTranslated = (label, english, translated, marker) => {
     const keys = Object.keys(english);
     assert.deepEqual(Object.keys(translated), keys, `${label}: locale keys should match English exactly`);
@@ -34081,7 +34084,7 @@ test('new locale dictionaries contain translated copy and preserve functional to
       assert.deepEqual(extract(translated[key], /<[^>]+>/g), extract(english[key], /<[^>]+>/g), `${label}/${key}: HTML structure changed`);
       assert.deepEqual(extract(translated[key], /<(?:code|kbd)\b[^>]*>[\s\S]*?<\/(?:code|kbd)>/gi), extract(english[key], /<(?:code|kbd)\b[^>]*>[\s\S]*?<\/(?:code|kbd)>/gi), `${label}/${key}: code or keyboard token changed`);
       assert.deepEqual(extract(translated[key], /`[^`\n]+`/g), extract(english[key], /`[^`\n]+`/g), `${label}/${key}: inline code changed`);
-      assert.deepEqual(extract(translated[key], /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), extract(english[key], /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), `${label}/${key}: HTML entity changed`);
+      assert.deepEqual(extract(dropProseAmpersands(translated[key]), /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), extract(dropProseAmpersands(english[key]), /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), `${label}/${key}: HTML entity changed`);
       assert.deepEqual(extract(translated[key], /(?:https?:\/\/|(?:chrome-extension|moz-extension):\/\/|(?:chrome|edge|about):\/\/?)[^\s<>"']+/gi), extract(english[key], /(?:https?:\/\/|(?:chrome-extension|moz-extension):\/\/|(?:chrome|edge|about):\/\/?)[^\s<>"']+/gi), `${label}/${key}: URL changed`);
       assert.deepEqual(extract(translated[key], slashCommand), extract(english[key], slashCommand), `${label}/${key}: slash command changed`);
       assert.equal(extract(translated[key], /WebBrain/g).length, extract(english[key], /WebBrain/g).length, `${label}/${key}: WebBrain brand changed`);
@@ -34116,6 +34119,42 @@ test('web landing builder preserves template markers and HTML entity escaping', 
   );
   for (const entity of ['&amp;', '&lt;', '&gt;', '&#39;', '&quot;']) {
     assert.ok(build.includes(`.replace(/${entity}/g,`), `web build: htmlToPlain must decode ${entity}`);
+  }
+});
+
+test('generated landing pages stay in sync with the web build template', () => {
+  // web/index.html and web/<locale>/index.html are build artifacts of
+  // web/build/template.html. Hand-editing one silently loses the edit on the
+  // next `npm run build:web`, so every literal chunk of the template (the text
+  // between {{...}} placeholders) must still appear, in order, in each page.
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const literals = template.split(/\{\{[^}]*\}\}/).filter((chunk) => chunk.trim().length > 0);
+  assert.ok(literals.length > 50, 'web build: template should split into literal chunks around placeholders');
+
+  const locales = fs
+    .readdirSync(path.join(ROOT, 'web/build/locales'))
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => name.replace(/\.json$/, ''));
+  const pages = locales.map((code) => (code === 'en' ? 'web/index.html' : `web/${code}/index.html`));
+
+  for (const page of pages) {
+    const html = fs.readFileSync(path.join(ROOT, page), 'utf8');
+    let cursor = 0;
+    for (const chunk of literals) {
+      const at = html.indexOf(chunk, cursor);
+      if (at === -1) {
+        // Chunks span many lines; report the first template line the page lost.
+        const lost = chunk
+          .split('\n')
+          .map((line) => line.trim())
+          .find((line) => line.length > 8 && html.indexOf(line, cursor) === -1);
+        assert.fail(
+          `${page}: drifted from web/build/template.html — missing ${JSON.stringify(lost || chunk.trim().slice(0, 120))}. `
+            + 'Edit the template (and web/build/locales/*.json), then run `npm run build:web`.',
+        );
+      }
+      cursor = at + chunk.length;
+    }
   }
 });
 
