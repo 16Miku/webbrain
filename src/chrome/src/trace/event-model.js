@@ -35,6 +35,7 @@ export const EVENT_KINDS = Object.freeze([
   'note',
   'vision_sub_call',
   'vision_route',
+  'terminal_runtime',
 ]);
 
 // Kinds that readers may safely collapse. Empty today: the mechanism exists so
