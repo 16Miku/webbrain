@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "001",
+  "image": "images/001.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign in",
+        "login",
+        "identity verification",
+        "session expired"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Welcome back",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Sign in",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "email-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Email",
+        "empty"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "missing",
+        "email",
+        "password"
+      ],
+      "weight": 2,
+      "critical": false
+    }
+  ],
+  "successRubric": "Identify the Welcome back authentication surface, quote Sign in, and report missing email and password."
+}

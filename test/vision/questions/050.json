@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "050",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "chart-reading",
+  "title": "Latency by region",
+  "image": "images/050.png",
+  "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Latency by region” screen.",
+  "defaultPromptMode": "production"
+}

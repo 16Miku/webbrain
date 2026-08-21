@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "043",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "checkout",
+  "title": "Review order",
+  "image": "images/043.png",
+  "question": "What is the exact total, and can the visible purchase action proceed? Focus on the “Review order” screen.",
+  "defaultPromptMode": "production"
+}

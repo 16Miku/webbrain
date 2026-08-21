@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "041",
+  "image": "images/041.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign in",
+        "login",
+        "identity verification",
+        "session expired"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Administrator login",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Log in",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "email-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Email",
+        "ops@example.com"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "incorrect",
+        "password"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Incorrect password",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Identify the Administrator login authentication surface, quote Log in, and report incorrect password."
+}

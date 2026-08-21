@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "034",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "calendar",
+  "title": "Team calendar",
+  "image": "images/034.png",
+  "question": "What event is shown on the selected day, and at what exact time? Focus on the “Team calendar” screen.",
+  "defaultPromptMode": "production"
+}

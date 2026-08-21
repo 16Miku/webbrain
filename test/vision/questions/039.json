@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "039",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "security-challenge",
+  "title": "Confirm it’s you",
+  "image": "images/039.png",
+  "question": "What security challenge is present, and can the visible action proceed? Focus on the “Confirm it’s you” screen.",
+  "defaultPromptMode": "production"
+}

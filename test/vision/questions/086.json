@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "086",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "toast-notification",
+  "title": "Export queued",
+  "image": "images/086.png",
+  "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Export queued” screen.",
+  "defaultPromptMode": "production"
+}

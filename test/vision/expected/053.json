@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "053",
+  "image": "images/053.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "board",
+        "kanban",
+        "project",
+        "sprint",
+        "incident"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Launch plan",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "card-column",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "Legal review",
+        "Blocked"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Preserve the spatial association: Legal review is in Blocked."
+}

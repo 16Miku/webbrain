@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "052",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "email-compose",
+  "title": "New Message",
+  "image": "images/052.png",
+  "question": "Who is the message addressed to, what is its subject, and is any send warning visible? Focus on the “New Message” screen.",
+  "defaultPromptMode": "production"
+}

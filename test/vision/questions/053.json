@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "053",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "kanban-board",
+  "title": "Launch plan",
+  "image": "images/053.png",
+  "question": "Which column contains “Legal review”? Focus on the “Launch plan” screen.",
+  "defaultPromptMode": "production"
+}

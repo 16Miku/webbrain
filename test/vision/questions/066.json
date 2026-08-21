@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "066",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "toast-notification",
+  "title": "Rule saved with warnings",
+  "image": "images/066.png",
+  "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Rule saved with warnings” screen.",
+  "defaultPromptMode": "production"
+}

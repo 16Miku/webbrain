@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "091",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "data-table",
+  "title": "Access audit",
+  "image": "images/091.png",
+  "question": "Locate the target row and report its exact status without mixing it with neighboring rows. Focus on the “Access audit” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "012",
+  "image": "images/012.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "email",
+        "compose",
+        "message"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "New message",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Send",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "to-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "To",
+        "empty"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "subject-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Subject",
+        "empty"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Report the compose fields exactly and surface the empty required fields."
+}

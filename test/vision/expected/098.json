@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "098",
+  "image": "images/098.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "account",
+        "pricing",
+        "report",
+        "editor",
+        "trading"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Trading panel",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Review order",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "cover",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Market closed",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "occlusion",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "cover",
+        "overlap",
+        "overlay",
+        "obstruct",
+        "block"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Detect the visual obstruction: Market closed interferes with Review order."
+}

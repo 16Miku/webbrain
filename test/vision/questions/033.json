@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "033",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "kanban-board",
+  "title": "Sprint 18",
+  "image": "images/033.png",
+  "question": "Which column contains “Fix checkout”? Focus on the “Sprint 18” screen.",
+  "defaultPromptMode": "production"
+}

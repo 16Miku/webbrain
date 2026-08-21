@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "009",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "dashboard",
+  "title": "Overview",
+  "image": "images/009.png",
+  "question": "What is the value of Orders, and is there an alert that changes the page state? Focus on the “Overview” screen.",
+  "defaultPromptMode": "production"
+}

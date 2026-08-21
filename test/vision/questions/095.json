@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "095",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "map-and-travel",
+  "title": "Evacuation map",
+  "image": "images/095.png",
+  "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Evacuation map” screen.",
+  "defaultPromptMode": "production"
+}

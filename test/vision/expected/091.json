@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "091",
+  "image": "images/091.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "table",
+        "orders",
+        "members",
+        "deployment",
+        "invoice",
+        "audit"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Access audit",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target-row",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "svc-legacy",
+        "org:admin",
+        "Critical"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Keep row association intact: svc-legacy — org:admin — Critical."
+}

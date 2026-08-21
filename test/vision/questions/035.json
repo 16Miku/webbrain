@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "035",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "map-and-travel",
+  "title": "Hotel map",
+  "image": "images/035.png",
+  "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Hotel map” screen.",
+  "defaultPromptMode": "production"
+}

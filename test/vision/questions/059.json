@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "059",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "security-challenge",
+  "title": "Unusual activity detected",
+  "image": "images/059.png",
+  "question": "What security challenge is present, and can the visible action proceed? Focus on the “Unusual activity detected” screen.",
+  "defaultPromptMode": "production"
+}

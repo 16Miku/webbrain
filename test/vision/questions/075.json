@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "075",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "map-and-travel",
+  "title": "Tren rotası",
+  "image": "images/075.png",
+  "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Tren rotası” screen.",
+  "defaultPromptMode": "production"
+}
