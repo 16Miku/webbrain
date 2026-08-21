@@ -8106,6 +8106,8 @@ console.log('\ntrace event model');
 
 const EVENT_MODEL_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/event-model.js').replace(/\\/g, '/'));
 const EVENT_MODEL_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/event-model.js').replace(/\\/g, '/'));
+const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
+const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
 test('trace event model: catalog covers every kind the recorder writes', () => {
   const kinds = EVENT_MODEL_CH.EVENT_KINDS;
@@ -8166,6 +8168,121 @@ test('trace event model: mirrors are identical and browser-neutral', () => {
   assert.equal(EVENT_MODEL_CH.TRACE_FORMAT_VERSION, 1, 'first trace format version');
   assert.doesNotMatch(chromeSource, /chrome\./, 'event model must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'event model must not touch storage');
+});
+
+test('Cloud terminal runtime envelope pairs the terminal done call with its executed result', () => {
+  const messages = [
+    { role: 'user', content: 'Complete the task' },
+    {
+      role: 'assistant',
+      tool_calls: [{ id: 'call_done', function: { name: 'done', arguments: '{"outcome":"success","summary":"Complete"}' } }],
+    },
+    { role: 'tool', tool_call_id: 'call_done', content: '{"success":true,"done":true,"summary":"Complete"}' },
+  ];
+  for (const [label, runtime] of [['chrome', CLOUD_RUNTIME_OUTBOX_CH], ['firefox', CLOUD_RUNTIME_OUTBOX_FX]]) {
+    const item = runtime.buildTerminalRuntimeEvent({
+      runId: 'run-terminal',
+      status: 'done',
+      finalContent: 'Complete',
+      messages,
+      model: 'webbrain-cloud 1.0',
+      mode: 'act',
+      browserTarget: label,
+      extensionVersion: '27.2.0',
+    });
+    assert.equal(item.event_id, 'run-terminal:1:terminal_runtime');
+    assert.equal(item.event.kind, 'terminal_runtime');
+    assert.equal(item.event.data.terminal_tool.name, 'done');
+    assert.equal(item.event.data.terminal_tool.status, 'succeeded');
+    assert.match(item.event.data.terminal_tool.result, /"done":true/);
+  }
+});
+
+test('Cloud terminal runtime outbox persists retryable failures and removes acknowledged events', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  try {
+    const item = CLOUD_RUNTIME_OUTBOX_CH.buildTerminalRuntimeEvent({
+      runId: 'run-retry',
+      status: 'error',
+      finalContent: 'Failed visibly',
+      messages: [
+        { role: 'user', content: 'Try it' },
+        { role: 'assistant', tool_calls: [{ id: 'call_click', function: { name: 'click', arguments: '{"ref_id":"e1"}' } }] },
+        { role: 'tool', tool_call_id: 'call_click', content: '{"success":false,"error":"target missing"}' },
+      ],
+      browserTarget: 'chrome',
+    });
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_CH.enqueueCloudRuntimeEvent('conv-1', item), true);
+    const provider = {
+      config: { providerName: 'webbrain-cloud' },
+      calls: 0,
+      async sendRuntimeEvents() {
+        this.calls++;
+        return this.calls === 1
+          ? { ok: false, retryable: true, status: 503 }
+          : { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_CH.flushCloudRuntimeOutbox(provider), 0);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_CH.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_CH.flushCloudRuntimeOutbox(provider), 1);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_CH.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 0);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Cloud terminal runtime outbox never overwrites queued data after a storage read failure', async () => {
+  const originalChrome = globalThis.chrome;
+  let writes = 0;
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get() { throw new Error('storage unavailable'); },
+        async set() { writes++; },
+      },
+    },
+  };
+  try {
+    await assert.rejects(
+      CLOUD_RUNTIME_OUTBOX_CH.enqueueCloudRuntimeEvent('conv-fail', {
+        event_id: 'run-fail:1:terminal_runtime',
+        event: { runId: 'run-fail', seq: 1, ts: 1, kind: 'terminal_runtime', data: {} },
+      }),
+      /storage unavailable/,
+    );
+    assert.equal(writes, 0);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Cloud runtime delivery stays consent-gated and mirrored across both builds', () => {
+  const chromeOutbox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js'), 'utf8');
+  const firefoxOutbox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js'), 'utf8');
+  assert.equal(chromeOutbox, firefoxOutbox, 'Chrome/Firefox Cloud runtime outboxes drifted');
+  for (const browser of ['chrome', 'firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
+    assert.match(agent, /helpImproveWebBrain !== false[\s\S]*enqueueCloudRuntimeEvent/);
+    assert.match(agent, /void flushCloudRuntimeOutbox\(provider\)/);
+    assert.match(provider, /\/improvement\/runtime-events/);
+    assert.match(provider, /retryable: response\.status === 408 \|\| response\.status === 429 \|\| response\.status >= 500/);
+  }
 });
 
 test('trace recorder: writes go through the event model and stamp the format version', () => {

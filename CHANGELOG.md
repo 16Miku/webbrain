@@ -7,6 +7,7 @@ This changelog was generated from the repository Git history and release tags. V
 ## [33.0.8] - 2026-08-20
 
 ### Changed
+- Added a consent-gated, durable WebBrain Cloud terminal-runtime outbox so executed terminal tool results survive provider-trace export gaps and can be joined through stable de-identified references.
 - fix: resume vision downloads and organize settings
 - fix: require vision cache marker and isolate queued worker deadlines
 - fix: verify local vision cache and abort timed-out remote vision

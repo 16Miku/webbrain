@@ -55,6 +55,7 @@ import {
   PDF_PASSTHROUGH_MAX_BYTES,
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
+import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeOutbox } from '../trace/cloud-runtime-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
@@ -8644,16 +8645,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * End a trace run and clear its currentRunId, tolerating recorder errors.
-   * No-op when runId is falsy. Shared by the streaming and non-streaming
-   * message paths so the teardown stays in one place. (#9)
+   * End local tracing and durably queue any opted-in Cloud terminal outcome.
+   * Cloud delivery remains active when optional local tracing is disabled.
+   * Shared by the streaming and non-streaming message paths. (#9)
    */
-  async _endTraceRun(tabId, runId, status, finalContent) {
-    if (!runId) return;
-    try {
-      await trace.endRun(runId, { status, finalContent });
-    } catch {}
-    this.currentRunId.delete(tabId);
+  async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '' } = {}) {
+    if (String(provider?.config?.providerName || '').toLowerCase() === 'webbrain-cloud') {
+      try {
+        const sessionId = this.conversationIds.get(tabId) || null;
+        if (sessionId && provider?.config?.helpImproveWebBrain !== false) {
+          let extensionVersion = '';
+          try { extensionVersion = chrome.runtime.getManifest().version || ''; } catch {}
+          const item = buildTerminalRuntimeEvent({
+            runId,
+            status,
+            finalContent,
+            messages,
+            model: provider?.model,
+            mode,
+            browserTarget: 'firefox',
+            extensionVersion,
+          });
+          if (item) await enqueueCloudRuntimeEvent(sessionId, item);
+        }
+        // The durable write above is awaited; network delivery is deliberately
+        // detached from UI completion and retried by the next Cloud run.
+        void flushCloudRuntimeOutbox(provider);
+      } catch {}
+    }
+    if (runId) {
+      try {
+        await trace.endRun(runId, { status, finalContent });
+      } catch {}
+      this.currentRunId.delete(tabId);
+    }
   }
 
   /**
@@ -20775,6 +20800,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const provider = this.providerManager.getActive();
+    // Give previously queued terminal outcomes the whole duration of this run
+    // to upload; the current run is enqueued at finalization and may complete
+    // in the background or on the next Cloud run.
+    void flushCloudRuntimeOutbox(provider);
 
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
         && runOptions.isDetachedStartCancelled()) {
@@ -21584,7 +21613,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         lastTraceStep,
         this._traceTurnEndPayload(_traceStatus, traceFailureCode),
       );
-      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode });
     }
   }
 
@@ -21747,6 +21776,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const provider = this.providerManager.getActive();
+    void flushCloudRuntimeOutbox(provider);
 
     // Clear any stale abort flag before any LLM work. The planner gate makes a
     // paid LLM call and checks/consumes this flag, so a leftover flag from a
@@ -22281,7 +22311,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         lastTraceStep,
         this._traceTurnEndPayload(_traceStatus, traceFailureCode),
       );
-      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode });
     }
   }
 }
