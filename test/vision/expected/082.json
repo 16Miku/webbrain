@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "082",
+  "image": "images/082.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "search",
+        "results"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Case-sensitive search",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "tab",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Exact match",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "count",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "0 results",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "query",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Search",
+        "Orion-7B"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "chip",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Archived",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "notice",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "No matches for “Orion-7B”",
+      "weight": 1,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Read the active query Orion-7B, selected tab Exact match, and exact count 0 results."
+}

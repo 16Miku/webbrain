@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "076",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "photo-understanding",
+  "title": "Sanat arşivi",
+  "image": "images/076.png",
+  "question": "What type of artwork is displayed and what caption identifies it? Focus on the “Sanat arşivi” screen.",
+  "defaultPromptMode": "production"
+}

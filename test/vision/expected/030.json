@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "030",
+  "image": "images/030.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "chart",
+        "dashboard",
+        "quarterly revenue"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Quarterly revenue",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "highest-label",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "Q4"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "highest-value",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "44",
+        "$44K"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Use the rendered bars, not source order: Q4 is tallest and is labeled $44K."
+}

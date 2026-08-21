@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "085",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "modal-overlay",
+  "title": "Confirm transfer of $8,740.00?",
+  "image": "images/085.png",
+  "question": "What modal is blocking the page, and what are its two exact actions? Focus on the “Confirm transfer of $8,740.00?” screen.",
+  "defaultPromptMode": "production"
+}

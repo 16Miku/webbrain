@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "020",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "uncertainty-calibration",
+  "title": "Account ID",
+  "image": "images/020.png",
+  "question": "Which characters are actually legible, and which information must remain unknown? Focus on the “Account ID” screen.",
+  "defaultPromptMode": "production"
+}

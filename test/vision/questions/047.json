@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "047",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "loading-state",
+  "title": "Processing 12 files",
+  "image": "images/047.png",
+  "question": "Is the page ready for interaction, and what exact progress signal is visible? Focus on the “Processing 12 files” screen.",
+  "defaultPromptMode": "production"
+}

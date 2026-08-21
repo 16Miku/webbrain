@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "077",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "multilingual-ocr",
+  "title": "Sipariş ayrıntıları",
+  "image": "images/077.png",
+  "question": "Read the non-English heading, field label/value, action, and visible status exactly as rendered. Focus on the “Sipariş ayrıntıları” screen.",
+  "defaultPromptMode": "production"
+}

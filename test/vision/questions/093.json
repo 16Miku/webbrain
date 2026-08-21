@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "093",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "kanban-board",
+  "title": "Incident board",
+  "image": "images/093.png",
+  "question": "Which column contains “Retry storm”? Focus on the “Incident board” screen.",
+  "defaultPromptMode": "production"
+}

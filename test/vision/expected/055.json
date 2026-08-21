@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "055",
+  "image": "images/055.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "map",
+        "tracking",
+        "route",
+        "hotel",
+        "café"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Delivery tracking",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "selection",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "Courier",
+        "2 stops away"
+      ],
+      "weight": 3,
+      "critical": true
+    },
+    {
+      "id": "pin-count",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "4",
+        "four"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Read the selected Courier card, its 2 stops away detail, and 4 pins."
+}

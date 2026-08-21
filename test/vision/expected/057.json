@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "057",
+  "image": "images/057.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign",
+        "payment",
+        "order",
+        "security",
+        "login",
+        "checkout",
+        "settings"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "お支払い",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "支払う",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "カード番号",
+        "•••• 4242"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "有効期限を確認してください",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Preserve Unicode exactly: お支払い; カード番号; 支払う; 有効期限を確認してください."
+}

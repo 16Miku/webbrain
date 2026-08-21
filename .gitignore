@@ -3,6 +3,7 @@
 node_modules/
 test/anonymous/.test-profile/
 ci/artifacts/
+test/vision/results/
 
 # ---- Expo / React Native local state ----
 .expo/

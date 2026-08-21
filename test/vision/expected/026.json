@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "026",
+  "image": "images/026.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "preferences",
+        "settings",
+        "upload",
+        "export"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Preferences",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Close",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "toast",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Settings updated",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "detail",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Synced just now",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Quote Settings updated and Synced just now, and classify the visible state."
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "029",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "dashboard",
+  "title": "Sales dashboard",
+  "image": "images/029.png",
+  "question": "What is the value of Conversion, and is there an alert that changes the page state? Focus on the “Sales dashboard” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "094",
+  "image": "images/094.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "calendar",
+        "schedule"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Release calendar",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "selected-event",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "31",
+        "Production freeze",
+        "23:30 UTC"
+      ],
+      "weight": 3,
+      "critical": true
+    },
+    {
+      "id": "conflict",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Overlaps with Database migration",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Associate day 31 with Production freeze at 23:30 UTC."
+}

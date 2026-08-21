@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "021",
+  "image": "images/021.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign in",
+        "login",
+        "identity verification",
+        "session expired"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Sign in to Atlas",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Continue",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "email-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Email",
+        "maya@example.com"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "missing",
+        "password"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "disabled",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "any",
+      "values": [
+        "disabled",
+        "unavailable"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Identify the Sign in to Atlas authentication surface, quote Continue, and report missing password."
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "034",
+  "image": "images/034.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "calendar",
+        "schedule"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Team calendar",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "selected-event",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "24",
+        "Sprint planning",
+        "14:30"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Associate day 24 with Sprint planning at 14:30."
+}

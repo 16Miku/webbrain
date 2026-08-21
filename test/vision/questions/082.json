@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "082",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "search-results",
+  "title": "Case-sensitive search",
+  "image": "images/082.png",
+  "question": "What query is active, which result tab is selected, and how many results are shown? Focus on the “Case-sensitive search” screen.",
+  "defaultPromptMode": "production"
+}

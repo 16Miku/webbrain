@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "011",
+  "image": "images/011.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "table",
+        "orders",
+        "members",
+        "deployment",
+        "invoice",
+        "audit"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Recent orders",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target-row",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "#1043",
+        "Pending"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Keep row association intact: #1043 — Pending."
+}

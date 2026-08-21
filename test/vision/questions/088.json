@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "088",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "consent-banner",
+  "title": "Consent required",
+  "image": "images/088.png",
+  "question": "Which consent overlay is present and what exact choices does it offer? Focus on the “Consent required” screen.",
+  "defaultPromptMode": "production"
+}

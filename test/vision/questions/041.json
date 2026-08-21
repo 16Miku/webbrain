@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "041",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "authentication",
+  "title": "Administrator login",
+  "image": "images/041.png",
+  "question": "What is preventing the user from completing Log in? Focus on the “Administrator login” screen.",
+  "defaultPromptMode": "production"
+}

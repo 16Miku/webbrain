@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "049",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "dashboard",
+  "title": "System health",
+  "image": "images/049.png",
+  "question": "What is the value of Errors, and is there an alert that changes the page state? Focus on the “System health” screen.",
+  "defaultPromptMode": "production"
+}

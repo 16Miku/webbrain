@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "069",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "dashboard",
+  "title": "Bölgesel performans",
+  "image": "images/069.png",
+  "question": "What is the value of İzmir, and is there an alert that changes the page state? Focus on the “Bölgesel performans” screen.",
+  "defaultPromptMode": "production"
+}

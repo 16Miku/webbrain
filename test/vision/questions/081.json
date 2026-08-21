@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "081",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "authentication",
+  "title": "Session expired",
+  "image": "images/081.png",
+  "question": "What is preventing the user from completing Sign in again? Focus on the “Session expired” screen.",
+  "defaultPromptMode": "production"
+}

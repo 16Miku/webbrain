@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "022",
+  "image": "images/022.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "search",
+        "results"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Product search",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "tab",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Products",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "count",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "18 results",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "query",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Search",
+        "wireless keyboard"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "chip",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "In stock",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Read the active query wireless keyboard, selected tab Products, and exact count 18 results."
+}

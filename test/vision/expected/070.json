@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "070",
+  "image": "images/070.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "chart",
+        "dashboard",
+        "dönüşüm hunisi"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Dönüşüm hunisi",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "highest-label",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "Satın alma"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "highest-value",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "100",
+        "29%"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Use the rendered bars, not source order: Satın alma is tallest and is labeled 29%."
+}

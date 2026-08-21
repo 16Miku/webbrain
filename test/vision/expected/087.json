@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "087",
+  "image": "images/087.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "loading",
+        "processing",
+        "reconnecting",
+        "import"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Finalizing import",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "spinner",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "any",
+      "values": [
+        "loading",
+        "spinner",
+        "processing",
+        "reconnecting",
+        "progress"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "wait-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "loading",
+        "wait",
+        "processing",
+        "reconnecting",
+        "not ready"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "detail",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Do not close this tab",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "progress",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "99%",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Report the loading state and preserve 99% without inventing completion."
+}
