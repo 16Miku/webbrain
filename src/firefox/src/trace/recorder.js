@@ -92,6 +92,23 @@ async function tracingEnabled() {
 // on the first write of each wake cycle via `_peekSeq`.
 
 const _runState = new Map(); // runId -> { seq, model, providerId, ... }
+const _runWriteQueues = new Map(); // runId -> serialized event-write promise
+
+function _queueRunWrite(runId, write) {
+  if (!runId) return Promise.resolve();
+  const previous = _runWriteQueues.get(runId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(write);
+  _runWriteQueues.set(runId, current);
+  current.finally(() => {
+    if (_runWriteQueues.get(runId) === current) _runWriteQueues.delete(runId);
+  }).catch(() => {});
+  return current;
+}
+
+async function _flushRunWrites(runId) {
+  const pending = _runWriteQueues.get(runId);
+  if (pending) await pending.catch(() => {});
+}
 
 async function _peekSeq(db, runId) {
   // Find the max seq already in the events store for this runId.
@@ -171,8 +188,7 @@ export async function startRun(meta) {
   }
 }
 
-async function _appendEvent(runId, kind, data) {
-  if (!runId) return;
+async function _appendEventNow(runId, kind, data) {
   if (!(await tracingEnabled())) return;
   try {
     const db = await openDB();
@@ -194,6 +210,10 @@ async function _appendEvent(runId, kind, data) {
   } catch (e) {
     console.warn('[trace] appendEvent failed:', e);
   }
+}
+
+function _appendEvent(runId, kind, data) {
+  return _queueRunWrite(runId, () => _appendEventNow(runId, kind, data));
 }
 
 export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
@@ -256,37 +276,38 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   });
 }
 
-export async function recordScreenshot(runId, step, dataUrl, caption = '') {
-  if (!runId) return;
-  if (!(await tracingEnabled())) return;
-  if (!dataUrl) return;
-  try {
-    const db = await openDB();
-    if (!_runState.has(runId)) {
-      const seq = await _peekSeq(db, runId);
-      _runState.set(runId, { seq });
-    }
-    const seq = _newSeq(runId);
-    // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
-    let blob = null;
+export function recordScreenshot(runId, step, dataUrl, caption = '') {
+  return _queueRunWrite(runId, async () => {
+    if (!(await tracingEnabled())) return;
+    if (!dataUrl) return;
     try {
-      const resp = await fetch(dataUrl);
-      blob = await resp.blob();
-    } catch {
-      // Fall back to storing the data URL as text.
+      const db = await openDB();
+      if (!_runState.has(runId)) {
+        const seq = await _peekSeq(db, runId);
+        _runState.set(runId, { seq });
+      }
+      const seq = _newSeq(runId);
+      // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
+      let blob = null;
+      try {
+        const resp = await fetch(dataUrl);
+        blob = await resp.blob();
+      } catch {
+        // Fall back to storing the data URL as text.
+      }
+      const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
+      await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
+      // Also record a lightweight marker in the events log so the timeline
+      // renders screenshots in order with everything else.
+      const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
+      if (marker) {
+        await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
+      }
+      return seq;
+    } catch (e) {
+      console.warn('[trace] recordScreenshot failed:', e);
     }
-    const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
-    await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
-    // Also record a lightweight marker in the events log so the timeline
-    // renders screenshots in order with everything else.
-    const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
-    if (marker) {
-      await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
-    }
-    return seq;
-  } catch (e) {
-    console.warn('[trace] recordScreenshot failed:', e);
-  }
+  });
 }
 
 export function recordError(runId, step, phase, message, code) {
@@ -366,8 +387,49 @@ export function recordNote(runId, step, note, extra = null) {
   return _appendEvent(runId, 'note', { step, note, extra });
 }
 
+async function _retryCount(db, runId, step) {
+  let count = 0;
+  await new Promise((resolve) => {
+    const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
+    const req = idx.openCursor(IDBKeyRange.only(runId));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve();
+      const event = cursor.value;
+      if (event?.kind === 'note'
+          && event.data?.note === 'llm_retry'
+          && event.data?.step === step) count += 1;
+      cursor.continue();
+    };
+    req.onerror = () => resolve();
+  });
+  return count;
+}
+
+export function recordLLMRetry(runId, step, { delayMs = 0, code = 'UNKNOWN' } = {}) {
+  return _queueRunWrite(runId, async () => {
+    if (!(await tracingEnabled())) return;
+    try {
+      const db = await openDB();
+      if (!_runState.has(runId)) {
+        const seq = await _peekSeq(db, runId);
+        _runState.set(runId, { seq });
+      }
+      const attempt = (await _retryCount(db, runId, step)) + 1;
+      return _appendEventNow(runId, 'note', {
+        step,
+        note: 'llm_retry',
+        extra: { attempt, delayMs, code: normalizeErrorCode(code) },
+      });
+    } catch (e) {
+      console.warn('[trace] recordLLMRetry failed:', e);
+    }
+  });
+}
+
 export async function endRun(runId, { status = 'done', finalContent = null } = {}) {
   if (!runId) return;
+  await _flushRunWrites(runId);
   if (!(await tracingEnabled())) return;
   try {
     const db = await openDB();
@@ -414,6 +476,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     console.warn('[trace] endRun failed:', e);
   } finally {
     _runState.delete(runId);
+    _runWriteQueues.delete(runId);
   }
 }
 

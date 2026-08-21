@@ -8911,12 +8911,18 @@ test('agent trace error classification: _traceErrorCodeFor maps failures to stab
     assert.equal(agent._traceErrorCodeFor({ status: 401, message: 'bad key' }), 'INVALID_CREDENTIAL', `${label}: 401 must classify as credential`);
     assert.equal(agent._traceErrorCodeFor({ status: 403, message: 'forbidden' }), 'INVALID_CREDENTIAL', `${label}: 403 must classify as credential`);
     assert.equal(agent._traceErrorCodeFor({ status: 429, message: 'rate limited' }), 'RATE_LIMIT', `${label}: 429 must classify as rate limit`);
-    assert.equal(agent._traceErrorCodeFor({ message: 'You have hit your quota' }), 'RATE_LIMIT', `${label}: quota wording must classify as rate limit`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'You have hit your quota' }), 'QUOTA', `${label}: quota wording must remain distinct from rate limiting`);
     assert.equal(agent._traceErrorCodeFor({ message: 'context window exceeded' }), 'CONTEXT_WINDOW_EXCEEDED', `${label}: context wording must classify as overflow`);
     assert.equal(agent._traceErrorCodeFor({ message: 'empty response' }), 'EMPTY_RESPONSE', `${label}: empty wording must classify as empty`);
     assert.equal(agent._traceErrorCodeFor({ message: 'connection reset' }), 'TRANSPORT', `${label}: transport failures must classify as transport`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'network error — could not reach the server' }), 'TRANSPORT', `${label}: provider reachability wording must not look like empty output`);
     assert.equal(agent._traceErrorCodeFor({ code: 'WB_COST_ALLOWANCE' }), 'COST_LIMIT', `${label}: cost allowance must classify as cost limit`);
     assert.equal(agent._traceErrorCodeFor({ message: 'Subscribe for more usage: https://webbrain.one/' }), 'COST_LIMIT', `${label}: cloud subscribe prompt must classify as cost limit`);
+    assert.deepEqual(agent._traceStepEndForResult({ content: '', toolCalls: [] }), { ok: false, code: 'EMPTY_RESPONSE' }, `${label}: empty model output must close as a failed step`);
+    assert.deepEqual(agent._traceStepEndForResult({ content: 'done', toolCalls: [] }), { ok: true }, `${label}: text output must close as a successful step`);
+    assert.deepEqual(agent._traceStepEndForResult({ content: '', toolCalls: [{ id: 'call_1' }] }, { retried: true }), { ok: true, retried: true }, `${label}: retried tool output must close as successful`);
+    assert.deepEqual(agent._traceTurnEndPayload('error', 'TRANSPORT'), { status: 'error', reason: 'error', code: 'TRANSPORT' }, `${label}: failed turn must carry reason and code`);
+    assert.deepEqual(agent._traceTurnEndPayload('done'), { status: 'done', reason: 'done' }, `${label}: successful turn must not invent a failure code`);
   }
 });
 
@@ -8930,25 +8936,38 @@ test('trace recorder: turn/step boundary helpers and structured error codes are 
     assert.match(recorderSource, /recordError\(runId, step, phase, message, code\)/, `${browser}: recordError does not accept a structured code`);
     assert.match(recorderSource, /data\.code = normalizeErrorCode\(code\)/, `${browser}: recordError does not normalize the code`);
     assert.match(recorderSource, /import \{ normalizeErrorCode \} from '\.\/error-codes\.js';/, `${browser}: recorder does not import error-codes`);
+    assert.match(recorderSource, /const _runWriteQueues = new Map\(\)/, `${browser}: per-run event serialization queue missing`);
+    assert.match(recorderSource, /await _flushRunWrites\(runId\)[\s\S]*?existing\.endedAt = Date\.now\(\)/, `${browser}: run finalization can race queued lifecycle events`);
+    assert.match(recorderSource, /export function recordLLMRetry\([\s\S]*?_retryCount\(db, runId, step\)[\s\S]*?normalizeErrorCode\(code\)/, `${browser}: retry attempts are not derived from the durable event log`);
   }
 });
 
 test('agent trace instrumentation: turn/step boundaries, retries-before-wait, and codes in both builds', () => {
   for (const browser of ['chrome', 'firefox']) {
     const agentSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
-    assert.match(agentSource, /recordTurnStart\(runId, 0, \{ mode \}\)/, `${browser}: turn_start missing before the loop`);
-    assert.match(agentSource, /recordStepStart\(runId, steps, \{\}\)/, `${browser}: step_start missing per iteration`);
-    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: true \}\)/, `${browser}: success step_end missing`);
-    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: true, retried: true \}\)/, `${browser}: retried-success step_end missing`);
-    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: false, code: 'COST_LIMIT' \}\)/, `${browser}: cost-limit step_end missing`);
-    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: false, code: this\._traceErrorCodeFor\(e2?\) \}\)/, `${browser}: coded failure step_end missing`);
-    // Retries must be recorded BEFORE the backoff wait.
-    assert.match(agentSource, /recordNote\(runId, steps, 'llm_retry', \{ attempt: 1, delayMs: 2000, code: this\._traceErrorCodeFor\(e\) \}\)[\s\S]*?await new Promise\(r => setTimeout\(r, 2000\)\)/, `${browser}: retry event does not precede the backoff wait`);
-    assert.match(agentSource, /recordNote\(runId, steps, 'llm_retry', \{ attempt: 1, delayMs: 0, code: 'CONTEXT_WINDOW_EXCEEDED' \}\)/, `${browser}: overflow retry event missing`);
-    // turn_end must land before the run is closed (non-streaming finally + streaming finish).
-    assert.match(agentSource, /recordTurnEnd\(runId, lastTraceStep, \{ status: _traceStatus \}\)[\s\S]*?_endTraceRun/, `${browser}: non-streaming turn_end missing before run close`);
-    assert.match(agentSource, /const finish = \(response, status = _traceStatus\) => \{[\s\S]*?recordTurnEnd\(runId, lastTraceStep, \{ status \}\)/, `${browser}: streaming finish does not record turn_end`);
-    assert.match(agentSource, /_traceErrorCodeFor\(error\)/, `${browser}: outer catch does not carry the error code`);
+    const startTraceStart = agentSource.indexOf('async _startTraceRun(');
+    const endTraceStart = agentSource.indexOf('async _endTraceRun(', startTraceStart);
+    const nonStreamingStart = agentSource.indexOf('async _processMessageInner(');
+    const streamingStart = agentSource.indexOf('async _processMessageStreamInner(');
+    assert.ok(startTraceStart >= 0 && endTraceStart > startTraceStart, `${browser}: trace lifecycle helpers missing`);
+    assert.ok(nonStreamingStart >= 0 && streamingStart > nonStreamingStart, `${browser}: message loop boundaries missing`);
+    const startTraceBody = agentSource.slice(startTraceStart, endTraceStart);
+    const nonStreamingBody = agentSource.slice(nonStreamingStart, streamingStart);
+    const streamingBody = agentSource.slice(streamingStart);
+    assert.match(startTraceBody, /recordTurnStart\(runId, 0, \{ mode \}\)/, `${browser}: every started trace must receive turn_start, including planner exits`);
+    assert.match(nonStreamingBody, /recordStepStart\(runId, steps, \{\}\)/, `${browser}: non-streaming step_start missing`);
+    assert.match(streamingBody, /recordStepStart\(runId, steps, \{\}\)/, `${browser}: streaming step_start missing`);
+    assert.match(nonStreamingBody, /_traceStepEndForResult\(result\)/, `${browser}: non-streaming output is not validated before step_end`);
+    assert.match(streamingBody, /const closeTraceStep = \(payload\) => \{[\s\S]*?traceStepClosed = true/, `${browser}: streaming step_end is not single-shot`);
+    const streamedClose = streamingBody.indexOf('closeTraceStep(this._traceStepEndForResult');
+    const streamedToolBatch = streamingBody.indexOf('await this._executeToolBatch(');
+    assert.ok(streamedClose >= 0 && streamedClose < streamedToolBatch, `${browser}: streaming LLM step stays open through terminal tool exits`);
+    assert.match(nonStreamingBody, /await trace\.recordLLMRetry\(runId, steps, \{ delayMs: 2000,[\s\S]*?await new Promise\(r => setTimeout\(r, 2000\)\)/, `${browser}: retry record is not durable before backoff`);
+    assert.match(nonStreamingBody, /await trace\.recordTurnEnd\([\s\S]*?await this\._endTraceRun/, `${browser}: non-streaming turn_end is not flushed before run close`);
+    assert.match(streamingBody, /await trace\.recordTurnEnd\([\s\S]*?await this\._endTraceRun/, `${browser}: streaming turn_end is not flushed before run close`);
+    const finishStart = streamingBody.indexOf('const finish = (response, status = _traceStatus) => {');
+    const finishEnd = streamingBody.indexOf('\n    };', finishStart);
+    assert.doesNotMatch(streamingBody.slice(finishStart, finishEnd), /recordTurnEnd/, `${browser}: streaming finish can emit duplicate turn_end events`);
   }
 });
 
