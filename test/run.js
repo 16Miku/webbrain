@@ -17931,10 +17931,11 @@ test('cloud run controller preserves a boolean false root output schema', async 
     'persistence marked the false root schema as unstructured');
 });
 
-test('cloud run controller threads parent lineage from the active browser run', async () => {
+test('cloud run controller threads lineage from the completed parent cloud trace', async () => {
   const session = {};
   const tab = { id: 23, url: 'https://example.test/', active: true, windowId: 5 };
-  let receivedRunOptions;
+  const receivedRunOptions = [];
+  let nextRun = 0;
   const controller = createCloudRunController({
     chromeApi: {
       tabs: {
@@ -17956,21 +17957,34 @@ test('cloud run controller threads parent lineage from the active browser run', 
       abort: () => {},
       setApiMutationsAllowed: () => {},
       setTemporaryApiMutationsAllowed: () => {},
-      // An active browser trace run on this tab: the cloud run is its child.
-      currentRunId: { get: () => 'run_parent_1' },
-      conversationIds: { get: () => 'conv_lineage_9' },
-      processMessage: async (_tabId, _task, _onUpdate, _mode, _attachments, runOptions) => {
-        receivedRunOptions = runOptions;
+      // A persistent conversation id without a trace parent must never become
+      // an orphaned parent-session link on a root cloud run.
+      conversationIds: { get: () => 'conv_unrelated' },
+      processMessage: async (_tabId, task, _onUpdate, _mode, _attachments, runOptions) => {
+        receivedRunOptions.push(runOptions);
+        runOptions.onTraceStarted?.(task === 'Parent task' ? 'trace_parent_1' : 'trace_child_1');
         return 'cloud result';
       },
     },
     ensureOffscreen: async () => {},
-    makeRunId: () => 'run_lineage_child',
+    workflowTrace: {
+      async getRun(runId) {
+        assert.equal(runId, 'trace_parent_1');
+        return { runId, conversationId: 'conv_parent_9' };
+      },
+    },
+    makeRunId: () => (++nextRun === 1 ? 'cloud_parent_1' : 'cloud_child_1'),
   });
 
-  await controller.startRun({ task: 'Do the thing.', apiMutationsAllowed: true });
-  assert.equal(receivedRunOptions.parentRunId, 'run_parent_1', 'cloud run did not receive the active run as parent');
-  assert.equal(receivedRunOptions.parentSessionId, 'conv_lineage_9', 'cloud run did not receive the parent session id');
+  const parent = await controller.startRun({ task: 'Parent task', apiMutationsAllowed: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await controller.startRun({ task: 'Child task', parentRunId: parent.runId });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(receivedRunOptions[0].parentRunId, null, 'root cloud run received an orphaned parent run');
+  assert.equal(receivedRunOptions[0].parentSessionId, null, 'root cloud run received an orphaned parent session');
+  assert.equal(receivedRunOptions[1].parentRunId, 'trace_parent_1', 'continuation did not receive its parent trace');
+  assert.equal(receivedRunOptions[1].parentSessionId, 'conv_parent_9', 'continuation did not receive its parent trace session');
 });
 
 test('cloud run controller tolerates an agent without lineage maps', async () => {
@@ -18017,13 +18031,53 @@ test('trace lineage: _startTraceRun and replay plumb parent ids in both builds',
     const agentSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
     assert.match(agentSource, /parentRunId: runOptions\?\.parentRunId \|\| null,/, `${browser}: _startTraceRun does not forward parentRunId`);
     assert.match(agentSource, /parentSessionId: runOptions\?\.parentSessionId \|\| null,/, `${browser}: _startTraceRun does not forward parentSessionId`);
-    assert.match(agentSource, /parentRunId: this\.currentRunId\.get\(tabId\) \|\| null,/, `${browser}: replay does not link the active run as parent`);
-    assert.match(agentSource, /parentSessionId: this\.conversationIds\.get\(tabId\) \|\| null,/, `${browser}: replay does not link the parent session`);
+    assert.match(agentSource, /const replayParentRunId = runOptions\?\.parentRunId \|\| workflow\.source\?\.runId \|\| null;[\s\S]*?await this\._claimRunEntry\(tabId, 'workflow', runOptions\);/, `${browser}: replay does not capture source lineage before claiming the tab`);
+    assert.match(agentSource, /this\._getSavedWorkflowParentTrace\(replayParentRunId\)/, `${browser}: replay does not resolve its source trace session`);
+    assert.match(agentSource, /parentRunId: replayParentRunId,[\s\S]*?parentSessionId: replayParentSessionId,/, `${browser}: replay does not pass captured lineage to tracing`);
   }
   const chromeCloudRuns = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
-  assert.match(chromeCloudRuns, /parentRunId: agent\.currentRunId\?\.get\?\.\(tabId\) \|\| null,/, 'cloud-runs does not thread parentRunId');
-  assert.match(chromeCloudRuns, /parentSessionId: agent\.conversationIds\?\.get\?\.\(tabId\) \|\| null,/, 'cloud-runs does not thread parentSessionId');
+  assert.match(chromeCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'cloud-runs does not use the completed parent trace');
+  assert.match(chromeCloudRuns, /workflowTrace\.getRun\(parentTraceRunId\)/, 'cloud-runs does not resolve the parent trace session');
+  assert.match(chromeCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'cloud-runs does not thread resolved parent lineage');
   assert.ok(!fs.existsSync(path.join(ROOT, 'src/firefox/src/cloud-runs.js')), 'Firefox has no cloud-runs module — lineage threading is Chrome-only by platform boundary');
+});
+
+test('saved workflow replay captures its source lineage before claiming the tab', async () => {
+  for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const tabId = browser === 'chrome' ? 17853 : 17854;
+    const workflow = {
+      id: `workflow_lineage_${browser}`,
+      name: 'Replay lineage',
+      source: { runId: `trace_source_${browser}` },
+      start: { origin: 'https://example.test', pathFamily: '/expected' },
+      steps: [{ id: 'step_1', tool: 'navigate', args: { url: 'https://example.test/next' } }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    let traceMeta = null;
+    agent._claimRunEntry = async () => {
+      // If replay reads workflow.source after claiming, this destroys lineage.
+      workflow.source.runId = '';
+    };
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent._currentUrl = async () => 'https://other.test/';
+    agent.ensureConversationId = async () => `conv_child_${browser}`;
+    agent._getSavedWorkflowParentTrace = async runId => ({
+      runId,
+      conversationId: `conv_parent_${browser}`,
+    });
+    agent._startSavedWorkflowTraceRun = async meta => {
+      traceMeta = meta;
+      return `trace_replay_${browser}`;
+    };
+    agent._endSavedWorkflowTraceRun = async () => {};
+
+    const replay = await agent.replaySavedWorkflow(tabId, workflow);
+
+    assert.equal(replay.status, 'fallback', `${browser}: replay fixture did not stop after trace start`);
+    assert.equal(traceMeta.parentRunId, `trace_source_${browser}`, `${browser}: replay lost the compiling trace id`);
+    assert.equal(traceMeta.parentSessionId, `conv_parent_${browser}`, `${browser}: replay used the child conversation as its parent session`);
+  }
 });
 
 test('cloud run controller rejects duplicate caller-supplied run IDs', async () => {
