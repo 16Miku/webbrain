@@ -84,13 +84,17 @@ vanilla JS/CSS unless there is a very strong reason to add a framework.
   `web/build/template.html` and `web/build/locales/*.json`, then run
   `npm run build:web`. Do not hand-edit only `web/index.html` or localized
   `web/*/index.html`, because the next build will erase those changes.
+  `npm test` enforces this: the test `generated landing pages stay in sync with
+  the web build template` fails when a page and the template disagree.
 
 ## Testing
 
 Use `npm test` for the main regression suite. For syntax-only JS checks, run
 `node --check <file>` on touched agent/provider/UI files. Run
-`npm run build:web` after changing `web/` content or web locales. Use
-`npm run build:zip` when validating release packaging.
+`npm run build:web` after changing `web/` content or web locales, then read
+`git diff`: pages you did not mean to touch mean the edit went into a generated
+file instead of the template. Use `npm run build:zip` when validating release
+packaging.
 
 For behavior changes in the extension, test at least the touched browser path
 manually. If the change affects shared agent behavior, test both Chrome and
