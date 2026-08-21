@@ -1169,6 +1169,10 @@ export function createCloudRunController({
               run.traceRunId = traceRunId;
               schedulePersist();
             },
+            // When a browser trace run is active on this tab, the cloud run is
+            // its derived run — record the origin so the run is attributable.
+            parentRunId: agent.currentRunId?.get?.(tabId) || null,
+            parentSessionId: agent.conversationIds?.get?.(tabId) || null,
           });
         }
         run.pendingInput = null;

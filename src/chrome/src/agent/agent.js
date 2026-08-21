@@ -10716,6 +10716,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         mode,
         attachments: Array.isArray(runOptions?.traceAttachments) ? runOptions.traceAttachments : [],
         conversationId: this.conversationIds.get(tabId) || null,
+        // Derived-run lineage: when this run is launched from an active run on
+        // the same tab (cloud run, workflow replay), the launching call site
+        // passes the origin ids so the trace can attribute the derived run.
+        parentRunId: runOptions?.parentRunId || null,
+        parentSessionId: runOptions?.parentSessionId || null,
         force: runOptions?.cloudRun === true,
       });
     } catch {
@@ -19628,6 +19633,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const conversationId = await this.ensureConversationId(tabId, 'act');
       traceRunId = await trace.startRun({
         conversationId,
+        // A replay launched from an active run on this tab is that run's child.
+        parentRunId: this.currentRunId.get(tabId) || null,
+        parentSessionId: this.conversationIds.get(tabId) || null,
         userMessage: `Run saved workflow: ${workflow.name}`,
         tabUrl: startUrl,
         mode: 'act',
