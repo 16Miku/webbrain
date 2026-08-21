@@ -8577,6 +8577,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         mode,
         attachments: Array.isArray(runOptions?.traceAttachments) ? runOptions.traceAttachments : [],
         conversationId: this.conversationIds.get(tabId) || null,
+        // Derived-run lineage: when this run is launched from an active run on
+        // the same tab (cloud run, workflow replay), the launching call site
+        // passes the origin ids so the trace can attribute the derived run.
+        parentRunId: runOptions?.parentRunId || null,
+        parentSessionId: runOptions?.parentSessionId || null,
         force: runOptions?.cloudRun === true,
       });
     } catch {
@@ -16758,10 +16763,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await trace.endRun(runId, { status, finalContent });
   }
 
+  async _getSavedWorkflowParentTrace(runId) {
+    return trace.getRun(runId);
+  }
+
+  async _startSavedWorkflowTraceRun(meta) {
+    return trace.startRun(meta);
+  }
+
   async replaySavedWorkflow(tabId, workflow, parameters = {}, onUpdate = () => {}, runOptions = {}) {
     if (!workflow?.id || !Array.isArray(workflow.steps) || !workflow.steps.length) {
       throw new Error('Saved workflow is missing or invalid.');
     }
+    // Capture the compiling trace before the run claim. Active trace ids are
+    // cleared when a run ends, but a normalized workflow retains its durable
+    // source run id and can therefore establish real replay provenance.
+    const replayParentRunId = runOptions?.parentRunId || workflow.source?.runId || null;
+    let replayParentSessionId = replayParentRunId
+      ? runOptions?.parentSessionId || null
+      : null;
     await this._claimRunEntry(tabId, 'workflow', runOptions);
     let completionRunToken = '';
     let startUrl = '';
@@ -16787,8 +16807,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       completionRunToken = this._beginCompletionInvariant(tabId);
       startUrl = await this._currentUrl(tabId);
       const conversationId = await this.ensureConversationId(tabId, 'act');
-      traceRunId = await trace.startRun({
+      if (replayParentRunId && !replayParentSessionId) {
+        try {
+          const parentTrace = await this._getSavedWorkflowParentTrace(replayParentRunId);
+          replayParentSessionId = parentTrace?.conversationId || null;
+        } catch { /* missing historical traces leave session lineage unset */ }
+      }
+      traceRunId = await this._startSavedWorkflowTraceRun({
         conversationId,
+        parentRunId: replayParentRunId,
+        parentSessionId: replayParentSessionId,
         userMessage: `Run saved workflow: ${workflow.name}`,
         tabUrl: startUrl,
         mode: 'act',

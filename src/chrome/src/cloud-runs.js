@@ -1096,6 +1096,18 @@ export function createCloudRunController({
       let recordingId = null;
       const strictSecretMode = agent.strictSecretMode === true;
       try {
+        // A continuation starts only after its parent has finished, so the
+        // agent's active-run map cannot identify the parent here. The cloud
+        // run record keeps the actual trace id; resolve its session from that
+        // trace instead of attaching the tab's potentially unrelated session.
+        const parentTraceRunId = parentRun?.traceRunId || null;
+        let parentTraceSessionId = null;
+        if (parentTraceRunId && typeof workflowTrace?.getRun === 'function') {
+          try {
+            const parentTrace = await workflowTrace.getRun(parentTraceRunId);
+            parentTraceSessionId = parentTrace?.conversationId || null;
+          } catch { /* lineage lookup is best-effort and must not fail a run */ }
+        }
         if (run.capture === 'video') {
           try {
             if (!startRecording || !stopRecording) throw new Error('Cloud run video capture is unavailable.');
@@ -1169,6 +1181,8 @@ export function createCloudRunController({
               run.traceRunId = traceRunId;
               schedulePersist();
             },
+            parentRunId: parentTraceRunId,
+            parentSessionId: parentTraceSessionId,
           });
         }
         run.pendingInput = null;
