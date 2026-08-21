@@ -38,7 +38,7 @@ lede: >
 
 ## The result at a glance
 
-We built a new 100-case suite around the exact screenshot-description call WebBrain uses for `inspect_viewport`, screenshot tools, and automatic screenshot routing. The [complete benchmark—images, rubrics, validation, and runner—is available on GitHub](https://github.com/webbrain-one/webbrain/tree/main/test/vision). The cases progress from large, obvious controls to dense tables, charts, multilingual OCR, overlays, conflicting signals, occlusion, and deliberately unreadable text.
+We built a new 100-case suite around the exact screenshot-description call WebBrain uses for `inspect_viewport`, screenshot tools, and automatic screenshot routing. The [complete benchmark—images, rubrics, validation, and runner—is available on GitHub](https://github.com/esokullu/webbrain/tree/main/test/vision). The cases progress from large, obvious controls to dense tables, charts, multilingual OCR, overlays, conflicting signals, occlusion, and deliberately unreadable text.
 
 [Qwen 3.8 27B NVFP4](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4) is the main reference. It is the result to compare the small models against, not a claim that every 27B deployment or every API will produce the same number.
 
