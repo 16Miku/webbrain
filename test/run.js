@@ -8819,6 +8819,62 @@ test('config transfer exports and restores Settings values including provider ke
   );
 });
 
+// trace run header — session lineage allowlist
+// ────────────────────────────────────────────────────────────────────────
+
+console.log('\ntrace run header');
+
+const RUN_HEADER_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/run-header.js').replace(/\\/g, '/'));
+const RUN_HEADER_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/run-header.js').replace(/\\/g, '/'));
+
+test('trace run header: normalizeRunHeader keeps only allowlisted lineage ids', () => {
+  const { normalizeRunHeader } = RUN_HEADER_CH;
+  assert.equal(normalizeRunHeader(null), null);
+  assert.equal(normalizeRunHeader([]), null);
+  assert.equal(normalizeRunHeader({}), null, 'empty header must be null');
+  const valid = normalizeRunHeader({ parentRunId: 'run_abc', parentSessionId: 'conv_1', delegationDepth: 3 });
+  assert.deepEqual(valid, { parentRunId: 'run_abc', parentSessionId: 'conv_1', delegationDepth: 3 });
+  assert.equal(normalizeRunHeader({ parentRunId: 'x'.repeat(201) }), null, 'over-long id must be rejected');
+  assert.deepEqual(normalizeRunHeader({ parentRunId: '  run_x  ' }), { parentRunId: 'run_x' }, 'ids should be trimmed');
+  assert.equal(normalizeRunHeader({ parentRunId: 'bad\u0000id' }), null, 'control characters must be rejected');
+  assert.equal(normalizeRunHeader({ delegationDepth: -1 }), null, 'negative depth must be rejected');
+  assert.equal(normalizeRunHeader({ delegationDepth: 3.5 }), null, 'fractional depth must be rejected');
+  assert.equal(normalizeRunHeader({ delegationDepth: 65 }), null, 'depth beyond the bound must be rejected');
+  assert.deepEqual(normalizeRunHeader({ parentSessionId: 'conv_9' }), { parentSessionId: 'conv_9' }, 'session id alone must survive');
+});
+
+test('trace run header: effectiveDelegationDepth resolves root/child/explicit', () => {
+  const { effectiveDelegationDepth, normalizeRunHeader } = RUN_HEADER_CH;
+  assert.equal(effectiveDelegationDepth(null), 0, 'no header is a root run');
+  assert.equal(effectiveDelegationDepth(normalizeRunHeader({})), 0, 'empty header is a root run');
+  assert.equal(effectiveDelegationDepth(normalizeRunHeader({ parentRunId: 'run_p' })), 1, 'parent without depth is a direct child');
+  assert.equal(effectiveDelegationDepth(normalizeRunHeader({ parentRunId: 'run_p', delegationDepth: 5 })), 5, 'explicit depth wins');
+  assert.equal(effectiveDelegationDepth(normalizeRunHeader({ parentSessionId: 'conv_x' })), 0, 'session id without parent run is a root run');
+});
+
+test('trace run header: mirrors are identical and browser-neutral', () => {
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/run-header.js'), 'utf8');
+  const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/run-header.js'), 'utf8');
+  assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox run header drifted');
+  assert.equal(typeof RUN_HEADER_FX.normalizeRunHeader, 'function', 'Firefox run header missing exports');
+  assert.doesNotMatch(chromeSource, /chrome\./, 'run header must not depend on chrome APIs');
+  assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'run header must not touch storage');
+});
+
+test('trace recorder: DB v2 adds lineage indexes and startRun stores lineage fields', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    assert.match(recorderSource, /const DB_VERSION = 2;/, `${browser}: trace DB did not move to v2`);
+    assert.match(recorderSource, /createIndex\('sessionId', 'conversationId'\)/, `${browser}: session index missing`);
+    assert.match(recorderSource, /createIndex\('parentRunId', 'parentRunId'\)/, `${browser}: parent index missing`);
+    assert.match(recorderSource, /indexNames\.contains\('sessionId'\)/, `${browser}: index creation is not idempotent`);
+    assert.match(recorderSource, /import \{ normalizeRunHeader, effectiveDelegationDepth \} from '\.\/run-header\.js';/, `${browser}: recorder does not import the run header`);
+    assert.match(recorderSource, /parentRunId: \(lineage && lineage\.parentRunId\) \|\| null,/, `${browser}: parentRunId not stored`);
+    assert.match(recorderSource, /parentSessionId: \(lineage && lineage\.parentSessionId\) \|\| null,/, `${browser}: parentSessionId not stored`);
+    assert.match(recorderSource, /delegationDepth: effectiveDelegationDepth\(lineage\),/, `${browser}: delegationDepth not resolved`);
+  }
+});
+
 test('trace recording remains opt-in by default', () => {
   for (const [label, prefix, configTransfer] of [
     ['chrome', 'src/chrome', ConfigTransferCh],

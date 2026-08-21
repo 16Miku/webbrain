@@ -2,12 +2,13 @@ import { normalizeRuntimeTraceConfig } from './runtime-config.js';
 import { buildPromptTraceProvenance } from './prompt-provenance.js';
 import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
+import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
  * screenshots) into IndexedDB for later inspection and cross-model comparison.
  *
- * Schema (db `webbrain_traces`, v1):
+ * Schema (db `webbrain_traces`, v2):
  *   - runs       keyPath=runId                  // top-level run metadata
  *   - events     keyPath=[runId, seq]           // ordered event log
  *   - shots      keyPath=[runId, seq]           // screenshot Blobs
@@ -17,7 +18,7 @@ import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
  */
 
 const DB_NAME = 'webbrain_traces';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let _dbPromise = null;
 function openDB() {
@@ -31,6 +32,19 @@ function openDB() {
         s.createIndex('startedAt', 'startedAt');
         s.createIndex('model', 'model');
         s.createIndex('providerId', 'providerId');
+      }
+      // v2: lineage lookup indexes. `conversationId` IS the session identity
+      // (grouping key for sibling runs); the index carries the semantic name
+      // so session-level queries read naturally. Records with null keys are
+      // skipped by IndexedDB, so old runs are simply absent from the index.
+      const runsStore = req.transaction ? req.transaction.objectStore('runs') : null;
+      if (runsStore) {
+        if (!runsStore.indexNames.contains('sessionId')) {
+          runsStore.createIndex('sessionId', 'conversationId');
+        }
+        if (!runsStore.indexNames.contains('parentRunId')) {
+          runsStore.createIndex('parentRunId', 'parentRunId');
+        }
       }
       if (!db.objectStoreNames.contains('events')) {
         const s = db.createObjectStore('events', { keyPath: ['runId', 'seq'] });
@@ -130,6 +144,7 @@ export async function startRun(meta = {}) {
   try {
     const db = await openDB();
     const runId = meta.runId || `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const lineage = normalizeRunHeader(meta) || {};
     const record = {
       runId,
       // Stable per-conversation id so the Traces UI can group sibling runs
@@ -137,6 +152,11 @@ export async function startRun(meta = {}) {
       // map keyed by tabId. Older runs have null here — viewer treats those
       // as singletons.
       conversationId: meta.conversationId || null,
+      // Lineage: which run/session this run was derived from. Root runs keep
+      // null/0. Only allowlisted identifiers reach these fields (run-header.js).
+      parentRunId: (lineage && lineage.parentRunId) || null,
+      parentSessionId: (lineage && lineage.parentSessionId) || null,
+      delegationDepth: effectiveDelegationDepth(lineage),
       startedAt: Date.now(),
       endedAt: null,
       durationMs: null,
