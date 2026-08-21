@@ -1,6 +1,7 @@
 import { normalizeRuntimeTraceConfig } from './runtime-config.js';
 import { buildPromptTraceProvenance } from './prompt-provenance.js';
 import { formatErrorMessage } from '../error-format.js';
+import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -128,6 +129,7 @@ export async function startRun(meta) {
       providerId: meta.providerId || '',
       providerClass: meta.providerClass || '',
       webbrainVersion: meta.webbrainVersion || '',
+      traceFormatVersion: TRACE_FORMAT_VERSION,
       runtimeConfig: normalizeRuntimeTraceConfig(meta.runtimeConfig),
       userMessage: meta.userMessage || '',
       tabUrl: meta.tabUrl || '',
@@ -159,7 +161,13 @@ async function _appendEvent(runId, kind, data) {
       _runState.set(runId, { seq });
     }
     const seq = _newSeq(runId);
-    const ev = { runId, seq, ts: Date.now(), kind, data: data || null };
+    const ev = makeEvent(runId, seq, kind, data);
+    if (!ev) {
+      // Unknown kind or unserializable data: skip the write and surface the
+      // bug at recording time instead of storing a ghost event.
+      console.warn('[trace] dropped invalid event:', kind);
+      return null;
+    }
     await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     return seq;
   } catch (e) {
@@ -250,9 +258,10 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
     await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
     // Also record a lightweight marker in the events log so the timeline
     // renders screenshots in order with everything else.
-    await promisifyReq(tx(db, ['events']).objectStore('events').put({
-      runId, seq, ts: shot.ts, kind: 'screenshot', data: { step, caption },
-    }));
+    const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
+    if (marker) {
+      await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
+    }
     return seq;
   } catch (e) {
     console.warn('[trace] recordScreenshot failed:', e);
