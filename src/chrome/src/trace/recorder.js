@@ -2,6 +2,7 @@ import { normalizeRuntimeTraceConfig } from './runtime-config.js';
 import { buildPromptTraceProvenance } from './prompt-provenance.js';
 import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
+import { normalizeErrorCode } from './error-codes.js';
 import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
 
 /**
@@ -305,8 +306,29 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
   }
 }
 
-export function recordError(runId, step, phase, message) {
-  return _appendEvent(runId, 'error', { step, phase, message: formatErrorMessage(message) });
+export function recordError(runId, step, phase, message, code) {
+  const data = { step, phase, message: formatErrorMessage(message) };
+  if (code) data.code = normalizeErrorCode(code);
+  return _appendEvent(runId, 'error', data);
+}
+
+// Turn/step boundary events: one turn per user message plus final answer, one
+// step per LLM request. They give the event log explicit lifecycle structure —
+// "which step failed, with what code" — instead of deriving it from payloads.
+export function recordTurnStart(runId, step, payload = {}) {
+  return _appendEvent(runId, 'turn_start', { step, ...payload });
+}
+
+export function recordTurnEnd(runId, step, payload = {}) {
+  return _appendEvent(runId, 'turn_end', { step, ...payload });
+}
+
+export function recordStepStart(runId, step, payload = {}) {
+  return _appendEvent(runId, 'step_start', { step, ...payload });
+}
+
+export function recordStepEnd(runId, step, payload = {}) {
+  return _appendEvent(runId, 'step_end', { step, ...payload });
 }
 
 /**

@@ -8875,6 +8875,91 @@ test('trace recorder: DB v2 adds lineage indexes and startRun stores lineage fie
   }
 });
 
+// trace error codes and turn/step boundary events
+// ────────────────────────────────────────────────────────────────────────
+
+console.log('\ntrace error codes and boundaries');
+
+const ERROR_CODES_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/error-codes.js').replace(/\\/g, '/'));
+const ERROR_CODES_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/error-codes.js').replace(/\\/g, '/'));
+
+test('trace error codes: catalog is stable and normalizeErrorCode bounds the value', () => {
+  const { ERROR_CODES, isErrorCode, normalizeErrorCode } = ERROR_CODES_CH;
+  assert.ok(ERROR_CODES.length >= 8, 'error code catalog shrank');
+  for (const code of ERROR_CODES) {
+    assert.equal(isErrorCode(code), true, `catalog entry ${code} not recognized`);
+    assert.equal(normalizeErrorCode(code), code, `catalog entry ${code} must round-trip`);
+  }
+  assert.equal(isErrorCode('NOT_A_CODE'), false);
+  assert.equal(normalizeErrorCode('NOT_A_CODE'), 'UNKNOWN', 'unknown code must normalize to UNKNOWN');
+  assert.equal(normalizeErrorCode(null), 'UNKNOWN', 'null code must normalize to UNKNOWN');
+  assert.equal(normalizeErrorCode(undefined), 'UNKNOWN', 'missing code must normalize to UNKNOWN');
+  assert.deepEqual(ERROR_CODES_FX.ERROR_CODES, ERROR_CODES, 'Firefox code catalog drifted');
+});
+
+test('trace error codes: mirrors are identical and browser-neutral', () => {
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/error-codes.js'), 'utf8');
+  const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/error-codes.js'), 'utf8');
+  assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox error codes drifted');
+  assert.doesNotMatch(chromeSource, /chrome\./, 'error codes must not depend on chrome APIs');
+  assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'error codes must not touch storage');
+});
+
+test('agent trace error classification: _traceErrorCodeFor maps failures to stable codes', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    assert.equal(agent._traceErrorCodeFor({ status: 401, message: 'bad key' }), 'INVALID_CREDENTIAL', `${label}: 401 must classify as credential`);
+    assert.equal(agent._traceErrorCodeFor({ status: 403, message: 'forbidden' }), 'INVALID_CREDENTIAL', `${label}: 403 must classify as credential`);
+    assert.equal(agent._traceErrorCodeFor({ status: 429, message: 'rate limited' }), 'RATE_LIMIT', `${label}: 429 must classify as rate limit`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'You have hit your quota' }), 'RATE_LIMIT', `${label}: quota wording must classify as rate limit`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'context window exceeded' }), 'CONTEXT_WINDOW_EXCEEDED', `${label}: context wording must classify as overflow`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'empty response' }), 'EMPTY_RESPONSE', `${label}: empty wording must classify as empty`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'connection reset' }), 'TRANSPORT', `${label}: transport failures must classify as transport`);
+    assert.equal(agent._traceErrorCodeFor({ code: 'WB_COST_ALLOWANCE' }), 'COST_LIMIT', `${label}: cost allowance must classify as cost limit`);
+    assert.equal(agent._traceErrorCodeFor({ message: 'Subscribe for more usage: https://webbrain.one/' }), 'COST_LIMIT', `${label}: cloud subscribe prompt must classify as cost limit`);
+  }
+});
+
+test('trace recorder: turn/step boundary helpers and structured error codes are wired', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    assert.match(recorderSource, /export function recordTurnStart\(runId, step, payload = \{\}\)/, `${browser}: recordTurnStart missing`);
+    assert.match(recorderSource, /export function recordTurnEnd\(runId, step, payload = \{\}\)/, `${browser}: recordTurnEnd missing`);
+    assert.match(recorderSource, /export function recordStepStart\(runId, step, payload = \{\}\)/, `${browser}: recordStepStart missing`);
+    assert.match(recorderSource, /export function recordStepEnd\(runId, step, payload = \{\}\)/, `${browser}: recordStepEnd missing`);
+    assert.match(recorderSource, /recordError\(runId, step, phase, message, code\)/, `${browser}: recordError does not accept a structured code`);
+    assert.match(recorderSource, /data\.code = normalizeErrorCode\(code\)/, `${browser}: recordError does not normalize the code`);
+    assert.match(recorderSource, /import \{ normalizeErrorCode \} from '\.\/error-codes\.js';/, `${browser}: recorder does not import error-codes`);
+  }
+});
+
+test('agent trace instrumentation: turn/step boundaries, retries-before-wait, and codes in both builds', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const agentSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    assert.match(agentSource, /recordTurnStart\(runId, 0, \{ mode \}\)/, `${browser}: turn_start missing before the loop`);
+    assert.match(agentSource, /recordStepStart\(runId, steps, \{\}\)/, `${browser}: step_start missing per iteration`);
+    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: true \}\)/, `${browser}: success step_end missing`);
+    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: true, retried: true \}\)/, `${browser}: retried-success step_end missing`);
+    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: false, code: 'COST_LIMIT' \}\)/, `${browser}: cost-limit step_end missing`);
+    assert.match(agentSource, /recordStepEnd\(runId, steps, \{ ok: false, code: this\._traceErrorCodeFor\(e2?\) \}\)/, `${browser}: coded failure step_end missing`);
+    // Retries must be recorded BEFORE the backoff wait.
+    assert.match(agentSource, /recordNote\(runId, steps, 'llm_retry', \{ attempt: 1, delayMs: 2000, code: this\._traceErrorCodeFor\(e\) \}\)[\s\S]*?await new Promise\(r => setTimeout\(r, 2000\)\)/, `${browser}: retry event does not precede the backoff wait`);
+    assert.match(agentSource, /recordNote\(runId, steps, 'llm_retry', \{ attempt: 1, delayMs: 0, code: 'CONTEXT_WINDOW_EXCEEDED' \}\)/, `${browser}: overflow retry event missing`);
+    // turn_end must land before the run is closed (non-streaming finally + streaming finish).
+    assert.match(agentSource, /recordTurnEnd\(runId, lastTraceStep, \{ status: _traceStatus \}\)[\s\S]*?_endTraceRun/, `${browser}: non-streaming turn_end missing before run close`);
+    assert.match(agentSource, /const finish = \(response, status = _traceStatus\) => \{[\s\S]*?recordTurnEnd\(runId, lastTraceStep, \{ status \}\)/, `${browser}: streaming finish does not record turn_end`);
+    assert.match(agentSource, /_traceErrorCodeFor\(error\)/, `${browser}: outer catch does not carry the error code`);
+  }
+});
+
+test('trace event model: boundary kinds are catalogued and content-free', () => {
+  for (const kind of ['turn_start', 'turn_end', 'step_start', 'step_end']) {
+    assert.equal(EVENT_MODEL_CH.isKnownKind(kind), true, `boundary kind ${kind} not catalogued`);
+  }
+  const chromeModel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/event-model.js'), 'utf8');
+  assert.doesNotMatch(chromeModel, /chrome\.|indexedDB/, 'event model must stay browser-neutral');
+});
+
 test('trace recording remains opt-in by default', () => {
   for (const [label, prefix, configTransfer] of [
     ['chrome', 'src/chrome', ConfigTransferCh],
@@ -59079,7 +59164,7 @@ test('Ask streaming lifecycle tracing is wired through recorder, agent, and Trac
     assert.match(agentSource, /status: 'attempted'[\s\S]*?status: 'completed'[\s\S]*?status: fallbackSafe \? 'fallback' : 'failed'/, `${browser}: lifecycle outcomes missing`);
     assert.match(agentSource, /if \(shouldOrderInteractiveAskTrace\) queueAskStreamingTraceWrite\(writeRequestTrace\)/, `${browser}: request trace must lead the streaming lifecycle queue`);
     assert.match(agentSource, /if \(shouldOrderInteractiveAskTrace\) await queueAskStreamingTraceWrite\(writeResponseTrace\)/, `${browser}: response trace must flush after streaming lifecycle events`);
-    assert.match(agentSource, /finally \{[\s\S]{0,120}?await askStreamingTraceWrite;\s*this\._endTraceRun/, `${browser}: run finalization must wait for streaming lifecycle traces`);
+    assert.match(agentSource, /finally \{[\s\S]{0,120}?await askStreamingTraceWrite;[\s\S]{0,200}?_endTraceRun/, `${browser}: run finalization must wait for streaming lifecycle traces`);
     assert.match(tracesSource, /case 'streaming':[\s\S]*?t\('st\.display\.openai_ask_streaming\.label'\)/, `${browser}: localized Traces UI renderer missing`);
     assert.doesNotMatch(tracesSource, /Ask stream:|text delta|first delta|ms total|tool call/, `${browser}: streaming trace copy should not be hard-coded in English`);
     assert.match(tracesHtml, /\.event\.streaming \{ border-left:/, `${browser}: Traces UI styling missing`);

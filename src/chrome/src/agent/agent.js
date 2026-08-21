@@ -2238,6 +2238,20 @@ export class Agent extends LoopDetector {
       || /(?:Subscribe for more usage|Upgrade to WebBrain Plus):\s*https?:\/\/\S+/i.test(String(err?.message || ''));
   }
 
+  // Classify a provider failure for the trace record. Trace-only: used at
+  // recordError/step_end call sites so the log carries a stable code; agent
+  // behavior never routes on the result.
+  _traceErrorCodeFor(error) {
+    if (this._isCostAllowanceError(error)) return 'COST_LIMIT';
+    const message = String(error?.message || '').toLowerCase();
+    const status = Number(error?.status);
+    if (status === 401 || status === 403 || /invalid.*credential|api\s*key|unauthorized/i.test(message)) return 'INVALID_CREDENTIAL';
+    if (status === 429 || /rate\s*limit|quota/i.test(message)) return 'RATE_LIMIT';
+    if (/context|too long|max.*token|token\s*limit/i.test(message)) return 'CONTEXT_WINDOW_EXCEEDED';
+    if (/empty|no response|could not|invalid.*output/i.test(message)) return 'EMPTY_RESPONSE';
+    return 'TRANSPORT';
+  }
+
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
     const before = await this._checkCostAllowance(provider, costState);
     if (before) throw this._costAllowanceError(before);
@@ -27128,6 +27142,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let finalResponse = '';
     let messageCompletion = null;
     let _traceStatus = 'done'; // updated on early exits
+    let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let askStreamingTraceWrite = Promise.resolve();
     let shouldOrderInteractiveAskTrace = false;
     const queueAskStreamingTraceWrite = (write) => {
@@ -27462,6 +27477,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return finalResponse;
     }
 
+    if (runId) trace.recordTurnStart(runId, 0, { mode });
+
     while (steps < this.maxSteps) {
       // Check for abort before each step
       if (this._checkAbort(tabId)) {
@@ -27505,7 +27522,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       steps++;
+      lastTraceStep = steps;
       onUpdate('thinking', { step: steps });
+      if (runId) trace.recordStepStart(runId, steps, {});
 
       let result;
       try {
@@ -27559,11 +27578,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeResponseTrace);
           else writeResponseTrace();
         }
+        if (runId) trace.recordStepEnd(runId, steps, { ok: true });
       } catch (e) {
         this._logDebug({ type: 'llm_error', step: steps, error: e.message });
         if (this._isCostAllowanceError(e)) {
           finalResponse = e.message;
           _traceStatus = 'cost_limit';
+          if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
           messages.push({ role: 'assistant', content: finalResponse });
           onUpdate('warning', { message: finalResponse });
           break;
@@ -27571,6 +27592,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // If context overflow, trim aggressively and retry once
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
+          if (runId) trace.recordNote(runId, steps, 'llm_retry', { attempt: 1, delayMs: 0, code: 'CONTEXT_WINDOW_EXCEEDED' });
           emergencyTrimMessagesForRun();
           try {
             const useTools = provider.supportsTools && tools.length > 0;
@@ -27579,15 +27601,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._logDebug({ type: 'llm_request_retry', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
             result = await chatMainTurn(prunedMessages, chatOpts, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
+            if (runId) trace.recordStepEnd(runId, steps, { ok: true, retried: true });
           } catch (e2) {
             this._logDebug({ type: 'llm_error_retry', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
+              if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
               messages.push({ role: 'assistant', content: finalResponse });
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'CONTEXT_WINDOW_EXCEEDED' });
             onUpdate('error', { message: `Context still too large after trimming: ${e2.message}` });
             finalResponse = 'The conversation got too long. Please start a new conversation (click the + button).';
             messages.push({ role: 'assistant', content: finalResponse });
@@ -27604,6 +27629,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               this._persist(tabId);
               continue;
             }
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: this._traceErrorCodeFor(e) });
             onUpdate('error', { message: e.message });
             finalResponse = `Error communicating with LLM: ${e.message}`;
             messages.push({ role: 'assistant', content: finalResponse });
@@ -27611,21 +27637,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           // Retry once after a short delay for transient errors (rate limits, network).
           this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
+          if (runId) trace.recordNote(runId, steps, 'llm_retry', { attempt: 1, delayMs: 2000, code: this._traceErrorCodeFor(e) });
           await new Promise(r => setTimeout(r, 2000));
           try {
             const useTools2 = provider.supportsTools && tools.length > 0;
             const chatOpts2 = { tools: useTools2 ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
             result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
+            if (runId) trace.recordStepEnd(runId, steps, { ok: true, retried: true });
           } catch (e2) {
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
+              if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
               messages.push({ role: 'assistant', content: finalResponse });
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: this._traceErrorCodeFor(e2) });
             onUpdate('error', { message: e2.message });
             finalResponse = `Error communicating with LLM: ${e2.message}`;
             messages.push({ role: 'assistant', content: finalResponse });
@@ -27997,7 +28027,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       _traceStatus = 'error';
       finalResponse = `Error: ${message}`;
       if (runId) {
-        const writeErrorTrace = () => trace.recordError(runId, null, 'agent', message);
+        const writeErrorTrace = () => trace.recordError(runId, null, 'agent', message, this._traceErrorCodeFor(error));
         if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeErrorTrace);
         else writeErrorTrace();
       }
@@ -28005,6 +28035,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } finally {
       this.currentCostState.delete(tabId);
       await askStreamingTraceWrite;
+      if (runId) trace.recordTurnEnd(runId, lastTraceStep, { status: _traceStatus });
       this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
     }
   }
@@ -28214,8 +28245,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     let runId = null;
     let finalResponse = '';
+    let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let _traceStatus = 'done';
     const finish = (response, status = _traceStatus) => {
+      // Single exit point for every loop outcome: record the turn boundary
+      // here so every status transition (done/cancelled/cost_limit/error/…)
+      // lands exactly one turn_end event, before the run record is closed.
+      if (runId) trace.recordTurnEnd(runId, lastTraceStep, { status });
       finalResponse = response || '';
       _traceStatus = status;
       return response;
@@ -28382,7 +28418,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       steps++;
+      lastTraceStep = steps;
       onUpdate('thinking', { step: steps });
+      if (runId) trace.recordStepStart(runId, steps, {});
 
       try {
         streamEmittedOutput = false;
@@ -28520,6 +28558,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             messages.push({ role: 'assistant', content: costStopMessage });
             onUpdate('warning', { message: costStopMessage });
             this._persist(tabId);
+            if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
             return finish(costStopMessage, 'cost_limit');
           }
           const toolCalls = Object.values(toolCallsAccumulator);
@@ -28563,6 +28602,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (batchResult.action === 'abort') {
             return finish(batchResult.value, 'cancelled');
           }
+          if (runId) trace.recordStepEnd(runId, steps, { ok: true });
           continue;
         }
 
@@ -28574,6 +28614,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messages.push({ role: 'assistant', content: costStopMessage });
           onUpdate('warning', { message: costStopMessage });
           this._persist(tabId);
+          if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
           return finish(costStopMessage, 'cost_limit');
         }
         if (!fullText || !fullText.trim()) {
@@ -28596,6 +28637,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
+          if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'EMPTY_RESPONSE' });
           return finish(failMsg, 'empty_output');
         }
         if (this._isActionMode(mode) && this._isCompressionPlaceholderResponse(fullText)) {
@@ -28719,6 +28761,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('text', { content: incompleteFailure, replace: true });
           onUpdate('warning', { message: incompleteFailure });
           this._persist(tabId);
+          if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'EMPTY_RESPONSE' });
           return finish(incompleteFailure, 'incomplete_output');
         }
         const repairedFullText = repairAssistantDisplayText(fullText);
@@ -28747,6 +28790,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
         this._persist(tabId);
+        if (runId) trace.recordStepEnd(runId, steps, { ok: true });
         return finish(fullText);
 
       } catch (e) {
@@ -28756,6 +28800,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messages.push({ role: 'assistant', content: caughtMessage });
           onUpdate('warning', { message: caughtMessage });
           this._persist(tabId);
+          if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: 'COST_LIMIT' });
           return finish(caughtMessage, 'cost_limit');
         }
         if (!streamEmittedOutput && !visionFallbackAttempted) {
@@ -28790,6 +28835,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const errMsg = `Error: ${caughtMessage}`;
         messages.push({ role: 'assistant', content: errMsg });
         this._persist(tabId);
+        if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: this._traceErrorCodeFor(e) });
         return finish(errMsg, 'error');
       }
     }
@@ -28807,7 +28853,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
       finalResponse = `Error: ${message}`;
-      if (runId) trace.recordError(runId, null, 'agent', message);
+      if (runId) {
+        trace.recordTurnEnd(runId, lastTraceStep, { status: 'error' });
+        trace.recordError(runId, null, 'agent', message, this._traceErrorCodeFor(error));
+      }
       throw error;
     } finally {
       this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
