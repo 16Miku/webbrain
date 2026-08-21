@@ -291,6 +291,34 @@ button:active:not(:disabled),
   box-shadow:inset 0 -2px 0 var(--accent);
 }
 
+/* WebBrain signature above the page title. The page keeps its own mark (a nuclear
+   trefoil, W, PDF); this eyebrow only says which product that mark belongs to, so
+   it stays unboxed — a chip here would read as a third button beside Back. */
+.kit-brand {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  align-self:start;
+  margin-bottom:3px;
+  color:var(--muted);
+  text-decoration:none;
+  font:760 9px/1 var(--font-mono);
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  transition:color .16s ease;
+}
+
+/* The PDF reader colors every link in its heading; the signature is not one. */
+a.kit-brand,
+a.kit-brand:hover .kit-brand-logo { text-decoration:none; }
+.document-heading a.kit-brand { color:var(--muted);font-size:9px; }
+.document-heading a.kit-brand:hover { color:var(--accent);text-decoration:none; }
+
+.kit-brand-logo { width:15px;height:15px;flex:0 0 15px;display:block; }
+.kit-brand-sep { opacity:.5; }
+
+a.kit-brand:hover { color:var(--accent); }
+
 .topbar .apocalypse-icon,
 .ap-page .apocalypse-icon {
   width:64px;
@@ -1060,6 +1088,9 @@ button:active:not(:disabled),
 }
 
 @media (max-width:700px) {
+  /* The eyebrow sheds the mode name before the page's own title gives up room. */
+  .kit-brand-sep,
+  .kit-brand-mode { display:none; }
   .ap-page > header { min-height:0;overflow:visible; }
   .ap-page .header-right { margin-inline-start:0; }
   .ap-page .hero-overview { padding:22px 18px; }
