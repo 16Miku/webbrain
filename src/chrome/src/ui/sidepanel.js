@@ -1085,6 +1085,7 @@ let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
 const cancelledRunRecoveryRequestIds = new Set();
+const conversationClearFollowerCancellationRequestIds = new Set();
 const adoptedRunRecoveryRequestIds = new Set();
 const clearedConversationRunRequestIds = new Set();
 let recommendationsRequestId = 0;
@@ -2335,6 +2336,8 @@ async function renderClearedConversationForTab(tabId) {
   if (!clearResult?.ok || clearResult?.skipped) {
     throw new Error(clearResult?.error || 'Unable to clear tab chat.');
   }
+  setTabProcessing(tabId, false);
+  setTabAbortRequested(tabId, false);
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
   clearPendingAttachmentsForTab(tabId);
@@ -2347,6 +2350,8 @@ async function renderClearedConversationForTab(tabId) {
   resetChatNavigation();
   renderedTabId = tabId;
   messagesEl.innerHTML = '';
+  currentAssistantEl = null;
+  hideActivity();
   inputEl.value = '';
   autoResizeInput();
   syncSendButtonState();
@@ -2963,6 +2968,7 @@ async function scheduledJobAction(action, jobId) {
 }
 
 async function drainQueuedPromptsAfterRunSettles() {
+  if (isConversationClearInProgress()) return;
   if (drainQueuedComposerMessageForCurrentTab()) return;
   drainQueuedContextMenuPrompts();
 }
@@ -4547,12 +4553,14 @@ async function adoptRestoredRunState(tabId, state) {
     }
   } finally {
     adoptedRunRecoveryRequestIds.delete(requestId);
-    if (localRunRequestIds.get(Number(tabId)) === requestId) {
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
+    const ownsRunState = localRunRequestIds.get(Number(tabId)) === requestId;
+    if (ownsRunState) {
       localRunRequestIds.delete(Number(tabId));
       setTabProcessing(tabId, false);
       setTabAbortRequested(tabId, false);
     }
-    if (sameTabId(currentTabId, tabId)) {
+    if (ownsRunState && sameTabId(currentTabId, tabId)) {
       if (assistantEl) finalizeSteps(assistantEl);
       syncSendButtonState();
       hideActivity();
@@ -7641,12 +7649,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/reset') {
+    const clearingRequestId = localRunRequestIdForTab(tabId);
     setConversationClearInProgress(tabId, true);
     try {
-      suppressRunUpdatesForClearedConversation(tabId);
-      if (isTabProcessing(tabId)) await abortRun(tabId);
+      if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
       await sendToBackground('clear_conversation', { tabId });
+      suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
       await renderClearedConversationForTab(tabId);
+    } catch (error) {
+      showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
     } finally {
       setConversationClearInProgress(tabId, false);
     }
@@ -8450,6 +8461,7 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } catch (e) {
+    if (clearedConversationRunRequestIds.has(requestId)) return accepted;
     reconcileFailedSelectionGroundedStart(tabId, {
       sourceGrounding,
       selectionGroundedBeforeSend,
@@ -8504,13 +8516,16 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } finally {
-    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    const ownsRunState = localRunRequestIds.get(tabId) === requestId;
+    if (ownsRunState) localRunRequestIds.delete(tabId);
     cancelledRunRecoveryRequestIds.delete(requestId);
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
     if (activeChatPayloadsByTab.get(tabId) === activePayloadState) {
       scheduleActiveChatPayloadCleanup(tabId, activePayloadState);
     }
-    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
     clearAssistantTextStreamState(assistantEl);
+    if (!ownsRunState) return accepted;
+    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
     // Chime the user when the agent finishes. We play on both success and
     // error completion — anything that wasn't an explicit user abort. The
     // sound is what takes them from "glance back at the tab" to "know it's
@@ -8838,18 +8853,29 @@ function ensureCurrentRunAssistant(msg) {
   return assistantEl;
 }
 
-function suppressRunUpdatesForClearedConversation(tabId) {
-  const requestId = String(
+function localRunRequestIdForTab(tabId) {
+  return String(
     localRunRequestIds.get(Number(tabId))
       || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
       || '',
   );
+}
+
+function suppressRunUpdatesForClearedConversation(tabId, requestId = localRunRequestIdForTab(tabId)) {
+  requestId = String(requestId || '');
   if (!requestId) return;
   // Runtime messages are delivered asynchronously. Keep recently cleared
   // request IDs so a terminal update already queued by the background cannot
   // recreate an assistant bubble after the empty conversation is rendered.
   clearedConversationRunRequestIds.delete(requestId);
   clearedConversationRunRequestIds.add(requestId);
+  if (localRunFollowers.get(Number(tabId))?.requestId === requestId) {
+    cancelledRunRecoveryRequestIds.add(requestId);
+    conversationClearFollowerCancellationRequestIds.add(requestId);
+  }
+  if (localRunRequestIds.get(Number(tabId)) === requestId) {
+    localRunRequestIds.delete(Number(tabId));
+  }
   while (clearedConversationRunRequestIds.size > 100) {
     clearedConversationRunRequestIds.delete(clearedConversationRunRequestIds.values().next().value);
   }
@@ -11351,10 +11377,13 @@ async function continueAgent(options = {}) {
       addMessage('error', t('sp.error_prefix', { msg: e.message }));
     }
   } finally {
-    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    const ownsRunState = localRunRequestIds.get(tabId) === requestId;
+    if (ownsRunState) localRunRequestIds.delete(tabId);
     cancelledRunRecoveryRequestIds.delete(requestId);
-    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
     clearAssistantTextStreamState(assistantEl);
+    if (!ownsRunState) return;
+    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     if (currentTabId === tabId) {
@@ -12024,6 +12053,7 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   const tabId = Number(payload?.tabId);
   const requestId = String(payload?.requestId || '');
   cancelledRunRecoveryRequestIds.delete(requestId);
+  conversationClearFollowerCancellationRequestIds.delete(requestId);
   const promise = runDetachedWithReconnect({
     initialAction,
     payload,
@@ -12039,6 +12069,7 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
     },
     shouldResume: () => !isTabAbortRequested(tabId)
       && !cancelledRunRecoveryRequestIds.has(requestId),
+    shouldContinue: () => !conversationClearFollowerCancellationRequestIds.has(requestId),
     onStatus: ({ phase }) => {
       if (!sameTabId(currentTabId, tabId)) return;
       if (phase === 'reconnecting' || phase === 'retrying_start') {
@@ -12354,6 +12385,22 @@ async function abortRun(tabId = currentTabId) {
     await follower.promise.catch(() => {});
     fallbackCancelled = true;
     clearTimeout(fallbackTimer);
+  }
+}
+
+const CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS = 2_000;
+
+async function abortRunForConversationClear(tabId, requestId = localRunRequestIdForTab(tabId)) {
+  requestId = String(requestId || '');
+  if (requestId) conversationClearFollowerCancellationRequestIds.add(requestId);
+  let timeoutId = null;
+  const timeout = new Promise(resolve => {
+    timeoutId = setTimeout(resolve, CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([abortRun(tabId).catch(() => {}), timeout]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
 }
 
@@ -13209,16 +13256,20 @@ async function startNewConversationForTab(tabId) {
   if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return false;
   if (!await requestNewConversationConfirmation(tabId)) return false;
   if (!sameTabId(currentTabId, tabId)) return false;
+  const clearingRequestId = localRunRequestIdForTab(tabId);
   setConversationClearInProgress(tabId, true);
   try {
-    suppressRunUpdatesForClearedConversation(tabId);
+    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
+    if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
+    await sendToBackground('clear_conversation', { tabId });
+    suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
     clearQueuedComposerMessagesForTab(tabId);
     clearQueuedForTab(tabId);
-    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
-    if (isTabProcessing(tabId)) await abortRun(tabId);
-    await sendToBackground('clear_conversation', { tabId });
     await renderClearedConversationForTab(tabId);
     return true;
+  } catch (error) {
+    showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
+    return false;
   } finally {
     setConversationClearInProgress(tabId, false);
   }

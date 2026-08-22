@@ -29,6 +29,13 @@ const Z_AI_STREAM_TERMINAL_FINISH_REASONS = new Set([
   'model_context_window_exceeded',
 ]);
 
+function sseDataPayload(line) {
+  const normalized = String(line || '').replace(/\r$/, '');
+  if (!normalized.startsWith('data:')) return null;
+  const value = normalized.slice(5);
+  return value.startsWith(' ') ? value.slice(1) : value;
+}
+
 /**
  * Provider for OpenAI-compatible APIs (ChatGPT, OpenRouter, any OpenAI-compatible endpoint).
  */
@@ -861,10 +868,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const payload = trimmed.slice(6);
-        if (payload === '[DONE]') {
+        const payload = sseDataPayload(line);
+        if (payload == null) continue;
+        if (payload.trim() === '[DONE]') {
           // Responses must finish with response.completed so we can retain
           // the complete output Items used for encrypted reasoning replay.
           // A bare legacy sentinel is therefore an incomplete stream, not a
@@ -1038,10 +1044,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const payload = trimmed.slice(6);
-        if (payload === '[DONE]') {
+        const payload = sseDataPayload(line);
+        if (payload == null) continue;
+        if (payload.trim() === '[DONE]') {
           if (finalUsage) yield { type: 'usage', usage: finalUsage };
           yield {
             type: 'done',

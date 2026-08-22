@@ -9150,6 +9150,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /_losslessTotalEstimate \+= addedBytes;[\s\S]*?if \(_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP\) return;/, `${browser}: eviction scan is not gated by a cached running total`);
     assert.match(recorderSource, /async function _scanLosslessTotal\(\)[\s\S]*?objectStore\('runs'\)\.openCursor\(\)/, `${browser}: lossless total must scan every run, not a newest-N window`);
     assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
+    assert.match(recorderSource, /new TextEncoder\(\)\.encode\(JSON\.stringify\(resolvedData\)\)\.length/, `${browser}: lossless budgets should count serialized UTF-8 bytes`);
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
@@ -34177,13 +34178,21 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
-      `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
+      `${label}: confirmed New conversation should preserve queued prompts until the bounded background clear succeeds`,
     );
     assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
+    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(\) \{[\s\S]*?if \(isConversationClearInProgress\(\)\) return;/, `${label}: a settling run must not drain queued prompts into an in-flight clear`);
     assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
-    assert.match(panel, /function suppressRunUpdatesForClearedConversation\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
+    assert.match(panel, /function localRunRequestIdForTab\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?function suppressRunUpdatesForClearedConversation\(tabId, requestId = localRunRequestIdForTab\(tabId\)\)/, `${label}: clear should capture its request before waiting for the follower to settle`);
+    assert.match(panel, /function suppressRunUpdatesForClearedConversation\([\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
+    assert.match(panel, /function suppressRunUpdatesForClearedConversation\([\s\S]*?localRunFollowers\.get\(Number\(tabId\)\)\?\.requestId === requestId[\s\S]*?cancelledRunRecoveryRequestIds\.add\(requestId\);[\s\S]*?conversationClearFollowerCancellationRequestIds\.add\(requestId\);[\s\S]*?localRunRequestIds\.delete\(Number\(tabId\)\)/, `${label}: a successful clear should cancel a lingering follower and revoke the old request's ownership before rendering the new conversation`);
+    assert.match(panel, /async function sendRunWithReconnect\([\s\S]*?shouldContinue: \(\) => !conversationClearFollowerCancellationRequestIds\.has\(requestId\)/, `${label}: conversation clear should cancel the local follower at its next bounded poll`);
+    assert.match(panel, /const CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS = 2_000;[\s\S]*?async function abortRunForConversationClear\(tabId, requestId = localRunRequestIdForTab\(tabId\)\) \{[\s\S]*?conversationClearFollowerCancellationRequestIds\.add\(requestId\);[\s\S]*?Promise\.race\(\[abortRun\(tabId\)\.catch\(\(\) => \{\}\), timeout\]\)[\s\S]*?clearTimeout\(timeoutId\)/, `${label}: local follower settlement must not reintroduce an unbounded clear wait`);
+    assert.match(panel, /const ownsRunState = localRunRequestIds\.get\(tabId\) === requestId;[\s\S]*?if \(!ownsRunState\) return accepted;/, `${label}: a cleared chat run should not finalize a newer run's UI state`);
+    assert.match(panel, /catch \(e\) \{\s*if \(clearedConversationRunRequestIds\.has\(requestId\)\) return accepted;\s*reconcileFailedSelectionGroundedStart/, `${label}: a cleared chat run should not restore its old scope or attachments`);
+    assert.match(panel, /async function continueAgent\([\s\S]*?const ownsRunState = localRunRequestIds\.get\(tabId\) === requestId;[\s\S]*?if \(!ownsRunState\) return;/, `${label}: a cleared continuation should not finalize a newer run's UI state`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
   }
@@ -34239,7 +34248,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {'),
       panel.indexOf('\n\nfunction settleNewConversationConfirmation', panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {')),
     ), /setSelectionGroundedForTab/, `${label}: uncertain failed starts should not clear the fail-closed local scope before reconciliation`);
-    assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: all chat-start failures should reconcile both explicit and inherited selected-text state`);
+    assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*if \(clearedConversationRunRequestIds\.has\(requestId\)\) return accepted;\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: non-cleared chat-start failures should reconcile both explicit and inherited selected-text state`);
     assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful clear entry point should drop local selected-text state`);
 
     const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
@@ -34334,6 +34343,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       `(() => { ${panel.slice(reconnectStart, reconnectEnd)}; return sendRunWithReconnect; })()`,
       {
         cancelledRunRecoveryRequestIds: { delete() {} },
+        conversationClearFollowerCancellationRequestIds: { has() { return false; }, delete() {} },
         runDetachedWithReconnect: async (options) => {
           await options.onState({ sourceGrounding });
           return { content: 'ok' };
@@ -34359,7 +34369,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
   }
 });
 
-test('background waits for an active run to stop before clearing its conversation', () => {
+test('background bounds the active-run stop wait before clearing its conversation', async () => {
   for (const [label, backgroundRel] of [
     ['chrome', 'src/chrome/src/background.js'],
     ['firefox', 'src/firefox/src/background.js'],
@@ -34367,12 +34377,64 @@ test('background waits for an active run to stop before clearing its conversatio
     const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
     const helperMatch = background.match(/async function stopActiveRunBeforeConversationClear\(tabId\) \{([\s\S]*?)\n\}/);
     assert.ok(helperMatch, `${label}: active-run clear helper missing`);
+    assert.match(background, /const CONVERSATION_CLEAR_STOP_TIMEOUT_MS = 10_000;/, `${label}: clear wait timeout missing`);
     assert.match(helperMatch[1], /cancelDetachedRunStart\(tabId\);[\s\S]*?agent\.abort\(tabId\);[\s\S]*?await activeStart\.promise\.catch\(\(\) => \{\}\);/, `${label}: clear helper should cancel, abort, and await detached runs`);
-    assert.match(helperMatch[1], /while \(agent\.activeRunState\(tabId\)\?\.running\) \{[\s\S]*?setTimeout\(resolve, 50\)/, `${label}: clear helper should also wait for direct chat runs to release the agent guard`);
+    assert.match(helperMatch[1], /while \(!timedOut && agent\.activeRunState\(tabId\)\?\.running\) \{[\s\S]*?setTimeout\(resolve, 50\)/, `${label}: direct chat polling should stop at the deadline`);
+    assert.match(helperMatch[1], /Promise\.race\(\[unwind, timeout\]\)[\s\S]*?clearTimeout\(timeoutId\)/, `${label}: detached and direct waits should share one bounded deadline`);
+
+    const detachedRunStarts = new Map([[7, { promise: new Promise(() => {}) }]]);
+    const stopActiveRunBeforeConversationClear = vm.runInNewContext(
+      `(${helperMatch[0]})`,
+      {
+        detachedRunStarts,
+        cancelDetachedRunStart: () => true,
+        agent: { activeRunState: () => ({ running: true }), abort: () => {} },
+        CONVERSATION_CLEAR_STOP_TIMEOUT_MS: 5,
+        setTimeout,
+        clearTimeout,
+      },
+    );
+    await assert.rejects(
+      stopActiveRunBeforeConversationClear(7),
+      /active run did not stop within 10 seconds/,
+      `${label}: a wedged detached start should reject instead of hanging forever`,
+    );
 
     const clearStart = background.indexOf("case 'clear_conversation':");
     const clearBody = background.slice(clearStart, background.indexOf("case 'compact_conversation':", clearStart));
     assert.match(clearBody, /const conversationId = await agent\.getConversationId\(tabId\);[\s\S]*?await stopActiveRunBeforeConversationClear\(tabId\);[\s\S]*?await scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: active runs should settle before old-conversation jobs and state are cleared`);
+  }
+});
+
+test('duplicate typing identity is cleared on navigation and tab cleanup', () => {
+  for (const [label, prefix, AgentClass] of [
+    ['chrome', 'src/chrome', AgentCh],
+    ['firefox', 'src/firefox', AgentFx],
+  ]) {
+    const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const agent = Object.create(AgentClass.prototype);
+    agent._lastTypeFieldIdent = new Map([[17, 'focused:INPUT|email']]);
+    const staleEpoch = agent._captureLastTypeFieldEpoch(17);
+    agent.clearLastTypeFieldIdent(17);
+    assert.equal(agent._lastTypeFieldIdent.has(17), false, `${label}: navigation cleanup should delete the tab identity`);
+    assert.equal(
+      agent._rememberLastTypeFieldIdent(17, 'focused:INPUT|email', staleEpoch),
+      false,
+      `${label}: a type operation started before navigation should not restore stale identity`,
+    );
+    assert.equal(agent._lastTypeFieldIdent.has(17), false, `${label}: stale identity writes should be discarded`);
+    const currentEpoch = agent._captureLastTypeFieldEpoch(17);
+    assert.equal(agent._rememberLastTypeFieldIdent(17, 'focused:INPUT|email', currentEpoch), false, `${label}: first type on the new page should not warn`);
+    assert.equal(agent._rememberLastTypeFieldIdent(17, 'focused:INPUT|email', currentEpoch), true, `${label}: repeated type on the same page should still warn`);
+    assert.match(agentSource, /_cleanupTab\(tabId,[\s\S]*?this\._lastTypeFieldIdent\?\.delete\(tabId\)[\s\S]*?this\._lastTypeFieldEpoch\?\.delete\(tabId\)/, `${label}: tab cleanup should release duplicate-typing state and epochs`);
+    assert.match(background, /frameId !== 0\) return;[\s\S]*?agent\.clearLastTypeFieldIdent\(details\.tabId\)|function recordNav\(tabId,[\s\S]*?agent\.clearLastTypeFieldIdent\(tabId\)/, `${label}: top-level navigation should reset duplicate-typing state`);
+    assert.match(content, /const fieldIdent = `\$\{location\.href\}\|\$\{el\.tagName\}/, `${label}: content-script fallback identity should be scoped to the current route`);
+    if (label === 'chrome') {
+      assert.equal((agentSource.match(/const typeFieldEpoch = this\._captureLastTypeFieldEpoch\(tabId\);/g) || []).length, 3, 'chrome: every CDP type path should capture its navigation epoch before dispatch');
+      assert.equal((agentSource.match(/this\._rememberLastTypeFieldIdent\(tabId, fieldIdent, typeFieldEpoch\)/g) || []).length, 3, 'chrome: every CDP type path should reject stale post-navigation writes');
+    }
   }
 });
 
@@ -58420,6 +58482,50 @@ test('Chat Completions streaming rejects premature EOF and accepts terminal comp
         { type: 'text', content: 'done' },
         { type: 'done', content: '', finishReason: 'stop' },
       ], `${label}: terminal finish_reason should complete the stream`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI SSE parsers accept data fields without the optional space', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, Provider] of [
+      ['chrome', OpenAIProviderCh],
+      ['firefox', OpenAIProviderFx],
+    ]) {
+      globalThis.fetch = async () => new Response([
+        `data:${JSON.stringify({ choices: [{ delta: { content: 'chat' } }] })}\n\n`,
+        'data:[DONE]\n\n',
+      ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      const chatProvider = new Provider({
+        providerName: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.5',
+      });
+      const chatChunks = [];
+      for await (const chunk of chatProvider.chatStream([{ role: 'user', content: 'hello' }])) chatChunks.push(chunk);
+      assert.deepEqual(chatChunks, [
+        { type: 'text', content: 'chat' },
+        { type: 'done', content: '' },
+      ], `${label}: Chat Completions dropped a spec-valid data: line`);
+
+      globalThis.fetch = async () => new Response([
+        `data:${JSON.stringify({ type: 'response.output_text.delta', delta: 'responses' })}\n\n`,
+        `data:${JSON.stringify({ type: 'response.completed', response: { output: [] } })}\n\n`,
+      ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      const responsesProvider = new Provider({
+        providerName: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.6-terra',
+      });
+      const responseChunks = [];
+      for await (const chunk of responsesProvider.chatStream([{ role: 'user', content: 'hello' }])) responseChunks.push(chunk);
+      assert.deepEqual(responseChunks, [
+        { type: 'text', content: 'responses' },
+        { type: 'done', content: '', responseItems: [] },
+      ], `${label}: Responses API dropped a spec-valid data: line`);
     }
   } finally {
     globalThis.fetch = originalFetch;
@@ -85729,6 +85835,44 @@ test('detached runs reconnect to a live request without starting it twice', asyn
     assert.ok(statuses.includes('reconnecting'), `${label}: reconnecting status should be visible`);
     assert.ok(statuses.includes('reconnected'), `${label}: reconnected status should be visible`);
     assert.deepEqual(replayedStates, ['running', 'completed'], `${label}: missed UI journal states should be replayable after reconnect`);
+  }
+});
+
+test('detached run followers honor local cancellation before their next state probe', async () => {
+  for (const [label, runDetachedWithReconnect] of [
+    ['chrome', runDetachedWithReconnectCh],
+    ['firefox', runDetachedWithReconnectFx],
+  ]) {
+    const requestId = `${label}-locally-cancelled-follower`;
+    let shouldContinue = true;
+    let starts = 0;
+    let probes = 0;
+    let waits = 0;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 42, requestId, mode: 'act', text: 'stop this run' },
+        start: async () => {
+          starts += 1;
+          return { accepted: true, requestId };
+        },
+        probe: async () => {
+          probes += 1;
+          return { running: true, runUi: { requestId, status: 'running', events: [] } };
+        },
+        shouldContinue: () => shouldContinue,
+        isConnectionError: () => false,
+        wait: async () => {
+          waits += 1;
+          shouldContinue = false;
+        },
+      }),
+      /Run recovery was cancelled/,
+      `${label}: aborting the local follower should not wait for a terminal journal that clear may remove`,
+    );
+    assert.equal(starts, 1, `${label}: cancellation should not restart the request`);
+    assert.equal(waits, 1, `${label}: cancellation should be observed at the first poll boundary`);
+    assert.equal(probes, 0, `${label}: a cancelled follower should not race conversation clear with another probe`);
   }
 });
 

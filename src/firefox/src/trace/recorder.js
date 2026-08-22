@@ -343,7 +343,7 @@ async function _appendEventNow(runId, kind, data) {
     await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
       let bytes = 0;
-      try { bytes = JSON.stringify(resolvedData).length; } catch {}
+      try { bytes = new TextEncoder().encode(JSON.stringify(resolvedData)).length; } catch {}
       state.losslessBytes = (state.losslessBytes || 0) + bytes;
       const run = await promisifyReq(tx(db, ['runs']).objectStore('runs').get(runId));
       if (run?.lossless === true) {

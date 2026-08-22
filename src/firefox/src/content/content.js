@@ -2192,7 +2192,7 @@
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
 
     // Duplicate-field detection
-    const fieldIdent = `${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
+    const fieldIdent = `${location.href}|${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
     let typeWarning;
     if (_lastTypeFieldIdent === fieldIdent) {
       typeWarning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
