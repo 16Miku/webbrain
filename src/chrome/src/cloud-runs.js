@@ -14,7 +14,7 @@ const CLOUD_PERSIST_BYTES_LIMIT = 4 * 1024 * 1024;
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
 // Suffix match on normalized keys (non-alnum stripped). Avoid bare `pin` as a
 // suffix — it over-matches `spin`, `mapPin`, etc. Short exact keys live in the set.
-const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
+const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime|recovery)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
 const SENSITIVE_CLOUD_KEY_EXACT = new Set(['code', 'pin', 'otp', 'cvv', 'cvc', 'ssn']);
 const LARGE_IMAGE_KEY = /(?:attachimage|screenshot|image|imagedata|dataurl)$/i;
 const CLOUD_TEXT_ENTRY_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
@@ -81,7 +81,7 @@ export function normalizeCloudBridgeUrl(value = DEFAULT_CLOUD_BRIDGE_URL) {
   return url.href;
 }
 
-function isSensitiveCloudKey(key) {
+export function isSensitiveCloudKey(key) {
   const normalizedKey = normalizedCloudKey(key);
   if (!normalizedKey) return false;
   return SENSITIVE_CLOUD_KEY.test(normalizedKey) || SENSITIVE_CLOUD_KEY_EXACT.has(normalizedKey);

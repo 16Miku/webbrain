@@ -584,6 +584,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Bei jedem Schritt',
   'st.display.tracing.label': 'Traces aufzeichnen (zum Modellvergleich)',
   'st.display.tracing.desc_html': 'Speichert jeden Durchlauf in der lokalen IndexedDB, damit Sie Modelle seitenweise inspizieren und vergleichen können. <a href="traces.html" target="_blank" style="color:var(--accent);">Traces öffnen →</a>',
+  'st.display.lossless_tracing.label': 'Vollständige Anforderungsdetails aufzeichnen (Debug-Stufe)',
+  'st.display.lossless_tracing.desc_html': 'Speichert zusätzlich die vollständigen Prompts, Nachrichten und Tool-Schemata jeder LLM-Anfrage statt inhaltsloser Zusammenfassungen und behält bis zu 200 KB jedes Tool-Ergebnisses. Ermöglicht tiefes Debugging und die Rekonstruktion von Anfragen. Standardmäßig aus, weil es Ihren Gesprächsinhalt lokal schreibt und deutlich mehr Speicherplatz benötigt. Erfordert aktivierte Trace-Aufzeichnung.',
   'st.display.cost_session_limit.label': 'Cloud-Kosten-Sitzungskontingent',
   'st.display.cost_session_limit.desc': 'Stoppt Cloud- und OpenRouter-Durchläufe vor einem weiteren kostenpflichtigen Modellaufruf, wenn diese Sitzung das Kostenkontingent erreicht.',
   'st.display.cost_total_limit.label': 'Cloud-Kosten-Gesamtkontingent',
@@ -912,6 +914,8 @@ export default {
   'hist.confirm_clear_all': 'ALLE gespeicherten Gespräche löschen? Dies kann nicht rückgängig gemacht werden.',
   // --- Traces ---
   'tr.title': 'WebBrain Traces',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} Durchläufe',
   'tr.run': '{n} Durchlauf',
   'tr.btn.refresh': '↻ Aktualisieren',

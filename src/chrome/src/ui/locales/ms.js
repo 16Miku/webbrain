@@ -267,6 +267,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Setiap langkah',
   'st.display.tracing.label': 'Rakam jejak (untuk perbandingan model)',
   'st.display.tracing.desc_html': 'Simpan setiap larian (permintaan LLM, respons, panggilan alat, tangkapan skrin) ke dalam IndexedDB tempatan supaya anda boleh memeriksa dan membandingkan model secara bersebelahan. Dibuka dalam tab Jejak yang berasingan. Dimatikan secara lalai kerana ia menambah penulisan cakera pada setiap langkah. <a href="traces.html" target="_blank" style="color:var(--accent);">Buka halaman Jejak →</a>',
+  'st.display.lossless_tracing.label': 'Rekod butiran penuh permintaan (peringkat debug)',
+  'st.display.lossless_tracing.desc_html': 'Juga menyimpan prompt, mesej, dan skema alatan penuh bagi setiap permintaan LLM dan bukannya ringkasan tanpa kandungan, serta mengekalkan sehingga 200 KB bagi setiap hasil alatan. Membolehkan penyahpepijatan mendalam dan pembinaan semula permintaan. Dimatikan secara lalai kerana menulis kandungan perbualan anda secara setempat dan menggunakan lebih banyak cakera. Memerlukan rakaman jejak dihidupkan.',
   'st.display.allow_local_network.label': 'Benarkan ejen mengakses rangkaian tempatan',
   'st.display.allow_local_network.desc': 'Membenarkan alat fetch_url ejen mencapai loopback (127.0.0.1, localhost) dan alamat peribadi/RFC1918 (10.x, 192.168.x, 172.16–31.x). Berguna untuk pelayan pembangunan tempatan, alat intranet, atau API yang dihos sendiri. Dimatikan secara lalai — apabila dimatikan, halaman yang disuntik prompt-injection tidak boleh mendorong ejen untuk meneliti rangkaian tempatan anda. Alamat metadata awan (169.254.169.254) dan nama hos *.internal/*.local kekal disekat walaupun dihidupkan.',
   'st.display.notify_sound.label': 'Bunyi selesai',
@@ -346,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Keselamatan — sila baca:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Teks yang anda masukkan di sini disimpan <strong>sebagai teks biasa</strong> dalam storan tempatan pelayar anda. Ia <strong>tidak</strong> dihantar kepada projek WebBrain — tetapi <strong>dihantar</strong> kepada pembekal LLM yang anda konfigurasikan pada setiap giliran, sebagai sebahagian daripada system prompt.</li><li><strong>Jangan letakkan kata laluan untuk akaun penting</strong> di sini (Google, Apple, iCloud, perbankan, SSO kerja, e-mel utama). Akaun-akaun itu sepatutnya menggunakan 2FA dan anda sememangnya tidak perlu menyerahkannya kepada ejen.</li><li>Kes penggunaan yang dimaksudkan ialah <strong>kata laluan pakai buang</strong> yang anda guna semula untuk pendaftaran laman berisiko rendah (surat berita, percubaan percuma, akaun forum).</li><li>Jika profil pelayar ini diceroboh, penyerang yang mempunyai akses cakera boleh membaca teks ini. Kekalkan ia seminimum mungkin.</li></ul>',
 
   'tr.title': 'Jejak WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} larian',
   'tr.run': '{n} larian',
   'tr.btn.refresh': '↻ Muat semula',

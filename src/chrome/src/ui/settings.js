@@ -108,6 +108,7 @@ const planReviewConfidenceRow = document.getElementById('row-plan-review-confide
 const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
 const tracingToggle = document.getElementById('toggle-tracing');
+const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
 const cloudBridgeToggle = document.getElementById('toggle-cloud-bridge');
@@ -698,7 +699,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -770,6 +771,10 @@ async function init() {
   notifySoundToggle.checked = stored.notifySound ?? true; // on by default
   completionConfettiToggle.checked = stored.completionConfetti ?? true; // on by default
   tracingToggle.checked = stored.tracingEnabled === true;
+  losslessTracingToggle.checked = stored.losslessTrace === true;
+  // Lossless recording only means something when tracing is on; mirror the
+  // disabled state so the disclosure reads honestly.
+  losslessTracingToggle.disabled = tracingToggle.checked !== true;
   const sessionLimit = normalizeCostAmount(stored.costAllowanceSessionUsd);
   const totalLimit = normalizeCostAmount(stored.costAllowanceTotalUsd);
   const totalSpent = normalizeCostAmount(stored.meteredProviderCostSpentUsd, 0);
@@ -1459,6 +1464,15 @@ completionConfettiToggle.addEventListener('change', async () => {
 
 tracingToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ tracingEnabled: tracingToggle.checked }).catch(() => {});
+  losslessTracingToggle.disabled = tracingToggle.checked !== true;
+  if (!tracingToggle.checked) {
+    losslessTracingToggle.checked = false;
+    await chrome.storage.local.set({ losslessTrace: false }).catch(() => {});
+  }
+});
+
+losslessTracingToggle.addEventListener('change', async () => {
+  await chrome.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
 });
 
 costSessionLimitInput?.addEventListener('change', async () => {

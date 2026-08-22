@@ -267,6 +267,8 @@ export default {
   'st.display.auto_screenshot.every_step': '每一步',
   'st.display.tracing.label': '记录轨迹（用于模型对比）',
   'st.display.tracing.desc_html': '将每次运行（LLM 请求、响应、工具调用、截图）持久化到本地 IndexedDB，以便并排查看和对比模型。在独立的轨迹页打开。因为每步都会写盘，默认关闭。<a href="traces.html" target="_blank" style="color:var(--accent);">打开轨迹页 →</a>',
+  'st.display.lossless_tracing.label': '记录完整请求详情（调试档）',
+  'st.display.lossless_tracing.desc_html': '同时持久化每次 LLM 请求的完整提示词、消息与工具结构（而非无内容摘要），并保留每个工具结果最多 200 KB。支持深度调试与请求重建。默认关闭，因为会在本地写入对话内容并占用更多磁盘。需要先开启记录轨迹。',
   'st.display.allow_local_network.label': '允许代理访问本地网络',
   'st.display.allow_local_network.desc': '允许代理的 fetch_url 工具访问回环（127.0.0.1、localhost）和私有/RFC1918 地址（10.x、192.168.x、172.16–31.x）。用于本地开发服务器、内网工具或自托管 API。默认关闭 — 关闭时，含 prompt 注入的页面无法引导代理探测你的本地网络。即使开启，云元数据地址（169.254.169.254）和 *.internal/*.local 主机名仍然会被阻止。',
   'st.display.notify_sound.label': '完成提示音',
@@ -346,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>安全提示 — 请阅读：</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>你在这里输入的文本以<strong>明文</strong>保存在浏览器的本地存储中。它<strong>不会</strong>被发送到 WebBrain 项目 — 但<strong>会</strong>在每一轮作为系统提示的一部分发送给你所配置的 LLM 提供商。</li><li><strong>不要在这里放重要账户的密码</strong>（Google、Apple、iCloud、银行、工作 SSO、主邮箱）。这些账户应启用 2FA，也本就不该交给代理。</li><li>适合此处的是你用于低风险注册（时事通讯、免费试用、论坛账户）的<strong>一次性密码</strong>。</li><li>如果此浏览器配置文件被攻破，能访问磁盘的攻击者就能读到此文本。请尽量精简。</li></ul>',
 
   'tr.title': 'WebBrain 轨迹',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} 次运行',
   'tr.run': '{n} 次运行',
   'tr.btn.refresh': '↻ 刷新',

@@ -267,6 +267,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'À chaque étape',
   'st.display.tracing.label': 'Enregistrer les traces (pour comparer des modèles)',
   'st.display.tracing.desc_html': 'Conserve chaque exécution (requêtes LLM, réponses, appels d\'outils, captures) dans IndexedDB local pour pouvoir inspecter et comparer les modèles côte à côte. S\'ouvre dans un onglet Traces distinct. Désactivé par défaut car cela ajoute des écritures disque à chaque étape. <a href="traces.html" target="_blank" style="color:var(--accent);">Ouvrir la page Traces →</a>',
+  'st.display.lossless_tracing.label': 'Enregistrer les détails complets des requêtes (niveau débogage)',
+  'st.display.lossless_tracing.desc_html': 'Conserve aussi les prompts, messages et schémas d\'outils complets de chaque requête LLM au lieu de résumés sans contenu, et garde jusqu\'à 200 Ko de chaque résultat d\'outil. Permet un débogage approfondi et la reconstruction des requêtes. Désactivé par défaut car cela écrit localement le contenu de votre conversation et utilise beaucoup plus d\'espace disque. Nécessite que l\'enregistrement des traces soit activé.',
   'st.display.allow_local_network.label': 'Autoriser l\'agent à accéder au réseau local',
   'st.display.allow_local_network.desc': 'Permet à l\'outil fetch_url de l\'agent d\'atteindre les adresses loopback (127.0.0.1, localhost) et privées/RFC1918 (10.x, 192.168.x, 172.16–31.x). Utile pour les serveurs de dev locaux, outils intranet ou API auto-hébergées. Désactivé par défaut — quand désactivé, des pages avec injection de prompt ne peuvent pas pousser l\'agent à sonder votre réseau local. Les adresses de méta-données cloud (169.254.169.254) et les noms d\'hôte *.internal/*.local restent bloqués même quand activé.',
   'st.display.notify_sound.label': 'Son de fin',
@@ -346,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Sécurité — à lire :</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Le texte que vous saisissez ici est stocké <strong>en clair</strong> dans le stockage local de votre navigateur. Il n\'est <strong>pas</strong> transmis au projet WebBrain — mais il <strong>est</strong> envoyé au fournisseur de LLM que vous avez configuré à chaque tour, dans le cadre du prompt système.</li><li><strong>Ne mettez pas ici les mots de passe de comptes importants</strong> (Google, Apple, iCloud, banque, SSO professionnel, e-mail principal). Ces comptes devraient utiliser la 2FA et vous ne devriez pas avoir à les confier à un agent.</li><li>Un <strong>mot de passe jetable</strong> que vous réutilisez pour des inscriptions peu sensibles (newsletters, essais gratuits, comptes de forum) est l\'usage prévu.</li><li>Si ce profil de navigateur est un jour compromis, un attaquant ayant accès au disque pourra lire ce texte. Gardez-le au minimum.</li></ul>',
 
   'tr.title': 'Traces WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} exécutions',
   'tr.run': '{n} exécution',
   'tr.btn.refresh': '↻ Actualiser',

@@ -8,6 +8,7 @@ import {
   deleteRun, clearAllRuns, repairStaleRuns,
 } from '../trace/recorder.js';
 import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
+import { sanitizeTraceExport } from '../agent/trace-export.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 
@@ -121,6 +122,9 @@ function renderList() {
       compareIds.includes(r.runId) ? 'compare' : '',
     ].filter(Boolean).join(' ');
     const title = r.userMessage || t('tr.no_task');
+    const losslessBadge = r.lossless === true
+      ? `<span class="lossless-badge" title="${escapeAttr(t('tr.lossless.warning'))}">${escapeHtml(t('tr.lossless.badge'))}</span>`
+      : '';
     const siblings = siblingsOf(r);
     const convChip = siblings.length > 1
       ? `<span class="conv-chip" title="${escapeAttr(t('tr.conversation.tooltip', { n: siblings.length, id: r.conversationId }))}">🧵 ${siblings.length}</span>`
@@ -131,7 +135,7 @@ function renderList() {
     const costClass = isCostlyFailure ? 'cost-warn' : '';
     return `
       <div class="${cls}" data-run-id="${escapeAttr(r.runId)}">
-        <div class="run-title"><span class="status-dot ${statusClass}"></span>${escapeHtml(title.slice(0, 120))}${convChip}</div>
+        <div class="run-title"><span class="status-dot ${statusClass}"></span>${escapeHtml(title.slice(0, 120))}${losslessBadge}${convChip}</div>
         <div class="run-meta">
           <span class="run-model">${escapeHtml(r.model || '?')}</span>
           <span>${escapeHtml(r.providerId || '')}</span>
@@ -271,6 +275,7 @@ async function buildRunView(run, events, compact, objectUrls = new Set()) {
       <span class="stat">${escapeHtml(t('tr.outtokens.label'))} <b>${(run.totalOutputTokens || 0).toLocaleString()}</b></span>
       ${formatCost(run.totalCost) ? `<span class="stat">${escapeHtml(t('tr.cost.label'))} <b>${escapeHtml(formatCost(run.totalCost))}</b></span>` : ''}
     </div>
+    ${run.lossless === true ? `<div class="lossless-warning" role="alert">${escapeHtml(t('tr.lossless.warning'))}</div>` : ''}
     ${renderConversationPanel(run, compact)}
     <div class="run-task">${escapeHtml(run.userMessage || '')}</div>
     ${run.finalContent ? `<div class="run-task" style="border-left-color:var(--success);"><b style="color:var(--success);">${escapeHtml(t('tr.final_label'))}</b> ${escapeHtml(run.finalContent)}</div>` : ''}
@@ -541,7 +546,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     exportedByWebBrainVersion: browser.runtime.getManifest().version || '',
     schema: 'webbrain-trace/1',
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(sanitizeTraceExport(payload), null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
