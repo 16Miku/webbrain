@@ -3019,6 +3019,11 @@ async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId) {
   try {
     runState = await sendToBackground('agent_run_state', { tabId: numericTabId });
   } catch { /* retry while a queued prompt still needs the background reservation */ }
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  if (isConversationClearInProgress(numericTabId)) return;
   if (!runState?.ok || runState.running || runState.starting) {
     scheduleQueuedPromptDrainRetry(numericTabId);
     return;
