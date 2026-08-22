@@ -34178,10 +34178,11 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
       `${label}: confirmed New conversation should preserve queued prompts until the bounded background clear succeeds`,
     );
-    assert.match(clearBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: New conversation should finish a partial local reset and resume queued prompts only when the background clear itself failed`);
+    assert.match(clearBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: New conversation should finish a partial local reset and resume queued prompts only when the background clear itself failed`);
+    assert.doesNotMatch(clearBody, /sendToBackground\('clear_context_menu_prompt'/, `${label}: New conversation should not leave durable prompt invalidation in a second fallible message`);
     const resetStart = panel.indexOf("if (command.value === '/reset') {");
     const resetBody = panel.slice(resetStart, panel.indexOf("if (command.value === '/print')", resetStart));
     assert.match(resetBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?\} else \{\s*shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: /reset should finish a partial local reset without draining preserved prompts into an already-cleared background conversation`);
@@ -34420,6 +34421,7 @@ test('background bounds the active-run stop wait before clearing its conversatio
     const clearStart = background.indexOf("case 'clear_conversation':");
     const clearBody = background.slice(clearStart, background.indexOf("case 'compact_conversation':", clearStart));
     assert.match(clearBody, /const conversationId = await agent\.getConversationId\(tabId\);[\s\S]*?await stopActiveRunBeforeConversationClear\(tabId\);[\s\S]*?await scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: active runs should settle before old-conversation jobs and state are cleared`);
+    assert.match(clearBody, /if \(msg\.clearContextMenuPrompt === true\) \{\s*await contextMenuStorage\.clear\(tabId\);\s*\}[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: durable context-menu prompt deletion should complete in the clear handler before the conversation is emptied`);
   }
 });
 
@@ -37999,7 +38001,7 @@ test('sidepanel deletes durable history when clearing conversations', () => {
 
     const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
     const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
-    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should await durable history deletion`);
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should await durable prompt and history deletion`);
   }
 });
 
@@ -40594,7 +40596,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
     const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
     assert.match(clearBody, /if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;/, `${label}: shared new-conversation action should confirm in-panel and reject a stale tab before clearing`);
-    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should clear the originally requested tab only`);
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should clear the originally requested tab and its durable prompt together`);
 
     const compactIdx = panel.indexOf("if (command.value === '/compact')");
     const compactBody = panel.slice(compactIdx, panel.indexOf("if (command.value === '/verbose')", compactIdx));
@@ -41321,6 +41323,9 @@ test('background awaits context-menu prompt clear before agent chat starts', () 
     assert.notEqual(processIdx, -1, `${label}: chat handler should start an agent run`);
     assert.equal(clearIdx < processIdx, true, `${label}: context-menu prompt clear must finish before the agent run starts`);
     assert.doesNotMatch(chatBody, /contextMenuStorage\.clear\(msg\.contextMenuClear\.tabId,\s*msg\.contextMenuClear\.promptId\)\.catch\(\(\) => \{\}\)/, `${label}: context-menu clear should not be fire-and-forget`);
+    const clearMatch = bg.match(/case 'clear_conversation': \{([\s\S]*?)\n\s+case '(?:disable_dev_diagnostics|compact_conversation)':/);
+    assert.ok(clearMatch, `${label}: clear-conversation handler missing`);
+    assert.match(clearMatch[1], /await contextMenuStorage\.clear\(tabId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: New conversation should durably delete its prompt before clearing authoritative state`);
   }
 });
 
@@ -43262,6 +43267,7 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
   ]) {
     const data = new Map();
     let nextSetGate = null;
+    let nextRemoveError = null;
     const store = {
       async set(values) {
         const gate = nextSetGate;
@@ -43273,6 +43279,11 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
         return data.has(key) ? { [key]: data.get(key) } : {};
       },
       async remove(keys) {
+        if (nextRemoveError) {
+          const error = nextRemoveError;
+          nextRemoveError = null;
+          throw error;
+        }
         (Array.isArray(keys) ? keys : [keys]).forEach(key => data.delete(key));
       },
     };
@@ -43338,6 +43349,22 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     await storage.clear(prompt.tabId, prompt.id);
     assert.equal(data.has(storage.key(prompt.tabId)), false, `${label}: accepting the run should clear the durable prompt`);
     assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: accepting the run should clear its lease`);
+
+    const clearFailurePrompt = { id: `${label}-clear-failure`, tabId: 13, text: 'Discard me' };
+    await storage.save(clearFailurePrompt.tabId, clearFailurePrompt);
+    await storage.claim(clearFailurePrompt.tabId, clearFailurePrompt.id, 'panel-clear', () => false, 1_500);
+    nextRemoveError = new Error('durable remove failed');
+    await assert.rejects(
+      storage.clear(clearFailurePrompt.tabId),
+      /durable remove failed/,
+      `${label}: a failed durable removal must reject the clear transaction`,
+    );
+    assert.equal(data.has(storage.key(clearFailurePrompt.tabId)), true, `${label}: failed removal should leave the durable prompt available for recovery`);
+    const retainedAfterFailure = await storage.consume(clearFailurePrompt.tabId);
+    assert.equal(retainedAfterFailure.prompt?.id, clearFailurePrompt.id, `${label}: failed removal should retain the in-memory prompt too`);
+    await storage.clear(clearFailurePrompt.tabId);
+    assert.equal(data.has(storage.key(clearFailurePrompt.tabId)), false, `${label}: retrying clear should remove the durable prompt`);
+    assert.equal(data.has(storage.claimKey(clearFailurePrompt.tabId)), false, `${label}: retrying clear should remove the durable lease`);
 
     const delayedClaimPrompt = {
       id: `${label}-queued-claim-clock`,
