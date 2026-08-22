@@ -1686,18 +1686,24 @@ async function flashTabAttention(msg) {
     return { ok: true, mode: 'title-flash' };
   } catch {
     // No content-script receiver — fall back to a per-tab toolbar badge.
-    // But re-check activity first: the user may have activated the tab while
-    // sendMessage was still rejecting. The activation listener has already
-    // cleared any badge, and no further activation event would fire, so
-    // setting one now would stick on the visible tab.
-    let tabIsActive = false;
+    // But re-check first whether the user is actually looking at the tab:
+    // "active" only means selected within its own window, so an active tab
+    // in an unfocused window (user works elsewhere) still deserves the
+    // badge. The activation listener has already cleared any stale badge,
+    // and no further activation event would fire for an already-active tab.
+    let tabIsWatched = false;
     try {
       const fresh = await browser.tabs.get(tabId);
-      tabIsActive = fresh?.active === true;
+      if (fresh?.active) {
+        const tabWindow = fresh.windowId != null
+          ? await browser.windows.get(fresh.windowId)
+          : null;
+        tabIsWatched = tabWindow?.focused === true;
+      }
     } catch {
       return { ok: false, error: `Tab ${tabId} no longer exists.` };
     }
-    if (tabIsActive) return { ok: true, mode: 'skipped-tab-active' };
+    if (tabIsWatched) return { ok: true, mode: 'skipped-tab-watched' };
     try {
       await browser.browserAction.setBadgeText({ tabId, text: success ? '✓' : '!' });
       await browser.browserAction.setBadgeBackgroundColor({

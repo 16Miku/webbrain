@@ -1323,7 +1323,10 @@ async function flashTabAttentionIfBackgrounded({ success, tabId }) {
     ]);
   } catch { /* treat lookup failure as focused — avoid over-flashing */ }
   const ownWindowFocused = ownWindow?.id != null
-    && ownWindow.id === lastFocused?.id;
+    && ownWindow.id === lastFocused?.id
+    // getLastFocused() can return this window even after the whole browser
+    // lost foreground to another application; its focused flag is the truth.
+    && lastFocused?.focused === true;
   const panelVisible = document.visibilityState === 'visible';
   if (ownWindowFocused && panelVisible) return;
   void sendToBackground('flash_tab_attention', { tabId, success }).catch(() => {});
