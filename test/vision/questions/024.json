@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "024",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "form-validation",
+  "title": "Shipping details",
+  "image": "images/024.png",
+  "question": "Which field is invalid, what value does it contain, and what exact error is shown? Focus on the “Shipping details” screen.",
+  "defaultPromptMode": "production"
+}

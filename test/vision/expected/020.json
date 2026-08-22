@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "020",
+  "image": "images/020.png",
+  "threshold": 0.68,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "account",
+        "label",
+        "receipt",
+        "contract",
+        "telemetry",
+        "document"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Account ID",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "visible-fragment",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "ACCT-1042",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Transcribe only ACCT-1042."
+}

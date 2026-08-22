@@ -1923,12 +1923,11 @@
       letter-spacing: .16em;
     }
     .apocalypse-kicker-mark {
-      width: 11px;
-      height: 11px;
-      border: 2px solid currentColor;
-      border-radius: 50%;
-      box-shadow: 0 0 0 4px rgba(240, 167, 47, .13);
-      animation: apocalypseSignal 2.8s ease-in-out infinite;
+      display: inline-block;
+      font-size: 26px;
+      line-height: 1;
+      font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+      vertical-align: -3px;
     }
     @keyframes apocalypseSignal {
       0%, 100% { box-shadow: 0 0 0 4px rgba(240, 167, 47, .13); }
@@ -2587,8 +2586,8 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
-      height: 28px;
+      width: 22px;
+      height: 22px;
       border-radius: 6px;
       color: var(--text-dim);
       transition: color 0.15s, background 0.15s;
@@ -2615,13 +2614,13 @@
       justify-content: space-between;
       align-items: center;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 10px 16px;
     }
     .footer-links {
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: 12px 20px;
+      gap: 8px 12px;
     }
     /* Only ever revealed by the <noscript> stylesheet in <head>. */
     .lang-noscript {
@@ -3597,9 +3596,9 @@
 <section class="section apocalypse-section" id="apocalypse" aria-labelledby="apocalypse-title">
   <div class="apocalypse-shell">
     <div class="apocalypse-copy">
-      <div class="apocalypse-kicker"><span class="apocalypse-kicker-mark" aria-hidden="true"></span>حالت Apocalypse</div>
+      <div class="apocalypse-kicker"><span class="apocalypse-kicker-mark" aria-hidden="true">☢</span>حالت Apocalypse</div>
       <h2 id="apocalypse-title">WebBrain آماده است، حتی وقتی اینترنت نیست.</h2>
-      <p class="apocalypse-lead"><strong>دانش آفلاین، تحت کنترل شما</strong>سه جزء ضروری برای چت خصوصی و محلی را راه‌اندازی کنید: مدل متن، مدل بینایی و یک نسخهٔ آفلاین ویکی‌پدیا.</p>
+      <p class="apocalypse-lead"><strong>دانش آفلاین، تحت کنترل شما</strong>چهار جزء ضروری برای چت خصوصی و محلی را راه‌اندازی کنید: مدل متن، مدل بینایی، یک نسخهٔ آفلاین ویکی‌پدیا و جعبهٔ اضطراری.</p>
       <div class="apocalypse-actions">
         <a class="apocalypse-cta" href="#download">WebBrain را نصب کنید <span aria-hidden="true">→</span></a>
         <button
@@ -3655,7 +3654,7 @@
     <div class="security-video-dialog-copy">
       <div class="security-video-dialog-kicker">حالت Apocalypse</div>
       <h2 class="security-video-dialog-title" id="apocalypse-video-dialog-title">WebBrain آماده است، حتی وقتی اینترنت نیست.</h2>
-      <p class="security-video-dialog-description" id="apocalypse-video-dialog-description">سه جزء ضروری برای چت خصوصی و محلی را راه‌اندازی کنید: مدل متن، مدل بینایی و یک نسخهٔ آفلاین ویکی‌پدیا.</p>
+      <p class="security-video-dialog-description" id="apocalypse-video-dialog-description">چهار جزء ضروری برای چت خصوصی و محلی را راه‌اندازی کنید: مدل متن، مدل بینایی، یک نسخهٔ آفلاین ویکی‌پدیا و جعبهٔ اضطراری.</p>
       <button
         class="security-video-dialog-close"
         id="apocalypse-video-close"
@@ -3943,7 +3942,7 @@
 <!-- FOOTER -->
 <footer>
   <div class="footer-inner">
-    <span>© 2026 WebBrain. ساخته شده توسط <a href="https://emresokullu.com" target="_blank">امره سوکولو</a>.</span>
+    <span>© 2026 WebBrain. ساخته شده توسط <a href="https://emresokullu.com" target="_blank">امره سوکولو</a> و <a href="https://github.com/webbrain-one/webbrain/graphs/contributors" target="_blank">مشارکت‌کنندگان</a>.</span>
     <div class="footer-links">
       <a href="https://mastoturk.org/@webbrain" target="_blank" rel="me noopener" aria-label="WebBrain در Mastodon" title="WebBrain در Mastodon" class="footer-icon">
         <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M21.327 8.566c0-5.035-3.298-6.511-3.298-6.511C16.366 1.292 13.508.971 12.04.947h-.036c-1.468.024-4.326.345-5.989 1.108 0 0-3.298 1.476-3.298 6.511 0 1.153-.022 2.535.014 4.001.12 4.935.907 9.799 5.478 11.007 2.106.557 3.916.674 5.374.594 2.645-.147 4.128-.943 4.128-.943l-.087-1.918s-1.888.595-4.012.523c-2.104-.072-4.326-.227-4.668-2.809a5.289 5.289 0 0 1-.047-.724s2.066.505 4.686.625c1.603.073 3.107-.094 4.632-.276 2.925-.349 5.474-2.149 5.794-3.793.503-2.591.462-6.287.462-6.287ZM8.545 15.023H6.09V8.996c0-2.534 1.627-3.829 3.424-3.829 1.963 0 2.909 1.268 3.35 2.257.44-.989 1.386-2.257 3.349-2.257 1.797 0 3.424 1.295 3.424 3.829v6.027h-2.454V9.174c0-1.233-.519-1.859-1.557-1.859-1.148 0-1.724.742-1.724 2.207v3.203h-2.454V9.522c0-1.465-.576-2.207-1.724-2.207-1.038 0-1.557.626-1.557 1.859v5.849Z"/></svg>

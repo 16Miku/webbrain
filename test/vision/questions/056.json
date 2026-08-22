@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "056",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "photo-understanding",
+  "title": "Night scenes",
+  "image": "images/056.png",
+  "question": "Is the featured scene daytime or nighttime, and what medium badge is shown? Focus on the “Night scenes” screen.",
+  "defaultPromptMode": "production"
+}

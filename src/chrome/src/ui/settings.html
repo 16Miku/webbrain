@@ -61,6 +61,14 @@
       text-decoration: none;
       -webkit-text-fill-color: inherit;
     }
+    /* Brain mark next to the wordmark. The gradient text fill above only
+       touches glyphs, so the logo keeps its own colors in both themes. */
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      vertical-align: -5px;
+      margin-right: 9px;
+    }
     .subtitle { color: var(--text2); font-size: 13px; margin-bottom: 24px; }
 
     .header-row {
@@ -1311,7 +1319,7 @@
 <body>
   <div class="header-row">
     <div>
-      <h1><a id="settings-title-link" href="#" data-i18n="st.title"></a></h1>
+      <h1><img class="brand-mark" src="../../icons/icon128.png" alt="" aria-hidden="true"><a id="settings-title-link" href="#" data-i18n="st.title"></a></h1>
       <p class="subtitle" id="subtitle"></p>
     </div>
     <div class="header-actions">

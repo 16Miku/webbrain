@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "027",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "loading-state",
+  "title": "Preparing dashboard",
+  "image": "images/027.png",
+  "question": "Is the page ready for interaction, and what exact progress signal is visible? Focus on the “Preparing dashboard” screen.",
+  "defaultPromptMode": "production"
+}

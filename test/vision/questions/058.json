@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "058",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "occlusion-and-contrast",
+  "title": "Report builder",
+  "image": "images/058.png",
+  "question": "What action is partially covered, and what visible overlay or widget causes the obstruction? Focus on the “Report builder” screen.",
+  "defaultPromptMode": "production"
+}

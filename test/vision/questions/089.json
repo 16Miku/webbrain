@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "089",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "dashboard",
+  "title": "Incident command",
+  "image": "images/089.png",
+  "question": "What is the value of ETA, and is there an alert that changes the page state? Focus on the “Incident command” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "062",
+  "image": "images/062.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "search",
+        "results"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Global search",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "tab",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Dosyalar",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "count",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "7 sonuç",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "query",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Search",
+        "fatura"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "chip",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Son 30 gün",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "notice",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "2 filters active",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Read the active query fatura, selected tab Dosyalar, and exact count 7 sonuç."
+}

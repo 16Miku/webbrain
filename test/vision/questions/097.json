@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "097",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "multilingual-ocr",
+  "title": "إعدادات الأمان",
+  "image": "images/097.png",
+  "question": "Read the non-English heading, field label/value, action, and visible status exactly as rendered. Focus on the “إعدادات الأمان” screen.",
+  "defaultPromptMode": "production"
+}

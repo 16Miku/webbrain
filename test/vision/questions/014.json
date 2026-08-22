@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "014",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "calendar",
+  "title": "August 2026",
+  "image": "images/014.png",
+  "question": "What event is shown on the selected day, and at what exact time? Focus on the “August 2026” screen.",
+  "defaultPromptMode": "production"
+}

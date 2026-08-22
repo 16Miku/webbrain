@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "065",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "modal-overlay",
+  "title": "Production is locked",
+  "image": "images/065.png",
+  "question": "What modal is blocking the page, and what are its two exact actions? Focus on the “Production is locked” screen.",
+  "defaultPromptMode": "production"
+}

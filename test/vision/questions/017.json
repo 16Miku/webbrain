@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "017",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "multilingual-ocr",
+  "title": "Bienvenue",
+  "image": "images/017.png",
+  "question": "Read the non-English heading, field label/value, action, and visible status exactly as rendered. Focus on the “Bienvenue” screen.",
+  "defaultPromptMode": "production"
+}

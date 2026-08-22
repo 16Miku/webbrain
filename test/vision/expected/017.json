@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "017",
+  "image": "images/017.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign",
+        "payment",
+        "order",
+        "security",
+        "login",
+        "checkout",
+        "settings"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Bienvenue",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Continuer",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Adresse e-mail",
+        "empty"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Preserve Unicode exactly: Bienvenue; Adresse e-mail; Continuer."
+}

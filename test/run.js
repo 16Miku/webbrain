@@ -8106,6 +8106,10 @@ console.log('\ntrace event model');
 
 const EVENT_MODEL_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/event-model.js').replace(/\\/g, '/'));
 const EVENT_MODEL_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/event-model.js').replace(/\\/g, '/'));
+const TRACE_REPAIR_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/repair.js').replace(/\\/g, '/'));
+const TRACE_REPAIR_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/repair.js').replace(/\\/g, '/'));
+const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
+const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
 test('trace event model: catalog covers every kind the recorder writes', () => {
   const kinds = EVENT_MODEL_CH.EVENT_KINDS;
@@ -8166,6 +8170,254 @@ test('trace event model: mirrors are identical and browser-neutral', () => {
   assert.equal(EVENT_MODEL_CH.TRACE_FORMAT_VERSION, 1, 'first trace format version');
   assert.doesNotMatch(chromeSource, /chrome\./, 'event model must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'event model must not touch storage');
+});
+
+test('Cloud terminal runtime envelope pairs the terminal done call with its executed result', () => {
+  const messages = [
+    { role: 'user', content: 'Complete the task' },
+    {
+      role: 'assistant',
+      tool_calls: [{ id: 'call_done', function: { name: 'done', arguments: '{"outcome":"success","summary":"Complete"}' } }],
+    },
+    { role: 'tool', tool_call_id: 'call_done', content: '{"success":true,"done":true,"summary":"Complete"}' },
+  ];
+  for (const [label, runtime] of [['chrome', CLOUD_RUNTIME_OUTBOX_CH], ['firefox', CLOUD_RUNTIME_OUTBOX_FX]]) {
+    const item = runtime.buildTerminalRuntimeEvent({
+      runId: 'run-terminal',
+      status: 'done',
+      finalContent: 'Complete',
+      messages,
+      model: 'webbrain-cloud 1.0',
+      mode: 'act',
+      browserTarget: label,
+      extensionVersion: '27.2.0',
+    });
+    assert.equal(item.event_id, 'run-terminal:1:terminal_runtime');
+    assert.equal(item.event.kind, 'terminal_runtime');
+    assert.equal(item.event.data.terminal_tool.name, 'done');
+    assert.equal(item.event.data.terminal_tool.status, 'succeeded');
+    assert.match(item.event.data.terminal_tool.result, /"done":true/);
+  }
+});
+
+test('Cloud terminal runtime envelope prefers completed done_json over trailing skipped tools', () => {
+  const messages = [
+    { role: 'user', content: 'Return structured output' },
+    {
+      role: 'assistant',
+      tool_calls: [
+        { id: 'call_done_json', function: { name: 'done_json', arguments: '{"result":{"ok":true}}' } },
+        { id: 'call_trailing', function: { name: 'click', arguments: '{"ref_id":"e2"}' } },
+      ],
+    },
+    { role: 'tool', tool_call_id: 'call_done_json', content: '{"success":true,"done":true,"doneJson":true,"result":{"ok":true}}' },
+    { role: 'tool', tool_call_id: 'call_trailing', content: '{"success":false,"skipped":true}' },
+  ];
+  for (const [label, runtime] of [['chrome', CLOUD_RUNTIME_OUTBOX_CH], ['firefox', CLOUD_RUNTIME_OUTBOX_FX]]) {
+    const item = runtime.buildTerminalRuntimeEvent({
+      runId: `run-done-json-${label}`,
+      status: 'done',
+      finalContent: '{"ok":true}',
+      messages,
+      browserTarget: label,
+    });
+    assert.equal(item.event.data.terminal_tool.call_id, 'call_done_json', `${label}: trailing skipped tool replaced done_json`);
+    assert.equal(item.event.data.terminal_tool.name, 'done_json', `${label}: done_json was not treated as terminal`);
+    assert.equal(item.event.data.terminal_tool.status, 'succeeded');
+  }
+});
+
+test('Cloud terminal runtime envelope ignores blocked done attempts when later tools execute', () => {
+  const messages = [
+    { role: 'user', content: 'Complete the task' },
+    {
+      role: 'assistant',
+      tool_calls: [{ id: 'call_blocked_done', function: { name: 'done', arguments: '{"outcome":"success"}' } }],
+    },
+    { role: 'tool', tool_call_id: 'call_blocked_done', content: '{"success":false,"blockedDone":true}' },
+    {
+      role: 'assistant',
+      tool_calls: [{ id: 'call_recovery', function: { name: 'click', arguments: '{"ref_id":"e3"}' } }],
+    },
+    { role: 'tool', tool_call_id: 'call_recovery', content: '{"success":true}' },
+  ];
+  for (const [label, runtime] of [['chrome', CLOUD_RUNTIME_OUTBOX_CH], ['firefox', CLOUD_RUNTIME_OUTBOX_FX]]) {
+    const item = runtime.buildTerminalRuntimeEvent({
+      runId: `run-blocked-done-${label}`,
+      status: 'error',
+      finalContent: 'Stopped later',
+      messages,
+      browserTarget: label,
+    });
+    assert.equal(item.event.data.terminal_tool.call_id, 'call_recovery', `${label}: blocked done replaced later execution`);
+    assert.equal(item.event.data.terminal_tool.name, 'click');
+  }
+});
+
+test('Cloud terminal runtime outbox persists retryable failures and removes acknowledged events', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  try {
+    const item = CLOUD_RUNTIME_OUTBOX_CH.buildTerminalRuntimeEvent({
+      runId: 'run-retry',
+      status: 'error',
+      finalContent: 'Failed visibly',
+      messages: [
+        { role: 'user', content: 'Try it' },
+        { role: 'assistant', tool_calls: [{ id: 'call_click', function: { name: 'click', arguments: '{"ref_id":"e1"}' } }] },
+        { role: 'tool', tool_call_id: 'call_click', content: '{"success":false,"error":"target missing"}' },
+      ],
+      browserTarget: 'chrome',
+    });
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_CH.enqueueCloudRuntimeEvent('conv-1', item), true);
+    const provider = {
+      config: { providerName: 'webbrain-cloud' },
+      calls: 0,
+      async sendRuntimeEvents() {
+        this.calls++;
+        return this.calls === 1
+          ? { ok: false, retryable: true, status: 503 }
+          : { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_CH.flushCloudRuntimeOutbox(provider), 0);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_CH.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_CH.flushCloudRuntimeOutbox(provider), 1);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_CH.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 0);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Firefox Cloud runtime outbox uses the promise-based browser storage namespace', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  let chromeCalls = 0;
+  globalThis.browser = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get() { chromeCalls++; throw new Error('callback-only chrome namespace used'); },
+        set() { chromeCalls++; throw new Error('callback-only chrome namespace used'); },
+      },
+    },
+  };
+  try {
+    const item = {
+      event_id: 'run-firefox-storage:1:terminal_runtime',
+      event: { runId: 'run-firefox-storage', seq: 1, ts: 1, kind: 'terminal_runtime', data: {} },
+    };
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_FX.enqueueCloudRuntimeEvent('conv-firefox', item), true);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_FX.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await CLOUD_RUNTIME_OUTBOX_FX.flushCloudRuntimeOutbox({
+      config: { providerName: 'webbrain-cloud' },
+      async sendRuntimeEvents() { return { ok: true, retryable: false, status: 202 }; },
+    }), 1);
+    assert.equal(storage[CLOUD_RUNTIME_OUTBOX_FX.CLOUD_RUNTIME_OUTBOX_STORAGE_KEY].length, 0);
+    assert.equal(chromeCalls, 0, 'Firefox outbox touched the callback-based chrome namespace');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Cloud terminal runtime outbox never overwrites queued data after a storage read failure', async () => {
+  const originalChrome = globalThis.chrome;
+  let writes = 0;
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get() { throw new Error('storage unavailable'); },
+        async set() { writes++; },
+      },
+    },
+  };
+  try {
+    await assert.rejects(
+      CLOUD_RUNTIME_OUTBOX_CH.enqueueCloudRuntimeEvent('conv-fail', {
+        event_id: 'run-fail:1:terminal_runtime',
+        event: { runId: 'run-fail', seq: 1, ts: 1, kind: 'terminal_runtime', data: {} },
+      }),
+      /storage unavailable/,
+    );
+    assert.equal(writes, 0);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Firefox Cloud runtime delivery uses its available fetch transport', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  let request = null;
+  globalThis.browser = {
+    storage: {
+      local: { async get() { return {}; } },
+      onChanged: { addListener() {} },
+    },
+  };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return { ok: true, status: 202 };
+  };
+  try {
+    const provider = new OpenAIProviderFx({
+      providerName: 'webbrain-cloud',
+      baseUrl: 'https://cloud.example/v1',
+      deviceGuid: 'device-test',
+      helpImproveWebBrain: true,
+    });
+    const result = await provider.sendRuntimeEvents('conv-firefox', [{ event_id: 'event-1', event: {} }], { timeoutMs: 500 });
+    assert.deepEqual(result, { ok: true, retryable: false, status: 202 });
+    assert.equal(request?.url, 'https://cloud.example/v1/improvement/runtime-events');
+    assert.equal(request?.options?.method, 'POST');
+    assert.equal(JSON.parse(request?.options?.body || '{}').session_id, 'conv-firefox');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+  }
+});
+
+test('Cloud runtime delivery stays consent-gated and mirrored across both builds', () => {
+  const chromeOutbox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js'), 'utf8');
+  const firefoxOutbox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js'), 'utf8');
+  assert.equal(chromeOutbox, firefoxOutbox, 'Chrome/Firefox Cloud runtime outboxes drifted');
+  for (const browser of ['chrome', 'firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
+    assert.match(agent, /helpImproveWebBrain !== false[\s\S]*enqueueCloudRuntimeEvent/);
+    assert.match(agent, /void flushCloudRuntimeOutbox\(provider\)/);
+    assert.match(provider, /\/improvement\/runtime-events/);
+    assert.match(provider, /retryable: response\.status === 408 \|\| response\.status === 429 \|\| response\.status >= 500/);
+  }
 });
 
 test('trace recorder: writes go through the event model and stamp the format version', () => {
@@ -9057,6 +9309,7 @@ test('trace error codes: catalog is stable and normalizeErrorCode bounds the val
   assert.equal(normalizeErrorCode('NOT_A_CODE'), 'UNKNOWN', 'unknown code must normalize to UNKNOWN');
   assert.equal(normalizeErrorCode(null), 'UNKNOWN', 'null code must normalize to UNKNOWN');
   assert.equal(normalizeErrorCode(undefined), 'UNKNOWN', 'missing code must normalize to UNKNOWN');
+  assert.equal(isErrorCode('SERVICE_WORKER_EVICTED'), true, 'service-worker interruption needs a stable repair code');
   assert.deepEqual(ERROR_CODES_FX.ERROR_CODES, ERROR_CODES, 'Firefox code catalog drifted');
 });
 
@@ -9066,6 +9319,113 @@ test('trace error codes: mirrors are identical and browser-neutral', () => {
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox error codes drifted');
   assert.doesNotMatch(chromeSource, /chrome\./, 'error codes must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'error codes must not touch storage');
+});
+
+test('trace repair: stale interrupted runs receive one ordered terminal repair', () => {
+  const run = {
+    runId: 'run_interrupted',
+    startedAt: 1_000,
+    status: 'running',
+    stepCount: 1,
+    finalContent: null,
+  };
+  const events = [
+    { runId: run.runId, seq: 1, kind: 'turn_start', data: { step: 0 } },
+    { runId: run.runId, seq: 2, kind: 'step_start', data: { step: 1 } },
+    { runId: run.runId, seq: 3, kind: 'llm_request', data: { step: 1 } },
+  ];
+  const plan = TRACE_REPAIR_CH.buildTraceRepairPlan(run, events, {
+    now: 100_000,
+    staleAfterMs: 60_000,
+  });
+
+  assert.ok(plan, 'an old running run must produce a repair plan');
+  assert.deepEqual(
+    plan.events.map((event) => [event.seq, event.kind]),
+    [[4, 'step_end'], [5, 'error'], [6, 'turn_end']],
+    'repair events must continue the existing sequence and close open lifecycle events',
+  );
+  assert.deepEqual(plan.events[0].data, {
+    step: 1,
+    ok: false,
+    reason: 'service_worker_eviction',
+    code: 'SERVICE_WORKER_EVICTED',
+    repaired: true,
+  });
+  assert.deepEqual(plan.events[1].data, {
+    step: null,
+    phase: 'repair',
+    message: 'Trace run interrupted by service-worker eviction.',
+    code: 'SERVICE_WORKER_EVICTED',
+  });
+  assert.deepEqual(plan.events[2].data, {
+    step: 0,
+    status: 'error',
+    reason: 'service_worker_eviction',
+    code: 'SERVICE_WORKER_EVICTED',
+    repaired: true,
+  });
+  assert.equal(plan.run.status, 'error', 'repaired run must no longer be running');
+  assert.equal(plan.run.endedAt, 100_000);
+  assert.equal(plan.run.durationMs, 99_000);
+  assert.equal(plan.run.repairedBy, 'service-worker-eviction');
+  assert.equal(plan.run.repairedAt, 100_000);
+});
+
+test('trace repair: ignores recent and already repaired runs, with mirrored helpers', () => {
+  const recent = { runId: 'recent', startedAt: 95_000, status: 'running' };
+  const activeLongRun = { runId: 'active_long', startedAt: 1_000, status: 'running' };
+  const repaired = {
+    runId: 'repaired',
+    startedAt: 1_000,
+    status: 'error',
+    repairedBy: 'service-worker-eviction',
+  };
+  for (const [label, repair] of [['chrome', TRACE_REPAIR_CH], ['firefox', TRACE_REPAIR_FX]]) {
+    assert.equal(
+      repair.buildTraceRepairPlan(recent, [], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent runs must remain eligible for normal completion`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(activeLongRun, [
+        { runId: activeLongRun.runId, seq: 1, ts: 95_000, kind: 'step_start', data: { step: 1 } },
+      ], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent durable activity must protect a long-running active trace`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(repaired, [], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: repaired runs must be idempotent`,
+    );
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/repair.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/repair.js'), 'utf8'),
+    'Chrome and Firefox repair helpers must remain mirrored',
+  );
+});
+
+test('trace repair: recorder and browser entry points apply the repair transaction', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorder = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, `src/${browser}/src/background.js`), 'utf8');
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    assert.match(recorder, /import \{[\s\S]*?buildTraceRepairPlan[\s\S]*?from '\.\/repair\.js';/, `${browser}: recorder repair import missing`);
+    assert.match(recorder, /const transaction = tx\(db, \['runs', 'events'\], 'readwrite'\)/, `${browser}: repair must share one atomic transaction`);
+    assert.match(recorder, /for \(const event of plan\.events\) eventsStore\.put\(event\);/, `${browser}: repair events are not persisted`);
+    assert.match(recorder, /runsStore\.put\(plan\.run\);/, `${browser}: repaired run is not persisted`);
+    assert.match(recorder, /export async function repairStaleRuns\(/, `${browser}: stale-run scan is not exported`);
+    // Candidate scan must be bounded to the possibly-stale slice of history
+    // and re-check in-memory liveness at the last instant before writing.
+    assert.match(recorder, /index\('startedAt'\)[\s\S]*?openCursor\(IDBKeyRange\.upperBound\(cutoff\)\)/, `${browser}: stale-run scan must not walk the full runs store`);
+    assert.match(recorder, /if \(_runState\.has\(runId\)\) return;\n\s*for \(const event of plan\.events\)/, `${browser}: repair must re-check live runs before writing`);
+    assert.match(background, /setTimeout\(\(\) => \{ void workflowTrace\.repairStaleRuns\(\)\.catch\(\(\) => \{\}\); \}, TRACE_REPAIR_STARTUP_DELAY_MS\)/, `${browser}: background startup must defer the stale-run scan`);
+    assert.match(background, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?workflowTrace\.repairStaleRuns\(\)/, `${browser}: background does not answer the traces-page repair request`);
+    assert.match(traces, /\(async \(\) => \{\s*await repairStaleRunsForPage\(\);\s*await refresh\(\);/, `${browser}: Traces page does not route its first repair through the background`);
+    assert.match(traces, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?return repairStaleRuns\(\)\.catch\(\(\) => \[\]\);/, `${browser}: Traces page lost its local fallback for when the background is unreachable`);
+  }
 });
 
 test('agent trace error classification: _traceErrorCodeFor maps failures to stable codes', () => {
@@ -25425,6 +25785,64 @@ test('Emergency Box UI and PDF reader stay in Chrome and Firefox parity', () => 
   }
 });
 
+test('every WebBrain page signs its header with the extension logo', () => {
+  // The suite pages carry their own marks (a nuclear trefoil, W, PDF, TXT), so the
+  // WebBrain lockup is what tells a reader whose product those marks belong to.
+  const apocalypsePages = [
+    'emergency-box.html',
+    'wikipedia-library.html',
+    'wikipedia-reader.html',
+    'emergency-communication.html',
+    'emergency-pdf.html',
+    'emergency-text.html',
+  ];
+  for (const browser of ['chrome', 'firefox']) {
+    const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
+
+    const kit = fs.readFileSync(path.join(uiDir, 'apocalypse-kit.css'), 'utf8');
+    assert.match(kit, /\.kit-brand \{[\s\S]*?font:[^;]*var\(--font-mono\)/,
+      `${browser}: the Apocalypse Kit does not style the shared WebBrain eyebrow`);
+    assert.doesNotMatch(kit, /\.kit-brand \{[^}]*border:/,
+      `${browser}: a boxed signature reads as a third button beside Back`);
+    assert.match(kit, /@media \(max-width:700px\) \{[\s\S]*?\.kit-brand-mode \{ display:none; \}/,
+      `${browser}: the eyebrow does not shed the mode name on a narrow topbar`);
+    assert.match(kit, /\.document-heading a\.kit-brand \{ color:var\(--muted\)/,
+      `${browser}: the PDF reader paints the signature like one of its heading links`);
+
+    for (const page of apocalypsePages) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, /<a class="kit-brand" href="apocalypse-mode\.html"[\s\S]*?src="\.\.\/\.\.\/icons\/icon128\.png"[\s\S]*?WebBrain[\s\S]*?data-i18n="ap\.title"[\s\S]*?<\/a>/,
+        `${browser}: ${page} does not carry the WebBrain lockup back to Apocalypse Mode`);
+      assert.match(html, /<div class="(?:title-block|document-heading)">\s*<a class="kit-brand"/,
+        `${browser}: ${page} does not sit the signature above its own page title`);
+    }
+
+    // The hub already names the mode in its h1 and must not link to itself.
+    const hub = fs.readFileSync(path.join(uiDir, 'apocalypse-mode.html'), 'utf8');
+    assert.match(hub, /<div class="header-copy"><span class="kit-brand"><img class="kit-brand-logo" src="\.\.\/\.\.\/icons\/icon128\.png"[^>]*><span class="kit-brand-name">WebBrain<\/span><\/span><h1 data-i18n="ap\.title">/,
+      `${browser}: Apocalypse Mode does not sign the title it already names`);
+    assert.doesNotMatch(hub, /<a class="kit-brand"/,
+      `${browser}: Apocalypse Mode links its own brand lockup back to itself`);
+
+    // Settings, History, and Traces put the logo inside the gradient title. The
+    // translated text has to stay in its own element: applyDOMTranslations writes
+    // textContent, which would drop an <img> sibling inside the same node.
+    for (const [page, key] of [['history.html', 'hist.title'], ['traces.html', 'tr.title']]) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, new RegExp(`<h1><img class="brand-mark" src="\\.\\./\\.\\./icons/icon128\\.png"[^>]*><span data-i18n="${key.replace('.', '\\.')}"></span></h1>`),
+        `${browser}: ${page} does not show the WebBrain logo beside a separately translated title`);
+    }
+    const settings = fs.readFileSync(path.join(uiDir, 'settings.html'), 'utf8');
+    assert.match(settings, /<h1><img class="brand-mark" src="\.\.\/\.\.\/icons\/icon128\.png"[^>]*><a id="settings-title-link"[^>]*data-i18n="st\.title"><\/a><\/h1>/,
+      `${browser}: Settings does not show the WebBrain logo beside its title link`);
+    for (const page of ['settings.html', 'history.html', 'traces.html']) {
+      const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
+      assert.match(html, /\.brand-mark \{[\s\S]*?width: \d+px;/,
+        `${browser}: ${page} ships the title logo without sizing it`);
+    }
+  }
+});
+
 test('Apocalypse download tracker follows every offline transfer from its pages and Settings', () => {
   const pages = [
     'apocalypse-mode.html',
@@ -33984,6 +34402,9 @@ test('new locale dictionaries contain translated copy and preserve functional to
   };
   const slashCommand = /(?<![A-Za-z0-9])\/(?:help|schedule|progress|scratchpad|memory|workflow|allow-api|dangerously-skip-permissions|compact|verbose|reset|screenshot|record|export|import|profile|vision|ask|act|dev|plan)(?:\s+--(?:help|list|append|clear|add|forget|save|run|delete|full-page|full-screen|hide-recording-indicator|transcribe|traces|config|file))?/g;
   const extract = (value, pattern) => [...String(value).matchAll(pattern)].map((match) => match[0]).sort();
+  // A standalone `&amp;` is the word "and", which locales render with their own
+  // conjunction. Every other entity still has to survive translation intact.
+  const dropProseAmpersands = (value) => String(value).replace(/(^|\s)&amp;(?=\s|$)/g, '$1');
   const assertTranslated = (label, english, translated, marker) => {
     const keys = Object.keys(english);
     assert.deepEqual(Object.keys(translated), keys, `${label}: locale keys should match English exactly`);
@@ -33996,7 +34417,7 @@ test('new locale dictionaries contain translated copy and preserve functional to
       assert.deepEqual(extract(translated[key], /<[^>]+>/g), extract(english[key], /<[^>]+>/g), `${label}/${key}: HTML structure changed`);
       assert.deepEqual(extract(translated[key], /<(?:code|kbd)\b[^>]*>[\s\S]*?<\/(?:code|kbd)>/gi), extract(english[key], /<(?:code|kbd)\b[^>]*>[\s\S]*?<\/(?:code|kbd)>/gi), `${label}/${key}: code or keyboard token changed`);
       assert.deepEqual(extract(translated[key], /`[^`\n]+`/g), extract(english[key], /`[^`\n]+`/g), `${label}/${key}: inline code changed`);
-      assert.deepEqual(extract(translated[key], /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), extract(english[key], /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), `${label}/${key}: HTML entity changed`);
+      assert.deepEqual(extract(dropProseAmpersands(translated[key]), /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), extract(dropProseAmpersands(english[key]), /&(?:[a-z]+|#\d+|#x[\da-f]+);/gi), `${label}/${key}: HTML entity changed`);
       assert.deepEqual(extract(translated[key], /(?:https?:\/\/|(?:chrome-extension|moz-extension):\/\/|(?:chrome|edge|about):\/\/?)[^\s<>"']+/gi), extract(english[key], /(?:https?:\/\/|(?:chrome-extension|moz-extension):\/\/|(?:chrome|edge|about):\/\/?)[^\s<>"']+/gi), `${label}/${key}: URL changed`);
       assert.deepEqual(extract(translated[key], slashCommand), extract(english[key], slashCommand), `${label}/${key}: slash command changed`);
       assert.equal(extract(translated[key], /WebBrain/g).length, extract(english[key], /WebBrain/g).length, `${label}/${key}: WebBrain brand changed`);
@@ -34031,6 +34452,42 @@ test('web landing builder preserves template markers and HTML entity escaping', 
   );
   for (const entity of ['&amp;', '&lt;', '&gt;', '&#39;', '&quot;']) {
     assert.ok(build.includes(`.replace(/${entity}/g,`), `web build: htmlToPlain must decode ${entity}`);
+  }
+});
+
+test('generated landing pages stay in sync with the web build template', () => {
+  // web/index.html and web/<locale>/index.html are build artifacts of
+  // web/build/template.html. Hand-editing one silently loses the edit on the
+  // next `npm run build:web`, so every literal chunk of the template (the text
+  // between {{...}} placeholders) must still appear, in order, in each page.
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const literals = template.split(/\{\{[^}]*\}\}/).filter((chunk) => chunk.trim().length > 0);
+  assert.ok(literals.length > 50, 'web build: template should split into literal chunks around placeholders');
+
+  const locales = fs
+    .readdirSync(path.join(ROOT, 'web/build/locales'))
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => name.replace(/\.json$/, ''));
+  const pages = locales.map((code) => (code === 'en' ? 'web/index.html' : `web/${code}/index.html`));
+
+  for (const page of pages) {
+    const html = fs.readFileSync(path.join(ROOT, page), 'utf8');
+    let cursor = 0;
+    for (const chunk of literals) {
+      const at = html.indexOf(chunk, cursor);
+      if (at === -1) {
+        // Chunks span many lines; report the first template line the page lost.
+        const lost = chunk
+          .split('\n')
+          .map((line) => line.trim())
+          .find((line) => line.length > 8 && html.indexOf(line, cursor) === -1);
+        assert.fail(
+          `${page}: drifted from web/build/template.html — missing ${JSON.stringify(lost || chunk.trim().slice(0, 120))}. `
+            + 'Edit the template (and web/build/locales/*.json), then run `npm run build:web`.',
+        );
+      }
+      cursor = at + chunk.length;
+    }
   }
 });
 

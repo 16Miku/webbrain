@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "018",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "occlusion-and-contrast",
+  "title": "Account",
+  "image": "images/018.png",
+  "question": "What action is partially covered, and what visible overlay or widget causes the obstruction? Focus on the “Account” screen.",
+  "defaultPromptMode": "production"
+}

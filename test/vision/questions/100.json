@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "100",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "uncertainty-calibration",
+  "title": "Telemetry capture",
+  "image": "images/100.png",
+  "question": "Which characters are actually legible, and which information must remain unknown? Focus on the “Telemetry capture” screen.",
+  "defaultPromptMode": "production"
+}

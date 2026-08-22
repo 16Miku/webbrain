@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "038",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "occlusion-and-contrast",
+  "title": "Pricing",
+  "image": "images/038.png",
+  "question": "What action is partially covered, and what visible overlay or widget causes the obstruction? Focus on the “Pricing” screen.",
+  "defaultPromptMode": "production"
+}

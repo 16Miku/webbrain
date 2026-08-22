@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "092",
+  "image": "images/092.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "email",
+        "compose",
+        "message"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Confidential message",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Send anyway",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "to-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "To",
+        "outside@vendor.test"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "subject-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Subject",
+        "Q3 forecast"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "External recipient warning",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "external-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "external",
+        "warning",
+        "recipient"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Report the compose fields exactly and surface External recipient warning."
+}

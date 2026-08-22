@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "030",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "chart-reading",
+  "title": "Quarterly revenue",
+  "image": "images/030.png",
+  "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Quarterly revenue” screen.",
+  "defaultPromptMode": "production"
+}

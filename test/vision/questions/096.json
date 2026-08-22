@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "096",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "photo-understanding",
+  "title": "Visual comparison",
+  "image": "images/096.png",
+  "question": "Which panel shows snow, left or right, and what comparison caption is visible? Focus on the “Visual comparison” screen.",
+  "defaultPromptMode": "production"
+}

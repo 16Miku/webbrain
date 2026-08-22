@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tiny Vision Models Compared: LFM 2.5 VL vs Qwen 3.5 0.8B - WebBrain Blog</title>
+  <meta name="description" content="Qwen 3.8 27B set a strong 74/100 reference in WebBrain&#39;s 100-case browser-vision benchmark. We compare it with Qwen 3.5 0.8B and Liquid AI&#39;s 450M and 1.6B local VLMs—and explain why a weak benchmark score can still describe a useful fallback.">
+  <meta name="keywords" content="WebBrain, Qwen 3.8 27B, Qwen 3.5 0.8B, LFM2.5-VL-450M, LFM2.5-VL-1.6B, local vision model, WebGPU, browser agent, Apocalypse Mode, vision benchmark">
+  <meta property="og:title" content="Tiny Vision Models Compared: LFM 2.5 VL vs Qwen 3.5 0.8B">
+  <meta property="og:description" content="A strict 100-case WebBrain vision benchmark puts Qwen 3.8 27B far ahead, while showing where sub-2B local models can still earn a place in a browser agent.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/tiny-vision-models-qwen38-reference">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Tiny Vision Models Compared: LFM 2.5 VL vs Qwen 3.5 0.8B">
+  <meta name="twitter:description" content="Qwen 3.8 27B scored 74/100. Qwen 3.5 0.8B scored 20. Tiny LFM2.5-VL models scored lower—but fallback vision is a different product problem.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/tiny-vision-models-qwen38-reference">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Tiny Vision Models Compared: LFM 2.5 VL vs Qwen 3.5 0.8B",
+  "description": "Qwen 3.8 27B set a strong 74/100 reference in WebBrain's 100-case browser-vision benchmark. We compare it with Qwen 3.5 0.8B and Liquid AI's 450M and 1.6B local VLMs—and explain why a weak benchmark score can still describe a useful fallback.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-21",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/tiny-vision-models-qwen38-reference"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 21, 2026 &middot; 7 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Tiny Vision Models Compared: LFM 2.5 VL vs Qwen 3.5 0.8B</h1>
+    <p class="lede"><strong>Small vision models are not substitutes for a frontier API or a strong local model such as Qwen 3.8 27B.</strong> Our new 100-case benchmark makes that obvious. It also shows something more useful: a tiny model can still be good enough when vision is an occasional local fallback, not the brain responsible for the entire browser session.</p>
+<h2 id="the-result-at-a-glance">The result at a glance</h2>
+<p>We built a new 100-case suite around the exact screenshot-description call WebBrain uses for <code>inspect_viewport</code>, screenshot tools, and automatic screenshot routing. The <a href="https://github.com/esokullu/webbrain/tree/main/test/vision" target="_blank" rel="noopener">complete benchmark—images, rubrics, validation, and runner—is available on GitHub</a>. The cases progress from large, obvious controls to dense tables, charts, multilingual OCR, overlays, conflicting signals, occlusion, and deliberately unreadable text.</p>
+<p><a href="https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4" target="_blank" rel="noopener">Qwen 3.8 27B NVFP4</a> is the main reference. It is the result to compare the small models against, not a claim that every 27B deployment or every API will produce the same number.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Parameters</th><th>Passed</th><th>Mean rubric score</th><th>Reading</th></tr></thead><tbody><tr><td><strong>Qwen 3.8 27B NVFP4</strong></td><td>27B</td><td><strong>74/100</strong></td><td><strong>93.2%</strong></td><td>Strong local reference</td></tr><tr><td><strong><a href="https://huggingface.co/Qwen/Qwen3.5-0.8B" target="_blank" rel="noopener">Qwen 3.5 0.8B</a></strong></td><td>0.8B</td><td><strong>20/100</strong></td><td>41.6%</td><td>Unexpectedly capable tiny candidate</td></tr><tr><td><strong><a href="https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B" target="_blank" rel="noopener">LFM2.5-VL-1.6B</a></strong></td><td>1.6B</td><td><strong>12/100</strong></td><td><strong>44.4%</strong></td><td>Better partial coverage, lower strict pass rate</td></tr><tr><td><strong><a href="https://huggingface.co/LiquidAI/LFM2.5-VL-450M" target="_blank" rel="noopener">LFM2.5-VL-450M</a></strong></td><td>450M</td><td><strong>1/100</strong></td><td>21.6%</td><td>Very small fallback, not a general VLM replacement</td></tr></tbody></table></div>
+<p>We are deliberately not comparing latency here. Qwen 3.8 27B ran as NVFP4 through vLLM on a remote GPU; Qwen 3.5 0.8B ran through LM Studio; the LFM rows used MLX. Those are different machines, quantizations, and inference stacks. The quality comparison is still useful because every row received the same 100 images, the same production prompt, and the same deterministic grader. The speed numbers would not be a controlled model comparison.</p>
+<h2 id="what-passed-means">What “passed” means</h2>
+<p>This is not a general image-captioning leaderboard. It tests one narrow but important browser-agent contract.</p>
+<p>For each 1280×720 viewport, the model must return six structured sections: page purpose, exact visible text, inputs, state signals, blockers, and unknowns. The grader checks weighted facts and marks critical errors. A fluent answer does not pass if it misses the blocking modal, changes an exact button label, associates a status with the wrong table row, or confidently guesses text that is intentionally unreadable.</p>
+<p>That strictness explains why the mean rubric score matters next to the binary pass rate. LFM2.5-VL-450M passed only one case, but its 21.6% mean score shows that it still extracted pieces of useful evidence. LFM2.5-VL-1.6B had a slightly higher mean score than Qwen 3.5 0.8B, yet Qwen crossed the full success threshold more often. Qwen&#39;s useful facts were more concentrated into complete answers; the 1.6B LFM spread more partial credit across the suite.</p>
+<h2 id="qwen-3-8-27b-is-the-clear-reference">Qwen 3.8 27B is the clear reference</h2>
+<p>Qwen 3.8 27B passed 74 cases and maintained a 93.2% mean rubric score. More importantly, it stayed useful as the suite became harder: 85% on easy cases, 80% on both basic and intermediate cases, 70% on advanced cases, and 55% on the challenging final fifth.</p>
+<p>It swept several browser-relevant categories: dashboards, charts, data tables, kanban boards, toast notifications, consent banners, ordinary photos, and low-contrast or occluded content. That breadth is what a primary local vision model should look like. It does not merely read large text; it preserves relationships and state across different interface types.</p>
+<p>If you can run Qwen 3.8 27B locally, it is the obvious choice among these four. A strong frontier vision API is also a reasonable choice when local hardware, setup time, or model storage matters more than keeping screenshots on the device.</p>
+<h2 id="qwen-3-5-0-8b-is-the-surprise">Qwen 3.5 0.8B is the surprise</h2>
+<p>The interesting small-model result is Qwen 3.5 0.8B. Twenty passes out of 100 is nowhere near the 27B reference, but it is remarkable for a model below one billion parameters.</p>
+<p>Its capability was not evenly distributed. It passed all five data-table cases, four of five photo-understanding cases, and three of five map-and-travel cases. It was much less reliable on authentication, checkout, modals, consent, email, kanban, multilingual OCR, and uncertainty calibration.</p>
+<p>That profile makes it a candidate for targeted routing, not a universal vision backend. If WebBrain already knows that the current task is row extraction, a simple photo, or a map, the 0.8B model may provide surprisingly good evidence. If the task depends on a transient error, a blocker, or exact small UI text, the benchmark says not to trust it alone.</p>
+<p>We have not bundled Qwen 3.5 0.8B into WebBrain&#39;s WebGPU path yet. Serving it through LM Studio or vLLM is straightforward, but integrating its full multimodal stack into the browser runtime is a different engineering problem. The result is strong enough that we think it is worth exploring.</p>
+<h2 id="the-lfm-results-are-a-baseline-not-a-ceiling">The LFM results are a baseline, not a ceiling</h2>
+<p>The raw LFM2.5-VL numbers are modest. The 1.6B model passed 12 cases; the 450M model passed one. The larger LFM was most useful on photos, tables, kanban boards, and maps. The 450M checkpoint frequently recovered some visible text or broad page state but failed the full contract, especially exact labels, blockers, and uncertainty.</p>
+<p>We should be candid about that. LFM2.5-VL-450M is not close to Qwen 3.8 27B, and this run does not justify treating it as a general replacement for a frontier VLM.</p>
+<p>It also is not the end of the LFM story. Liquid AI explicitly recommends use-case fine-tuning for both the 450M and 1.6B checkpoints and publishes supervised fine-tuning paths. We tested the off-the-shelf models. We have not yet fine-tuned them on WebBrain&#39;s screenshot format, control states, exact-label discipline, blocker detection, or “do not guess” behavior.</p>
+<p>That makes these results a useful before-picture. A WebBrain-specific training set could directly target the failures this benchmark exposes. Fine-tuning is not a guarantee, and any improvement would have to survive the same held-out suite, but the LFM family is unusually practical for this experiment because the checkpoints are small and explicitly intended for adaptation.</p>
+<h2 id="why-webbrain-still-ships-the-450m-fallback">Why WebBrain still ships the 450M fallback</h2>
+<p>WebBrain does not ask the vision model to run the whole agent. The main planner still chooses tools, reasons over history, and decides what to do next. Most browser state can often be recovered from the URL, page text, DOM, accessibility tree, and tool results. Vision enters when those sources are incomplete: canvases, charts, selected states, visual blockers, broken semantics, or a screenshot after an important state change.</p>
+<p>That means the local vision model is used relatively rarely. Its job is to add visual evidence when the ordinary browser-reading path is not enough.</p>
+<p>For that role, LFM2.5-VL-450M has three product advantages even when its strict benchmark score is weak:</p>
+<ul><li><strong>It is small enough for an in-browser fallback.</strong> WebBrain&#39;s ONNX package is about 770 MB and runs through WebGPU on supported Chromium systems.</li><li><strong>Screenshots can stay on the device.</strong> The visual observation becomes text context for the selected planner instead of requiring a remote image upload.</li><li><strong>It shares a family with WebBrain&#39;s offline text stack.</strong> <a href="/blog/why-we-built-apocalypse-mode">Apocalypse Mode</a> uses LFM2.5 2.6B for local text generation and can augment it with offline retrieval from installed Wikipedia and document indexes. The 450M vision sidecar gives that resilient local stack a compact set of eyes.</li></ul>
+<p>In an offline or degraded-network scenario, the comparison is not always “450M versus the best API.” It may be “450M versus no visual model at all.” The benchmark tells us to keep its claims narrow and its outputs corroborated; it does not tell us that the fallback has no value.</p>
+<h2 id="a-practical-split-stack">A practical split stack</h2>
+<p>Our preferred architecture remains modular:</p>
+<ol><li>Use <strong>Qwen 3.8 27B locally</strong> if you have the hardware and want a strong private multimodal reference.</li><li>Use a <strong>frontier vision API</strong> if you prefer managed quality and accept the provider&#39;s image-data path.</li><li>Or pair an inexpensive text-only planner—such as <a href="/blog/poolside-laguna-s-openrouter-planner-benchmark">Laguna S 2.1 through OpenRouter</a>—with WebBrain&#39;s local LFM2.5-VL-450M fallback.</li></ol>
+<p>The third option is easy to underestimate. A browser agent does not need to purchase an image-capable call for every planning turn when only a minority of states require pixel inspection. A cheap text model can run the main loop; the local sidecar can fill the visual gap only when necessary.</p>
+<p>WebBrain is also working on larger model-specific vision paths. Experimental checkpoints for <a href="https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-NVFP4" target="_blank" rel="noopener">Laguna XS 2.1 Vision</a> and <a href="https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4" target="_blank" rel="noopener">DeepSeek V4 Flash Vision</a> are available on our Hugging Face page. Those projects aim to make strong text-first models natively useful on screenshots rather than relying forever on a separate tiny captioner.</p>
+<p>The current Bonsai 27B option is separate from this comparison. It is a beta, text-only path for WebBrain&#39;s local stack, so it does not replace the vision fallback and does not belong in this vision table.</p>
+<h2 id="bottom-line">Bottom line</h2>
+<p>Small models do not replace frontier APIs or a new local model such as Qwen 3.8 27B. They are not supposed to.</p>
+<p>Qwen 3.8 27B is the clear quality choice in this run. Qwen 3.5 0.8B is the most surprising small model and deserves more work, especially if we can make its browser/WebGPU integration practical. LFM2.5-VL-1.6B is a useful adaptation target. LFM2.5-VL-450M has a poor strict success rate today, but it remains small, private, available offline, and capable of recovering partial visual evidence when WebBrain&#39;s normal page-reading tools are not enough.</p>
+<p>That is what “it works” means here. Not that a 450M model becomes a 27B model, and not that one lucky caption makes it trustworthy. It means the system can reserve expensive or heavyweight vision for the cases that need it, keep a compact fallback on the device, corroborate its observations with browser-native evidence, and improve the small checkpoint through task-specific fine-tuning over time.</p>
+<p>Tags: #WebBrain #Qwen38 #Qwen35 #LFM25VL #WebGPU #LocalAI #VisionLanguageModel #BrowserAgent #ApocalypseMode</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

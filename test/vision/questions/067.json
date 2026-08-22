@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "067",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "loading-state",
+  "title": "Reconnecting…",
+  "image": "images/067.png",
+  "question": "Is the page ready for interaction, and what exact progress signal is visible? Focus on the “Reconnecting…” screen.",
+  "defaultPromptMode": "production"
+}

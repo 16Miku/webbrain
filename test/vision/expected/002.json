@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "002",
+  "image": "images/002.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "search",
+        "results"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Search",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "tab",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "All",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "count",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "24 results",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "query",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Search",
+        "camera"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Read the active query camera, selected tab All, and exact count 24 results."
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "006",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "toast-notification",
+  "title": "Saved",
+  "image": "images/006.png",
+  "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Saved” screen.",
+  "defaultPromptMode": "production"
+}

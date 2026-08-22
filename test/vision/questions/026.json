@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "026",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "toast-notification",
+  "title": "Settings updated",
+  "image": "images/026.png",
+  "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Settings updated” screen.",
+  "defaultPromptMode": "production"
+}
