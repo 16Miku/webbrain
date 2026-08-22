@@ -9516,6 +9516,24 @@ test('trace trajectory: exposes lifecycle failure codes without requiring an err
   assert.deepEqual(rows[0].errors, []);
 });
 
+test('trace trajectory: closes run rows for unlisted terminal end statuses', () => {
+  for (const status of [
+    'scheduled_resume',
+    'read_scope_limited',
+    'clarification_required',
+    'chrome_protected_page_visual_fallback',
+    'partial',
+    'delivery_recovery_failed',
+  ]) {
+    const rows = TRACE_TRAJECTORY_CH.buildTraceTrajectory([
+      { seq: 1, ts: 10, kind: 'turn_start', data: {} },
+      { seq: 2, ts: 20, kind: 'llm_response', data: { step: 1, usage: { prompt_tokens: 5 } } },
+      { seq: 3, ts: 30, kind: 'turn_end', data: { status, reason: status } },
+    ]);
+    assert.equal(rows[0].status, 'done', `terminal turn_end status ${status} must not linger as running`);
+  }
+});
+
 test('trace UI: renders the trajectory rows before the detailed event timeline', () => {
   for (const browser of ['chrome', 'firefox']) {
     const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');

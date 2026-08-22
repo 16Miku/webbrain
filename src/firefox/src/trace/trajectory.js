@@ -70,18 +70,23 @@ function addError(row, data) {
   row.status = 'error';
 }
 
+// Only failure-shaped end payloads mark the row as errored. Every other end
+// payload closes its row as done because a recorded end event terminates the
+// step/run by definition; the agent emits terminal statuses that are not
+// enumerated here (scheduled_resume, read_scope_limited,
+// clarification_required, delivery-recovery fallbacks), and listing them
+// would only drift out of sync with agent.js.
+const FAILED_END_STATUSES = [
+  'error', 'loop_stopped', 'max_steps', 'cancelled', 'cost_limit',
+  'plan_only_output', 'incomplete_output', 'empty_output',
+  'placeholder_output', 'required_tool_missing', 'grounding_unavailable',
+  'captcha_manual_required',
+];
+
 function markEnd(row, data) {
-  const failedStatuses = [
-    'error', 'loop_stopped', 'max_steps', 'cancelled', 'cost_limit',
-    'plan_only_output', 'incomplete_output', 'empty_output',
-    'placeholder_output', 'required_tool_missing', 'grounding_unavailable',
-    'captcha_manual_required',
-  ];
-  const failed = data?.ok === false || failedStatuses.includes(data?.status);
+  const failed = data?.ok === false || FAILED_END_STATUSES.includes(data?.status);
   if (failed) row.status = 'error';
-  else if (data?.ok === true || data?.status === 'done') {
-    if (row.status !== 'error') row.status = 'done';
-  }
+  else if (row.status !== 'error') row.status = 'done';
   if (data?.code && failed) addUnique(row.errorCodes, data.code, MAX_ERRORS);
   if (data?.repaired === true) row.repaired = true;
 }
