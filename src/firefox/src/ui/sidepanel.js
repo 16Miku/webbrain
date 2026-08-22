@@ -12781,9 +12781,9 @@ async function startNewConversationForTab(tabId) {
   let shouldDrainQueuedPrompts = false;
   setConversationClearInProgress(tabId, true);
   try {
-    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
     if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
     await sendToBackground('clear_conversation', { tabId });
+    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
     suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
     clearQueuedComposerMessagesForTab(tabId);
     clearQueuedForTab(tabId);

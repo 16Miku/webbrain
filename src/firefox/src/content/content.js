@@ -2136,6 +2136,7 @@
     el.focus();
     showAgentWorkingTarget(el, 'type_text');
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+    const routeHrefBeforeType = location.href;
 
     // contenteditable path (Notion, Google Docs comments, Lexical,
     // ProseMirror, Slate, Draft — all need the beforeinput → input →
@@ -2191,13 +2192,16 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
 
-    // Duplicate-field detection
-    const fieldIdent = `${location.href}|${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
+    // Duplicate-field detection. Input handlers can synchronously start a
+    // same-document navigation, so never attribute the old field to the route
+    // that happens to be current after verification yields.
+    const routeStayedCurrent = location.href === routeHrefBeforeType;
+    const fieldIdent = `${routeHrefBeforeType}|${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
     let typeWarning;
-    if (_lastTypeFieldIdent === fieldIdent) {
+    if (routeStayedCurrent && _lastTypeFieldIdent === fieldIdent) {
       typeWarning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
     }
-    _lastTypeFieldIdent = fieldIdent;
+    _lastTypeFieldIdent = routeStayedCurrent ? fieldIdent : null;
 
     return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
