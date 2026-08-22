@@ -4604,6 +4604,7 @@ async function adoptRestoredRunState(tabId, state) {
         await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
       }
     }
+    if (ownsRunState) await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
@@ -8341,7 +8342,8 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } catch (e) {
-    if (clearedConversationRunRequestIds.has(requestId)) return accepted;
+    if (clearedConversationRunRequestIds.has(requestId)
+        || conversationClearFollowerCancellationRequestIds.has(requestId)) return accepted;
     reconcileFailedSelectionGroundedStart(tabId, {
       sourceGrounding,
       selectionGroundedBeforeSend,
@@ -11205,7 +11207,8 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId
         && assistantEl
         && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       addMessage('error', t('sp.error_prefix', { msg: e.message }));
     }
   } finally {
