@@ -4534,7 +4534,7 @@ function requestVisibleSidePanelStateRefresh() {
   }).catch(() => {});
 }
 
-async function refreshConversationScopeState(tabId = currentTabId) {
+async function refreshConversationScopeState(tabId = currentTabId, { apply = true } = {}) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return null;
   let state = null;
@@ -4543,12 +4543,13 @@ async function refreshConversationScopeState(tabId = currentTabId) {
   } catch {
     return null;
   }
-  applyConversationScopeState(numericTabId, state);
+  if (apply) applyConversationScopeState(numericTabId, state);
   return state;
 }
 
 const FAILED_CONVERSATION_CLEAR_RECOVERY_RETRY_MS = 1_000;
 const failedConversationClearRecoveryRetryTimers = new Map();
+const failedConversationClearRecoveryTokens = new Map();
 
 function cancelFailedConversationClearRecoveryRetry(tabId) {
   const numericTabId = Number(tabId);
@@ -4570,7 +4571,12 @@ function scheduleFailedConversationClearRecoveryRetry(tabId) {
 
 function holdFailedConversationClearRecovery(tabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
-  if (numericTabId == null) return;
+  if (numericTabId == null) return null;
+  let recoveryToken = failedConversationClearRecoveryTokens.get(numericTabId);
+  if (!recoveryToken) {
+    recoveryToken = Symbol('failed-conversation-clear-recovery');
+    failedConversationClearRecoveryTokens.set(numericTabId, recoveryToken);
+  }
   // A timed-out local abort can finish after clear_conversation has failed.
   // Keep its finalizer from making the composer look idle until the background
   // reservation has either been re-adopted or authoritatively ended.
@@ -4581,12 +4587,21 @@ function holdFailedConversationClearRecovery(tabId) {
     showActivity('Reconnecting\u2026');
     syncSendButtonState();
   }
+  return recoveryToken;
+}
+
+function isFailedConversationClearRecoveryCurrent(tabId, recoveryToken) {
+  const numericTabId = Number(tabId);
+  return failedConversationClearRecoveryTabs.has(numericTabId)
+    && failedConversationClearRecoveryTokens.get(numericTabId) === recoveryToken
+    && !isConversationClearInProgress(numericTabId);
 }
 
 function finishFailedConversationClearRecovery(tabId, { processing }) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return;
   failedConversationClearRecoveryTabs.delete(numericTabId);
+  failedConversationClearRecoveryTokens.delete(numericTabId);
   cancelFailedConversationClearRecoveryRetry(numericTabId);
   setTabProcessing(numericTabId, processing);
   setTabAbortRequested(numericTabId, false);
@@ -4599,14 +4614,14 @@ function finishFailedConversationClearRecovery(tabId, { processing }) {
 async function recoverActiveRunAfterFailedConversationClear(tabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return false;
-  holdFailedConversationClearRecovery(numericTabId);
+  const recoveryToken = holdFailedConversationClearRecovery(numericTabId);
   if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
     cancelFailedConversationClearRecoveryRetry(numericTabId);
     return false;
   }
 
-  const state = await refreshConversationScopeState(numericTabId);
-  if (!failedConversationClearRecoveryTabs.has(numericTabId)) return false;
+  const state = await refreshConversationScopeState(numericTabId, { apply: false });
+  if (!isFailedConversationClearRecoveryCurrent(numericTabId, recoveryToken)) return false;
   if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
     cancelFailedConversationClearRecoveryRetry(numericTabId);
     return false;
@@ -4615,9 +4630,15 @@ async function recoverActiveRunAfterFailedConversationClear(tabId) {
     scheduleFailedConversationClearRecoveryRetry(numericTabId);
     return false;
   }
+  applyConversationScopeState(numericTabId, state);
 
-  const snapshotStillActive = await applyActiveRunState(numericTabId, state);
-  if (!failedConversationClearRecoveryTabs.has(numericTabId)) return false;
+  const recoveryStillCurrent = () => (
+    isFailedConversationClearRecoveryCurrent(numericTabId, recoveryToken)
+  );
+  const snapshotStillActive = await applyActiveRunState(numericTabId, state, {
+    shouldContinue: recoveryStillCurrent,
+  });
+  if (!recoveryStillCurrent()) return false;
   if (!snapshotStillActive) {
     scheduleFailedConversationClearRecoveryRetry(numericTabId);
     return false;
@@ -4644,7 +4665,7 @@ async function recoverActiveRunAfterFailedConversationClear(tabId) {
   }
 
   void adoptRestoredRunState(numericTabId, state);
-  if (!failedConversationClearRecoveryTabs.has(numericTabId)) return false;
+  if (!recoveryStillCurrent()) return false;
   const runWasAdopted = localRunRequestIds.get(numericTabId) === requestId
     && localRunFollowers.get(numericTabId)?.requestId === requestId;
   if (!runWasAdopted) {
