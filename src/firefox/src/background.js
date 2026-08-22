@@ -1666,13 +1666,14 @@ browser.tabs.onActivated.addListener(({ tabId } = {}) => {
 // Focusing a window does not fire tabs.onActivated for its already-active
 // tab, so badges set on restricted tabs in unfocused windows would linger
 // after the user returns to that window. Clear the focused window's active
-// tab badge as well.
+// tab badge as well — unconditionally, like the activation handler above,
+// so cleanup never depends on volatile state.
 browser.windows.onFocusChanged.addListener(async (windowId) => {
   if (windowId == null || windowId === browser.windows.WINDOW_ID_NONE) return;
   try {
     const [activeTab] = await browser.tabs.query({ active: true, windowId });
     const activeTabId = Number(activeTab?.id);
-    if (!Number.isInteger(activeTabId) || !flashedBadgeTabs.has(activeTabId)) return;
+    if (!Number.isInteger(activeTabId)) return;
     flashedBadgeTabs.delete(activeTabId);
     await browser.browserAction.setBadgeText({ tabId: activeTabId, text: '' });
   } catch { /* best-effort cleanup */ }

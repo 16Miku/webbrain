@@ -2329,13 +2329,14 @@ chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
 // Focusing a window does not fire tabs.onActivated for its already-active
 // tab, so badges set on restricted tabs in unfocused windows would linger
 // after the user returns to that window. Clear the focused window's active
-// tab badge as well.
+// tab badge as well — unconditionally, like the activation handler above,
+// since the tracking Set cannot survive MV3 worker restarts.
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   if (windowId == null || windowId === chrome.windows.WINDOW_ID_NONE) return;
   try {
     const [activeTab] = await chrome.tabs.query({ active: true, windowId });
     const activeTabId = Number(activeTab?.id);
-    if (!Number.isInteger(activeTabId) || !flashedBadgeTabs.has(activeTabId)) return;
+    if (!Number.isInteger(activeTabId)) return;
     flashedBadgeTabs.delete(activeTabId);
     await chrome.action.setBadgeText({ tabId: activeTabId, text: '' });
   } catch { /* best-effort cleanup */ }
