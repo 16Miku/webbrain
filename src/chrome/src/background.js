@@ -3094,8 +3094,19 @@ async function handleMessage(msg, sender) {
         if (msg.clearContextMenuPrompt === true) {
           await contextMenuStorage.clear(tabId);
         }
+        const tabChatClearResult = await tabChatHandoff.clear(tabId);
+        if (!tabChatClearResult?.ok || tabChatClearResult.skipped) {
+          throw new Error('Could not durably clear the tab transcript.');
+        }
         agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
+        chrome.runtime.sendMessage({
+          target: 'sidepanel',
+          action: 'tab_chat_cleared',
+          tabId,
+          handoffOwnerId: tabChatClearResult.handoffOwnerId,
+          handoffGeneration: tabChatClearResult.handoffGeneration,
+        }).catch(() => {});
       }
       return { ok: true };
     }

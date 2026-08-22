@@ -1184,6 +1184,7 @@ function createRunRequestId(tabId) {
 const {
   acceptContextMenuPrompt,
   drainQueuedContextMenuPrompts,
+  hasQueuedForTab: hasQueuedContextMenuPromptForTab,
   consumePendingContextMenuPrompt,
   clearQueuedForTab,
 } = createContextMenuPromptHandler({
@@ -2830,9 +2831,51 @@ async function scheduledJobAction(action, jobId) {
   }
 }
 
+const QUEUED_PROMPT_DRAIN_RETRY_MS = 1_000;
+const queuedPromptDrainRetryTimers = new Map();
+
+function cancelQueuedPromptDrainRetry(tabId) {
+  const numericTabId = Number(tabId);
+  const timerId = queuedPromptDrainRetryTimers.get(numericTabId);
+  if (timerId != null) clearTimeout(timerId);
+  queuedPromptDrainRetryTimers.delete(numericTabId);
+}
+
+function scheduleQueuedPromptDrainRetry(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId) || queuedPromptDrainRetryTimers.has(numericTabId)) return;
+  const timerId = setTimeout(() => {
+    queuedPromptDrainRetryTimers.delete(numericTabId);
+    void drainQueuedPromptsAfterRunSettles(numericTabId);
+  }, QUEUED_PROMPT_DRAIN_RETRY_MS);
+  queuedPromptDrainRetryTimers.set(numericTabId, timerId);
+}
+
+function hasQueuedPromptForTab(tabId) {
+  return getQueuedComposerMessages(tabId).length > 0
+    || hasQueuedContextMenuPromptForTab(tabId);
+}
+
 async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId) {
-  if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+  const numericTabId = Number(tabId);
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
   if (isConversationClearInProgress(tabId)) return;
+  if (!hasQueuedPromptForTab(numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  let runState = null;
+  try {
+    runState = await sendToBackground('agent_run_state', { tabId: numericTabId });
+  } catch { /* retry while a queued prompt still needs the background reservation */ }
+  if (!runState?.ok || runState.running || runState.starting) {
+    scheduleQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  cancelQueuedPromptDrainRetry(numericTabId);
   if (drainQueuedComposerMessageForCurrentTab()) return;
   drainQueuedContextMenuPrompts();
 }

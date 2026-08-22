@@ -127,6 +127,16 @@ export function createContextMenuPromptHandler({
     }
   }
 
+  function hasQueuedForTab(tabId) {
+    const numericTabId = Number(tabId);
+    if (!Number.isFinite(numericTabId)) return false;
+    const matchesTab = (prompt) => (
+      prompt?.tabId == null || Number(prompt.tabId) === numericTabId
+    );
+    return queuedContextMenuPrompts.some(matchesTab)
+      || deferredContextMenuPrompts.some(matchesTab);
+  }
+
   async function runContextMenuPrompt(payload) {
     if (!payload?.text) return;
     clearClaimRetry(payload.id);
@@ -262,6 +272,7 @@ export function createContextMenuPromptHandler({
   return {
     acceptContextMenuPrompt,
     drainQueuedContextMenuPrompts,
+    hasQueuedForTab,
     consumePendingContextMenuPrompt,
     clearQueuedForTab,
   };
