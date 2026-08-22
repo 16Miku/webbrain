@@ -8106,6 +8106,8 @@ console.log('\ntrace event model');
 
 const EVENT_MODEL_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/event-model.js').replace(/\\/g, '/'));
 const EVENT_MODEL_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/event-model.js').replace(/\\/g, '/'));
+const TRACE_REPAIR_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/repair.js').replace(/\\/g, '/'));
+const TRACE_REPAIR_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/repair.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -9144,6 +9146,7 @@ test('trace error codes: catalog is stable and normalizeErrorCode bounds the val
   assert.equal(normalizeErrorCode('NOT_A_CODE'), 'UNKNOWN', 'unknown code must normalize to UNKNOWN');
   assert.equal(normalizeErrorCode(null), 'UNKNOWN', 'null code must normalize to UNKNOWN');
   assert.equal(normalizeErrorCode(undefined), 'UNKNOWN', 'missing code must normalize to UNKNOWN');
+  assert.equal(isErrorCode('SERVICE_WORKER_EVICTED'), true, 'service-worker interruption needs a stable repair code');
   assert.deepEqual(ERROR_CODES_FX.ERROR_CODES, ERROR_CODES, 'Firefox code catalog drifted');
 });
 
@@ -9153,6 +9156,113 @@ test('trace error codes: mirrors are identical and browser-neutral', () => {
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox error codes drifted');
   assert.doesNotMatch(chromeSource, /chrome\./, 'error codes must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'error codes must not touch storage');
+});
+
+test('trace repair: stale interrupted runs receive one ordered terminal repair', () => {
+  const run = {
+    runId: 'run_interrupted',
+    startedAt: 1_000,
+    status: 'running',
+    stepCount: 1,
+    finalContent: null,
+  };
+  const events = [
+    { runId: run.runId, seq: 1, kind: 'turn_start', data: { step: 0 } },
+    { runId: run.runId, seq: 2, kind: 'step_start', data: { step: 1 } },
+    { runId: run.runId, seq: 3, kind: 'llm_request', data: { step: 1 } },
+  ];
+  const plan = TRACE_REPAIR_CH.buildTraceRepairPlan(run, events, {
+    now: 100_000,
+    staleAfterMs: 60_000,
+  });
+
+  assert.ok(plan, 'an old running run must produce a repair plan');
+  assert.deepEqual(
+    plan.events.map((event) => [event.seq, event.kind]),
+    [[4, 'step_end'], [5, 'error'], [6, 'turn_end']],
+    'repair events must continue the existing sequence and close open lifecycle events',
+  );
+  assert.deepEqual(plan.events[0].data, {
+    step: 1,
+    ok: false,
+    reason: 'service_worker_eviction',
+    code: 'SERVICE_WORKER_EVICTED',
+    repaired: true,
+  });
+  assert.deepEqual(plan.events[1].data, {
+    step: null,
+    phase: 'repair',
+    message: 'Trace run interrupted by service-worker eviction.',
+    code: 'SERVICE_WORKER_EVICTED',
+  });
+  assert.deepEqual(plan.events[2].data, {
+    step: 0,
+    status: 'error',
+    reason: 'service_worker_eviction',
+    code: 'SERVICE_WORKER_EVICTED',
+    repaired: true,
+  });
+  assert.equal(plan.run.status, 'error', 'repaired run must no longer be running');
+  assert.equal(plan.run.endedAt, 100_000);
+  assert.equal(plan.run.durationMs, 99_000);
+  assert.equal(plan.run.repairedBy, 'service-worker-eviction');
+  assert.equal(plan.run.repairedAt, 100_000);
+});
+
+test('trace repair: ignores recent and already repaired runs, with mirrored helpers', () => {
+  const recent = { runId: 'recent', startedAt: 95_000, status: 'running' };
+  const activeLongRun = { runId: 'active_long', startedAt: 1_000, status: 'running' };
+  const repaired = {
+    runId: 'repaired',
+    startedAt: 1_000,
+    status: 'error',
+    repairedBy: 'service-worker-eviction',
+  };
+  for (const [label, repair] of [['chrome', TRACE_REPAIR_CH], ['firefox', TRACE_REPAIR_FX]]) {
+    assert.equal(
+      repair.buildTraceRepairPlan(recent, [], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent runs must remain eligible for normal completion`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(activeLongRun, [
+        { runId: activeLongRun.runId, seq: 1, ts: 95_000, kind: 'step_start', data: { step: 1 } },
+      ], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent durable activity must protect a long-running active trace`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(repaired, [], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: repaired runs must be idempotent`,
+    );
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/repair.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/repair.js'), 'utf8'),
+    'Chrome and Firefox repair helpers must remain mirrored',
+  );
+});
+
+test('trace repair: recorder and browser entry points apply the repair transaction', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorder = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, `src/${browser}/src/background.js`), 'utf8');
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    assert.match(recorder, /import \{[\s\S]*?buildTraceRepairPlan[\s\S]*?from '\.\/repair\.js';/, `${browser}: recorder repair import missing`);
+    assert.match(recorder, /const transaction = tx\(db, \['runs', 'events'\], 'readwrite'\)/, `${browser}: repair must share one atomic transaction`);
+    assert.match(recorder, /for \(const event of plan\.events\) eventsStore\.put\(event\);/, `${browser}: repair events are not persisted`);
+    assert.match(recorder, /runsStore\.put\(plan\.run\);/, `${browser}: repaired run is not persisted`);
+    assert.match(recorder, /export async function repairStaleRuns\(/, `${browser}: stale-run scan is not exported`);
+    // Candidate scan must be bounded to the possibly-stale slice of history
+    // and re-check in-memory liveness at the last instant before writing.
+    assert.match(recorder, /index\('startedAt'\)[\s\S]*?openCursor\(IDBKeyRange\.upperBound\(cutoff\)\)/, `${browser}: stale-run scan must not walk the full runs store`);
+    assert.match(recorder, /if \(_runState\.has\(runId\)\) return;\n\s*for \(const event of plan\.events\)/, `${browser}: repair must re-check live runs before writing`);
+    assert.match(background, /setTimeout\(\(\) => \{ void workflowTrace\.repairStaleRuns\(\)\.catch\(\(\) => \{\}\); \}, TRACE_REPAIR_STARTUP_DELAY_MS\)/, `${browser}: background startup must defer the stale-run scan`);
+    assert.match(background, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?workflowTrace\.repairStaleRuns\(\)/, `${browser}: background does not answer the traces-page repair request`);
+    assert.match(traces, /\(async \(\) => \{\s*await repairStaleRunsForPage\(\);\s*await refresh\(\);/, `${browser}: Traces page does not route its first repair through the background`);
+    assert.match(traces, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?return repairStaleRuns\(\)\.catch\(\(\) => \[\]\);/, `${browser}: Traces page lost its local fallback for when the background is unreachable`);
+  }
 });
 
 test('agent trace error classification: _traceErrorCodeFor maps failures to stable codes', () => {
