@@ -1880,7 +1880,11 @@ function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSuc
 }
 
 // Mirror the sidepanel's successful-Ask classification for badge styling
-// only: non-empty content with no error/attachment/max-steps update.
+// only: non-empty content with no error/attachment/max-steps update and no
+// billing terminal (subscribe / cost-allowance messages are actionable
+// failures, not successes).
+const BADGE_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
+const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
   if (updates.some(update => (
@@ -1890,7 +1894,11 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
     || update?.error
     || update?.data?.error
   ))) return false;
-  return String(result ?? '').trim().length > 0;
+  const content = String(result ?? '').trim();
+  if (!content) return false;
+  if (BADGE_SUBSCRIBE_ERROR_RE.test(content)) return false;
+  if (BADGE_COST_ALLOWANCE_ERROR_RE.test(content)) return false;
+  return true;
 }
 
 async function getRunUiSnapshot(tabId) {
