@@ -130,7 +130,7 @@ async function peekRunFlags(db, runId) {
     const record = await promisifyReq(
       tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
     );
-    return { forced: record?.forced === true, lossless: record?.lossless === true, losslessBytes: record?.losslessBytes || 0 };
+    return { forced: record?.forced === true, lossless: record?.lossless === true, losslessBytes: record?.losslessBytes || 0, losslessBytesEncoding: record?.losslessBytesEncoding || '' };
   } catch { return { forced: false, lossless: false, losslessBytes: 0 }; }
 }
 
@@ -185,7 +185,7 @@ async function _ensureRunState(runId, db = null) {
       const resolvedDb = db || await openDB();
       const seq = await _peekSeq(resolvedDb, runId);
       const flags = await peekRunFlags(resolvedDb, runId);
-      const state = { seq, forced: flags.forced, lossless: flags.lossless, losslessBytes: Number(flags.losslessBytes) || 0 };
+      const state = { seq, forced: flags.forced, lossless: flags.lossless, losslessBytes: Number(flags.losslessBytes) || 0, losslessBytesEncoding: flags.losslessBytesEncoding };
       _runState.set(runId, state);
       return state;
     } catch { return null; }
@@ -326,7 +326,7 @@ export async function startRun(meta = {}) {
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
       attachments: normalizeTraceAttachments(meta.attachments),
-      ...(lossless ? { lossless: true, losslessBytes: 0 } : {}),
+      ...(lossless ? { lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' } : {}),
       forced,
       stepCount: 0,
       totalInputTokens: 0,
@@ -334,7 +334,7 @@ export async function startRun(meta = {}) {
       finalContent: null,
     };
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
-    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless, losslessBytes: 0 });
+    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
     return runId;
   } catch (e) {
     console.warn('[trace] startRun failed:', e);
@@ -347,6 +347,13 @@ async function _appendEventNow(runId, kind, data) {
   try {
     const db = await openDB();
     const state = await _ensureRunState(runId, db);
+    if (state?.lossless === true && state.losslessBytesEncoding !== 'utf8') {
+      const run = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
+      if (run?.lossless === true) {
+        state.losslessBytes = await _recomputeLosslessBytes(db, run, { refreshActiveState: false });
+        state.losslessBytesEncoding = 'utf8';
+      }
+    }
     const resolvedData = typeof data === 'function' ? data(state) : data;
     const seq = _newSeq(runId);
     const ev = makeEvent(runId, seq, kind, resolvedData);
@@ -394,15 +401,20 @@ async function _recomputeLosslessBytes(db, run, { refreshActiveState = true } = 
   const runTx = tx(db, ['runs']);
   const runStore = runTx.objectStore('runs');
   const current = await promisifyReq(runStore.get(run.runId));
-  if (current?.lossless === true && (Number(current.losslessBytes) || 0) !== bytes) {
+  if (current?.lossless === true
+      && ((Number(current.losslessBytes) || 0) !== bytes || current.losslessBytesEncoding !== 'utf8')) {
     current.losslessBytes = bytes;
+    current.losslessBytesEncoding = 'utf8';
     await promisifyReq(runStore.put(current));
   }
   if (refreshActiveState && _runState.get(run.runId)?.lossless === true) {
     void _queueRunWrite(run.runId, async () => {
       const refreshedBytes = await _recomputeLosslessBytes(db, run, { refreshActiveState: false });
       const state = _runState.get(run.runId);
-      if (state?.lossless === true) state.losslessBytes = refreshedBytes;
+      if (state?.lossless === true) {
+        state.losslessBytes = refreshedBytes;
+        state.losslessBytesEncoding = 'utf8';
+      }
     });
   }
   return bytes;

@@ -9135,7 +9135,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /async function losslessTraceEnabled\(\)/, `${browser}: losslessTraceEnabled missing`);
     assert.match(recorderSource, /const lossless = meta\.lossless === true \|\| await losslessTraceEnabled\(\);/, `${browser}: tier decision missing in startRun`);
-    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: run record does not stamp the tier`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' \} : \{\}\)/, `${browser}: run record does not stamp the tier and UTF-8 accounting unit`);
     assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
     assert.match(recorderSource, /const LOSSILESS_REQUEST_CAP = 500_000;/, `${browser}: lossless request cap missing`);
     assert.match(recorderSource, /_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
@@ -9144,7 +9144,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
     assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
     assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
-    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' \} : \{\}\)/, `${browser}: default run records should omit lossless accounting fields`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
     assert.match(recorderSource, /_losslessTotalEstimate \+= addedBytes;[\s\S]*?if \(_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP\) return;/, `${browser}: eviction scan is not gated by a cached running total`);
@@ -9154,6 +9154,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /_runState\.get\(run\.runId\)\?\.lossless === true[\s\S]*?void _queueRunWrite\(run\.runId, async \(\) => \{[\s\S]*?_recomputeLosslessBytes\(db, run, \{ refreshActiveState: false \}\)[\s\S]*?state\.losslessBytes = refreshedBytes;/, `${browser}: migrated active-run byte totals should refresh only inside that run's serialized write queue`);
     assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
     assert.match(recorderSource, /new TextEncoder\(\)\.encode\(JSON\.stringify\(resolvedData\)\)\.length/, `${browser}: lossless budgets should count serialized UTF-8 bytes`);
+    assert.match(recorderSource, /state\?\.lossless === true && state\.losslessBytesEncoding !== 'utf8'[\s\S]*?_recomputeLosslessBytes\(db, run, \{ refreshActiveState: false \}\)[\s\S]*?state\.losslessBytesEncoding = 'utf8';[\s\S]*?const resolvedData = typeof data === 'function' \? data\(state\) : data;/, `${browser}: legacy active totals should migrate before the first payload cap guard runs`);
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
