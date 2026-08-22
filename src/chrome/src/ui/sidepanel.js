@@ -4572,11 +4572,8 @@ function scheduleFailedConversationClearRecoveryRetry(tabId) {
 function holdFailedConversationClearRecovery(tabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return null;
-  let recoveryToken = failedConversationClearRecoveryTokens.get(numericTabId);
-  if (!recoveryToken) {
-    recoveryToken = Symbol('failed-conversation-clear-recovery');
-    failedConversationClearRecoveryTokens.set(numericTabId, recoveryToken);
-  }
+  const recoveryToken = Symbol('failed-conversation-clear-recovery');
+  failedConversationClearRecoveryTokens.set(numericTabId, recoveryToken);
   // A timed-out local abort can finish after clear_conversation has failed.
   // Keep its finalizer from making the composer look idle until the background
   // reservation has either been re-adopted or authoritatively ended.
