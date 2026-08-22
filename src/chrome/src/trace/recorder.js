@@ -4,6 +4,11 @@ import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
 import { normalizeErrorCode } from './error-codes.js';
 import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
+import {
+  buildTraceRepairPlan,
+  isStaleRunningTrace,
+  TRACE_REPAIR_STALE_AFTER_MS,
+} from './repair.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -135,6 +140,47 @@ async function _peekSeq(db, runId) {
     cursor.onerror = () => resolve(0);
   });
   return result;
+}
+
+function _repairRunInTransaction(db, runId, { now, staleAfterMs }) {
+  return new Promise((resolve, reject) => {
+    const transaction = tx(db, ['runs', 'events'], 'readwrite');
+    const runsStore = transaction.objectStore('runs');
+    const eventsStore = transaction.objectStore('events');
+    let run = null;
+    let events = null;
+    let pending = 2;
+    let repairedRunId = null;
+    let requestError = null;
+
+    const fail = (error) => {
+      requestError = error || new Error('trace repair request failed');
+      try { transaction.abort(); } catch {}
+    };
+    const apply = () => {
+      pending -= 1;
+      if (pending > 0 || requestError) return;
+      const plan = buildTraceRepairPlan(run, events, { now, staleAfterMs });
+      if (!plan) return;
+      for (const event of plan.events) eventsStore.put(event);
+      runsStore.put(plan.run);
+      repairedRunId = runId;
+    };
+
+    transaction.oncomplete = () => resolve(repairedRunId);
+    transaction.onerror = () => reject(requestError || transaction.error || new Error('trace repair failed'));
+    transaction.onabort = () => {
+      if (requestError) reject(requestError);
+      else if (!repairedRunId) resolve(null);
+    };
+
+    const runRequest = runsStore.get(runId);
+    runRequest.onsuccess = () => { run = runRequest.result || null; apply(); };
+    runRequest.onerror = () => fail(runRequest.error);
+    const eventsRequest = eventsStore.index('runId').getAll(IDBKeyRange.only(runId));
+    eventsRequest.onsuccess = () => { events = eventsRequest.result || []; apply(); };
+    eventsRequest.onerror = () => fail(eventsRequest.error);
+  });
 }
 
 function _newSeq(runId) {
@@ -495,6 +541,40 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
   } finally {
     _runState.delete(runId);
     _runWriteQueues.delete(runId);
+  }
+}
+
+/**
+ * Repair trace records left running after a service-worker eviction. Each run
+ * is re-read and updated in one transaction so a concurrent normal completion
+ * wins, and a second repair pass cannot append duplicate terminal events.
+ */
+export async function repairStaleRuns({
+  now = Date.now(),
+  staleAfterMs = TRACE_REPAIR_STALE_AFTER_MS,
+} = {}) {
+  if (typeof indexedDB === 'undefined') return [];
+  try {
+    const db = await openDB();
+    const candidates = await listRuns({ limit: Number.MAX_SAFE_INTEGER });
+    const repaired = [];
+    for (const candidate of candidates) {
+      if (!isStaleRunningTrace(candidate, { now, staleAfterMs })) continue;
+      // A live run in this service-worker instance is still owned by the
+      // agent. The durable marker handles races from another extension page.
+      if (_runState.has(candidate.runId)) continue;
+      await _flushRunWrites(candidate.runId);
+      try {
+        const repairedRunId = await _repairRunInTransaction(db, candidate.runId, { now, staleAfterMs });
+        if (repairedRunId) repaired.push(repairedRunId);
+      } catch (e) {
+        console.warn('[trace] stale-run repair failed:', e);
+      }
+    }
+    return repaired;
+  } catch (e) {
+    console.warn('[trace] stale-run scan failed:', e);
+    return [];
   }
 }
 

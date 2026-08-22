@@ -100,6 +100,7 @@ import {
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(browser);
 let emergencyDownloads = null;
+void workflowTrace.repairStaleRuns().catch(() => {});
 
 function emergencyDownloadController() {
   if (!emergencyDownloads) {

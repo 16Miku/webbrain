@@ -112,6 +112,7 @@ import {
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(chrome);
 const VISION_OFFSCREEN_URL = chrome.runtime.getURL('src/offscreen/offscreen.html');
+void workflowTrace.repairStaleRuns().catch(() => {});
 
 function normalizeVisionDownloadState(state) {
   return {

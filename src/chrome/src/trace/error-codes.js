@@ -23,6 +23,7 @@ export const ERROR_CODES = Object.freeze([
   'TRANSPORT',
   'TOOL_TIMEOUT',
   'COST_LIMIT',
+  'SERVICE_WORKER_EVICTED',
   'UNKNOWN',
 ]);
 
