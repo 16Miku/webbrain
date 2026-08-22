@@ -319,8 +319,8 @@ export default {
   'st.provider.field.model_loaded_hint': '空欄にすると読み込み済みモデルを使用',
 
   'st.vision.desc': '設定すると、ページ読み取り用のスクリーンショットはこのモデルに送られ、プランニングとツール呼び出しはアクティブなプロバイダーが担当します。空欄なら画像認識もアクティブなプロバイダーを使います。OpenAI 互換エンドポイントのみ対応。',
-  'st.vision.local.title': 'LFM2.5-VL ローカルフォールバック',
-  "st.vision.local.desc": "LiquidAI/LFM2.5-VL-450M-ONNXをGPU上で実行し、スクリーンショットはこのデバイス内に保持します。「ローカルフォールバックを使用」を選ぶと、WebGPUを確認して同意を記録し、Hugging Faceから約770 MBのバックグラウンドダウンロードを開始します。タスクは状態を表示し、完了を待ちません。Chromeは開いたままにしてください。",
+  'st.vision.local.title': 'WebBrain VL 2 450M ローカルフォールバック',
+  "st.vision.local.desc": "webbrain-one/webbrain-vl-2-450M-onnxをGPU上で実行し、スクリーンショットはこのデバイス内に保持します。「ローカルフォールバックを使用」を選ぶと、WebGPUを確認して同意を記録し、Hugging Faceから約810 MBのバックグラウンドダウンロードを開始します。タスクは状態を表示し、完了を待ちません。Chromeは開いたままにしてください。",
   'st.vision.local.enable': 'ローカルフォールバックを使用',
   'st.vision.local.disable': 'ローカルフォールバックを無効化',
   'st.vision.local.saved': 'ローカルビジョンフォールバックを有効にしました。',

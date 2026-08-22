@@ -4,9 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.1.0] - 2026-08-22
+
+### Changed
+- Switched to WebBrain VL 2 450M as the local vision fallback.
+
 ## [33.0.8] - 2026-08-20
 
 ### Changed
+- Changed the Chrome local vision fallback to the fine-tuned `webbrain-one/webbrain-vl-2-450M-onnx` release, with renewed opt-in consent and a versioned ready marker so older caches cannot be mistaken for the new model.
 - Added a consent-gated, durable WebBrain Cloud terminal-runtime outbox so executed terminal tool results survive provider-trace export gaps and can be joined through stable de-identified references.
 - fix: resume vision downloads and organize settings
 - fix: require vision cache marker and isolate queued worker deadlines

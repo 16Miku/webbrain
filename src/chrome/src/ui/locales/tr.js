@@ -358,8 +358,8 @@ export default {
   'st.provider.field.model_loaded_hint': 'yüklenmiş modeli kullanmak için boş bırak',
 
   'st.vision.desc': 'Ayarlandığında, sayfa okuma için ekran görüntüleri bu modele gönderilir; planlama ve araç çağrılarını aktif sağlayıcı yürütür. Görme için de aktif sağlayıcıyı kullanmak istiyorsan boş bırak. Yalnızca OpenAI uyumlu uç noktalar.',
-  'st.vision.local.title': 'LFM2.5-VL yerel yedek modeli',
-  "st.vision.local.desc": "LiquidAI/LFM2.5-VL-450M-ONNX modelini GPU’nuzda çalıştırır; ekran görüntüleri bu cihazda kalır. “Yerel yedek modeli kullan” seçildiğinde WebGPU denetlenir, onayınız kaydedilir ve Hugging Face’ten yaklaşık 770 MB arka plan indirmesi başlar. Görevler durumu gösterir ve indirmeyi beklemez; Chrome’u açık tutun.",
+  'st.vision.local.title': 'WebBrain VL 2 450M yerel yedek modeli',
+  "st.vision.local.desc": "webbrain-one/webbrain-vl-2-450M-onnx modelini GPU’nuzda çalıştırır; ekran görüntüleri bu cihazda kalır. “Yerel yedek modeli kullan” seçildiğinde WebGPU denetlenir, onayınız kaydedilir ve Hugging Face’ten yaklaşık 810 MB arka plan indirmesi başlar. Görevler durumu gösterir ve indirmeyi beklemez; Chrome’u açık tutun.",
   'st.vision.local.enable': 'Yerel yedek modeli kullan',
   'st.vision.local.disable': 'Yerel yedek modeli devre dışı bırak',
   'st.vision.local.saved': 'Yerel görüntü yedek modeli etkinleştirildi.',

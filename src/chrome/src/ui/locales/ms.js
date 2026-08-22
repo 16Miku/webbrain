@@ -319,8 +319,8 @@ export default {
   'st.provider.field.model_loaded_hint': 'biarkan kosong untuk menggunakan model yang telah dimuatkan',
 
   'st.vision.desc': 'Jika ditetapkan, tangkapan skrin dihantar kepada model ini untuk membaca halaman, manakala pembekal aktif mengendalikan perancangan dan panggilan alat. Biarkan kosong agar pembekal aktif juga mengendalikan penglihatan. Hanya hujung yang serasi dengan OpenAI.',
-  'st.vision.local.title': 'Model sandaran setempat LFM2.5-VL',
-  "st.vision.local.desc": "Menjalankan LiquidAI/LFM2.5-VL-450M-ONNX pada GPU anda; tangkapan skrin kekal pada peranti ini. Memilih “Gunakan model sandaran setempat” memeriksa WebGPU, merekodkan persetujuan anda dan memulakan muat turun latar belakang kira-kira 770 MB daripada Hugging Face. Tugas memaparkan status dan tidak menunggu muat turun; pastikan Chrome terus dibuka.",
+  'st.vision.local.title': 'Model sandaran setempat WebBrain VL 2 450M',
+  "st.vision.local.desc": "Menjalankan webbrain-one/webbrain-vl-2-450M-onnx pada GPU anda; tangkapan skrin kekal pada peranti ini. Memilih “Gunakan model sandaran setempat” memeriksa WebGPU, merekodkan persetujuan anda dan memulakan muat turun latar belakang kira-kira 810 MB daripada Hugging Face. Tugas memaparkan status dan tidak menunggu muat turun; pastikan Chrome terus dibuka.",
   'st.vision.local.enable': 'Gunakan model sandaran setempat',
   'st.vision.local.disable': 'Lumpuhkan model sandaran setempat',
   'st.vision.local.saved': 'Model sandaran penglihatan setempat diaktifkan.',

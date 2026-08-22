@@ -65,7 +65,7 @@ const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '33.0.8';
+const EXT_VERSION = '33.1.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -1591,7 +1591,7 @@ async function setWebgpuVisionEnabled(enabled) {
     if (!result?.ok) throw new Error(result?.error || 'The local vision model download could not be started.');
   } else {
     // Release GPU allocations, but keep the browser-cached model download so
-    // re-enabling does not require another ~770 MB transfer.
+    // re-enabling does not require another ~810 MB transfer.
     await sendToBackground('dispose_webgpu_vision').catch(() => {});
     await chrome.storage.local.remove([
       WEBGPU_VISION_ENABLED_KEY,

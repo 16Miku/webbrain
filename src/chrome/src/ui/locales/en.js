@@ -792,8 +792,8 @@ export default {
 
   'st.vision.heading': 'Vision',
   'st.vision.desc': 'Choose a separate model to read screenshots while the active provider handles planning and tool calls. Leave both options unset to use the active provider for vision.',
-  'st.vision.local.title': 'LFM2.5-VL local fallback',
-  "st.vision.local.desc": "Runs LiquidAI/LFM2.5-VL-450M-ONNX on your GPU. Screenshots stay on this device. Selecting “Use local fallback” checks WebGPU, records your consent, and starts an approximately 770 MB background download from Hugging Face. Tasks report its status and never wait for it; keep Chrome open.",
+  'st.vision.local.title': 'WebBrain VL 2 450M local fallback',
+  "st.vision.local.desc": "Runs webbrain-one/webbrain-vl-2-450M-onnx on your GPU. Screenshots stay on this device. Selecting “Use local fallback” checks WebGPU, records your consent, and starts an approximately 810 MB background download from Hugging Face. Tasks report its status and never wait for it; keep Chrome open.",
   'st.vision.local.enable': 'Use local fallback',
   'st.vision.local.disable': 'Disable local fallback',
   'st.vision.local.saved': 'Local vision fallback enabled.',

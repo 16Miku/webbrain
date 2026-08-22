@@ -319,8 +319,8 @@ export default {
   'st.provider.field.model_loaded_hint': 'iwang blangko para gamitin ang na-load na modelo',
 
   'st.vision.desc': 'Kung naitakda, ipinapadala ang mga screenshot sa modelong ito para basahin ang pahina, habang ang aktibong provider ang humahawak sa pagpaplano at mga tool call. Iwang blangko para gamitin din ang aktibong provider para sa bisyon. Para lamang sa mga OpenAI-compatible na endpoint.',
-  'st.vision.local.title': 'Lokal na fallback ng LFM2.5-VL',
-  "st.vision.local.desc": "Pinapagana ang LiquidAI/LFM2.5-VL-450M-ONNX sa iyong GPU at nananatili sa device ang mga screenshot. Kapag pinili ang “Gamitin ang lokal na fallback,” susuriin ang WebGPU, itatala ang pahintulot, at magsisimula ang humigit-kumulang 770 MB na background download mula sa Hugging Face. Ipinapakita ng mga gawain ang status at hindi hinihintay ang download; panatilihing bukas ang Chrome.",
+  'st.vision.local.title': 'Lokal na fallback ng WebBrain VL 2 450M',
+  "st.vision.local.desc": "Pinapagana ang webbrain-one/webbrain-vl-2-450M-onnx sa iyong GPU at nananatili sa device ang mga screenshot. Kapag pinili ang “Gamitin ang lokal na fallback,” susuriin ang WebGPU, itatala ang pahintulot, at magsisimula ang humigit-kumulang 810 MB na background download mula sa Hugging Face. Ipinapakita ng mga gawain ang status at hindi hinihintay ang download; panatilihing bukas ang Chrome.",
   'st.vision.local.enable': 'Gamitin ang lokal na fallback',
   'st.vision.local.disable': 'I-disable ang lokal na fallback',
   'st.vision.local.saved': 'Naka-enable ang lokal na vision fallback.',

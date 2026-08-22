@@ -791,8 +791,8 @@ export default {
 
   'st.vision.heading': "Tầm nhìn",
   'st.vision.desc': "Nếu được đặt, ảnh chụp màn hình sẽ được gửi đến mô hình này để đọc trang, trong khi nhà cung cấp hoạt động xử lý các lệnh gọi công cụ và lập kế hoạch. Để trống để sử dụng nhà cung cấp hoạt động cho thị lực. Chỉ các điểm cuối tương thích với OpenAI.",
-  'st.vision.local.title': 'Mô hình dự phòng cục bộ LFM2.5-VL',
-  "st.vision.local.desc": "Chạy LiquidAI/LFM2.5-VL-450M-ONNX trên GPU của bạn; ảnh chụp màn hình chỉ lưu trên thiết bị này. Chọn “Sử dụng mô hình dự phòng cục bộ” sẽ kiểm tra WebGPU, ghi nhận sự đồng ý và bắt đầu tải nền khoảng 770 MB từ Hugging Face. Tác vụ hiển thị trạng thái và không chờ tải xong; hãy giữ Chrome mở.",
+  'st.vision.local.title': 'Mô hình dự phòng cục bộ WebBrain VL 2 450M',
+  "st.vision.local.desc": "Chạy webbrain-one/webbrain-vl-2-450M-onnx trên GPU của bạn; ảnh chụp màn hình chỉ lưu trên thiết bị này. Chọn “Sử dụng mô hình dự phòng cục bộ” sẽ kiểm tra WebGPU, ghi nhận sự đồng ý và bắt đầu tải nền khoảng 810 MB từ Hugging Face. Tác vụ hiển thị trạng thái và không chờ tải xong; hãy giữ Chrome mở.",
   'st.vision.local.enable': 'Sử dụng mô hình dự phòng cục bộ',
   'st.vision.local.disable': 'Tắt mô hình dự phòng cục bộ',
   'st.vision.local.saved': 'Đã bật mô hình thị giác dự phòng cục bộ.',
