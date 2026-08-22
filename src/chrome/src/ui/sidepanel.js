@@ -2970,8 +2970,9 @@ async function scheduledJobAction(action, jobId) {
   }
 }
 
-async function drainQueuedPromptsAfterRunSettles() {
-  if (isConversationClearInProgress()) return;
+async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId) {
+  if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+  if (isConversationClearInProgress(tabId)) return;
   if (drainQueuedComposerMessageForCurrentTab()) return;
   drainQueuedContextMenuPrompts();
 }
@@ -3023,7 +3024,7 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     hideActivity();
     if (currentAssistantEl === assistantEl) currentAssistantEl = null;
     if (renderedTabId != null) await flushRenderedTabChat();
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(runTabId);
   }
   if (event === 'completed' && job?.source !== 'watch') {
     notifyCompletion({ success: job?.lastOutcome === 'success' });
@@ -3128,7 +3129,7 @@ async function handleScheduledJobEvent(data, tabId) {
       setTabProcessing(runTabId, false);
       syncSendButtonState();
       addMessage('system', systemHtml(tSystemHtml('sp.scheduled.needs_user_input', { title })));
-      drainQueuedPromptsAfterRunSettles();
+      drainQueuedPromptsAfterRunSettles(runTabId);
     }
   }
 }
@@ -4409,7 +4410,9 @@ async function switchToTab(newTabId) {
     syncSendButtonState();
   }
   drainQueuedAgentUpdatesForTab(newTabId);
-  consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  consumePendingContextMenuPrompt()
+    .then(() => drainQueuedPromptsAfterRunSettles(newTabId))
+    .catch(() => {});
   if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
 }
 
@@ -5975,7 +5978,7 @@ function clearPlanReviewActiveRun(assistantEl, tabId = currentTabId) {
     sendBtn.disabled = false;
     hideActivity();
   }
-  drainQueuedPromptsAfterRunSettles();
+  drainQueuedPromptsAfterRunSettles(tabId);
   refreshRecommendedActions();
 }
 
@@ -7682,7 +7685,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
     } finally {
       setConversationClearInProgress(tabId, false);
-      if (shouldDrainQueuedPrompts) await drainQueuedPromptsAfterRunSettles();
+      if (shouldDrainQueuedPrompts) await drainQueuedPromptsAfterRunSettles(tabId);
     }
     return '';
   }
@@ -8571,7 +8574,7 @@ async function sendMessage(extraChatParams = {}) {
       });
     }
     if (renderToCurrentTab && currentTabId === tabId) refreshRecommendedActions();
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(tabId);
   }
   return accepted;
 }
@@ -10046,7 +10049,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
           syncSendButtonState();
           hideActivity();
         }
-        drainQueuedPromptsAfterRunSettles();
+        drainQueuedPromptsAfterRunSettles(tabId);
       }
       /* background may be torn down — clarify state already lives there */
     });
@@ -11417,7 +11420,7 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId) scrollToBottom();
     if (currentTabId === tabId && renderedTabId === tabId) await flushRenderedTabChat();
     if (currentTabId === tabId && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
@@ -12387,7 +12390,7 @@ async function abortRun(tabId = currentTabId) {
       currentAssistantEl = null;
       setTabAbortRequested(tabId, false);
       await flushRenderedTabChat();
-      await drainQueuedPromptsAfterRunSettles();
+      await drainQueuedPromptsAfterRunSettles(tabId);
       resolve();
     };
     fallbackTimer = setTimeout(settleWhenInactive, 3000);
@@ -13317,7 +13320,7 @@ async function startNewConversationForTab(tabId) {
     return false;
   } finally {
     setConversationClearInProgress(tabId, false);
-    if (shouldDrainQueuedPrompts) await drainQueuedPromptsAfterRunSettles();
+    if (shouldDrainQueuedPrompts) await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 

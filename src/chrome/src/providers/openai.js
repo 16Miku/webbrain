@@ -33,7 +33,8 @@ function sseDataPayload(line) {
   const normalized = String(line || '').replace(/\r$/, '');
   if (!normalized.startsWith('data:')) return null;
   const value = normalized.slice(5);
-  return value.startsWith(' ') ? value.slice(1) : value;
+  const payload = value.startsWith(' ') ? value.slice(1) : value;
+  return payload.trim() ? payload : null;
 }
 
 /**

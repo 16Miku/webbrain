@@ -34181,13 +34181,14 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
       /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
       `${label}: confirmed New conversation should preserve queued prompts until the bounded background clear succeeds`,
     );
-    assert.match(clearBody, /catch \(error\) \{[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(\);/, `${label}: a failed New conversation clear should resume queued prompts only after releasing the clear interlock`);
+    assert.match(clearBody, /catch \(error\) \{[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: a failed New conversation clear should resume queued prompts for its initiating tab only after releasing the clear interlock`);
     const resetStart = panel.indexOf("if (command.value === '/reset') {");
     const resetBody = panel.slice(resetStart, panel.indexOf("if (command.value === '/print')", resetStart));
-    assert.match(resetBody, /catch \(error\) \{[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(\);/, `${label}: a failed /reset clear should resume queued prompts only after releasing the clear interlock`);
+    assert.match(resetBody, /catch \(error\) \{[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: a failed /reset clear should resume queued prompts for its initiating tab only after releasing the clear interlock`);
     assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
-    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(\) \{[\s\S]*?if \(isConversationClearInProgress\(\)\) return;/, `${label}: a settling run must not drain queued prompts into an in-flight clear`);
+    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?!sameTabId\(currentTabId, tabId\)[\s\S]*?!sameTabId\(renderedTabId, tabId\)[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return;/, `${label}: a settling run must drain only its visible initiating tab and never drain into an in-flight clear`);
+    assert.match(panel, /async function switchToTab\(newTabId\)[\s\S]*?consumePendingContextMenuPrompt\(\)[\s\S]*?drainQueuedPromptsAfterRunSettles\(newTabId\)/, `${label}: returning to a tab should resume composer and context-menu prompts deferred while it was hidden`);
     assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
     assert.match(panel, /function localRunRequestIdForTab\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?function suppressRunUpdatesForClearedConversation\(tabId, requestId = localRunRequestIdForTab\(tabId\)\)/, `${label}: clear should capture its request before waiting for the follower to settle`);
     assert.match(panel, /function suppressRunUpdatesForClearedConversation\([\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
@@ -38075,7 +38076,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.ok(sendMatch, `${label}: sendMessage finally block missing`);
     const sendFinally = sendMatch[1];
     const sendFlushIdx = sendFinally.indexOf('flushRenderedTabChat()');
-    const sendDrainIdx = sendFinally.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const sendDrainIdx = sendFinally.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(sendFlushIdx, -1, `${label}: send completion should flush the final transcript`);
     assert.notEqual(sendDrainIdx, -1, `${label}: send completion should drain queued prompts`);
     assert.equal(sendFlushIdx < sendDrainIdx, true, `${label}: send completion must flush before draining queued prompts`);
@@ -38084,7 +38085,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.ok(continueMatch, `${label}: continueAgent finally block missing`);
     const continueFinally = continueMatch[1];
     const continueFlushIdx = continueFinally.indexOf('flushRenderedTabChat()');
-    const continueDrainIdx = continueFinally.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const continueDrainIdx = continueFinally.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(continueFlushIdx, -1, `${label}: Continue completion should flush the final transcript`);
     assert.notEqual(continueDrainIdx, -1, `${label}: Continue completion should drain queued prompts`);
     assert.equal(continueFlushIdx < continueDrainIdx, true, `${label}: Continue completion must flush before draining queued prompts`);
@@ -38095,7 +38096,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.notEqual(scheduledEnd, -1, `${label}: scheduled event handler boundary missing`);
     const scheduledBody = panel.slice(scheduledStart, scheduledEnd);
     const scheduledFlushNeedle = 'await flushRenderedTabChat()';
-    const scheduledDrainNeedle = 'await drainQueuedPromptsAfterRunSettles();';
+    const scheduledDrainNeedle = 'await drainQueuedPromptsAfterRunSettles(runTabId);';
     const scheduledFlushIdx = scheduledBody.indexOf(scheduledFlushNeedle);
     const scheduledDrainIdx = scheduledBody.indexOf(scheduledDrainNeedle);
     assert.notEqual(scheduledFlushIdx, -1, `${label}: scheduled completion should flush the final transcript`);
@@ -38108,7 +38109,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.notEqual(abortEnd, -1, `${label}: abort safety timeout registration missing`);
     const abortBody = panel.slice(abortStart, abortEnd);
     const abortFlushIdx = abortBody.indexOf('flushRenderedTabChat()');
-    const abortDrainIdx = abortBody.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const abortDrainIdx = abortBody.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(abortFlushIdx, -1, `${label}: abort timeout should flush the stopped transcript`);
     assert.notEqual(abortDrainIdx, -1, `${label}: abort timeout should drain queued prompts`);
     assert.equal(abortFlushIdx < abortDrainIdx, true, `${label}: abort timeout must flush before draining queued prompts`);
@@ -41001,7 +41002,7 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.notEqual(queueShiftIdx, -1, `${label}: queued composer drain should shift the next queued message`);
     assert.equal(draftGuardIdx < queueShiftIdx, true, `${label}: queued composer drain must preserve drafts before removing queued messages`);
     assert.match(panel, /if \(drainQueuedComposerMessageForCurrentTab\(\)\) return;[\s\S]*?drainQueuedContextMenuPrompts\(\);/, `${label}: run settlement should drain queued composer messages before context-menu recovery prompts`);
-    const helperStart = panel.indexOf('async function drainQueuedPromptsAfterRunSettles()');
+    const helperStart = panel.indexOf('async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId)');
     const helperEnd = panel.indexOf('function queueAgentUpdateDuringTabSwitch', helperStart);
     assert.notEqual(helperStart, -1, `${label}: queued drain helper should exist`);
     assert.notEqual(helperEnd, -1, `${label}: queued drain helper boundary should exist`);
@@ -41127,7 +41128,7 @@ test('sidepanel drains queued context-menu prompts on run completion', () => {
       assert.ok(match, `${label}: ${fnName} finally block missing`);
       const finallyBody = match[1];
       const idleIdx = finallyBody.indexOf('setTabProcessing(tabId, false);');
-      const helperIdx = finallyBody.indexOf('await drainQueuedPromptsAfterRunSettles();');
+      const helperIdx = finallyBody.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
       assert.notEqual(idleIdx, -1, `${label}: ${fnName} should clear processing state`);
       assert.notEqual(helperIdx, -1, `${label}: ${fnName} completion should drain queued prompts via the settlement helper`);
       assert.equal(idleIdx < helperIdx, true, `${label}: ${fnName} context-menu queue must drain after processing is cleared`);
@@ -41148,7 +41149,7 @@ test('sidepanel abort safety timeout drains queued prompts', () => {
     assert.notEqual(abortEnd, -1, `${label}: abort safety timeout registration missing`);
     const body = panel.slice(abortStart, abortEnd);
     const idleIdx = body.indexOf('setTabProcessing(tabId, false);');
-    const helperIdx = body.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const helperIdx = body.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(idleIdx, -1, `${label}: abort timeout should clear processing state`);
     assert.notEqual(helperIdx, -1, `${label}: abort timeout should drain queued prompts via the settlement helper`);
     assert.equal(idleIdx < helperIdx, true, `${label}: abort timeout should drain after processing is cleared`);
@@ -41162,14 +41163,14 @@ test('sidepanel drains scheduled-run context-menu prompts', () => {
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(\) \{[\s\S]*?if \(drainQueuedComposerMessageForCurrentTab\(\)\) return;[\s\S]*?drainQueuedContextMenuPrompts\(\);/, `${label}: scheduled completions need a settlement drain helper that runs composer drain before context-menu prompts`);
+    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?if \(drainQueuedComposerMessageForCurrentTab\(\)\) return;[\s\S]*?drainQueuedContextMenuPrompts\(\);/, `${label}: scheduled completions need a tab-scoped settlement drain helper that runs composer drain before context-menu prompts`);
 
     const scheduledStart = panel.search(/(?:async\s+)?function settleScheduledRun\(event, job, tabId = currentTabId\)/);
     const scheduledEnd = panel.indexOf('if (scheduledJobsEl)', scheduledStart);
     assert.notEqual(scheduledStart, -1, `${label}: scheduled run settlement helper missing`);
     assert.notEqual(scheduledEnd, -1, `${label}: scheduled job event block missing`);
     const scheduledBlock = panel.slice(scheduledStart, scheduledEnd);
-    const helperCalls = scheduledBlock.match(/drainQueuedPromptsAfterRunSettles\(\);/g) || [];
+    const helperCalls = scheduledBlock.match(/drainQueuedPromptsAfterRunSettles\(runTabId\);/g) || [];
     assert.equal(helperCalls.length >= 2, true, `${label}: scheduled terminal and waiting-idle paths should drain via the settlement helper`);
   }
 });
@@ -41184,7 +41185,7 @@ test('sidepanel drains scheduled-clarify rejection prompts', () => {
     assert.ok(match, `${label}: scheduled clarify rejection handler missing`);
     const body = match[1];
     const idleIdx = body.indexOf('setTabProcessing(tabId, false);');
-    const drainIdx = body.indexOf('drainQueuedPromptsAfterRunSettles();');
+    const drainIdx = body.indexOf('drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(idleIdx, -1, `${label}: scheduled clarify rejection should clear processing state`);
     assert.notEqual(drainIdx, -1, `${label}: scheduled clarify rejection should drain queued prompts via the settlement helper`);
     assert.equal(body.includes('drainQueuedContextMenuPrompts();'), false, `${label}: scheduled clarify rejection must not drain against the stale tab`);
@@ -60196,6 +60197,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
       const defaults = manager._defaultConfigs();
       for (const id of providerIds) {
         globalThis.fetch = async () => new Response([
+          'data:\n\n',
           `data: ${JSON.stringify({ choices: [{ delta: { content: `${id} answer` } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read_page', arguments: '{}' } }] } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
