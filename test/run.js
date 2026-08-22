@@ -918,6 +918,7 @@ const {
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  WEBGPU_VISION_READY_MARKER_VERSION,
   normalizeWebgpuModelId,
   webgpuVisionReadyMarkerUrl,
 } = await import(
@@ -33152,11 +33153,15 @@ test('vision Settings copy is explicit, bounded, and mirrored across every local
       `${label}: automatic screenshot policy copy diverged across browsers`);
     assert.ok(chromeLocale['st.display.auto_screenshot.desc']?.trim(),
       `${label}: automatic screenshot policy copy is missing`);
+    assert.match(chromeLocale['st.vision.local.title'], /WebBrain VL 2 450M/,
+      `${label}: local vision title does not identify the shipped WebBrain VL model`);
     assert.match(chromeLocale['st.vision.local.desc'], /WebGPU/,
       `${label}: local vision copy does not identify the explicit hardware probe`);
-    assert.match(chromeLocale['st.vision.local.desc'], /770/,
+    assert.match(chromeLocale['st.vision.local.desc'], /webbrain-one\/webbrain-vl-2-450M-onnx/,
+      `${label}: local vision copy does not identify the shipped WebBrain VL model`);
+    assert.match(chromeLocale['st.vision.local.desc'], /810/,
       `${label}: local vision copy omits the explicit download size`);
-    assert.doesNotMatch(chromeLocale['st.vision.local.testing'], /770|Hugging Face/,
+    assert.doesNotMatch(chromeLocale['st.vision.local.testing'], /810|Hugging Face/,
       `${label}: testing copy still claims that inference can initiate a download`);
   }
 });
@@ -33459,6 +33464,8 @@ test('public Apocalypse Mode guide and launch essay document the offline boundar
     'docs: the guide should state the browser-specific WebGPU boundary');
   assert.match(guide, /LiquidAI\/LFM2\.5-2\.6B-ONNX[\s\S]*?does not silently change the provider/,
     'docs: the local text model should be named without implying global provider selection');
+  assert.match(guide, /about 810 MB[\s\S]*?WebBrain VL 2 450M/,
+    'docs: the shipped local vision model and approximate download size should be current');
   assert.match(guide, /Wikipedia reader[\s\S]*?Emergency Box[\s\S]*?Medical guidance becomes outdated/,
     'docs: the offline readers and medical-content warning should be covered');
   assert.match(guide, /Universal Basic Lexicon[\s\S]*?13 essential health[\s\S]*?0\.004 GB built in \+ ≈ 0\.06 GB download[\s\S]*?203-resource catalog[\s\S]*?≈ 12\.1 GB download[\s\S]*?storage figures are estimates/i,
@@ -53211,6 +53218,11 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
 
     const manager = new ProviderManagerCh();
     const webgpuConfig = manager._defaultConfigs().webgpu;
+    assert.equal(WEBGPU_VISION_MODEL_ID, 'webbrain-one/webbrain-vl-2-450M-onnx');
+    assert.equal(WEBGPU_VISION_CONSENT_VERSION, 2,
+      'switching the shipped vision model must require explicit consent again');
+    assert.equal(WEBGPU_VISION_READY_MARKER_VERSION, 2);
+    assert.match(webgpuVisionReadyMarkerUrl(), /\/webgpu-vision-ready\/v2\/webbrain-one%2Fwebbrain-vl-2-450M-onnx$/);
     assert.equal(webgpuConfig.model, WEBGPU_MODEL_ID);
     assert.equal(WEBGPU_MODEL_ID, WEBGPU_LFM25_MODEL_ID);
     assert.equal(webgpuConfig.baseUrl, '');
@@ -53358,7 +53370,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   }
 });
 
-test('vision routing keeps LiquidAI behind explicit overrides and active raw vision', async () => {
+test('vision routing keeps the WebBrain VL fallback behind explicit overrides and active raw vision', async () => {
   const manager = new ProviderManagerCh();
   const activeVision = { name: 'webbrain-cloud', model: 'cloud-vision', supportsVision: true };
   const activeText = { name: 'text-only', supportsVision: false };
@@ -53696,6 +53708,24 @@ test('local vision defaults off and migration requires re-consent without deleti
     assert.deepEqual(sentMessages, [], 'a fresh readiness check must not create a worker or start a download');
 
     Object.assign(state, {
+      [WEBGPU_VISION_ENABLED_KEY]: true,
+      [WEBGPU_VISION_CONSENT_VERSION_KEY]: 1,
+      [WEBGPU_VISION_DOWNLOAD_STATE_KEY]: {
+        modelId: 'LiquidAI/LFM2.5-VL-450M-ONNX',
+        status: 'ready',
+        progress: 100,
+      },
+    });
+    await fresh._migrateWebgpuVisionConsent({ ...state });
+    assert.equal(state[WEBGPU_VISION_ENABLED_KEY], undefined,
+      'the previous model consent must not silently authorize the replacement download');
+    assert.equal(state[WEBGPU_VISION_CONSENT_VERSION_KEY], 1);
+    assert.equal(state[WEBGPU_VISION_DOWNLOAD_STATE_KEY].status, 'ready',
+      'requiring renewed consent must not delete the previous cached model');
+    delete state[WEBGPU_VISION_CONSENT_VERSION_KEY];
+    delete state[WEBGPU_VISION_DOWNLOAD_STATE_KEY];
+
+    Object.assign(state, {
       visionModel: { type: 'openai', baseUrl: 'https://vision.example/v1', model: 'remote-vision', apiKey: 'keep-me' },
       [WEBGPU_VISION_ENABLED_KEY]: true,
       [WEBGPU_VISION_AUTO_SELECTED_KEY]: true,
@@ -53967,7 +53997,7 @@ test('Apocalypse enable keeps a selected Bonsai preset and does not auto-downloa
   }
 });
 
-test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
+test('WebGPU worker follows local text-generation and WebBrain VL vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
@@ -53999,7 +54029,8 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(worker, /getVisionRuntime\(modelId, dtype, device, \{ localFilesOnly: true \}\)/,
     'automatic screenshot inference must not download missing local vision weights');
   assert.match(worker, /async function markVisionModelReady/);
-  assert.match(worker, /webgpu-vision-ready\//,
+  assert.match(worker, /WEBGPU_VISION_READY_MARKER_VERSION = 2/);
+  assert.match(worker, /webgpu-vision-ready\/['"]/,
     'a completed Vision Model preload must write a ready marker, not infer completeness from any cached file');
   assert.match(worker, /queued: queued && !active/,
     'cancel acknowledgements must distinguish queued vision inference from an active generation');
@@ -54178,6 +54209,9 @@ test('WebGPU worker follows local text-generation and LiquidAI vision contracts'
   assert.match(apocalypseHtml, /data-vision-download-action="pause"/);
   assert.match(apocalypseHtml, /data-vision-download-action="resume"/);
   assert.match(apocalypseHtml, /data-vision-download-action="stop"/);
+  assert.match(apocalypseHtml, /~810 MB · WebGPU/);
+  assert.match(apocalypseDocs, /WebBrain VL 2 450M/);
+  assert.match(apocalypseDocs, /approximately 810 MB/);
   for (const [label, script] of [
     ['chrome', apocalypseScript],
     ['firefox', apocalypseFirefoxScript],
@@ -54716,11 +54750,13 @@ test('Vision Model removal deletes only its cache entries', async () => {
   const previousCaches = globalThis.caches;
   const visionBase = `https://huggingface.co/${WEBGPU_VISION_MODEL_ID}/resolve/main/`;
   const textBase = `https://huggingface.co/${WEBGPU_MODEL_ID}/resolve/main/`;
-  const markerUrl = `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(WEBGPU_VISION_MODEL_ID)}`;
+  const markerUrl = webgpuVisionReadyMarkerUrl(WEBGPU_VISION_MODEL_ID);
+  const legacyMarkerUrl = `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(WEBGPU_VISION_MODEL_ID)}`;
   const cacheEntries = new Map([
     [`${visionBase}config.json`, true],
     [`${visionBase}onnx/model_q4.onnx`, true],
     [markerUrl, true],
+    [legacyMarkerUrl, true],
     [`${textBase}config.json`, true],
     ['https://huggingface.co/another/model/resolve/main/config.json', true],
   ]);
@@ -54741,11 +54777,13 @@ test('Vision Model removal deletes only its cache entries', async () => {
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?vision-cache-scope-test`;
     const { clearVisionModelCache } = await import(workerUrl);
     const result = await clearVisionModelCache(WEBGPU_VISION_MODEL_ID);
-    assert.equal(result.deletedEntries, 3);
+    assert.equal(result.deletedEntries, 4);
     assert.equal(cacheEntries.has(`${visionBase}config.json`), false);
     assert.equal(cacheEntries.has(`${visionBase}onnx/model_q4.onnx`), false);
     assert.equal(cacheEntries.has(markerUrl), false,
       'removing the Vision Model must delete its ready marker');
+    assert.equal(cacheEntries.has(legacyMarkerUrl), false,
+      'removing the Vision Model must delete stale ready markers from earlier marker versions');
     assert.equal(cacheEntries.has(`${textBase}config.json`), true,
       'removing the Vision Model must preserve the Text Model cache');
     assert.equal(cacheEntries.has('https://huggingface.co/another/model/resolve/main/config.json'), true);

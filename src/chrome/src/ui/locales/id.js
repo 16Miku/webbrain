@@ -317,8 +317,8 @@ export default {
   'st.provider.field.model_loaded_hint': 'kosongkan untuk menggunakan model yang sudah dimuat',
 
   'st.vision.desc': 'Jika diatur, tangkapan layar dikirim ke model ini untuk membaca halaman, sementara penyedia aktif menangani perencanaan dan pemanggilan alat. Kosongkan agar penyedia aktif juga menangani visi. Hanya endpoint yang kompatibel dengan OpenAI.',
-  'st.vision.local.title': 'Fallback lokal LFM2.5-VL',
-  "st.vision.local.desc": "Menjalankan LiquidAI/LFM2.5-VL-450M-ONNX di GPU Anda; tangkapan layar tetap di perangkat ini. Memilih “Gunakan fallback lokal” memeriksa WebGPU, merekam persetujuan Anda, dan memulai unduhan latar belakang sekitar 770 MB dari Hugging Face. Tugas menampilkan status dan tidak menunggu unduhan; biarkan Chrome tetap terbuka.",
+  'st.vision.local.title': 'Fallback lokal WebBrain VL 2 450M',
+  "st.vision.local.desc": "Menjalankan webbrain-one/webbrain-vl-2-450M-onnx di GPU Anda; tangkapan layar tetap di perangkat ini. Memilih “Gunakan fallback lokal” memeriksa WebGPU, merekam persetujuan Anda, dan memulai unduhan latar belakang sekitar 810 MB dari Hugging Face. Tugas menampilkan status dan tidak menunggu unduhan; biarkan Chrome tetap terbuka.",
   'st.vision.local.enable': 'Gunakan fallback lokal',
   'st.vision.local.disable': 'Nonaktifkan fallback lokal',
   'st.vision.local.saved': 'Fallback visi lokal diaktifkan.',

@@ -26,6 +26,8 @@ const WEBGPU_TEXT_MAX_NEW_TOKENS = 256;
 const WEBGPU_LFM25_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048;
+const WEBGPU_VISION_READY_MARKER_VERSION = 2;
+const WEBGPU_VISION_READY_MARKER_PREFIX = 'https://webbrain.one/.well-known/webgpu-vision-ready/';
 function createWebGpuTextSessionOptions() {
   return {
     extra: {
@@ -127,7 +129,14 @@ function fetchTargetsActiveVisionModel(input) {
 }
 
 function visionReadyMarkerUrl(modelId) {
-  return `https://webbrain.one/.well-known/webgpu-vision-ready/${encodeURIComponent(String(modelId || '').trim())}`;
+  return `${WEBGPU_VISION_READY_MARKER_PREFIX}v${WEBGPU_VISION_READY_MARKER_VERSION}/${encodeURIComponent(String(modelId || '').trim())}`;
+}
+
+function isVisionReadyMarkerForModel(url, modelId) {
+  const candidate = String(url || '');
+  const encodedModelId = encodeURIComponent(String(modelId || '').trim());
+  return candidate.startsWith(WEBGPU_VISION_READY_MARKER_PREFIX)
+    && candidate.endsWith(`/${encodedModelId}`);
 }
 
 async function isVisionModelCached(modelId) {
@@ -151,7 +160,10 @@ async function markVisionModelReady(modelId) {
   const normalized = String(modelId || '').trim();
   if (!normalized || typeof caches === 'undefined') return;
   const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
-  await cache.put(visionReadyMarkerUrl(normalized), new Response(JSON.stringify({ modelId: normalized }), {
+  await cache.put(visionReadyMarkerUrl(normalized), new Response(JSON.stringify({
+    modelId: normalized,
+    markerVersion: WEBGPU_VISION_READY_MARKER_VERSION,
+  }), {
     headers: { 'content-type': 'application/json' },
   }));
 }
@@ -1083,7 +1095,7 @@ export async function clearVisionModelCache(modelId) {
       const cache = await caches.open(name);
       for (const request of await cache.keys()) {
         const url = safeDecodedUrl(request.url);
-        if (url.includes(modelPath) || request.url === markerUrl) {
+        if (url.includes(modelPath) || isVisionReadyMarkerForModel(request.url, normalizedModelId)) {
           if (await cache.delete(request)) deletedEntries++;
         }
       }

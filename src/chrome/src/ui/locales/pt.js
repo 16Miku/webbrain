@@ -789,8 +789,8 @@ export default {
 
   'st.vision.heading': "Visão",
   'st.vision.desc': "Se definido, as capturas de tela serão enviadas a esse modelo para leitura da página, enquanto o provedor ativo cuida do planejamento e das chamadas de ferramentas. Deixe em branco para usar também o provedor ativo para visão. Somente terminais compatíveis com OpenAI.",
-  'st.vision.local.title': 'Fallback local do LFM2.5-VL',
-  "st.vision.local.desc": "Executa o LiquidAI/LFM2.5-VL-450M-ONNX na sua GPU; as capturas permanecem neste dispositivo. Selecionar “Usar fallback local” verifica o WebGPU, registra seu consentimento e inicia em segundo plano um download de aproximadamente 770 MB do Hugging Face. As tarefas mostram o status e não aguardam o download; mantenha o Chrome aberto.",
+  'st.vision.local.title': 'Fallback local do WebBrain VL 2 450M',
+  "st.vision.local.desc": "Executa o webbrain-one/webbrain-vl-2-450M-onnx na sua GPU; as capturas permanecem neste dispositivo. Selecionar “Usar fallback local” verifica o WebGPU, registra seu consentimento e inicia em segundo plano um download de aproximadamente 810 MB do Hugging Face. As tarefas mostram o status e não aguardam o download; mantenha o Chrome aberto.",
   'st.vision.local.enable': 'Usar fallback local',
   'st.vision.local.disable': 'Desativar fallback local',
   'st.vision.local.saved': 'Fallback local de visão ativado.',

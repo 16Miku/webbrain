@@ -1214,7 +1214,7 @@ export class ProviderManager {
     }
   }
 
-  /** Return the Chrome-only LiquidAI fallback, but only when explicitly enabled and ready. */
+  /** Return the Chrome-only WebBrain VL fallback, but only when explicitly enabled and ready. */
   async getLocalVisionFallbackProvider() {
     try {
       const readiness = await this.getWebgpuVisionReadiness();

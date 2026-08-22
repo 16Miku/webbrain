@@ -317,8 +317,8 @@ export default {
   'st.provider.field.model_loaded_hint': '留空则使用已加载的模型',
 
   'st.vision.desc': '设置后，页面阅读的截图会发送给此模型，而当前提供商负责规划和工具调用。留空则视觉也使用当前提供商。仅限 OpenAI 兼容的端点。',
-  'st.vision.local.title': 'LFM2.5-VL 本地备用模型',
-  "st.vision.local.desc": "在您的 GPU 上运行 LiquidAI/LFM2.5-VL-450M-ONNX，屏幕截图仅保留在本设备上。选择“使用本地备用模型”会检查 WebGPU、记录您的同意，并从 Hugging Face 开始约 770 MB 的后台下载。任务会显示下载状态且不会等待完成；请保持 Chrome 运行。",
+  'st.vision.local.title': 'WebBrain VL 2 450M 本地备用模型',
+  "st.vision.local.desc": "在您的 GPU 上运行 webbrain-one/webbrain-vl-2-450M-onnx，屏幕截图仅保留在本设备上。选择“使用本地备用模型”会检查 WebGPU、记录您的同意，并从 Hugging Face 开始约 810 MB 的后台下载。任务会显示下载状态且不会等待完成；请保持 Chrome 运行。",
   'st.vision.local.enable': '使用本地备用模型',
   'st.vision.local.disable': '禁用本地备用模型',
   'st.vision.local.saved': '已启用本地视觉备用模型。',

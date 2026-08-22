@@ -317,8 +317,8 @@ export default {
   'st.provider.field.model_loaded_hint': 'déjalo en blanco para usar el modelo cargado',
 
   'st.vision.desc': 'Si se define, las capturas de pantalla se envían a este modelo para leer la página, mientras el proveedor activo se encarga de la planificación y las llamadas a herramientas. Déjalo en blanco para usar también el proveedor activo para la visión. Solo endpoints compatibles con OpenAI.',
-  'st.vision.local.title': 'Alternativa local LFM2.5-VL',
-  "st.vision.local.desc": "Ejecuta LiquidAI/LFM2.5-VL-450M-ONNX en tu GPU; las capturas permanecen en este dispositivo. Al seleccionar «Usar alternativa local» se comprueba WebGPU, se registra tu consentimiento y se inicia una descarga en segundo plano de unos 770 MB desde Hugging Face. Las tareas muestran el estado y no esperan la descarga; mantén Chrome abierto.",
+  'st.vision.local.title': 'Alternativa local WebBrain VL 2 450M',
+  "st.vision.local.desc": "Ejecuta webbrain-one/webbrain-vl-2-450M-onnx en tu GPU; las capturas permanecen en este dispositivo. Al seleccionar «Usar alternativa local» se comprueba WebGPU, se registra tu consentimiento y se inicia una descarga en segundo plano de unos 810 MB desde Hugging Face. Las tareas muestran el estado y no esperan la descarga; mantén Chrome abierto.",
   'st.vision.local.enable': 'Usar alternativa local',
   'st.vision.local.disable': 'Desactivar alternativa local',
   'st.vision.local.saved': 'Alternativa local de visión activada.',

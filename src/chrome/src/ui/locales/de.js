@@ -729,8 +729,8 @@ export default {
   // --- Vision settings ---
   'st.vision.heading': 'Vision',
   'st.vision.desc': 'Wenn gesetzt, werden Screenshots an dieses Modell gesendet, um die Seite zu lesen...',
-  'st.vision.local.title': 'Lokale LFM2.5-VL-Ausweichlösung',
-  "st.vision.local.desc": "Führt LiquidAI/LFM2.5-VL-450M-ONNX auf deiner GPU aus; Screenshots bleiben auf diesem Gerät. „Lokale Ausweichlösung verwenden“ prüft WebGPU, protokolliert deine Einwilligung und startet einen Hintergrunddownload von etwa 770 MB von Hugging Face. Aufgaben zeigen den Status an und warten nicht auf den Download; Chrome muss geöffnet bleiben.",
+  'st.vision.local.title': 'Lokale WebBrain VL 2 450M-Ausweichlösung',
+  "st.vision.local.desc": "Führt webbrain-one/webbrain-vl-2-450M-onnx auf deiner GPU aus; Screenshots bleiben auf diesem Gerät. „Lokale Ausweichlösung verwenden“ prüft WebGPU, protokolliert deine Einwilligung und startet einen Hintergrunddownload von etwa 810 MB von Hugging Face. Aufgaben zeigen den Status an und warten nicht auf den Download; Chrome muss geöffnet bleiben.",
   'st.vision.local.enable': 'Lokale Ausweichlösung verwenden',
   'st.vision.local.disable': 'Lokale Ausweichlösung deaktivieren',
   'st.vision.local.saved': 'Lokale Ausweichlösung für Bilderkennung aktiviert.',

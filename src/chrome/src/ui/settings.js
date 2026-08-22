@@ -1577,7 +1577,7 @@ async function setWebgpuVisionEnabled(enabled) {
     if (!result?.ok) throw new Error(result?.error || 'The local vision model download could not be started.');
   } else {
     // Release GPU allocations, but keep the browser-cached model download so
-    // re-enabling does not require another ~770 MB transfer.
+    // re-enabling does not require another ~810 MB transfer.
     await sendToBackground('dispose_webgpu_vision').catch(() => {});
     await chrome.storage.local.remove([
       WEBGPU_VISION_ENABLED_KEY,

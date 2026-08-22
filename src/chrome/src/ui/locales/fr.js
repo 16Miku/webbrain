@@ -317,8 +317,8 @@ export default {
   'st.provider.field.model_loaded_hint': 'laisser vide pour utiliser le modèle chargé',
 
   'st.vision.desc': 'Si défini, les captures d\'écran sont envoyées à ce modèle pour lire la page, pendant que le fournisseur actif gère la planification et les appels d\'outils. Laissez vide pour utiliser également le fournisseur actif pour la vision. Uniquement pour les endpoints compatibles OpenAI.',
-  'st.vision.local.title': 'Solution de secours locale LFM2.5-VL',
-  "st.vision.local.desc": "Exécute LiquidAI/LFM2.5-VL-450M-ONNX sur votre GPU ; les captures restent sur cet appareil. Sélectionner « Utiliser la solution de secours locale » vérifie WebGPU, enregistre votre consentement et lance un téléchargement d’environ 770 Mo depuis Hugging Face en arrière-plan. Les tâches affichent son état sans l’attendre ; laissez Chrome ouvert.",
+  'st.vision.local.title': 'Solution de secours locale WebBrain VL 2 450M',
+  "st.vision.local.desc": "Exécute webbrain-one/webbrain-vl-2-450M-onnx sur votre GPU ; les captures restent sur cet appareil. Sélectionner « Utiliser la solution de secours locale » vérifie WebGPU, enregistre votre consentement et lance un téléchargement d’environ 810 Mo depuis Hugging Face en arrière-plan. Les tâches affichent son état sans l’attendre ; laissez Chrome ouvert.",
   'st.vision.local.enable': 'Utiliser la solution de secours locale',
   'st.vision.local.disable': 'Désactiver la solution de secours locale',
   'st.vision.local.saved': 'Solution de secours locale pour la vision activée.',
