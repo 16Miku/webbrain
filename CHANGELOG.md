@@ -4,6 +4,11 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.1.0] - 2026-08-22
+
+### Changed
+- Switched to WebBrain VL 2 450M as the local vision fallback.
+
 ## [33.0.8] - 2026-08-20
 
 ### Changed
