@@ -375,16 +375,19 @@ async function _recomputeLosslessBytes(db, run) {
     if (event?.kind !== 'llm_request' && event?.kind !== 'tool') continue;
     try { bytes += new TextEncoder().encode(JSON.stringify(event.data)).length; } catch {}
   }
-  if ((Number(run.losslessBytes) || 0) !== bytes) {
-    run.losslessBytes = bytes;
-    await promisifyReq(tx(db, ['runs']).objectStore('runs').put(run));
+  const runTx = tx(db, ['runs']);
+  const runStore = runTx.objectStore('runs');
+  const current = await promisifyReq(runStore.get(run.runId));
+  if (current?.lossless === true && (Number(current.losslessBytes) || 0) !== bytes) {
+    current.losslessBytes = bytes;
+    await promisifyReq(runStore.put(current));
   }
   const state = _runState.get(run.runId);
   if (state?.lossless === true) state.losslessBytes = bytes;
   return bytes;
 }
 
-async function _scanLosslessTotal() {
+async function _scanLosslessTotal(activeRunId) {
   const db = await openDB();
   const runs = [];
   await new Promise((resolve) => {
@@ -398,7 +401,11 @@ async function _scanLosslessTotal() {
     req.onerror = () => resolve();
   });
   let total = 0;
-  for (const run of runs) total += await _recomputeLosslessBytes(db, run);
+  for (const run of runs) {
+    total += run.runId === activeRunId
+      ? await _recomputeLosslessBytes(db, run)
+      : await _queueRunWrite(run.runId, () => _recomputeLosslessBytes(db, run));
+  }
   _losslessTotalEstimate = total;
   return total;
 }
@@ -407,7 +414,7 @@ async function evictOldestLosslessRuns(activeRunId, addedBytes = 0) {
   if (_losslessTotalEstimate === null) {
     // First lossless write of this worker lifetime: learn the true total.
     // The persisted run record already includes this write's bytes.
-    await _scanLosslessTotal();
+    await _scanLosslessTotal(activeRunId);
   } else {
     _losslessTotalEstimate += addedBytes;
     if (_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP) return;
