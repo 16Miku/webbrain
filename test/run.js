@@ -8173,7 +8173,7 @@ test('trace recorder: writes go through the event model and stamp the format ver
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /import \{ TRACE_FORMAT_VERSION, makeEvent \} from '\.\/event-model\.js';/, `${browser}: recorder does not import the event model`);
     assert.match(recorderSource, /traceFormatVersion: TRACE_FORMAT_VERSION/, `${browser}: run record does not stamp the format version`);
-    assert.match(recorderSource, /const ev = makeEvent\(runId, seq, kind, data\);/, `${browser}: event writes bypass the envelope`);
+    assert.match(recorderSource, /const resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the envelope`);
     assert.match(recorderSource, /dropped invalid event/, `${browser}: invalid-event drop is not surfaced`);
     assert.match(recorderSource, /const marker = makeEvent\(runId, seq, 'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
   }
@@ -8893,6 +8893,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
     assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
+    assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
   }

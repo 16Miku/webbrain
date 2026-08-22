@@ -27,6 +27,7 @@ const DB_VERSION = 2;
 const LOSSILESS_RESULT_CAP = 200_000;
 const LOSSILESS_REQUEST_CAP = 500_000;
 const LOSSILESS_RUN_CAP = 5_000_000;
+const LOSSILESS_TOTAL_CAP = 50_000_000;
 
 let _dbPromise = null;
 function openDB() {
@@ -314,11 +315,27 @@ async function _appendEventNow(runId, kind, data) {
       if (run?.lossless === true) {
         run.losslessBytes = state.losslessBytes;
         await promisifyReq(tx(db, ['runs']).objectStore('runs').put(run));
+        await evictOldestLosslessRuns(runId);
       }
     }
     return seq;
   } catch (e) {
     console.warn('[trace] appendEvent failed:', e);
+  }
+}
+
+// Retain the active run and evict completed lossless runs oldest first when
+// their aggregate recorded payload crosses the global budget.
+async function evictOldestLosslessRuns(activeRunId) {
+  const runs = await listRuns({ limit: 500 });
+  let total = runs.reduce((sum, run) => sum + (run?.lossless === true ? Number(run.losslessBytes) || 0 : 0), 0);
+  const candidates = runs
+    .filter(run => run?.lossless === true && run.runId !== activeRunId && run.status !== 'running')
+    .sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0));
+  for (const run of candidates) {
+    if (total <= LOSSILESS_TOTAL_CAP) break;
+    await deleteRun(run.runId);
+    total -= Number(run.losslessBytes) || 0;
   }
 }
 
