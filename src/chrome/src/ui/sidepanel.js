@@ -3065,12 +3065,13 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     if (renderedTabId != null) await flushRenderedTabChat();
     await drainQueuedPromptsAfterRunSettles();
   }
-  // Terminal scheduled runs chime and flash like live runs do. Failures
-  // pass outcome:false so backgrounded tabs get the red failure badge.
+  // Terminal scheduled runs chime like live runs do. The attention flash
+  // itself is owned by the background scheduler path — scheduled jobs keep
+  // running even when this panel is closed, and the background already
+  // suppresses the signal while the finished tab is being watched.
   if ((event === 'completed' || event === 'failed') && job?.source !== 'watch') {
     notifyCompletion({
       success: event === 'completed' && job?.lastOutcome === 'success',
-      tabId: runTabId,
     });
   }
 }

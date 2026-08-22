@@ -179,6 +179,7 @@ const scheduler = new ScheduledJobManager({
       type,
       data,
     }).catch(() => {});
+    maybeFlashScheduledTerminalEvent(tabId, type, data);
   },
   showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
   hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
@@ -1678,6 +1679,27 @@ browser.windows.onFocusChanged.addListener(async (windowId) => {
     await browser.browserAction.setBadgeText({ tabId: activeTabId, text: '' });
   } catch { /* best-effort cleanup */ }
 });
+
+// Scheduled jobs keep running even when no side panel is mounted, so the
+// background owns their attention flash: terminal events trigger it here
+// and the panel never duplicates it. The stored setting is honored, and
+// flashTabAttention itself suppresses the signal while the finished tab is
+// being actively watched.
+async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
+  if (type !== 'scheduled_job') return;
+  const event = data?.event;
+  const job = data?.job;
+  if ((event !== 'completed' && event !== 'failed') || job?.source === 'watch') return;
+  try {
+    const stored = await browser.storage.local.get('completionFlashTab');
+    if (stored?.completionFlashTab === false) return;
+    const jobTabId = Number(job.tabId ?? job.target?.tabId ?? _tabId);
+    await flashTabAttention({
+      tabId: jobTabId,
+      success: event === 'completed' && job?.lastOutcome === 'success',
+    });
+  } catch { /* best-effort */ }
+}
 
 async function flashTabAttention(msg) {
   const tabId = Number(msg?.tabId);
