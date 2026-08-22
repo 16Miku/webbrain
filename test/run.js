@@ -8882,16 +8882,16 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /async function losslessTraceEnabled\(\)/, `${browser}: losslessTraceEnabled missing`);
     assert.match(recorderSource, /const lossless = meta\.lossless === true \|\| await losslessTraceEnabled\(\);/, `${browser}: tier decision missing in startRun`);
-    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true \} : \{\}\)/, `${browser}: run record does not stamp the tier`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: run record does not stamp the tier`);
     assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
     assert.match(recorderSource, /const LOSSILESS_REQUEST_CAP = 500_000;/, `${browser}: lossless request cap missing`);
-    assert.match(recorderSource, /await _ensureRunState\(runId\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
-    assert.match(recorderSource, /await _ensureRunState\(runId\)[\s\S]*?state\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000/, `${browser}: tool-result cap does not branch on tier`);
+    assert.match(recorderSource, /_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
+    assert.match(recorderSource, /const cap = state\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000;/, `${browser}: tool-result cap does not branch on tier`);
     assert.match(recorderSource, /peekRunFlags|lossless: record\?\.lossless === true|lossless = record\?\.lossless === true/, `${browser}: SW-eviction recovery does not restore the tier`);
     assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
     assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
     assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
-    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
     // Default tier must keep the content-free provenance path.
@@ -8986,12 +8986,17 @@ test('trace lossless tier: exports redact the complete credential-key catalog', 
 test('trace lossless tier: JSON exports redact lossless event credentials only', () => {
   const payload = {
     run: { runId: 'lossless-json', lossless: true },
-    events: [{ data: { messages: [{ content: '{"refresh_token":"refresh-sentinel","private_key":"private-sentinel"}' }] } }],
+    events: [
+      { data: { messages: [{ content: '{"refresh_token":"refresh-sentinel","private_key":"private-sentinel"}' }] } },
+      { data: { name: 'fill_form', args: { recovery_code: 'recovery-sentinel', api_key: 'api-sentinel', notes: 'plain-sentinel' } } },
+    ],
   };
   for (const [label, sanitize] of [['chrome', sanitizeTraceExport], ['firefox', sanitizeTraceExportFx]]) {
     const exported = JSON.stringify(sanitize(payload));
     assert.doesNotMatch(exported, /refresh-sentinel|private-sentinel/, `${label}: JSON export leaked a credential`);
+    assert.doesNotMatch(exported, /recovery-sentinel|api-sentinel/, `${label}: JSON export leaked a credential stored under a sensitive args key`);
     assert.match(exported, /\[redacted\]/, `${label}: JSON export did not mark credentials`);
+    assert.match(exported, /plain-sentinel/, `${label}: JSON export redacted a non-sensitive key`);
   }
 });
 

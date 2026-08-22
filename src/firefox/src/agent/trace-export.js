@@ -34,7 +34,7 @@ const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{8,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
 ];
-const SENSITIVE_TRACE_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
+const SENSITIVE_TRACE_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime|recovery)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
 const SENSITIVE_TRACE_KEY_EXACT = new Set(['code', 'pin', 'otp', 'cvv', 'cvc', 'ssn']);
 
 function isSensitiveTraceKey(key) {
