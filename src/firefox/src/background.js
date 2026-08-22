@@ -2600,14 +2600,16 @@ async function handleMessage(msg, sender) {
       if (tabId) {
         const conversationId = await agent.getConversationId(tabId);
         await stopActiveRunBeforeConversationClear(tabId);
-        await scheduler.cancelForConversation(tabId, conversationId);
-        if (msg.clearContextMenuPrompt === true) {
-          await contextMenuStorage.clear(tabId);
-        }
-        const tabChatClearResult = await tabChatHandoff.clear(tabId);
+        const tabChatClearResult = msg.clearContextMenuPrompt === true
+          ? await contextMenuStorage.clearAlongside(
+            tabId,
+            additionalKeys => tabChatHandoff.clear(tabId, { additionalKeys }),
+          )
+          : await tabChatHandoff.clear(tabId);
         if (!tabChatClearResult?.ok || tabChatClearResult.skipped) {
           throw new Error('Could not durably clear the tab transcript.');
         }
+        await scheduler.cancelForConversation(tabId, conversationId);
         agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         browser.runtime.sendMessage({

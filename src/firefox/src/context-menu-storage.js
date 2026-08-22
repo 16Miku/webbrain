@@ -476,6 +476,21 @@ export function createContextMenuStorage(getStore) {
     });
   }
 
+  async function clearAlongside(tabId, clearDurably) {
+    if (typeof clearDurably !== 'function') {
+      return { ok: false, error: 'A durable clear callback is required.' };
+    }
+    return enqueue(tabId, async (numericTabId) => {
+      const result = await clearDurably([key(numericTabId), claimKey(numericTabId)]);
+      if (result?.ok === false || result?.skipped) return result;
+      // The callback removes these keys in the same durable operation as its
+      // own state. Keep both memory copies until that combined removal commits.
+      pending.delete(numericTabId);
+      claims.delete(numericTabId);
+      return result || { ok: true };
+    });
+  }
+
   // Call on tab close or navigation to purge in-memory state and storage.
   // Queues behind earlier operations so cleanup wins over older saves, while
   // later saves for the same tab wait their turn and remain intact.
@@ -493,5 +508,16 @@ export function createContextMenuStorage(getStore) {
     });
   }
 
-  return { key, claimKey, save, consume, claim, reserve, release, clear, cleanup };
+  return {
+    key,
+    claimKey,
+    save,
+    consume,
+    claim,
+    reserve,
+    release,
+    clear,
+    clearAlongside,
+    cleanup,
+  };
 }

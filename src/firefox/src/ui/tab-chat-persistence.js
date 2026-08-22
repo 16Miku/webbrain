@@ -358,7 +358,11 @@ export function createTabChatHandoffCoordinator(storageArea, {
     });
   }
 
-  function clear(tabId, { ownerId = '', handoffGeneration = null } = {}) {
+  function clear(tabId, {
+    ownerId = '',
+    handoffGeneration = null,
+    additionalKeys = [],
+  } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
     return enqueue(numericTabId, async (queuedTabId) => {
@@ -389,7 +393,10 @@ export function createTabChatHandoffCoordinator(storageArea, {
       } else {
         keys.push(TAB_CHAT_HANDOFF_PREFIX + queuedTabId);
       }
-      await storageArea.remove(keys);
+      for (const additionalKey of additionalKeys) {
+        if (typeof additionalKey === 'string' && additionalKey) keys.push(additionalKey);
+      }
+      await storageArea.remove([...new Set(keys)]);
       return {
         ok: true,
         handoffOwnerId: normalizedOwnerId || null,

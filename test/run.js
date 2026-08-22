@@ -34422,8 +34422,7 @@ test('background bounds the active-run stop wait before clearing its conversatio
     const clearStart = background.indexOf("case 'clear_conversation':");
     const clearBody = background.slice(clearStart, background.indexOf("case 'compact_conversation':", clearStart));
     assert.match(clearBody, /const conversationId = await agent\.getConversationId\(tabId\);[\s\S]*?await stopActiveRunBeforeConversationClear\(tabId\);[\s\S]*?await scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: active runs should settle before old-conversation jobs and state are cleared`);
-    assert.match(clearBody, /if \(msg\.clearContextMenuPrompt === true\) \{\s*await contextMenuStorage\.clear\(tabId\);\s*\}[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: durable context-menu prompt deletion should complete in the clear handler before the conversation is emptied`);
-    assert.match(clearBody, /const tabChatClearResult = await tabChatHandoff\.clear\(tabId\);[\s\S]*?!tabChatClearResult\?\.ok \|\| tabChatClearResult\.skipped[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: durable transcript deletion should complete in the clear handler before the conversation is emptied`);
+    assert.match(clearBody, /msg\.clearContextMenuPrompt === true[\s\S]*?contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{ additionalKeys \}\)[\s\S]*?!tabChatClearResult\?\.ok \|\| tabChatClearResult\.skipped[\s\S]*?scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: prompt and transcript deletion should commit together before scheduler and conversation state are cleared`);
   }
 });
 
@@ -38394,6 +38393,17 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     });
     assert.equal(postClearWrite.ok, true, `${label}: the owner should persist the new conversation under the rotated generation`);
     assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>new conversation</div>', `${label}: the post-clear transcript should remain current`);
+
+    values['contextMenuPrompt:8'] = { id: 'prompt-8', text: 'Summarize this' };
+    values['contextMenuPromptClaim:8'] = { promptId: 'prompt-8', claimantId: 'panel-8' };
+    await coordinator.save(8, '<div>conversation eight</div>');
+    const combinedClear = await coordinator.clear(8, {
+      additionalKeys: ['contextMenuPrompt:8', 'contextMenuPromptClaim:8'],
+    });
+    assert.equal(combinedClear.ok, true, `${label}: coordinator should clear additional transaction keys`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}8`], undefined, `${label}: combined clear retained the transcript`);
+    assert.equal(values['contextMenuPrompt:8'], undefined, `${label}: combined clear retained the prompt`);
+    assert.equal(values['contextMenuPromptClaim:8'], undefined, `${label}: combined clear retained the prompt lease`);
   }
 });
 
@@ -41327,7 +41337,7 @@ test('background awaits context-menu prompt clear before agent chat starts', () 
     assert.doesNotMatch(chatBody, /contextMenuStorage\.clear\(msg\.contextMenuClear\.tabId,\s*msg\.contextMenuClear\.promptId\)\.catch\(\(\) => \{\}\)/, `${label}: context-menu clear should not be fire-and-forget`);
     const clearMatch = bg.match(/case 'clear_conversation': \{([\s\S]*?)\n\s+case '(?:disable_dev_diagnostics|compact_conversation)':/);
     assert.ok(clearMatch, `${label}: clear-conversation handler missing`);
-    assert.match(clearMatch[1], /await contextMenuStorage\.clear\(tabId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: New conversation should durably delete its prompt before clearing authoritative state`);
+    assert.match(clearMatch[1], /contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{ additionalKeys \}\)[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: New conversation should durably delete its prompt and transcript together before clearing authoritative state`);
   }
 });
 
@@ -43367,6 +43377,32 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     await storage.clear(clearFailurePrompt.tabId);
     assert.equal(data.has(storage.key(clearFailurePrompt.tabId)), false, `${label}: retrying clear should remove the durable prompt`);
     assert.equal(data.has(storage.claimKey(clearFailurePrompt.tabId)), false, `${label}: retrying clear should remove the durable lease`);
+
+    const combinedPrompt = { id: `${label}-combined-clear`, tabId: 15, text: 'Keep me atomically' };
+    const combinedTranscriptKey = `tabChat:${combinedPrompt.tabId}`;
+    const combinedHandoffKey = `tabChatHandoff:${combinedPrompt.tabId}`;
+    await storage.save(combinedPrompt.tabId, combinedPrompt);
+    await storage.claim(combinedPrompt.tabId, combinedPrompt.id, 'panel-combined', () => false, 2_000);
+    data.set(combinedTranscriptKey, '<div>old transcript</div>');
+    data.set(combinedHandoffKey, { ownerId: 'panel-combined', generation: 1 });
+    const combinedDurableClear = async (additionalKeys) => {
+      await store.remove([...additionalKeys, combinedTranscriptKey, combinedHandoffKey]);
+      return { ok: true };
+    };
+    nextRemoveError = new Error('combined durable remove failed');
+    await assert.rejects(
+      storage.clearAlongside(combinedPrompt.tabId, combinedDurableClear),
+      /combined durable remove failed/,
+      `${label}: a failed combined clear should reject the transaction`,
+    );
+    assert.equal(data.has(combinedTranscriptKey), true, `${label}: a failed combined clear should retain the transcript`);
+    assert.equal(data.has(storage.key(combinedPrompt.tabId)), true, `${label}: a failed combined clear should retain the prompt`);
+    const combinedRetained = await storage.consume(combinedPrompt.tabId);
+    assert.equal(combinedRetained.prompt?.id, combinedPrompt.id, `${label}: a failed combined clear should retain prompt recovery`);
+    await storage.clearAlongside(combinedPrompt.tabId, combinedDurableClear);
+    assert.equal(data.has(combinedTranscriptKey), false, `${label}: retrying combined clear should remove the transcript`);
+    assert.equal(data.has(storage.key(combinedPrompt.tabId)), false, `${label}: retrying combined clear should remove the prompt`);
+    assert.equal(data.has(storage.claimKey(combinedPrompt.tabId)), false, `${label}: retrying combined clear should remove the lease`);
 
     const delayedClaimPrompt = {
       id: `${label}-queued-claim-clock`,
