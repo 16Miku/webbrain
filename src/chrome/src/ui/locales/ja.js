@@ -267,6 +267,8 @@ export default {
   'st.display.auto_screenshot.every_step': '毎ステップ',
   'st.display.tracing.label': 'トレースを記録（モデル比較用）',
   'st.display.tracing.desc_html': 'すべての実行（LLM リクエスト、レスポンス、ツール呼び出し、スクリーンショット）をローカルの IndexedDB に保存し、モデルを並べて検査・比較できるようにします。別の「トレース」タブで開きます。毎ステップで書き込みが増えるためデフォルトはオフです。<a href="traces.html" target="_blank" style="color:var(--accent);">トレースページを開く →</a>',
+  'st.display.lossless_tracing.label': 'リクエストの完全な詳細を記録（デバッグ層）',
+  'st.display.lossless_tracing.desc_html': '各LLMリクエストの完全なプロンプト・メッセージ・ツールスキーマを、内容を含まない要約の代わりに保存し、各ツール結果を最大200KB保持します。深いデバッグとリクエスト再構築が可能になります。会話内容をローカルに書き込み、ディスク消費が大幅に増えるため、既定ではオフです。トレース記録の有効化が必要です。',
   'st.display.allow_local_network.label': 'エージェントにローカルネットワークへのアクセスを許可',
   'st.display.allow_local_network.desc': 'エージェントの fetch_url ツールがループバック（127.0.0.1、localhost）やプライベート/RFC1918 アドレス（10.x、192.168.x、172.16–31.x）に届くようになります。ローカル開発サーバー、社内ツール、セルフホスト API に便利です。デフォルトはオフ — オフのときは prompt 注入されたページがエージェントにローカルネットワークの探索をさせることはできません。クラウドメタデータアドレス（169.254.169.254）と *.internal/*.local ホスト名はオンでもブロックされたままです。',
   'st.display.notify_sound.label': '完了サウンド',
@@ -346,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>セキュリティ — 必ずお読みください：</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>ここに入力したテキストはブラウザのローカルストレージに<strong>平文</strong>で保存されます。WebBrain プロジェクトへは<strong>送信されません</strong>が、設定済みの LLM プロバイダーへはシステム prompt の一部として毎ターン<strong>送信されます</strong>。</li><li>重要アカウント（Google、Apple、iCloud、銀行、社内 SSO、メインのメール）のパスワードは<strong>絶対にここに入れないでください</strong>。それらは 2FA を有効にすべきで、そもそもエージェントに渡すべきではありません。</li><li>意図された使い方は、低リスクの登録（メルマガ、無料体験、フォーラム）で使い回す<strong>使い捨てパスワード</strong>です。</li><li>このブラウザプロファイルが侵害された場合、ディスクにアクセスできる攻撃者はこのテキストを読み取れます。最小限にとどめてください。</li></ul>',
 
   'tr.title': 'WebBrain トレース',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} 件の実行',
   'tr.run': '{n} 件の実行',
   'tr.btn.refresh': '↻ 更新',

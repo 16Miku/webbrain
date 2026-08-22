@@ -267,6 +267,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Bawat hakbang',
   'st.display.tracing.label': 'I-record ang mga trace (para sa paghahambing ng modelo)',
   'st.display.tracing.desc_html': 'I-save ang bawat run (mga LLM request, response, tool call, screenshot) sa lokal na IndexedDB para maaari mong suriin at ihambing ang mga modelo nang magkatabi. Bumubukas sa hiwalay na Traces tab. Naka-off bilang default dahil nagdadagdag ito ng disk writes kada hakbang. <a href="traces.html" target="_blank" style="color:var(--accent);">Buksan ang Traces page →</a>',
+  'st.display.lossless_tracing.label': 'Itala ang buong detalye ng kahilingan (antas ng debug)',
+  'st.display.lossless_tracing.desc_html': 'Iniimbak din ang buong prompt, mensahe, at schema ng tool ng bawat LLM request sa halip na buod na walang nilalaman, at nagpapanatili ng hanggang 200 KB ng bawat resulta ng tool. Nagbibigay-daan sa malalim na pag-debug at muling pagbuo ng request. Naka-off bilang default dahil isinusulat nito ang nilalaman ng iyong usapan nang lokal at gumagamit ng mas malaking disk. Nangangailangan ng naka-on na pag-record ng trace.',
   'st.display.allow_local_network.label': 'Pahintulutan ang ahente na ma-access ang lokal na network',
   'st.display.allow_local_network.desc': 'Hinahayaan ang fetch_url tool ng ahente na maabot ang loopback (127.0.0.1, localhost) at mga private/RFC1918 address (10.x, 192.168.x, 172.16–31.x). Mainam para sa mga lokal na dev server, intranet tool, o self-hosted API. Naka-off bilang default — kapag naka-off, hindi mapipilit ng mga pahina na may prompt-injection ang ahente na sumiyasat sa iyong lokal na network. Mananatiling naka-block ang mga cloud-metadata address (169.254.169.254) at mga *.internal/*.local hostname kahit naka-on ito.',
   'st.display.notify_sound.label': 'Tunog kapag tapos na',
@@ -346,6 +348,8 @@ export default {
   'st.profile.security_html': '<strong>Seguridad — basahin ito:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Ang teksto na inilagay mo dito ay iniimbak <strong>bilang plain text</strong> sa local storage ng iyong browser. <strong>Hindi</strong> ito ipinapadala sa proyektong WebBrain — ngunit <strong>ipinapadala</strong> ito sa kung anong LLM provider ang iyong na-configure sa bawat turn, bilang bahagi ng system prompt.</li><li><strong>Huwag maglagay ng mga password para sa mahahalagang account</strong> dito (Google, Apple, iCloud, banking, work SSO, pangunahing email). Dapat gumamit ng 2FA ang mga account na iyon at hindi mo naman dapat ipinapasa sa isang ahente.</li><li>Ang inilaang gamit ay <strong>isahang-gamit na password</strong> na ginagamit mo sa mga low-stakes na site signup (newsletter, libreng trial, forum account).</li><li>Kung sakaling ma-compromise ang browser profile na ito, ang isang attacker na may disk access ay makakabasa ng tekstong ito. Panatilihin itong minimal.</li></ul>',
 
   'tr.title': 'Mga Trace ng WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} run',
   'tr.run': '{n} run',
   'tr.btn.refresh': '↻ I-refresh',

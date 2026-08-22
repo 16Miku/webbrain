@@ -589,6 +589,8 @@ export default {
   'st.display.auto_screenshot.every_step': "हर कदम",
   'st.display.tracing.label': "रिकॉर्ड निशान (मॉडल तुलना के लिए)",
   'st.display.tracing.desc_html': "प्रत्येक रन (एलएलएम अनुरोध, प्रतिक्रिया, टूल कॉल, स्क्रीनशॉट) को स्थानीय IndexedDB में जारी रखें ताकि आप साथ-साथ मॉडलों का निरीक्षण और तुलना कर सकें। एक अलग ट्रेसेस टैब में खुलता है। डिफ़ॉल्ट रूप से बंद है क्योंकि यह प्रति चरण डिस्क राइट जोड़ता है। <a href=\"traces.html\" target=\"_blank\" style=\"color:var(--accent);\">ट्रेस पेज खोलें →</a>",
+  'st.display.lossless_tracing.label': 'पूर्ण अनुरोध विवरण रिकॉर्ड करें (डीबग स्तर)',
+  'st.display.lossless_tracing.desc_html': 'प्रत्येक LLM अनुरोध के पूर्ण प्रॉम्प्ट, संदेश और टूल स्कीमा को बिना सामग्री वाले सारांशों के बजाय सहेजता है, और प्रत्येक टूल परिणाम का 200 KB तक रखता है। गहन डीबगिंग और अनुरोध पुनर्निर्माण सक्षम करता है। डिफ़ॉल्ट रूप से बंद क्योंकि यह आपकी बातचीत की सामग्री को स्थानीय रूप से लिखता है और बहुत अधिक डिस्क उपयोग करता है। ट्रेस रिकॉर्डिंग चालू होना आवश्यक है।',
   'st.display.cost_session_limit.label': "क्लाउड लागत सत्र भत्ता",
   'st.display.cost_session_limit.desc': "एक बार जब यह सत्र रिपोर्ट की गई या अनुमानित लागत भत्ता तक पहुंच जाता है, तो क्लाउड रुक जाता है और OpenRouter किसी अन्य भुगतान मॉडल कॉल से पहले चलता है। डिफ़ॉल्ट $10.",
   'st.display.cost_total_limit.label': "क्लाउड लागत कुल भत्ता",
@@ -914,6 +916,8 @@ export default {
 
   // --- Traces page -------------------------------------------------------
   'tr.title': "WebBrain निशान",
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': "{n} चलता है",
   'tr.run': "{n} चलाएँ",
   'tr.btn.refresh': "↻ ताज़ा करें",

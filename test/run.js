@@ -286,10 +286,10 @@ const {
 );
 
 // trace-export.js is pure ESM — the /export --traces serializer, tested here.
-const { tracesToMarkdown } = await import(
+const { tracesToMarkdown, sanitizeTraceExport } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/trace-export.js').replace(/\\/g, '/')
 );
-const { tracesToMarkdown: tracesToMarkdownFx } = await import(
+const { tracesToMarkdown: tracesToMarkdownFx, sanitizeTraceExport: sanitizeTraceExportFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
 );
 const { webbrainTraceToAtif } = await import(
@@ -8107,6 +8107,8 @@ console.log('\ntrace event model');
 
 const EVENT_MODEL_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/event-model.js').replace(/\\/g, '/'));
 const EVENT_MODEL_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/event-model.js').replace(/\\/g, '/'));
+const TRACE_REPAIR_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/repair.js').replace(/\\/g, '/'));
+const TRACE_REPAIR_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/repair.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -8424,7 +8426,7 @@ test('trace recorder: writes go through the event model and stamp the format ver
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /import \{ TRACE_FORMAT_VERSION, makeEvent \} from '\.\/event-model\.js';/, `${browser}: recorder does not import the event model`);
     assert.match(recorderSource, /traceFormatVersion: TRACE_FORMAT_VERSION/, `${browser}: run record does not stamp the format version`);
-    assert.match(recorderSource, /const ev = makeEvent\(runId, seq, kind, data\);/, `${browser}: event writes bypass the envelope`);
+    assert.match(recorderSource, /const resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the envelope`);
     assert.match(recorderSource, /dropped invalid event/, `${browser}: invalid-event drop is not surfaced`);
     assert.match(recorderSource, /const marker = makeEvent\(runId, seq, 'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
   }
@@ -9112,6 +9114,169 @@ test('trace run header: mirrors are identical and browser-neutral', () => {
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'run header must not touch storage');
 });
 
+// trace lossless tier — opt-in full-request recording
+// ────────────────────────────────────────────────────────────────────────
+
+console.log('\ntrace lossless tier');
+
+const RUNTIME_CONFIG_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/runtime-config.js').replace(/\\/g, '/'));
+
+test('trace lossless tier: runtime-config accepts the boolean and defaults stay off', () => {
+  const normalized = RUNTIME_CONFIG_CH.normalizeRuntimeTraceConfig({ lossless_trace: true });
+  assert.equal(normalized.lossless_trace, true, 'lossless_trace boolean not allowlisted');
+  const off = RUNTIME_CONFIG_CH.normalizeRuntimeTraceConfig({ lossless_trace: false });
+  assert.equal(off.lossless_trace, false, 'lossless_trace false should survive');
+  const junk = RUNTIME_CONFIG_CH.normalizeRuntimeTraceConfig({ lossless_trace: 'yes' });
+  assert.equal(junk.lossless_trace, undefined, 'non-boolean lossless_trace must be rejected');
+});
+
+test('trace lossless tier: recorder branches on the tier and clamps payloads', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    assert.match(recorderSource, /async function losslessTraceEnabled\(\)/, `${browser}: losslessTraceEnabled missing`);
+    assert.match(recorderSource, /const lossless = meta\.lossless === true \|\| await losslessTraceEnabled\(\);/, `${browser}: tier decision missing in startRun`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: run record does not stamp the tier`);
+    assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
+    assert.match(recorderSource, /const LOSSILESS_REQUEST_CAP = 500_000;/, `${browser}: lossless request cap missing`);
+    assert.match(recorderSource, /_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
+    assert.match(recorderSource, /const cap = state\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000;/, `${browser}: tool-result cap does not branch on tier`);
+    assert.match(recorderSource, /peekRunFlags|lossless: record\?\.lossless === true|lossless = record\?\.lossless === true/, `${browser}: SW-eviction recovery does not restore the tier`);
+    assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
+    assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
+    assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
+    assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
+    assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
+    assert.match(recorderSource, /_losslessTotalEstimate \+= addedBytes;[\s\S]*?if \(_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP\) return;/, `${browser}: eviction scan is not gated by a cached running total`);
+    assert.match(recorderSource, /async function _scanLosslessTotal\(\)[\s\S]*?objectStore\('runs'\)\.openCursor\(\)/, `${browser}: lossless total must scan every run, not a newest-N window`);
+    assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
+    assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
+    // Default tier must keep the content-free provenance path.
+    assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
+  }
+});
+
+test('trace lossless tier: settings UI wires the toggle and the disclosure', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.html`), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.js`), 'utf8');
+    const enLocale = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/locales/en.js`), 'utf8');
+    assert.match(settingsHtml, /id="toggle-lossless-tracing"/, `${browser}: settings HTML toggle missing`);
+    assert.match(settingsHtml, /st\.display\.lossless_tracing\.label/, `${browser}: settings HTML label key missing`);
+    assert.match(settingsJs, /losslessTracingToggle\.checked = stored\.losslessTrace === true/, `${browser}: settings JS does not load the key`);
+    assert.match(settingsJs, /storage\.local\.set\(\{ losslessTrace: losslessTracingToggle\.checked \}\)/, `${browser}: settings JS does not persist the key`);
+    assert.match(settingsJs, /losslessTracingToggle\.disabled = tracingToggle\.checked !== true/, `${browser}: lossless toggle is not gated on tracing`);
+    assert.match(enLocale, /st\.display\.lossless_tracing\.label/, `${browser}: en locale label missing`);
+    assert.match(enLocale, /writes your conversation content locally/, `${browser}: en locale disclosure missing`);
+  }
+});
+
+test('trace lossless tier: export renders masked request previews only for lossless runs', () => {
+  const losslessRun = {
+    runId: 'r_lossless', userMessage: 'hello', status: 'done', webbrainVersion: '',
+  };
+  const losslessEvents = [
+    {
+      runId: 'r_lossless', seq: 1, ts: 1, kind: 'llm_request',
+      data: {
+        messageCount: 2, toolsCount: 1, lossless: true,
+        messages: [
+          { role: 'system', content: 'You are WebBrain.' },
+          { role: 'user', content: '{"password":"hunter2abc", "api_key":"value12345"} api_key=sk-secret1234567890 and Bearer tok1234567890' },
+        ],
+        tools: [{ function: { name: 'click' } }],
+      },
+    },
+  ];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize([{ run: losslessRun, events: losslessEvents }]);
+    assert.match(markdown, /\*\*user:\*\*/, `${label}: lossless message preview missing`);
+    assert.match(markdown, /tools: click/, `${label}: lossless tool list missing`);
+    assert.doesNotMatch(markdown, /sk-secret1234567890|tok1234567890/, `${label}: lossless export leaked secrets`);
+    assert.match(markdown, /\[redacted\]/, `${label}: lossless export has no redaction marker`);
+
+    const truncated = serialize([{ run: losslessRun, events: [{
+      kind: 'llm_request',
+      data: {
+        messageCount: 1, toolsCount: 2, lossless: true,
+        messages: { _truncated: true, length: 750000, head: '{"messages":[{"role":"user","content":"partial"}' , toolNames: ['click', 'type_text'] },
+        tools: null,
+      },
+    }] }]).markdown;
+    assert.match(truncated, /truncated/i, `${label}: truncated request marker was rendered as empty`);
+    assert.match(truncated, /partial/, `${label}: truncated request head was omitted`);
+    assert.match(truncated, /tools: click, type_text/, `${label}: truncated request tool names were omitted`);
+  }
+  // Default tier: no message preview even when a request payload exists.
+  const defaultRun = {
+    runId: 'r_default', userMessage: 'hello', status: 'done', webbrainVersion: '',
+  };
+  const defaultEvents = [
+    {
+      runId: 'r_default', seq: 1, ts: 1, kind: 'llm_request',
+      data: { messageCount: 2, toolsCount: 0, promptProvenance: { systemPromptVariant: 'ask' } },
+    },
+  ];
+  const { markdown } = tracesToMarkdown([{ run: defaultRun, events: defaultEvents }]);
+  assert.doesNotMatch(markdown, /\*\*system:\*\*|\*\*user:\*\*/, 'default tier export must not render messages');
+});
+
+test('trace lossless tier: exports redact the complete credential-key catalog', () => {
+  const sentinel = {
+    refresh_token: 'refresh-sentinel',
+    client_secret: 'client-secret-sentinel',
+    private_key: 'private-key-sentinel',
+    otp: 'otp-sentinel',
+    recovery_code: 'recovery-sentinel',
+  };
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize([{ run: { runId: label, status: 'done' }, events: [{
+      kind: 'llm_request',
+      data: { lossless: true, messages: [{ role: 'user', content: JSON.stringify(sentinel) }], tools: [] },
+    }] }]);
+    for (const value of Object.values(sentinel)) {
+      assert.doesNotMatch(markdown, new RegExp(value), `${label}: Markdown leaked ${value}`);
+    }
+  }
+});
+
+test('trace lossless tier: JSON exports redact lossless event credentials only', () => {
+  const payload = {
+    run: { runId: 'lossless-json', lossless: true },
+    events: [
+      { data: { messages: [{ content: '{"refresh_token":"refresh-sentinel","private_key":"private-sentinel"}' }] } },
+      { data: { name: 'fill_form', args: { recovery_code: 'recovery-sentinel', api_key: 'api-sentinel', notes: 'plain-sentinel' } } },
+    ],
+  };
+  for (const [label, sanitize] of [['chrome', sanitizeTraceExport], ['firefox', sanitizeTraceExportFx]]) {
+    const exported = JSON.stringify(sanitize(payload));
+    assert.doesNotMatch(exported, /refresh-sentinel|private-sentinel/, `${label}: JSON export leaked a credential`);
+    assert.doesNotMatch(exported, /recovery-sentinel|api-sentinel/, `${label}: JSON export leaked a credential stored under a sensitive args key`);
+    assert.match(exported, /\[redacted\]/, `${label}: JSON export did not mark credentials`);
+    assert.match(exported, /plain-sentinel/, `${label}: JSON export redacted a non-sensitive key`);
+  }
+});
+
+test('trace lossless tier: default-tier privacy guard survives in both builds', () => {
+  const chromeRecorder = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/recorder.js'), 'utf8');
+  const firefoxRecorder = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/recorder.js'), 'utf8');
+  assert.match(chromeRecorder, /Default tier: never persist full prompts, message text, tool schemas, or[\s\S]*?tool names here\./, 'chrome default tier lost its privacy comment guard');
+  assert.match(firefoxRecorder, /Default tier: never persist full prompts, message text, tool schemas, or[\s\S]*?tool names here\./, 'firefox default tier lost its privacy comment guard');
+});
+
+test('trace lossless tier: Traces UI identifies sensitive runs before export', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.html`), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/locales/en.js`), 'utf8');
+    assert.match(traces, /run\.lossless === true/, `${browser}: run list does not surface lossless traces`);
+    assert.match(traces, /tr\.lossless\.warning/, `${browser}: selected lossless run has no export warning`);
+    assert.match(html, /lossless-badge|lossless-warning/, `${browser}: no lossless trace styling exists`);
+    assert.match(locale, /tr\.lossless\.badge/, `${browser}: lossless badge locale missing`);
+    assert.match(locale, /tr\.lossless\.warning/, `${browser}: lossless warning locale missing`);
+  }
+});
+
 test('trace recorder: DB v2 adds lineage indexes and startRun stores lineage fields', () => {
   for (const browser of ['chrome', 'firefox']) {
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
@@ -9145,6 +9310,7 @@ test('trace error codes: catalog is stable and normalizeErrorCode bounds the val
   assert.equal(normalizeErrorCode('NOT_A_CODE'), 'UNKNOWN', 'unknown code must normalize to UNKNOWN');
   assert.equal(normalizeErrorCode(null), 'UNKNOWN', 'null code must normalize to UNKNOWN');
   assert.equal(normalizeErrorCode(undefined), 'UNKNOWN', 'missing code must normalize to UNKNOWN');
+  assert.equal(isErrorCode('SERVICE_WORKER_EVICTED'), true, 'service-worker interruption needs a stable repair code');
   assert.deepEqual(ERROR_CODES_FX.ERROR_CODES, ERROR_CODES, 'Firefox code catalog drifted');
 });
 
@@ -9154,6 +9320,113 @@ test('trace error codes: mirrors are identical and browser-neutral', () => {
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox error codes drifted');
   assert.doesNotMatch(chromeSource, /chrome\./, 'error codes must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'error codes must not touch storage');
+});
+
+test('trace repair: stale interrupted runs receive one ordered terminal repair', () => {
+  const run = {
+    runId: 'run_interrupted',
+    startedAt: 1_000,
+    status: 'running',
+    stepCount: 1,
+    finalContent: null,
+  };
+  const events = [
+    { runId: run.runId, seq: 1, kind: 'turn_start', data: { step: 0 } },
+    { runId: run.runId, seq: 2, kind: 'step_start', data: { step: 1 } },
+    { runId: run.runId, seq: 3, kind: 'llm_request', data: { step: 1 } },
+  ];
+  const plan = TRACE_REPAIR_CH.buildTraceRepairPlan(run, events, {
+    now: 100_000,
+    staleAfterMs: 60_000,
+  });
+
+  assert.ok(plan, 'an old running run must produce a repair plan');
+  assert.deepEqual(
+    plan.events.map((event) => [event.seq, event.kind]),
+    [[4, 'step_end'], [5, 'error'], [6, 'turn_end']],
+    'repair events must continue the existing sequence and close open lifecycle events',
+  );
+  assert.deepEqual(plan.events[0].data, {
+    step: 1,
+    ok: false,
+    reason: 'service_worker_eviction',
+    code: 'SERVICE_WORKER_EVICTED',
+    repaired: true,
+  });
+  assert.deepEqual(plan.events[1].data, {
+    step: null,
+    phase: 'repair',
+    message: 'Trace run interrupted by service-worker eviction.',
+    code: 'SERVICE_WORKER_EVICTED',
+  });
+  assert.deepEqual(plan.events[2].data, {
+    step: 0,
+    status: 'error',
+    reason: 'service_worker_eviction',
+    code: 'SERVICE_WORKER_EVICTED',
+    repaired: true,
+  });
+  assert.equal(plan.run.status, 'error', 'repaired run must no longer be running');
+  assert.equal(plan.run.endedAt, 100_000);
+  assert.equal(plan.run.durationMs, 99_000);
+  assert.equal(plan.run.repairedBy, 'service-worker-eviction');
+  assert.equal(plan.run.repairedAt, 100_000);
+});
+
+test('trace repair: ignores recent and already repaired runs, with mirrored helpers', () => {
+  const recent = { runId: 'recent', startedAt: 95_000, status: 'running' };
+  const activeLongRun = { runId: 'active_long', startedAt: 1_000, status: 'running' };
+  const repaired = {
+    runId: 'repaired',
+    startedAt: 1_000,
+    status: 'error',
+    repairedBy: 'service-worker-eviction',
+  };
+  for (const [label, repair] of [['chrome', TRACE_REPAIR_CH], ['firefox', TRACE_REPAIR_FX]]) {
+    assert.equal(
+      repair.buildTraceRepairPlan(recent, [], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent runs must remain eligible for normal completion`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(activeLongRun, [
+        { runId: activeLongRun.runId, seq: 1, ts: 95_000, kind: 'step_start', data: { step: 1 } },
+      ], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent durable activity must protect a long-running active trace`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(repaired, [], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: repaired runs must be idempotent`,
+    );
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/repair.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/repair.js'), 'utf8'),
+    'Chrome and Firefox repair helpers must remain mirrored',
+  );
+});
+
+test('trace repair: recorder and browser entry points apply the repair transaction', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const recorder = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, `src/${browser}/src/background.js`), 'utf8');
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    assert.match(recorder, /import \{[\s\S]*?buildTraceRepairPlan[\s\S]*?from '\.\/repair\.js';/, `${browser}: recorder repair import missing`);
+    assert.match(recorder, /const transaction = tx\(db, \['runs', 'events'\], 'readwrite'\)/, `${browser}: repair must share one atomic transaction`);
+    assert.match(recorder, /for \(const event of plan\.events\) eventsStore\.put\(event\);/, `${browser}: repair events are not persisted`);
+    assert.match(recorder, /runsStore\.put\(plan\.run\);/, `${browser}: repaired run is not persisted`);
+    assert.match(recorder, /export async function repairStaleRuns\(/, `${browser}: stale-run scan is not exported`);
+    // Candidate scan must be bounded to the possibly-stale slice of history
+    // and re-check in-memory liveness at the last instant before writing.
+    assert.match(recorder, /index\('startedAt'\)[\s\S]*?openCursor\(IDBKeyRange\.upperBound\(cutoff\)\)/, `${browser}: stale-run scan must not walk the full runs store`);
+    assert.match(recorder, /if \(_runState\.has\(runId\)\) return;\n\s*for \(const event of plan\.events\)/, `${browser}: repair must re-check live runs before writing`);
+    assert.match(background, /setTimeout\(\(\) => \{ void workflowTrace\.repairStaleRuns\(\)\.catch\(\(\) => \{\}\); \}, TRACE_REPAIR_STARTUP_DELAY_MS\)/, `${browser}: background startup must defer the stale-run scan`);
+    assert.match(background, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?workflowTrace\.repairStaleRuns\(\)/, `${browser}: background does not answer the traces-page repair request`);
+    assert.match(traces, /\(async \(\) => \{\s*await repairStaleRunsForPage\(\);\s*await refresh\(\);/, `${browser}: Traces page does not route its first repair through the background`);
+    assert.match(traces, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?return repairStaleRuns\(\)\.catch\(\(\) => \[\]\);/, `${browser}: Traces page lost its local fallback for when the background is unreachable`);
+  }
 });
 
 test('agent trace error classification: _traceErrorCodeFor maps failures to stable codes', () => {
@@ -19229,7 +19502,9 @@ test('cloud runs force trace capture without changing the interactive opt-in def
   assert.match(agentSource, /force:\s*runOptions\?\.cloudRun === true/);
   assert.match(recorderSource, /if \(!forced && !\(await tracingEnabled\(\)\)\) return null/);
   assert.match(recorderSource, /tracingEnabledForRun\(runId\)/);
-  assert.match(recorderSource, /forced:\s*await isForcedTraceRun\(runId\)/);
+  // The forced flag is restored from the durable run record after SW eviction
+  // (peekRunFlags), keeping forced-capture semantics without an in-memory map.
+  assert.match(recorderSource, /forced: flags\.forced, lossless: flags\.lossless/);
 });
 
 test('cloud trace keeps CAPTCHA frame/vendor diagnostics after the rolling update window drops the event', async () => {

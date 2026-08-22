@@ -259,6 +259,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Setiap langkah',
   'st.display.tracing.label': 'Rekam jejak (untuk perbandingan model)',
   'st.display.tracing.desc_html': 'Simpan setiap proses (permintaan LLM, respons, pemanggilan alat, tangkapan layar) ke IndexedDB lokal sehingga Anda dapat memeriksa dan membandingkan model berdampingan. Membuka tab Jejak terpisah. Nonaktif secara bawaan karena menambah penulisan disk per langkah. <a href="traces.html" target="_blank" style="color:var(--accent);">Buka halaman Jejak →</a>',
+  'st.display.lossless_tracing.label': 'Rekam detail lengkap permintaan (tingkat debug)',
+  'st.display.lossless_tracing.desc_html': 'Juga menyimpan prompt, pesan, dan skema alat lengkap dari setiap permintaan LLM alih-alih ringkasan tanpa konten, dan menyimpan hingga 200 KB setiap hasil alat. Memungkinkan debug mendalam dan rekonstruksi permintaan. Nonaktif secara default karena menulis konten percakapan Anda secara lokal dan memakai disk jauh lebih banyak. Memerlukan perekaman trace aktif.',
   'st.display.allow_local_network.label': 'Izinkan agen mengakses jaringan lokal',
   'st.display.allow_local_network.desc': 'Memungkinkan alat fetch_url agen menjangkau loopback (127.0.0.1, localhost) dan alamat privat/RFC1918 (10.x, 192.168.x, 172.16–31.x). Berguna untuk server pengembangan lokal, alat intranet, atau API yang di-host sendiri. Nonaktif secara bawaan — saat nonaktif, halaman yang disisipi prompt-injection tidak dapat menyuruh agen memindai jaringan lokal Anda. Alamat metadata cloud (169.254.169.254) dan nama host *.internal/*.local tetap diblokir bahkan saat diaktifkan.',
   'st.display.notify_sound.label': 'Suara penyelesaian',
@@ -331,6 +333,8 @@ export default {
   'st.profile.security_html': '<strong>Keamanan — baca ini:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Teks yang Anda masukkan di sini disimpan <strong>dalam bentuk teks biasa</strong> di penyimpanan lokal peramban Anda. Teks ini <strong>tidak</strong> dikirim ke proyek WebBrain — tetapi <strong>dikirim</strong> ke penyedia LLM yang Anda konfigurasikan pada setiap giliran, sebagai bagian dari prompt sistem.</li><li><strong>Jangan masukkan kata sandi untuk akun penting</strong> di sini (Google, Apple, iCloud, perbankan, SSO kantor, email utama). Akun-akun itu seharusnya memakai 2FA dan tidak perlu Anda serahkan ke agen.</li><li>Kasus penggunaan yang dimaksud adalah <strong>kata sandi sekali pakai</strong> yang Anda gunakan kembali untuk pendaftaran situs berisiko rendah (newsletter, uji coba gratis, akun forum).</li><li>Jika profil peramban ini suatu saat disusupi, penyerang yang memiliki akses disk dapat membaca teks ini. Buat seminimal mungkin.</li></ul>',
 
   'tr.title': 'Jejak WebBrain',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} proses',
   'tr.run': '{n} proses',
   'tr.btn.refresh': '↻ Segarkan',

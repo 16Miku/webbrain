@@ -604,6 +604,8 @@ export default {
   'st.display.auto_screenshot.every_step': 'Every step',
   'st.display.tracing.label': 'Record traces (for model comparison)',
   'st.display.tracing.desc_html': 'Persist every run (LLM requests, responses, tool calls, screenshots) into local IndexedDB so you can inspect and compare models side-by-side. Opens in a separate Traces tab. Off by default because it adds disk writes per step. <a href="traces.html" target="_blank" style="color:var(--accent);">Open Traces page →</a>',
+  'st.display.lossless_tracing.label': 'Record full request details (debug tier)',
+  'st.display.lossless_tracing.desc_html': 'Also persist the full prompts, messages, and tool schemas of each LLM request instead of content-free summaries, and keep up to 200 KB of each tool result. Enables deep debugging and request reconstruction. Off by default because it writes your conversation content locally and uses much more disk. Requires Record traces to be on.',
   'st.display.cost_session_limit.label': 'Cloud cost session allowance',
   'st.display.cost_session_limit.desc': 'Stops eligible cloud and router runs before another paid model call once this session reaches the reported or estimated cost allowance. Default $10.',
   'st.display.cost_total_limit.label': 'Cloud cost total allowance',
@@ -939,6 +941,8 @@ export default {
 
   // --- Traces page -------------------------------------------------------
   'tr.title': 'WebBrain Traces',
+  'tr.lossless.badge': 'Sensitive debug tier',
+  'tr.lossless.warning': 'This run contains full request content. Review it for secrets before exporting or sharing.',
   'tr.runs': '{n} runs',
   'tr.run': '{n} run',
   'tr.btn.refresh': '↻ Refresh',
