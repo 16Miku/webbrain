@@ -1714,8 +1714,21 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '') {
-  return runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', runSucceeded = false) {
+  const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
+  if (snapshot) snapshot.runSucceeded = runSucceeded === true;
+  return snapshot;
+}
+
+// Mirror the sidepanel's completion classification for badge styling only:
+// Act runs need an explicit successful done update; Ask replies succeed
+// with non-empty content and no error update.
+function runOutcomeSucceededForBadge(mode, result, updates = [], error = null) {
+  if (error) return false;
+  if (runUpdatesSucceeded(updates)) return true;
+  if (mode !== 'ask') return false;
+  if (updates.some(update => update?.type === 'error')) return false;
+  return String(result ?? '').trim().length > 0;
 }
 
 async function getRunUiSnapshot(tabId) {
@@ -1942,7 +1955,13 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
   // flashTabAttention.
   const liveStatus = String(snapshot.status || '');
   if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
-    flashTabAttention({ tabId, success: liveStatus === 'completed' }).catch(() => {});
+    // Badge styling uses the run's recorded outcome (successful done update
+    // or successful Ask reply), not just the terminal status — a completed
+    // status alone can still mean max-steps were reached without success.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
   }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
@@ -3042,6 +3061,7 @@ async function handleMessage(msg, sender) {
             runUi.requestId,
             terminalRunUiStatus(result, updates, runError),
             result || (runError ? `Error: ${runError.message}` : ''),
+            runOutcomeSucceededForBadge(mode, result, updates, runError),
           );
           await sendAgentRunComplete(tabId, snapshot);
         }

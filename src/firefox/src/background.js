@@ -2058,7 +2058,13 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
   // flashTabAttention.
   const liveStatus = String(snapshot.status || '');
   if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
-    flashTabAttention({ tabId, success: liveStatus === 'completed' }).catch(() => {});
+    // Badge styling uses the run's recorded outcome (successful done update
+    // or successful Ask reply), not just the terminal status — a completed
+    // status alone can still mean max-steps were reached without success.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
   }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
@@ -2565,7 +2571,7 @@ async function handleMessage(msg, sender) {
         if (runError && String(runError.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX)) {
           clearRunUiSnapshot(tabId);
         } else {
-          const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
+          const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''), runOutcomeSucceededForBadge(mode, result, updates, runError));
           await sendAgentRunComplete(tabId, snapshot);
         }
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
@@ -2634,7 +2640,7 @@ async function handleMessage(msg, sender) {
         throw error;
       } finally {
         if (!userMemoryTurnContextTaken) clearUserMemoryTurnContext(tabId);
-        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
+        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''), runOutcomeSucceededForBadge(mode, result, updates, runError));
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
@@ -2694,7 +2700,7 @@ async function handleMessage(msg, sender) {
         throw error;
       } finally {
         if (!userMemoryTurnContextTaken) clearUserMemoryTurnContext(tabId);
-        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
+        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''), runOutcomeSucceededForBadge(mode, result, updates, runError));
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
