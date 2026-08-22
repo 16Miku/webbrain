@@ -1714,20 +1714,27 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', runSucceeded = false) {
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false) {
   const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
-  if (snapshot) snapshot.runSucceeded = runSucceeded === true;
+  if (snapshot) {
+    // The journal carries an exact successful-'done' predicate for Act runs;
+    // Ask replies are classified by the caller and OR-ed in for badge styling.
+    snapshot.runSucceeded = snapshot.successfulDone === true || askSucceeded === true;
+  }
   return snapshot;
 }
 
-// Mirror the sidepanel's completion classification for badge styling only:
-// Act runs need an explicit successful done update; Ask replies succeed
-// with non-empty content and no error update.
-function runOutcomeSucceededForBadge(mode, result, updates = [], error = null) {
+// Mirror the sidepanel's successful-Ask classification for badge styling
+// only: non-empty content with no error/attachment/max-steps update.
+function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
-  if (runUpdatesSucceeded(updates)) return true;
-  if (mode !== 'ask') return false;
-  if (updates.some(update => update?.type === 'error')) return false;
+  if (updates.some(update => (
+    update?.type === 'error'
+    || update?.type === 'attachment_rejected'
+    || update?.type === 'max_steps_reached'
+    || update?.error
+    || update?.data?.error
+  ))) return false;
   return String(result ?? '').trim().length > 0;
 }
 
@@ -3061,7 +3068,7 @@ async function handleMessage(msg, sender) {
             runUi.requestId,
             terminalRunUiStatus(result, updates, runError),
             result || (runError ? `Error: ${runError.message}` : ''),
-            runOutcomeSucceededForBadge(mode, result, updates, runError),
+            mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
           );
           await sendAgentRunComplete(tabId, snapshot);
         }
@@ -3139,6 +3146,7 @@ async function handleMessage(msg, sender) {
           runUi.requestId,
           terminalRunUiStatus(result, updates, runError),
           result || (runError ? `Error: ${runError.message}` : ''),
+          mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
         );
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
@@ -3207,6 +3215,7 @@ async function handleMessage(msg, sender) {
           runUi.requestId,
           terminalRunUiStatus(result, updates, runError),
           result || (runError ? `Error: ${runError.message}` : ''),
+          mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
         );
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
