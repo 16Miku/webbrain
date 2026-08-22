@@ -43985,7 +43985,8 @@ test('completion confetti is default-on and success-only in sidepanel completion
     assert.match(panel, /function isSuccessfulAskCompletion\(mode, response\)/, `${label}: sidepanel should classify successful Ask replies separately`);
     assert.match(panel, /if \(success\) triggerCompletionConfetti\(\);/, `${label}: confetti should only fire for successful completions`);
     assert.match(panel, /result\?\.outcome === 'success'/, `${label}: live done success should require explicit success outcome`);
-    assert.match(panel, /notifyCompletion\(\{\s*success:\s*job\?\.lastOutcome === 'success'\s*[},]/, `${label}: scheduled completed jobs should celebrate only explicit success outcomes`);
+    assert.match(panel, /notifyCompletion\(\{\s*success:\s*(?:event === 'completed' && )?job\?\.lastOutcome === 'success'\s*[},]/, `${label}: scheduled completed jobs should celebrate only explicit success outcomes`);
+    assert.match(panel, /\(event === 'completed' \|\| event === 'failed'\) && job\?\.source !== 'watch'/, `${label}: failed scheduled runs should also reach the completion notification path with a failure badge`);
     assert.match(panel, /success:\s*currentTabId === tabId && completedSuccessfully/, `${label}: live confetti should be gated to the tab that completed`);
     assert.doesNotMatch(panel, /completedSuccessfully = !\(res\?\./, `${label}: live confetti should not treat every normal chat response as successful completion`);
 
@@ -44418,7 +44419,7 @@ test('/watch alert audio is background-owned, configurable, and distinct by styl
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'ui/sidepanel.js'), 'utf8');
     assert.match(alertRuntime, /playWatchAlert[\s\S]*?notifySound|notifySound[\s\S]*?playWatchAlert/, `${label}: background alert should honor the notification-sound setting`);
     assert.match(background, /playWatchAlert(?:,|:)/, `${label}: scheduler should own alert playback`);
-    assert.match(panel, /event === 'completed' && job\?\.source !== 'watch'/, `${label}: watch completion must not also play the side-panel completion sound`);
+    assert.match(panel, /\(event === 'completed' \|\| event === 'failed'\) && job\?\.source !== 'watch'/, `${label}: watch completion must not also play the side-panel completion sound`);
     assert.match(panel, /'polled', 'triggered'/, `${label}: continuing watch runs should settle their side-panel run state`);
     assert.match(
       panel,

@@ -3044,8 +3044,13 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     if (renderedTabId != null) await flushRenderedTabChat();
     await drainQueuedPromptsAfterRunSettles();
   }
-  if (event === 'completed' && job?.source !== 'watch') {
-    notifyCompletion({ success: job?.lastOutcome === 'success', tabId: runTabId });
+  // Terminal scheduled runs chime and flash like live runs do. Failures
+  // pass outcome:false so backgrounded tabs get the red failure badge.
+  if ((event === 'completed' || event === 'failed') && job?.source !== 'watch') {
+    notifyCompletion({
+      success: event === 'completed' && job?.lastOutcome === 'success',
+      tabId: runTabId,
+    });
   }
 }
 
@@ -8559,7 +8564,9 @@ async function sendMessage(extraChatParams = {}) {
         success: currentTabId === tabId && completedSuccessfully,
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
         tabId,
-        outcome: completedSuccessfully,
+        // Ask-mode successes are classified separately from Act done
+        // results; include them so backgrounded badges show ✓ too.
+        outcome: promptEligibleCompletion,
       });
     }
     if (renderToCurrentTab && currentTabId === tabId) refreshRecommendedActions();
