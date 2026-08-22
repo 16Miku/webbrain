@@ -1689,7 +1689,10 @@ async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
   if (type !== 'scheduled_job') return;
   const event = data?.event;
   const job = data?.job;
-  if ((event !== 'completed' && event !== 'failed') || job?.source === 'watch') return;
+  // clarification_required is terminal for unattended runs and waits on the
+  // user — they must be told, or the task stalls unnoticed forever.
+  if ((event !== 'completed' && event !== 'failed' && event !== 'clarification_required')
+    || job?.source === 'watch') return;
   try {
     const jobTabId = Number(job.tabId ?? job.target?.tabId ?? _tabId);
     await flashTabAttention({
