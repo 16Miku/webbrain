@@ -8,6 +8,7 @@ import {
   deleteRun, clearAllRuns,
 } from '../trace/recorder.js';
 import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
+import { sanitizeTraceExport } from '../agent/trace-export.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 
@@ -543,7 +544,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     exportedByWebBrainVersion: browser.runtime.getManifest().version || '',
     schema: 'webbrain-trace/1',
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(sanitizeTraceExport(payload), null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

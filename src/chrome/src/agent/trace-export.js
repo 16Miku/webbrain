@@ -19,6 +19,7 @@
  */
 
 import { isKnownKind } from '../trace/event-model.js';
+import { isSensitiveCloudKey } from '../cloud-runs.js';
 
 const ARGS_LIMIT = 300;
 const RESULT_LIMIT = 600;
@@ -40,9 +41,21 @@ function maskSecrets(text) {
   for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '[redacted]');
   out = out
     .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-    .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:api[_ -]?key|access[_ -]?token|token|secret|password|passwd)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
+    .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime|recovery)[_ -]?code|secret|credential|private[_ -]?key|api[_ -]?key|(?:access|refresh)[_ -]?token|client[_ -]?secret|token|access[_ -]?key[_ -]?id|secret[_ -]?access[_ -]?key|otp)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
     .replace(/([?&](?:api[_-]?key|access[_-]?token|token|key)=)[^&\s]+/gi, '$1[redacted]');
   return out;
+}
+
+function redactExportValue(value, key = '') {
+  if (isSensitiveCloudKey(key)) return '[redacted]';
+  if (typeof value === 'string') return maskSecrets(value);
+  if (Array.isArray(value)) return value.map(item => redactExportValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, item]) => [childKey, redactExportValue(item, childKey)]));
+}
+
+export function sanitizeTraceExport(payload) {
+  return payload?.run?.lossless === true ? redactExportValue(payload) : payload;
 }
 
 // Lossless requests carry the full message/tool shape. Render a bounded,

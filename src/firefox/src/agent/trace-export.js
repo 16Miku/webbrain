@@ -34,15 +34,34 @@ const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{8,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
 ];
+const SENSITIVE_TRACE_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
+const SENSITIVE_TRACE_KEY_EXACT = new Set(['code', 'pin', 'otp', 'cvv', 'cvc', 'ssn']);
+
+function isSensitiveTraceKey(key) {
+  const normalized = String(key || '').replace(/[^a-z0-9]/gi, '');
+  return SENSITIVE_TRACE_KEY.test(normalized) || SENSITIVE_TRACE_KEY_EXACT.has(normalized);
+}
 
 function maskSecrets(text) {
   let out = String(text ?? '');
   for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '[redacted]');
   out = out
     .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-    .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:api[_ -]?key|access[_ -]?token|token|secret|password|passwd)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
+    .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime|recovery)[_ -]?code|secret|credential|private[_ -]?key|api[_ -]?key|(?:access|refresh)[_ -]?token|client[_ -]?secret|token|access[_ -]?key[_ -]?id|secret[_ -]?access[_ -]?key|otp)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
     .replace(/([?&](?:api[_-]?key|access[_-]?token|token|key)=)[^&\s]+/gi, '$1[redacted]');
   return out;
+}
+
+function redactExportValue(value, key = '') {
+  if (isSensitiveTraceKey(key)) return '[redacted]';
+  if (typeof value === 'string') return maskSecrets(value);
+  if (Array.isArray(value)) return value.map(item => redactExportValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, item]) => [childKey, redactExportValue(item, childKey)]));
+}
+
+export function sanitizeTraceExport(payload) {
+  return payload?.run?.lossless === true ? redactExportValue(payload) : payload;
 }
 
 // Lossless requests carry the full message/tool shape. Render a bounded,

@@ -81,7 +81,7 @@ export function normalizeCloudBridgeUrl(value = DEFAULT_CLOUD_BRIDGE_URL) {
   return url.href;
 }
 
-function isSensitiveCloudKey(key) {
+export function isSensitiveCloudKey(key) {
   const normalizedKey = normalizedCloudKey(key);
   if (!normalizedKey) return false;
   return SENSITIVE_CLOUD_KEY.test(normalizedKey) || SENSITIVE_CLOUD_KEY_EXACT.has(normalizedKey);
