@@ -7603,6 +7603,56 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
     assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged trusted Gmail thread remained blocked`);
 
+    // Reproduce the Gmail trace where the model carried a document/subtree
+    // revision into page 1. Page 1 is a fresh snapshot boundary, so that stale
+    // revision must not keep the accepted page ledger permanently empty.
+    let stalePageOneState = runtime.createReadCompletenessState(`${label}-gmail-stale-page-one`, true, true, 'gmail');
+    stalePageOneState = runtime.recordReadCompleteness(stalePageOneState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000,
+    }, {
+      pageContent: 'document root discovery',
+      page: 1,
+      hasMore: true,
+      truncated: true,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionB,
+    });
+    const stalePageOneArgs = {
+      ...expandedPage1Args,
+      tree_revision: gmailRevisionB,
+    };
+    stalePageOneState = runtime.recordReadCompleteness(stalePageOneState, 'get_accessibility_tree', stalePageOneArgs, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"',
+      page: 1,
+      totalChars: 2400,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    assert.deepEqual(stalePageOneState.treePages, [1], `${label}: stale page-1 revision prevented a fresh Gmail snapshot`);
+    assert.deepEqual(stalePageOneState.continuationArgs, {
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
+    }, `${label}: stale page-1 revision lost the fresh snapshot continuation`);
+    stalePageOneState = runtime.recordReadCompleteness(stalePageOneState, 'get_accessibility_tree', {
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
+    }, {
+      pageContent: 'listitem "Latest message"',
+      page: 2,
+      totalChars: 2400,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    assert.equal(runtime.readCompletenessBlock(stalePageOneState), null, `${label}: fresh Gmail restart with a stale page-1 revision did not complete`);
+
     let missingRootState = runtime.createReadCompletenessState(`${label}-gmail-missing-root`, true, true, 'gmail');
     missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
       filter: 'visible', maxDepth: 12, maxChars: 12000,
@@ -7933,6 +7983,7 @@ test('Ask and managed cloud classify communication read scope across languages',
     { label: 'ask-tr', mode: 'ask', runOptions: {}, task: 'Bu konuşmada neler oluyor?', scope: 'complete_thread', blocked: true },
     { label: 'cloud-es', mode: 'act', runOptions: { cloudRun: true }, task: 'Resume toda esta conversación.', scope: 'complete_thread', blocked: true },
     { label: 'ask-ja', mode: 'ask', runOptions: {}, task: '選択した最新のメッセージだけを説明して。', scope: 'current_message', blocked: false },
+    { label: 'ask-best-effort-followup', mode: 'ask', runOptions: {}, task: 'Okay, based only on what you already saw, what does it say?', scope: 'none', blocked: false },
   ];
 
   for (const [browserIndex, [browserLabel, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
@@ -80544,6 +80595,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /response timing/);
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /review my message, don't send[\s\S]*current_message/i);
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /Do not choose this merely because the target is an email reply or draft/i);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /based on what you saw[\s\S]*use none/i);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /narrower latest request overrides an earlier request for a complete-thread read/i);
   for (const [build, parse] of [
     [buildReadScopeMessages, parseReadScopeFromContent],
     [buildReadScopeMessagesFx, parseReadScopeFromContentFx],
