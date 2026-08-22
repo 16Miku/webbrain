@@ -5287,7 +5287,6 @@
   const ATTENTION_FLASH_MARKER = '\u{1F514} ';
   let attentionFlashTimer = null;
   let attentionFlashTimeout = null;
-  let attentionFlashOriginalTitle = null;
   let attentionFlashFaviconEl = null;
   let attentionFlashOnVisible = null;
 
@@ -5309,6 +5308,13 @@
     }
   }
 
+  function attentionFlashStripMarker(title) {
+    const text = String(title ?? '');
+    return text.startsWith(ATTENTION_FLASH_MARKER)
+      ? text.slice(ATTENTION_FLASH_MARKER.length)
+      : text;
+  }
+
   function stopAttentionFlash() {
     if (attentionFlashTimer) {
       clearInterval(attentionFlashTimer);
@@ -5322,12 +5328,10 @@
       document.removeEventListener('visibilitychange', attentionFlashOnVisible);
       attentionFlashOnVisible = null;
     }
-    // Restore the site's own title only while we still own it — pages that
-    // mutate their own title mid-flash keep their newer value.
-    if (attentionFlashOriginalTitle != null && document.title.startsWith(ATTENTION_FLASH_MARKER)) {
-      document.title = attentionFlashOriginalTitle;
-    }
-    attentionFlashOriginalTitle = null;
+    // Leave the page's latest own title in place — only remove our marker.
+    // Toggling from a captured snapshot instead would discard live updates
+    // (unread counts, …) made while the tab was backgrounded.
+    document.title = attentionFlashStripMarker(document.title);
     if (attentionFlashFaviconEl) {
       attentionFlashFaviconEl.remove();
       attentionFlashFaviconEl = null;
@@ -5339,7 +5343,6 @@
     stopAttentionFlash();
     // Already looking at the page — nothing to draw attention to.
     if (document.visibilityState === 'visible') return false;
-    attentionFlashOriginalTitle = String(document.title ?? '');
     attentionFlashOnVisible = () => {
       if (document.visibilityState === 'visible') stopAttentionFlash();
     };
@@ -5347,9 +5350,12 @@
     let flashing = false;
     attentionFlashTimer = setInterval(() => {
       flashing = !flashing;
+      // Derive each toggle from the live title so changes the site makes
+      // while backgrounded survive the flash instead of being overwritten.
+      const base = attentionFlashStripMarker(document.title);
       document.title = flashing
-        ? `${ATTENTION_FLASH_MARKER}${attentionFlashOriginalTitle}`
-        : attentionFlashOriginalTitle;
+        ? `${ATTENTION_FLASH_MARKER}${base}`
+        : base;
     }, ATTENTION_FLASH_INTERVAL_MS);
     try {
       // Append our icon link instead of editing the site's own <link> tags —

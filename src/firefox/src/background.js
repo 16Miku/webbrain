@@ -1657,8 +1657,9 @@ browser.tabs.onRemoved.addListener((tabId) => {
 const flashedBadgeTabs = new Set();
 
 browser.tabs.onActivated.addListener(({ tabId } = {}) => {
-  if (!flashedBadgeTabs.has(tabId)) return;
   flashedBadgeTabs.delete(tabId);
+  // Clear unconditionally so badge cleanup never depends on volatile state.
+  // Resetting the per-tab override is idempotent and restores any global badge.
   browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => {});
 });
 
@@ -1668,15 +1669,14 @@ async function flashTabAttention(msg) {
   if (!Number.isInteger(tabId) || tabId < 0) {
     return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
   }
-  let tab = null;
   try {
-    tab = await browser.tabs.get(tabId);
+    await browser.tabs.get(tabId);
   } catch {
     return { ok: false, error: `Tab ${tabId} no longer exists.` };
   }
-  if (tab?.discarded) {
-    return { ok: false, error: `Tab ${tabId} is discarded and cannot be flashed.` };
-  }
+  // Discarded tabs have no content-script receiver, so sendMessage below
+  // fails and they flow into the badge fallback — which works without
+  // touching the page and survives until the user activates the tab.
   try {
     await browser.tabs.sendMessage(tabId, {
       target: 'content',

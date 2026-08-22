@@ -2319,8 +2319,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 const flashedBadgeTabs = new Set();
 
 chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
-  if (!flashedBadgeTabs.has(tabId)) return;
   flashedBadgeTabs.delete(tabId);
+  // Clear unconditionally: the Set only lives in service-worker memory, but
+  // a tab-scoped badge survives MV3 worker suspension/restarts. Resetting
+  // the per-tab override is idempotent and restores any global badge.
   chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
 });
 
@@ -2330,15 +2332,14 @@ async function flashTabAttention(msg) {
   if (!Number.isInteger(tabId) || tabId < 0) {
     return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
   }
-  let tab = null;
   try {
-    tab = await chrome.tabs.get(tabId);
+    await chrome.tabs.get(tabId);
   } catch {
     return { ok: false, error: `Tab ${tabId} no longer exists.` };
   }
-  if (tab?.discarded || tab?.status === 'unloaded') {
-    return { ok: false, error: `Tab ${tabId} is discarded and cannot be flashed.` };
-  }
+  // Discarded/unloaded tabs have no content-script receiver, so sendMessage
+  // below fails and they flow into the badge fallback — which works without
+  // touching the page and survives until the user activates the tab.
   try {
     await chrome.tabs.sendMessage(tabId, {
       target: 'content',
