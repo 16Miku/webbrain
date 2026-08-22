@@ -26,7 +26,7 @@ import {
 } from './rich-text-toolbar-guard.js';
 import { RichTextToolbarProbe } from './rich-text-toolbar-probe.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
-import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
+import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, progressIdentitiesAreUnique, progressIdentityKeys, reconcileLedgerItems, reconcilePersistedLedgerRows, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
@@ -10125,7 +10125,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this.submittedRunRequestIds.set(tabId, String(entry.submittedRunRequestId));
         }
         if (Array.isArray(entry.progressLedger)) {
-          this.progressLedgers.set(tabId, entry.progressLedger);
+          const reconciledLedger = reconcilePersistedLedgerRows(entry.progressLedger);
+          this.progressLedgers.set(tabId, reconciledLedger.rows);
         }
         if (entry.progressSession && typeof entry.progressSession === 'object') {
           this.progressSessions.set(tabId, entry.progressSession);
@@ -15812,7 +15813,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const canonicalItems = this._canonicalizeProgressItems(items);
     const activeSession = this._currentProgressSession(tabId);
     const currentRows = this.progressLedgers.get(tabId) || [];
-    const terminalRequirements = canonicalItems
+    // Only internal callers may select a trusted ledger source. Tool arguments
+    // are model-controlled and must not be able to impersonate the classifier.
+    const updateSource = opts.source || 'model';
+    const reconciliationSessionId = opts.sessionId
+      || args.sessionId
+      || args.session_id
+      || activeSession?.sessionId
+      || '';
+    const reconciliation = reconcileLedgerItems(currentRows, canonicalItems, {
+      source: updateSource,
+      sessionId: reconciliationSessionId,
+      pageScope: opts.pageScope || activeSession?.pageScope || '',
+      taskKey: this._progressTaskKeyHash(tabId),
+    });
+    const reconciledItems = reconciliation.items;
+    const terminalRequirements = reconciledItems
       .filter(item => isTerminalLedgerStatus(item?.status))
       .map(item => {
         const requirementSessionId = opts.sessionId
@@ -15896,7 +15912,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ids: observationOnlyRequirementIds.slice(0, 20),
       };
     }
-    const mastodonGuard = this._mastodonProgressUpdateGuard(tabId, canonicalItems);
+    const mastodonGuard = this._mastodonProgressUpdateGuard(tabId, reconciledItems);
     if (mastodonGuard) {
       return {
         success: false,
@@ -15905,18 +15921,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ids: mastodonGuard.ids,
       };
     }
-    // Only internal callers may select a trusted ledger source. Tool arguments
-    // are model-controlled and must not be able to impersonate the classifier.
-    const updateSource = opts.source || 'model';
     const sessionOpts = { ...opts, sessionId: opts.sessionId || args.sessionId || args.session_id, source: updateSource };
-    const session = this._sessionForProgressUpdate(tabId, canonicalItems, sessionOpts);
+    const session = this._sessionForProgressUpdate(tabId, reconciledItems, sessionOpts);
     const sessionId = sessionOpts.sessionId || session?.sessionId || '';
     const pageScope = opts.pageScope || session?.pageScope || '';
     const scopedItems = sessionId
-      ? canonicalItems.map(item => (item && typeof item === 'object' && !Array.isArray(item)
+      ? reconciledItems.map(item => (item && typeof item === 'object' && !Array.isArray(item)
         ? { ...item, sessionId, ...(pageScope ? { pageScope } : {}) }
         : item))
-      : canonicalItems;
+      : reconciledItems;
     const current = this.progressLedgers.get(tabId) || [];
     const taskKey = this._progressTaskKeyHash(tabId);
     const result = upsertLedgerItems(current, scopedItems, {
@@ -15958,6 +15971,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       counts: progressCounts(visibleRows),
       unresolved: unresolvedLedgerRows(visibleRows, { limit: 20 }),
       ...(sessionId ? { sessionId } : {}),
+      ...(reconciliation.reconciled.length ? { reconciled: reconciliation.reconciled } : {}),
       ...(blockedDowngrades.length ? {
         warnings: blockedDowngrades.map(b => `row ${b.id} is already ${b.keptStatus}; status change to ${b.requestedStatus} ignored. Pass reopen:true only if the user explicitly asked to redo it.`),
       } : {}),
@@ -16202,10 +16216,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const allowedActions = session.allowedActions.map(normalizeProgressAction).filter(Boolean);
     const action = allowedActions[0];
     if (!action) return null;
-    const existingKeys = new Set((this.progressLedgers.get(tabId) || [])
-      .map(ledgerRowKey)
-      .filter(Boolean));
-    const items = session.targets.map((target, index) => ({
+    const targetItems = session.targets.map((target, index) => ({
       id: `requirement:${index + 1}:${String(target || '').trim()}`,
       label: String(target || '').trim(),
       target: String(target || '').trim(),
@@ -16215,7 +16226,58 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         completionRequirement: true,
         classifierTarget: true,
       },
-    })).filter(item => item.label
+    })).filter(item => item.label);
+    if (targetItems.length !== session.targets.length) return null;
+
+    const currentRows = this.progressLedgers.get(tabId) || [];
+    const expectedRows = this._rowsForProgressSession(tabId, session.sessionId, currentRows)
+      .filter(row => Number.isInteger(Number(row?.fields?.expectedOrdinal)))
+      .sort((a, b) => Number(a.fields.expectedOrdinal) - Number(b.fields.expectedOrdinal));
+    if (expectedRows.length) {
+      if (expectedRows.length !== targetItems.length) {
+        return {
+          success: false,
+          bindingDeferred: true,
+          error: `Classifier found ${targetItems.length} targets for ${expectedRows.length} expected rows; kept the ordered expected rows without adding a duplicate requirement set.`,
+        };
+      }
+      const uniqueTargets = progressIdentitiesAreUnique(targetItems);
+      if (!uniqueTargets) {
+        return {
+          success: false,
+          bindingDeferred: true,
+          error: 'Classifier targets were empty or ambiguous; kept the ordered expected rows without adding a duplicate requirement set.',
+        };
+      }
+      const alreadyBound = expectedRows.every((row, index) => {
+        const targetKeys = new Set(progressIdentityKeys(targetItems[index]));
+        return row?.fields?.classifierTarget === true
+          && progressIdentityKeys(row).some(key => targetKeys.has(key));
+      });
+      if (alreadyBound) return null;
+      const boundItems = expectedRows.map((row, index) => ({
+        id: row.id,
+        label: targetItems[index].label,
+        target: targetItems[index].target,
+        action,
+        status: row.status || 'pending',
+        fields: {
+          ...(row.fields || {}),
+          expectedOrdinal: Number(row.fields.expectedOrdinal),
+          completionRequirement: true,
+          classifierTarget: true,
+        },
+      }));
+      return this._progressUpdate(tabId, { items: boundItems }, {
+        source: 'classifier',
+        sessionId: session.sessionId,
+        pageScope: session.pageScope || '',
+      });
+    }
+    const existingKeys = new Set((this.progressLedgers.get(tabId) || [])
+      .map(ledgerRowKey)
+      .filter(Boolean));
+    const items = targetItems.filter(item => item.label
       && !existingKeys.has(ledgerRowKey({ ...item, sessionId: session.sessionId })));
     if (!items.length) return null;
     return this._progressUpdate(tabId, { items }, {
@@ -16239,12 +16301,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _seedExpectedProgressItems(tabId, session, expectedItems) {
     if (!session?.sessionId || !expectedItems) return null;
+    const action = session.allowedActions?.[0] || 'process_item';
+    const requiresCompletionEvidence = !['collect_email', 'collect_profile', 'process_item', 'visit', 'open'].includes(action);
     const items = Array.from({ length: expectedItems.count }, (_, index) => ({
       id: `expected:${index + 1}`,
       label: `${expectedItems.item_type} ${index + 1}`,
-      action: session.allowedActions?.[0] || 'process_item',
+      action,
       status: 'pending',
-      fields: { expectedOrdinal: index + 1 },
+      fields: {
+        expectedOrdinal: index + 1,
+        ...(requiresCompletionEvidence ? { completionRequirement: true } : {}),
+      },
     }));
     return this._progressUpdate(tabId, { items }, {
       source: 'classifier',
@@ -16258,12 +16325,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const expected = this.progressExpectedItems.get(tabId);
     if (!expected) return null;
     const rows = this._currentTaskLedgerRows(tabId)
-      .filter(row => /^expected:\d+$/.test(String(row?.id || '')))
-      .sort((a, b) => Number(String(a.id).split(':')[1]) - Number(String(b.id).split(':')[1]));
+      .map(row => {
+        const trustedOrdinal = Number(row?.fields?.expectedOrdinal);
+        const legacyMatch = String(row?.id || '').match(/^expected:(\d+)$/);
+        const ordinal = Number.isInteger(trustedOrdinal) && trustedOrdinal > 0
+          ? trustedOrdinal
+          : Number(legacyMatch?.[1] || 0);
+        return ordinal > 0 ? { row, ordinal } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.ordinal - b.ordinal);
     if (rows.length !== expected.count) {
       return { blocked: true, error: `Expected ${expected.count} ${expected.item_type} rows, but the ledger contains ${rows.length}. Seed and process every ordered row before success.` };
     }
-    const incomplete = rows.filter(row => String(row.status || '').toLowerCase() !== 'processed'
+    if (rows.some(({ ordinal }, index) => ordinal !== index + 1)) {
+      return { blocked: true, error: `Expected exactly one ordered row for every ${expected.item_type} position from 1 through ${expected.count}; duplicate or missing ordinals remain.` };
+    }
+    const orderedRows = rows.map(({ row }) => row);
+    const incomplete = orderedRows.filter(row => String(row.status || '').toLowerCase() !== 'processed'
       || expected.required_fields.some(field => {
         const value = row?.fields?.[field];
         return value == null || String(value).trim() === '';
@@ -16277,7 +16356,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const identityField = expected.required_fields[0];
     if (identityField) {
-      const values = rows.map(row => String(row?.fields?.[identityField] || '').trim().toLowerCase());
+      const values = orderedRows.map(row => String(row?.fields?.[identityField] || '').trim().toLowerCase());
       if (new Set(values).size !== values.length) {
         return { blocked: true, error: `Expected ${expected.count} non-duplicated ${identityField} values; duplicate rows remain.` };
       }
@@ -16326,8 +16405,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         targets: classified?.targets || [],
         reason: classified?.reason || 'approved planner enabled repeated-item progress tracking',
       }, { taskText, pageScope, source: classified ? 'classifier' : 'planner' });
-      this._seedClassifierProgressTargets(tabId, session);
       this._seedExpectedProgressItems(tabId, session, expectedItems);
+      this._seedClassifierProgressTargets(tabId, session);
       this._syncProgressSessionPrompt(tabId);
       return session;
     }
@@ -16364,38 +16443,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._rowsForProgressSession(tabId, session.sessionId)
       : [];
     return unresolvedLedgerRows(rows);
-  }
-
-  _progressLedgerLookupKey(value) {
-    return String(value || '')
-      .trim()
-      .replace(/^follow:/i, '')
-      .replace(/^\s*(?:follow|unfollow)\s+/i, '')
-      .replace(/^\s*@/, '')
-      .toLowerCase();
-  }
-
-  _reconcileAutoProgressItem(tabId, item) {
-    if (!item || String(item.action || '').toLowerCase() !== 'follow') return item;
-    const itemKeys = new Set([item.id, item.label, item.target]
-      .map(value => this._progressLedgerLookupKey(value))
-      .filter(Boolean));
-    if (!itemKeys.size) return item;
-    const session = this._currentProgressSession(tabId);
-    const match = this._activeProgressLedgerRows(tabId).find(row => {
-      if (session?.sessionId && String(row?.sessionId || '') !== session.sessionId) return false;
-      if (String(row?.action || '').toLowerCase() !== 'follow') return false;
-      return [row.id, row.label, row.target]
-        .map(value => this._progressLedgerLookupKey(value))
-        .some(key => key && itemKeys.has(key));
-    });
-    if (!match?.id || match.id === item.id) return item;
-    return {
-      ...item,
-      id: match.id,
-      label: match.label || item.label,
-      url: item.url || match.url,
-    };
   }
 
   _progressAutoRecordedNote(item = {}) {
@@ -16638,11 +16685,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || detectProgressAction(name, args, result, { allowedActions: session.allowedActions });
     if (!item) return null;
     if (!isProgressActionAllowed(session, item.action)) return null;
-    const reconciled = this._reconcileAutoProgressItem(tabId, item);
-    const update = this._progressUpdate(tabId, { items: [reconciled] }, { source: 'auto', sessionId: session.sessionId, pageScope: session.pageScope });
+    const update = this._progressUpdate(tabId, { items: [item] }, { source: 'auto', sessionId: session.sessionId, pageScope: session.pageScope });
     if (!update?.success) return null;
     return {
-      item: update.updated?.[0] || reconciled,
+      item: update.updated?.[0] || item,
       counts: update.counts || progressCounts(this._currentTaskLedgerRows(tabId)),
       unresolved: unresolvedLedgerRows(this._currentTaskLedgerRows(tabId), { limit: 8 }),
     };

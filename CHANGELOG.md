@@ -7,6 +7,7 @@ This changelog was generated from the repository Git history and release tags. V
 ## [33.1.1] - 2026-08-22
 
 ### Changed
+- Reconcile planner expected-item placeholders with classifier and concrete progress rows, preserving one ordered canonical row per repeated-task target across Chrome, Firefox, and restored sessions.
 - 33.1.0
 - Add WebBrain VL 2 benchmark blog posts
 - webbrain-vl-2-450m

@@ -755,6 +755,9 @@ const {
   upsertLedgerItems,
   progressCounts,
   ledgerDoneBlock,
+  progressIdentityKeys,
+  reconcileLedgerItems,
+  reconcilePersistedLedgerRows,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/progress-ledger.js').replace(/\\/g, '/')
 );
@@ -762,6 +765,7 @@ const {
   detectProgressAction: detectProgressActionFx,
   isValidLedgerStatus: isValidLedgerStatusFx,
   upsertLedgerItems: upsertLedgerItemsFx,
+  reconcilePersistedLedgerRows: reconcilePersistedLedgerRowsFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/progress-ledger.js').replace(/\\/g, '/')
 );
@@ -67654,6 +67658,173 @@ test('planner progress-ledger policy disables fallback or enables the canonical 
   }
 });
 
+test('planner expected rows remain canonical when concrete bulk items arrive', async () => {
+  for (const [AgentClass, count] of [[AgentCh, 40], [AgentFx, 22]]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = count === 40 ? 23260 : 23261;
+    const taskText = `Follow these ${count} profiles.`;
+    const targets = Array.from({ length: count }, (_, index) => `profile-${String(index + 1).padStart(2, '0')}`);
+    agent._persist = () => {};
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: taskText },
+    ]);
+    agent._classifyProgressIntentWithProvider = async () => ({
+      mode: 'active',
+      allowedActions: ['follow'],
+      forbiddenActions: [],
+      targets,
+      confidence: 0.98,
+      pageScopePolicy: 'page',
+    });
+
+    const session = await agent._ensureProgressSessionForCurrentTask(tabId, {
+      taskText,
+      pageScope: 'https://example.test/profiles',
+      progressLedgerPolicy: 'enabled',
+      progressAction: 'follow',
+      expectedItems: {
+        count,
+        item_type: 'profile',
+        ordered: true,
+        required_fields: [],
+      },
+    });
+    const placeholders = agent._rowsForProgressSession(tabId, session.sessionId);
+    assert.equal(placeholders.length, count, `${AgentClass.name}: expected rows were not seeded once`);
+    assert.deepEqual(placeholders.map(row => row.id), targets.map((_, index) => `expected:${index + 1}`));
+
+    let reconciledCount = 0;
+    const splitAt = Math.floor(count / 2);
+    for (const batchTargets of [targets.slice(0, splitAt), targets.slice(splitAt)]) {
+      const concrete = agent._progressUpdate(tabId, {
+        items: batchTargets.map(target => ({
+          id: `follow:${target}`,
+          label: target,
+          target,
+          action: 'follow',
+          status: 'pending',
+          url: `https://example.test/${target}`,
+        })),
+      }, { sessionId: session.sessionId });
+      assert.equal(concrete.success, true, `${AgentClass.name}: concrete partial batch did not update expected slots`);
+      reconciledCount += concrete.reconciled?.length || 0;
+    }
+    assert.equal(reconciledCount, count, `${AgentClass.name}: concrete partial batches were not fully reconciled`);
+    const rows = agent._rowsForProgressSession(tabId, session.sessionId);
+    assert.equal(rows.length, count, `${AgentClass.name}: ${count} concrete targets doubled the ledger`);
+    assert.deepEqual(rows.map(row => row.id), targets.map((_, index) => `expected:${index + 1}`));
+    assert.deepEqual(rows.map(row => row.label), targets, `${AgentClass.name}: target order was not preserved`);
+    assert.deepEqual(rows.map(row => row.fields?.expectedOrdinal), targets.map((_, index) => index + 1));
+    assert.ok(rows.every(row => row.fields?.completionRequirement === true), `${AgentClass.name}: follow slots lost per-item evidence requirements`);
+  }
+});
+
+test('repeated concrete items do not consume a fresh expected slot in later partial batches', () => {
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    const sessionId = 'mixed-partial-batch';
+    let state = upsert([], [1, 2, 3].map(ordinal => ({
+      id: `expected:${ordinal}`,
+      label: `profile ${ordinal}`,
+      action: 'follow',
+      status: 'pending',
+      fields: { expectedOrdinal: ordinal, completionRequirement: true },
+    })), { source: 'classifier', sessionId, now: 100 });
+
+    state = upsert(state.rows, [{
+      id: 'follow:alice', label: 'Alice', target: 'Alice', action: 'follow', status: 'pending',
+    }], { source: 'model', sessionId, now: 200 });
+    assert.deepEqual(state.reconciled, [{ incomingId: 'follow:alice', canonicalId: 'expected:1' }]);
+
+    state = upsert(state.rows, [
+      { id: 'follow:alice', label: 'Alice', target: 'Alice', action: 'follow', status: 'acted' },
+      { id: 'follow:bob', label: 'Bob', target: 'Bob', action: 'follow', status: 'pending' },
+    ], { source: 'model', sessionId, now: 300 });
+    assert.equal(state.rows.length, 3);
+    assert.deepEqual(state.rows.map(row => row.id), ['expected:1', 'expected:2', 'expected:3']);
+    assert.deepEqual(state.rows.map(row => row.target || null), ['Alice', 'Bob', null]);
+    assert.deepEqual(state.rows.map(row => row.status), ['acted', 'pending', 'pending']);
+    assert.deepEqual(state.reconciled, [
+      { incomingId: 'follow:alice', canonicalId: 'expected:1' },
+      { incomingId: 'follow:bob', canonicalId: 'expected:2' },
+    ]);
+  }
+});
+
+test('classifier target mismatches keep expected rows without a second requirement set', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = AgentClass === AgentCh ? 23262 : 23263;
+    agent._persist = () => {};
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Process three profiles.' },
+    ]);
+    const session = agent._setProgressSession(tabId, {
+      mode: 'active',
+      allowedActions: ['process_item'],
+      forbiddenActions: [],
+      targets: ['alice', 'bob'],
+      confidence: 0.9,
+    }, { taskText: 'Process three profiles.', source: 'classifier' });
+    agent._seedExpectedProgressItems(tabId, session, {
+      count: 3,
+      item_type: 'profile',
+      ordered: true,
+      required_fields: [],
+    });
+    const result = agent._seedClassifierProgressTargets(tabId, session);
+    assert.equal(result?.bindingDeferred, true, `${AgentClass.name}: count mismatch was not reported`);
+    const rows = agent._rowsForProgressSession(tabId, session.sessionId);
+    assert.equal(rows.length, 3, `${AgentClass.name}: count mismatch added duplicate classifier rows`);
+    assert.ok(rows.every(row => /^expected:\d+$/.test(row.id)));
+  }
+});
+
+test('concrete progress rows reconcile to canonical ordered slots before evidence checks', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = AgentClass === AgentCh ? 23264 : 23269;
+    agent._persist = () => {};
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Follow Alice.' },
+    ]);
+    const session = agent._setProgressSession(tabId, {
+      mode: 'active', allowedActions: ['follow'], forbiddenActions: [], targets: ['Alice'], confidence: 0.95,
+    }, { taskText: 'Follow Alice.', source: 'classifier' });
+    agent._seedExpectedProgressItems(tabId, session, {
+      count: 1, item_type: 'profile', ordered: true, required_fields: [],
+    });
+    agent._progressUpdate(tabId, {
+      items: [{
+        id: 'expected:1', label: 'Alice', target: 'Alice', action: 'follow', status: 'pending',
+        fields: { expectedOrdinal: 1, completionRequirement: true, classifierTarget: true },
+      }],
+    }, { source: 'classifier', sessionId: session.sessionId });
+
+    const premature = agent._progressUpdate(tabId, {
+      items: [{ id: 'profile-alice', label: 'Follow Alice', action: 'follow', status: 'processed' }],
+    }, { sessionId: session.sessionId });
+    assert.equal(premature.success, false, `${AgentClass.name}: different concrete id bypassed completion evidence`);
+    assert.equal(premature.completionInvariant, true);
+    assert.equal(agent._rowsForProgressSession(tabId, session.sessionId).length, 1);
+
+    const acted = agent._progressUpdate(tabId, {
+      items: [{ id: 'profile-alice', label: 'Follow Alice', action: 'follow', status: 'acted', url: 'https://github.com/Alice' }],
+    }, { source: 'auto', sessionId: session.sessionId });
+    assert.equal(acted.success, true);
+    assert.deepEqual(acted.reconciled, [{ incomingId: 'profile-alice', canonicalId: 'expected:1' }]);
+    const row = agent._rowsForProgressSession(tabId, session.sessionId)[0];
+    assert.equal(row.id, 'expected:1');
+    assert.equal(row.status, 'acted');
+    assert.equal(row.url, 'https://github.com/Alice');
+    assert.equal(row.fields.expectedOrdinal, 1);
+  }
+});
+
 test('classifier targets become isolated app-owned completion obligations', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({
@@ -68275,6 +68446,129 @@ test('progress ledger merges rows and does not downgrade terminal rows', () => {
     { id: 'octocat', label: 'follow octocat', action: 'follow', status: 'acted' },
   ], { source: 'auto', now: 100 });
   assert.equal(fx.counts.acted, 1);
+});
+
+test('progress ledger identity reconciliation preserves order and remote account hosts', () => {
+  let state = upsertLedgerItems([], [
+    {
+      id: 'expected:1', label: 'Alice', target: 'alice@one.social', action: 'follow', status: 'pending',
+      fields: { expectedOrdinal: 1, completionRequirement: true, classifierTarget: true },
+    },
+    {
+      id: 'expected:2', label: 'Alice', target: 'alice@two.social', action: 'follow', status: 'pending',
+      fields: { expectedOrdinal: 2, completionRequirement: true, classifierTarget: true },
+    },
+  ], { source: 'classifier', sessionId: 'bulk-remote', now: 100 });
+
+  state = upsertLedgerItems(state.rows, [{
+    id: 'remote-alice',
+    label: 'Alice',
+    action: 'follow',
+    status: 'acted',
+    url: 'https://home.social/@alice@two.social',
+  }], { source: 'model', sessionId: 'bulk-remote', now: 200 });
+  assert.equal(state.rows.length, 2);
+  assert.deepEqual(state.rows.map(row => row.id), ['expected:1', 'expected:2']);
+  assert.equal(state.rows[0].status, 'pending');
+  assert.equal(state.rows[1].status, 'acted');
+  assert.equal(state.rows[1].url, 'https://home.social/@alice@two.social');
+  assert.deepEqual(state.reconciled, [{ incomingId: 'remote-alice', canonicalId: 'expected:2' }]);
+
+  const ambiguous = reconcileLedgerItems(state.rows, [{
+    id: 'alice-only', label: 'Alice', action: 'follow', status: 'pending',
+  }], { source: 'model', sessionId: 'bulk-remote' });
+  assert.deepEqual(ambiguous.reconciled, [], 'hostless ambiguous identity must fail closed');
+  assert.equal(ambiguous.items[0].id, 'alice-only');
+  assert.ok(progressIdentityKeys({ url: 'https://one.social/@alice' }).includes('acct:alice@one.social'));
+
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    let remoteBatch = upsert([], [1, 2].map(ordinal => ({
+      id: `expected:${ordinal}`,
+      label: `profile ${ordinal}`,
+      action: 'follow',
+      status: 'pending',
+      fields: { expectedOrdinal: ordinal, completionRequirement: true },
+    })), { source: 'classifier', sessionId: 'remote-batch', now: 100 });
+    remoteBatch = upsert(remoteBatch.rows, [
+      {
+        id: 'follow:alice-one', label: 'Alice', target: 'alice@one.social', action: 'follow', status: 'pending',
+        url: 'https://home.social/@alice@one.social',
+      },
+      {
+        id: 'follow:alice-two', label: 'Alice', target: 'alice@two.social', action: 'follow', status: 'pending',
+        url: 'https://home.social/@alice@two.social',
+      },
+    ], { source: 'model', sessionId: 'remote-batch', now: 200 });
+    assert.equal(remoteBatch.rows.length, 2, 'different remote hosts should not block ordinal reconciliation');
+    assert.deepEqual(remoteBatch.rows.map(row => row.id), ['expected:1', 'expected:2']);
+    assert.deepEqual(remoteBatch.rows.map(row => row.target), ['alice@one.social', 'alice@two.social']);
+  }
+});
+
+test('progress ledger repairs persisted placeholder sets only when identities are unambiguous', () => {
+  const sessionId = 'persisted-bulk';
+  const rows = [
+    { id: 'expected:1', label: 'profile 1', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 1 } },
+    { id: 'expected:2', label: 'profile 2', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 2 } },
+    {
+      id: 'requirement:1:alice', label: 'alice', target: 'alice', action: 'follow', status: 'pending', sessionId,
+      fields: { completionRequirement: true, classifierTarget: true },
+    },
+    {
+      id: 'requirement:2:bob', label: 'bob', target: 'bob', action: 'follow', status: 'pending', sessionId,
+      fields: { completionRequirement: true, classifierTarget: true },
+    },
+    { id: 'alice', label: 'Follow alice', action: 'follow', status: 'acted', sessionId, attempts: 1 },
+    { id: 'bob', label: 'Follow bob', action: 'follow', status: 'processed', sessionId, fields: { email: null } },
+  ];
+  for (const reconcile of [reconcilePersistedLedgerRows, reconcilePersistedLedgerRowsFx]) {
+    const repaired = reconcile(rows);
+    assert.equal(repaired.changed, true);
+    assert.equal(repaired.rows.length, 2);
+    assert.deepEqual(repaired.rows.map(row => row.id), ['expected:1', 'expected:2']);
+    assert.deepEqual(repaired.rows.map(row => row.label), ['Follow alice', 'Follow bob']);
+    assert.deepEqual(repaired.rows.map(row => row.status), ['acted', 'processed']);
+    assert.deepEqual(repaired.rows.map(row => row.fields.expectedOrdinal), [1, 2]);
+    assert.ok(repaired.rows.every(row => row.fields.completionRequirement === true && row.fields.classifierTarget === true));
+  }
+
+  const directPlaceholderRepair = reconcilePersistedLedgerRows([
+    { id: 'expected:1', label: 'profile 1', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 1 } },
+    { id: 'expected:2', label: 'profile 2', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 2 } },
+    { id: 'alice', label: 'alice', action: 'follow', status: 'acted', sessionId },
+    { id: 'bob', label: 'bob', action: 'follow', status: 'processed', sessionId },
+  ]);
+  assert.equal(directPlaceholderRepair.rows.length, 2);
+  assert.deepEqual(directPlaceholderRepair.rows.map(row => row.id), ['expected:1', 'expected:2']);
+  assert.deepEqual(directPlaceholderRepair.rows.map(row => row.label), ['alice', 'bob']);
+
+  const conflicting = reconcilePersistedLedgerRows([
+    { id: 'expected:1', label: 'alice', action: 'follow', status: 'processed', sessionId, fields: { expectedOrdinal: 1 } },
+    {
+      id: 'requirement:1:alice', label: 'alice', action: 'follow', status: 'failed', sessionId,
+      fields: { completionRequirement: true, classifierTarget: true },
+    },
+  ]);
+  assert.equal(conflicting.changed, false, 'conflicting terminal results must not be guessed together');
+  assert.equal(conflicting.rows.length, 2);
+});
+
+test('expected ordinals are app-owned typed metadata', () => {
+  let state = upsertLedgerItems([], [{
+    id: 'expected:1', label: 'alice', action: 'follow', status: 'pending',
+    fields: { expectedOrdinal: 1, completionRequirement: true },
+  }], { source: 'classifier', sessionId: 'typed-ordinal', now: 100 });
+  state = upsertLedgerItems(state.rows, [{
+    id: 'expected:1', label: 'alice', action: 'follow', status: 'pending',
+    fields: { expectedOrdinal: 99, completionRequirement: false },
+  }], { source: 'model', sessionId: 'typed-ordinal', now: 200 });
+  assert.equal(state.rows[0].fields.expectedOrdinal, 1);
+  assert.equal(state.rows[0].fields.completionRequirement, true);
+
+  const forged = upsertLedgerItems([], [{
+    id: 'forged', label: 'forged', action: 'follow', status: 'pending', fields: { expectedOrdinal: 1 },
+  }], { source: 'model', sessionId: 'typed-ordinal', now: 300 });
+  assert.equal(Object.prototype.hasOwnProperty.call(forged.rows[0].fields || {}, 'expectedOrdinal'), false);
 });
 
 test('progress ledger rejects malformed statuses and normalizes null-like fields', () => {
