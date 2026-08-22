@@ -4561,7 +4561,8 @@ async function adoptRestoredRunState(tabId, state) {
     if (returnedPlannerFailure
         && sameTabId(currentTabId, tabId)
         && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderPlannerRequestFailure(
         assistantEl,
         returnedPlannerFailure.data,
@@ -4574,7 +4575,8 @@ async function adoptRestoredRunState(tabId, state) {
     if (returnedErrorUpdate
         && sameTabId(currentTabId, tabId)
         && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
         submittedTurnDurable: res.submittedTurnDurable,
       });
@@ -4582,7 +4584,8 @@ async function adoptRestoredRunState(tabId, state) {
   } catch (error) {
     if (sameTabId(currentTabId, tabId)
         && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
     }
   } finally {
