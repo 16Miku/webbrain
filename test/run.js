@@ -8894,6 +8894,10 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
+    assert.match(recorderSource, /_losslessTotalEstimate \+= addedBytes;[\s\S]*?if \(_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP\) return;/, `${browser}: eviction scan is not gated by a cached running total`);
+    assert.match(recorderSource, /async function _scanLosslessTotal\(\)[\s\S]*?objectStore\('runs'\)\.openCursor\(\)/, `${browser}: lossless total must scan every run, not a newest-N window`);
+    assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
+    assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
   }

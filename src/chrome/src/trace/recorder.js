@@ -315,7 +315,7 @@ async function _appendEventNow(runId, kind, data) {
       if (run?.lossless === true) {
         run.losslessBytes = state.losslessBytes;
         await promisifyReq(tx(db, ['runs']).objectStore('runs').put(run));
-        await evictOldestLosslessRuns(runId);
+        await evictOldestLosslessRuns(runId, bytes);
       }
     }
     return seq;
@@ -325,18 +325,60 @@ async function _appendEventNow(runId, kind, data) {
 }
 
 // Retain the active run and evict completed lossless runs oldest first when
-// their aggregate recorded payload crosses the global budget.
-async function evictOldestLosslessRuns(activeRunId) {
-  const runs = await listRuns({ limit: 500 });
-  let total = runs.reduce((sum, run) => sum + (run?.lossless === true ? Number(run.losslessBytes) || 0 : 0), 0);
+// their aggregate recorded payload crosses the global budget. A cached running
+// total keeps under-budget writes free of any store-wide scan; the scan itself
+// walks every run rather than a newest-N window so old lossless runs still
+// count toward the budget and stay evictable.
+let _losslessTotalEstimate = null;
+
+async function _scanLosslessTotal() {
+  const db = await openDB();
+  let total = 0;
+  await new Promise((resolve) => {
+    const req = tx(db, ['runs'], 'readonly').objectStore('runs').openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) return resolve();
+      if (c.value?.lossless === true) total += Number(c.value.losslessBytes) || 0;
+      c.continue();
+    };
+    req.onerror = () => resolve();
+  });
+  _losslessTotalEstimate = total;
+  return total;
+}
+
+async function evictOldestLosslessRuns(activeRunId, addedBytes = 0) {
+  if (_losslessTotalEstimate === null) {
+    // First lossless write of this worker lifetime: learn the true total.
+    // The persisted run record already includes this write's bytes.
+    await _scanLosslessTotal();
+  } else {
+    _losslessTotalEstimate += addedBytes;
+    if (_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP) return;
+  }
+  const db = await openDB();
+  const runs = [];
+  await new Promise((resolve) => {
+    const req = tx(db, ['runs'], 'readonly').objectStore('runs').openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) return resolve();
+      if (c.value?.lossless === true) runs.push(c.value);
+      c.continue();
+    };
+    req.onerror = () => resolve();
+  });
+  let total = runs.reduce((sum, run) => sum + (Number(run.losslessBytes) || 0), 0);
   const candidates = runs
-    .filter(run => run?.lossless === true && run.runId !== activeRunId && run.status !== 'running')
+    .filter(run => run.runId !== activeRunId && run.status !== 'running')
     .sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0));
   for (const run of candidates) {
     if (total <= LOSSILESS_TOTAL_CAP) break;
     await deleteRun(run.runId);
     total -= Number(run.losslessBytes) || 0;
   }
+  _losslessTotalEstimate = total;
 }
 
 function _appendEvent(runId, kind, data) {
@@ -351,7 +393,9 @@ export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
   return _appendEvent(runId, 'llm_request', (state) => {
     if (state?.lossless === true && provenanceInput) {
       if ((state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
-        return { step, ...payload, lossless: true, messages: { _truncated: true, length: 0, head: '(per-run lossless budget reached)', toolNames: [] }, tools: null };
+        let length = null;
+        try { length = JSON.stringify({ messages: provenanceInput.messages || null, tools: provenanceInput.tools || null }).length; } catch {}
+        return { step, ...payload, lossless: true, messages: { _truncated: true, length, head: '(per-run lossless budget reached)', toolNames: boundedToolNames(provenanceInput.tools) }, tools: null };
       }
       const { messages, tools } = clampLosslessRequest(provenanceInput.messages || null, provenanceInput.tools || null);
       return { step, ...payload, lossless: true, messages, tools };
@@ -393,7 +437,9 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   // opt-in lossless tier; note the truncation either way.
   return _appendEvent(runId, 'tool', (state) => {
     if (state?.lossless === true && (state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
-      return { step, name, args: args || null, result: { _truncated: true, length: 0, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
+      let length = null;
+      try { const s = typeof result === 'string' ? result : JSON.stringify(result); length = s ? s.length : 0; } catch {}
+      return { step, name, args: args || null, result: { _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
     }
     const cap = state?.lossless === true ? LOSSILESS_RESULT_CAP : 20_000;
     let shortResult = result;
@@ -684,6 +730,7 @@ export async function deleteRun(runId) {
 }
 
 export async function clearAllRuns() {
+  _losslessTotalEstimate = null;
   const db = await openDB();
   const t = tx(db, ['runs', 'events', 'shots']);
   await promisifyReq(t.objectStore('runs').clear());
