@@ -2493,12 +2493,15 @@ function drainQueuedComposerMessageForCurrentTab() {
 async function renderClearedConversationForTab(tabId) {
   dismissSelectionAskAction();
   setSelectionGroundedForTab(tabId, false);
+  // The background conversation is already cleared before this helper runs.
+  // Release the old run even if clearing the local transcript fails, because
+  // its follower no longer owns the tab and cannot settle these flags itself.
+  setTabProcessing(tabId, false);
+  setTabAbortRequested(tabId, false);
   const clearResult = await clearCachedTabChat(tabId);
   if (!clearResult?.ok || clearResult?.skipped) {
     throw new Error(clearResult?.error || 'Unable to clear tab chat.');
   }
-  setTabProcessing(tabId, false);
-  setTabAbortRequested(tabId, false);
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
   clearPendingAttachmentsForTab(tabId);
@@ -4428,9 +4431,15 @@ async function adoptRestoredRunState(tabId, state) {
   }
 }
 
-async function applyActiveRunState(numericTabId, state) {
-  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) return;
+async function applyActiveRunState(numericTabId, state, { shouldContinue = () => true } = {}) {
   const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  const requestId = String(runUi?.requestId || '');
+  const shouldApplyState = () => shouldContinue()
+    && !isConversationClearInProgress(numericTabId)
+    && (!requestId || !clearedConversationRunRequestIds.has(requestId))
+    && sameTabId(currentTabId, numericTabId)
+    && sameTabId(renderedTabId, numericTabId);
+  if (!shouldApplyState()) return;
   if (runUi?.requestId) {
     const runAssistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(runUi.requestId))}"]`)
       || messagesEl.querySelector('.message.assistant:last-of-type')
@@ -4515,7 +4524,9 @@ async function applyActiveRunState(numericTabId, state) {
       numericTabId,
       runUi.requestId,
       runUi.attachmentDeliveryState,
+      { shouldContinue: shouldApplyState },
     );
+    if (!shouldApplyState()) return;
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     if (renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
@@ -4523,6 +4534,7 @@ async function applyActiveRunState(numericTabId, state) {
         requestId: runUi.requestId,
         seq: renderedSeq,
       }).catch(() => {});
+      if (!shouldApplyState()) return;
     }
   }
   const pendingPlan = state?.pendingPlan;
@@ -11661,6 +11673,7 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   const requestId = String(payload?.requestId || '');
   cancelledRunRecoveryRequestIds.delete(requestId);
   conversationClearFollowerCancellationRequestIds.delete(requestId);
+  const shouldContinueRunRecovery = () => !conversationClearFollowerCancellationRequestIds.has(requestId);
   const promise = runDetachedWithReconnect({
     initialAction,
     payload,
@@ -11671,12 +11684,13 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
     }),
     isConnectionError: isBackgroundConnectionError,
     onState: state => {
+      if (!shouldContinueRunRecovery()) return;
       applyConversationScopeState(tabId, state);
-      return applyActiveRunState(tabId, state);
+      return applyActiveRunState(tabId, state, { shouldContinue: shouldContinueRunRecovery });
     },
     shouldResume: () => !isTabAbortRequested(tabId)
       && !cancelledRunRecoveryRequestIds.has(requestId),
-    shouldContinue: () => !conversationClearFollowerCancellationRequestIds.has(requestId),
+    shouldContinue: shouldContinueRunRecovery,
     onStatus: ({ phase }) => {
       if (!sameTabId(currentTabId, tabId)) return;
       if (phase === 'reconnecting' || phase === 'retrying_start') {
@@ -12384,16 +12398,25 @@ function clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots = fals
   }
 }
 
-async function restorePendingAttachmentsForTab(tabId, attachments) {
+async function restorePendingAttachmentsForTab(tabId, attachments, {
+  shouldContinue = () => true,
+  attachmentGeneration = null,
+} = {}) {
   if (!Array.isArray(attachments) || !attachments.length) return;
   const numericTabId = normalizeAttachmentTabId(tabId);
-  if (numericTabId == null) return;
+  if (numericTabId == null || !shouldContinue()) return;
+  const expectedGeneration = attachmentGeneration ?? getAttachmentGeneration(numericTabId);
   const screenshotsPersisted = await markStagedScreenshots(
     browser.storage.local,
     numericTabId,
     attachments,
     { deliveryState: 'pending' },
   ).catch(() => false);
+  if (getAttachmentGeneration(numericTabId) !== expectedGeneration) {
+    await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
+    return;
+  }
+  if (!shouldContinue()) return;
   const restorable = screenshotsPersisted
     ? attachments
     : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
@@ -12419,10 +12442,16 @@ async function removePersistedStagedAttachments(tabId, attachments) {
   await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
 }
 
-async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState) {
+async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState, {
+  shouldContinue = () => true,
+} = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
-  if (numericTabId == null || !['included', 'not-sent', 'unknown'].includes(deliveryState)) return;
+  if (numericTabId == null
+      || !['included', 'not-sent', 'unknown'].includes(deliveryState)
+      || !shouldContinue()) return;
+  const attachmentGeneration = getAttachmentGeneration(numericTabId);
   const stored = await loadStagedScreenshots(browser.storage.local, numericTabId).catch(() => []);
+  if (!shouldContinue()) return;
   const matching = stored.filter(attachment => (
     attachment.deliveryState === 'sending'
     && String(attachment.requestId || '') === String(requestId || '')
@@ -12438,7 +12467,10 @@ async function reconcilePersistedStagedScreenshots(tabId, requestId, deliverySta
   if (deliveryState === 'included') {
     await removePersistedStagedAttachments(numericTabId, matching);
   } else {
-    await restorePendingAttachmentsForTab(numericTabId, matching);
+    await restorePendingAttachmentsForTab(numericTabId, matching, {
+      shouldContinue,
+      attachmentGeneration,
+    });
   }
 }
 
