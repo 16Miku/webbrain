@@ -6359,6 +6359,24 @@
       : text;
   }
 
+  function attentionFlashToggleFavicon(show) {
+    try {
+      if (show && !attentionFlashFaviconEl) {
+        // Append our icon link instead of editing the site's own <link>
+        // tags — browsers prefer the last-declared favicon, so removing
+        // ours restores the original without touching site elements.
+        attentionFlashFaviconEl = document.createElement('link');
+        attentionFlashFaviconEl.setAttribute('rel', 'icon');
+        attentionFlashFaviconEl.setAttribute('data-webbrain-attention', '1');
+        attentionFlashFaviconEl.setAttribute('href', attentionFlashDotDataUrl());
+        (document.head || document.documentElement).appendChild(attentionFlashFaviconEl);
+      } else if (!show && attentionFlashFaviconEl) {
+        attentionFlashFaviconEl.remove();
+        attentionFlashFaviconEl = null;
+      }
+    } catch { /* favicon swap is best-effort */ }
+  }
+
   function stopAttentionFlash() {
     if (attentionFlashTimer) {
       clearInterval(attentionFlashTimer);
@@ -6394,7 +6412,7 @@
     };
     document.addEventListener('visibilitychange', attentionFlashOnVisible);
     let flashing = false;
-    attentionFlashTimer = setInterval(() => {
+    const applyAttentionTick = () => {
       flashing = !flashing;
       // Derive each toggle from the live title so changes the site makes
       // while backgrounded survive the flash. A previous marker is only
@@ -6406,17 +6424,12 @@
         ? `${ATTENTION_FLASH_MARKER}${base}`
         : base;
       document.title = attentionFlashOwnTitle;
-    }, ATTENTION_FLASH_INTERVAL_MS);
-    try {
-      // Append our icon link instead of editing the site's own <link> tags —
-      // browsers prefer the last-declared favicon, so removing ours on stop
-      // restores the original without touching site elements.
-      attentionFlashFaviconEl = document.createElement('link');
-      attentionFlashFaviconEl.setAttribute('rel', 'icon');
-      attentionFlashFaviconEl.setAttribute('data-webbrain-attention', '1');
-      attentionFlashFaviconEl.setAttribute('href', attentionFlashDotDataUrl());
-      (document.head || document.documentElement).appendChild(attentionFlashFaviconEl);
-    } catch { /* favicon swap is best-effort */ }
+      // The favicon alternates with the title: our icon shows during the
+      // marked phase and the site's own icons return during the quiet one.
+      attentionFlashToggleFavicon(flashing);
+    };
+    applyAttentionTick();
+    attentionFlashTimer = setInterval(applyAttentionTick, ATTENTION_FLASH_INTERVAL_MS);
     attentionFlashTimeout = setTimeout(stopAttentionFlash, ATTENTION_FLASH_TIMEOUT_MS);
     return true;
   }

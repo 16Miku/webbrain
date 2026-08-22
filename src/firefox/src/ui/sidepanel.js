@@ -1303,12 +1303,30 @@ function notifyCompletion({
  * per-tab toolbar badge on pages content scripts can't reach). Best-effort:
  * failures are silently ignored — the chime already played.
  */
-function flashTabAttentionIfBackgrounded({ success, tabId }) {
+async function flashTabAttentionIfBackgrounded({ success, tabId }) {
   if (!completionFlashEnabled) return;
-  if (tabId == null || sameTabId(currentTabId, tabId)) return;
-  try {
+  if (tabId == null) return;
+  if (!sameTabId(currentTabId, tabId)) {
     void sendToBackground('flash_tab_attention', { tabId, success }).catch(() => {});
-  } catch { /* ignore */ }
+    return;
+  }
+  // Same chat, but it may still not be watched: in a multi-window setup
+  // another window can hold focus while this panel's window scope
+  // deliberately ignores other windows' activation events, and a
+  // minimized/occluded window hides the tab strip entirely.
+  let ownWindow = null;
+  let lastFocused = null;
+  try {
+    [ownWindow, lastFocused] = await Promise.all([
+      browser.windows.getCurrent(),
+      browser.windows.getLastFocused(),
+    ]);
+  } catch { /* treat lookup failure as focused — avoid over-flashing */ }
+  const ownWindowFocused = ownWindow?.id != null
+    && ownWindow.id === lastFocused?.id;
+  const panelVisible = document.visibilityState === 'visible';
+  if (ownWindowFocused && panelVisible) return;
+  void sendToBackground('flash_tab_attention', { tabId, success }).catch(() => {});
 }
 
 function getExtensionStoreKey() {
