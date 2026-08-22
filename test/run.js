@@ -9254,8 +9254,14 @@ test('trace repair: recorder and browser entry points apply the repair transacti
     assert.match(recorder, /for \(const event of plan\.events\) eventsStore\.put\(event\);/, `${browser}: repair events are not persisted`);
     assert.match(recorder, /runsStore\.put\(plan\.run\);/, `${browser}: repaired run is not persisted`);
     assert.match(recorder, /export async function repairStaleRuns\(/, `${browser}: stale-run scan is not exported`);
-    assert.match(background, /void workflowTrace\.repairStaleRuns\(\)\.catch\(\(\) => \{\}\);/, `${browser}: background startup does not scan stale runs`);
-    assert.match(traces, /\(async \(\) => \{\s*await repairStaleRuns\(\)\.catch\(\(\) => \[\]\);\s*await refresh\(\);/, `${browser}: Traces page does not repair before its first list load`);
+    // Candidate scan must be bounded to the possibly-stale slice of history
+    // and re-check in-memory liveness at the last instant before writing.
+    assert.match(recorder, /index\('startedAt'\)[\s\S]*?openCursor\(IDBKeyRange\.upperBound\(cutoff\)\)/, `${browser}: stale-run scan must not walk the full runs store`);
+    assert.match(recorder, /if \(_runState\.has\(runId\)\) return;\n\s*for \(const event of plan\.events\)/, `${browser}: repair must re-check live runs before writing`);
+    assert.match(background, /setTimeout\(\(\) => \{ void workflowTrace\.repairStaleRuns\(\)\.catch\(\(\) => \{\}\); \}, TRACE_REPAIR_STARTUP_DELAY_MS\)/, `${browser}: background startup must defer the stale-run scan`);
+    assert.match(background, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?workflowTrace\.repairStaleRuns\(\)/, `${browser}: background does not answer the traces-page repair request`);
+    assert.match(traces, /\(async \(\) => \{\s*await repairStaleRunsForPage\(\);\s*await refresh\(\);/, `${browser}: Traces page does not route its first repair through the background`);
+    assert.match(traces, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?return repairStaleRuns\(\)\.catch\(\(\) => \[\]\);/, `${browser}: Traces page lost its local fallback for when the background is unreachable`);
   }
 });
 

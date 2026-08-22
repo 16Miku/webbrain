@@ -100,7 +100,11 @@ import {
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(browser);
 let emergencyDownloads = null;
-void workflowTrace.repairStaleRuns().catch(() => {});
+// The stale-run repair scan waits a beat after wake so a run resuming from
+// eviction registers its in-memory state first; the Traces page can also
+// request an immediate scan via WB_TRACE_REPAIR_STALE_RUNS.
+const TRACE_REPAIR_STARTUP_DELAY_MS = 15_000;
+setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => {}); }, TRACE_REPAIR_STARTUP_DELAY_MS);
 
 function emergencyDownloadController() {
   if (!emergencyDownloads) {
@@ -1260,6 +1264,16 @@ async function handleContextMenuAsk(info, tab) {
 
 getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
+});
+
+// Only this instance knows which runs are live in memory, so it owns the
+// stale-run repair whenever it is reachable.
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_TRACE_REPAIR_STALE_RUNS') return;
+  workflowTrace.repairStaleRuns()
+    .then(repaired => sendResponse({ ok: true, repaired }))
+    .catch(error => sendResponse({ ok: false, error: error?.message || String(error) }));
+  return true;
 });
 
 browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

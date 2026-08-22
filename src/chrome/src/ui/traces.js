@@ -11,6 +11,8 @@ import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 
+const runtimeApi = globalThis.browser || globalThis.chrome;
+
 const listEl = document.getElementById('run-list');
 const mainPane = document.getElementById('main-pane');
 const emptyState = document.getElementById('empty-state');
@@ -645,10 +647,31 @@ document.addEventListener('visibilitychange', () => {
   else if (hasRunningJob()) scheduleAutoRefresh();
 });
 
+// Prefer letting the background own the stale-run scan: only its recorder
+// instance knows which runs are live in memory. If it cannot be reached,
+// nothing can be running anywhere, so a local pass is safe.
+async function repairStaleRunsForPage({ timeoutMs = 5_000 } = {}) {
+  let timer;
+  try {
+    if (runtimeApi?.runtime?.sendMessage) {
+      const response = await Promise.race([
+        runtimeApi.runtime.sendMessage({ type: 'WB_TRACE_REPAIR_STALE_RUNS' }),
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('trace repair roundtrip timed out')), timeoutMs);
+        }),
+      ]);
+      if (response?.ok) return Array.isArray(response.repaired) ? response.repaired : [];
+    }
+  } catch {} finally {
+    clearTimeout(timer);
+  }
+  return repairStaleRuns().catch(() => []);
+}
+
 // Initial load: always do one refresh so the list populates, then only keep
 // polling if the freshly-loaded data shows a live run.
 (async () => {
-  await repairStaleRuns().catch(() => []);
+  await repairStaleRunsForPage();
   await refresh();
   if (initialRunId && await ensureRunLoaded(initialRunId)) {
     selectedRunId = initialRunId;

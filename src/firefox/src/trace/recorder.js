@@ -7,6 +7,7 @@ import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
 import {
   buildTraceRepairPlan,
   isStaleRunningTrace,
+  normalizedThreshold,
   TRACE_REPAIR_STALE_AFTER_MS,
 } from './repair.js';
 
@@ -147,6 +148,9 @@ function _repairRunInTransaction(db, runId, { now, staleAfterMs }) {
       if (pending > 0 || requestError) return;
       const plan = buildTraceRepairPlan(run, events, { now, staleAfterMs });
       if (!plan) return;
+      // Last-instant liveness check: a run resumed between the candidate scan
+      // and this transaction has registered itself in memory again.
+      if (_runState.has(runId)) return;
       for (const event of plan.events) eventsStore.put(event);
       runsStore.put(plan.run);
       repairedRunId = runId;
@@ -531,14 +535,36 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
  * is re-read and updated in one transaction so a concurrent normal completion
  * wins, and a second repair pass cannot append duplicate terminal events.
  */
+async function _listStaleRunCandidates(db, cutoff) {
+  // Only runs old enough to be stale can qualify (last activity is never
+  // older than startedAt), so scan just that slice of the startedAt index
+  // instead of every run on record.
+  const out = [];
+  await new Promise((resolve, reject) => {
+    const idx = tx(db, ['runs'], 'readonly').objectStore('runs').index('startedAt');
+    const req = idx.openCursor(IDBKeyRange.upperBound(cutoff));
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) return resolve();
+      const row = c.value;
+      if (row?.status === 'running' && !row.repairedBy) out.push(row);
+      c.continue();
+    };
+    req.onerror = () => reject(req.error || new Error('stale-run scan failed'));
+  });
+  return out;
+}
+
 export async function repairStaleRuns({
   now = Date.now(),
   staleAfterMs = TRACE_REPAIR_STALE_AFTER_MS,
 } = {}) {
   if (typeof indexedDB === 'undefined') return [];
+  if (!Number.isFinite(Number(now))) return [];
   try {
     const db = await openDB();
-    const candidates = await listRuns({ limit: Number.MAX_SAFE_INTEGER });
+    const cutoff = Number(now) - normalizedThreshold(staleAfterMs);
+    const candidates = await _listStaleRunCandidates(db, cutoff);
     const repaired = [];
     for (const candidate of candidates) {
       if (!isStaleRunningTrace(candidate, { now, staleAfterMs })) continue;

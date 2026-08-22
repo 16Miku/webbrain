@@ -37,7 +37,7 @@ function openTurnStep(events) {
   return step;
 }
 
-function normalizedThreshold(value) {
+export function normalizedThreshold(value) {
   return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : TRACE_REPAIR_STALE_AFTER_MS;
 }
 
