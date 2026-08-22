@@ -7658,6 +7658,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
 
   if (command.value === '/reset') {
     const clearingRequestId = localRunRequestIdForTab(tabId);
+    let shouldDrainQueuedPrompts = false;
     setConversationClearInProgress(tabId, true);
     try {
       if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
@@ -7665,9 +7666,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
       await renderClearedConversationForTab(tabId);
     } catch (error) {
+      shouldDrainQueuedPrompts = true;
       showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
     } finally {
       setConversationClearInProgress(tabId, false);
+      if (shouldDrainQueuedPrompts) await drainQueuedPromptsAfterRunSettles();
     }
     return '';
   }
@@ -13265,6 +13268,7 @@ async function startNewConversationForTab(tabId) {
   if (!await requestNewConversationConfirmation(tabId)) return false;
   if (!sameTabId(currentTabId, tabId)) return false;
   const clearingRequestId = localRunRequestIdForTab(tabId);
+  let shouldDrainQueuedPrompts = false;
   setConversationClearInProgress(tabId, true);
   try {
     await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
@@ -13276,10 +13280,12 @@ async function startNewConversationForTab(tabId) {
     await renderClearedConversationForTab(tabId);
     return true;
   } catch (error) {
+    shouldDrainQueuedPrompts = true;
     showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
     return false;
   } finally {
     setConversationClearInProgress(tabId, false);
+    if (shouldDrainQueuedPrompts) await drainQueuedPromptsAfterRunSettles();
   }
 }
 
