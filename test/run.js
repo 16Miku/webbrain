@@ -68571,6 +68571,43 @@ test('expected ordinals are app-owned typed metadata', () => {
   assert.equal(Object.prototype.hasOwnProperty.call(forged.rows[0].fields || {}, 'expectedOrdinal'), false);
 });
 
+test('auto-recorded items need identity agreement before consuming the last expected slot', () => {
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    let state = upsert([], [{
+      id: 'expected:1', label: 'profile 1', action: 'follow', status: 'pending',
+      fields: { expectedOrdinal: 1, completionRequirement: true },
+    }], { source: 'classifier', sessionId: 'auto-guard', now: 100 });
+
+    state = upsert(state.rows, [{
+      id: 'stray-bob', label: 'Follow Bob', action: 'follow', status: 'acted',
+    }], { source: 'auto', sessionId: 'auto-guard', now: 200 });
+    assert.deepEqual(state.reconciled, [], 'unrelated auto click must not consume the placeholder positionally');
+    assert.equal(state.rows.find(row => row.id === 'expected:1').status, 'pending');
+    assert.ok(state.rows.some(row => row.id === 'stray-bob'), 'auto evidence is still recorded as its own row');
+
+    state = upsert(state.rows, [{
+      id: 'late-alice', target: 'profile 1', action: 'follow', status: 'acted',
+    }], { source: 'auto', sessionId: 'auto-guard', now: 300 });
+    assert.deepEqual(state.reconciled, [{ incomingId: 'late-alice', canonicalId: 'expected:1' }]);
+    assert.equal(state.rows.find(row => row.id === 'expected:1').status, 'acted');
+  }
+});
+
+test('batch-bound targets derive from labels without action verbs', () => {
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    let state = upsert([], [1, 2].map(ordinal => ({
+      id: `expected:${ordinal}`, label: `profile ${ordinal}`, action: 'follow', status: 'pending',
+      fields: { expectedOrdinal: ordinal, completionRequirement: true },
+    })), { source: 'classifier', sessionId: 'label-targets', now: 100 });
+    state = upsert(state.rows, [
+      { id: 'x1', label: 'Follow Alice', action: 'follow', status: 'pending' },
+      { id: 'x2', label: 'unfollow Bob', action: 'follow', status: 'pending' },
+    ], { source: 'model', sessionId: 'label-targets', now: 200 });
+    assert.equal(state.rows.length, 2);
+    assert.deepEqual(state.rows.map(row => row.target), ['Alice', 'Bob']);
+  }
+});
+
 test('progress ledger rejects malformed statuses and normalizes null-like fields', () => {
   assert.equal(isValidLedgerStatus('pending'), true);
   assert.equal(isValidLedgerStatus('「pending」'), true);

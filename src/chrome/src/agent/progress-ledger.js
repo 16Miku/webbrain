@@ -327,7 +327,10 @@ export function reconcileLedgerItems(rows = [], items = [], opts = {}) {
     if (availableExpected.length && batchFitsAvailable) {
       const identitiesAreUnique = progressIdentitiesAreUnique(newIncoming.map(({ item }) => item));
       const compatible = newIncoming.every(({ item }, index) => actionsCompatible(availableExpected[index], item));
-      if (identitiesAreUnique && compatible) {
+      const identityVerified = source !== 'auto' || newIncoming.every(({ item }, index) => (
+        identityMatchScore(availableExpected[index], item) > 0
+      ));
+      if (identitiesAreUnique && compatible && identityVerified) {
         newIncoming.forEach(({ index }, expectedIndex) => batchBindings.set(index, availableExpected[expectedIndex]));
       }
     }
@@ -350,7 +353,10 @@ export function reconcileLedgerItems(rows = [], items = [], opts = {}) {
       return {
         ...rawItem,
         id: batchCanonical.id,
-        target: rawItem?.target || incoming.target || incoming.label,
+        target: rawItem?.target
+          || incoming.target
+          || sanitizeText(String(incoming.label || '').replace(IDENTITY_ACTION_PREFIX_RE, ''), 180)
+          || incoming.label,
         sessionId: batchCanonical.sessionId || incoming.sessionId || sessionId,
       };
     }

@@ -13896,6 +13896,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .sort((a, b) => Number(a.fields.expectedOrdinal) - Number(b.fields.expectedOrdinal));
     if (expectedRows.length) {
       if (expectedRows.length !== targetItems.length) {
+        this._logDebug({
+          type: 'progress_binding_deferred',
+          reason: 'count_mismatch',
+          expected: expectedRows.length,
+          targets: targetItems.length,
+        });
         return {
           success: false,
           bindingDeferred: true,
@@ -13904,6 +13910,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const uniqueTargets = progressIdentitiesAreUnique(targetItems);
       if (!uniqueTargets) {
+        this._logDebug({
+          type: 'progress_binding_deferred',
+          reason: 'ambiguous_targets',
+          targets: targetItems.length,
+        });
         return {
           success: false,
           bindingDeferred: true,
