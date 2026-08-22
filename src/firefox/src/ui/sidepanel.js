@@ -1199,13 +1199,11 @@ const {
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
 let completionConfettiEnabled = true;
-let completionFlashEnabled = true;
 let notifyAudioContext = null;
 let completionConfettiTimer = null;
-browser.storage.local.get(['notifySound', 'completionConfetti', 'completionFlashTab']).then((stored) => {
+browser.storage.local.get(['notifySound', 'completionConfetti']).then((stored) => {
   if (stored && stored.notifySound === false) notifySoundEnabled = false;
   if (stored && stored.completionConfetti === false) completionConfettiEnabled = false;
-  if (stored && stored.completionFlashTab === false) completionFlashEnabled = false;
 }).catch(() => {});
 browser.storage.onChanged.addListener((changes) => {
   if (changes.notifySound) {
@@ -1213,9 +1211,6 @@ browser.storage.onChanged.addListener((changes) => {
   }
   if (changes.completionConfetti) {
     completionConfettiEnabled = changes.completionConfetti.newValue !== false;
-  }
-  if (changes.completionFlashTab) {
-    completionFlashEnabled = changes.completionFlashTab.newValue !== false;
   }
 });
 
@@ -1282,54 +1277,14 @@ function triggerCompletionConfetti() {
   } catch { /* ignore */ }
 }
 
-function notifyCompletion({
-  success = false,
-  storeReviewSuccess = success,
-  tabId = null,
-  outcome = success,
-} = {}) {
+function notifyCompletion({ success = false, storeReviewSuccess = success } = {}) {
   playCompletionSound();
   if (success) triggerCompletionConfetti();
-  // `outcome` is the run's real result regardless of which chat is being
-  // viewed — the background flash only styles its badge with it (✓ vs !),
-  // while `success` keeps the foreground-only confetti/store-review gates.
-  flashTabAttentionIfBackgrounded({ success: outcome, tabId });
   if (storeReviewSuccess) void maybePromptStoreReviewAfterSuccess();
-}
-
-/**
- * If the run finished on a tab the user has since navigated away from, ask
- * the background to make that tab noticeable (title/favicon blink, or a
- * per-tab toolbar badge on pages content scripts can't reach). Best-effort:
- * failures are silently ignored — the chime already played.
- */
-async function flashTabAttentionIfBackgrounded({ success, tabId }) {
-  if (!completionFlashEnabled) return;
-  if (tabId == null) return;
-  if (!sameTabId(currentTabId, tabId)) {
-    void sendToBackground('flash_tab_attention', { tabId, success }).catch(() => {});
-    return;
-  }
-  // Same chat, but it may still not be watched: in a multi-window setup
-  // another window can hold focus while this panel's window scope
-  // deliberately ignores other windows' activation events, and a
-  // minimized/occluded window hides the tab strip entirely.
-  let ownWindow = null;
-  let lastFocused = null;
-  try {
-    [ownWindow, lastFocused] = await Promise.all([
-      browser.windows.getCurrent(),
-      browser.windows.getLastFocused(),
-    ]);
-  } catch { /* treat lookup failure as focused — avoid over-flashing */ }
-  const ownWindowFocused = ownWindow?.id != null
-    && ownWindow.id === lastFocused?.id
-    // getLastFocused() can return this window even after the whole browser
-    // lost foreground to another application; its focused flag is the truth.
-    && lastFocused?.focused === true;
-  const panelVisible = document.visibilityState === 'visible';
-  if (ownWindowFocused && panelVisible) return;
-  void sendToBackground('flash_tab_attention', { tabId, success }).catch(() => {});
+  // The tab attention flash itself is owned by the background: live runs,
+  // continuations, and scheduled jobs all settle there — even when this
+  // panel is closed or reloaded mid-run — so it can cover every path
+  // without duplicating signals while a panel is mounted.
 }
 
 function getExtensionStoreKey() {
@@ -8247,10 +8202,6 @@ async function sendMessage(extraChatParams = {}) {
       notifyCompletion({
         success: currentTabId === tabId && completedSuccessfully,
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
-        tabId,
-        // Ask-mode successes are classified separately from Act done
-        // results; include them so backgrounded badges show ✓ too.
-        outcome: promptEligibleCompletion,
       });
     }
     await drainQueuedPromptsAfterRunSettles();

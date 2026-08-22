@@ -1935,6 +1935,15 @@ function standaloneRagFilterOptions(msg) {
 
 async function sendAgentRunComplete(tabId, snapshot = null) {
   if (tabId == null || !snapshot) return;
+  // Live runs continue in the background even if their side panel is closed
+  // or reloaded mid-run (and continuations settle here too), so terminal
+  // attention flashes are owned here rather than by the panel. User stops
+  // and cancellations never flash; the setting is honored inside
+  // flashTabAttention.
+  const liveStatus = String(snapshot.status || '');
+  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
+    flashTabAttention({ tabId, success: liveStatus === 'completed' }).catch(() => {});
+  }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
       tabId,
@@ -2345,17 +2354,15 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 
 // Scheduled jobs keep running even when no side panel is mounted, so the
 // background owns their attention flash: terminal events trigger it here
-// and the panel never duplicates it. The stored setting is honored, and
-// flashTabAttention itself suppresses the signal while the finished tab is
-// being actively watched.
+// and the panel never duplicates it. flashTabAttention itself honors the
+// stored setting and suppresses the signal while the finished tab is being
+// actively watched.
 async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
   if (type !== 'scheduled_job') return;
   const event = data?.event;
   const job = data?.job;
   if ((event !== 'completed' && event !== 'failed') || job?.source === 'watch') return;
   try {
-    const stored = await chrome.storage.local.get('completionFlashTab');
-    if (stored?.completionFlashTab === false) return;
     const jobTabId = Number(job.tabId ?? job.target?.tabId ?? _tabId);
     await flashTabAttention({
       tabId: jobTabId,
@@ -2364,7 +2371,12 @@ async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
   } catch { /* best-effort */ }
 }
 
-async function flashTabAttention(msg) {  const tabId = Number(msg?.tabId);
+async function flashTabAttention(msg) {
+  try {
+    const stored = await chrome.storage.local.get('completionFlashTab');
+    if (stored?.completionFlashTab === false) return { ok: true, mode: 'disabled' };
+  } catch { /* setting defaults to on */ }
+  const tabId = Number(msg?.tabId);
   const success = msg?.success !== false;
   if (!Number.isInteger(tabId) || tabId < 0) {
     return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
