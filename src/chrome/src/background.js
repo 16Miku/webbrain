@@ -3087,6 +3087,7 @@ async function handleMessage(msg, sender) {
 
     case 'clear_conversation': {
       const tabId = msg.tabId || sender.tab?.id;
+      let clearedContextMenuPromptId = null;
       if (tabId) {
         const conversationId = await agent.getConversationId(tabId);
         await stopActiveRunBeforeConversationClear(tabId);
@@ -3105,6 +3106,7 @@ async function handleMessage(msg, sender) {
         if (!tabChatClearResult?.ok || tabChatClearResult.skipped) {
           throw new Error('Could not durably clear the tab transcript.');
         }
+        clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
         agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         chrome.runtime.sendMessage({
@@ -3113,9 +3115,10 @@ async function handleMessage(msg, sender) {
           tabId,
           handoffOwnerId: tabChatClearResult.handoffOwnerId,
           handoffGeneration: tabChatClearResult.handoffGeneration,
+          clearedContextMenuPromptId,
         }).catch(() => {});
       }
-      return { ok: true };
+      return { ok: true, clearedContextMenuPromptId };
     }
 
     case 'disable_dev_diagnostics': {

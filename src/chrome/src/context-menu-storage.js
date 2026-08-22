@@ -481,13 +481,25 @@ export function createContextMenuStorage(getStore) {
       return { ok: false, error: 'A durable clear callback is required.' };
     }
     return enqueue(tabId, async (numericTabId) => {
+      const promptStorageKey = key(numericTabId);
+      let clearedPrompt = pending.get(numericTabId) || null;
+      if (!clearedPrompt) {
+        const store = getStore();
+        if (store) {
+          const stored = await store.get(promptStorageKey);
+          clearedPrompt = stored?.[promptStorageKey] || null;
+        }
+      }
       const result = await clearDurably([key(numericTabId), claimKey(numericTabId)]);
       if (result?.ok === false || result?.skipped) return result;
       // The callback removes these keys in the same durable operation as its
       // own state. Keep both memory copies until that combined removal commits.
       pending.delete(numericTabId);
       claims.delete(numericTabId);
-      return result || { ok: true };
+      return {
+        ...(result || { ok: true }),
+        clearedContextMenuPromptId: clearedPrompt?.id ? String(clearedPrompt.id) : null,
+      };
     });
   }
 

@@ -34178,8 +34178,8 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
-      `${label}: confirmed New conversation should preserve queued prompts until the bounded background clear succeeds`,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?const clearResult = await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId, \{ promptId: clearResult\.clearedContextMenuPromptId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);[\s\S]*?else if \(backgroundClearSucceeded\) await drainQueuedPromptsAfterRunSettles\(tabId\);/,
+      `${label}: confirmed New conversation should discard only the durably cleared prompt and drain newer work after releasing the interlock`,
     );
     assert.match(clearBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?shouldRecoverActiveRun = true;\s*holdFailedConversationClearRecovery\(tabId\);[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldRecoverActiveRun\) await recoverActiveRunAfterFailedConversationClear\(tabId\);/, `${label}: New conversation should finish a partial local reset and recover the old run only when the background clear itself failed`);
     assert.doesNotMatch(clearBody, /sendToBackground\('clear_context_menu_prompt'/, `${label}: New conversation should not leave durable prompt invalidation in a second fallible message`);
@@ -34187,6 +34187,7 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     const resetBody = panel.slice(resetStart, panel.indexOf("if (command.value === '/print')", resetStart));
     assert.match(resetBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?\} else \{\s*shouldRecoverActiveRun = true;\s*holdFailedConversationClearRecovery\(tabId\);[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldRecoverActiveRun\) await recoverActiveRunAfterFailedConversationClear\(tabId\);/, `${label}: /reset should finish a partial local reset without draining preserved prompts into an already-cleared background conversation`);
     assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
+    assert.match(panel, /msg\.action !== 'tab_chat_cleared'\) return;\s*if \(msg\.clearedContextMenuPromptId\) \{\s*clearQueuedForTab\(msg\.tabId, \{ promptId: msg\.clearedContextMenuPromptId \}\);/, `${label}: every panel should suppress only the prompt durably removed by a conversation clear`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
     assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?!sameTabId\(currentTabId, numericTabId\)[\s\S]*?!sameTabId\(renderedTabId, numericTabId\)[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return;/, `${label}: a settling run must drain only its visible initiating tab and never drain into an in-flight clear`);
     assert.match(panel, /await sendToBackground\('agent_run_state', \{ tabId: numericTabId \}\);[\s\S]*?if \(!sameTabId\(currentTabId, numericTabId\) \|\| !sameTabId\(renderedTabId, numericTabId\)\) \{\s*cancelQueuedPromptDrainRetry\(numericTabId\);\s*return;\s*\}\s*if \(isConversationClearInProgress\(numericTabId\)\) return;[\s\S]*?drainQueuedComposerMessageForCurrentTab\(\)/, `${label}: queued-prompt drains should revalidate their target tab and clear interlock after the awaited run-state probe`);
@@ -34427,6 +34428,7 @@ test('background bounds the active-run stop wait before clearing its conversatio
     const clearBody = background.slice(clearStart, background.indexOf("case 'compact_conversation':", clearStart));
     assert.match(clearBody, /const conversationId = await agent\.getConversationId\(tabId\);[\s\S]*?await stopActiveRunBeforeConversationClear\(tabId\);[\s\S]*?await scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: active runs should settle before old-conversation jobs and state are cleared`);
     assert.match(clearBody, /const commitSchedulerClear = async \(\) => \{\s*await scheduler\.cancelForConversation\(tabId, conversationId\);\s*\};[\s\S]*?contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{[\s\S]*?additionalKeys,[\s\S]*?commitAfterRemove: commitSchedulerClear,[\s\S]*?!tabChatClearResult\?\.ok \|\| tabChatClearResult\.skipped[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: prompt, transcript, and scheduler cleanup should share a rollback boundary before conversation state is cleared`);
+    assert.match(clearBody, /clearedContextMenuPromptId = tabChatClearResult\.clearedContextMenuPromptId \|\| null;[\s\S]*?action: 'tab_chat_cleared',[\s\S]*?clearedContextMenuPromptId,[\s\S]*?return \{ ok: true, clearedContextMenuPromptId \};/, `${label}: a successful clear should identify the exact old prompt so panels preserve newer queued work`);
   }
 });
 
@@ -42927,6 +42929,29 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
   }
 });
 
+test('targeted conversation clears preserve newer queued context-menu prompts', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const oldPrompt = { id: `${label}-cleared-prompt`, tabId: 8, text: 'Old selection action' };
+    const newPrompt = { id: `${label}-fresh-prompt`, tabId: 8, text: 'Fresh selection action' };
+    const h = createContextMenuPromptHarness(createHandler, oldPrompt, async () => true);
+    h.setProcessing(true);
+    h.handler.acceptContextMenuPrompt(oldPrompt);
+    h.handler.acceptContextMenuPrompt(newPrompt);
+
+    h.handler.clearQueuedForTab(oldPrompt.tabId, { promptId: oldPrompt.id });
+    h.handler.acceptContextMenuPrompt(oldPrompt);
+    h.setProcessing(false);
+    h.handler.drainQueuedContextMenuPrompts();
+    await waitMicrotasks(8);
+
+    assert.equal(h.sends.length, 1, `${label}: releasing the clear interlock should drain one fresh prompt`);
+    assert.equal(h.sends[0].extra.contextMenuClear.promptId, newPrompt.id, `${label}: a targeted clear should preserve the newer prompt while suppressing a late old notification`);
+  }
+});
+
 test('context-menu prompt recovery does not duplicate an in-flight send', async () => {
   for (const [label, createHandler] of [
     ['chrome', createContextMenuPromptHandlerCh],
@@ -43420,7 +43445,8 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     assert.equal(data.has(storage.key(combinedPrompt.tabId)), true, `${label}: a failed combined clear should retain the prompt`);
     const combinedRetained = await storage.consume(combinedPrompt.tabId);
     assert.equal(combinedRetained.prompt?.id, combinedPrompt.id, `${label}: a failed combined clear should retain prompt recovery`);
-    await storage.clearAlongside(combinedPrompt.tabId, combinedDurableClear);
+    const combinedClearResult = await storage.clearAlongside(combinedPrompt.tabId, combinedDurableClear);
+    assert.equal(combinedClearResult.clearedContextMenuPromptId, combinedPrompt.id, `${label}: combined clear should identify only the prompt removed by its durable transaction`);
     assert.equal(data.has(combinedTranscriptKey), false, `${label}: retrying combined clear should remove the transcript`);
     assert.equal(data.has(storage.key(combinedPrompt.tabId)), false, `${label}: retrying combined clear should remove the prompt`);
     assert.equal(data.has(storage.claimKey(combinedPrompt.tabId)), false, `${label}: retrying combined clear should remove the lease`);

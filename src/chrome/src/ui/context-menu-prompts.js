@@ -247,13 +247,23 @@ export function createContextMenuPromptHandler({
     } catch { /* best effort */ }
   }
 
-  // Called when the background reports that a tab navigated to a new URL.
-  // Drops any in-panel queued/deferred prompts for that tab so they aren't
-  // submitted against the wrong page.
-  function clearQueuedForTab(tabId) {
+  // Navigation drops every prompt for the tab. Conversation clear passes the
+  // exact durably removed prompt ID so work created behind that transaction
+  // remains queued for the fresh conversation.
+  function clearQueuedForTab(tabId, { promptId = null } = {}) {
     const numericTabId = Number(tabId);
     if (!Number.isFinite(numericTabId)) return;
-    const keep = (p) => Number(p.tabId) !== numericTabId;
+    const normalizedPromptId = promptId == null ? '' : String(promptId);
+    const matchesTarget = (prompt) => Number(prompt?.tabId) === numericTabId
+      && (!normalizedPromptId || prompt?.id === normalizedPromptId);
+    const keep = (prompt) => !matchesTarget(prompt);
+    if (normalizedPromptId) {
+      // A notification already in flight for the durably cleared prompt may
+      // arrive after this sweep. Treat its ID as consumed without suppressing
+      // a newer prompt created behind the clear transaction.
+      acceptedContextMenuPromptIds.add(normalizedPromptId);
+      clearClaimRetry(normalizedPromptId);
+    }
     for (const p of queuedContextMenuPrompts) {
       if (!keep(p)) trackedContextMenuPromptIds.delete(p.id);
     }
@@ -265,7 +275,8 @@ export function createContextMenuPromptHandler({
     deferredContextMenuPrompts.splice(0, deferredContextMenuPrompts.length,
       ...deferredContextMenuPrompts.filter(keep));
     for (const [promptId, retry] of claimRetryTimers) {
-      if (Number(retry?.tabId) === numericTabId) clearClaimRetry(promptId);
+      if (Number(retry?.tabId) === numericTabId
+          && (!normalizedPromptId || promptId === normalizedPromptId)) clearClaimRetry(promptId);
     }
   }
 
