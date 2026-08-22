@@ -4,6 +4,48 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.1.1] - 2026-08-22
+
+### Changed
+- 33.1.0
+- Add WebBrain VL 2 benchmark blog posts
+- webbrain-vl-2-450m
+- fix(trace): gate lossless eviction on a cached total and scan all runs
+- fix(trace): redact recovery_code in JSON exports and refresh lossless tier pins
+- fix(trace): close repair races and bound the stale-run scan
+- fix(trace): protect runs with recent durable activity
+- fix(trace): scan stale runs once when traces opens
+- fix(trace): repair runs interrupted by service-worker eviction
+- fix(trace): evict oldest lossless runs within budget
+- fix(trace): redact lossless JSON exports and serialize recovery
+- Count the Emergency Box among the Apocalypse Mode essentials
+- Sign the Apocalypse Mode pages with the WebBrain mark
+- Add the WebBrain logo to the Traces header
+- added logo to settings and history.html
+- Restore the Apocalypse Mode nuclear emoji at its source and fix two broken tests
+- footer tightened
+- cosmetic changes
+- Fix Cloud runtime outbox delivery
+- Add durable terminal runtime outbox
+- docs: fix vision benchmark GitHub link
+- test: add vision benchmark and model comparison
+- fix(trace): address lossless tier review findings
+- fix(trace): preserve lifecycle event integrity
+- feat(trace): opt-in lossless recording tier sharing the event pipeline
+- feat(trace): turn/step boundary events with structured failure codes
+- fix(trace): preserve derived run lineage
+- feat(trace): plumb parent lineage from cloud_run and replay entry points
+- feat(trace): add session lineage fields and DB v2 lookup indexes
+- feat(trace): add event model with run-level format version and tolerant read path
+- refactor(ui): share schedule message reconciliation
+- fix(ui): reconcile schedule confirmations
+- fix(ui): deduplicate scheduled job messages
+
+## [33.1.0] - 2026-08-22
+
+### Changed
+- Switched to WebBrain VL 2 450M as the local vision fallback.
+
 ## [33.0.8] - 2026-08-20
 
 ### Changed

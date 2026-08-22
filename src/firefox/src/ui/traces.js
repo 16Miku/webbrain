@@ -8,6 +8,7 @@ import {
   deleteRun, clearAllRuns, repairStaleRuns,
 } from '../trace/recorder.js';
 import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
+import { buildTraceTrajectory } from '../trace/trajectory.js';
 import { sanitizeTraceExport } from '../agent/trace-export.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
@@ -261,6 +262,80 @@ function renderConversationPanel(run, compact) {
   `;
 }
 
+function formatTrajectoryDuration(durationMs) {
+  if (!Number.isFinite(durationMs)) return '—';
+  if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function formatTrajectoryMetric(value) {
+  return value > 0 ? value.toLocaleString() : '—';
+}
+
+function renderTrajectoryActivity(row) {
+  const parts = [];
+  if (row.requestCount) parts.push(`${escapeHtml(t('tr.event.llm_request'))} ×${row.requestCount}`);
+  if (row.responseCount) parts.push(`${escapeHtml(t('tr.event.llm_response'))} ×${row.responseCount}`);
+  if (row.toolCount) {
+    const names = row.toolNames.length ? ` · ${row.toolNames.map(name => escapeHtml(name)).join(', ')}` : '';
+    parts.push(`🔧 ×${row.toolCount}${names}`);
+  }
+  if (row.subCallCount) parts.push(`${escapeHtml(t('tr.event.vision_sub_call'))} ×${row.subCallCount}`);
+  if (row.errorCount) parts.push(`${escapeHtml(t('tr.event.error_kind'))} ×${row.errorCount}`);
+  return parts.join(' · ') || '—';
+}
+
+function renderTrajectoryErrors(row) {
+  if (!row.errors.length && !row.errorCodes.length) return '';
+  const codes = row.errorCodes.length ? ` · ${row.errorCodes.map(code => escapeHtml(code)).join(', ')}` : '';
+  const details = row.errors.map((error) => {
+    const parts = [error.code, error.phase, error.message].filter(Boolean).map(escapeHtml);
+    return parts.join(' · ');
+  });
+  if (!details.length) details.push(row.errorCodes.map(code => escapeHtml(code)).join('\n'));
+  return `<details class="trajectory-errors"><summary>${escapeHtml(t('tr.event.error_kind'))}${codes}</summary><div class="trajectory-error-details">${details.join('\n')}</div></details>`;
+}
+
+function renderStepTrajectory(events, compact) {
+  const rows = buildTraceTrajectory(events);
+  if (!rows.length) return '';
+  const tableRows = rows.map((row) => {
+    const status = safeClassToken(row.status);
+    const stepLabel = row.step == null ? '—' : row.step;
+    const cost = formatCost(row.cost) || '—';
+    return `
+      <tr class="trajectory-row ${status}" data-step="${escapeAttr(row.step == null ? 'run' : row.step)}">
+        <th scope="row">
+          <span class="trajectory-step">${escapeHtml(stepLabel)}</span>
+          <div class="trajectory-activity">${renderTrajectoryActivity(row)}</div>
+          ${renderTrajectoryErrors(row)}
+        </th>
+        <td><span class="trajectory-status">${escapeHtml(row.status)}</span>${row.repaired ? ' ↻' : ''}</td>
+        <td class="trajectory-metric">${escapeHtml(formatTrajectoryDuration(row.durationMs))}</td>
+        <td class="trajectory-metric">${escapeHtml(formatTrajectoryMetric(row.inputTokens))}</td>
+        <td class="trajectory-metric">${escapeHtml(formatTrajectoryMetric(row.outputTokens))}</td>
+        <td class="trajectory-metric">${escapeHtml(cost)}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <section class="trajectory${compact ? ' compact' : ''}" aria-label="${escapeAttr(t('tr.steps.label'))}">
+      <div class="trajectory-heading">${escapeHtml(t('tr.steps.label'))}</div>
+      <div class="trajectory-scroll">
+        <table class="trajectory-table">
+          <thead><tr>
+            <th scope="col">#</th>
+            <th scope="col">${escapeHtml(t('tr.status.label'))}</th>
+            <th scope="col">${escapeHtml(t('tr.duration.label'))}</th>
+            <th scope="col">${escapeHtml(t('tr.intokens.label'))}</th>
+            <th scope="col">${escapeHtml(t('tr.outtokens.label'))}</th>
+            <th scope="col">${escapeHtml(t('tr.cost.label'))}</th>
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
 async function buildRunView(run, events, compact, objectUrls = new Set()) {
   const header = `
     <div class="run-header">
@@ -289,7 +364,7 @@ async function buildRunView(run, events, compact, objectUrls = new Set()) {
     }
   }
   const items = events.map(ev => renderEvent(ev, shotCache, compact, objectUrls)).join('');
-  return `${header}<div class="timeline">${items}</div>`;
+  return `${header}${renderStepTrajectory(events, compact)}<div class="timeline">${items}</div>`;
 }
 
 function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {

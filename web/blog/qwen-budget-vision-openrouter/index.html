@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Six Budget Qwen Vision Models Compared on OpenRouter - WebBrain Blog</title>
+  <meta name="description" content="We ran every current sub-dollar Qwen vision model on OpenRouter through WebBrain&#39;s 100-case browser-vision benchmark. Qwen3-VL-32B Instruct won on quality, the MoE 30B-A3B matched it at twice the speed, and the thinking variants billed four to five times the output tokens for little or no gain.">
+  <meta name="keywords" content="Qwen3-VL, OpenRouter, vision model benchmark, browser agent, qwen3.5-35b-a3b, Qwen3-VL-32B Instruct, Qwen3-VL-30B-A3B, reasoning models, vision language model, WebBrain">
+  <meta property="og:title" content="Six budget Qwen vision models compared on OpenRouter">
+  <meta property="og:description" content="600 image requests, zero errors, 54 cents total. Where Qwen&#39;s cheap vision models actually differ: latency, output-token burn, and a hard cliff below 30B.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/qwen-budget-vision-openrouter">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Six budget Qwen vision models compared on OpenRouter">
+  <meta name="twitter:description" content="Qwen3-VL-32B Instruct wins our 100-case browser benchmark at $0.02 per full run. Thinking variants bill 4-5x the tokens. Full tables inside.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/qwen-budget-vision-openrouter">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Six budget Qwen vision models, compared: 600 requests, 54 cents on OpenRouter",
+  "description": "We ran every current sub-dollar Qwen vision model on OpenRouter through WebBrain's 100-case browser-vision benchmark. Qwen3-VL-32B Instruct won on quality, the MoE 30B-A3B matched it at twice the speed, and the thinking variants billed four to five times the output tokens for little or no gain.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-22",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/qwen-budget-vision-openrouter"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 22, 2026 &middot; 7 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Six budget Qwen vision models, compared: 600 requests, 54 cents on OpenRouter</h1>
+    <p class="lede"><strong>You don&#39;t need an expensive API to give a browser agent eyes.</strong> We pushed all six of Qwen&#39;s current sub-dollar vision-capable models on OpenRouter through our <a href="https://github.com/esokullu/webbrain/tree/main/test/vision" target="_blank" rel="noopener">100-case browser-vision benchmark</a> — same screenshots, same production six-section prompt, same strict rubric we use to evaluate WebBrain&#39;s own vision subsystem. All 600 requests completed without a single error, and the entire sweep cost <strong>$0.53</strong>. The dense Qwen3-VL-32B Instruct won on quality. Its MoE sibling matched it at twice the speed. And the two &quot;thinking&quot; variants billed four to five times the output tokens for a gain you can count on one hand.</p>
+<h2 id="the-lineup">The lineup</h2>
+<p>Six model IDs, all served through the same OpenRouter account on August 22, 2026. Prices are OpenRouter list price per million tokens:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Architecture</th><th>In / 1M tok</th><th>Out / 1M tok</th></tr></thead><tbody><tr><td><code>qwen/qwen3-vl-8b-instruct</code></td><td>dense VL, 8B</td><td>$0.117</td><td>$0.455</td></tr><tr><td><code>qwen/qwen3-vl-8b-thinking</code></td><td>dense VL, 8B + reasoning</td><td>$0.18</td><td>$2.10</td></tr><tr><td><code>qwen/qwen3-vl-30b-a3b-instruct</code></td><td>MoE VL, ~3B active</td><td>$0.13</td><td>$0.52</td></tr><tr><td><code>qwen/qwen3-vl-30b-a3b-thinking</code></td><td>MoE VL, ~3B active + reasoning</td><td>$0.20</td><td>$2.40</td></tr><tr><td><code>qwen/qwen3-vl-32b-instruct</code></td><td>dense VL, 32B</td><td>$0.104</td><td>$0.416</td></tr><tr><td><code>qwen/qwen3.5-35b-a3b</code></td><td>MoE generalist (text+image+video)</td><td>$0.25</td><td>$1.25</td></tr></tbody></table></div>
+<p>Note what&#39;s missing from that table: any expensive model. The priciest row costs a quarter of a cent per 1K input tokens. This is the budget tier, and the question is how much capability survives down here.</p>
+<h2 id="results">Results</h2>
+<p>Every model saw all 100 cases with WebBrain&#39;s production screenshot contract: temperature 0, max 800 tokens, six required sections, strict rubric scoring against expected facts. A strict pass means the complete contract plus the case&#39;s weighted facts recovered without critical contradiction.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Strict passes</th><th>Mean rubric</th><th>Mean latency</th><th>Output tokens</th><th>Cost / 100-case run</th></tr></thead><tbody><tr><td><strong>Qwen3-VL-32B Instruct</strong></td><td><strong>69</strong></td><td><strong>91.9%</strong></td><td>4.6 s</td><td>22.2K</td><td><strong>$0.022</strong></td></tr><tr><td>Qwen3-VL-30B-A3B Instruct</td><td>68</td><td>91.3%</td><td><strong>2.2 s</strong></td><td>17.1K</td><td>$0.024</td></tr><tr><td>Qwen3.5-35B-A3B</td><td>67</td><td>90.8%</td><td>5.2 s</td><td>55.4K</td><td>$0.099</td></tr><tr><td>Qwen3-VL-30B-A3B Thinking</td><td>62</td><td>88.9%</td><td>6.3 s</td><td>68.5K</td><td>$0.188</td></tr><tr><td>Qwen3-VL-8B Thinking</td><td>61</td><td>86.7%</td><td>6.4 s</td><td>75.5K</td><td>$0.180</td></tr><tr><td>Qwen3-VL-8B Instruct</td><td>48</td><td>84.0%</td><td>2.1 s</td><td>14.9K</td><td>$0.021</td></tr></tbody></table></div>
+<p>Three things jump out.</p>
+<p><strong>First place is a tie in disguise.</strong> The dense 32B scores one strict pass and half a point of rubric above the MoE 30B-A3B. But the MoE answers in 2.2 seconds where the dense model needs 4.6. For an interactive browser agent watching its own screenshots, latency compounds across every step of a task; we&#39;d pick the MoE for production loops and the dense model when you want maximum accuracy per request.</p>
+<p><strong>The generalist doesn&#39;t beat the specialists.</strong> Qwen3.5-35B-A3B is the flagship-shaped option — bigger context class, video input, newest generation. On browser screens it finished third, behind both dedicated VL siblings, while burning 2-4x their output tokens. If your workload is screenshots, the VL-tuned rows are simply better and cheaper.</p>
+<p><strong>The 8B instruct is a different product.</strong> At 48 strict passes it trails the leaders by twenty points, and the shape of its failure curve matters more than the average, which we&#39;ll get to below.</p>
+<h2 id="what-the-extra-money-buys">What the extra money buys</h2>
+<p>Strict-pass rate by difficulty band (20 cases each):</p>
+<div class="table-wrap"><table><thead><tr><th>Band</th><th>8B Inst</th><th>8B Think</th><th>30B MoE Inst</th><th>30B MoE Think</th><th>32B Inst</th><th>35B A3B</th></tr></thead><tbody><tr><td>Easy</td><td>60%</td><td>65%</td><td>70%</td><td>65%</td><td>70%</td><td>80%</td></tr><tr><td>Basic</td><td>65%</td><td>70%</td><td>80%</td><td>80%</td><td>75%</td><td>70%</td></tr><tr><td>Intermediate</td><td>50%</td><td>65%</td><td>70%</td><td>65%</td><td>80%</td><td>60%</td></tr><tr><td>Advanced</td><td>35%</td><td>55%</td><td>60%</td><td>50%</td><td>65%</td><td>70%</td></tr><tr><td>Challenging</td><td>30%</td><td>50%</td><td>60%</td><td>50%</td><td>55%</td><td>55%</td></tr></tbody></table></div>
+<p>The 8B instruct falls off a cliff exactly where a browser agent needs help most: hard overlays, occluded controls, ambiguous states. Every model at 30B-plus holds a rough 55-70% floor across all five bands. Below 30B, only the thinking variant keeps that shape.</p>
+<h2 id="thinking-worth-it-at-8b-not-at-30b">Thinking: worth it at 8B, not at 30B</h2>
+<p>This is the cleanest experiment in the set, because both sizes ship paired instruct/thinking checkpoints:</p>
+<ul><li><strong>At 8B:</strong> thinking adds <strong>+13 strict passes</strong> (61 vs 48). If you&#39;re stuck with small models, the reasoning checkpoint genuinely rescues hard cases — advanced band jumps from 35% to 55%.</li><li><strong>At 30B:</strong> thinking <em>loses</em> six passes (62 vs 68). Whatever the extra tokens buy, they also buy overthinking easy screens.</li></ul>
+<p>Either way you pay for it: the thinking variants emitted <strong>4-5x the completion tokens</strong> of their instruct siblings (75.5K vs 14.9K at 8B; 68.5K vs 17.1K at 30B), ran about three times slower, and cost roughly eight times more per run at list prices.</p>
+<p>One measurement caveat for anyone replicating this: our harness records OpenAI-style <code>reasoning_content</code>, while OpenRouter streams reasoning under its own <code>reasoning</code> field, so our captured reasoning text is empty even though the token usage makes clear the reasoning happened and was billed. Scores were computed on final content only, which is fair — but treat our &quot;reasoning chars&quot; fields in the committed results as zero by convention, not by observation.</p>
+<h2 id="where-they-all-break">Where they all break</h2>
+<p>Category-level strict-pass rates expose shared blind spots that no amount of parameters in this tier fixed:</p>
+<div class="table-wrap"><table><thead><tr><th>Category</th><th>Best of six</th><th>Worst of six</th></tr></thead><tbody><tr><td>form-validation</td><td>20% (two models)</td><td>0% (four models)</td></tr><tr><td>modal-overlay</td><td>20% (two models)</td><td>0% (four models)</td></tr><tr><td>multilingual-OCR</td><td>40% (35B generalist)</td><td>0% (three models)</td></tr><tr><td>calendar</td><td>100%</td><td>20% (8B instruct)</td></tr><tr><td>checkout</td><td>80%</td><td>20% (8B instruct)</td></tr><tr><td>consent-banner</td><td>100%</td><td>0% (8B instruct)</td></tr></tbody></table></div>
+<p>Form validation and modal overlays are brutal across the board — these are precisely the states where an automation agent most needs reliable vision, and the whole budget tier mostly misses them. Meanwhile toast notifications, data tables, and chart reading are free wins at 100% nearly everywhere.</p>
+<p>Eighteen of the 100 cases failed for <strong>all six models</strong>. That&#39;s the honest floor of this price bracket today, and it&#39;s a useful target list for fine-tunes like <a href="/blog/tiny-vision-models-compared-ii">our 450M browser-specific model</a>.</p>
+<p>One for the road: on case 001 — an ordinary login screen — the <em>only</em> model to earn a perfect score was the 8B instruct, the worst performer overall. Every larger sibling dropped details. Small models are unreliable; so are rankings.</p>
+<h2 id="which-one-should-you-call">Which one should you call</h2>
+<ul><li><strong>Production browser agent:</strong> Qwen3-VL-30B-A3B Instruct — 90th-percentile accuracy at 2.2 s median and ~$0.24 per thousand screenshots.</li><li><strong>Maximum accuracy per request:</strong> Qwen3-VL-32B Instruct, one pass better, twice as slow.</li><li><strong>Stuck under 10B:</strong> take the thinking variant without guilt — it&#39;s the only small model here that doesn&#39;t collapse on hard pages.</li><li><strong>Skip for vision workloads:</strong> Qwen3.5-35B-A3B (good model, wrong tool) and both thinking variants at 30B-plus (paying more to score less).</li></ul>
+<p>The complete harness — screenshots, expected facts, scoring code, and all six committed result directories — lives in <a href="https://github.com/esokullu/webbrain/tree/main/test/vision" target="_blank" rel="noopener"><code>test/vision</code></a> on GitHub.</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

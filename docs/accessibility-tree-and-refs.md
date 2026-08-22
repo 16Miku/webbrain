@@ -110,7 +110,9 @@ model may also request the expanded page for a whole-document read. Every
 truncated result remains deterministic: callers must reuse the exact
 `continuationArgs`, including `maxChars`, until `hasMore:false`. Increasing the
 window reduces model round trips; it does not turn a multi-page tree into proof
-of complete coverage.
+of complete coverage. `tree_revision` binds page 2 and later to the snapshot
+created by page 1. Page 1 always starts or restarts a fresh snapshot, so the
+runtime ignores a stale revision if a model carries one into a page-1 call.
 
 Pagination also cannot prove that an application rendered hidden conversation
 content. On a Gmail thread route, a discovery read returns a trusted
@@ -128,6 +130,10 @@ can activate Expand all and then restart the trusted anchored read at page 1.
 Each newly accepted exact page counts as bounded completeness progress, so a
 long thread can exceed the ordinary eight-observation delivery checkpoint;
 repeated, skipped, stale, changed-tree, and wrong-scope reads still do not.
+When the latest user explicitly narrows a follow-up to a best-effort answer
+from evidence already seen or provided in the conversation, the semantic scope
+classifier uses `none`; an earlier complete-thread request must not force a new
+Gmail read after the user has accepted that narrower evidence boundary.
 
 Trace storage has a separate diagnostic truncation policy. A trace showing only
 the head of a large result does not mean the model received the same truncated

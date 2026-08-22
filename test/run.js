@@ -7603,6 +7603,56 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
     assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged trusted Gmail thread remained blocked`);
 
+    // Reproduce the Gmail trace where the model carried a document/subtree
+    // revision into page 1. Page 1 is a fresh snapshot boundary, so that stale
+    // revision must not keep the accepted page ledger permanently empty.
+    let stalePageOneState = runtime.createReadCompletenessState(`${label}-gmail-stale-page-one`, true, true, 'gmail');
+    stalePageOneState = runtime.recordReadCompleteness(stalePageOneState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000,
+    }, {
+      pageContent: 'document root discovery',
+      page: 1,
+      hasMore: true,
+      truncated: true,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionB,
+    });
+    const stalePageOneArgs = {
+      ...expandedPage1Args,
+      tree_revision: gmailRevisionB,
+    };
+    stalePageOneState = runtime.recordReadCompleteness(stalePageOneState, 'get_accessibility_tree', stalePageOneArgs, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"',
+      page: 1,
+      totalChars: 2400,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    assert.deepEqual(stalePageOneState.treePages, [1], `${label}: stale page-1 revision prevented a fresh Gmail snapshot`);
+    assert.deepEqual(stalePageOneState.continuationArgs, {
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
+    }, `${label}: stale page-1 revision lost the fresh snapshot continuation`);
+    stalePageOneState = runtime.recordReadCompleteness(stalePageOneState, 'get_accessibility_tree', {
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
+    }, {
+      pageContent: 'listitem "Latest message"',
+      page: 2,
+      totalChars: 2400,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    assert.equal(runtime.readCompletenessBlock(stalePageOneState), null, `${label}: fresh Gmail restart with a stale page-1 revision did not complete`);
+
     let missingRootState = runtime.createReadCompletenessState(`${label}-gmail-missing-root`, true, true, 'gmail');
     missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
       filter: 'visible', maxDepth: 12, maxChars: 12000,
@@ -7933,6 +7983,7 @@ test('Ask and managed cloud classify communication read scope across languages',
     { label: 'ask-tr', mode: 'ask', runOptions: {}, task: 'Bu konuşmada neler oluyor?', scope: 'complete_thread', blocked: true },
     { label: 'cloud-es', mode: 'act', runOptions: { cloudRun: true }, task: 'Resume toda esta conversación.', scope: 'complete_thread', blocked: true },
     { label: 'ask-ja', mode: 'ask', runOptions: {}, task: '選択した最新のメッセージだけを説明して。', scope: 'current_message', blocked: false },
+    { label: 'ask-best-effort-followup', mode: 'ask', runOptions: {}, task: 'Okay, based only on what you already saw, what does it say?', scope: 'none', blocked: false },
   ];
 
   for (const [browserIndex, [browserLabel, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
@@ -8109,6 +8160,8 @@ const EVENT_MODEL_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/
 const EVENT_MODEL_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/event-model.js').replace(/\\/g, '/'));
 const TRACE_REPAIR_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/repair.js').replace(/\\/g, '/'));
 const TRACE_REPAIR_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/repair.js').replace(/\\/g, '/'));
+const TRACE_TRAJECTORY_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/trajectory.js').replace(/\\/g, '/'));
+const TRACE_TRAJECTORY_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/trajectory.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -9426,6 +9479,122 @@ test('trace repair: recorder and browser entry points apply the repair transacti
     assert.match(background, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?workflowTrace\.repairStaleRuns\(\)/, `${browser}: background does not answer the traces-page repair request`);
     assert.match(traces, /\(async \(\) => \{\s*await repairStaleRunsForPage\(\);\s*await refresh\(\);/, `${browser}: Traces page does not route its first repair through the background`);
     assert.match(traces, /WB_TRACE_REPAIR_STALE_RUNS[\s\S]*?return repairStaleRuns\(\)\.catch\(\(\) => \[\]\);/, `${browser}: Traces page lost its local fallback for when the background is unreachable`);
+  }
+});
+
+test('trace trajectory: groups step lifecycle metrics and failure evidence', () => {
+  const events = [
+    { seq: 1, ts: 100, kind: 'step_start', data: { step: 1 } },
+    { seq: 2, ts: 150, kind: 'llm_request', data: { step: 1, model: 'model-a' } },
+    { seq: 3, ts: 450, kind: 'llm_response', data: {
+      step: 1,
+      usage: { prompt_tokens: 10, completion_tokens: 4, cost: 0.12 },
+      latencyMs: 300,
+    } },
+    { seq: 4, ts: 500, kind: 'tool', data: {
+      step: 1, name: 'click', latencyMs: 50, result: { success: false },
+    } },
+    { seq: 5, ts: 600, kind: 'error', data: {
+      step: 1, phase: 'provider', message: 'transport failed', code: 'TRANSPORT',
+    } },
+    { seq: 6, ts: 700, kind: 'step_end', data: {
+      step: 1, ok: false, code: 'TRANSPORT', reason: 'error',
+    } },
+    { seq: 7, ts: 800, kind: 'step_start', data: { step: 2 } },
+    { seq: 8, ts: 900, kind: 'step_end', data: { step: 2, ok: true } },
+  ];
+  const rows = TRACE_TRAJECTORY_CH.buildTraceTrajectory(events);
+  const firefoxRows = TRACE_TRAJECTORY_FX.buildTraceTrajectory(events);
+
+  assert.deepEqual(rows.map((row) => row.step), [1, 2]);
+  assert.deepEqual(firefoxRows, rows, 'Chrome/Firefox trajectory aggregators must agree');
+  assert.deepEqual(rows[0], {
+    step: 1,
+    status: 'error',
+    startedAt: 100,
+    endedAt: 700,
+    durationMs: 600,
+    requestCount: 1,
+    responseCount: 1,
+    toolCount: 1,
+    subCallCount: 0,
+    errorCount: 1,
+    inputTokens: 10,
+    outputTokens: 4,
+    cost: 0.12,
+    llmLatencyMs: 300,
+    toolLatencyMs: 50,
+    toolNames: ['click'],
+    errorCodes: ['TRANSPORT'],
+    errors: [{ code: 'TRANSPORT', phase: 'provider', message: 'transport failed' }],
+    repaired: false,
+  });
+  assert.equal(rows[1].status, 'done');
+  assert.equal(rows[1].durationMs, 100);
+});
+
+test('trace trajectory: preserves run-level repair evidence and mirrors the browser modules', () => {
+  const rows = TRACE_TRAJECTORY_CH.buildTraceTrajectory([
+    { seq: 1, ts: 0, kind: 'turn_start', data: { step: 0 } },
+    { seq: 2, ts: 1, kind: 'error', data: {
+      step: null, phase: 'repair', message: 'interrupted', code: 'SERVICE_WORKER_EVICTED',
+    } },
+    { seq: 3, ts: 2, kind: 'turn_end', data: {
+      step: 0, status: 'error', reason: 'service_worker_eviction', code: 'SERVICE_WORKER_EVICTED', repaired: true,
+    } },
+  ]);
+  assert.equal(rows.length, 1, 'turn lifecycle and run-level evidence share one run row');
+  assert.equal(rows[0].step, null);
+  assert.equal(rows[0].status, 'error');
+  assert.equal(rows[0].durationMs, 2);
+  assert.deepEqual(rows[0].errorCodes, ['SERVICE_WORKER_EVICTED']);
+  assert.equal(rows[0].repaired, true);
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/trajectory.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/trajectory.js'), 'utf8'),
+    'Chrome/Firefox trajectory modules must remain mirrored',
+  );
+});
+
+test('trace trajectory: exposes lifecycle failure codes without requiring an error event', () => {
+  const rows = TRACE_TRAJECTORY_CH.buildTraceTrajectory([
+    { seq: 1, ts: 10, kind: 'step_start', data: { step: 3 } },
+    { seq: 2, ts: 20, kind: 'step_end', data: { step: 3, ok: false, code: 'COST_LIMIT' } },
+  ]);
+  assert.equal(rows[0].status, 'error');
+  assert.deepEqual(rows[0].errorCodes, ['COST_LIMIT']);
+  assert.equal(rows[0].errorCount, 0);
+  assert.deepEqual(rows[0].errors, []);
+});
+
+test('trace trajectory: closes run rows for unlisted terminal end statuses', () => {
+  for (const status of [
+    'scheduled_resume',
+    'read_scope_limited',
+    'clarification_required',
+    'chrome_protected_page_visual_fallback',
+    'partial',
+    'delivery_recovery_failed',
+  ]) {
+    const rows = TRACE_TRAJECTORY_CH.buildTraceTrajectory([
+      { seq: 1, ts: 10, kind: 'turn_start', data: {} },
+      { seq: 2, ts: 20, kind: 'llm_response', data: { step: 1, usage: { prompt_tokens: 5 } } },
+      { seq: 3, ts: 30, kind: 'turn_end', data: { status, reason: status } },
+    ]);
+    assert.equal(rows[0].status, 'done', `terminal turn_end status ${status} must not linger as running`);
+  }
+});
+
+test('trace UI: renders the trajectory rows before the detailed event timeline', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.html`), 'utf8');
+    assert.match(traces, /import \{ buildTraceTrajectory \} from '\.\.\/trace\/trajectory\.js';/, `${browser}: Traces UI does not import the trajectory module`);
+    assert.match(traces, /function renderStepTrajectory\(events, compact\)/, `${browser}: trajectory renderer missing`);
+    assert.match(traces, /const rows = buildTraceTrajectory\(events\);/, `${browser}: UI does not build rows through the pure seam`);
+    assert.match(traces, /trajectory-table/, `${browser}: trajectory table class missing from renderer`);
+    assert.match(traces, /renderStepTrajectory\(events, compact\)/, `${browser}: run view does not render the trajectory before details`);
+    assert.match(html, /\.trajectory-table|\.trajectory-row/, `${browser}: trajectory table styles missing`);
   }
 });
 
@@ -80544,6 +80713,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /response timing/);
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /review my message, don't send[\s\S]*current_message/i);
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /Do not choose this merely because the target is an email reply or draft/i);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /based on what you saw[\s\S]*use none/i);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /narrower latest request overrides an earlier request for a complete-thread read/i);
   for (const [build, parse] of [
     [buildReadScopeMessages, parseReadScopeFromContent],
     [buildReadScopeMessagesFx, parseReadScopeFromContentFx],
