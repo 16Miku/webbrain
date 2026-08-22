@@ -2454,10 +2454,14 @@ async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
     || job?.source === 'watch') return;
   try {
     const jobTabId = Number(job.tabId ?? job.target?.tabId ?? _tabId);
-    await flashTabAttention({
-      tabId: jobTabId,
-      success: event === 'completed' && job?.lastOutcome === 'success',
-    });
+    // Ask-mode scheduled runs complete without a done tool update, so
+    // lastOutcome stays null even on success — fall back to "non-empty
+    // result" there instead of badging every successful Ask as failure.
+    const success = event === 'completed' && (
+      job?.lastOutcome === 'success'
+      || (job?.lastOutcome == null && String(job?.lastResult ?? '').trim().length > 0)
+    );
+    await flashTabAttention({ tabId: jobTabId, success });
   } catch { /* best-effort */ }
 }
 
