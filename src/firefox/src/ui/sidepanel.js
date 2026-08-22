@@ -4345,7 +4345,8 @@ async function restoreActiveRunState(tabId = currentTabId) {
   if (numericTabId == null) return;
   const state = await refreshConversationScopeState(numericTabId);
   if (!state) return;
-  await applyActiveRunState(numericTabId, state);
+  const snapshotStillActive = await applyActiveRunState(numericTabId, state);
+  if (!snapshotStillActive) return;
   void adoptRestoredRunState(numericTabId, state);
 }
 
@@ -4359,6 +4360,10 @@ async function adoptRestoredRunState(tabId, state) {
   if (!requestId
       || isTerminalRunUiStatus(runUi.status)
       || runUi.status === 'awaiting_plan'
+      || isConversationClearInProgress(tabId)
+      || clearedConversationRunRequestIds.has(requestId)
+      || !sameTabId(currentTabId, tabId)
+      || !sameTabId(renderedTabId, tabId)
       || localRunRequestIds.has(Number(tabId))
       || adoptedRunRecoveryRequestIds.has(requestId)) return;
 
@@ -4442,7 +4447,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     && (!requestId || !clearedConversationRunRequestIds.has(requestId))
     && sameTabId(currentTabId, numericTabId)
     && sameTabId(renderedTabId, numericTabId);
-  if (!shouldApplyState()) return;
+  if (!shouldApplyState()) return false;
   if (runUi?.requestId) {
     const runAssistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(runUi.requestId))}"]`)
       || messagesEl.querySelector('.message.assistant:last-of-type')
@@ -4529,7 +4534,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
       runUi.attachmentDeliveryState,
       { shouldContinue: shouldApplyState },
     );
-    if (!shouldApplyState()) return;
+    if (!shouldApplyState()) return false;
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     if (renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
@@ -4537,7 +4542,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
         requestId: runUi.requestId,
         seq: renderedSeq,
       }).catch(() => {});
-      if (!shouldApplyState()) return;
+      if (!shouldApplyState()) return false;
     }
   }
   const pendingPlan = state?.pendingPlan;
@@ -4551,7 +4556,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
         && String(lastPlanLifecycleEvent.data?.planId || '') === String(pendingPlan.planId)));
   if (pendingPlanMatchesRun) {
     renderPlanReviewCard({ ...pendingPlan, tabId: numericTabId, requestId: runUi?.requestId || null, runId: runUi?.runId || null });
-    return;
+    return true;
   }
   const restoredPlanResolution = lastPlanLifecycleEvent?.type === 'plan_resolved'
     ? lastPlanLifecycleEvent.data
@@ -4603,6 +4608,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     hideActivity();
     syncSendButtonState();
   }
+  return true;
 }
 
 function conversationHasUserMessages() {
