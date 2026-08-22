@@ -8,7 +8,7 @@ const CLICK_ACTION_TOOLS = new Set(['click', 'click_ax', 'iframe_click']);
 const APP_OWNED_BOOLEAN_FIELD_KEYS = new Set(['completionRequirement', 'classifierTarget']);
 const APP_OWNED_INTEGER_FIELD_KEYS = new Set(['expectedOrdinal']);
 const ACTION_RE = /^\s*(follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove)\b(?:\s+(.+?))?\s*$/i;
-const IDENTITY_ACTION_PREFIX_RE = /^\s*(?:follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove|collect_email|collect_profile|process_item|visit|open)\s*[:\-]?\s+/i;
+const IDENTITY_ACTION_PREFIX_RE = /^\s*(?:follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove|collect_email|collect_profile|process_item|visit|open)(?:\s*:\s*|\s+)(?!$)/i;
 const GENERIC_TARGET_RE = /^(button|link|item|result|profile|user|member|person|this|that|it|here|there|more|submit|save|send|add|remove|follow|unfollow|changes?|message|comment|reply|post|form|details|settings|preferences)$/i;
 
 export function normalizeLedgerStatus(value, fallback = 'pending') {

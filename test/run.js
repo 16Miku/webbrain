@@ -68608,6 +68608,24 @@ test('batch-bound targets derive from labels without action verbs', () => {
   }
 });
 
+test('colon-namespaced action ids share identities with recorded clicks', () => {
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    assert.ok(progressIdentityKeys({ id: 'follow:alice' }).includes('text:alice'));
+    assert.ok(progressIdentityKeys({ label: 'Follow-up email' }).includes('text:follow-up email'));
+
+    const sessionId = 'colon-ids';
+    let state = upsert([], [{
+      id: 'follow:alice', label: 'Follow alice', action: 'follow', status: 'acted',
+    }], { source: 'auto', sessionId, now: 100 });
+
+    state = upsert(state.rows, [{
+      id: 'clicked-alice', label: 'Alice', target: 'alice', action: 'follow', status: 'acted',
+    }], { source: 'auto', sessionId, now: 200 });
+    assert.deepEqual(state.reconciled, [{ incomingId: 'clicked-alice', canonicalId: 'follow:alice' }]);
+    assert.equal(state.rows.length, 1);
+  }
+});
+
 test('progress ledger rejects malformed statuses and normalizes null-like fields', () => {
   assert.equal(isValidLedgerStatus('pending'), true);
   assert.equal(isValidLedgerStatus('「pending」'), true);
