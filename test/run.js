@@ -34193,6 +34193,10 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.match(panel, /const ownsRunState = localRunRequestIds\.get\(tabId\) === requestId;[\s\S]*?if \(!ownsRunState\) return accepted;/, `${label}: a cleared chat run should not finalize a newer run's UI state`);
     assert.match(panel, /catch \(e\) \{\s*if \(clearedConversationRunRequestIds\.has\(requestId\)\) return accepted;\s*reconcileFailedSelectionGroundedStart/, `${label}: a cleared chat run should not restore its old scope or attachments`);
     assert.match(panel, /async function continueAgent\([\s\S]*?const ownsRunState = localRunRequestIds\.get\(tabId\) === requestId;[\s\S]*?if \(!ownsRunState\) return;/, `${label}: a cleared continuation should not finalize a newer run's UI state`);
+    const restoredRunStart = panel.indexOf('async function adoptRestoredRunState(tabId, state) {');
+    const restoredRunEnd = panel.indexOf('\n\nasync function applyActiveRunState(', restoredRunStart);
+    const restoredRunBody = panel.slice(restoredRunStart, restoredRunEnd);
+    assert.equal((restoredRunBody.match(/!clearedConversationRunRequestIds\.has\(requestId\)/g) || []).length, 3, `${label}: restored-run planner, returned-error, and thrown-error paths should ignore a cleared request`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
   }
@@ -85875,6 +85879,28 @@ test('detached run followers honor local cancellation before their next state pr
     assert.equal(starts, 1, `${label}: cancellation should not restart the request`);
     assert.equal(waits, 1, `${label}: cancellation should be observed at the first poll boundary`);
     assert.equal(probes, 0, `${label}: a cancelled follower should not race conversation clear with another probe`);
+
+    const probeRequestId = `${label}-cancelled-during-probe`;
+    let probeShouldContinue = true;
+    let appliedStates = 0;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 43, requestId: probeRequestId, mode: 'act', text: 'clear during probe' },
+        start: async () => ({ accepted: true, requestId: probeRequestId }),
+        probe: async () => {
+          probeShouldContinue = false;
+          return { running: true, runUi: { requestId: probeRequestId, status: 'running', events: [] } };
+        },
+        shouldContinue: () => probeShouldContinue,
+        onState: () => { appliedStates += 1; },
+        isConnectionError: () => false,
+        wait: async () => {},
+      }),
+      /Run recovery was cancelled/,
+      `${label}: cancellation during a probe should reject before applying stale state`,
+    );
+    assert.equal(appliedStates, 0, `${label}: a probe completed after clear must not replay old conversation state`);
   }
 });
 

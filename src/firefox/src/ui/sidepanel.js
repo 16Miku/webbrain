@@ -4379,7 +4379,10 @@ async function adoptRestoredRunState(tabId, state) {
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
-    if (returnedPlannerFailure && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (returnedPlannerFailure
+        && sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
       renderPlannerRequestFailure(
         assistantEl,
         returnedPlannerFailure.data,
@@ -4389,13 +4392,18 @@ async function adoptRestoredRunState(tabId, state) {
     const returnedErrorUpdate = Array.isArray(res?.updates)
       ? res.updates.find(update => update?.type === 'error')
       : null;
-    if (returnedErrorUpdate && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (returnedErrorUpdate
+        && sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
       renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
         submittedTurnDurable: res.submittedTurnDurable,
       });
     }
   } catch (error) {
-    if (sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
       renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
     }
   } finally {

@@ -162,6 +162,7 @@ export async function runDetachedWithReconnect({
       let state;
       try {
         state = await probe({ requestId });
+        if (!shouldContinue()) throw new Error('Run recovery was cancelled.');
         connectionFailures = 0;
         try {
           await onState(state);
