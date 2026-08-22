@@ -34432,6 +34432,8 @@ test('duplicate typing identity is cleared on navigation and tab cleanup', () =>
     assert.match(background, /frameId !== 0\) return;[\s\S]*?agent\.clearLastTypeFieldIdent\(details\.tabId\)|function recordNav\(tabId,[\s\S]*?agent\.clearLastTypeFieldIdent\(tabId\)/, `${label}: top-level navigation should reset duplicate-typing state`);
     assert.match(content, /const fieldIdent = `\$\{location\.href\}\|\$\{el\.tagName\}/, `${label}: content-script fallback identity should be scoped to the current route`);
     if (label === 'chrome') {
+      assert.match(background, /function recordNav\(tabId, type, url, \{ resetTypeIdentity = true \} = \{\}\) \{[\s\S]*?if \(resetTypeIdentity\) agent\.clearLastTypeFieldIdent\(tabId\);/, 'chrome: navigation recording should make typing-identity invalidation explicit');
+      assert.match(background, /onCompleted\?\.addListener\(\(details\) => \{[\s\S]*?recordNav\(details\.tabId, 'completed', details\.url, \{ resetTypeIdentity: false \}\);/, 'chrome: load completion should not erase typing recorded after commit');
       assert.equal((agentSource.match(/const typeFieldEpoch = this\._captureLastTypeFieldEpoch\(tabId\);/g) || []).length, 3, 'chrome: every CDP type path should capture its navigation epoch before dispatch');
       assert.equal((agentSource.match(/this\._rememberLastTypeFieldIdent\(tabId, fieldIdent, typeFieldEpoch\)/g) || []).length, 3, 'chrome: every CDP type path should reject stale post-navigation writes');
     }

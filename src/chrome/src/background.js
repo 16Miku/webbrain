@@ -2095,10 +2095,10 @@ function invalidateContextMenuForTab(tabId) {
 const lastNavByTab = new Map(); // tabId -> { ts, type, url }
 globalThis.__webbrainLastNav = lastNavByTab;
 
-function recordNav(tabId, type, url) {
+function recordNav(tabId, type, url, { resetTypeIdentity = true } = {}) {
   if (tabId == null) return;
   lastNavByTab.set(tabId, { ts: Date.now(), type, url: url || '' });
-  agent.clearLastTypeFieldIdent(tabId);
+  if (resetTypeIdentity) agent.clearLastTypeFieldIdent(tabId);
 }
 
 function recordTeacherNavigation(tabId, url, options) {
@@ -2133,7 +2133,9 @@ chrome.webNavigation?.onCommitted?.addListener((details) => {
   agent.clearDevCssPatchesForTab(details.tabId).catch(() => {});
 });
 chrome.webNavigation?.onCompleted?.addListener((details) => {
-  if (details.frameId === 0) recordNav(details.tabId, 'completed', details.url);
+  if (details.frameId === 0) {
+    recordNav(details.tabId, 'completed', details.url, { resetTypeIdentity: false });
+  }
 });
 
 // Cloudflare Challenge Pages replace the requested top-level document and
