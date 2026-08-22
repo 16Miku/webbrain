@@ -1281,6 +1281,10 @@ function notifyCompletion({ success = false, storeReviewSuccess = success } = {}
   playCompletionSound();
   if (success) triggerCompletionConfetti();
   if (storeReviewSuccess) void maybePromptStoreReviewAfterSuccess();
+  // The tab attention flash itself is owned by the background: live runs,
+  // continuations, and scheduled jobs all settle there — even when this
+  // panel is closed or reloaded mid-run — so it can cover every path
+  // without duplicating signals while a panel is mounted.
 }
 
 function getExtensionStoreKey() {
@@ -2870,8 +2874,14 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     if (renderedTabId != null) await flushRenderedTabChat();
     await drainQueuedPromptsAfterRunSettles();
   }
-  if (event === 'completed' && job?.source !== 'watch') {
-    notifyCompletion({ success: job?.lastOutcome === 'success' });
+  // Terminal scheduled runs chime like live runs do. The attention flash
+  // itself is owned by the background scheduler path — scheduled jobs keep
+  // running even when this panel is closed, and the background already
+  // suppresses the signal while the finished tab is being watched.
+  if ((event === 'completed' || event === 'failed') && job?.source !== 'watch') {
+    notifyCompletion({
+      success: event === 'completed' && job?.lastOutcome === 'success',
+    });
   }
 }
 

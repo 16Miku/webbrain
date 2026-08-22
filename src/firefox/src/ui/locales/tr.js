@@ -303,6 +303,8 @@ export default {
   'st.display.notify_sound.desc': 'Aracı bir görevi bitirdiğinde yan panelde kısa bir ses çalar. Çalışmayı iptal edersen çalınmaz.',
   'st.display.completion_confetti.label': 'Tamamlama konfetisi',
   'st.display.completion_confetti.desc': 'Bir görev başarıyla tamamlandığında üstten kısa bir konfeti animasyonu gösterir. Varsayılan olarak açıktır; daha sakin bir bitiş istersen kapatabilirsin.',
+  'st.display.completion_flash_tab.label': 'Biten sekmeyi yanıp söndür',
+  'st.display.completion_flash_tab.desc': 'Bir görev, ayrıldığın bir sekmede bittiğinde o sekmenin başlığı ve simgesi yanıp söner; hangi sekmenin bittiğini tek bakışta görürsün.',
   'st.display.max_steps.label': 'Azami aracı adımı',
   'st.display.max_steps.desc': 'Aracının mesaj başına atabileceği en fazla araç adımı sayısı. Daha yüksek değerler daha karmaşık çok adımlı görevlere izin verir ama daha fazla token kullanabilir. Sınırsız adım için kaydırıcıyı ∞ konumuna getirin.',
   'st.display.traces_link.label': 'İzler',

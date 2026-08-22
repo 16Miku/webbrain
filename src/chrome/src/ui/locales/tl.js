@@ -275,6 +275,8 @@ export default {
   'st.display.notify_sound.desc': 'Magpatugtog ng maikling chime sa side panel kapag natapos ang gawain ng ahente. Hindi tutugtog kung kinansela mo ang run.',
   'st.display.completion_confetti.label': 'Confetti kapag tapos na',
   'st.display.completion_confetti.desc': 'Magpakita ng maikling confetti animation mula sa itaas kapag matagumpay na natapos ang gawain. Naka-on ito bilang default; i-off kung mas gusto mo ng mas tahimik na pagtatapos.',
+  'st.display.completion_flash_tab.label': "I-flash ang tapos na tab",
+  'st.display.completion_flash_tab.desc': "Kapag natapos ang gawain sa tab na iniwan mo na, kumikislap ang title at favicon ng tab na iyon para makita sa isang sulyap kung alin ang tapos na.",
   'st.display.max_steps.label': 'Maximum na hakbang ng ahente',
   'st.display.max_steps.desc': 'Pinakamalaking bilang ng tool-use na hakbang na maaaring gawin ng ahente bawat mensahe. Ang mas mataas na halaga ay nagpapahintulot ng mas komplikadong multi-step na gawain ngunit maaaring mas marami ang gagamiting token. Itakda ang slider sa ∞ para sa walang limitasyong mga hakbang.',
   'st.display.traces_link.label': 'Traces',

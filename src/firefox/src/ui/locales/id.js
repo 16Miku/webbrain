@@ -267,6 +267,8 @@ export default {
   'st.display.notify_sound.desc': 'Mainkan dering singkat di panel samping saat agen menyelesaikan tugas. Tidak akan dimainkan jika Anda membatalkan proses.',
   'st.display.completion_confetti.label': 'Konfeti selesai',
   'st.display.completion_confetti.desc': 'Tampilkan animasi konfeti singkat dari atas saat tugas berhasil selesai. Aktif secara default; matikan jika Anda ingin penutup yang lebih tenang.',
+  'st.display.completion_flash_tab.label': "Kedipkan tab yang selesai",
+  'st.display.completion_flash_tab.desc': "Saat tugas selesai di tab yang sudah kamu tinggalkan, judul dan favicon tab itu berkedip agar kamu tahu sekilas tab mana yang selesai.",
   'st.display.max_steps.label': 'Langkah maksimum agen',
   'st.display.max_steps.desc': 'Jumlah maksimum langkah pemanggilan alat yang dapat dilakukan agen per pesan. Nilai lebih tinggi memungkinkan tugas multi-langkah lebih kompleks tetapi mungkin memakai lebih banyak token. Geser ke ∞ untuk langkah tanpa batas.',
   'st.display.traces_link.label': 'Jejak',

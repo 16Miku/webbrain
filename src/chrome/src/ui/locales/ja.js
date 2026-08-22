@@ -275,6 +275,8 @@ export default {
   'st.display.notify_sound.desc': 'エージェントがタスクを完了したときにサイドパネルで短いチャイムを鳴らします。実行をキャンセルした場合は鳴りません。',
   'st.display.completion_confetti.label': '完了時の紙吹雪',
   'st.display.completion_confetti.desc': 'タスクが正常に完了したとき、上から短い紙吹雪アニメーションを表示します。既定でオンです。落ち着いた完了表示にしたい場合はオフにできます。',
+  'st.display.completion_flash_tab.label': "完了したタブを点滅",
+  'st.display.completion_flash_tab.desc': "離れたタブでタスクが完了すると、そのタブのタイトルとアイコンが点滅し、どのタブが完了したかひと目でわかります。",
   'st.display.max_steps.label': 'エージェントの最大ステップ数',
   'st.display.max_steps.desc': '1 メッセージあたりに使えるツール呼び出しステップの上限です。値を大きくすると複雑な多段タスクが可能になりますが、トークン消費が増えることがあります。スライダーを ∞ にするとステップ数は無制限になります。',
   'st.display.traces_link.label': 'トレース',
