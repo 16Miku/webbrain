@@ -2362,6 +2362,59 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // badge that clears as soon as the user activates the tab.
 const flashedBadgeTabs = new Set();
 
+// Per-tab toolbar badges are only visible while their tab is selected, so
+// restricted/discarded targets additionally get a system notification (the
+// only fallback visible while another tab is selected). Clicking it focuses
+// the finished tab. The chime has already played, so notifications stay
+// silent and auto-clear.
+const COMPLETION_NOTIFICATION_VISIBLE_MS = 12000;
+const completionNotificationFocusHandlers = new Map();
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  const focus = completionNotificationFocusHandlers.get(notificationId);
+  if (!focus) return;
+  completionNotificationFocusHandlers.delete(notificationId);
+  void focus();
+});
+chrome.notifications.onClosed.addListener((notificationId) => {
+  completionNotificationFocusHandlers.delete(notificationId);
+});
+
+async function showCompletionNotification(tabId, success) {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch { return; }
+  const message = tab?.title || tab?.url || 'A background task finished.';
+  await new Promise((resolve) => {
+    try {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+        title: `WebBrain — ${success ? 'Task finished' : 'Task needs attention'}`,
+        message,
+        silent: true,
+      }, (notificationId) => {
+        if (!notificationId) return resolve();
+        setTimeout(() => {
+          completionNotificationFocusHandlers.delete(notificationId);
+          chrome.notifications.clear(notificationId, () => {});
+        }, COMPLETION_NOTIFICATION_VISIBLE_MS);
+        if (Number.isInteger(tabId)) {
+          completionNotificationFocusHandlers.set(notificationId, async () => {
+            try {
+              const target = await chrome.tabs.get(tabId);
+              if (target?.windowId != null) await chrome.windows.update(target.windowId, { focused: true });
+              await chrome.tabs.update(tabId, { active: true });
+            } catch { /* tab may be gone */ }
+          });
+        }
+        resolve();
+      });
+    } catch { resolve(); }
+  });
+}
+
 chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
   flashedBadgeTabs.delete(tabId);
   // Clear unconditionally: the Set only lives in service-worker memory, but
@@ -2465,7 +2518,10 @@ async function flashTabAttention(msg) {
       color: success ? '#22c55e' : '#ef4444',
     });
     flashedBadgeTabs.add(tabId);
-    return { ok: true, mode: 'badge' };
+    // The badge itself is invisible while another tab is selected — pair it
+    // with a system notification so the completion is discoverable anyway.
+    await showCompletionNotification(tabId, success);
+    return { ok: true, mode: 'badge+notification' };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }

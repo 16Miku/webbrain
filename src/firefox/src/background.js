@@ -1657,6 +1657,56 @@ browser.tabs.onRemoved.addListener((tabId) => {
 // as soon as the user activates the tab.
 const flashedBadgeTabs = new Set();
 
+// Per-tab toolbar badges are only visible while their tab is selected, so
+// restricted/discarded targets additionally get a system notification (the
+// only fallback visible while another tab is selected). Clicking it focuses
+// the finished tab. The chime has already played, so notifications stay
+// silent and auto-clear.
+const COMPLETION_NOTIFICATION_VISIBLE_MS = 12000;
+const completionNotificationFocusHandlers = new Map();
+
+browser.notifications.onClicked.addListener((notificationId) => {
+  const focus = completionNotificationFocusHandlers.get(notificationId);
+  if (!focus) return;
+  completionNotificationFocusHandlers.delete(notificationId);
+  void focus();
+});
+browser.notifications.onClosed.addListener((notificationId) => {
+  completionNotificationFocusHandlers.delete(notificationId);
+});
+
+async function showCompletionNotification(tabId, success) {
+  let tab = null;
+  try {
+    tab = await browser.tabs.get(tabId);
+  } catch { return; }
+  const message = tab?.title || tab?.url || 'A background task finished.';
+  let notificationId = null;
+  try {
+    notificationId = await browser.notifications.create({
+      type: 'basic',
+      iconUrl: browser.runtime.getURL('icons/icon48.png'),
+      title: `WebBrain — ${success ? 'Task finished' : 'Task needs attention'}`,
+      message,
+      silent: true,
+    });
+  } catch { return; }
+  if (!notificationId) return;
+  setTimeout(() => {
+    completionNotificationFocusHandlers.delete(notificationId);
+    browser.notifications.clear(notificationId).catch(() => {});
+  }, COMPLETION_NOTIFICATION_VISIBLE_MS);
+  if (Number.isInteger(tabId)) {
+    completionNotificationFocusHandlers.set(notificationId, async () => {
+      try {
+        const target = await browser.tabs.get(tabId);
+        if (target?.windowId != null) await browser.windows.update(target.windowId, { focused: true });
+        await browser.tabs.update(tabId, { active: true });
+      } catch { /* tab may be gone */ }
+    });
+  }
+}
+
 browser.tabs.onActivated.addListener(({ tabId } = {}) => {
   flashedBadgeTabs.delete(tabId);
   // Clear unconditionally so badge cleanup never depends on volatile state.
@@ -1759,7 +1809,10 @@ async function flashTabAttention(msg) {
       color: success ? '#22c55e' : '#ef4444',
     });
     flashedBadgeTabs.add(tabId);
-    return { ok: true, mode: 'badge' };
+    // The badge itself is invisible while another tab is selected — pair it
+    // with a system notification so the completion is discoverable anyway.
+    await showCompletionNotification(tabId, success);
+    return { ok: true, mode: 'badge+notification' };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
