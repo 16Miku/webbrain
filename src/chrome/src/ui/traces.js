@@ -67,7 +67,6 @@ function formatCost(value) {
 
 async function refresh() {
   const requestId = ++traceRefreshRequestId;
-  if (typeof repairStaleRuns === 'function') await repairStaleRuns().catch(() => []);
   const runs = await listRuns({ limit: 500 });
   if (requestId !== traceRefreshRequestId) return;
   allRuns = runs;
@@ -649,6 +648,7 @@ document.addEventListener('visibilitychange', () => {
 // Initial load: always do one refresh so the list populates, then only keep
 // polling if the freshly-loaded data shows a live run.
 (async () => {
+  await repairStaleRuns().catch(() => []);
   await refresh();
   if (initialRunId && await ensureRunLoaded(initialRunId)) {
     selectedRunId = initialRunId;

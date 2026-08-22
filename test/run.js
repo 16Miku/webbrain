@@ -9247,7 +9247,7 @@ test('trace repair: recorder and browser entry points apply the repair transacti
     assert.match(recorder, /runsStore\.put\(plan\.run\);/, `${browser}: repaired run is not persisted`);
     assert.match(recorder, /export async function repairStaleRuns\(/, `${browser}: stale-run scan is not exported`);
     assert.match(background, /void workflowTrace\.repairStaleRuns\(\)\.catch\(\(\) => \{\}\);/, `${browser}: background startup does not scan stale runs`);
-    assert.match(traces, /if \(typeof repairStaleRuns === 'function'\) await repairStaleRuns\(\)\.catch\(\(\) => \[\]\);/, `${browser}: Traces page does not start repair`);
+    assert.match(traces, /\(async \(\) => \{\s*await repairStaleRuns\(\)\.catch\(\(\) => \[\]\);\s*await refresh\(\);/, `${browser}: Traces page does not repair before its first list load`);
   }
 });
 
