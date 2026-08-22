@@ -41,12 +41,20 @@ function normalizedThreshold(value) {
   return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : TRACE_REPAIR_STALE_AFTER_MS;
 }
 
-export function isStaleRunningTrace(run, { now = Date.now(), staleAfterMs = TRACE_REPAIR_STALE_AFTER_MS } = {}) {
+export function isStaleRunningTrace(run, {
+  now = Date.now(),
+  staleAfterMs = TRACE_REPAIR_STALE_AFTER_MS,
+  events = [],
+} = {}) {
   if (!run || run.status !== 'running' || run.repairedBy) return false;
-  const startedAt = Number(run.startedAt);
   const currentTime = Number(now);
-  if (!Number.isFinite(startedAt) || !Number.isFinite(currentTime)) return false;
-  return currentTime - startedAt >= normalizedThreshold(staleAfterMs);
+  let lastActivityAt = Number(run.startedAt);
+  if (!Number.isFinite(lastActivityAt) || !Number.isFinite(currentTime)) return false;
+  for (const event of Array.isArray(events) ? events : []) {
+    const eventTime = Number(event?.ts);
+    if (Number.isFinite(eventTime)) lastActivityAt = Math.max(lastActivityAt, eventTime);
+  }
+  return currentTime - lastActivityAt >= normalizedThreshold(staleAfterMs);
 }
 
 /**
@@ -60,11 +68,11 @@ export function buildTraceRepairPlan(run, events, {
   now = Date.now(),
   staleAfterMs = TRACE_REPAIR_STALE_AFTER_MS,
 } = {}) {
-  if (!isStaleRunningTrace(run, { now, staleAfterMs })) return null;
   const orderedEvents = (Array.isArray(events) ? events : [])
     .filter(Boolean)
     .slice()
     .sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+  if (!isStaleRunningTrace(run, { now, staleAfterMs, events: orderedEvents })) return null;
   const lastSeq = orderedEvents.reduce((max, event) => Math.max(max, Number(event.seq) || 0), 0);
   const code = normalizeErrorCode(TRACE_REPAIR_ERROR_CODE);
   const repairedEvents = [];

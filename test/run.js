@@ -9211,6 +9211,7 @@ test('trace repair: stale interrupted runs receive one ordered terminal repair',
 
 test('trace repair: ignores recent and already repaired runs, with mirrored helpers', () => {
   const recent = { runId: 'recent', startedAt: 95_000, status: 'running' };
+  const activeLongRun = { runId: 'active_long', startedAt: 1_000, status: 'running' };
   const repaired = {
     runId: 'repaired',
     startedAt: 1_000,
@@ -9222,6 +9223,13 @@ test('trace repair: ignores recent and already repaired runs, with mirrored help
       repair.buildTraceRepairPlan(recent, [], { now: 100_000, staleAfterMs: 60_000 }),
       null,
       `${label}: recent runs must remain eligible for normal completion`,
+    );
+    assert.equal(
+      repair.buildTraceRepairPlan(activeLongRun, [
+        { runId: activeLongRun.runId, seq: 1, ts: 95_000, kind: 'step_start', data: { step: 1 } },
+      ], { now: 100_000, staleAfterMs: 60_000 }),
+      null,
+      `${label}: recent durable activity must protect a long-running active trace`,
     );
     assert.equal(
       repair.buildTraceRepairPlan(repaired, [], { now: 100_000, staleAfterMs: 60_000 }),
