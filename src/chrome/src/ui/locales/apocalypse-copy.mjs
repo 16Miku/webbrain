@@ -12,7 +12,7 @@ const englishApocalypseModeCopy = {
   'ap.title': 'Apocalypse Mode',
   'ap.subtitle': 'WebBrain, ready when the internet isn’t.',
   'ap.hero.title': 'Offline knowledge, under your control',
-  'ap.hero.desc': 'Set up the three essentials for private local chat: a Text Model, a Vision Model, and one offline Wikipedia edition.',
+  'ap.hero.desc': 'Set up the four essentials for private local chat: a Text Model, a Vision Model, one offline Wikipedia edition, and the Emergency Box.',
   'ap.hero.consent': 'On supported browsers, turning this on starts the Text Model and smaller Simple English Wikipedia downloads. Local vision stays optional and must be enabled separately.',
   'ap.models.text.title': 'Text Model',
   'ap.models.text.lfm': 'Minimal text model',

@@ -112,7 +112,7 @@
   "apocalypse.label": "Modo Apocalipsis",
   "apocalypse.title": "WebBrain, listo incluso cuando no hay internet.",
   "apocalypse.heading": "Conocimiento sin conexión bajo tu control",
-  "apocalypse.description": "Configura los tres elementos esenciales para el chat local privado: un modelo de texto, un modelo de visión y una edición de Wikipedia sin conexión.",
+  "apocalypse.description": "Configura los cuatro elementos esenciales para el chat local privado: un modelo de texto, un modelo de visión, una edición de Wikipedia sin conexión y la Caja de Emergencia.",
   "apocalypse.video.cta": "Mira nuestro vídeo",
   "apocalypse.video.close_aria": "Cerrar el vídeo de Modo Apocalipsis",
   "features.page_understanding.title": "Comprensión de páginas",
