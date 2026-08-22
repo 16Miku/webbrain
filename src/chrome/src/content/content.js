@@ -6420,10 +6420,11 @@
       const base = document.title === attentionFlashOwnTitle
         ? attentionFlashStripMarker(document.title)
         : String(document.title ?? '');
-      attentionFlashOwnTitle = flashing
-        ? `${ATTENTION_FLASH_MARKER}${base}`
-        : base;
-      document.title = attentionFlashOwnTitle;
+      // Only the marked phase is extension-owned — during the quiet phase
+      // the title belongs to the page even though we just wrote it, so it
+      // must never be stripped on stop.
+      attentionFlashOwnTitle = flashing ? `${ATTENTION_FLASH_MARKER}${base}` : null;
+      document.title = flashing ? attentionFlashOwnTitle : base;
       // The favicon alternates with the title: our icon shows during the
       // marked phase and the site's own icons return during the quiet one.
       attentionFlashToggleFavicon(flashing);

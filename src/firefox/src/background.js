@@ -1663,6 +1663,21 @@ browser.tabs.onActivated.addListener(({ tabId } = {}) => {
   browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => {});
 });
 
+// Focusing a window does not fire tabs.onActivated for its already-active
+// tab, so badges set on restricted tabs in unfocused windows would linger
+// after the user returns to that window. Clear the focused window's active
+// tab badge as well.
+browser.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId == null || windowId === browser.windows.WINDOW_ID_NONE) return;
+  try {
+    const [activeTab] = await browser.tabs.query({ active: true, windowId });
+    const activeTabId = Number(activeTab?.id);
+    if (!Number.isInteger(activeTabId) || !flashedBadgeTabs.has(activeTabId)) return;
+    flashedBadgeTabs.delete(activeTabId);
+    await browser.browserAction.setBadgeText({ tabId: activeTabId, text: '' });
+  } catch { /* best-effort cleanup */ }
+});
+
 async function flashTabAttention(msg) {
   const tabId = Number(msg?.tabId);
   const success = msg?.success !== false;
@@ -1674,47 +1689,51 @@ async function flashTabAttention(msg) {
   } catch {
     return { ok: false, error: `Tab ${tabId} no longer exists.` };
   }
-  // Discarded tabs have no content-script receiver, so sendMessage below
-  // fails and they flow into the badge fallback — which works without
-  // touching the page and survives until the user activates the tab.
+  // Discarded/unloaded tabs and pages whose content script declines to
+  // blink (document already visible) both fall through to the badge
+  // fallback — which works without touching the page and survives until
+  // the user actually looks at the tab.
+  let flashAccepted = false;
   try {
-    await browser.tabs.sendMessage(tabId, {
+    const response = await browser.tabs.sendMessage(tabId, {
       target: 'content',
       action: 'attention_flash_start',
       params: { success },
     });
-    return { ok: true, mode: 'title-flash' };
+    flashAccepted = response?.started === true;
   } catch {
-    // No content-script receiver — fall back to a per-tab toolbar badge.
-    // But re-check first whether the user is actually looking at the tab:
-    // "active" only means selected within its own window, so an active tab
-    // in an unfocused window (user works elsewhere) still deserves the
-    // badge. The activation listener has already cleared any stale badge,
-    // and no further activation event would fire for an already-active tab.
-    let tabIsWatched = false;
-    try {
-      const fresh = await browser.tabs.get(tabId);
-      if (fresh?.active) {
-        const tabWindow = fresh.windowId != null
-          ? await browser.windows.get(fresh.windowId)
-          : null;
-        tabIsWatched = tabWindow?.focused === true;
-      }
-    } catch {
-      return { ok: false, error: `Tab ${tabId} no longer exists.` };
+    flashAccepted = false;
+  }
+  if (flashAccepted) return { ok: true, mode: 'title-flash' };
+  // No content-script receiver (or it declined) — fall back to a per-tab
+  // toolbar badge. But re-check first whether the user is actually looking
+  // at the tab: "active" only means selected within its own window, so an
+  // active tab in an unfocused window (user works elsewhere) still deserves
+  // the badge. The activation/focus listeners have already cleared any
+  // stale badge, and no further event would fire for an already-active tab.
+  let tabIsWatched = false;
+  try {
+    const fresh = await browser.tabs.get(tabId);
+    if (fresh?.active) {
+      const tabWindow = fresh.windowId != null
+        ? await browser.windows.get(fresh.windowId)
+        : null;
+      tabIsWatched = tabWindow?.focused === true;
     }
-    if (tabIsWatched) return { ok: true, mode: 'skipped-tab-watched' };
-    try {
-      await browser.browserAction.setBadgeText({ tabId, text: success ? '✓' : '!' });
-      await browser.browserAction.setBadgeBackgroundColor({
-        tabId,
-        color: success ? '#22c55e' : '#ef4444',
-      });
-      flashedBadgeTabs.add(tabId);
-      return { ok: true, mode: 'badge' };
-    } catch (error) {
-      return { ok: false, error: String(error?.message || error) };
-    }
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  if (tabIsWatched) return { ok: true, mode: 'skipped-tab-watched' };
+  try {
+    await browser.browserAction.setBadgeText({ tabId, text: success ? '✓' : '!' });
+    await browser.browserAction.setBadgeBackgroundColor({
+      tabId,
+      color: success ? '#22c55e' : '#ef4444',
+    });
+    flashedBadgeTabs.add(tabId);
+    return { ok: true, mode: 'badge' };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
   }
 }
 
