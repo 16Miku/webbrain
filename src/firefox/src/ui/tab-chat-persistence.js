@@ -411,8 +411,8 @@ export function createTabChatHandoffCoordinator(storageArea, {
           }
         }
       }
-      latestHtml.delete(queuedTabId);
       await storageArea.remove(removalKeys);
+      latestHtml.delete(queuedTabId);
       try {
         await commitAfterRemove?.();
       } catch (error) {

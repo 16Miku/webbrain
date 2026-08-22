@@ -38299,6 +38299,7 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     let acknowledgeHandoff;
     let requestedHandoff = null;
     let signalHandoffRequest;
+    let nextRemoveError = null;
     const handoffAcknowledged = new Promise(resolve => { acknowledgeHandoff = resolve; });
     const handoffRequested = new Promise(resolve => { signalHandoffRequest = resolve; });
     const storageArea = {
@@ -38312,6 +38313,11 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
         Object.assign(values, patch);
       },
       async remove(keys) {
+        if (nextRemoveError) {
+          const error = nextRemoveError;
+          nextRemoveError = null;
+          throw error;
+        }
         for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
       },
     };
@@ -38427,6 +38433,21 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     assert.equal(values['contextMenuPromptClaim:9']?.claimantId, 'panel-9', `${label}: scheduler failure should restore the prompt lease`);
     const restoredAfterRollback = await coordinator.load(9);
     assert.equal(restoredAfterRollback.html, '<div>conversation nine</div>', `${label}: scheduler rollback should restore the coordinator's lossless cache`);
+
+    await coordinator.save(10, '<div>lossless conversation ten</div>');
+    values[`${persistence.TAB_CHAT_PREFIX}10`] = '<div>compacted conversation</div>';
+    nextRemoveError = new Error('transcript removal failed');
+    await assert.rejects(
+      coordinator.clear(10, { commitAfterRemove: async () => {} }),
+      /transcript removal failed/,
+      `${label}: a failed transcript removal should reject the transactional clear`,
+    );
+    const restoredAfterRemoveFailure = await coordinator.load(10);
+    assert.equal(
+      restoredAfterRemoveFailure.html,
+      '<div>lossless conversation ten</div>',
+      `${label}: a failed transcript removal should preserve the coordinator's lossless cache`,
+    );
   }
 });
 
