@@ -381,19 +381,40 @@ async function _appendEventNow(runId, kind, data) {
 // count toward the budget and stay evictable.
 let _losslessTotalEstimate = null;
 
+async function _recomputeLosslessBytes(db, run) {
+  const events = await promisifyReq(
+    tx(db, ['events'], 'readonly').objectStore('events').index('runId')
+      .getAll(IDBKeyRange.only(run.runId)),
+  );
+  let bytes = 0;
+  for (const event of events || []) {
+    if (event?.kind !== 'llm_request' && event?.kind !== 'tool') continue;
+    try { bytes += new TextEncoder().encode(JSON.stringify(event.data)).length; } catch {}
+  }
+  if ((Number(run.losslessBytes) || 0) !== bytes) {
+    run.losslessBytes = bytes;
+    await promisifyReq(tx(db, ['runs']).objectStore('runs').put(run));
+  }
+  const state = _runState.get(run.runId);
+  if (state?.lossless === true) state.losslessBytes = bytes;
+  return bytes;
+}
+
 async function _scanLosslessTotal() {
   const db = await openDB();
-  let total = 0;
+  const runs = [];
   await new Promise((resolve) => {
     const req = tx(db, ['runs'], 'readonly').objectStore('runs').openCursor();
     req.onsuccess = () => {
       const c = req.result;
       if (!c) return resolve();
-      if (c.value?.lossless === true) total += Number(c.value.losslessBytes) || 0;
+      if (c.value?.lossless === true) runs.push(c.value);
       c.continue();
     };
     req.onerror = () => resolve();
   });
+  let total = 0;
+  for (const run of runs) total += await _recomputeLosslessBytes(db, run);
   _losslessTotalEstimate = total;
   return total;
 }
