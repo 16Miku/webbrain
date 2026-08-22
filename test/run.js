@@ -9466,7 +9466,9 @@ test('trace recorder: turn/step boundary helpers and structured error codes are 
     assert.match(recorderSource, /data\.code = normalizeErrorCode\(code\)/, `${browser}: recordError does not normalize the code`);
     assert.match(recorderSource, /import \{ normalizeErrorCode \} from '\.\/error-codes\.js';/, `${browser}: recorder does not import error-codes`);
     assert.match(recorderSource, /const _runWriteQueues = new Map\(\)/, `${browser}: per-run event serialization queue missing`);
-    assert.match(recorderSource, /await _flushRunWrites\(runId\)[\s\S]*?existing\.endedAt = Date\.now\(\)/, `${browser}: run finalization can race queued lifecycle events`);
+    assert.match(recorderSource, /async function _flushRunWrites\(runId\) \{\s*let pending = _runWriteQueues\.get\(runId\);\s*while \(pending\) \{[\s\S]*?const next = _runWriteQueues\.get\(runId\);\s*if \(!next \|\| next === pending\) return;\s*pending = next;[\s\S]*?export async function endRun[\s\S]*?await _flushRunWrites\(runId\);[\s\S]*?return _queueRunWrite\(runId, async \(\) => \{[\s\S]*?const runTx = tx\(db, \['runs'\]\);\s*const runStore = runTx\.objectStore\('runs'\);\s*const existing = await promisifyReq\(runStore\.get\(runId\)\);[\s\S]*?runStore\.put\(existing\)/, `${browser}: run finalization must drain nested refreshes, share the per-run queue, and transactionally patch the latest byte-accounting record`);
+    const endRunBody = recorderSource.slice(recorderSource.indexOf('export async function endRun'), recorderSource.indexOf('/**\n * Repair trace records'));
+    assert.doesNotMatch(endRunBody, /_runWriteQueues\.delete\(runId\)/, `${browser}: finalization must let the queue owner release itself after later queued migrations settle`);
     assert.match(recorderSource, /export function recordLLMRetry\([\s\S]*?_retryCount\(db, runId, step\)[\s\S]*?normalizeErrorCode\(code\)/, `${browser}: retry attempts are not derived from the durable event log`);
   }
 });

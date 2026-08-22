@@ -131,8 +131,13 @@ function _queueRunWrite(runId, write) {
 }
 
 async function _flushRunWrites(runId) {
-  const pending = _runWriteQueues.get(runId);
-  if (pending) await pending.catch(() => {});
+  let pending = _runWriteQueues.get(runId);
+  while (pending) {
+    await pending.catch(() => {});
+    const next = _runWriteQueues.get(runId);
+    if (!next || next === pending) return;
+    pending = next;
+  }
 }
 
 async function _peekSeq(db, runId) {
@@ -681,55 +686,64 @@ export function recordLLMRetry(runId, step, { delayMs = 0, code = 'UNKNOWN' } = 
 
 export async function endRun(runId, { status = 'done', finalContent = null } = {}) {
   if (!runId) return;
+  // Drain writes that enqueue migration refreshes while settling, then place
+  // finalization at the tail of the same run queue.
   await _flushRunWrites(runId);
-  if (!(await tracingEnabled())) return;
-  try {
-    const db = await openDB();
-    // Tally usage from events. `totalCost` is the sum of `usage.cost`
-    // across all llm_response events — providers report this in their
-    // native units (OpenRouter & OpenAI: USD).
-    let totalIn = 0, totalOut = 0, totalCost = 0, stepCount = 0;
-    let sawLoopError = false;
-    await new Promise((resolve) => {
-      const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
-      const req = idx.openCursor(IDBKeyRange.only(runId));
-      req.onsuccess = () => {
-        const c = req.result;
-        if (!c) return resolve();
-        const ev = c.value;
-        if (ev.kind === 'error' && ev.data?.phase === 'loop') sawLoopError = true;
-        if (ev.kind === 'llm_response') {
-          stepCount = Math.max(stepCount, ev.data?.step || 0);
-          const u = ev.data?.usage;
-          if (u) {
-            totalIn += u.prompt_tokens || 0;
-            totalOut += u.completion_tokens || 0;
-            if (typeof u.cost === 'number' && Number.isFinite(u.cost)) totalCost += u.cost;
+  // Finalization is a write in the same per-run sequence as events and any
+  // migration refresh queued while those event writes are still settling.
+  return _queueRunWrite(runId, async () => {
+    try {
+      if (!(await tracingEnabled())) return;
+      const db = await openDB();
+      // Tally usage from events. `totalCost` is the sum of `usage.cost`
+      // across all llm_response events — providers report this in their
+      // native units (OpenRouter & OpenAI: USD).
+      let totalIn = 0, totalOut = 0, totalCost = 0, stepCount = 0;
+      let sawLoopError = false;
+      await new Promise((resolve) => {
+        const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
+        const req = idx.openCursor(IDBKeyRange.only(runId));
+        req.onsuccess = () => {
+          const c = req.result;
+          if (!c) return resolve();
+          const ev = c.value;
+          if (ev.kind === 'error' && ev.data?.phase === 'loop') sawLoopError = true;
+          if (ev.kind === 'llm_response') {
+            stepCount = Math.max(stepCount, ev.data?.step || 0);
+            const u = ev.data?.usage;
+            if (u) {
+              totalIn += u.prompt_tokens || 0;
+              totalOut += u.completion_tokens || 0;
+              if (typeof u.cost === 'number' && Number.isFinite(u.cost)) totalCost += u.cost;
+            }
           }
-        }
-        c.continue();
-      };
-      req.onerror = () => resolve();
-    });
-    const existing = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
-    if (existing) {
-      const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
-      existing.endedAt = Date.now();
-      existing.durationMs = existing.endedAt - existing.startedAt;
-      existing.status = finalStatus;
-      existing.finalContent = finalContent;
-      existing.stepCount = stepCount;
-      existing.totalInputTokens = totalIn;
-      existing.totalOutputTokens = totalOut;
-      existing.totalCost = totalCost;
-      await promisifyReq(tx(db, ['runs']).objectStore('runs').put(existing));
+          c.continue();
+        };
+        req.onerror = () => resolve();
+      });
+      // Keep the read and write in one transaction so byte migration cannot
+      // land between a stale snapshot and finalization's whole-record update.
+      const runTx = tx(db, ['runs']);
+      const runStore = runTx.objectStore('runs');
+      const existing = await promisifyReq(runStore.get(runId));
+      if (existing) {
+        const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
+        existing.endedAt = Date.now();
+        existing.durationMs = existing.endedAt - existing.startedAt;
+        existing.status = finalStatus;
+        existing.finalContent = finalContent;
+        existing.stepCount = stepCount;
+        existing.totalInputTokens = totalIn;
+        existing.totalOutputTokens = totalOut;
+        existing.totalCost = totalCost;
+        await promisifyReq(runStore.put(existing));
+      }
+    } catch (e) {
+      console.warn('[trace] endRun failed:', e);
+    } finally {
+      _runState.delete(runId);
     }
-  } catch (e) {
-    console.warn('[trace] endRun failed:', e);
-  } finally {
-    _runState.delete(runId);
-    _runWriteQueues.delete(runId);
-  }
+  });
 }
 
 /**
