@@ -112,7 +112,7 @@
   "apocalypse.label": "アポカリプスモード",
   "apocalypse.title": "インターネットがなくても、WebBrain は準備万端です。",
   "apocalypse.heading": "あなたの制御下のオフライン知識",
-  "apocalypse.description": "プライベートなローカルチャットに必要な3つの要素（テキストモデル、ビジョンモデル、オフライン版ウィキペディア1つ）をセットアップします。",
+  "apocalypse.description": "プライベートなローカルチャットに必要な4つの要素（テキストモデル、ビジョンモデル、オフライン版ウィキペディア1つ、緊急ボックス）をセットアップします。",
   "apocalypse.video.cta": "動画を見る",
   "apocalypse.video.close_aria": "アポカリプスモードの動画を閉じる",
   "features.page_understanding.title": "ページ理解",

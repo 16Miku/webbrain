@@ -112,7 +112,7 @@
   "apocalypse.label": "末日模式",
   "apocalypse.title": "没有网络时，WebBrain 也准备就绪。",
   "apocalypse.heading": "由您掌控的离线知识",
-  "apocalypse.description": "设置私人本地聊天所需的三项核心内容：文本模型、视觉模型和一个离线维基百科版本。",
+  "apocalypse.description": "设置私人本地聊天所需的四项核心内容：文本模型、视觉模型、一个离线维基百科版本和应急箱。",
   "apocalypse.video.cta": "观看我们的视频",
   "apocalypse.video.close_aria": "关闭末日模式视频",
   "features.page_understanding.title": "页面理解",
