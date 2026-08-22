@@ -12622,7 +12622,6 @@ async function restorePendingAttachmentsForTab(tabId, attachments, {
     await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
     return;
   }
-  if (!shouldContinue()) return;
   const restorable = screenshotsPersisted
     ? attachments
     : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
