@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-22T18:56:49.521Z",
+  "id": "058",
+  "model": "qwen/qwen3-vl-32b-instruct",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "058",
+    "difficulty": {
+      "level": 3,
+      "slug": "intermediate",
+      "label": "Intermediate"
+    },
+    "category": "occlusion-and-contrast",
+    "title": "Report builder",
+    "image": "images/058.png",
+    "question": "What action is partially covered, and what visible overlay or widget causes the obstruction? Focus on the “Report builder” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/058.png",
+    "bytes": 89372,
+    "sha256": "572bc3a726c4d44cb153ba37e3e4c440f5e94a160c6572200fe042f0104e4ae9"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Report builder form for configuring and exporting workspace settings.\n\n2) Visible text:\n- Header: \"Report builder\"\n- Subtext: \"Update settings, then save your work.\"\n- Labels: \"Name\", \"Description\"\n- Button text: \"Export CSV\", \"Beta\"\n- Navigation tabs: \"Home\", \"Workspace\", \"Activity\"\n- Logo: \"WebScene\"\n\n3) Inputs:\n- Name field:\n  - Label: \"Name\"\n  - Value: \"Example workspace\"\n  - Placeholder: none\n  - Status: not focused, enabled\n- Description field:\n  - Label: \"Description\"\n  - Value: \"Production configuration\"\n  - Placeholder: none\n  - Status: not focused, enabled\n\n4) State signals:\n- No loading spinners, toasts, modals, error banners, or success messages visible.\n- No CAPTCHA or cookie/consent banners present.\n- A dark gray button labeled \"Beta\" is positioned next to the \"Export CSV\" button, possibly indicating a feature toggle or label.\n\n5) Blockers:\n- No obvious blockers. All inputs appear editable and no disabled elements prevent interaction.\n- However, there is no visible \"Save\" or \"Submit\" button, which may be required to complete the action.\n\n6) Unknowns:\n- The function of the \"Beta\" button is unclear — it may be a toggle or label only.\n- There is no indication of whether changes are auto-saved or require explicit submission.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1186,
+      "completion_tokens": 307,
+      "total_tokens": 1493,
+      "cost": 0.000251056,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.000251056,
+        "upstream_inference_prompt_cost": 0.000123344,
+        "upstream_inference_completions_cost": 0.000127712
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1087,
+    "total": 5530
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 10,
+    "possible": 10,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 3,
+        "possible": 3,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "blockers": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "account",
+          "pricing",
+          "report",
+          "editor",
+          "trading"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "report"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Report builder",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Report builder"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "target",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Export CSV",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Export CSV"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "cover",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Beta",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Beta"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "occlusion",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "cover",
+          "overlap",
+          "overlay",
+          "obstruct",
+          "block"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "block"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}
