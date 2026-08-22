@@ -86000,6 +86000,35 @@ test('detached run followers honor local cancellation before their next state pr
       `${label}: cancellation during a probe should reject before applying stale state`,
     );
     assert.equal(appliedStates, 0, `${label}: a probe completed after clear must not replay old conversation state`);
+
+    const applyRequestId = `${label}-cancelled-during-state-apply`;
+    let applyShouldContinue = true;
+    let completedStateApplications = 0;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 44, requestId: applyRequestId, mode: 'act', text: 'clear during state apply' },
+        start: async () => ({ accepted: true, requestId: applyRequestId }),
+        probe: async () => ({
+          running: false,
+          starting: false,
+          submittedTurnDurable: true,
+          runUi: { requestId: applyRequestId, status: 'completed', finalContent: 'stale result', events: [] },
+        }),
+        shouldContinue: () => applyShouldContinue,
+        onState: async () => {
+          await Promise.resolve();
+          applyShouldContinue = false;
+          completedStateApplications += 1;
+          return false;
+        },
+        isConnectionError: () => false,
+        wait: async () => {},
+      }),
+      /Run recovery was cancelled/,
+      `${label}: cancellation while applying state should reject before consuming a terminal snapshot`,
+    );
+    assert.equal(completedStateApplications, 1, `${label}: cancellation should be observed immediately after the awaited state application`);
   }
 });
 

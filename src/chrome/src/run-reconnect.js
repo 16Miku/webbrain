@@ -167,6 +167,7 @@ export async function runDetachedWithReconnect({
         try {
           await onState(state);
         } catch {}
+        if (!shouldContinue()) throw new Error('Run recovery was cancelled.');
       } catch (error) {
         if (!isConnectionError?.(error)) throw error;
         connectionFailures += 1;
