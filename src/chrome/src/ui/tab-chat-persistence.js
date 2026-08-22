@@ -362,12 +362,16 @@ export function createTabChatHandoffCoordinator(storageArea, {
     ownerId = '',
     handoffGeneration = null,
     additionalKeys = [],
+    commitAfterRemove = null,
   } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
     return enqueue(numericTabId, async (queuedTabId) => {
       const normalizedOwnerId = String(ownerId || '');
       const normalizedGeneration = Number(handoffGeneration);
+      if (normalizedOwnerId && typeof commitAfterRemove === 'function') {
+        throw new Error('A transactional clear cannot retain an existing handoff owner.');
+      }
       if (normalizedOwnerId) {
         if (!Number.isFinite(normalizedGeneration) || normalizedGeneration <= 0) {
           return { ok: true, skipped: true, reason: 'stale-handoff' };
@@ -379,7 +383,6 @@ export function createTabChatHandoffCoordinator(storageArea, {
           return { ok: true, skipped: true, reason: 'stale-handoff' };
         }
       }
-      latestHtml.delete(queuedTabId);
       const keys = [TAB_CHAT_PREFIX + queuedTabId];
       let nextGeneration = null;
       if (normalizedOwnerId) {
@@ -396,7 +399,30 @@ export function createTabChatHandoffCoordinator(storageArea, {
       for (const additionalKey of additionalKeys) {
         if (typeof additionalKey === 'string' && additionalKey) keys.push(additionalKey);
       }
-      await storageArea.remove([...new Set(keys)]);
+      const removalKeys = [...new Set(keys)];
+      const hadLatestHtml = latestHtml.has(queuedTabId);
+      const previousLatestHtml = latestHtml.get(queuedTabId);
+      const rollbackSnapshot = {};
+      if (typeof commitAfterRemove === 'function') {
+        for (const removalKey of removalKeys) {
+          const stored = await storageArea.get(removalKey);
+          if (Object.prototype.hasOwnProperty.call(stored || {}, removalKey)) {
+            rollbackSnapshot[removalKey] = stored[removalKey];
+          }
+        }
+      }
+      latestHtml.delete(queuedTabId);
+      await storageArea.remove(removalKeys);
+      try {
+        await commitAfterRemove?.();
+      } catch (error) {
+        if (Object.keys(rollbackSnapshot).length) {
+          await storageArea.set(rollbackSnapshot);
+        }
+        if (hadLatestHtml) latestHtml.set(queuedTabId, previousLatestHtml);
+        else latestHtml.delete(queuedTabId);
+        throw error;
+      }
       return {
         ok: true,
         handoffOwnerId: normalizedOwnerId || null,

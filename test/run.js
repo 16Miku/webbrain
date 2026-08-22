@@ -34422,7 +34422,7 @@ test('background bounds the active-run stop wait before clearing its conversatio
     const clearStart = background.indexOf("case 'clear_conversation':");
     const clearBody = background.slice(clearStart, background.indexOf("case 'compact_conversation':", clearStart));
     assert.match(clearBody, /const conversationId = await agent\.getConversationId\(tabId\);[\s\S]*?await stopActiveRunBeforeConversationClear\(tabId\);[\s\S]*?await scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: active runs should settle before old-conversation jobs and state are cleared`);
-    assert.match(clearBody, /msg\.clearContextMenuPrompt === true[\s\S]*?contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{ additionalKeys \}\)[\s\S]*?!tabChatClearResult\?\.ok \|\| tabChatClearResult\.skipped[\s\S]*?scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: prompt and transcript deletion should commit together before scheduler and conversation state are cleared`);
+    assert.match(clearBody, /const commitSchedulerClear = async \(\) => \{\s*await scheduler\.cancelForConversation\(tabId, conversationId\);\s*\};[\s\S]*?contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{[\s\S]*?additionalKeys,[\s\S]*?commitAfterRemove: commitSchedulerClear,[\s\S]*?!tabChatClearResult\?\.ok \|\| tabChatClearResult\.skipped[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: prompt, transcript, and scheduler cleanup should share a rollback boundary before conversation state is cleared`);
   }
 });
 
@@ -38404,6 +38404,23 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     assert.equal(values[`${persistence.TAB_CHAT_PREFIX}8`], undefined, `${label}: combined clear retained the transcript`);
     assert.equal(values['contextMenuPrompt:8'], undefined, `${label}: combined clear retained the prompt`);
     assert.equal(values['contextMenuPromptClaim:8'], undefined, `${label}: combined clear retained the prompt lease`);
+
+    values['contextMenuPrompt:9'] = { id: 'prompt-9', text: 'Keep this prompt' };
+    values['contextMenuPromptClaim:9'] = { promptId: 'prompt-9', claimantId: 'panel-9' };
+    await coordinator.save(9, '<div>conversation nine</div>');
+    await assert.rejects(
+      coordinator.clear(9, {
+        additionalKeys: ['contextMenuPrompt:9', 'contextMenuPromptClaim:9'],
+        commitAfterRemove: async () => { throw new Error('scheduler storage failed'); },
+      }),
+      /scheduler storage failed/,
+      `${label}: a failed scheduler commit should reject the combined clear`,
+    );
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}9`], '<div>conversation nine</div>', `${label}: scheduler failure should restore the transcript`);
+    assert.equal(values['contextMenuPrompt:9']?.id, 'prompt-9', `${label}: scheduler failure should restore the prompt`);
+    assert.equal(values['contextMenuPromptClaim:9']?.claimantId, 'panel-9', `${label}: scheduler failure should restore the prompt lease`);
+    const restoredAfterRollback = await coordinator.load(9);
+    assert.equal(restoredAfterRollback.html, '<div>conversation nine</div>', `${label}: scheduler rollback should restore the coordinator's lossless cache`);
   }
 });
 
@@ -41337,7 +41354,7 @@ test('background awaits context-menu prompt clear before agent chat starts', () 
     assert.doesNotMatch(chatBody, /contextMenuStorage\.clear\(msg\.contextMenuClear\.tabId,\s*msg\.contextMenuClear\.promptId\)\.catch\(\(\) => \{\}\)/, `${label}: context-menu clear should not be fire-and-forget`);
     const clearMatch = bg.match(/case 'clear_conversation': \{([\s\S]*?)\n\s+case '(?:disable_dev_diagnostics|compact_conversation)':/);
     assert.ok(clearMatch, `${label}: clear-conversation handler missing`);
-    assert.match(clearMatch[1], /contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{ additionalKeys \}\)[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: New conversation should durably delete its prompt and transcript together before clearing authoritative state`);
+    assert.match(clearMatch[1], /contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{[\s\S]*?commitAfterRemove: commitSchedulerClear,[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: New conversation should commit prompt, transcript, and scheduler cleanup before clearing authoritative state`);
   }
 });
 
