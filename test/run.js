@@ -38300,6 +38300,7 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     let requestedHandoff = null;
     let signalHandoffRequest;
     let nextRemoveError = null;
+    let nextSetError = null;
     const handoffAcknowledged = new Promise(resolve => { acknowledgeHandoff = resolve; });
     const handoffRequested = new Promise(resolve => { signalHandoffRequest = resolve; });
     const storageArea = {
@@ -38307,6 +38308,11 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
         return { [key]: values[key] };
       },
       async set(patch) {
+        if (nextSetError) {
+          const error = nextSetError;
+          nextSetError = null;
+          throw error;
+        }
         if (Object.hasOwn(patch, `${persistence.TAB_CHAT_PREFIX}7`)) {
           writes.push(patch[`${persistence.TAB_CHAT_PREFIX}7`]);
         }
@@ -38447,6 +38453,22 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
       restoredAfterRemoveFailure.html,
       '<div>lossless conversation ten</div>',
       `${label}: a failed transcript removal should preserve the coordinator's lossless cache`,
+    );
+
+    await coordinator.save(11, '<div>lossless conversation eleven</div>');
+    nextSetError = new Error('rollback write failed');
+    await assert.rejects(
+      coordinator.clear(11, {
+        commitAfterRemove: async () => { throw new Error('scheduler cancellation failed'); },
+      }),
+      /rollback write failed/,
+      `${label}: a failed durable rollback should reject the transactional clear`,
+    );
+    const restoredAfterRollbackFailure = await coordinator.load(11);
+    assert.equal(
+      restoredAfterRollbackFailure.html,
+      '<div>lossless conversation eleven</div>',
+      `${label}: a failed durable rollback should still restore the coordinator's lossless cache`,
     );
   }
 });

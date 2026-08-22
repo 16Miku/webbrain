@@ -416,11 +416,11 @@ export function createTabChatHandoffCoordinator(storageArea, {
       try {
         await commitAfterRemove?.();
       } catch (error) {
+        if (hadLatestHtml) latestHtml.set(queuedTabId, previousLatestHtml);
+        else latestHtml.delete(queuedTabId);
         if (Object.keys(rollbackSnapshot).length) {
           await storageArea.set(rollbackSnapshot);
         }
-        if (hadLatestHtml) latestHtml.set(queuedTabId, previousLatestHtml);
-        else latestHtml.delete(queuedTabId);
         throw error;
       }
       return {
