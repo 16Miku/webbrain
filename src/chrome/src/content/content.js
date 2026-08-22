@@ -6329,6 +6329,10 @@
   let attentionFlashTimeout = null;
   let attentionFlashFaviconEl = null;
   let attentionFlashOnVisible = null;
+  // Exact title string this flash last wrote — ownership marker. Stripping
+  // by prefix alone would eat a page's own title that legitimately starts
+  // with the same bell character.
+  let attentionFlashOwnTitle = null;
 
   function attentionFlashDotDataUrl() {
     try {
@@ -6368,10 +6372,12 @@
       document.removeEventListener('visibilitychange', attentionFlashOnVisible);
       attentionFlashOnVisible = null;
     }
-    // Leave the page's latest own title in place — only remove our marker.
-    // Toggling from a captured snapshot instead would discard live updates
-    // (unread counts, …) made while the tab was backgrounded.
-    document.title = attentionFlashStripMarker(document.title);
+    // Only undo our own write. If the page replaced the title since we last
+    // touched it, leave its value completely untouched.
+    if (attentionFlashOwnTitle != null && document.title === attentionFlashOwnTitle) {
+      document.title = attentionFlashStripMarker(document.title);
+    }
+    attentionFlashOwnTitle = null;
     if (attentionFlashFaviconEl) {
       attentionFlashFaviconEl.remove();
       attentionFlashFaviconEl = null;
@@ -6391,11 +6397,15 @@
     attentionFlashTimer = setInterval(() => {
       flashing = !flashing;
       // Derive each toggle from the live title so changes the site makes
-      // while backgrounded survive the flash instead of being overwritten.
-      const base = attentionFlashStripMarker(document.title);
-      document.title = flashing
+      // while backgrounded survive the flash. A previous marker is only
+      // stripped when the current title is still exactly what we wrote.
+      const base = document.title === attentionFlashOwnTitle
+        ? attentionFlashStripMarker(document.title)
+        : String(document.title ?? '');
+      attentionFlashOwnTitle = flashing
         ? `${ATTENTION_FLASH_MARKER}${base}`
         : base;
+      document.title = attentionFlashOwnTitle;
     }, ATTENTION_FLASH_INTERVAL_MS);
     try {
       // Append our icon link instead of editing the site's own <link> tags —

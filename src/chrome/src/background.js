@@ -2349,6 +2349,18 @@ async function flashTabAttention(msg) {
     return { ok: true, mode: 'title-flash' };
   } catch {
     // No content-script receiver — fall back to a per-tab toolbar badge.
+    // But re-check activity first: the user may have activated the tab while
+    // sendMessage was still rejecting. The activation listener has already
+    // cleared any badge, and no further activation event would fire, so
+    // setting one now would stick on the visible tab.
+    let tabIsActive = false;
+    try {
+      const fresh = await chrome.tabs.get(tabId);
+      tabIsActive = fresh?.active === true;
+    } catch {
+      return { ok: false, error: `Tab ${tabId} no longer exists.` };
+    }
+    if (tabIsActive) return { ok: true, mode: 'skipped-tab-active' };
     try {
       await chrome.action.setBadgeText({ tabId, text: success ? '✓' : '!' });
       await chrome.action.setBadgeBackgroundColor({

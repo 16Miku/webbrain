@@ -1581,10 +1581,18 @@ function triggerCompletionConfetti() {
   } catch { /* ignore */ }
 }
 
-function notifyCompletion({ success = false, storeReviewSuccess = success, tabId = null } = {}) {
+function notifyCompletion({
+  success = false,
+  storeReviewSuccess = success,
+  tabId = null,
+  outcome = success,
+} = {}) {
   playCompletionSound();
   if (success) triggerCompletionConfetti();
-  flashTabAttentionIfBackgrounded({ success, tabId });
+  // `outcome` is the run's real result regardless of which chat is being
+  // viewed — the background flash only styles its badge with it (✓ vs !),
+  // while `success` keeps the foreground-only confetti/store-review gates.
+  flashTabAttentionIfBackgrounded({ success: outcome, tabId });
   if (storeReviewSuccess) void maybePromptStoreReviewAfterSuccess();
 }
 
@@ -8551,6 +8559,7 @@ async function sendMessage(extraChatParams = {}) {
         success: currentTabId === tabId && completedSuccessfully,
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
         tabId,
+        outcome: completedSuccessfully,
       });
     }
     if (renderToCurrentTab && currentTabId === tabId) refreshRecommendedActions();
