@@ -34181,10 +34181,10 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
       /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
       `${label}: confirmed New conversation should preserve queued prompts until the bounded background clear succeeds`,
     );
-    assert.match(clearBody, /catch \(error\) \{[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: a failed New conversation clear should resume queued prompts for its initiating tab only after releasing the clear interlock`);
+    assert.match(clearBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: New conversation should finish a partial local reset and resume queued prompts only when the background clear itself failed`);
     const resetStart = panel.indexOf("if (command.value === '/reset') {");
     const resetBody = panel.slice(resetStart, panel.indexOf("if (command.value === '/print')", resetStart));
-    assert.match(resetBody, /catch \(error\) \{[\s\S]*?shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: a failed /reset clear should resume queued prompts for its initiating tab only after releasing the clear interlock`);
+    assert.match(resetBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?\} else \{\s*shouldDrainQueuedPrompts = true;[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldDrainQueuedPrompts\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: /reset should finish a partial local reset without draining preserved prompts into an already-cleared background conversation`);
     assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
     assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?!sameTabId\(currentTabId, tabId\)[\s\S]*?!sameTabId\(renderedTabId, tabId\)[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return;/, `${label}: a settling run must drain only its visible initiating tab and never drain into an in-flight clear`);
@@ -34266,7 +34266,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       panel.indexOf('\n\nfunction settleNewConversationConfirmation', panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {')),
     ), /setSelectionGroundedForTab/, `${label}: uncertain failed starts should not clear the fail-closed local scope before reconciliation`);
     assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*if \(clearedConversationRunRequestIds\.has\(requestId\)\) return accepted;\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: non-cleared chat-start failures should reconcile both explicit and inherited selected-text state`);
-    assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful background clear should release old run state before local transcript cleanup can fail`);
+    assert.match(panel, /async function renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure = false \} = \{\}\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful background clear should release old run state before local transcript cleanup can fail`);
 
     const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
     const workflowEnd = panel.indexOf('\n\nasync function submitSavedWorkflowParameters', workflowStart);
@@ -37987,9 +37987,9 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     assert.notEqual(mapDeleteIdx, -1, `${label}: reset should clear in-memory history ids`);
     assert.equal(hydrateMissingIdx < recordSetIdx && recordSetIdx < deleteIdx && activeRecordIdx < deleteIdx && conversationRecordIdx < deleteIdx && deleteIdx < mapDeleteIdx, true, `${label}: durable history must be hydrated and deleted before in-memory ids are dropped`);
 
-    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
+    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {})');
     assert.notEqual(helperStart, -1, `${label}: clear helper should be async`);
-    const helperBody = panel.slice(helperStart, panel.indexOf('refreshScheduledJobs({', helperStart));
+    const helperBody = panel.slice(helperStart, panel.indexOf('refreshRecommendedActions();', helperStart) + 'refreshRecommendedActions();'.length);
     assert.match(helperBody, /await clearCachedTabChat\(tabId\);[\s\S]*?await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should durably clear tab chat before deleting history and checking visibility`);
     assert.match(helperBody, /addMessage\('system', t\('sp\.cleared_message'\)\);[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should replace the invalidated transcript only after the durable clear`);
 
@@ -40412,7 +40412,7 @@ test('sidepanel scopes allow-api override to the tab conversation and confirms i
     const switchBody = panel.slice(switchStart, panel.indexOf('refreshScheduledJobs({', switchStart));
     assert.match(switchBody, /currentTabId = newTabId;[\s\S]*?syncApiMutationsAllowedForCurrentTab\(\);/, `${label}: switching tabs should load the selected tab's /allow-api state`);
 
-    const resetStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
+    const resetStart = panel.indexOf('async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {})');
     assert.notEqual(resetStart, -1, `${label}: renderClearedConversationForTab missing`);
     const resetBody = panel.slice(resetStart, panel.indexOf('refreshScheduledJobs({', resetStart));
     assert.match(resetBody, /clearCachedTabChat\(tabId\);[\s\S]*?setApiMutationsAllowedForTab\(tabId, false\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: reset should clear the target tab's /allow-api state before visible-tab guards`);
@@ -40580,9 +40580,9 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     );
     assert.match(panel, /async function parseSlashCommands\(text, tabId = currentTabId, options = \{\}\) \{/, `${label}: slash-command parsing should accept the initiating tab id and optional source context`);
 
-    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
+    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {})');
     assert.notEqual(helperStart, -1, `${label}: clear helper missing`);
-    const helperBody = panel.slice(helperStart, panel.indexOf('\n}', helperStart) + 2);
+    const helperBody = panel.slice(helperStart, panel.indexOf('refreshRecommendedActions();', helperStart) + 'refreshRecommendedActions();'.length);
     assert.match(helperBody, /clearCachedTabChat\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;[\s\S]*?messagesEl\.innerHTML = '';/, `${label}: clear helper should clear cached target tab and only mutate visible UI for the same tab`);
     assert.match(helperBody, /refreshScheduledJobs\(\{ tabId \}\);/, `${label}: clear helper should scope async scheduled-job refresh to the cleared tab`);
 
@@ -40865,7 +40865,7 @@ test('sidepanel keeps retry metadata long enough for returned error updates', ()
     );
     assert.match(
       source,
-      /function renderClearedConversationForTab\(tabId\) \{[\s\S]*?releaseRetryAttachmentsInTree\(messagesEl\);[\s\S]*?clearRetryAttachmentsForTab\(tabId\);[\s\S]*?messagesEl\.innerHTML = '';/,
+      /function renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure = false \} = \{\}\) \{[\s\S]*?releaseRetryAttachmentsInTree\(messagesEl\);[\s\S]*?clearRetryAttachmentsForTab\(tabId\);[\s\S]*?messagesEl\.innerHTML = '';/,
       `${label}: reset should release retry attachment payloads before removing retry buttons from the DOM`,
     );
     assert.match(
