@@ -13116,10 +13116,11 @@ async function restorePendingAttachmentsForTab(tabId, attachments, {
     attachments,
     { deliveryState: 'pending' },
   ).catch(() => false);
-  if (!shouldContinue() || getAttachmentGeneration(numericTabId) !== expectedGeneration) {
+  if (getAttachmentGeneration(numericTabId) !== expectedGeneration) {
     await removeStagedScreenshots(chrome.storage.local, numericTabId, attachments).catch(() => {});
     return;
   }
+  if (!shouldContinue()) return;
   const restorable = screenshotsPersisted
     ? attachments
     : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
