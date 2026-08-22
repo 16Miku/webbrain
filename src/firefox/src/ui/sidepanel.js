@@ -12196,7 +12196,10 @@ const CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS = 2_000;
 
 async function abortRunForConversationClear(tabId, requestId = localRunRequestIdForTab(tabId)) {
   requestId = String(requestId || '');
-  if (requestId) conversationClearFollowerCancellationRequestIds.add(requestId);
+  const follower = localRunFollowers.get(Number(tabId));
+  if (requestId && follower?.requestId === requestId) {
+    conversationClearFollowerCancellationRequestIds.add(requestId);
+  }
   let timeoutId = null;
   const timeout = new Promise(resolve => {
     timeoutId = setTimeout(resolve, CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS);
