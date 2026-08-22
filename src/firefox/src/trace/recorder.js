@@ -365,7 +365,7 @@ async function _appendEventNow(runId, kind, data) {
 // count toward the budget and stay evictable.
 let _losslessTotalEstimate = null;
 
-async function _recomputeLosslessBytes(db, run) {
+async function _recomputeLosslessBytes(db, run, { refreshActiveState = true } = {}) {
   const events = await promisifyReq(
     tx(db, ['events'], 'readonly').objectStore('events').index('runId')
       .getAll(IDBKeyRange.only(run.runId)),
@@ -381,6 +381,13 @@ async function _recomputeLosslessBytes(db, run) {
   if (current?.lossless === true && (Number(current.losslessBytes) || 0) !== bytes) {
     current.losslessBytes = bytes;
     await promisifyReq(runStore.put(current));
+  }
+  if (refreshActiveState && _runState.get(run.runId)?.lossless === true) {
+    void _queueRunWrite(run.runId, async () => {
+      const refreshedBytes = await _recomputeLosslessBytes(db, run, { refreshActiveState: false });
+      const state = _runState.get(run.runId);
+      if (state?.lossless === true) state.losslessBytes = refreshedBytes;
+    });
   }
   return bytes;
 }
