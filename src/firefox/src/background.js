@@ -1645,7 +1645,60 @@ browser.tabs.onRemoved.addListener((tabId) => {
   activeIndicatorTabs.delete(tabId);
   clearRunUiSnapshot(tabId);
   clearDetachedRunFailure(tabId);
+  flashedBadgeTabs.delete(tabId);
 });
+
+// ─── Completion attention flash ─────────────────────────────────────
+// When a run settles on a background tab, the side panel asks us to make
+// that tab noticeable. The preferred path blinks the page title/favicon
+// via the content script; when no receiver answers (restricted pages,
+// discarded tabs, …) we fall back to a per-tab toolbar badge that clears
+// as soon as the user activates the tab.
+const flashedBadgeTabs = new Set();
+
+browser.tabs.onActivated.addListener(({ tabId } = {}) => {
+  if (!flashedBadgeTabs.has(tabId)) return;
+  flashedBadgeTabs.delete(tabId);
+  browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => {});
+});
+
+async function flashTabAttention(msg) {
+  const tabId = Number(msg?.tabId);
+  const success = msg?.success !== false;
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
+  }
+  let tab = null;
+  try {
+    tab = await browser.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  if (tab?.discarded) {
+    return { ok: false, error: `Tab ${tabId} is discarded and cannot be flashed.` };
+  }
+  try {
+    await browser.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'attention_flash_start',
+      params: { success },
+    });
+    return { ok: true, mode: 'title-flash' };
+  } catch {
+    // No content-script receiver — fall back to a per-tab toolbar badge.
+    try {
+      await browser.browserAction.setBadgeText({ tabId, text: success ? '✓' : '!' });
+      await browser.browserAction.setBadgeBackgroundColor({
+        tabId,
+        color: success ? '#22c55e' : '#ef4444',
+      });
+      flashedBadgeTabs.add(tabId);
+      return { ok: true, mode: 'badge' };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
+  }
+}
 
 const RUN_UI_PREFIX = 'runUi:';
 const runUiPersistenceQueues = new Map();
@@ -2005,6 +2058,7 @@ async function handleMessage(msg, sender) {
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
     EMERGENCY_DOWNLOAD_ACTION,
+    'flash_tab_attention',
   ].includes(msg.action);
   if (!lightweightAction) {
     if (providerManager.providers.size === 0) {
@@ -2769,6 +2823,9 @@ async function handleMessage(msg, sender) {
         ownerId: msg.handoffOwnerId,
         handoffGeneration: msg.handoffGeneration,
       });
+
+    case 'flash_tab_attention':
+      return await flashTabAttention(msg);
 
     case 'load_tab_chat':
       return await tabChatHandoff.load(msg.tabId || sender.tab?.id, {

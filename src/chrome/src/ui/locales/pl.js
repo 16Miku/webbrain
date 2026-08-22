@@ -438,6 +438,8 @@ export default {
   'st.display.notify_sound.desc': 'Odtwarzaj krótki dźwięk w panelu bocznym, gdy agent ukończy zadanie. Nie zabrzmi, jeśli anulujesz wykonanie.',
   'st.display.completion_confetti.label': 'Konfetti po ukończeniu',
   'st.display.completion_confetti.desc': 'Pokazuj krótką animację konfetti z góry, gdy zadanie zakończy się powodzeniem. Domyślnie włączone; wyłącz, jeśli wolisz spokojniejsze zakończenie.',
+  'st.display.completion_flash_tab.label': "Migaj zakończoną kartą",
+  'st.display.completion_flash_tab.desc': "Gdy zadanie kończy się w karcie, którą opuściłeś, tytuł i ikona tej karty migają, abyś jednym spojrzeniem widział, która karta ukończyła pracę.",
   'st.display.max_steps.label': 'Maksymalna liczba kroków agenta',
   'st.display.max_steps.desc': 'Maksymalna liczba kroków z użyciem narzędzi, jakie agent może wykonać na wiadomość. Wyższe wartości pozwalają na bardziej złożone wieloetapowe zadania, ale mogą zużywać więcej tokenów. Ustaw suwak na ∞, aby uzyskać nieograniczoną liczbę kroków.',
   'st.display.request_timeout.label': 'Limit czasu żądania LLM',

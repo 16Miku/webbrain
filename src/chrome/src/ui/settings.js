@@ -107,6 +107,7 @@ const planReviewConfidenceValueLabel = document.getElementById('plan-review-conf
 const planReviewConfidenceRow = document.getElementById('row-plan-review-confidence');
 const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
+const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
@@ -699,7 +700,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -770,6 +771,7 @@ async function init() {
   }
   notifySoundToggle.checked = stored.notifySound ?? true; // on by default
   completionConfettiToggle.checked = stored.completionConfetti ?? true; // on by default
+  completionFlashTabToggle.checked = stored.completionFlashTab ?? true; // on by default
   tracingToggle.checked = stored.tracingEnabled === true;
   losslessTracingToggle.checked = stored.losslessTrace === true;
   // Lossless recording only means something when tracing is on; mirror the
@@ -1460,6 +1462,10 @@ notifySoundToggle.addEventListener('change', async () => {
 
 completionConfettiToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ completionConfetti: completionConfettiToggle.checked }).catch(() => {});
+});
+
+completionFlashTabToggle.addEventListener('change', async () => {
+  await chrome.storage.local.set({ completionFlashTab: completionFlashTabToggle.checked }).catch(() => {});
 });
 
 tracingToggle.addEventListener('change', async () => {

@@ -2307,7 +2307,60 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   for (const [id, replay] of apiRequestReplayById.entries()) {
     if (replay?.tabId === tabId) apiRequestReplayById.delete(id);
   }
+  flashedBadgeTabs.delete(tabId);
 });
+
+// ─── Completion attention flash ─────────────────────────────────────
+// When a run settles on a background tab, the side panel asks us to make
+// that tab noticeable. The preferred path blinks the page title/favicon
+// via the content script; when no receiver answers (chrome:// pages, the
+// Chrome Web Store, discarded tabs, …) we fall back to a per-tab toolbar
+// badge that clears as soon as the user activates the tab.
+const flashedBadgeTabs = new Set();
+
+chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
+  if (!flashedBadgeTabs.has(tabId)) return;
+  flashedBadgeTabs.delete(tabId);
+  chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+});
+
+async function flashTabAttention(msg) {
+  const tabId = Number(msg?.tabId);
+  const success = msg?.success !== false;
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
+  }
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  if (tab?.discarded || tab?.status === 'unloaded') {
+    return { ok: false, error: `Tab ${tabId} is discarded and cannot be flashed.` };
+  }
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'attention_flash_start',
+      params: { success },
+    });
+    return { ok: true, mode: 'title-flash' };
+  } catch {
+    // No content-script receiver — fall back to a per-tab toolbar badge.
+    try {
+      await chrome.action.setBadgeText({ tabId, text: success ? '✓' : '!' });
+      await chrome.action.setBadgeBackgroundColor({
+        tabId,
+        color: success ? '#22c55e' : '#ef4444',
+      });
+      flashedBadgeTabs.add(tabId);
+      return { ok: true, mode: 'badge' };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
+  }
+}
 
 /**
  * Central message handler.
@@ -2332,6 +2385,7 @@ async function handleMessage(msg, sender) {
     'capture_screenshot_redaction_snapshot',
     'ensure_offscreen_offline_rag_host',
     EMERGENCY_DOWNLOAD_ACTION,
+    'flash_tab_attention',
   ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
@@ -2444,6 +2498,8 @@ async function handleMessage(msg, sender) {
       return await stopTabRecording({ expectedRecordingId: msg.expectedRecordingId || null });
     case 'recording_capture_ended':
       return await stopTabRecording({ reason: 'capture_ended' });
+    case 'flash_tab_attention':
+      return await flashTabAttention(msg);
     case 'get_recording_state':
       return {
         ok: true,

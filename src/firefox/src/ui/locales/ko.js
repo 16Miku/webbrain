@@ -267,6 +267,8 @@ export default {
   'st.display.notify_sound.desc': '에이전트가 작업을 마치면 사이드 패널에서 짧은 알림음을 재생합니다. 실행을 취소한 경우에는 재생되지 않습니다.',
   'st.display.completion_confetti.label': '완료 색종이',
   'st.display.completion_confetti.desc': '작업이 성공적으로 끝나면 위에서 짧은 색종이 애니메이션을 표시합니다. 기본적으로 켜져 있으며, 더 차분한 마무리를 원하면 끌 수 있습니다.',
+  'st.display.completion_flash_tab.label': "완료된 탭 깜뗝이기",
+  'st.display.completion_flash_tab.desc': "떠나 있는 탭에서 작업이 끌나면 해당 탭의 제목과 아이콘이 깜뗝여 어떤 탭이 완료됐는지 한눈에 알 수 있습니다.",
   'st.display.max_steps.label': '에이전트 최대 단계 수',
   'st.display.max_steps.desc': '한 메시지당 에이전트가 사용할 수 있는 도구 호출 단계의 최대 수입니다. 값이 클수록 더 복잡한 다단계 작업이 가능하지만 토큰을 더 소비할 수 있습니다. 슬라이더를 ∞로 설정하면 단계 수가 무제한입니다.',
   'st.display.traces_link.label': '트레이스',

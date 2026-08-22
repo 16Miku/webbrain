@@ -1344,11 +1344,13 @@ const {
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
 let completionConfettiEnabled = true;
+let completionFlashEnabled = true;
 let notifyAudio = null;
 let completionConfettiTimer = null;
-chrome.storage.local.get(['notifySound', 'completionConfetti']).then((stored) => {
+chrome.storage.local.get(['notifySound', 'completionConfetti', 'completionFlashTab']).then((stored) => {
   if (stored && stored.notifySound === false) notifySoundEnabled = false;
   if (stored && stored.completionConfetti === false) completionConfettiEnabled = false;
+  if (stored && stored.completionFlashTab === false) completionFlashEnabled = false;
 }).catch(() => {});
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.notifySound) {
@@ -1356,6 +1358,9 @@ chrome.storage.onChanged.addListener((changes) => {
   }
   if (changes.completionConfetti) {
     completionConfettiEnabled = changes.completionConfetti.newValue !== false;
+  }
+  if (changes.completionFlashTab) {
+    completionFlashEnabled = changes.completionFlashTab.newValue !== false;
   }
 });
 
@@ -1576,10 +1581,25 @@ function triggerCompletionConfetti() {
   } catch { /* ignore */ }
 }
 
-function notifyCompletion({ success = false, storeReviewSuccess = success } = {}) {
+function notifyCompletion({ success = false, storeReviewSuccess = success, tabId = null } = {}) {
   playCompletionSound();
   if (success) triggerCompletionConfetti();
+  flashTabAttentionIfBackgrounded({ success, tabId });
   if (storeReviewSuccess) void maybePromptStoreReviewAfterSuccess();
+}
+
+/**
+ * If the run finished on a tab the user has since navigated away from, ask
+ * the background to make that tab noticeable (title/favicon blink, or a
+ * per-tab toolbar badge on pages content scripts can't reach). Best-effort:
+ * failures are silently ignored — the chime already played.
+ */
+function flashTabAttentionIfBackgrounded({ success, tabId }) {
+  if (!completionFlashEnabled) return;
+  if (tabId == null || sameTabId(currentTabId, tabId)) return;
+  try {
+    void sendToBackground('flash_tab_attention', { tabId, success }).catch(() => {});
+  } catch { /* ignore */ }
 }
 
 function getExtensionStoreKey() {
@@ -3017,7 +3037,7 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     await drainQueuedPromptsAfterRunSettles();
   }
   if (event === 'completed' && job?.source !== 'watch') {
-    notifyCompletion({ success: job?.lastOutcome === 'success' });
+    notifyCompletion({ success: job?.lastOutcome === 'success', tabId: runTabId });
   }
 }
 
@@ -8530,6 +8550,7 @@ async function sendMessage(extraChatParams = {}) {
       notifyCompletion({
         success: currentTabId === tabId && completedSuccessfully,
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
+        tabId,
       });
     }
     if (renderToCurrentTab && currentTabId === tabId) refreshRecommendedActions();

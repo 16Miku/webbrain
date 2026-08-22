@@ -43985,7 +43985,7 @@ test('completion confetti is default-on and success-only in sidepanel completion
     assert.match(panel, /function isSuccessfulAskCompletion\(mode, response\)/, `${label}: sidepanel should classify successful Ask replies separately`);
     assert.match(panel, /if \(success\) triggerCompletionConfetti\(\);/, `${label}: confetti should only fire for successful completions`);
     assert.match(panel, /result\?\.outcome === 'success'/, `${label}: live done success should require explicit success outcome`);
-    assert.match(panel, /notifyCompletion\(\{\s*success:\s*job\?\.lastOutcome === 'success'\s*\}\)/, `${label}: scheduled completed jobs should celebrate only explicit success outcomes`);
+    assert.match(panel, /notifyCompletion\(\{\s*success:\s*job\?\.lastOutcome === 'success'\s*[},]/, `${label}: scheduled completed jobs should celebrate only explicit success outcomes`);
     assert.match(panel, /success:\s*currentTabId === tabId && completedSuccessfully/, `${label}: live confetti should be gated to the tab that completed`);
     assert.doesNotMatch(panel, /completedSuccessfully = !\(res\?\./, `${label}: live confetti should not treat every normal chat response as successful completion`);
 

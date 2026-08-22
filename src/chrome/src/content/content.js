@@ -4860,6 +4860,22 @@
       'wait_for_element': () => waitForElement(msg.params || {}),
       'get_selection': () => ({ text: window.getSelection()?.toString() || '' }),
       'find_text': () => findText(msg.params || {}),
+      // ── Completion attention flash (tab title/favicon blink) ─────────
+      'attention_flash_start': () => {
+        try {
+          return { success: true, started: startAttentionFlash() };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
+      'attention_flash_stop': () => {
+        try {
+          stopAttentionFlash();
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
       // ── Accessibility-tree-backed reads and actions ──────────────────
       //
       // The tree is built by src/content/accessibility-tree.js (a port of
@@ -6296,4 +6312,96 @@
     }
     sendResponse(result);
   });
+
+  // ─── Tab attention flash ────────────────────────────────────────────
+  // When a run finishes on a tab the user has navigated away from, the side
+  // panel asks this page to blink its title and favicon so the finished tab
+  // can be found at a glance. Blinking stops when the tab becomes visible,
+  // after ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
+  //
+  // Declared at the end of this closure (function declarations hoist, so the
+  // message handlers above can call them) — code above this point is sliced
+  // and evaluated standalone by tests.
+  const ATTENTION_FLASH_INTERVAL_MS = 700;
+  const ATTENTION_FLASH_TIMEOUT_MS = 30000;
+  const ATTENTION_FLASH_MARKER = '\u{1F514} ';
+  let attentionFlashTimer = null;
+  let attentionFlashTimeout = null;
+  let attentionFlashOriginalTitle = null;
+  let attentionFlashFaviconEl = null;
+  let attentionFlashOnVisible = null;
+
+  function attentionFlashDotDataUrl() {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(32, 32, 26, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return canvas.toDataURL('image/png');
+    } catch {
+      return 'data:image/gif;base64,R0lGODlhAQABAIAAAJ2cjQAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
+    }
+  }
+
+  function stopAttentionFlash() {
+    if (attentionFlashTimer) {
+      clearInterval(attentionFlashTimer);
+      attentionFlashTimer = null;
+    }
+    if (attentionFlashTimeout) {
+      clearTimeout(attentionFlashTimeout);
+      attentionFlashTimeout = null;
+    }
+    if (attentionFlashOnVisible) {
+      document.removeEventListener('visibilitychange', attentionFlashOnVisible);
+      attentionFlashOnVisible = null;
+    }
+    // Restore the site's own title only while we still own it — pages that
+    // mutate their own title mid-flash keep their newer value.
+    if (attentionFlashOriginalTitle != null && document.title.startsWith(ATTENTION_FLASH_MARKER)) {
+      document.title = attentionFlashOriginalTitle;
+    }
+    attentionFlashOriginalTitle = null;
+    if (attentionFlashFaviconEl) {
+      attentionFlashFaviconEl.remove();
+      attentionFlashFaviconEl = null;
+    }
+  }
+
+  function startAttentionFlash() {
+    if (typeof document === 'undefined') return false;
+    stopAttentionFlash();
+    // Already looking at the page — nothing to draw attention to.
+    if (document.visibilityState === 'visible') return false;
+    attentionFlashOriginalTitle = String(document.title ?? '');
+    attentionFlashOnVisible = () => {
+      if (document.visibilityState === 'visible') stopAttentionFlash();
+    };
+    document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    let flashing = false;
+    attentionFlashTimer = setInterval(() => {
+      flashing = !flashing;
+      document.title = flashing
+        ? `${ATTENTION_FLASH_MARKER}${attentionFlashOriginalTitle}`
+        : attentionFlashOriginalTitle;
+    }, ATTENTION_FLASH_INTERVAL_MS);
+    try {
+      // Append our icon link instead of editing the site's own <link> tags —
+      // browsers prefer the last-declared favicon, so removing ours on stop
+      // restores the original without touching site elements.
+      attentionFlashFaviconEl = document.createElement('link');
+      attentionFlashFaviconEl.setAttribute('rel', 'icon');
+      attentionFlashFaviconEl.setAttribute('data-webbrain-attention', '1');
+      attentionFlashFaviconEl.setAttribute('href', attentionFlashDotDataUrl());
+      (document.head || document.documentElement).appendChild(attentionFlashFaviconEl);
+    } catch { /* favicon swap is best-effort */ }
+    attentionFlashTimeout = setTimeout(stopAttentionFlash, ATTENTION_FLASH_TIMEOUT_MS);
+    return true;
+  }
 })();
