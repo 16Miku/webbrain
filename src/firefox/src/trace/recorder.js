@@ -423,7 +423,11 @@ async function _scanLosslessTotal() {
     req.onerror = () => resolve();
   });
   let total = 0;
-  for (const run of runs) total += await _recomputeLosslessBytes(db, run);
+  for (const run of runs) {
+    total += run.losslessBytesEncoding === 'utf8'
+      ? Number(run.losslessBytes) || 0
+      : await _recomputeLosslessBytes(db, run);
+  }
   _losslessTotalEstimate = total;
   return total;
 }
