@@ -421,7 +421,12 @@ export function createContextMenuStorage(getStore) {
         try {
           await store.remove(ck);
         } catch {
-          return { ok: false, released: false, reason: 'storage' };
+          return {
+            ok: false,
+            released: false,
+            reason: 'storage',
+            leaseExpiresAt: Number(activeClaim.expiresAt) || undefined,
+          };
         }
       }
       claims.delete(numericTabId);

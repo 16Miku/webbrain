@@ -42903,6 +42903,9 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage, opti
       }
       if (action === 'release_context_menu_prompt_claim') {
         releases.push(params);
+        if (typeof options.releasePrompt === 'function') {
+          return await options.releasePrompt(params, releases.length);
+        }
         return { ok: true, released: true };
       }
       assert.equal(action, 'consume_context_menu_prompt');
@@ -43011,6 +43014,39 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
     }, `${label}: retry should still clear the stored prompt when accepted`);
     assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: recovered sends should retain prompt ownership`);
     assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: recovered sends should remain retryable until reservation`);
+  }
+});
+
+test('context-menu prompts release and requeue after pre-run durable cleanup fails', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-cleanup-retry`, tabId: 7, text: 'Summarize this selection' };
+    const h = createContextMenuPromptHarness(
+      createHandler,
+      prompt,
+      async (_extra, attempt) => {
+        if (attempt === 1) throw new Error('durable prompt cleanup failed');
+        return true;
+      },
+      {
+        releasePrompt: async () => ({
+          ok: true,
+          released: true,
+          prompt,
+          retryAfterMs: 5,
+        }),
+      },
+    );
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await new Promise(resolve => setTimeout(resolve, 90));
+
+    assert.equal(h.releases.length, 1, `${label}: a pre-run cleanup failure should release the owned claim`);
+    assert.equal(h.claims.length, 2, `${label}: the surviving durable prompt should be reclaimed`);
+    assert.equal(h.sends.length, 2, `${label}: the surviving prompt should retry without a remount`);
+    assert.equal(h.sends[1].extra.contextMenuClear.promptId, prompt.id, `${label}: retry should retain durable cleanup identity`);
   }
 });
 

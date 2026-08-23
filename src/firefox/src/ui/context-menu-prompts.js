@@ -154,12 +154,12 @@ export function createContextMenuPromptHandler({
     const clearPayload = { tabId: payload.tabId ?? currentTabId, promptId: payload.id };
     const releasePromptClaim = async () => {
       try {
-        await sendToBackground('release_context_menu_prompt_claim', {
+        return await sendToBackground('release_context_menu_prompt_claim', {
           tabId: clearPayload.tabId,
           promptId: payload.id,
           claimantId,
         });
-      } catch { /* the durable lease still expires if release fails */ }
+      } catch { return null; /* the durable lease still expires if release fails */ }
     };
     let claimResult = null;
     try {
@@ -205,11 +205,10 @@ export function createContextMenuPromptHandler({
     // immediately when it starts the run — after receiving the request (so a
     // pre-acceptance crash preserves the prompt) but before the agent loop
     // (so a mid-run panel close does not replay it on reopen).
-    // Don't re-queue on failure: by the time sendMessage() resolves or rejects,
-    // the user message is already shown in the UI and the background has already
-    // cleared storage, so re-queuing would duplicate the submission on the next
-    // drain.  On a pre-receipt SW crash, storage is still intact and
-    // consumePendingContextMenuPrompt() recovers the prompt on the next panel load.
+    // Generic failures are normally delivery-ambiguous and must not replay a
+    // prompt that the background already cleared. If releasing this exact claim
+    // proves the durable prompt survived a pre-run cleanup failure, however,
+    // schedule a fresh claim instead of stranding it until a panel remount.
     let accepted = false;
     let rejectedClaim = null;
     try {
@@ -225,7 +224,18 @@ export function createContextMenuPromptHandler({
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
         ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
       });
-    } catch { /* storage recovery can retry the prompt later */ }
+    } catch {
+      if (!rejectedClaim) {
+        const releaseResult = await releasePromptClaim();
+        if (releaseResult?.released || releaseResult?.reason === 'storage') {
+          rejectedClaim = {
+            reason: 'start-failed',
+            leaseExpiresAt: releaseResult.leaseExpiresAt,
+            retryAfterMs: releaseResult.retryAfterMs || (releaseResult.released ? 250 : 1_000),
+          };
+        }
+      }
+    }
     runningContextMenuPromptId = null;
     trackedContextMenuPromptIds.delete(payload.id);
     if (accepted) {
