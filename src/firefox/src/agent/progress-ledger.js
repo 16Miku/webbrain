@@ -380,6 +380,17 @@ function mergedProgressStatus(canonicalStatus, duplicateStatus) {
   return 'pending';
 }
 
+function mergeCanonicalProgressFields(canonicalFields, duplicateFields) {
+  const canonical = canonicalFields && typeof canonicalFields === 'object' ? canonicalFields : {};
+  const duplicate = duplicateFields && typeof duplicateFields === 'object' ? duplicateFields : {};
+  const out = { ...duplicate };
+  for (const [key, value] of Object.entries(canonical)) {
+    const collected = value !== undefined && value !== null && value !== '';
+    if (collected || !Object.prototype.hasOwnProperty.call(out, key)) out[key] = value;
+  }
+  return out;
+}
+
 function mergeCanonicalProgressRows(canonical, duplicate) {
   const status = mergedProgressStatus(canonical?.status, duplicate?.status);
   if (!status) return null;
@@ -397,8 +408,7 @@ function mergeCanonicalProgressRows(canonical, duplicate) {
     ...(duplicate?.action ? { action: duplicate.action } : {}),
     source: duplicate?.source || canonical?.source || 'model',
     fields: {
-      ...(canonical?.fields || {}),
-      ...(duplicate?.fields || {}),
+      ...mergeCanonicalProgressFields(canonical?.fields, duplicate?.fields),
       ...(canonical?.fields?.completionRequirement === true || duplicate?.fields?.completionRequirement === true
         ? { completionRequirement: true } : {}),
       ...(canonical?.fields?.classifierTarget === true || duplicate?.fields?.classifierTarget === true

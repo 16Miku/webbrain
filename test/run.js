@@ -68553,6 +68553,34 @@ test('progress ledger repairs persisted placeholder sets only when identities ar
   assert.equal(conflicting.rows.length, 2);
 });
 
+test('persisted reconciliation preserves canonical collected fields over duplicate nulls', () => {
+  for (const reconcile of [reconcilePersistedLedgerRows, reconcilePersistedLedgerRowsFx]) {
+    const keepsCollected = reconcile([
+      { id: 'expected:1', label: 'profile 1', action: 'follow', status: 'acted', sessionId: 'field-keep', fields: { expectedOrdinal: 1, email: 'alice@example.com' } },
+      { id: 'alice', label: 'Follow alice', action: 'follow', status: 'acted', sessionId: 'field-keep', attempts: 1, fields: { email: null } },
+    ]);
+    assert.equal(keepsCollected.changed, true);
+    assert.deepEqual(keepsCollected.rows.map(row => row.id), ['expected:1']);
+    assert.equal(keepsCollected.rows[0].fields.email, 'alice@example.com');
+
+    const fillsMissing = reconcile([
+      { id: 'expected:1', label: 'profile 2', action: 'follow', status: 'acted', sessionId: 'field-keep', fields: { expectedOrdinal: 1 } },
+      { id: 'carol', label: 'Follow carol', action: 'follow', status: 'acted', sessionId: 'field-keep', attempts: 1, fields: { email: 'carol@example.com' } },
+    ]);
+    assert.equal(fillsMissing.changed, true);
+    assert.deepEqual(fillsMissing.rows.map(row => row.id), ['expected:1']);
+    assert.equal(fillsMissing.rows[0].fields.email, 'carol@example.com');
+
+    const keepsExplicitNulls = reconcile([
+      { id: 'expected:1', label: 'profile 3', action: 'follow', status: 'processed', sessionId: 'field-keep', fields: { expectedOrdinal: 1, email: null } },
+      { id: 'dave', label: 'Follow dave', action: 'follow', status: 'processed', sessionId: 'field-keep', attempts: 1 },
+    ]);
+    assert.equal(keepsExplicitNulls.changed, true);
+    assert.ok(Object.prototype.hasOwnProperty.call(keepsExplicitNulls.rows[0].fields || {}, 'email'));
+    assert.equal(keepsExplicitNulls.rows[0].fields.email, null);
+  }
+});
+
 test('expected ordinals are app-owned typed metadata', () => {
   let state = upsertLedgerItems([], [{
     id: 'expected:1', label: 'alice', action: 'follow', status: 'pending',
