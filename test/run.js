@@ -8162,6 +8162,8 @@ const TRACE_REPAIR_CH = await import('file://' + path.join(ROOT, 'src/chrome/src
 const TRACE_REPAIR_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/repair.js').replace(/\\/g, '/'));
 const TRACE_TRAJECTORY_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/trajectory.js').replace(/\\/g, '/'));
 const TRACE_TRAJECTORY_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/trajectory.js').replace(/\\/g, '/'));
+const TRACE_STATS_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/stats.js').replace(/\\/g, '/'));
+const TRACE_STATS_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/stats.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -9585,6 +9587,93 @@ test('trace trajectory: closes run rows for unlisted terminal end statuses', () 
   }
 });
 
+test('trace stats: aggregates event metrics and mirrors browser modules', () => {
+  const events = [
+    { kind: 'llm_request', data: { step: 1 } },
+    { kind: 'llm_response', data: { step: 1, usage: { prompt_tokens: 10, completion_tokens: 4, cost: 0.12 }, latencyMs: 300 } },
+    { kind: 'tool', data: { step: 1, latencyMs: 35 } },
+    { kind: 'note', data: { step: 1, note: 'llm_retry' } },
+    { kind: 'vision_sub_call', data: { step: 1, latencyMs: 42 } },
+    { kind: 'error', data: { step: 1, phase: 'loop', code: 'TRANSPORT' } },
+    { kind: 'llm_response', data: { step: 2, usage: { prompt_tokens: 7, completion_tokens: 5, cost: 0.03 }, latencyMs: 120 } },
+  ];
+  const stats = TRACE_STATS_CH.buildTraceStats(events);
+  assert.deepEqual(stats, {
+    stepCount: 2,
+    llmRequestCount: 1,
+    llmResponseCount: 2,
+    toolCallCount: 1,
+    visionSubCallCount: 1,
+    errorCount: 1,
+    retryCount: 1,
+    totalInputTokens: 17,
+    totalOutputTokens: 9,
+    totalCost: 0.15,
+    totalLlmLatencyMs: 420,
+    totalToolLatencyMs: 35,
+    hasLoopError: true,
+  });
+  assert.deepEqual(TRACE_STATS_FX.buildTraceStats(events), stats, 'Chrome/Firefox stats aggregators must agree');
+});
+
+test('trace stats: aggregates durable run snapshots without replaying events', () => {
+  const stats = TRACE_STATS_CH.aggregateTraceRuns([
+    {
+      runId: 'done-run', status: 'done', stepCount: 2,
+      totalInputTokens: 10, totalOutputTokens: 4, totalCost: 0.12,
+      llmRequestCount: 1, llmResponseCount: 1, toolCallCount: 1,
+      visionSubCallCount: 1, errorCount: 1, retryCount: 1,
+      totalLlmLatencyMs: 300, totalToolLatencyMs: 35,
+    },
+    {
+      runId: 'running-run', status: 'running', stepCount: 1,
+      totalInputTokens: 7, totalOutputTokens: 5, totalCost: 0.03,
+      llmRequestCount: 0, llmResponseCount: 1, toolCallCount: 0,
+      visionSubCallCount: 0, errorCount: 0, retryCount: 0,
+      totalLlmLatencyMs: 120, totalToolLatencyMs: 0,
+    },
+    { runId: 'legacy-run', status: 'done', stepCount: 1, totalInputTokens: 2, totalOutputTokens: 1, totalCost: 0.01 },
+  ]);
+  assert.deepEqual(stats, {
+    runCount: 3,
+    runningRunCount: 1,
+    completedRunCount: 2,
+    stepCount: 4,
+    llmRequestCount: 1,
+    llmResponseCount: 2,
+    toolCallCount: 1,
+    visionSubCallCount: 1,
+    errorCount: 1,
+    retryCount: 1,
+    totalInputTokens: 19,
+    totalOutputTokens: 10,
+    totalCost: 0.16,
+    totalLlmLatencyMs: 420,
+    totalToolLatencyMs: 35,
+    hasLoopError: false,
+  });
+});
+
+test('trace stats: recorder persists bounded run snapshots and reads session indexes', () => {
+  const sources = ['chrome', 'firefox'].map((browser) => [
+    browser,
+    fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8'),
+  ]);
+  for (const [browser, recorder] of sources) {
+    assert.match(recorder, /import \{ createTraceStats, addTraceEvent, aggregateTraceRuns \} from '\.\/stats\.js';/, `${browser}: recorder stats import missing`);
+    assert.match(recorder, /llmRequestCount: 0[\s\S]*?totalToolLatencyMs: 0/, `${browser}: new runs do not initialize stats snapshots`);
+    assert.match(recorder, /addTraceEvent\(stats, ev\)/, `${browser}: finalized runs do not use the shared event reducer`);
+    assert.match(recorder, /existing\.totalToolLatencyMs = stats\.totalToolLatencyMs/, `${browser}: finalized run stats are incomplete`);
+    assert.match(recorder, /index\(sessionQuery \? 'sessionId' : 'startedAt'\)/, `${browser}: session queries do not use the lineage index`);
+    assert.match(recorder, /export async function getSessionStats\(conversationId/, `${browser}: session stats reader is missing`);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/stats.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/stats.js'), 'utf8'),
+    'Chrome/Firefox stats modules must remain mirrored',
+  );
+});
+
 test('trace UI: renders the trajectory rows before the detailed event timeline', () => {
   for (const browser of ['chrome', 'firefox']) {
     const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
@@ -9592,9 +9681,13 @@ test('trace UI: renders the trajectory rows before the detailed event timeline',
     assert.match(traces, /import \{ buildTraceTrajectory \} from '\.\.\/trace\/trajectory\.js';/, `${browser}: Traces UI does not import the trajectory module`);
     assert.match(traces, /function renderStepTrajectory\(events, compact\)/, `${browser}: trajectory renderer missing`);
     assert.match(traces, /const rows = buildTraceTrajectory\(events\);/, `${browser}: UI does not build rows through the pure seam`);
+    assert.match(traces, /import \{ aggregateTraceRuns \} from '\.\.\/trace\/stats\.js';/, `${browser}: UI does not import the session stats seam`);
+    assert.match(traces, /sessionStats \|\| aggregateTraceRuns\(siblings\)/, `${browser}: conversation panel does not aggregate durable run snapshots`);
+    assert.match(traces, /getSessionStats\(run\.conversationId\)/, `${browser}: conversation panel does not read indexed session stats`);
     assert.match(traces, /trajectory-table/, `${browser}: trajectory table class missing from renderer`);
     assert.match(traces, /renderStepTrajectory\(events, compact\)/, `${browser}: run view does not render the trajectory before details`);
     assert.match(html, /\.trajectory-table|\.trajectory-row/, `${browser}: trajectory table styles missing`);
+    assert.match(html, /\.conv-summary/, `${browser}: conversation statistics style missing`);
   }
 });
 

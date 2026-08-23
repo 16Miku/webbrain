@@ -5,10 +5,11 @@
 
 import {
   listRuns, getRun, getRunEvents, getScreenshot,
-  deleteRun, clearAllRuns, repairStaleRuns,
+  getSessionStats, deleteRun, clearAllRuns, repairStaleRuns,
 } from '../trace/recorder.js';
 import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
 import { buildTraceTrajectory } from '../trace/trajectory.js';
+import { aggregateTraceRuns } from '../trace/stats.js';
 import { sanitizeTraceExport } from '../agent/trace-export.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
@@ -240,10 +241,19 @@ async function renderCompare(aId, bId) {
  * chat) so users can jump between them. Hidden in compare mode (panes are
  * already two-up) and when there's only one run in the conversation.
  */
-function renderConversationPanel(run, compact) {
+function renderConversationPanel(run, compact, sessionStats = null) {
   if (compact) return '';
   const siblings = siblingsOf(run);
   if (siblings.length < 2) return '';
+  const stats = sessionStats || aggregateTraceRuns(siblings);
+  const totalTokens = stats.totalInputTokens + stats.totalOutputTokens;
+  const summary = [
+    t(stats.runCount === 1 ? 'tr.run' : 'tr.runs', { n: stats.runCount }),
+    t(stats.stepCount === 1 ? 'tr.step' : 'tr.steps_plural', { n: stats.stepCount }),
+    totalTokens ? t('tr.tokens_short', { n: totalTokens.toLocaleString() }) : '',
+    formatCost(stats.totalCost) ? `${t('tr.cost.label')}: ${formatCost(stats.totalCost)}` : '',
+    stats.errorCount ? `${t('tr.event.error_kind')} ×${stats.errorCount}` : '',
+  ].filter(Boolean).join(' · ');
   const turnNumber = siblings.findIndex(r => r.runId === run.runId) + 1;
   const items = siblings.map((r, i) => {
     const isCurrent = r.runId === run.runId;
@@ -257,6 +267,7 @@ function renderConversationPanel(run, compact) {
   return `
     <div class="conv-panel">
       <div class="conv-panel-label">${escapeHtml(t('tr.conversation.label'))} · ${escapeHtml(t('tr.conversation.turn_of', { n: turnNumber, total: siblings.length }))}</div>
+      <div class="conv-summary">${escapeHtml(summary)}</div>
       <div class="conv-turns">${items}</div>
     </div>
   `;
@@ -337,6 +348,9 @@ function renderStepTrajectory(events, compact) {
 }
 
 async function buildRunView(run, events, compact, objectUrls = new Set()) {
+  const sessionStats = !compact && run.conversationId
+    ? await getSessionStats(run.conversationId).catch(() => null)
+    : null;
   const header = `
     <div class="run-header">
       <h2>${escapeHtml(run.model || t('tr.unknown_model'))}</h2>
@@ -351,7 +365,7 @@ async function buildRunView(run, events, compact, objectUrls = new Set()) {
       ${formatCost(run.totalCost) ? `<span class="stat">${escapeHtml(t('tr.cost.label'))} <b>${escapeHtml(formatCost(run.totalCost))}</b></span>` : ''}
     </div>
     ${run.lossless === true ? `<div class="lossless-warning" role="alert">${escapeHtml(t('tr.lossless.warning'))}</div>` : ''}
-    ${renderConversationPanel(run, compact)}
+    ${renderConversationPanel(run, compact, sessionStats)}
     <div class="run-task">${escapeHtml(run.userMessage || '')}</div>
     ${run.finalContent ? `<div class="run-task" style="border-left-color:var(--success);"><b style="color:var(--success);">${escapeHtml(t('tr.final_label'))}</b> ${escapeHtml(run.finalContent)}</div>` : ''}
   `;
