@@ -8174,6 +8174,8 @@ const TRACE_TRAJECTORY_CH = await import('file://' + path.join(ROOT, 'src/chrome
 const TRACE_TRAJECTORY_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/trajectory.js').replace(/\\/g, '/'));
 const TRACE_STATS_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/stats.js').replace(/\\/g, '/'));
 const TRACE_STATS_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/stats.js').replace(/\\/g, '/'));
+const TRACE_LINEAGE_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/lineage.js').replace(/\\/g, '/'));
+const TRACE_LINEAGE_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/lineage.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -9699,6 +9701,67 @@ test('trace stats: aggregates durable run snapshots without replaying events', (
   });
 });
 
+test('trace lineage: groups same-session runs and attaches deterministic parent links', () => {
+  const result = TRACE_LINEAGE_CH.buildTraceLineageGroups([
+    { runId: 'child', conversationId: 'session-a', parentRunId: 'root', startedAt: 200 },
+    { runId: 'root', conversationId: 'session-a', startedAt: 100 },
+    { runId: 'other', conversationId: 'session-b', startedAt: 150 },
+  ]);
+  const session = result.groups.find(group => group.sessionId === 'session-a');
+  assert.ok(session, 'same-session group is missing');
+  assert.equal(session.runCount, 2);
+  assert.equal(session.roots.length, 1);
+  assert.equal(session.roots[0].run.runId, 'root');
+  assert.equal(session.roots[0].children[0].run.runId, 'child');
+  assert.equal(session.roots[0].children[0].lineageState, 'attached');
+  assert.equal(result.incomplete, false);
+});
+
+test('trace lineage: preserves missing parents and bounded-result incompleteness', () => {
+  const result = TRACE_LINEAGE_CH.buildTraceLineageGroups([
+    { runId: 'child', conversationId: 'session-a', parentRunId: 'not-loaded', startedAt: 200 },
+  ], { bounded: true });
+  const node = result.groups[0].roots[0];
+  assert.equal(node.run.runId, 'child');
+  assert.equal(node.parentRunId, 'not-loaded');
+  assert.equal(node.lineageState, 'missing-parent');
+  assert.equal(result.missingParentCount, 1);
+  assert.equal(result.incomplete, true);
+});
+
+test('trace lineage: keeps duplicate IDs, cycles, and cross-session parents visible', () => {
+  const result = TRACE_LINEAGE_CH.buildTraceLineageGroups([
+    { runId: 'duplicate', conversationId: 'session-a', startedAt: 100 },
+    { runId: 'duplicate', conversationId: 'session-a', startedAt: 110 },
+    { runId: 'ambiguous-child', conversationId: 'session-a', parentRunId: 'duplicate', startedAt: 120 },
+    { runId: 'cycle-a', conversationId: 'session-a', parentRunId: 'cycle-b', startedAt: 130 },
+    { runId: 'cycle-b', conversationId: 'session-a', parentRunId: 'cycle-a', startedAt: 140 },
+    { runId: 'parent', conversationId: 'session-parent', startedAt: 150 },
+    { runId: 'cross-child', conversationId: 'session-child', parentRunId: 'parent', parentSessionId: 'session-parent', startedAt: 160 },
+  ]);
+  const nodes = result.groups.flatMap(group => group.nodes);
+  assert.equal(nodes.length, 7, 'lineage builder dropped a persisted record');
+  assert.equal(nodes.find(node => node.run.runId === 'ambiguous-child').lineageState, 'ambiguous-parent');
+  assert.equal(nodes.find(node => node.run.runId === 'cycle-a').lineageState, 'cycle');
+  assert.equal(nodes.find(node => node.run.runId === 'cycle-b').lineageState, 'cycle');
+  assert.equal(nodes.find(node => node.run.runId === 'cross-child').lineageState, 'cross-session-parent');
+  assert.equal(nodes.filter(node => !node.parentKey).length, 7, 'affected records must remain visible roots');
+  assert.equal(result.duplicateIdCount, 2);
+  assert.equal(result.cycleCount, 2);
+  assert.equal(result.crossSessionParentCount, 1);
+  assert.equal(result.incomplete, true);
+});
+
+test('trace lineage: Chrome and Firefox modules remain browser-neutral and mirrored', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/lineage.js'), 'utf8');
+  assert.equal(source, fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/lineage.js'), 'utf8'));
+  assert.doesNotMatch(source, /chrome\\.|browser\\.|indexedDB|storage\\./);
+  assert.deepEqual(
+    TRACE_LINEAGE_FX.buildTraceLineageGroups([{ runId: 'root', conversationId: 'session-a' }]),
+    TRACE_LINEAGE_CH.buildTraceLineageGroups([{ runId: 'root', conversationId: 'session-a' }]),
+  );
+});
+
 test('trace stats: recorder persists bounded run snapshots and reads session indexes', () => {
   const sources = ['chrome', 'firefox'].map((browser) => [
     browser,
@@ -9733,6 +9796,30 @@ test('trace UI: renders the trajectory rows before the detailed event timeline',
     assert.match(traces, /renderStepTrajectory\(events, compact\)/, `${browser}: run view does not render the trajectory before details`);
     assert.match(html, /\.trajectory-table|\.trajectory-row/, `${browser}: trajectory table styles missing`);
     assert.match(html, /\.conv-summary/, `${browser}: conversation statistics style missing`);
+  }
+});
+
+test('trace UI: renders collapsed session lineage groups with bounded-result warnings', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.html`), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/locales/en.js`), 'utf8');
+    assert.match(traces, /import \{ buildTraceLineageGroups \} from '\.\.\/trace\/lineage\.js';/, `${browser}: Traces UI does not use the lineage module`);
+    assert.match(traces, /buildTraceLineageGroups\(filtered, \{ bounded: queryBounded \}\)/, `${browser}: lineage query bound is not passed to the pure seam`);
+    assert.match(traces, /data-lineage-group-key/, `${browser}: session groups are not interactive`);
+    assert.match(traces, /data-lineage-toggle/, `${browser}: child lineage expansion is not interactive`);
+    assert.match(traces, /tr\.lineage\.incomplete/, `${browser}: incomplete lineage has no user-facing indicator`);
+    assert.match(html, /lineage-group|lineage-incomplete|lineage-node/, `${browser}: lineage styles are missing`);
+    for (const key of [
+      'tr.lineage.standalone',
+      'tr.lineage.incomplete',
+      'tr.lineage.toggle',
+      'tr.lineage.missing_parent',
+      'tr.lineage.ambiguous_parent',
+      'tr.lineage.cross_session_parent',
+      'tr.lineage.duplicate_id',
+      'tr.lineage.cycle',
+    ]) assert.match(locale, new RegExp(key.replaceAll('.', '\\.' )), `${browser}: missing ${key} locale fallback`);
   }
 });
 

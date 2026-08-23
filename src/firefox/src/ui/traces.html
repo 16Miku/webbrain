@@ -289,6 +289,94 @@
       white-space: nowrap;
       max-width: 230px;
     }
+    .lineage-incomplete {
+      margin: 4px 4px 8px;
+      padding: 7px 9px;
+      border-left: 3px solid var(--warning);
+      background: rgba(255,152,0,0.10);
+      color: var(--warning);
+      border-radius: 0 6px 6px 0;
+      font-size: 11px;
+    }
+    .lineage-group {
+      margin: 2px 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(22,33,62,0.42);
+      overflow: hidden;
+    }
+    .lineage-group-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 9px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+    }
+    .lineage-group-toggle:hover { background: var(--bg2); }
+    .lineage-group-chevron,
+    .lineage-toggle,
+    .lineage-toggle-spacer {
+      flex: 0 0 18px;
+      width: 18px;
+      color: var(--text3);
+      text-align: center;
+      font-size: 12px;
+    }
+    .lineage-group-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .lineage-group-summary {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--text2);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lineage-group-runs { padding: 0 4px 4px 8px; }
+    .lineage-node + .lineage-node { margin-top: 2px; }
+    .lineage-node .lineage-node {
+      margin-left: 17px;
+      border-left: 1px solid var(--border);
+      padding-left: 8px;
+    }
+    .lineage-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: stretch;
+      gap: 4px;
+    }
+    .lineage-toggle {
+      align-self: center;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .lineage-toggle:hover { color: var(--text); background: transparent; }
+    .lineage-badge {
+      display: inline-block;
+      margin-left: 5px;
+      color: var(--warning);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .lineage-badge.cross-session-parent { color: var(--accent); }
+    .lineage-parent-ref {
+      display: inline-block;
+      margin-left: 5px;
+      color: var(--text3);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 9px;
+    }
     .stat {
       font-size: 11px;
       color: var(--text2);
