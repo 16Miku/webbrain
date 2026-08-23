@@ -377,7 +377,10 @@ async function _appendEventNow(runId, kind, data) {
     if (state?.lossless === true && state.losslessBytesEncoding !== 'utf8') {
       const run = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
       if (run?.lossless === true) {
-        state.losslessBytes = await _recomputeLosslessBytes(db, run, { refreshActiveState: false });
+        state.losslessBytes = await _recomputeLosslessBytes(db, run, {
+          refreshActiveState: false,
+          trustMarkedCurrent: false,
+        });
         state.losslessBytesEncoding = 'utf8';
       }
     }
@@ -416,7 +419,10 @@ async function _appendEventNow(runId, kind, data) {
 // count toward the budget and stay evictable.
 let _losslessTotalEstimate = null;
 
-async function _recomputeLosslessBytes(db, run, { refreshActiveState = true } = {}) {
+async function _recomputeLosslessBytes(db, run, {
+  refreshActiveState = true,
+  trustMarkedCurrent = true,
+} = {}) {
   const events = await promisifyReq(
     tx(db, ['events'], 'readonly').objectStore('events').index('runId')
       .getAll(IDBKeyRange.only(run.runId)),
@@ -429,15 +435,24 @@ async function _recomputeLosslessBytes(db, run, { refreshActiveState = true } = 
   const runTx = tx(db, ['runs']);
   const runStore = runTx.objectStore('runs');
   const current = await promisifyReq(runStore.get(run.runId));
-  if (current?.lossless === true
-      && ((Number(current.losslessBytes) || 0) !== bytes || current.losslessBytesEncoding !== 'utf8')) {
-    current.losslessBytes = bytes;
-    current.losslessBytesEncoding = 'utf8';
-    await promisifyReq(runStore.put(current));
+  if (current?.lossless === true) {
+    if (trustMarkedCurrent && current.losslessBytesEncoding === 'utf8') {
+      // A serialized append or another migration committed after our event
+      // snapshot. Its atomic marker+total is newer, so never overwrite it.
+      bytes = Number(current.losslessBytes) || 0;
+    } else if ((Number(current.losslessBytes) || 0) !== bytes
+        || current.losslessBytesEncoding !== 'utf8') {
+      current.losslessBytes = bytes;
+      current.losslessBytesEncoding = 'utf8';
+      await promisifyReq(runStore.put(current));
+    }
   }
   if (refreshActiveState && _runState.get(run.runId)?.lossless === true) {
     void _queueRunWrite(run.runId, async () => {
-      const refreshedBytes = await _recomputeLosslessBytes(db, run, { refreshActiveState: false });
+      const refreshedBytes = await _recomputeLosslessBytes(db, run, {
+        refreshActiveState: false,
+        trustMarkedCurrent: false,
+      });
       const state = _runState.get(run.runId);
       if (state?.lossless === true) {
         state.losslessBytes = refreshedBytes;
