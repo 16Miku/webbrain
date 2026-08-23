@@ -15050,6 +15050,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     void cdpClient.cleanupTab(tabId).catch(() => {});
     this._cancelPendingPlans(tabId, 'tab closed');
     this._isPdfTabCache.delete(tabId);
+    this._lastTypeFieldIdent?.delete(tabId);
+    this._lastTypeFieldEpoch?.delete(tabId);
     this._lastCdpClickIdent?.delete(tabId);
     this._lastClickProgress?.delete(tabId);
     this._clickAxCdpFallbacks?.delete(tabId);
@@ -15106,6 +15108,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentRunId.delete(tabId);
     }
     this._clearRunLoopState(tabId);
+  }
+
+  clearLastTypeFieldIdent(tabId) {
+    this._lastTypeFieldIdent?.delete(tabId);
+    if (!this._lastTypeFieldEpoch) this._lastTypeFieldEpoch = new Map();
+    const nextEpoch = (this._lastTypeFieldEpoch.get(tabId) || 0) + 1;
+    this._lastTypeFieldEpoch.set(tabId, nextEpoch);
+  }
+
+  _captureLastTypeFieldEpoch(tabId) {
+    return this._lastTypeFieldEpoch?.get(tabId) || 0;
+  }
+
+  _rememberLastTypeFieldIdent(tabId, fieldIdent, epoch) {
+    if (this._captureLastTypeFieldEpoch(tabId) !== epoch) return false;
+    const repeated = this._lastTypeFieldIdent?.get(tabId) === fieldIdent;
+    if (!this._lastTypeFieldIdent) this._lastTypeFieldIdent = new Map();
+    this._lastTypeFieldIdent.set(tabId, fieldIdent);
+    return repeated;
   }
 
   clearConversation(tabId) {
@@ -24767,6 +24788,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             }
 
+            const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
             if (args.clear) {
               dispatched = true;
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
@@ -24795,13 +24817,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tokenConsumed = true;
 
             const fieldIdent = `focused:${prepared.tag}|${prepared.name}`;
-            const prev = this._lastTypeFieldIdent?.get(tabId);
             let warning;
-            if (prev === fieldIdent) {
+            if (this._rememberLastTypeFieldIdent(tabId, fieldIdent, typeFieldEpoch)) {
               warning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
             }
-            if (!this._lastTypeFieldIdent) this._lastTypeFieldIdent = new Map();
-            this._lastTypeFieldIdent.set(tabId, fieldIdent);
             return {
               success: true,
               ...(verification?.verified === true ? { verified: true } : {}),
@@ -24856,6 +24875,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: 'Could not preserve the selector target for safe typing. Re-read the page and retry.',
             };
           }
+          const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
           try {
             result = await cdpClient.typeText(
               tabId,
@@ -24875,12 +24895,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // Track field for duplicate-typing detection
           if (result.success) {
             const fieldIdent = `sel:${args.selector}`;
-            const prev = this._lastTypeFieldIdent?.get(tabId);
-            if (prev === fieldIdent) {
+            if (this._rememberLastTypeFieldIdent(tabId, fieldIdent, typeFieldEpoch)) {
               result.warning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
             }
-            if (!this._lastTypeFieldIdent) this._lastTypeFieldIdent = new Map();
-            this._lastTypeFieldIdent.set(tabId, fieldIdent);
           }
           return result;
         }
@@ -25022,6 +25039,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
 
+          const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
           const beforeSignature = await cdpClient.textEntrySignature(tabId, { focused: true });
           if (args.clear) {
             dispatched = true;
@@ -25049,13 +25067,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
           // Track field for duplicate-typing detection
           const fieldIdent = `focused:${focus.tag}|${focus.name}`;
-          const prev = this._lastTypeFieldIdent?.get(tabId);
           let warning;
-          if (prev === fieldIdent) {
+          if (this._rememberLastTypeFieldIdent(tabId, fieldIdent, typeFieldEpoch)) {
             warning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
           }
-          if (!this._lastTypeFieldIdent) this._lastTypeFieldIdent = new Map();
-          this._lastTypeFieldIdent.set(tabId, fieldIdent);
 
           return {
             success: true,

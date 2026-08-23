@@ -945,8 +945,10 @@ let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
 const cancelledRunRecoveryRequestIds = new Set();
+const conversationClearFollowerCancellationRequestIds = new Set();
 const adoptedRunRecoveryRequestIds = new Set();
 const clearedConversationRunRequestIds = new Set();
+const failedConversationClearRecoveryTabs = new Set();
 let recommendationsRequestId = 0;
 let providerSelectionRequestId = 0;
 let providerTestRequestId = 0;
@@ -974,9 +976,10 @@ const retryAttachmentIdsByTab = new Map();
 function setTabProcessing(tabId, processing) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return;
-  if (processing) processingTabs.add(numericTabId);
+  const effectiveProcessing = !!processing || failedConversationClearRecoveryTabs.has(numericTabId);
+  if (effectiveProcessing) processingTabs.add(numericTabId);
   else processingTabs.delete(numericTabId);
-  if (sameTabId(currentTabId, numericTabId)) isProcessing = !!processing;
+  if (sameTabId(currentTabId, numericTabId)) isProcessing = effectiveProcessing;
 }
 
 function isTabProcessing(tabId) {
@@ -1183,6 +1186,7 @@ function createRunRequestId(tabId) {
 const {
   acceptContextMenuPrompt,
   drainQueuedContextMenuPrompts,
+  hasQueuedForTab: hasQueuedContextMenuPromptForTab,
   consumePendingContextMenuPrompt,
   clearQueuedForTab,
 } = createContextMenuPromptHandler({
@@ -2493,12 +2497,23 @@ function drainQueuedComposerMessageForCurrentTab() {
   return true;
 }
 
-async function renderClearedConversationForTab(tabId) {
+async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {}) {
   dismissSelectionAskAction();
   setSelectionGroundedForTab(tabId, false);
-  const clearResult = await clearCachedTabChat(tabId);
-  if (!clearResult?.ok || clearResult?.skipped) {
-    throw new Error(clearResult?.error || 'Unable to clear tab chat.');
+  // The background conversation is already cleared before this helper runs.
+  // Release the old run even if clearing the local transcript fails, because
+  // its follower no longer owns the tab and cannot settle these flags itself.
+  setTabProcessing(tabId, false);
+  setTabAbortRequested(tabId, false);
+  let clearResult = null;
+  let cacheClearError = null;
+  try {
+    clearResult = await clearCachedTabChat(tabId);
+  } catch (error) {
+    cacheClearError = error;
+  }
+  if ((!clearResult?.ok || clearResult?.skipped) && !allowCacheClearFailure) {
+    throw cacheClearError || new Error(clearResult?.error || 'Unable to clear tab chat.');
   }
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
@@ -2512,6 +2527,8 @@ async function renderClearedConversationForTab(tabId) {
   resetChatNavigation();
   renderedTabId = tabId;
   messagesEl.innerHTML = '';
+  currentAssistantEl = null;
+  hideActivity();
   inputEl.value = '';
   autoResizeInput();
   syncSendButtonState();
@@ -2820,7 +2837,56 @@ async function scheduledJobAction(action, jobId) {
   }
 }
 
-async function drainQueuedPromptsAfterRunSettles() {
+const QUEUED_PROMPT_DRAIN_RETRY_MS = 1_000;
+const queuedPromptDrainRetryTimers = new Map();
+
+function cancelQueuedPromptDrainRetry(tabId) {
+  const numericTabId = Number(tabId);
+  const timerId = queuedPromptDrainRetryTimers.get(numericTabId);
+  if (timerId != null) clearTimeout(timerId);
+  queuedPromptDrainRetryTimers.delete(numericTabId);
+}
+
+function scheduleQueuedPromptDrainRetry(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId) || queuedPromptDrainRetryTimers.has(numericTabId)) return;
+  const timerId = setTimeout(() => {
+    queuedPromptDrainRetryTimers.delete(numericTabId);
+    void drainQueuedPromptsAfterRunSettles(numericTabId);
+  }, QUEUED_PROMPT_DRAIN_RETRY_MS);
+  queuedPromptDrainRetryTimers.set(numericTabId, timerId);
+}
+
+function hasQueuedPromptForTab(tabId) {
+  return getQueuedComposerMessages(tabId).length > 0
+    || hasQueuedContextMenuPromptForTab(tabId);
+}
+
+async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  if (isConversationClearInProgress(tabId)) return;
+  if (!hasQueuedPromptForTab(numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  let runState = null;
+  try {
+    runState = await sendToBackground('agent_run_state', { tabId: numericTabId });
+  } catch { /* retry while a queued prompt still needs the background reservation */ }
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  if (isConversationClearInProgress(numericTabId)) return;
+  if (!runState?.ok || runState.running || runState.starting) {
+    scheduleQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  cancelQueuedPromptDrainRetry(numericTabId);
   if (drainQueuedComposerMessageForCurrentTab()) return;
   drainQueuedContextMenuPrompts();
 }
@@ -2872,7 +2938,7 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     hideActivity();
     if (currentAssistantEl === assistantEl) currentAssistantEl = null;
     if (renderedTabId != null) await flushRenderedTabChat();
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(runTabId);
   }
   // Terminal scheduled runs chime like live runs do. The attention flash
   // itself is owned by the background scheduler path — scheduled jobs keep
@@ -2983,7 +3049,7 @@ async function handleScheduledJobEvent(data, tabId) {
       setTabProcessing(runTabId, false);
       syncSendButtonState();
       addMessage('system', systemHtml(tSystemHtml('sp.scheduled.needs_user_input', { title })));
-      drainQueuedPromptsAfterRunSettles();
+      drainQueuedPromptsAfterRunSettles(runTabId);
     }
   }
 }
@@ -4260,7 +4326,9 @@ async function switchToTab(newTabId) {
     syncSendButtonState();
   }
   drainQueuedAgentUpdatesForTab(newTabId);
-  consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  consumePendingContextMenuPrompt()
+    .then(() => drainQueuedPromptsAfterRunSettles(newTabId))
+    .catch(() => {});
   if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
 }
 
@@ -4325,7 +4393,7 @@ function requestVisibleSidePanelStateRefresh() {
   }).catch(() => {});
 }
 
-async function refreshConversationScopeState(tabId = currentTabId) {
+async function refreshConversationScopeState(tabId = currentTabId, { apply = true } = {}) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return null;
   let state = null;
@@ -4334,16 +4402,147 @@ async function refreshConversationScopeState(tabId = currentTabId) {
   } catch {
     return null;
   }
-  applyConversationScopeState(numericTabId, state);
+  if (apply) applyConversationScopeState(numericTabId, state);
   return state;
+}
+
+const FAILED_CONVERSATION_CLEAR_RECOVERY_RETRY_MS = 1_000;
+const failedConversationClearRecoveryRetryTimers = new Map();
+const failedConversationClearRecoveryTokens = new Map();
+
+function cancelFailedConversationClearRecoveryRetry(tabId) {
+  const numericTabId = Number(tabId);
+  const timerId = failedConversationClearRecoveryRetryTimers.get(numericTabId);
+  if (timerId != null) clearTimeout(timerId);
+  failedConversationClearRecoveryRetryTimers.delete(numericTabId);
+}
+
+function scheduleFailedConversationClearRecoveryRetry(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)
+      || failedConversationClearRecoveryRetryTimers.has(numericTabId)) return;
+  const timerId = setTimeout(() => {
+    failedConversationClearRecoveryRetryTimers.delete(numericTabId);
+    void recoverActiveRunAfterFailedConversationClear(numericTabId);
+  }, FAILED_CONVERSATION_CLEAR_RECOVERY_RETRY_MS);
+  failedConversationClearRecoveryRetryTimers.set(numericTabId, timerId);
+}
+
+function holdFailedConversationClearRecovery(tabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return null;
+  const recoveryToken = Symbol('failed-conversation-clear-recovery');
+  failedConversationClearRecoveryTokens.set(numericTabId, recoveryToken);
+  // A timed-out local abort can finish after clear_conversation has failed.
+  // Keep its finalizer from making the composer look idle until the background
+  // reservation has either been re-adopted or authoritatively ended.
+  failedConversationClearRecoveryTabs.add(numericTabId);
+  setTabProcessing(numericTabId, true);
+  setTabAbortRequested(numericTabId, false);
+  if (sameTabId(currentTabId, numericTabId)) {
+    showActivity('Reconnecting\u2026');
+    syncSendButtonState();
+  }
+  return recoveryToken;
+}
+
+function isFailedConversationClearRecoveryCurrent(tabId, recoveryToken) {
+  const numericTabId = Number(tabId);
+  return failedConversationClearRecoveryTabs.has(numericTabId)
+    && failedConversationClearRecoveryTokens.get(numericTabId) === recoveryToken
+    && !isConversationClearInProgress(numericTabId);
+}
+
+function finishFailedConversationClearRecovery(tabId, { processing }) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return;
+  failedConversationClearRecoveryTabs.delete(numericTabId);
+  failedConversationClearRecoveryTokens.delete(numericTabId);
+  cancelFailedConversationClearRecoveryRetry(numericTabId);
+  setTabProcessing(numericTabId, processing);
+  setTabAbortRequested(numericTabId, false);
+  if (sameTabId(currentTabId, numericTabId)) {
+    if (!processing) hideActivity();
+    syncSendButtonState();
+  }
+}
+
+async function recoverActiveRunAfterFailedConversationClear(tabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return false;
+  const recoveryToken = holdFailedConversationClearRecovery(numericTabId);
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+
+  const state = await refreshConversationScopeState(numericTabId, { apply: false });
+  if (!isFailedConversationClearRecoveryCurrent(numericTabId, recoveryToken)) return false;
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  if (!state?.ok) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  applyConversationScopeState(numericTabId, state);
+
+  const recoveryStillCurrent = () => (
+    isFailedConversationClearRecoveryCurrent(numericTabId, recoveryToken)
+  );
+  const snapshotStillActive = await applyActiveRunState(numericTabId, state, {
+    shouldContinue: recoveryStillCurrent,
+  });
+  if (!recoveryStillCurrent()) return false;
+  if (!snapshotStillActive) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  if (!state.running && !state.starting) {
+    finishFailedConversationClearRecovery(numericTabId, { processing: false });
+    await drainQueuedPromptsAfterRunSettles(numericTabId);
+    return true;
+  }
+
+  const runUi = state.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  const requestId = String(runUi?.requestId || '');
+  const oldFollowerStillSettling = !requestId
+    || conversationClearFollowerCancellationRequestIds.has(requestId)
+    || localRunFollowers.has(numericTabId)
+    || localRunRequestIds.has(numericTabId);
+  if (oldFollowerStillSettling) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  if (runUi?.status === 'awaiting_plan') {
+    finishFailedConversationClearRecovery(numericTabId, { processing: true });
+    return true;
+  }
+
+  void adoptRestoredRunState(numericTabId, state);
+  if (!recoveryStillCurrent()) return false;
+  const runWasAdopted = localRunRequestIds.get(numericTabId) === requestId
+    && localRunFollowers.get(numericTabId)?.requestId === requestId;
+  if (!runWasAdopted) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  finishFailedConversationClearRecovery(numericTabId, { processing: true });
+  return true;
 }
 
 async function restoreActiveRunState(tabId = currentTabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return;
+  if (failedConversationClearRecoveryTabs.has(numericTabId)) {
+    await recoverActiveRunAfterFailedConversationClear(numericTabId);
+    return;
+  }
   const state = await refreshConversationScopeState(numericTabId);
   if (!state) return;
-  await applyActiveRunState(numericTabId, state);
+  const snapshotStillActive = await applyActiveRunState(numericTabId, state);
+  if (!snapshotStillActive) return;
   void adoptRestoredRunState(numericTabId, state);
 }
 
@@ -4357,6 +4556,10 @@ async function adoptRestoredRunState(tabId, state) {
   if (!requestId
       || isTerminalRunUiStatus(runUi.status)
       || runUi.status === 'awaiting_plan'
+      || isConversationClearInProgress(tabId)
+      || clearedConversationRunRequestIds.has(requestId)
+      || !sameTabId(currentTabId, tabId)
+      || !sameTabId(renderedTabId, tabId)
       || localRunRequestIds.has(Number(tabId))
       || adoptedRunRecoveryRequestIds.has(requestId)) return;
 
@@ -4383,7 +4586,11 @@ async function adoptRestoredRunState(tabId, state) {
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
-    if (returnedPlannerFailure && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (returnedPlannerFailure
+        && sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderPlannerRequestFailure(
         assistantEl,
         returnedPlannerFailure.data,
@@ -4393,23 +4600,32 @@ async function adoptRestoredRunState(tabId, state) {
     const returnedErrorUpdate = Array.isArray(res?.updates)
       ? res.updates.find(update => update?.type === 'error')
       : null;
-    if (returnedErrorUpdate && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (returnedErrorUpdate
+        && sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
         submittedTurnDurable: res.submittedTurnDurable,
       });
     }
   } catch (error) {
-    if (sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
     }
   } finally {
     adoptedRunRecoveryRequestIds.delete(requestId);
-    if (localRunRequestIds.get(Number(tabId)) === requestId) {
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
+    const ownsRunState = localRunRequestIds.get(Number(tabId)) === requestId;
+    if (ownsRunState) {
       localRunRequestIds.delete(Number(tabId));
       setTabProcessing(tabId, false);
       setTabAbortRequested(tabId, false);
     }
-    if (sameTabId(currentTabId, tabId)) {
+    if (ownsRunState && sameTabId(currentTabId, tabId)) {
       if (assistantEl) finalizeSteps(assistantEl);
       syncSendButtonState();
       hideActivity();
@@ -4419,12 +4635,19 @@ async function adoptRestoredRunState(tabId, state) {
         await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
       }
     }
+    if (ownsRunState) await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
-async function applyActiveRunState(numericTabId, state) {
-  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) return;
+async function applyActiveRunState(numericTabId, state, { shouldContinue = () => true } = {}) {
   const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  const requestId = String(runUi?.requestId || '');
+  const shouldApplyState = () => shouldContinue()
+    && !isConversationClearInProgress(numericTabId)
+    && (!requestId || !clearedConversationRunRequestIds.has(requestId))
+    && sameTabId(currentTabId, numericTabId)
+    && sameTabId(renderedTabId, numericTabId);
+  if (!shouldApplyState()) return false;
   if (runUi?.requestId) {
     const runAssistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(runUi.requestId))}"]`)
       || messagesEl.querySelector('.message.assistant:last-of-type')
@@ -4509,7 +4732,9 @@ async function applyActiveRunState(numericTabId, state) {
       numericTabId,
       runUi.requestId,
       runUi.attachmentDeliveryState,
+      { shouldContinue: shouldApplyState },
     );
+    if (!shouldApplyState()) return false;
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     if (renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
@@ -4517,6 +4742,7 @@ async function applyActiveRunState(numericTabId, state) {
         requestId: runUi.requestId,
         seq: renderedSeq,
       }).catch(() => {});
+      if (!shouldApplyState()) return false;
     }
   }
   const pendingPlan = state?.pendingPlan;
@@ -4530,7 +4756,7 @@ async function applyActiveRunState(numericTabId, state) {
         && String(lastPlanLifecycleEvent.data?.planId || '') === String(pendingPlan.planId)));
   if (pendingPlanMatchesRun) {
     renderPlanReviewCard({ ...pendingPlan, tabId: numericTabId, requestId: runUi?.requestId || null, runId: runUi?.runId || null });
-    return;
+    return true;
   }
   const restoredPlanResolution = lastPlanLifecycleEvent?.type === 'plan_resolved'
     ? lastPlanLifecycleEvent.data
@@ -4582,6 +4808,7 @@ async function applyActiveRunState(numericTabId, state) {
     hideActivity();
     syncSendButtonState();
   }
+  return true;
 }
 
 function conversationHasUserMessages() {
@@ -5792,7 +6019,7 @@ function clearPlanReviewActiveRun(assistantEl, tabId = currentTabId) {
     sendBtn.disabled = false;
     hideActivity();
   }
-  drainQueuedPromptsAfterRunSettles();
+  drainQueuedPromptsAfterRunSettles(tabId);
   refreshRecommendedActions();
 }
 
@@ -7429,14 +7656,37 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/reset') {
+    const clearingRequestId = localRunRequestIdForTab(tabId);
+    let backgroundClearSucceeded = false;
+    let shouldRecoverActiveRun = false;
     setConversationClearInProgress(tabId, true);
     try {
-      suppressRunUpdatesForClearedConversation(tabId);
-      if (isTabProcessing(tabId)) await abortRun(tabId);
+      if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
       await sendToBackground('clear_conversation', { tabId });
+      backgroundClearSucceeded = true;
+      if (failedConversationClearRecoveryTabs.has(Number(tabId))) {
+        finishFailedConversationClearRecovery(tabId, { processing: false });
+      }
+      suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
       await renderClearedConversationForTab(tabId);
+    } catch (error) {
+      if (backgroundClearSucceeded) {
+        try {
+          // The authoritative conversation is already empty. Retry the cache
+          // handoff, then finish the local reset even if that retry still fails.
+          await renderClearedConversationForTab(tabId, { allowCacheClearFailure: true });
+        } catch (localError) {
+          showComposerToast(localError?.message || 'Unable to finish clearing the conversation.', { duration: 7000 });
+        }
+      } else {
+        shouldRecoverActiveRun = true;
+        holdFailedConversationClearRecovery(tabId);
+        showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
+      }
     } finally {
       setConversationClearInProgress(tabId, false);
+      if (shouldRecoverActiveRun) await recoverActiveRunAfterFailedConversationClear(tabId);
+      else if (backgroundClearSucceeded) await drainQueuedPromptsAfterRunSettles(tabId);
     }
     return '';
   }
@@ -8123,6 +8373,8 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } catch (e) {
+    if (clearedConversationRunRequestIds.has(requestId)
+        || conversationClearFollowerCancellationRequestIds.has(requestId)) return accepted;
     reconcileFailedSelectionGroundedStart(tabId, {
       sourceGrounding,
       selectionGroundedBeforeSend,
@@ -8177,13 +8429,16 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } finally {
-    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    const ownsRunState = localRunRequestIds.get(tabId) === requestId;
+    if (ownsRunState) localRunRequestIds.delete(tabId);
     cancelledRunRecoveryRequestIds.delete(requestId);
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
     if (activeChatPayloadsByTab.get(tabId) === activePayloadState) {
       scheduleActiveChatPayloadCleanup(tabId, activePayloadState);
     }
-    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
     clearAssistantTextStreamState(assistantEl);
+    if (!ownsRunState) return accepted;
+    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
     const wasAborted = isTabAbortRequested(tabId);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
@@ -8204,7 +8459,7 @@ async function sendMessage(extraChatParams = {}) {
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
       });
     }
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(tabId);
   }
   return accepted;
 }
@@ -8276,9 +8531,13 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 browser.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel'
-      || msg.action !== 'tab_chat_cleared'
-      || msg.handoffOwnerId === tabChatHandoffOwnerId
+      || msg.action !== 'tab_chat_cleared') return;
+  if (msg.clearedContextMenuPromptId) {
+    clearQueuedForTab(msg.tabId, { promptId: msg.clearedContextMenuPromptId });
+  }
+  if (msg.handoffOwnerId === tabChatHandoffOwnerId
       || document.visibilityState === 'hidden'
+      || isConversationClearInProgress(msg.tabId)
       || !sameTabId(currentTabId, msg.tabId)) return;
   tabChats.delete(Number(msg.tabId));
   if (lastVisibleTabChatSnapshot
@@ -8331,18 +8590,29 @@ function ensureCurrentRunAssistant(msg) {
   return assistantEl;
 }
 
-function suppressRunUpdatesForClearedConversation(tabId) {
-  const requestId = String(
+function localRunRequestIdForTab(tabId) {
+  return String(
     localRunRequestIds.get(Number(tabId))
       || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
       || '',
   );
+}
+
+function suppressRunUpdatesForClearedConversation(tabId, requestId = localRunRequestIdForTab(tabId)) {
+  requestId = String(requestId || '');
   if (!requestId) return;
   // Runtime messages are delivered asynchronously. Keep recently cleared
   // request IDs so a terminal update already queued by the background cannot
   // recreate an assistant bubble after the empty conversation is rendered.
   clearedConversationRunRequestIds.delete(requestId);
   clearedConversationRunRequestIds.add(requestId);
+  if (localRunFollowers.get(Number(tabId))?.requestId === requestId) {
+    cancelledRunRecoveryRequestIds.add(requestId);
+    conversationClearFollowerCancellationRequestIds.add(requestId);
+  }
+  if (localRunRequestIds.get(Number(tabId)) === requestId) {
+    localRunRequestIds.delete(Number(tabId));
+  }
   while (clearedConversationRunRequestIds.size > 100) {
     clearedConversationRunRequestIds.delete(clearedConversationRunRequestIds.values().next().value);
   }
@@ -9622,7 +9892,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
           syncSendButtonState();
           hideActivity();
         }
-        drainQueuedPromptsAfterRunSettles();
+        drainQueuedPromptsAfterRunSettles(tabId);
       }
       /* background may be torn down — clarify state already lives there */
     });
@@ -10969,14 +11239,18 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId
         && assistantEl
         && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       addMessage('error', t('sp.error_prefix', { msg: e.message }));
     }
   } finally {
-    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    const ownsRunState = localRunRequestIds.get(tabId) === requestId;
+    if (ownsRunState) localRunRequestIds.delete(tabId);
     cancelledRunRecoveryRequestIds.delete(requestId);
-    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
     clearAssistantTextStreamState(assistantEl);
+    if (!ownsRunState) return;
+    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     if (currentTabId === tabId) {
@@ -10987,7 +11261,7 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId) scrollToBottom();
     if (currentTabId === tabId && renderedTabId === tabId) await flushRenderedTabChat();
     if (currentTabId === tabId && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
@@ -11630,6 +11904,8 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   const tabId = Number(payload?.tabId);
   const requestId = String(payload?.requestId || '');
   cancelledRunRecoveryRequestIds.delete(requestId);
+  conversationClearFollowerCancellationRequestIds.delete(requestId);
+  const shouldContinueRunRecovery = () => !conversationClearFollowerCancellationRequestIds.has(requestId);
   const promise = runDetachedWithReconnect({
     initialAction,
     payload,
@@ -11640,11 +11916,13 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
     }),
     isConnectionError: isBackgroundConnectionError,
     onState: state => {
+      if (!shouldContinueRunRecovery()) return;
       applyConversationScopeState(tabId, state);
-      return applyActiveRunState(tabId, state);
+      return applyActiveRunState(tabId, state, { shouldContinue: shouldContinueRunRecovery });
     },
     shouldResume: () => !isTabAbortRequested(tabId)
       && !cancelledRunRecoveryRequestIds.has(requestId),
+    shouldContinue: shouldContinueRunRecovery,
     onStatus: ({ phase }) => {
       if (!sameTabId(currentTabId, tabId)) return;
       if (phase === 'reconnecting' || phase === 'retrying_start') {
@@ -11923,7 +12201,7 @@ async function abortRun(tabId = currentTabId) {
       currentAssistantEl = null;
       setTabAbortRequested(tabId, false);
       await flushRenderedTabChat();
-      await drainQueuedPromptsAfterRunSettles();
+      await drainQueuedPromptsAfterRunSettles(tabId);
       resolve();
     };
     fallbackTimer = setTimeout(settleWhenInactive, 3000);
@@ -11946,6 +12224,25 @@ async function abortRun(tabId = currentTabId) {
     await follower.promise.catch(() => {});
     fallbackCancelled = true;
     clearTimeout(fallbackTimer);
+  }
+}
+
+const CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS = 2_000;
+
+async function abortRunForConversationClear(tabId, requestId = localRunRequestIdForTab(tabId)) {
+  requestId = String(requestId || '');
+  const follower = localRunFollowers.get(Number(tabId));
+  if (requestId && follower?.requestId === requestId) {
+    conversationClearFollowerCancellationRequestIds.add(requestId);
+  }
+  let timeoutId = null;
+  const timeout = new Promise(resolve => {
+    timeoutId = setTimeout(resolve, CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([abortRun(tabId).catch(() => {}), timeout]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
 }
 
@@ -12336,16 +12633,24 @@ function clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots = fals
   }
 }
 
-async function restorePendingAttachmentsForTab(tabId, attachments) {
+async function restorePendingAttachmentsForTab(tabId, attachments, {
+  shouldContinue = () => true,
+  attachmentGeneration = null,
+} = {}) {
   if (!Array.isArray(attachments) || !attachments.length) return;
   const numericTabId = normalizeAttachmentTabId(tabId);
-  if (numericTabId == null) return;
+  if (numericTabId == null || !shouldContinue()) return;
+  const expectedGeneration = attachmentGeneration ?? getAttachmentGeneration(numericTabId);
   const screenshotsPersisted = await markStagedScreenshots(
     browser.storage.local,
     numericTabId,
     attachments,
     { deliveryState: 'pending' },
   ).catch(() => false);
+  if (getAttachmentGeneration(numericTabId) !== expectedGeneration) {
+    await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
+    return;
+  }
   const restorable = screenshotsPersisted
     ? attachments
     : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
@@ -12371,10 +12676,16 @@ async function removePersistedStagedAttachments(tabId, attachments) {
   await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
 }
 
-async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState) {
+async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState, {
+  shouldContinue = () => true,
+} = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
-  if (numericTabId == null || !['included', 'not-sent', 'unknown'].includes(deliveryState)) return;
+  if (numericTabId == null
+      || !['included', 'not-sent', 'unknown'].includes(deliveryState)
+      || !shouldContinue()) return;
+  const attachmentGeneration = getAttachmentGeneration(numericTabId);
   const stored = await loadStagedScreenshots(browser.storage.local, numericTabId).catch(() => []);
+  if (!shouldContinue()) return;
   const matching = stored.filter(attachment => (
     attachment.deliveryState === 'sending'
     && String(attachment.requestId || '') === String(requestId || '')
@@ -12390,7 +12701,10 @@ async function reconcilePersistedStagedScreenshots(tabId, requestId, deliverySta
   if (deliveryState === 'included') {
     await removePersistedStagedAttachments(numericTabId, matching);
   } else {
-    await restorePendingAttachmentsForTab(numericTabId, matching);
+    await restorePendingAttachmentsForTab(numericTabId, matching, {
+      shouldContinue,
+      attachmentGeneration,
+    });
   }
 }
 
@@ -12697,18 +13011,42 @@ async function startNewConversationForTab(tabId) {
   if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return false;
   if (!await requestNewConversationConfirmation(tabId)) return false;
   if (!sameTabId(currentTabId, tabId)) return false;
+  const clearingRequestId = localRunRequestIdForTab(tabId);
+  let backgroundClearSucceeded = false;
+  let shouldRecoverActiveRun = false;
   setConversationClearInProgress(tabId, true);
   try {
-    suppressRunUpdatesForClearedConversation(tabId);
+    if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
+    const clearResult = await sendToBackground('clear_conversation', { tabId, clearContextMenuPrompt: true });
+    backgroundClearSucceeded = true;
+    if (failedConversationClearRecoveryTabs.has(Number(tabId))) {
+      finishFailedConversationClearRecovery(tabId, { processing: false });
+    }
+    suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
     clearQueuedComposerMessagesForTab(tabId);
-    clearQueuedForTab(tabId);
-    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
-    if (isTabProcessing(tabId)) await abortRun(tabId);
-    await sendToBackground('clear_conversation', { tabId });
+    if (clearResult?.clearedContextMenuPromptId) {
+      clearQueuedForTab(tabId, { promptId: clearResult.clearedContextMenuPromptId });
+    }
     await renderClearedConversationForTab(tabId);
     return true;
+  } catch (error) {
+    if (backgroundClearSucceeded) {
+      try {
+        await renderClearedConversationForTab(tabId, { allowCacheClearFailure: true });
+        return true;
+      } catch (localError) {
+        showComposerToast(localError?.message || 'Unable to finish clearing the conversation.', { duration: 7000 });
+        return false;
+      }
+    }
+    shouldRecoverActiveRun = true;
+    holdFailedConversationClearRecovery(tabId);
+    showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
+    return false;
   } finally {
     setConversationClearInProgress(tabId, false);
+    if (shouldRecoverActiveRun) await recoverActiveRunAfterFailedConversationClear(tabId);
+    else if (backgroundClearSucceeded) await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 

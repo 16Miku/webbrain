@@ -1805,6 +1805,7 @@ const detachedRunStarts = new Map();
 const detachedRunFailures = new Map();
 const RUN_KEEPALIVE_INTERVAL_MS = 20_000;
 const DETACHED_RUN_FAILURE_TTL_MS = 60_000;
+const CONVERSATION_CLEAR_STOP_TIMEOUT_MS = 10_000;
 
 function clearDetachedRunFailure(tabId) {
   const failure = detachedRunFailures.get(tabId);
@@ -1868,17 +1869,32 @@ async function stopActiveRunBeforeConversationClear(tabId) {
   cancelDetachedRunStart(tabId);
   try { agent.abort(tabId); } catch { /* best effort */ }
 
-  // Keep the old conversation alive until its run has unwound. Clearing it
-  // first leaves the per-tab run guard active while the UI already looks like
-  // a fresh chat, so the next send fails with "run already in progress".
-  if (activeStart?.promise) {
-    await activeStart.promise.catch(() => {});
-  }
-  // Direct chat/chat_stream callers do not have a detached-start promise.
-  // Do not clear their conversation until processMessage's finally block has
-  // released the agent's per-tab run guard.
-  while (agent.activeRunState(tabId)?.running) {
-    await new Promise(resolve => setTimeout(resolve, 50));
+  let timedOut = false;
+  let timeoutId = null;
+  const unwind = (async () => {
+    // Keep the old conversation alive until its run has unwound. Clearing it
+    // first leaves the per-tab run guard active while the UI already looks like
+    // a fresh chat, so the next send fails with "run already in progress".
+    if (activeStart?.promise) {
+      await activeStart.promise.catch(() => {});
+    }
+    // Direct chat/chat_stream callers do not have a detached-start promise.
+    // Do not clear their conversation until processMessage's finally block has
+    // released the agent's per-tab run guard.
+    while (!timedOut && agent.activeRunState(tabId)?.running) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  })();
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      reject(new Error('The active run did not stop within 10 seconds. The conversation was left intact to avoid mixing it with a still-running task. Reload the extension to recover a permanently stuck run.'));
+    }, CONVERSATION_CLEAR_STOP_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([unwind, timeout]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
   return true;
 }
@@ -2123,9 +2139,10 @@ function invalidateContextMenuForTab(tabId) {
 const lastNavByTab = new Map(); // tabId -> { ts, type, url }
 globalThis.__webbrainLastNav = lastNavByTab;
 
-function recordNav(tabId, type, url) {
+function recordNav(tabId, type, url, { resetTypeIdentity = true } = {}) {
   if (tabId == null) return;
   lastNavByTab.set(tabId, { ts: Date.now(), type, url: url || '' });
+  if (resetTypeIdentity) agent.clearLastTypeFieldIdent(tabId);
 }
 
 function recordTeacherNavigation(tabId, url, options) {
@@ -2160,7 +2177,9 @@ chrome.webNavigation?.onCommitted?.addListener((details) => {
   agent.clearDevCssPatchesForTab(details.tabId).catch(() => {});
 });
 chrome.webNavigation?.onCompleted?.addListener((details) => {
-  if (details.frameId === 0) recordNav(details.tabId, 'completed', details.url);
+  if (details.frameId === 0) {
+    recordNav(details.tabId, 'completed', details.url, { resetTypeIdentity: false });
+  }
 });
 
 // Cloudflare Challenge Pages replace the requested top-level document and
@@ -3294,14 +3313,38 @@ async function handleMessage(msg, sender) {
 
     case 'clear_conversation': {
       const tabId = msg.tabId || sender.tab?.id;
+      let clearedContextMenuPromptId = null;
       if (tabId) {
         const conversationId = await agent.getConversationId(tabId);
         await stopActiveRunBeforeConversationClear(tabId);
-        await scheduler.cancelForConversation(tabId, conversationId);
+        const commitSchedulerClear = async () => {
+          await scheduler.cancelForConversation(tabId, conversationId);
+        };
+        const tabChatClearResult = msg.clearContextMenuPrompt === true
+          ? await contextMenuStorage.clearAlongside(
+            tabId,
+            additionalKeys => tabChatHandoff.clear(tabId, {
+              additionalKeys,
+              commitAfterRemove: commitSchedulerClear,
+            }),
+          )
+          : await tabChatHandoff.clear(tabId, { commitAfterRemove: commitSchedulerClear });
+        if (!tabChatClearResult?.ok || tabChatClearResult.skipped) {
+          throw new Error('Could not durably clear the tab transcript.');
+        }
+        clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
         agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
+        chrome.runtime.sendMessage({
+          target: 'sidepanel',
+          action: 'tab_chat_cleared',
+          tabId,
+          handoffOwnerId: tabChatClearResult.handoffOwnerId,
+          handoffGeneration: tabChatClearResult.handoffGeneration,
+          clearedContextMenuPromptId,
+        }).catch(() => {});
       }
-      return { ok: true };
+      return { ok: true, clearedContextMenuPromptId };
     }
 
     case 'disable_dev_diagnostics': {

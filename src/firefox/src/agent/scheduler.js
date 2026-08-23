@@ -1117,21 +1117,26 @@ export class ScheduledJobManager {
       const jobs = await this._getJobs();
       const next = [];
       const alarmsToClear = [];
+      const waitingJobIdsToClear = [];
       for (const job of jobs) {
         const matches = (job.tabId === tabId || job.target?.tabId === tabId) &&
           (!conversationId || job.conversationId === conversationId || job.target?.conversationId === conversationId);
         if (matches && ['pending', 'queued', 'paused', 'needs_user_input'].includes(job.status)) {
           alarmsToClear.push(job.id);
-          this._waitingForInput.delete(job.id);
+          waitingJobIdsToClear.push(job.id);
           next.push({ ...job, status: 'cancelled', lastError: reason, pendingClarify: null, updatedAt: iso(this.now()) });
         } else {
           next.push(job);
         }
       }
       await this._setJobs(next);
+      waitingJobIdsToClear.forEach((jobId) => this._waitingForInput.delete(jobId));
       return alarmsToClear;
     });
-    await Promise.all(alarmsToClear.map((id) => this._clearAlarm(id)));
+    // Once cancelled job state is durable, a stale alarm is harmless: its
+    // handler re-reads the cancelled job and exits. Do not reject a committed
+    // conversation clear merely because the browser could not remove an alarm.
+    await Promise.allSettled(alarmsToClear.map((id) => this._clearAlarm(id)));
   }
 
   async handleAlarm(alarmName) {

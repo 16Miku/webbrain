@@ -4,6 +4,7 @@ import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
 import { normalizeErrorCode } from './error-codes.js';
 import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
+import { clampUtf8Value, fitUtf8Prefix, utf8ByteLength } from './utf8-budget.js';
 import {
   buildTraceRepairPlan,
   isStaleRunningTrace,
@@ -131,7 +132,7 @@ async function peekRunFlags(db, runId) {
     const record = await promisifyReq(
       tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
     );
-    return { forced: record?.forced === true, lossless: record?.lossless === true, losslessBytes: record?.losslessBytes || 0 };
+    return { forced: record?.forced === true, lossless: record?.lossless === true, losslessBytes: record?.losslessBytes || 0, losslessBytesEncoding: record?.losslessBytesEncoding || '' };
   } catch { return { forced: false, lossless: false, losslessBytes: 0 }; }
 }
 
@@ -157,8 +158,13 @@ function _queueRunWrite(runId, write) {
 }
 
 async function _flushRunWrites(runId) {
-  const pending = _runWriteQueues.get(runId);
-  if (pending) await pending.catch(() => {});
+  let pending = _runWriteQueues.get(runId);
+  while (pending) {
+    await pending.catch(() => {});
+    const next = _runWriteQueues.get(runId);
+    if (!next || next === pending) return;
+    pending = next;
+  }
 }
 
 async function _peekSeq(db, runId) {
@@ -186,7 +192,7 @@ async function _ensureRunState(runId, db = null) {
       const resolvedDb = db || await openDB();
       const seq = await _peekSeq(resolvedDb, runId);
       const flags = await peekRunFlags(resolvedDb, runId);
-      const state = { seq, forced: flags.forced, lossless: flags.lossless, losslessBytes: Number(flags.losslessBytes) || 0 };
+      const state = { seq, forced: flags.forced, lossless: flags.lossless, losslessBytes: Number(flags.losslessBytes) || 0, losslessBytesEncoding: flags.losslessBytesEncoding };
       _runState.set(runId, state);
       return state;
     } catch { return null; }
@@ -202,7 +208,7 @@ function boundedToolNames(tools) {
     : [];
 }
 
-function clampLosslessRequest(messages, tools) {
+function clampLosslessRequest(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP) {
   const request = { messages: messages ?? null, tools: tools ?? null };
   let serialized;
   try { serialized = JSON.stringify(request); } catch { serialized = null; }
@@ -212,18 +218,96 @@ function clampLosslessRequest(messages, tools) {
       tools: null,
     };
   }
-  if (serialized.length <= LOSSILESS_REQUEST_CAP) return { messages, tools };
+  const byteLength = utf8ByteLength(serialized);
+  const limit = Math.max(0, Math.min(LOSSILESS_REQUEST_CAP, Number(maxBytes) || 0));
+  if (byteLength <= limit) return { messages, tools };
   // Keep one bounded head of the combined request. Tool names remain visible
   // even when the head ends before the dynamic tool catalog.
-  const headCap = Math.max(1, LOSSILESS_REQUEST_CAP - 2048);
-  return {
+  const toolNames = boundedToolNames(tools);
+  const buildMarker = head => ({
     messages: {
       _truncated: true,
-      length: serialized.length,
-      head: serialized.slice(0, headCap),
-      toolNames: boundedToolNames(tools),
+      length: byteLength,
+      head,
+      toolNames,
     },
     tools: null,
+  });
+  while (toolNames.length && utf8ByteLength(JSON.stringify(buildMarker(''))) > limit) {
+    toolNames.pop();
+  }
+  const head = fitUtf8Prefix(serialized, limit, prefix => JSON.stringify(buildMarker(prefix)));
+  return buildMarker(head);
+}
+
+function boundedLosslessRequestMetadata(data) {
+  const metadata = {};
+  for (const [key, limit] of [
+    ['providerClass', 160],
+    ['providerId', 160],
+    ['model', 240],
+    ['phase', 40],
+  ]) {
+    const value = String(data?.[key] || '').trim();
+    if (value) metadata[key] = value.slice(0, limit);
+  }
+  for (const key of [
+    'attempt',
+    'messageCount',
+    'toolsCount',
+    'imageBlockCount',
+    'documentBlockCount',
+  ]) {
+    const value = Number(data?.[key]);
+    if (Number.isFinite(value)) metadata[key] = Math.max(0, Math.min(1_000_000, Math.trunc(value)));
+  }
+  if (data?.repair === true) metadata.repair = true;
+  if (data?.localWikipediaRag && typeof data.localWikipediaRag === 'object') {
+    const rag = data.localWikipediaRag;
+    metadata.localWikipediaRag = {
+      status: String(rag.status || '').slice(0, 40),
+      attempted: rag.attempted === true,
+      matchCount: Math.max(0, Math.min(1_000_000, Math.trunc(Number(rag.matchCount) || 0))),
+      multiSource: rag.multiSource === true,
+      archiveDates: (Array.isArray(rag.archiveDates) ? rag.archiveDates : [])
+        .slice(0, 3)
+        .map(value => String(value || '').slice(0, 20)),
+    };
+  }
+  return metadata;
+}
+
+function losslessBudgetMarker(kind, data) {
+  const budgetHead = '(per-run lossless budget reached)';
+  if (kind === 'llm_request') {
+    let length = data?.messages?._truncated ? data.messages.length : null;
+    if (length == null) {
+      try { length = utf8ByteLength(JSON.stringify({ messages: data?.messages ?? null, tools: data?.tools ?? null })); } catch {}
+    }
+    const toolNames = Array.isArray(data?.messages?.toolNames)
+      ? data.messages.toolNames.slice(0, 100).map(value => String(value || '?').slice(0, 120))
+      : boundedToolNames(data?.tools);
+    return {
+      step: data?.step ?? null,
+      ...boundedLosslessRequestMetadata(data),
+      lossless: true,
+      messages: { _truncated: true, length, head: budgetHead, toolNames },
+      tools: null,
+      losslessBudgetOmitted: true,
+    };
+  }
+
+  let length = data?.result?._truncated ? data.result.length : null;
+  if (length == null) {
+    try { length = utf8ByteLength(JSON.stringify(data?.result)); } catch {}
+  }
+  return {
+    step: data?.step ?? null,
+    name: String(data?.name || '').slice(0, 120),
+    args: null,
+    result: { _truncated: true, length, head: budgetHead },
+    latencyMs: data?.latencyMs ?? null,
+    losslessBudgetOmitted: true,
   };
 }
 
@@ -327,7 +411,7 @@ export async function startRun(meta = {}) {
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
       attachments: normalizeTraceAttachments(meta.attachments),
-      ...(lossless ? { lossless: true, losslessBytes: 0 } : {}),
+      ...(lossless ? { lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' } : {}),
       forced,
       stepCount: 0,
       totalInputTokens: 0,
@@ -343,7 +427,7 @@ export async function startRun(meta = {}) {
       finalContent: null,
     };
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
-    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless, losslessBytes: 0 });
+    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
     return runId;
   } catch (e) {
     console.warn('[trace] startRun failed:', e);
@@ -351,12 +435,54 @@ export async function startRun(meta = {}) {
   }
 }
 
+function _putEventWithLosslessTotal(db, runId, event, losslessBytes) {
+  return new Promise((resolve, reject) => {
+    const transaction = tx(db, ['events', 'runs']);
+    const eventsStore = transaction.objectStore('events');
+    const runsStore = transaction.objectStore('runs');
+    let totalUpdated = false;
+    transaction.oncomplete = () => resolve(totalUpdated);
+    transaction.onerror = () => reject(transaction.error || new Error('lossless trace write failed'));
+    transaction.onabort = () => reject(transaction.error || new Error('lossless trace write aborted'));
+    eventsStore.put(event);
+    const runRequest = runsStore.get(runId);
+    runRequest.onsuccess = () => {
+      const run = runRequest.result;
+      if (run?.lossless !== true) return;
+      run.losslessBytes = losslessBytes;
+      run.losslessBytesEncoding = 'utf8';
+      runsStore.put(run);
+      totalUpdated = true;
+    };
+  });
+}
+
 async function _appendEventNow(runId, kind, data) {
   if (!(await tracingEnabledForRun(runId))) return;
   try {
     const db = await openDB();
     const state = await _ensureRunState(runId, db);
-    const resolvedData = typeof data === 'function' ? data(state) : data;
+    if (state?.lossless === true && state.losslessBytesEncoding !== 'utf8') {
+      const run = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
+      if (run?.lossless === true) {
+        state.losslessBytes = await _recomputeLosslessBytes(db, run, {
+          refreshActiveState: false,
+          trustMarkedCurrent: false,
+        });
+        state.losslessBytesEncoding = 'utf8';
+      }
+    }
+    let resolvedData = typeof data === 'function' ? data(state) : data;
+    let losslessBytes = 0;
+    let losslessBudgetOmitted = false;
+    if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
+      try { losslessBytes = new TextEncoder().encode(JSON.stringify(resolvedData)).length; } catch {}
+      const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state.losslessBytes || 0));
+      if (losslessBytes > remainingBytes) {
+        resolvedData = losslessBudgetMarker(kind, resolvedData);
+        losslessBudgetOmitted = true;
+      }
+    }
     const seq = _newSeq(runId);
     const ev = makeEvent(runId, seq, kind, resolvedData);
     if (!ev) {
@@ -365,17 +491,21 @@ async function _appendEventNow(runId, kind, data) {
       console.warn('[trace] dropped invalid event:', kind);
       return null;
     }
-    await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
-      let bytes = 0;
-      try { bytes = JSON.stringify(resolvedData).length; } catch {}
-      state.losslessBytes = (state.losslessBytes || 0) + bytes;
-      const run = await promisifyReq(tx(db, ['runs']).objectStore('runs').get(runId));
-      if (run?.lossless === true) {
-        run.losslessBytes = state.losslessBytes;
-        await promisifyReq(tx(db, ['runs']).objectStore('runs').put(run));
+      if (losslessBudgetOmitted) {
+        await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
+        return seq;
+      }
+      const bytes = losslessBytes;
+      const nextLosslessBytes = (state.losslessBytes || 0) + bytes;
+      const totalUpdated = await _putEventWithLosslessTotal(db, runId, ev, nextLosslessBytes);
+      if (totalUpdated) {
+        state.losslessBytes = nextLosslessBytes;
+        state.losslessBytesEncoding = 'utf8';
         await evictOldestLosslessRuns(runId, bytes);
       }
+    } else {
+      await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     }
     return seq;
   } catch (e) {
@@ -390,25 +520,85 @@ async function _appendEventNow(runId, kind, data) {
 // count toward the budget and stay evictable.
 let _losslessTotalEstimate = null;
 
+async function _recomputeLosslessBytes(db, run, {
+  refreshActiveState = true,
+  trustMarkedCurrent = true,
+} = {}) {
+  const events = await promisifyReq(
+    tx(db, ['events'], 'readonly').objectStore('events').index('runId')
+      .getAll(IDBKeyRange.only(run.runId)),
+  );
+  let bytes = 0;
+  for (const event of events || []) {
+    if (event?.kind !== 'llm_request' && event?.kind !== 'tool') continue;
+    if (event?.data?.losslessBudgetOmitted === true) continue;
+    try { bytes += new TextEncoder().encode(JSON.stringify(event.data)).length; } catch {}
+  }
+  const runTx = tx(db, ['runs']);
+  const runStore = runTx.objectStore('runs');
+  const current = await promisifyReq(runStore.get(run.runId));
+  if (current?.lossless === true) {
+    if (trustMarkedCurrent && current.losslessBytesEncoding === 'utf8') {
+      // A serialized append or another migration committed after our event
+      // snapshot. Its atomic marker+total is newer, so never overwrite it.
+      bytes = Number(current.losslessBytes) || 0;
+    } else if ((Number(current.losslessBytes) || 0) !== bytes
+        || current.losslessBytesEncoding !== 'utf8') {
+      current.losslessBytes = bytes;
+      current.losslessBytesEncoding = 'utf8';
+      await promisifyReq(runStore.put(current));
+    }
+  }
+  if (refreshActiveState && _runState.get(run.runId)?.lossless === true) {
+    void _queueRunWrite(run.runId, async () => {
+      const refreshedBytes = await _recomputeLosslessBytes(db, run, {
+        refreshActiveState: false,
+        trustMarkedCurrent: false,
+      });
+      const state = _runState.get(run.runId);
+      if (state?.lossless === true) {
+        state.losslessBytes = refreshedBytes;
+        state.losslessBytesEncoding = 'utf8';
+      }
+    });
+  }
+  return bytes;
+}
+
 async function _scanLosslessTotal() {
   const db = await openDB();
-  let total = 0;
+  const runs = [];
   await new Promise((resolve) => {
     const req = tx(db, ['runs'], 'readonly').objectStore('runs').openCursor();
     req.onsuccess = () => {
       const c = req.result;
       if (!c) return resolve();
-      if (c.value?.lossless === true) total += Number(c.value.losslessBytes) || 0;
+      if (c.value?.lossless === true) runs.push(c.value);
       c.continue();
     };
     req.onerror = () => resolve();
   });
+  let total = 0;
+  for (const run of runs) {
+    total += run.losslessBytesEncoding === 'utf8'
+      ? Number(run.losslessBytes) || 0
+      : await _recomputeLosslessBytes(db, run);
+  }
   _losslessTotalEstimate = total;
   return total;
 }
 
-async function evictOldestLosslessRuns(activeRunId, addedBytes = 0) {
-  if (_losslessTotalEstimate === null) {
+let _losslessBudgetQueue = Promise.resolve();
+
+function evictOldestLosslessRuns(activeRunId, addedBytes = 0) {
+  const rescan = _losslessTotalEstimate === null;
+  const operation = _losslessBudgetQueue.then(() => _evictOldestLosslessRuns(activeRunId, addedBytes, rescan));
+  _losslessBudgetQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function _evictOldestLosslessRuns(activeRunId, addedBytes, rescan) {
+  if (rescan || _losslessTotalEstimate === null) {
     // First lossless write of this worker lifetime: learn the true total.
     // The persisted run record already includes this write's bytes.
     await _scanLosslessTotal();
@@ -453,10 +643,15 @@ export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
     if (state?.lossless === true && provenanceInput) {
       if ((state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
         let length = null;
-        try { length = JSON.stringify({ messages: provenanceInput.messages || null, tools: provenanceInput.tools || null }).length; } catch {}
+        try { length = utf8ByteLength(JSON.stringify({ messages: provenanceInput.messages || null, tools: provenanceInput.tools || null })); } catch {}
         return { step, ...payload, lossless: true, messages: { _truncated: true, length, head: '(per-run lossless budget reached)', toolNames: boundedToolNames(provenanceInput.tools) }, tools: null };
       }
-      const { messages, tools } = clampLosslessRequest(provenanceInput.messages || null, provenanceInput.tools || null);
+      const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state.losslessBytes || 0));
+      const { messages, tools } = clampLosslessRequest(
+        provenanceInput.messages || null,
+        provenanceInput.tools || null,
+        Math.min(LOSSILESS_REQUEST_CAP, remainingBytes),
+      );
       return { step, ...payload, lossless: true, messages, tools };
     }
   // Default tier: never persist full prompts, message text, tool schemas, or
@@ -497,15 +692,14 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   return _appendEvent(runId, 'tool', (state) => {
     if (state?.lossless === true && (state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
       let length = null;
-      try { const s = typeof result === 'string' ? result : JSON.stringify(result); length = s ? s.length : 0; } catch {}
+      try { const s = JSON.stringify(result); length = s ? utf8ByteLength(s) : 0; } catch {}
       return { step, name, args: args || null, result: { _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
     }
-    const cap = state?.lossless === true ? LOSSILESS_RESULT_CAP : 20_000;
-    let shortResult = result;
-    try {
-      const s = typeof result === 'string' ? result : JSON.stringify(result);
-      if (s && s.length > cap) shortResult = { _truncated: true, length: s.length, head: s.slice(0, cap) };
-    } catch {}
+    const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state?.losslessBytes || 0));
+    const cap = state?.lossless === true
+      ? Math.min(LOSSILESS_RESULT_CAP, remainingBytes)
+      : 20_000;
+    const shortResult = clampUtf8Value(result, cap);
     return { step, name, args: args || null, result: shortResult, latencyMs: latencyMs || null };
   });
 }
@@ -657,56 +851,65 @@ export function recordLLMRetry(runId, step, { delayMs = 0, code = 'UNKNOWN' } = 
 
 export async function endRun(runId, { status = 'done', finalContent = null } = {}) {
   if (!runId) return;
+  // Drain writes that enqueue migration refreshes while settling, then place
+  // finalization at the tail of the same run queue.
   await _flushRunWrites(runId);
-  if (!(await tracingEnabledForRun(runId))) return;
-  try {
-    const db = await openDB();
-    // Tally usage from events. `totalCost` is the sum of `usage.cost` across
-    // all llm_response events — providers report this in their native units
-    // (OpenRouter & OpenAI: USD). Surfaced in the Traces UI so users can
-    // spot expensive-failure runs at a glance.
-    const stats = createTraceStats();
-    let sawLoopError = false;
-    await new Promise((resolve) => {
-      const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
-      const req = idx.openCursor(IDBKeyRange.only(runId));
-      req.onsuccess = () => {
-        const c = req.result;
-        if (!c) return resolve();
-        const ev = c.value;
-        if (ev.kind === 'error' && ev.data?.phase === 'loop') sawLoopError = true;
-        addTraceEvent(stats, ev);
-        c.continue();
-      };
-      req.onerror = () => resolve();
-    });
-    const existing = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').get(runId));
-    if (existing) {
-      const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
-      existing.endedAt = Date.now();
-      existing.durationMs = existing.endedAt - existing.startedAt;
-      existing.status = finalStatus;
-      existing.finalContent = finalContent;
-      existing.stepCount = stats.stepCount;
-      existing.totalInputTokens = stats.totalInputTokens;
-      existing.totalOutputTokens = stats.totalOutputTokens;
-      existing.totalCost = stats.totalCost; // null/0 when the provider didn't report cost
-      existing.llmRequestCount = stats.llmRequestCount;
-      existing.llmResponseCount = stats.llmResponseCount;
-      existing.toolCallCount = stats.toolCallCount;
-      existing.visionSubCallCount = stats.visionSubCallCount;
-      existing.errorCount = stats.errorCount;
-      existing.retryCount = stats.retryCount;
-      existing.totalLlmLatencyMs = stats.totalLlmLatencyMs;
-      existing.totalToolLatencyMs = stats.totalToolLatencyMs;
-      await promisifyReq(tx(db, ['runs']).objectStore('runs').put(existing));
+  // Finalization is a write in the same per-run sequence as events and any
+  // migration refresh queued while those event writes are still settling.
+  return _queueRunWrite(runId, async () => {
+    try {
+      if (!(await tracingEnabledForRun(runId))) return;
+      const db = await openDB();
+      // Tally usage from events. `totalCost` is the sum of `usage.cost` across
+      // all llm_response events — providers report this in their native units
+      // (OpenRouter & OpenAI: USD). Surfaced in the Traces UI so users can
+      // spot expensive-failure runs at a glance.
+      const stats = createTraceStats();
+      let sawLoopError = false;
+      await new Promise((resolve) => {
+        const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
+        const req = idx.openCursor(IDBKeyRange.only(runId));
+        req.onsuccess = () => {
+          const c = req.result;
+          if (!c) return resolve();
+          const ev = c.value;
+          if (ev.kind === 'error' && ev.data?.phase === 'loop') sawLoopError = true;
+          addTraceEvent(stats, ev);
+          c.continue();
+        };
+        req.onerror = () => resolve();
+      });
+      // Keep the read and write in one transaction so byte migration cannot
+      // land between a stale snapshot and finalization's whole-record update.
+      const runTx = tx(db, ['runs']);
+      const runStore = runTx.objectStore('runs');
+      const existing = await promisifyReq(runStore.get(runId));
+      if (existing) {
+        const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
+        existing.endedAt = Date.now();
+        existing.durationMs = existing.endedAt - existing.startedAt;
+        existing.status = finalStatus;
+        existing.finalContent = finalContent;
+        existing.stepCount = stats.stepCount;
+        existing.totalInputTokens = stats.totalInputTokens;
+        existing.totalOutputTokens = stats.totalOutputTokens;
+        existing.totalCost = stats.totalCost; // null/0 when the provider didn't report cost
+        existing.llmRequestCount = stats.llmRequestCount;
+        existing.llmResponseCount = stats.llmResponseCount;
+        existing.toolCallCount = stats.toolCallCount;
+        existing.visionSubCallCount = stats.visionSubCallCount;
+        existing.errorCount = stats.errorCount;
+        existing.retryCount = stats.retryCount;
+        existing.totalLlmLatencyMs = stats.totalLlmLatencyMs;
+        existing.totalToolLatencyMs = stats.totalToolLatencyMs;
+        await promisifyReq(runStore.put(existing));
+      }
+    } catch (e) {
+      console.warn('[trace] endRun failed:', e);
+    } finally {
+      _runState.delete(runId);
     }
-  } catch (e) {
-    console.warn('[trace] endRun failed:', e);
-  } finally {
-    _runState.delete(runId);
-    _runWriteQueues.delete(runId);
-  }
+  });
 }
 
 /**
