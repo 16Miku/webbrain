@@ -4,6 +4,92 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.1.6] - 2026-08-23
+
+### Changed
+- mark tech post
+- Version up
+- feat(web): use real brand icons on homepage
+- Version up
+- fix: survive background throttling in completion attention flash
+- fix(progress): require identity agreement for hydration batch merges
+- fix: blink favicon itself on completion attention flash
+- fix(progress): preserve canonical collected fields during hydration repair
+- feat(trace): add session statistics aggregation
+- Preserve capped trace request metadata
+- Keep trace markers past lossless cap
+- Retry unaccepted claimed prompts
+- Retry prompts after cleanup failures
+- Count escaped trace result bytes
+- Clamp lossless traces by UTF-8 bytes
+- Preserve newer lossless byte totals
+- Persist lossless event totals atomically
+- Skip migrated lossless rescans
+- Serialize trace run finalization
+- Rotate failed-clear recovery tokens
+- Guard failed-clear scope recovery
+- Migrate trace totals before cap checks
+- Refresh migrated active trace totals
+- Serialize aggregate lossless scans
+- Serialize lossless byte migration
+- Migrate lossless trace byte totals
+- Requeue attachments after failed clears
+- Suppress recovered follower cancellation errors
+- Settle failed-clear recovery queues
+- Restore cache before durable rollback
+- Cancel only active run followers
+- Wait for followers before plan recovery
+- Drain prompts after reset clears
+- Preserve lossless cache on clear failure
+- Preserve prompts created during conversation clears
+- Revalidate queued prompt drain targets
+- fix(progress): strip action prefixes before colon delimiters
+- Preserve screenshots when clears fail
+- Honor clear cancellation after state replay
+- fix: persist explicit success verdicts for scheduled Ask runs
+- Recover active runs after failed clears
+- fix: classify successful scheduled Ask runs for badge styling
+- fix: pair badge fallback with a system notification
+- Rollback conversation clears on scheduler failure
+- fix: flash scheduled runs that require clarification
+- fix(progress): harden auto identity checks in ledger reconciliation
+- fix: reject billing terminals in Ask badge classification
+- Make conversation clear storage atomic
+- more test vision results
+- fix: use exact done predicate for Act badges and cover all run paths
+- test: track vision benchmark results and stop ignoring test/vision/results
+- blog: compare six budget Qwen vision models on OpenRouter
+- blog: compare six budget Qwen vision models on OpenRouter
+- Make failed conversation clears recoverable
+- fix: preserve run outcome in background flashes and export flash setting
+- Clear durable prompts within conversation reset
+- fix: own all attention flashes in the background lifecycle
+- Reconcile repeated-item progress placeholders
+- Keep reset queues stopped after partial clear
+- fix: trigger scheduled flashes from the background
+- Prevent stale run adoption after clear
+- fix: clean cancelled screenshot recovery
+- fix: clear focused-window badges without volatile tracking
+- fix: scope queue drains and SSE heartbeats
+- fix: address sixth review round on completion tab flash
+- fix: preserve prompt and route identity
+- fix: address fifth review round on completion tab flash
+- fix: close conversation clear state races
+- fix: address fourth review round on completion tab flash
+- fix: resume queues after failed conversation clear
+- fix: address third review round on completion tab flash
+- fix: guard restored-run clear races
+- fix: address second review round on completion tab flash
+- fix: preserve typing identity through load completion
+- fix(trace): close trajectory rows for unlisted terminal end statuses
+- fix: harden issue 300 edge cases
+- fix: address review notes on completion tab flash
+- feat: flash finished tab when user switched away
+- Fix Gmail complete-thread read loops
+- feat(trace): add step trajectory table
+- highlights
+- google featured
+
 ## [33.1.1] - 2026-08-22
 
 ### Changed
