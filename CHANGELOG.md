@@ -4,6 +4,12 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.2.1] - 2026-08-23
+
+### Changed
+- fix: keep ordinary clarification independent of research
+- fix: diagnose empty model responses
+
 ## [33.2.0] - 2026-08-23
 
 ### Added
