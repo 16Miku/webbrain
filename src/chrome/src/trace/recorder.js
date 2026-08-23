@@ -239,6 +239,36 @@ function clampLosslessRequest(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP)
   return buildMarker(head);
 }
 
+function losslessBudgetMarker(kind, data) {
+  const budgetHead = '(per-run lossless budget reached)';
+  if (kind === 'llm_request') {
+    let length = data?.messages?._truncated ? data.messages.length : null;
+    if (length == null) {
+      try { length = utf8ByteLength(JSON.stringify({ messages: data?.messages ?? null, tools: data?.tools ?? null })); } catch {}
+    }
+    return {
+      step: data?.step ?? null,
+      lossless: true,
+      messages: { _truncated: true, length, head: budgetHead },
+      tools: null,
+      losslessBudgetOmitted: true,
+    };
+  }
+
+  let length = data?.result?._truncated ? data.result.length : null;
+  if (length == null) {
+    try { length = utf8ByteLength(JSON.stringify(data?.result)); } catch {}
+  }
+  return {
+    step: data?.step ?? null,
+    name: String(data?.name || '').slice(0, 120),
+    args: null,
+    result: { _truncated: true, length, head: budgetHead },
+    latencyMs: data?.latencyMs ?? null,
+    losslessBudgetOmitted: true,
+  };
+}
+
 function _repairRunInTransaction(db, runId, { now, staleAfterMs }) {
   return new Promise((resolve, reject) => {
     const transaction = tx(db, ['runs', 'events'], 'readwrite');
@@ -392,12 +422,16 @@ async function _appendEventNow(runId, kind, data) {
         state.losslessBytesEncoding = 'utf8';
       }
     }
-    const resolvedData = typeof data === 'function' ? data(state) : data;
+    let resolvedData = typeof data === 'function' ? data(state) : data;
     let losslessBytes = 0;
+    let losslessBudgetOmitted = false;
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
       try { losslessBytes = new TextEncoder().encode(JSON.stringify(resolvedData)).length; } catch {}
       const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state.losslessBytes || 0));
-      if (losslessBytes > remainingBytes) return null;
+      if (losslessBytes > remainingBytes) {
+        resolvedData = losslessBudgetMarker(kind, resolvedData);
+        losslessBudgetOmitted = true;
+      }
     }
     const seq = _newSeq(runId);
     const ev = makeEvent(runId, seq, kind, resolvedData);
@@ -408,6 +442,10 @@ async function _appendEventNow(runId, kind, data) {
       return null;
     }
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
+      if (losslessBudgetOmitted) {
+        await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
+        return seq;
+      }
       const bytes = losslessBytes;
       const nextLosslessBytes = (state.losslessBytes || 0) + bytes;
       const totalUpdated = await _putEventWithLosslessTotal(db, runId, ev, nextLosslessBytes);
@@ -443,6 +481,7 @@ async function _recomputeLosslessBytes(db, run, {
   let bytes = 0;
   for (const event of events || []) {
     if (event?.kind !== 'llm_request' && event?.kind !== 'tool') continue;
+    if (event?.data?.losslessBudgetOmitted === true) continue;
     try { bytes += new TextEncoder().encode(JSON.stringify(event.data)).length; } catch {}
   }
   const runTx = tx(db, ['runs']);
