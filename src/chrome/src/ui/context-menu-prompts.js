@@ -224,16 +224,15 @@ export function createContextMenuPromptHandler({
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
         ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
       });
-    } catch {
-      if (!rejectedClaim) {
-        const releaseResult = await releasePromptClaim();
-        if (releaseResult?.released || releaseResult?.reason === 'storage') {
-          rejectedClaim = {
-            reason: 'start-failed',
-            leaseExpiresAt: releaseResult.leaseExpiresAt,
-            retryAfterMs: releaseResult.retryAfterMs || (releaseResult.released ? 250 : 1_000),
-          };
-        }
+    } catch { /* confirm durable ownership below before retrying */ }
+    if (!accepted && !rejectedClaim) {
+      const releaseResult = await releasePromptClaim();
+      if (releaseResult?.released || releaseResult?.reason === 'storage') {
+        rejectedClaim = {
+          reason: 'start-failed',
+          leaseExpiresAt: releaseResult.leaseExpiresAt,
+          retryAfterMs: releaseResult.retryAfterMs || (releaseResult.released ? 250 : 1_000),
+        };
       }
     }
     runningContextMenuPromptId = null;

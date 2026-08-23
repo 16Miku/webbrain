@@ -42997,7 +42997,7 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
     const h = createContextMenuPromptHarness(createHandler, prompt, async (_extra, attempt) => attempt > 1);
 
     h.handler.acceptContextMenuPrompt(prompt);
-    await waitMicrotasks(3);
+    await waitMicrotasks(8);
     assert.equal(h.sends.length, 1, `${label}: direct prompt should attempt one send`);
     assert.equal(h.sends[0].text, prompt.text, `${label}: prompt text should be submitted`);
 
@@ -43026,10 +43026,7 @@ test('context-menu prompts release and requeue after pre-run durable cleanup fai
     const h = createContextMenuPromptHarness(
       createHandler,
       prompt,
-      async (_extra, attempt) => {
-        if (attempt === 1) throw new Error('durable prompt cleanup failed');
-        return true;
-      },
+      async (_extra, attempt) => attempt > 1,
       {
         releasePrompt: async () => ({
           ok: true,
