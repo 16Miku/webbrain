@@ -1538,6 +1538,32 @@ function askResearchConsentTool(tool) {
   };
 }
 
+function ordinaryClarifyTool(tool) {
+  const properties = { ...tool.function.parameters.properties };
+  delete properties.purpose;
+  delete properties.research_request;
+  delete properties.approve_option;
+  return {
+    ...tool,
+    function: {
+      ...tool.function,
+      parameters: {
+        ...tool.function.parameters,
+        properties: {
+          ...properties,
+          require_explicit_answer: {
+            ...properties.require_explicit_answer,
+            description: 'Wait for a direct user reply and ignore the global clarify timeout/Instant setting. Use when consent or a user-controlled value must not be inferred or auto-selected.',
+          },
+        },
+        required: (tool.function.parameters.required || []).filter(name => (
+          name !== 'purpose' && name !== 'research_request' && name !== 'approve_option'
+        )),
+      },
+    },
+  };
+}
+
 /**
  * Get tools filtered by mode.
  *
@@ -1570,7 +1596,8 @@ export function getToolsForMode(mode, opts = {}) {
   }
   if (opts.researchEscalationEnabled !== true) {
     base = base.filter(t => t.function.name !== 'delegate_research'
-      && !(normalizedMode === 'ask' && t.function.name === 'clarify'));
+      && !(normalizedMode === 'ask' && t.function.name === 'clarify'))
+      .map(t => (t.function.name === 'clarify' ? ordinaryClarifyTool(t) : t));
   }
   const requestedTreePageChars = tier !== 'compact'
     && Number(opts.accessibilityTreeMaxChars) === EXPANDED_TREE_PAGE_CHARS

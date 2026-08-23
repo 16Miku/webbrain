@@ -2354,6 +2354,7 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
     assert.equal(getTools('ask').some(tool => tool.function.name === 'delegate_research'), false, `${label}: default Ask exposed research delegation`);
     assert.equal(getTools('act').some(tool => tool.function.name === 'delegate_research'), false, `${label}: default Act exposed research delegation`);
     assert.ok(getTools('act').some(tool => tool.function.name === 'clarify'), `${label}: opt-in default removed normal Act clarification`);
+    const researchOnlyClarifyFields = ['purpose', 'research_request', 'approve_option'];
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full']]) {
       const enabled = getTools(mode, { tier, researchEscalationEnabled: true });
       assert.ok(enabled.some(tool => tool.function.name === 'delegate_research'), `${label}: ${mode}/${tier} did not expose research escalation`);
@@ -2367,6 +2368,37 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
         mode !== 'ask',
         `${label}: disabled research escalation must hide Ask clarification without removing normal ${mode} clarification`,
       );
+      const disabledClarify = disabled.find(tool => tool.function.name === 'clarify');
+      if (disabledClarify) {
+        for (const field of researchOnlyClarifyFields) {
+          assert.equal(
+            field in disabledClarify.function.parameters.properties,
+            false,
+            `${label}: disabled ${mode}/${tier} ordinary clarification exposed ${field}`,
+          );
+          assert.equal(
+            disabledClarify.function.parameters.required.includes(field),
+            false,
+            `${label}: disabled ${mode}/${tier} ordinary clarification required ${field}`,
+          );
+        }
+        assert.ok(
+          disabledClarify.function.parameters.properties.require_explicit_answer,
+          `${label}: disabled ${mode}/${tier} ordinary clarification lost explicit-answer support`,
+        );
+      }
+    }
+    for (const [mode, tier] of [['dev', 'mid'], ['dev', 'full']]) {
+      const disabledClarify = getTools(mode, { tier, researchEscalationEnabled: false })
+        .find(tool => tool.function.name === 'clarify');
+      assert.ok(disabledClarify, `${label}: disabled research escalation removed normal ${mode}/${tier} clarification`);
+      for (const field of researchOnlyClarifyFields) {
+        assert.equal(
+          field in disabledClarify.function.parameters.properties,
+          false,
+          `${label}: disabled ${mode}/${tier} ordinary clarification exposed ${field}`,
+        );
+      }
     }
 
     const askConsent = getTools('ask', { researchEscalationEnabled: true })
@@ -2390,8 +2422,18 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
     const actClarify = getTools('act', { researchEscalationEnabled: true })
       .find(tool => tool.function.name === 'clarify');
     assert.ok(actClarify.function.parameters.properties.require_explicit_answer, `${label}: narrowing Ask changed normal Act clarification`);
+    for (const field of researchOnlyClarifyFields) {
+      assert.ok(actClarify.function.parameters.properties[field], `${label}: enabled Act clarification lost ${field}`);
+    }
     assert.deepEqual(actClarify.function.parameters.required, ['question']);
     assert.doesNotMatch(actClarify.function.description, /not a generic clarification tool/i);
+
+    const defaultActClarify = getTools('act').find(tool => tool.function.name === 'clarify');
+    assert.match(
+      defaultActClarify.function.parameters.properties.require_explicit_answer.description,
+      /user-controlled value must not be inferred or auto-selected/i,
+      `${label}: ordinary clarification still advertises research escalation semantics`,
+    );
   }
 });
 
