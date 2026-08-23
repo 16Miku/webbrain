@@ -4,6 +4,13 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.1.7] - 2026-08-23
+
+### Changed
+- fix(settings): treat seeded local API key sentinels as empty
+- feat(trace): add session lineage navigation
+- feat(providers): support optional local API keys
+
 ## [33.1.6] - 2026-08-23
 
 ### Changed
