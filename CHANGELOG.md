@@ -4,6 +4,21 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.2.0] - 2026-08-23
+
+### Added
+- Session lineage navigation in Traces (Chrome + Firefox)
+
+### Changed
+- Support optional local API keys for providers (Chrome + Firefox)
+- Improve release-context handling in the AI changelog step (prevents missing/incorrect context during release generation)
+
+### Fixed
+- Treat seeded local API key sentinels as empty (Chrome + Firefox)
+
+### Tests
+- Added/updated vision benchmark fixtures and expectations used by the test suite
+
 ## [33.1.7] - 2026-08-23
 
 ### Changed
