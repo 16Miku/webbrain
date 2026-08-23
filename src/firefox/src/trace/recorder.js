@@ -225,6 +225,43 @@ function clampLosslessRequest(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP)
   return buildMarker(head);
 }
 
+function boundedLosslessRequestMetadata(data) {
+  const metadata = {};
+  for (const [key, limit] of [
+    ['providerClass', 160],
+    ['providerId', 160],
+    ['model', 240],
+    ['phase', 40],
+  ]) {
+    const value = String(data?.[key] || '').trim();
+    if (value) metadata[key] = value.slice(0, limit);
+  }
+  for (const key of [
+    'attempt',
+    'messageCount',
+    'toolsCount',
+    'imageBlockCount',
+    'documentBlockCount',
+  ]) {
+    const value = Number(data?.[key]);
+    if (Number.isFinite(value)) metadata[key] = Math.max(0, Math.min(1_000_000, Math.trunc(value)));
+  }
+  if (data?.repair === true) metadata.repair = true;
+  if (data?.localWikipediaRag && typeof data.localWikipediaRag === 'object') {
+    const rag = data.localWikipediaRag;
+    metadata.localWikipediaRag = {
+      status: String(rag.status || '').slice(0, 40),
+      attempted: rag.attempted === true,
+      matchCount: Math.max(0, Math.min(1_000_000, Math.trunc(Number(rag.matchCount) || 0))),
+      multiSource: rag.multiSource === true,
+      archiveDates: (Array.isArray(rag.archiveDates) ? rag.archiveDates : [])
+        .slice(0, 3)
+        .map(value => String(value || '').slice(0, 20)),
+    };
+  }
+  return metadata;
+}
+
 function losslessBudgetMarker(kind, data) {
   const budgetHead = '(per-run lossless budget reached)';
   if (kind === 'llm_request') {
@@ -232,10 +269,14 @@ function losslessBudgetMarker(kind, data) {
     if (length == null) {
       try { length = utf8ByteLength(JSON.stringify({ messages: data?.messages ?? null, tools: data?.tools ?? null })); } catch {}
     }
+    const toolNames = Array.isArray(data?.messages?.toolNames)
+      ? data.messages.toolNames.slice(0, 100).map(value => String(value || '?').slice(0, 120))
+      : boundedToolNames(data?.tools);
     return {
       step: data?.step ?? null,
+      ...boundedLosslessRequestMetadata(data),
       lossless: true,
-      messages: { _truncated: true, length, head: budgetHead },
+      messages: { _truncated: true, length, head: budgetHead, toolNames },
       tools: null,
       losslessBudgetOmitted: true,
     };
