@@ -4,7 +4,7 @@ import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
 import { normalizeErrorCode } from './error-codes.js';
 import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
-import { fitUtf8Prefix, utf8ByteLength } from './utf8-budget.js';
+import { clampUtf8Value, fitUtf8Prefix, utf8ByteLength } from './utf8-budget.js';
 import {
   buildTraceRepairPlan,
   isStaleRunningTrace,
@@ -235,18 +235,6 @@ function clampLosslessRequest(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP)
   while (toolNames.length && utf8ByteLength(JSON.stringify(buildMarker(''))) > limit) {
     toolNames.pop();
   }
-  const head = fitUtf8Prefix(serialized, limit, prefix => JSON.stringify(buildMarker(prefix)));
-  return buildMarker(head);
-}
-
-function clampTraceValue(value, maxBytes) {
-  let serialized;
-  try { serialized = typeof value === 'string' ? value : JSON.stringify(value); } catch { return value; }
-  if (!serialized) return value;
-  const byteLength = utf8ByteLength(serialized);
-  const limit = Math.max(0, Number(maxBytes) || 0);
-  if (byteLength <= limit) return value;
-  const buildMarker = head => ({ _truncated: true, length: byteLength, head });
   const head = fitUtf8Prefix(serialized, limit, prefix => JSON.stringify(buildMarker(prefix)));
   return buildMarker(head);
 }
@@ -615,14 +603,14 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   return _appendEvent(runId, 'tool', (state) => {
     if (state?.lossless === true && (state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
       let length = null;
-      try { const s = typeof result === 'string' ? result : JSON.stringify(result); length = s ? utf8ByteLength(s) : 0; } catch {}
+      try { const s = JSON.stringify(result); length = s ? utf8ByteLength(s) : 0; } catch {}
       return { step, name, args: args || null, result: { _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
     }
     const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state?.losslessBytes || 0));
     const cap = state?.lossless === true
       ? Math.min(LOSSILESS_RESULT_CAP, remainingBytes)
       : 20_000;
-    const shortResult = clampTraceValue(result, cap);
+    const shortResult = clampUtf8Value(result, cap);
     return { step, name, args: args || null, result: shortResult, latencyMs: latencyMs || null };
   });
 }

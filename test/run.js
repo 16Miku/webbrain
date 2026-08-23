@@ -9164,7 +9164,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
     assert.match(recorderSource, /new TextEncoder\(\)\.encode\(JSON\.stringify\(resolvedData\)\)\.length/, `${browser}: lossless budgets should count serialized UTF-8 bytes`);
     assert.match(recorderSource, /function clampLosslessRequest\(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP\)[\s\S]*?const byteLength = utf8ByteLength\(serialized\);[\s\S]*?length: byteLength,[\s\S]*?fitUtf8Prefix\(serialized, limit,/, `${browser}: lossless requests should clamp and report UTF-8 bytes`);
-    assert.match(recorderSource, /function clampTraceValue\(value, maxBytes\)[\s\S]*?const byteLength = utf8ByteLength\(serialized\);[\s\S]*?length: byteLength,[\s\S]*?fitUtf8Prefix\(serialized, limit,/, `${browser}: tool results should clamp and report UTF-8 bytes`);
+    assert.match(recorderSource, /import \{ clampUtf8Value, fitUtf8Prefix, utf8ByteLength \} from '\.\/utf8-budget\.js';[\s\S]*?const shortResult = clampUtf8Value\(result, cap\);/, `${browser}: tool results should use the serialized UTF-8 clamp`);
     assert.match(recorderSource, /const remainingBytes = Math\.max\(0, LOSSILESS_RUN_CAP - \(state\.losslessBytes \|\| 0\)\);\s*if \(losslessBytes > remainingBytes\) return null;/, `${browser}: a final lossless event must not overrun the per-run UTF-8 budget`);
     assert.match(recorderSource, /state\?\.lossless === true && state\.losslessBytesEncoding !== 'utf8'[\s\S]*?_recomputeLosslessBytes\(db, run, \{\s*refreshActiveState: false,\s*trustMarkedCurrent: false,[\s\S]*?state\.losslessBytesEncoding = 'utf8';[\s\S]*?const resolvedData = typeof data === 'function' \? data\(state\) : data;/, `${browser}: legacy active totals should force-migrate before the first payload cap guard runs`);
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
@@ -9182,6 +9182,14 @@ test('trace UTF-8 budget helpers keep multibyte truncation inside byte limits', 
     const head = budget.fitUtf8Prefix('漢字🙂', markerLimit, serializeMarker);
     assert.equal(head, '漢', `${browser}: marker overhead should be included in the byte boundary`);
     assert.ok(budget.utf8ByteLength(serializeMarker(head)) <= markerLimit, `${browser}: serialized marker exceeded its UTF-8 budget`);
+    const escaped = '\n'.repeat(120);
+    const escapedBytes = budget.utf8ByteLength(JSON.stringify(escaped));
+    const clamped = budget.clampUtf8Value(escaped, 100);
+    assert.equal(escapedBytes, 242, `${browser}: escaped string evidence should include JSON quotes and escapes`);
+    assert.equal(clamped._truncated, true, `${browser}: escaped string bypassed the serialized byte cap`);
+    assert.equal(clamped.length, escapedBytes, `${browser}: truncation marker should report serialized UTF-8 bytes`);
+    assert.ok(escaped.startsWith(clamped.head), `${browser}: string truncation marker should keep a raw readable prefix`);
+    assert.ok(budget.utf8ByteLength(JSON.stringify(clamped)) <= 100, `${browser}: escaped string marker exceeded its serialized UTF-8 cap`);
   }
 });
 

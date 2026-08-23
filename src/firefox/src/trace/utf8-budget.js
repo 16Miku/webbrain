@@ -38,3 +38,20 @@ export function fitUtf8Prefix(value, maxBytes, serializePrefix = prefix => prefi
 
   return text.slice(0, bestEnd);
 }
+
+export function clampUtf8Value(value, maxBytes) {
+  let serialized;
+  try { serialized = JSON.stringify(value); } catch { return value; }
+  if (typeof serialized !== 'string') return value;
+  const byteLength = utf8ByteLength(serialized);
+  const limit = Math.max(0, Number(maxBytes) || 0);
+  if (byteLength <= limit) return value;
+
+  // Preserve a readable raw prefix for string values, but measure the exact
+  // JSON representation that IndexedDB accounting will persist. For objects,
+  // the readable representation is already their serialized JSON.
+  const source = typeof value === 'string' ? value : serialized;
+  const buildMarker = head => ({ _truncated: true, length: byteLength, head });
+  const head = fitUtf8Prefix(source, limit, prefix => JSON.stringify(buildMarker(prefix)));
+  return buildMarker(head);
+}
