@@ -97,6 +97,24 @@ function renderLosslessRequest(messages, tools) {
 function oneLine(t) { return String(t ?? '').replace(/\s+/g, ' ').trim(); }
 function humanSize(n) { return n >= 1024 ? `${(n / 1024).toFixed(1)}kb` : `${n}b`; }
 
+function renderEmptyModelResponse(data) {
+  const details = [
+    `reason=${oneLine(data.emptyReason || 'unknown')}`,
+    data.finishReason ? `finish=${oneLine(data.finishReason)}` : '',
+    Number.isInteger(data.outputTokens) ? `output=${data.outputTokens} tokens` : '',
+    Number.isInteger(data.reasoningTokens)
+      ? `reasoning=${data.reasoningTokens} tokens`
+      : (Number.isInteger(data.reasoningChars) && data.reasoningChars > 0
+          ? `reasoning=${data.reasoningChars} chars`
+          : (data.reasoningPresent === true ? 'reasoning=present' : '')),
+    Number.isInteger(data.requestedMaxTokens) ? `limit=${data.requestedMaxTokens} tokens` : '',
+    Number.isInteger(data.recoveryAttempt) ? `attempt=${data.recoveryAttempt}` : '',
+    `${Number.isInteger(data.contentChars) ? data.contentChars : 0} visible chars`,
+    `${Number.isInteger(data.toolCallCount) ? data.toolCallCount : 0} tool calls`,
+  ].filter(Boolean).join(' · ');
+  return `- 🧠 Empty model response: ${details}\n`;
+}
+
 function truncate(text, limit) {
   const s = String(text ?? '');
   if (s.length <= limit) return s;
@@ -274,7 +292,12 @@ export function tracesToMarkdown(runsWithEvents, {
         md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderLocalWikipediaRag(d.localWikipediaRag)}${renderPromptProvenance(d.promptProvenance)}${d.lossless === true ? renderLosslessRequest(d.messages, d.tools) : ''}\n`;
       } else if (ev.kind === 'llm_response') {
         const content = String(d.content || '').trim();
-        if (!content) continue;
+        if (!content) {
+          if (!Array.isArray(d.toolCalls) || d.toolCalls.length === 0) {
+            md += renderEmptyModelResponse(d);
+          }
+          continue;
+        }
         // Plan-before-Act runs record the planner call with phase:'planner'; keep
         // it (derails often start in the plan) but label it and preserve its shape.
         if (d.phase === 'planner') {

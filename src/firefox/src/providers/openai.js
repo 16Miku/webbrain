@@ -978,6 +978,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       reasoningContent: message?.reasoning_content || message?.reasoning || '',
       toolCalls: message?.tool_calls || null,
       usage: data.usage || null,
+      finishReason: String(data?.choices?.[0]?.finish_reason || ''),
       raw: data,
     };
   }

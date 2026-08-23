@@ -665,7 +665,27 @@ export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
   });
 }
 
-export function recordLLMResponse(runId, step, { content, toolCalls, usage, latencyMs, model, phase, attempt, repair }) {
+export function recordLLMResponse(runId, step, {
+  content,
+  toolCalls,
+  usage,
+  latencyMs,
+  model,
+  phase,
+  attempt,
+  repair,
+  empty,
+  emptyReason,
+  finishReason,
+  contentChars,
+  toolCallCount,
+  reasoningPresent,
+  reasoningChars,
+  reasoningTokens,
+  outputTokens,
+  requestedMaxTokens,
+  recoveryAttempt,
+}) {
   return _appendEvent(runId, 'llm_response', {
     step,
     content: content || null,
@@ -682,6 +702,17 @@ export function recordLLMResponse(runId, step, { content, toolCalls, usage, late
     ...(phase ? { phase } : {}),
     ...(Number.isInteger(attempt) ? { attempt } : {}),
     ...(repair === true ? { repair: true } : {}),
+    ...(typeof empty === 'boolean' ? { empty } : {}),
+    ...(emptyReason ? { emptyReason } : {}),
+    ...(finishReason ? { finishReason } : {}),
+    ...(Number.isInteger(contentChars) ? { contentChars } : {}),
+    ...(Number.isInteger(toolCallCount) ? { toolCallCount } : {}),
+    ...(typeof reasoningPresent === 'boolean' ? { reasoningPresent } : {}),
+    ...(Number.isInteger(reasoningChars) ? { reasoningChars } : {}),
+    ...(Number.isInteger(reasoningTokens) ? { reasoningTokens } : {}),
+    ...(Number.isInteger(outputTokens) ? { outputTokens } : {}),
+    ...(Number.isInteger(requestedMaxTokens) ? { requestedMaxTokens } : {}),
+    ...(Number.isInteger(recoveryAttempt) && recoveryAttempt > 0 ? { recoveryAttempt } : {}),
   });
 }
 

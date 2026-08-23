@@ -95,6 +95,7 @@ import {
 } from '../providers/provider-compatibility.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
+import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
@@ -21274,6 +21275,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider.model,
             messageCount: prunedMessages.length,
             toolsCount: (chatOpts.tools || []).length,
+            requestedMaxTokens: chatOpts.maxTokens,
             ...Agent._traceMediaCounts(prunedMessages),
           }, {
             messages: prunedMessages,
@@ -21299,6 +21301,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             usage: result.usage,
             latencyMs: Date.now() - _llmStart,
             model: provider.model,
+            ...modelOutputDiagnostics(result, {
+              requestedMaxTokens: chatOpts.maxTokens,
+              recoveryAttempt: emptyOutputRecoveryAttempted ? 2 : 1,
+            }),
           });
           try {
             if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeResponseTrace);
@@ -21546,7 +21552,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._persist(tabId);
           break;
         }
-        finalResponse = '[Agent emitted no output and no tool call, even after a recovery nudge. This usually means the task exceeded the current model\'s capability or context budget. Try a stronger model, raise the step limit in settings, or break the task into smaller parts.]';
+        finalResponse = emptyOutputFailureMessage(modelOutputDiagnostics(result, {
+          requestedMaxTokens: 4096,
+          recoveryAttempt: 2,
+        }));
         _traceStatus = 'empty_output';
         traceFailureCode = 'EMPTY_RESPONSE';
         messages.push({ role: 'assistant', content: finalResponse });
@@ -22033,6 +22042,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let hasToolCalls = false;
         let responseItems = null;
         let reasoningContent = '';
+        let streamUsage = null;
+        let finishReason = '';
 
         const streamOpts = this._cloudGenerationOptions(provider, {
           tools: provider.supportsTools && tools.length > 0 ? tools : undefined,
@@ -22053,6 +22064,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await closeTraceStep({ ok: false, code: 'COST_LIMIT' });
           return finish(beforeCost, 'cost_limit');
         }
+        if (runId) {
+          await trace.recordLLMRequest(runId, steps, {
+            providerClass: provider.constructor.name,
+            model: provider.model,
+            messageCount: prunedMessages.length,
+            toolsCount: (streamOpts.tools || []).length,
+            requestedMaxTokens: streamOpts.maxTokens,
+            ...Agent._traceMediaCounts(prunedMessages),
+          }, {
+            messages: prunedMessages,
+            tools: streamOpts.tools || [],
+            runtimeMode: mode,
+          });
+        }
+        const _llmStart = Date.now();
         let costStopMessage = '';
 
         for await (const chunk of provider.chatStream(prunedMessages, streamOpts)) {
@@ -22063,6 +22089,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           } else if (chunk.type === 'reasoning') {
             reasoningContent += String(chunk.content || '');
           } else if (chunk.type === 'usage') {
+            streamUsage = chunk.usage || streamUsage;
             costStopMessage = (await this._recordCostUsage(provider, chunk.usage, costState)) || costStopMessage;
           } else if (chunk.type === 'tool_call') {
             streamEmittedOutput = true;
@@ -22094,14 +22121,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (Array.isArray(chunk.responseItems) && chunk.responseItems.length) {
               responseItems = chunk.responseItems;
             }
+            finishReason = String(
+              chunk.finishReason
+                ?? chunk.finish_reason
+                ?? chunk.stopReason
+                ?? chunk.stop_reason
+                ?? '',
+            );
+            if (chunk.usage && !streamUsage) {
+              streamUsage = chunk.usage;
+              costStopMessage = (await this._recordCostUsage(provider, chunk.usage, costState)) || costStopMessage;
+            }
             break;
           }
         }
 
         fullText = Agent._stripReasoningTags(fullText);
+        const streamedToolCalls = hasToolCalls ? Object.values(toolCallsAccumulator) : [];
+        const outputDiagnostics = modelOutputDiagnostics({
+          content: fullText,
+          toolCalls: streamedToolCalls,
+          reasoningContent,
+          usage: streamUsage,
+          finishReason,
+          responseItems,
+        }, {
+          requestedMaxTokens: streamOpts.maxTokens,
+          recoveryAttempt: emptyOutputRecoveryAttempted ? 2 : 1,
+        });
+        if (runId) {
+          await trace.recordLLMResponse(runId, steps, {
+            content: fullText,
+            toolCalls: streamedToolCalls,
+            usage: streamUsage,
+            latencyMs: Date.now() - _llmStart,
+            model: provider.model,
+            ...outputDiagnostics,
+          });
+        }
         closeTraceStep(this._traceStepEndForResult({
           content: fullText,
-          toolCalls: hasToolCalls ? Object.values(toolCallsAccumulator) : [],
+          toolCalls: streamedToolCalls,
         }));
 
         // Fallback: parse tool calls from streamed text if structured calls are missing.
@@ -22198,7 +22258,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._persist(tabId);
             return finish(scheduledResume.message, 'scheduled_resume');
           }
-          const failMsg = '[Agent emitted no output and no tool call, even after a recovery nudge. This usually means the task exceeded the current model\'s capability or context budget. Try a stronger model, raise the step limit in settings, or break the task into smaller parts.]';
+          const failMsg = emptyOutputFailureMessage(outputDiagnostics);
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
