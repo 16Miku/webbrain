@@ -103,6 +103,25 @@ const LANGUAGE_FLAG_CODES = {
 const FLAG_SOURCE_DIR = path.resolve(ROOT, '../src/chrome/icons/flags');
 const FLAG_OUTPUT_DIR = path.join(ROOT, 'assets', 'flags');
 
+// Reuse the exact provider marks shown in Settings instead of maintaining a
+// second website-only icon set. These filenames intentionally match provider
+// ids so adding or auditing a homepage node stays straightforward.
+const PROVIDER_ICON_FILES = [
+  'llamacpp.svg',
+  'ollama.svg',
+  'openai.svg',
+  'anthropic.svg',
+  'openrouter.svg',
+  'lmstudio.svg',
+  'vllm.svg',
+  'xai.svg',
+  'gemini.svg',
+  'deepseek.svg',
+  'mistral.svg',
+];
+const PROVIDER_ICON_SOURCE_DIR = path.resolve(ROOT, '../src/chrome/icons/providers');
+const PROVIDER_ICON_OUTPUT_DIR = path.join(ROOT, 'assets', 'providers');
+
 async function syncLanguageFlagAssets() {
   const missingFlagLocale = LOCALES.find((locale) => !LANGUAGE_FLAG_CODES[locale.code]);
   if (missingFlagLocale) {
@@ -120,6 +139,14 @@ async function syncLanguageFlagAssets() {
     path.join(FLAG_SOURCE_DIR, 'LICENSE.flag-icons.txt'),
     path.join(FLAG_OUTPUT_DIR, 'LICENSE.flag-icons.txt'),
   );
+}
+
+async function syncProviderIconAssets() {
+  await mkdir(PROVIDER_ICON_OUTPUT_DIR, { recursive: true });
+  await Promise.all(PROVIDER_ICON_FILES.map((file) => copyFile(
+    path.join(PROVIDER_ICON_SOURCE_DIR, file),
+    path.join(PROVIDER_ICON_OUTPUT_DIR, file),
+  )));
 }
 
 const FAQ_KEYS = [
@@ -525,6 +552,7 @@ async function main() {
   const faqTemplate = await readFile(FAQ_TEMPLATE_PATH, 'utf8');
   validateFaqRegistry();
   await syncLanguageFlagAssets();
+  await syncProviderIconAssets();
 
   // Load English first so others can fall back for missing keys.
   const en = JSON.parse(await readFile(path.join(LOCALES_DIR, 'en.json'), 'utf8'));

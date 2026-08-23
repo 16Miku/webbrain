@@ -292,6 +292,12 @@ const { tracesToMarkdown, sanitizeTraceExport } = await import(
 const { tracesToMarkdown: tracesToMarkdownFx, sanitizeTraceExport: sanitizeTraceExportFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
 );
+const Utf8BudgetCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/trace/utf8-budget.js').replace(/\\/g, '/')
+);
+const Utf8BudgetFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/trace/utf8-budget.js').replace(/\\/g, '/')
+);
 const { webbrainTraceToAtif } = await import(
   'file://' + path.join(ROOT, 'scripts/trace-to-atif.mjs').replace(/\\/g, '/')
 );
@@ -8481,7 +8487,7 @@ test('trace recorder: writes go through the event model and stamp the format ver
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /import \{ TRACE_FORMAT_VERSION, makeEvent \} from '\.\/event-model\.js';/, `${browser}: recorder does not import the event model`);
     assert.match(recorderSource, /traceFormatVersion: TRACE_FORMAT_VERSION/, `${browser}: run record does not stamp the format version`);
-    assert.match(recorderSource, /const resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the envelope`);
+    assert.match(recorderSource, /let resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the envelope`);
     assert.match(recorderSource, /dropped invalid event/, `${browser}: invalid-event drop is not surfaced`);
     assert.match(recorderSource, /const marker = makeEvent\(runId, seq, 'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
   }
@@ -9190,24 +9196,59 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /async function losslessTraceEnabled\(\)/, `${browser}: losslessTraceEnabled missing`);
     assert.match(recorderSource, /const lossless = meta\.lossless === true \|\| await losslessTraceEnabled\(\);/, `${browser}: tier decision missing in startRun`);
-    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: run record does not stamp the tier`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' \} : \{\}\)/, `${browser}: run record does not stamp the tier and UTF-8 accounting unit`);
     assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
     assert.match(recorderSource, /const LOSSILESS_REQUEST_CAP = 500_000;/, `${browser}: lossless request cap missing`);
     assert.match(recorderSource, /_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
-    assert.match(recorderSource, /const cap = state\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000;/, `${browser}: tool-result cap does not branch on tier`);
+    assert.match(recorderSource, /const cap = state\?\.lossless === true\s*\? Math\.min\(LOSSILESS_RESULT_CAP, remainingBytes\)\s*:\s*20_000;/, `${browser}: tool-result cap does not branch on tier and remaining UTF-8 budget`);
     assert.match(recorderSource, /peekRunFlags|lossless: record\?\.lossless === true|lossless = record\?\.lossless === true/, `${browser}: SW-eviction recovery does not restore the tier`);
     assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
     assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
     assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
-    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0 \} : \{\}\)/, `${browser}: default run records still serialize a false lossless field`);
+    assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' \} : \{\}\)/, `${browser}: default run records should omit lossless accounting fields`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
     assert.match(recorderSource, /_losslessTotalEstimate \+= addedBytes;[\s\S]*?if \(_losslessTotalEstimate <= LOSSILESS_TOTAL_CAP\) return;/, `${browser}: eviction scan is not gated by a cached running total`);
     assert.match(recorderSource, /async function _scanLosslessTotal\(\)[\s\S]*?objectStore\('runs'\)\.openCursor\(\)/, `${browser}: lossless total must scan every run, not a newest-N window`);
+    assert.match(recorderSource, /for \(const run of runs\) \{\s*total \+= run\.losslessBytesEncoding === 'utf8'\s*\? Number\(run\.losslessBytes\) \|\| 0\s*: await _recomputeLosslessBytes\(db, run\);/, `${browser}: aggregate scans should trust UTF-8-marked totals and recompute only legacy lossless runs`);
+    assert.match(recorderSource, /function _putEventWithLosslessTotal\(db, runId, event, losslessBytes\) \{[\s\S]*?tx\(db, \['events', 'runs'\]\)[\s\S]*?transaction\.oncomplete = \(\) => resolve\(totalUpdated\);[\s\S]*?eventsStore\.put\(event\);[\s\S]*?runsStore\.get\(runId\)[\s\S]*?run\.losslessBytes = losslessBytes;\s*run\.losslessBytesEncoding = 'utf8';\s*runsStore\.put\(run\);/, `${browser}: counted lossless events and their UTF-8 totals must commit atomically`);
+    assert.match(recorderSource, /const nextLosslessBytes = \(state\.losslessBytes \|\| 0\) \+ bytes;\s*const totalUpdated = await _putEventWithLosslessTotal\(db, runId, ev, nextLosslessBytes\);\s*if \(totalUpdated\) \{\s*state\.losslessBytes = nextLosslessBytes;/, `${browser}: in-memory lossless totals must advance only after the atomic event/run transaction commits`);
+    assert.match(recorderSource, /async function _recomputeLosslessBytes\(db, run, \{\s*refreshActiveState = true,\s*trustMarkedCurrent = true,[\s\S]*?index\('runId'\)[\s\S]*?getAll\(IDBKeyRange\.only\(run\.runId\)\)[\s\S]*?new TextEncoder\(\)\.encode\(JSON\.stringify\(event\.data\)\)\.length[\s\S]*?const runTx = tx\(db, \['runs'\]\);[\s\S]*?runStore\.get\(run\.runId\)[\s\S]*?if \(trustMarkedCurrent && current\.losslessBytesEncoding === 'utf8'\) \{[\s\S]*?bytes = Number\(current\.losslessBytes\) \|\| 0;[\s\S]*?current\.losslessBytes = bytes;/, `${browser}: aggregate scans should transactionally migrate legacy totals without overwriting a newer atomic marked total`);
+    assert.match(recorderSource, /let _losslessBudgetQueue = Promise\.resolve\(\);[\s\S]*?const rescan = _losslessTotalEstimate === null;[\s\S]*?_losslessBudgetQueue\.then\(\(\) => _evictOldestLosslessRuns[\s\S]*?if \(rescan \|\| _losslessTotalEstimate === null\)[\s\S]*?await _scanLosslessTotal\(\);/, `${browser}: concurrent initial aggregate scans should serialize without awaiting another run's write queue`);
+    assert.match(recorderSource, /_runState\.get\(run\.runId\)\?\.lossless === true[\s\S]*?void _queueRunWrite\(run\.runId, async \(\) => \{[\s\S]*?_recomputeLosslessBytes\(db, run, \{\s*refreshActiveState: false,\s*trustMarkedCurrent: false,[\s\S]*?state\.losslessBytes = refreshedBytes;/, `${browser}: migrated active-run byte totals should force-refresh only inside that run's serialized write queue`);
     assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
+    assert.match(recorderSource, /new TextEncoder\(\)\.encode\(JSON\.stringify\(resolvedData\)\)\.length/, `${browser}: lossless budgets should count serialized UTF-8 bytes`);
+    assert.match(recorderSource, /function clampLosslessRequest\(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP\)[\s\S]*?const byteLength = utf8ByteLength\(serialized\);[\s\S]*?length: byteLength,[\s\S]*?fitUtf8Prefix\(serialized, limit,/, `${browser}: lossless requests should clamp and report UTF-8 bytes`);
+    assert.match(recorderSource, /import \{ clampUtf8Value, fitUtf8Prefix, utf8ByteLength \} from '\.\/utf8-budget\.js';[\s\S]*?const shortResult = clampUtf8Value\(result, cap\);/, `${browser}: tool results should use the serialized UTF-8 clamp`);
+    assert.match(recorderSource, /function losslessBudgetMarker\(kind, data\)[\s\S]*?args: null,[\s\S]*?losslessBudgetOmitted: true,/, `${browser}: exhausted lossless payloads should retain content-free request and tool markers`);
+    assert.match(recorderSource, /function boundedLosslessRequestMetadata\(data\)[\s\S]*?'providerClass'[\s\S]*?'providerId'[\s\S]*?'model'[\s\S]*?'phase'[\s\S]*?'messageCount'[\s\S]*?'toolsCount'[\s\S]*?'imageBlockCount'[\s\S]*?'documentBlockCount'[\s\S]*?localWikipediaRag/, `${browser}: post-cap request markers should retain only bounded content-free metadata`);
+    assert.match(recorderSource, /const toolNames = Array\.isArray\(data\?\.messages\?\.toolNames\)[\s\S]*?: boundedToolNames\(data\?\.tools\);[\s\S]*?\.\.\.boundedLosslessRequestMetadata\(data\),[\s\S]*?messages: \{ _truncated: true, length, head: budgetHead, toolNames \}/, `${browser}: post-cap request markers should preserve bounded tool names and request metadata`);
+    assert.match(recorderSource, /const remainingBytes = Math\.max\(0, LOSSILESS_RUN_CAP - \(state\.losslessBytes \|\| 0\)\);\s*if \(losslessBytes > remainingBytes\) \{\s*resolvedData = losslessBudgetMarker\(kind, resolvedData\);\s*losslessBudgetOmitted = true;[\s\S]*?if \(losslessBudgetOmitted\) \{\s*await promisifyReq\(tx\(db, \['events'\]\)\.objectStore\('events'\)\.put\(ev\)\);\s*return seq;/, `${browser}: a final lossless event should become an uncounted timeline marker instead of overrunning or disappearing`);
+    assert.match(recorderSource, /if \(event\?\.data\?\.losslessBudgetOmitted === true\) continue;\s*try \{ bytes \+= new TextEncoder/, `${browser}: legacy byte recomputation should exclude content-free budget markers`);
+    assert.match(recorderSource, /state\?\.lossless === true && state\.losslessBytesEncoding !== 'utf8'[\s\S]*?_recomputeLosslessBytes\(db, run, \{\s*refreshActiveState: false,\s*trustMarkedCurrent: false,[\s\S]*?state\.losslessBytesEncoding = 'utf8';[\s\S]*?let resolvedData = typeof data === 'function' \? data\(state\) : data;/, `${browser}: legacy active totals should force-migrate before the first payload cap guard runs`);
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
+  }
+});
+
+test('trace UTF-8 budget helpers keep multibyte truncation inside byte limits', () => {
+  for (const [browser, budget] of [['chrome', Utf8BudgetCh], ['firefox', Utf8BudgetFx]]) {
+    assert.equal(budget.utf8ByteLength('A漢🙂'), 8, `${browser}: UTF-8 byte length should count CJK and astral characters`);
+    assert.equal(budget.fitUtf8Prefix('漢🙂A', 6), '漢', `${browser}: a raw prefix should not split or overrun a multibyte character`);
+    const serializeMarker = head => JSON.stringify({ _truncated: true, head });
+    const markerLimit = budget.utf8ByteLength(serializeMarker('漢'));
+    const head = budget.fitUtf8Prefix('漢字🙂', markerLimit, serializeMarker);
+    assert.equal(head, '漢', `${browser}: marker overhead should be included in the byte boundary`);
+    assert.ok(budget.utf8ByteLength(serializeMarker(head)) <= markerLimit, `${browser}: serialized marker exceeded its UTF-8 budget`);
+    const escaped = '\n'.repeat(120);
+    const escapedBytes = budget.utf8ByteLength(JSON.stringify(escaped));
+    const clamped = budget.clampUtf8Value(escaped, 100);
+    assert.equal(escapedBytes, 242, `${browser}: escaped string evidence should include JSON quotes and escapes`);
+    assert.equal(clamped._truncated, true, `${browser}: escaped string bypassed the serialized byte cap`);
+    assert.equal(clamped.length, escapedBytes, `${browser}: truncation marker should report serialized UTF-8 bytes`);
+    assert.ok(escaped.startsWith(clamped.head), `${browser}: string truncation marker should keep a raw readable prefix`);
+    assert.ok(budget.utf8ByteLength(JSON.stringify(clamped)) <= 100, `${browser}: escaped string marker exceeded its serialized UTF-8 cap`);
   }
 });
 
@@ -9723,7 +9764,9 @@ test('trace recorder: turn/step boundary helpers and structured error codes are 
     assert.match(recorderSource, /data\.code = normalizeErrorCode\(code\)/, `${browser}: recordError does not normalize the code`);
     assert.match(recorderSource, /import \{ normalizeErrorCode \} from '\.\/error-codes\.js';/, `${browser}: recorder does not import error-codes`);
     assert.match(recorderSource, /const _runWriteQueues = new Map\(\)/, `${browser}: per-run event serialization queue missing`);
-    assert.match(recorderSource, /await _flushRunWrites\(runId\)[\s\S]*?existing\.endedAt = Date\.now\(\)/, `${browser}: run finalization can race queued lifecycle events`);
+    assert.match(recorderSource, /async function _flushRunWrites\(runId\) \{\s*let pending = _runWriteQueues\.get\(runId\);\s*while \(pending\) \{[\s\S]*?const next = _runWriteQueues\.get\(runId\);\s*if \(!next \|\| next === pending\) return;\s*pending = next;[\s\S]*?export async function endRun[\s\S]*?await _flushRunWrites\(runId\);[\s\S]*?return _queueRunWrite\(runId, async \(\) => \{[\s\S]*?const runTx = tx\(db, \['runs'\]\);\s*const runStore = runTx\.objectStore\('runs'\);\s*const existing = await promisifyReq\(runStore\.get\(runId\)\);[\s\S]*?runStore\.put\(existing\)/, `${browser}: run finalization must drain nested refreshes, share the per-run queue, and transactionally patch the latest byte-accounting record`);
+    const endRunBody = recorderSource.slice(recorderSource.indexOf('export async function endRun'), recorderSource.indexOf('/**\n * Repair trace records'));
+    assert.doesNotMatch(endRunBody, /_runWriteQueues\.delete\(runId\)/, `${browser}: finalization must let the queue owner release itself after later queued migrations settle`);
     assert.match(recorderSource, /export function recordLLMRetry\([\s\S]*?_retryCount\(db, runId, step\)[\s\S]*?normalizeErrorCode\(code\)/, `${browser}: retry attempts are not derived from the durable event log`);
   }
 });
@@ -33922,6 +33965,77 @@ test('web landing language picker mirrors the extension flag listbox', () => {
   }
 });
 
+test('web provider constellation reuses the Settings brand icon set', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const build = fs.readFileSync(path.join(ROOT, 'web/build/build.mjs'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const providerIcons = [
+    'llamacpp', 'ollama', 'openai', 'anthropic', 'openrouter', 'lmstudio',
+    'vllm', 'xai', 'gemini', 'deepseek', 'mistral',
+  ];
+
+  assert.match(
+    build,
+    /async function syncProviderIconAssets\(\)[\s\S]*?copyFile\([\s\S]*?PROVIDER_ICON_SOURCE_DIR[\s\S]*?PROVIDER_ICON_OUTPUT_DIR/,
+    'web build: Settings provider artwork should be copied into website assets',
+  );
+  assert.match(
+    template,
+    /\.pn-logo \{[\s\S]*?background: rgba\(255,255,255,0\.94\);[\s\S]*?object-fit: contain;/,
+    'web: provider marks should keep the Settings-style light chip for theme-safe contrast',
+  );
+  assert.equal(
+    (template.match(/<img class="pn-logo"/g) || []).length,
+    providerIcons.length,
+    'web: every constellation node should render a real provider mark',
+  );
+
+  for (const icon of providerIcons) {
+    const assetPath = `/assets/providers/${icon}.svg`;
+    assert.equal(template.split(assetPath).length - 1, 1, `web template: ${icon} mark should appear once`);
+    assert.equal(generated.split(assetPath).length - 1, 1, `web build: ${icon} mark should appear once`);
+    assert.equal(
+      fs.readFileSync(path.join(ROOT, 'web/assets/providers', `${icon}.svg`), 'utf8'),
+      fs.readFileSync(path.join(ROOT, 'src/chrome/icons/providers', `${icon}.svg`), 'utf8'),
+      `web assets: ${icon} should match the Settings icon exactly`,
+    );
+  }
+
+  assert.doesNotMatch(
+    template,
+    /<div class="pn-bubble [^"]+">(?:🦙|◉|⬡|◈|◆|✦|▣|✕|◊|⬣|▲)<\/div>/,
+    'web: placeholder glyphs should not remain in provider bubbles',
+  );
+});
+
+test('web hero social proof uses recognizable brand and users icons', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+
+  for (const [label, html] of [['landing template', template], ['generated landing page', generated]]) {
+    assert.match(
+      html,
+      /hero-proof-featured[\s\S]*?<img class="hero-proof-icon" src="\/assets\/browser-chrome\.svg" alt="" aria-hidden="true"/,
+      `${label}: Chrome Web Store proof should use the bundled Chrome logo`,
+    );
+    assert.match(
+      html,
+      /hero-proof-hunt[\s\S]*?<circle cx="12" cy="12" r="12" fill="#da552f"\/>[\s\S]*?<path fill="#fff"/,
+      `${label}: Product Hunt proof should use its branded orange P mark`,
+    );
+    assert.match(
+      html,
+      /hero-proof-users[\s\S]*?<svg class="hero-proof-icon"[\s\S]*?<circle cx="9" cy="7" r="4"\/>/,
+      `${label}: user-count proof should include a decorative users icon`,
+    );
+    assert.doesNotMatch(
+      html,
+      /hero-proof-featured[\s\S]*?<polyline points="8\.5 12\.2 11 14\.7 15\.5 9\.5"/,
+      `${label}: generic featured checkmark should not remain`,
+    );
+  }
+});
+
 test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stack', () => {
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
@@ -34439,13 +34553,49 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
-      `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?const clearingRequestId = localRunRequestIdForTab\(tabId\);[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRunForConversationClear\(tabId, clearingRequestId\);[\s\S]*?const clearResult = await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId, clearingRequestId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId, \{ promptId: clearResult\.clearedContextMenuPromptId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?catch \(error\)[\s\S]*?return false;[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);[\s\S]*?else if \(backgroundClearSucceeded\) await drainQueuedPromptsAfterRunSettles\(tabId\);/,
+      `${label}: confirmed New conversation should discard only the durably cleared prompt and drain newer work after releasing the interlock`,
     );
+    assert.match(clearBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?shouldRecoverActiveRun = true;\s*holdFailedConversationClearRecovery\(tabId\);[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldRecoverActiveRun\) await recoverActiveRunAfterFailedConversationClear\(tabId\);/, `${label}: New conversation should finish a partial local reset and recover the old run only when the background clear itself failed`);
+    assert.doesNotMatch(clearBody, /sendToBackground\('clear_context_menu_prompt'/, `${label}: New conversation should not leave durable prompt invalidation in a second fallible message`);
+    const resetStart = panel.indexOf("if (command.value === '/reset') {");
+    const resetBody = panel.slice(resetStart, panel.indexOf("if (command.value === '/print')", resetStart));
+    assert.match(resetBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?\} else \{\s*shouldRecoverActiveRun = true;\s*holdFailedConversationClearRecovery\(tabId\);[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldRecoverActiveRun\) await recoverActiveRunAfterFailedConversationClear\(tabId\);\s*else if \(backgroundClearSucceeded\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: /reset should drain preserved prompts after a successful clear and recover the old run only when the background clear fails`);
     assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
+    assert.match(panel, /msg\.action !== 'tab_chat_cleared'\) return;\s*if \(msg\.clearedContextMenuPromptId\) \{\s*clearQueuedForTab\(msg\.tabId, \{ promptId: msg\.clearedContextMenuPromptId \}\);/, `${label}: every panel should suppress only the prompt durably removed by a conversation clear`);
+    assert.match(panel, /msg\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?document\.visibilityState === 'hidden'[\s\S]*?isConversationClearInProgress\(msg\.tabId\)[\s\S]*?!sameTabId\(currentTabId, msg\.tabId\)\) return;[\s\S]*?requestVisibleSidePanelStateRefresh\(\);/, `${label}: the initiating panel should ignore its clear broadcast while the local clear transaction is active`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
+    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?!sameTabId\(currentTabId, numericTabId\)[\s\S]*?!sameTabId\(renderedTabId, numericTabId\)[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return;/, `${label}: a settling run must drain only its visible initiating tab and never drain into an in-flight clear`);
+    assert.match(panel, /await sendToBackground\('agent_run_state', \{ tabId: numericTabId \}\);[\s\S]*?if \(!sameTabId\(currentTabId, numericTabId\) \|\| !sameTabId\(renderedTabId, numericTabId\)\) \{\s*cancelQueuedPromptDrainRetry\(numericTabId\);\s*return;\s*\}\s*if \(isConversationClearInProgress\(numericTabId\)\) return;[\s\S]*?drainQueuedComposerMessageForCurrentTab\(\)/, `${label}: queued-prompt drains should revalidate their target tab and clear interlock after the awaited run-state probe`);
+    assert.match(panel, /const queuedPromptDrainRetryTimers = new Map\(\);[\s\S]*?hasQueuedPromptForTab\(numericTabId\)[\s\S]*?sendToBackground\('agent_run_state', \{ tabId: numericTabId \}\)[\s\S]*?runState\.running \|\| runState\.starting[\s\S]*?scheduleQueuedPromptDrainRetry\(numericTabId\)[\s\S]*?drainQueuedComposerMessageForCurrentTab\(\)/, `${label}: queued prompts should remain queued and retry until both active and starting background reservations are gone`);
+    assert.match(panel, /async function switchToTab\(newTabId\)[\s\S]*?consumePendingContextMenuPrompt\(\)[\s\S]*?drainQueuedPromptsAfterRunSettles\(newTabId\)/, `${label}: returning to a tab should resume composer and context-menu prompts deferred while it was hidden`);
     assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
-    assert.match(panel, /function suppressRunUpdatesForClearedConversation\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
+    assert.match(panel, /function localRunRequestIdForTab\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?function suppressRunUpdatesForClearedConversation\(tabId, requestId = localRunRequestIdForTab\(tabId\)\)/, `${label}: clear should capture its request before waiting for the follower to settle`);
+    assert.match(panel, /function suppressRunUpdatesForClearedConversation\([\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
+    assert.match(panel, /function suppressRunUpdatesForClearedConversation\([\s\S]*?localRunFollowers\.get\(Number\(tabId\)\)\?\.requestId === requestId[\s\S]*?cancelledRunRecoveryRequestIds\.add\(requestId\);[\s\S]*?conversationClearFollowerCancellationRequestIds\.add\(requestId\);[\s\S]*?localRunRequestIds\.delete\(Number\(tabId\)\)/, `${label}: a successful clear should cancel a lingering follower and revoke the old request's ownership before rendering the new conversation`);
+    assert.match(panel, /async function sendRunWithReconnect\([\s\S]*?const shouldContinueRunRecovery = \(\) => !conversationClearFollowerCancellationRequestIds\.has\(requestId\);[\s\S]*?shouldContinue: shouldContinueRunRecovery/, `${label}: conversation clear should cancel the local follower at its next bounded poll`);
+    assert.match(panel, /const CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS = 2_000;[\s\S]*?async function abortRunForConversationClear\(tabId, requestId = localRunRequestIdForTab\(tabId\)\) \{[\s\S]*?const follower = localRunFollowers\.get\(Number\(tabId\)\);\s*if \(requestId && follower\?\.requestId === requestId\) \{\s*conversationClearFollowerCancellationRequestIds\.add\(requestId\);[\s\S]*?Promise\.race\(\[abortRun\(tabId\)\.catch\(\(\) => \{\}\), timeout\]\)[\s\S]*?clearTimeout\(timeoutId\)/, `${label}: clear should cancel only a matching local follower and keep its settlement wait bounded`);
+    assert.match(panel, /const ownsRunState = localRunRequestIds\.get\(tabId\) === requestId;[\s\S]*?if \(!ownsRunState\) return accepted;/, `${label}: a cleared chat run should not finalize a newer run's UI state`);
+    assert.match(panel, /function setTabProcessing\(tabId, processing\) \{[\s\S]*?const effectiveProcessing = !!processing \|\| failedConversationClearRecoveryTabs\.has\(numericTabId\);[\s\S]*?isProcessing = effectiveProcessing;/, `${label}: an old follower finalizer must not expose an idle composer while a failed clear is being reconciled`);
+    assert.match(panel, /async function recoverActiveRunAfterFailedConversationClear\(tabId\) \{[\s\S]*?const recoveryToken = holdFailedConversationClearRecovery\(numericTabId\);[\s\S]*?refreshConversationScopeState\(numericTabId, \{ apply: false \}\);\s*if \(!isFailedConversationClearRecoveryCurrent\(numericTabId, recoveryToken\)\) return false;[\s\S]*?if \(!state\?\.ok\) \{\s*scheduleFailedConversationClearRecoveryRetry\(numericTabId\);[\s\S]*?applyConversationScopeState\(numericTabId, state\);[\s\S]*?const recoveryStillCurrent = \(\) => \([\s\S]*?isFailedConversationClearRecoveryCurrent\(numericTabId, recoveryToken\)[\s\S]*?applyActiveRunState\(numericTabId, state, \{\s*shouldContinue: recoveryStillCurrent,[\s\S]*?if \(!recoveryStillCurrent\(\)\) return false;[\s\S]*?if \(!state\.running && !state\.starting\) \{\s*finishFailedConversationClearRecovery\(numericTabId, \{ processing: false \}\);\s*await drainQueuedPromptsAfterRunSettles\(numericTabId\);/, `${label}: failed clears should replay authoritative scope and run state only while their recovery token and clear interlock remain current`);
+    assert.match(panel, /const failedConversationClearRecoveryTokens = new Map\(\);[\s\S]*?function holdFailedConversationClearRecovery\(tabId\) \{[\s\S]*?const recoveryToken = Symbol\('failed-conversation-clear-recovery'\);\s*failedConversationClearRecoveryTokens\.set\(numericTabId, recoveryToken\)[\s\S]*?return recoveryToken;[\s\S]*?function isFailedConversationClearRecoveryCurrent\(tabId, recoveryToken\) \{[\s\S]*?failedConversationClearRecoveryTokens\.get\(numericTabId\) === recoveryToken[\s\S]*?!isConversationClearInProgress\(numericTabId\);[\s\S]*?function finishFailedConversationClearRecovery[\s\S]*?failedConversationClearRecoveryTokens\.delete\(numericTabId\);/, `${label}: every recovery attempt should rotate its token so a newer clear or recovery cycle invalidates stale probes before they replay scope`);
+    assert.match(panel, /const oldFollowerStillSettling = !requestId[\s\S]*?conversationClearFollowerCancellationRequestIds\.has\(requestId\)[\s\S]*?localRunFollowers\.has\(numericTabId\)[\s\S]*?localRunRequestIds\.has\(numericTabId\);[\s\S]*?scheduleFailedConversationClearRecoveryRetry\(numericTabId\);[\s\S]*?if \(runUi\?\.status === 'awaiting_plan'\) \{\s*finishFailedConversationClearRecovery\(numericTabId, \{ processing: true \}\);[\s\S]*?void adoptRestoredRunState\(numericTabId, state\);[\s\S]*?const runWasAdopted = localRunRequestIds\.get\(numericTabId\) === requestId[\s\S]*?localRunFollowers\.get\(numericTabId\)\?\.requestId === requestId;[\s\S]*?finishFailedConversationClearRecovery\(numericTabId, \{ processing: true \}\);/, `${label}: failed clears should wait out the cancelled follower before exposing a plan gate or re-adopting a surviving background run`);
+    assert.match(panel, /catch \(e\) \{\s*if \(clearedConversationRunRequestIds\.has\(requestId\)\s*\|\| conversationClearFollowerCancellationRequestIds\.has\(requestId\)\) return accepted;\s*reconcileFailedSelectionGroundedStart/, `${label}: a cleared or failed-clear-cancelled chat run should not restore its old scope, attachments, or cancellation error`);
+    assert.match(panel, /async function continueAgent\([\s\S]*?catch \(e\) \{[\s\S]*?!clearedConversationRunRequestIds\.has\(requestId\)[\s\S]*?!conversationClearFollowerCancellationRequestIds\.has\(requestId\)[\s\S]*?const ownsRunState = localRunRequestIds\.get\(tabId\) === requestId;[\s\S]*?if \(!ownsRunState\) return;/, `${label}: a cleared continuation should suppress failed-clear cancellation errors and not finalize a newer run's UI state`);
+    const restoredRunStart = panel.indexOf('async function adoptRestoredRunState(tabId, state) {');
+    const restoredRunEnd = panel.indexOf('\n\nasync function applyActiveRunState(', restoredRunStart);
+    const restoredRunBody = panel.slice(restoredRunStart, restoredRunEnd);
+    assert.equal((restoredRunBody.match(/!clearedConversationRunRequestIds\.has\(requestId\)/g) || []).length, 3, `${label}: restored-run planner, returned-error, and thrown-error paths should ignore a cleared request`);
+    assert.equal((restoredRunBody.match(/!conversationClearFollowerCancellationRequestIds\.has\(requestId\)/g) || []).length, 3, `${label}: restored-run planner, returned-error, and thrown-error paths should suppress failed-clear follower cancellation`);
+    assert.match(restoredRunBody, /isConversationClearInProgress\(tabId\)[\s\S]*?clearedConversationRunRequestIds\.has\(requestId\)[\s\S]*?!sameTabId\(currentTabId, tabId\)[\s\S]*?!sameTabId\(renderedTabId, tabId\)/, `${label}: restored-run adoption should independently reject cleared and stale-tab snapshots`);
+    assert.match(restoredRunBody, /finally \{[\s\S]*?const ownsRunState = localRunRequestIds\.get\(Number\(tabId\)\) === requestId;[\s\S]*?if \(ownsRunState\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: an adopted recovered follower should drain its originating tab's queued prompts when it settles`);
+    assert.match(panel, /async function restoreActiveRunState[\s\S]*?const snapshotStillActive = await applyActiveRunState\(numericTabId, state\);[\s\S]*?if \(!snapshotStillActive\) return;[\s\S]*?void adoptRestoredRunState\(numericTabId, state\);/, `${label}: cancelled active-run state application should not fall through to stale snapshot adoption`);
+    const activeRunEnd = panel.indexOf('\n\nfunction conversationHasUserMessages()', restoredRunEnd);
+    const activeRunBody = panel.slice(restoredRunEnd, activeRunEnd);
+    assert.match(activeRunBody, /const shouldApplyState = \(\) => shouldContinue\(\)[\s\S]*?!isConversationClearInProgress\(numericTabId\)[\s\S]*?!clearedConversationRunRequestIds\.has\(requestId\)/, `${label}: active-run snapshots should retain a request-scoped clear guard`);
+    assert.match(activeRunBody, /await reconcilePersistedStagedScreenshots\([\s\S]*?shouldContinue: shouldApplyState[\s\S]*?if \(!shouldApplyState\(\)\) return false;[\s\S]*?await sendToBackground\('agent_run_ack',[\s\S]*?if \(!shouldApplyState\(\)\) return false;/, `${label}: active-run state application should propagate clear cancellation after every await`);
+    assert.match(panel, /async function reconcilePersistedStagedScreenshots\([\s\S]*?shouldContinue = \(\) => true[\s\S]*?await loadStagedScreenshots\([\s\S]*?if \(!shouldContinue\(\)\) return;[\s\S]*?restorePendingAttachmentsForTab\([\s\S]*?shouldContinue,[\s\S]*?attachmentGeneration/, `${label}: staged-attachment reconciliation should stop before restoring UI after a clear`);
+    assert.match(panel, /async function restorePendingAttachmentsForTab\([\s\S]*?const expectedGeneration = attachmentGeneration \?\? getAttachmentGeneration\(numericTabId\);[\s\S]*?await markStagedScreenshots\([\s\S]*?if \(getAttachmentGeneration\(numericTabId\) !== expectedGeneration\) \{[\s\S]*?await removeStagedScreenshots\([\s\S]*?return;\s*\}\s*const restorable = screenshotsPersisted/, `${label}: a successful local clear generation should delete restored pixels while a failed clear requeues them after the pending write`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
   }
@@ -34481,7 +34631,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(agent, /_clearSelectionGroundingForIndependentRun\(tabId, runOptions = \{\}\)[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?_conversationScopeChangeListener\?\.\(tabId, \{ sourceGrounding: null \}\)/, `${label}: independent runs should broadcast the cleared scope after persisting it`);
     assert.match(background, /setConversationScopeChangeListener\(\(tabId, state\) => \{[\s\S]*?action: 'agent_update'[\s\S]*?type: 'conversation_scope'[\s\S]*?data: state/, `${label}: background should forward independent scope changes to open sidepanels`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{\s*if \(msg\.type === 'conversation_scope'\) \{\s*applyConversationScopeState\(msg\.tabId, msg\.data\);\s*return;/, `${label}: sidepanel should apply scope broadcasts before run rendering guards`);
-    assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state\);/, `${label}: detached run probes should reconcile scope before returning journal-only results`);
+    assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?if \(!shouldContinueRunRecovery\(\)\) return;[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state, \{ shouldContinue: shouldContinueRunRecovery \}\);/, `${label}: detached run probes should reconcile scope only while their request still owns state`);
     assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true, sourceGrounding\);/, `${label}: context-menu selection should reveal its exact policy without waiting for model output`);
     assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
@@ -34501,8 +34651,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {'),
       panel.indexOf('\n\nfunction settleNewConversationConfirmation', panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {')),
     ), /setSelectionGroundedForTab/, `${label}: uncertain failed starts should not clear the fail-closed local scope before reconciliation`);
-    assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: all chat-start failures should reconcile both explicit and inherited selected-text state`);
-    assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful clear entry point should drop local selected-text state`);
+    assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*if \(clearedConversationRunRequestIds\.has\(requestId\)\s*\|\| conversationClearFollowerCancellationRequestIds\.has\(requestId\)\) return accepted;\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: non-cleared and non-cancelled chat-start failures should reconcile both explicit and inherited selected-text state`);
+    assert.match(panel, /async function renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure = false \} = \{\}\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful background clear should release old run state before local transcript cleanup can fail`);
 
     const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
     const workflowEnd = panel.indexOf('\n\nasync function submitSavedWorkflowParameters', workflowStart);
@@ -34596,6 +34746,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       `(() => { ${panel.slice(reconnectStart, reconnectEnd)}; return sendRunWithReconnect; })()`,
       {
         cancelledRunRecoveryRequestIds: { delete() {} },
+        conversationClearFollowerCancellationRequestIds: { has() { return false; }, delete() {} },
         runDetachedWithReconnect: async (options) => {
           await options.onState({ sourceGrounding });
           return { content: 'ok' };
@@ -34621,7 +34772,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
   }
 });
 
-test('background waits for an active run to stop before clearing its conversation', () => {
+test('background bounds the active-run stop wait before clearing its conversation', async () => {
   for (const [label, backgroundRel] of [
     ['chrome', 'src/chrome/src/background.js'],
     ['firefox', 'src/firefox/src/background.js'],
@@ -34629,12 +34780,68 @@ test('background waits for an active run to stop before clearing its conversatio
     const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
     const helperMatch = background.match(/async function stopActiveRunBeforeConversationClear\(tabId\) \{([\s\S]*?)\n\}/);
     assert.ok(helperMatch, `${label}: active-run clear helper missing`);
+    assert.match(background, /const CONVERSATION_CLEAR_STOP_TIMEOUT_MS = 10_000;/, `${label}: clear wait timeout missing`);
     assert.match(helperMatch[1], /cancelDetachedRunStart\(tabId\);[\s\S]*?agent\.abort\(tabId\);[\s\S]*?await activeStart\.promise\.catch\(\(\) => \{\}\);/, `${label}: clear helper should cancel, abort, and await detached runs`);
-    assert.match(helperMatch[1], /while \(agent\.activeRunState\(tabId\)\?\.running\) \{[\s\S]*?setTimeout\(resolve, 50\)/, `${label}: clear helper should also wait for direct chat runs to release the agent guard`);
+    assert.match(helperMatch[1], /while \(!timedOut && agent\.activeRunState\(tabId\)\?\.running\) \{[\s\S]*?setTimeout\(resolve, 50\)/, `${label}: direct chat polling should stop at the deadline`);
+    assert.match(helperMatch[1], /Promise\.race\(\[unwind, timeout\]\)[\s\S]*?clearTimeout\(timeoutId\)/, `${label}: detached and direct waits should share one bounded deadline`);
+
+    const detachedRunStarts = new Map([[7, { promise: new Promise(() => {}) }]]);
+    const stopActiveRunBeforeConversationClear = vm.runInNewContext(
+      `(${helperMatch[0]})`,
+      {
+        detachedRunStarts,
+        cancelDetachedRunStart: () => true,
+        agent: { activeRunState: () => ({ running: true }), abort: () => {} },
+        CONVERSATION_CLEAR_STOP_TIMEOUT_MS: 5,
+        setTimeout,
+        clearTimeout,
+      },
+    );
+    await assert.rejects(
+      stopActiveRunBeforeConversationClear(7),
+      /active run did not stop within 10 seconds/,
+      `${label}: a wedged detached start should reject instead of hanging forever`,
+    );
 
     const clearStart = background.indexOf("case 'clear_conversation':");
     const clearBody = background.slice(clearStart, background.indexOf("case 'compact_conversation':", clearStart));
     assert.match(clearBody, /const conversationId = await agent\.getConversationId\(tabId\);[\s\S]*?await stopActiveRunBeforeConversationClear\(tabId\);[\s\S]*?await scheduler\.cancelForConversation\(tabId, conversationId\);[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: active runs should settle before old-conversation jobs and state are cleared`);
+    assert.match(clearBody, /const commitSchedulerClear = async \(\) => \{\s*await scheduler\.cancelForConversation\(tabId, conversationId\);\s*\};[\s\S]*?contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{[\s\S]*?additionalKeys,[\s\S]*?commitAfterRemove: commitSchedulerClear,[\s\S]*?!tabChatClearResult\?\.ok \|\| tabChatClearResult\.skipped[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: prompt, transcript, and scheduler cleanup should share a rollback boundary before conversation state is cleared`);
+    assert.match(clearBody, /clearedContextMenuPromptId = tabChatClearResult\.clearedContextMenuPromptId \|\| null;[\s\S]*?action: 'tab_chat_cleared',[\s\S]*?clearedContextMenuPromptId,[\s\S]*?return \{ ok: true, clearedContextMenuPromptId \};/, `${label}: a successful clear should identify the exact old prompt so panels preserve newer queued work`);
+  }
+});
+
+test('duplicate typing identity is cleared on navigation and tab cleanup', () => {
+  for (const [label, prefix, AgentClass] of [
+    ['chrome', 'src/chrome', AgentCh],
+    ['firefox', 'src/firefox', AgentFx],
+  ]) {
+    const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const agent = Object.create(AgentClass.prototype);
+    agent._lastTypeFieldIdent = new Map([[17, 'focused:INPUT|email']]);
+    const staleEpoch = agent._captureLastTypeFieldEpoch(17);
+    agent.clearLastTypeFieldIdent(17);
+    assert.equal(agent._lastTypeFieldIdent.has(17), false, `${label}: navigation cleanup should delete the tab identity`);
+    assert.equal(
+      agent._rememberLastTypeFieldIdent(17, 'focused:INPUT|email', staleEpoch),
+      false,
+      `${label}: a type operation started before navigation should not restore stale identity`,
+    );
+    assert.equal(agent._lastTypeFieldIdent.has(17), false, `${label}: stale identity writes should be discarded`);
+    const currentEpoch = agent._captureLastTypeFieldEpoch(17);
+    assert.equal(agent._rememberLastTypeFieldIdent(17, 'focused:INPUT|email', currentEpoch), false, `${label}: first type on the new page should not warn`);
+    assert.equal(agent._rememberLastTypeFieldIdent(17, 'focused:INPUT|email', currentEpoch), true, `${label}: repeated type on the same page should still warn`);
+    assert.match(agentSource, /_cleanupTab\(tabId,[\s\S]*?this\._lastTypeFieldIdent\?\.delete\(tabId\)[\s\S]*?this\._lastTypeFieldEpoch\?\.delete\(tabId\)/, `${label}: tab cleanup should release duplicate-typing state and epochs`);
+    assert.match(background, /frameId !== 0\) return;[\s\S]*?agent\.clearLastTypeFieldIdent\(details\.tabId\)|function recordNav\(tabId,[\s\S]*?agent\.clearLastTypeFieldIdent\(tabId\)/, `${label}: top-level navigation should reset duplicate-typing state`);
+    assert.match(content, /const routeHrefBeforeType = location\.href;[\s\S]*?await verifyValue\([\s\S]*?const routeStayedCurrent = location\.href === routeHrefBeforeType;[\s\S]*?const fieldIdent = `\$\{routeHrefBeforeType\}\|\$\{el\.tagName\}[\s\S]*?_lastTypeFieldIdent = routeStayedCurrent \? fieldIdent : null;/, `${label}: content-script fallback should capture its route before typing and discard identity when that route changes during verification`);
+    if (label === 'chrome') {
+      assert.match(background, /function recordNav\(tabId, type, url, \{ resetTypeIdentity = true \} = \{\}\) \{[\s\S]*?if \(resetTypeIdentity\) agent\.clearLastTypeFieldIdent\(tabId\);/, 'chrome: navigation recording should make typing-identity invalidation explicit');
+      assert.match(background, /onCompleted\?\.addListener\(\(details\) => \{[\s\S]*?recordNav\(details\.tabId, 'completed', details\.url, \{ resetTypeIdentity: false \}\);/, 'chrome: load completion should not erase typing recorded after commit');
+      assert.equal((agentSource.match(/const typeFieldEpoch = this\._captureLastTypeFieldEpoch\(tabId\);/g) || []).length, 3, 'chrome: every CDP type path should capture its navigation epoch before dispatch');
+      assert.equal((agentSource.match(/this\._rememberLastTypeFieldIdent\(tabId, fieldIdent, typeFieldEpoch\)/g) || []).length, 3, 'chrome: every CDP type path should reject stale post-navigation writes');
+    }
   }
 });
 
@@ -38168,9 +38375,9 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     assert.notEqual(mapDeleteIdx, -1, `${label}: reset should clear in-memory history ids`);
     assert.equal(hydrateMissingIdx < recordSetIdx && recordSetIdx < deleteIdx && activeRecordIdx < deleteIdx && conversationRecordIdx < deleteIdx && deleteIdx < mapDeleteIdx, true, `${label}: durable history must be hydrated and deleted before in-memory ids are dropped`);
 
-    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
+    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {})');
     assert.notEqual(helperStart, -1, `${label}: clear helper should be async`);
-    const helperBody = panel.slice(helperStart, panel.indexOf('refreshScheduledJobs({', helperStart));
+    const helperBody = panel.slice(helperStart, panel.indexOf('refreshRecommendedActions();', helperStart) + 'refreshRecommendedActions();'.length);
     assert.match(helperBody, /await clearCachedTabChat\(tabId\);[\s\S]*?await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should durably clear tab chat before deleting history and checking visibility`);
     assert.match(helperBody, /addMessage\('system', t\('sp\.cleared_message'\)\);[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should replace the invalidated transcript only after the durable clear`);
 
@@ -38180,7 +38387,7 @@ test('sidepanel deletes durable history when clearing conversations', () => {
 
     const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
     const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
-    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should await durable history deletion`);
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should await durable prompt and history deletion`);
   }
 });
 
@@ -38259,7 +38466,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.ok(sendMatch, `${label}: sendMessage finally block missing`);
     const sendFinally = sendMatch[1];
     const sendFlushIdx = sendFinally.indexOf('flushRenderedTabChat()');
-    const sendDrainIdx = sendFinally.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const sendDrainIdx = sendFinally.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(sendFlushIdx, -1, `${label}: send completion should flush the final transcript`);
     assert.notEqual(sendDrainIdx, -1, `${label}: send completion should drain queued prompts`);
     assert.equal(sendFlushIdx < sendDrainIdx, true, `${label}: send completion must flush before draining queued prompts`);
@@ -38268,7 +38475,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.ok(continueMatch, `${label}: continueAgent finally block missing`);
     const continueFinally = continueMatch[1];
     const continueFlushIdx = continueFinally.indexOf('flushRenderedTabChat()');
-    const continueDrainIdx = continueFinally.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const continueDrainIdx = continueFinally.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(continueFlushIdx, -1, `${label}: Continue completion should flush the final transcript`);
     assert.notEqual(continueDrainIdx, -1, `${label}: Continue completion should drain queued prompts`);
     assert.equal(continueFlushIdx < continueDrainIdx, true, `${label}: Continue completion must flush before draining queued prompts`);
@@ -38279,7 +38486,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.notEqual(scheduledEnd, -1, `${label}: scheduled event handler boundary missing`);
     const scheduledBody = panel.slice(scheduledStart, scheduledEnd);
     const scheduledFlushNeedle = 'await flushRenderedTabChat()';
-    const scheduledDrainNeedle = 'await drainQueuedPromptsAfterRunSettles();';
+    const scheduledDrainNeedle = 'await drainQueuedPromptsAfterRunSettles(runTabId);';
     const scheduledFlushIdx = scheduledBody.indexOf(scheduledFlushNeedle);
     const scheduledDrainIdx = scheduledBody.indexOf(scheduledDrainNeedle);
     assert.notEqual(scheduledFlushIdx, -1, `${label}: scheduled completion should flush the final transcript`);
@@ -38292,7 +38499,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.notEqual(abortEnd, -1, `${label}: abort safety timeout registration missing`);
     const abortBody = panel.slice(abortStart, abortEnd);
     const abortFlushIdx = abortBody.indexOf('flushRenderedTabChat()');
-    const abortDrainIdx = abortBody.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const abortDrainIdx = abortBody.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(abortFlushIdx, -1, `${label}: abort timeout should flush the stopped transcript`);
     assert.notEqual(abortDrainIdx, -1, `${label}: abort timeout should drain queued prompts`);
     assert.equal(abortFlushIdx < abortDrainIdx, true, `${label}: abort timeout must flush before draining queued prompts`);
@@ -38471,6 +38678,8 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     let acknowledgeHandoff;
     let requestedHandoff = null;
     let signalHandoffRequest;
+    let nextRemoveError = null;
+    let nextSetError = null;
     const handoffAcknowledged = new Promise(resolve => { acknowledgeHandoff = resolve; });
     const handoffRequested = new Promise(resolve => { signalHandoffRequest = resolve; });
     const storageArea = {
@@ -38478,12 +38687,22 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
         return { [key]: values[key] };
       },
       async set(patch) {
+        if (nextSetError) {
+          const error = nextSetError;
+          nextSetError = null;
+          throw error;
+        }
         if (Object.hasOwn(patch, `${persistence.TAB_CHAT_PREFIX}7`)) {
           writes.push(patch[`${persistence.TAB_CHAT_PREFIX}7`]);
         }
         Object.assign(values, patch);
       },
       async remove(keys) {
+        if (nextRemoveError) {
+          const error = nextRemoveError;
+          nextRemoveError = null;
+          throw error;
+        }
         for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
       },
     };
@@ -38571,6 +38790,65 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     });
     assert.equal(postClearWrite.ok, true, `${label}: the owner should persist the new conversation under the rotated generation`);
     assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>new conversation</div>', `${label}: the post-clear transcript should remain current`);
+
+    values['contextMenuPrompt:8'] = { id: 'prompt-8', text: 'Summarize this' };
+    values['contextMenuPromptClaim:8'] = { promptId: 'prompt-8', claimantId: 'panel-8' };
+    await coordinator.save(8, '<div>conversation eight</div>');
+    const combinedClear = await coordinator.clear(8, {
+      additionalKeys: ['contextMenuPrompt:8', 'contextMenuPromptClaim:8'],
+    });
+    assert.equal(combinedClear.ok, true, `${label}: coordinator should clear additional transaction keys`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}8`], undefined, `${label}: combined clear retained the transcript`);
+    assert.equal(values['contextMenuPrompt:8'], undefined, `${label}: combined clear retained the prompt`);
+    assert.equal(values['contextMenuPromptClaim:8'], undefined, `${label}: combined clear retained the prompt lease`);
+
+    values['contextMenuPrompt:9'] = { id: 'prompt-9', text: 'Keep this prompt' };
+    values['contextMenuPromptClaim:9'] = { promptId: 'prompt-9', claimantId: 'panel-9' };
+    await coordinator.save(9, '<div>conversation nine</div>');
+    await assert.rejects(
+      coordinator.clear(9, {
+        additionalKeys: ['contextMenuPrompt:9', 'contextMenuPromptClaim:9'],
+        commitAfterRemove: async () => { throw new Error('scheduler storage failed'); },
+      }),
+      /scheduler storage failed/,
+      `${label}: a failed scheduler commit should reject the combined clear`,
+    );
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}9`], '<div>conversation nine</div>', `${label}: scheduler failure should restore the transcript`);
+    assert.equal(values['contextMenuPrompt:9']?.id, 'prompt-9', `${label}: scheduler failure should restore the prompt`);
+    assert.equal(values['contextMenuPromptClaim:9']?.claimantId, 'panel-9', `${label}: scheduler failure should restore the prompt lease`);
+    const restoredAfterRollback = await coordinator.load(9);
+    assert.equal(restoredAfterRollback.html, '<div>conversation nine</div>', `${label}: scheduler rollback should restore the coordinator's lossless cache`);
+
+    await coordinator.save(10, '<div>lossless conversation ten</div>');
+    values[`${persistence.TAB_CHAT_PREFIX}10`] = '<div>compacted conversation</div>';
+    nextRemoveError = new Error('transcript removal failed');
+    await assert.rejects(
+      coordinator.clear(10, { commitAfterRemove: async () => {} }),
+      /transcript removal failed/,
+      `${label}: a failed transcript removal should reject the transactional clear`,
+    );
+    const restoredAfterRemoveFailure = await coordinator.load(10);
+    assert.equal(
+      restoredAfterRemoveFailure.html,
+      '<div>lossless conversation ten</div>',
+      `${label}: a failed transcript removal should preserve the coordinator's lossless cache`,
+    );
+
+    await coordinator.save(11, '<div>lossless conversation eleven</div>');
+    nextSetError = new Error('rollback write failed');
+    await assert.rejects(
+      coordinator.clear(11, {
+        commitAfterRemove: async () => { throw new Error('scheduler cancellation failed'); },
+      }),
+      /rollback write failed/,
+      `${label}: a failed durable rollback should reject the transactional clear`,
+    );
+    const restoredAfterRollbackFailure = await coordinator.load(11);
+    assert.equal(
+      restoredAfterRollbackFailure.html,
+      '<div>lossless conversation eleven</div>',
+      `${label}: a failed durable rollback should still restore the coordinator's lossless cache`,
+    );
   }
 });
 
@@ -40593,7 +40871,7 @@ test('sidepanel scopes allow-api override to the tab conversation and confirms i
     const switchBody = panel.slice(switchStart, panel.indexOf('refreshScheduledJobs({', switchStart));
     assert.match(switchBody, /currentTabId = newTabId;[\s\S]*?syncApiMutationsAllowedForCurrentTab\(\);/, `${label}: switching tabs should load the selected tab's /allow-api state`);
 
-    const resetStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
+    const resetStart = panel.indexOf('async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {})');
     assert.notEqual(resetStart, -1, `${label}: renderClearedConversationForTab missing`);
     const resetBody = panel.slice(resetStart, panel.indexOf('refreshScheduledJobs({', resetStart));
     assert.match(resetBody, /clearCachedTabChat\(tabId\);[\s\S]*?setApiMutationsAllowedForTab\(tabId, false\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: reset should clear the target tab's /allow-api state before visible-tab guards`);
@@ -40761,9 +41039,9 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     );
     assert.match(panel, /async function parseSlashCommands\(text, tabId = currentTabId, options = \{\}\) \{/, `${label}: slash-command parsing should accept the initiating tab id and optional source context`);
 
-    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
+    const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {})');
     assert.notEqual(helperStart, -1, `${label}: clear helper missing`);
-    const helperBody = panel.slice(helperStart, panel.indexOf('\n}', helperStart) + 2);
+    const helperBody = panel.slice(helperStart, panel.indexOf('refreshRecommendedActions();', helperStart) + 'refreshRecommendedActions();'.length);
     assert.match(helperBody, /clearCachedTabChat\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;[\s\S]*?messagesEl\.innerHTML = '';/, `${label}: clear helper should clear cached target tab and only mutate visible UI for the same tab`);
     assert.match(helperBody, /refreshScheduledJobs\(\{ tabId \}\);/, `${label}: clear helper should scope async scheduled-job refresh to the cleared tab`);
 
@@ -40775,7 +41053,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
     const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
     assert.match(clearBody, /if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;/, `${label}: shared new-conversation action should confirm in-panel and reject a stale tab before clearing`);
-    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should clear the originally requested tab only`);
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId, clearContextMenuPrompt: true \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should clear the originally requested tab and its durable prompt together`);
 
     const compactIdx = panel.indexOf("if (command.value === '/compact')");
     const compactBody = panel.slice(compactIdx, panel.indexOf("if (command.value === '/verbose')", compactIdx));
@@ -41046,7 +41324,7 @@ test('sidepanel keeps retry metadata long enough for returned error updates', ()
     );
     assert.match(
       source,
-      /function renderClearedConversationForTab\(tabId\) \{[\s\S]*?releaseRetryAttachmentsInTree\(messagesEl\);[\s\S]*?clearRetryAttachmentsForTab\(tabId\);[\s\S]*?messagesEl\.innerHTML = '';/,
+      /function renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure = false \} = \{\}\) \{[\s\S]*?releaseRetryAttachmentsInTree\(messagesEl\);[\s\S]*?clearRetryAttachmentsForTab\(tabId\);[\s\S]*?messagesEl\.innerHTML = '';/,
       `${label}: reset should release retry attachment payloads before removing retry buttons from the DOM`,
     );
     assert.match(
@@ -41185,7 +41463,7 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.notEqual(queueShiftIdx, -1, `${label}: queued composer drain should shift the next queued message`);
     assert.equal(draftGuardIdx < queueShiftIdx, true, `${label}: queued composer drain must preserve drafts before removing queued messages`);
     assert.match(panel, /if \(drainQueuedComposerMessageForCurrentTab\(\)\) return;[\s\S]*?drainQueuedContextMenuPrompts\(\);/, `${label}: run settlement should drain queued composer messages before context-menu recovery prompts`);
-    const helperStart = panel.indexOf('async function drainQueuedPromptsAfterRunSettles()');
+    const helperStart = panel.indexOf('async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId)');
     const helperEnd = panel.indexOf('function queueAgentUpdateDuringTabSwitch', helperStart);
     assert.notEqual(helperStart, -1, `${label}: queued drain helper should exist`);
     assert.notEqual(helperEnd, -1, `${label}: queued drain helper boundary should exist`);
@@ -41311,7 +41589,7 @@ test('sidepanel drains queued context-menu prompts on run completion', () => {
       assert.ok(match, `${label}: ${fnName} finally block missing`);
       const finallyBody = match[1];
       const idleIdx = finallyBody.indexOf('setTabProcessing(tabId, false);');
-      const helperIdx = finallyBody.indexOf('await drainQueuedPromptsAfterRunSettles();');
+      const helperIdx = finallyBody.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
       assert.notEqual(idleIdx, -1, `${label}: ${fnName} should clear processing state`);
       assert.notEqual(helperIdx, -1, `${label}: ${fnName} completion should drain queued prompts via the settlement helper`);
       assert.equal(idleIdx < helperIdx, true, `${label}: ${fnName} context-menu queue must drain after processing is cleared`);
@@ -41332,7 +41610,7 @@ test('sidepanel abort safety timeout drains queued prompts', () => {
     assert.notEqual(abortEnd, -1, `${label}: abort safety timeout registration missing`);
     const body = panel.slice(abortStart, abortEnd);
     const idleIdx = body.indexOf('setTabProcessing(tabId, false);');
-    const helperIdx = body.indexOf('await drainQueuedPromptsAfterRunSettles();');
+    const helperIdx = body.indexOf('await drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(idleIdx, -1, `${label}: abort timeout should clear processing state`);
     assert.notEqual(helperIdx, -1, `${label}: abort timeout should drain queued prompts via the settlement helper`);
     assert.equal(idleIdx < helperIdx, true, `${label}: abort timeout should drain after processing is cleared`);
@@ -41346,14 +41624,14 @@ test('sidepanel drains scheduled-run context-menu prompts', () => {
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(\) \{[\s\S]*?if \(drainQueuedComposerMessageForCurrentTab\(\)\) return;[\s\S]*?drainQueuedContextMenuPrompts\(\);/, `${label}: scheduled completions need a settlement drain helper that runs composer drain before context-menu prompts`);
+    assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?if \(drainQueuedComposerMessageForCurrentTab\(\)\) return;[\s\S]*?drainQueuedContextMenuPrompts\(\);/, `${label}: scheduled completions need a tab-scoped settlement drain helper that runs composer drain before context-menu prompts`);
 
     const scheduledStart = panel.search(/(?:async\s+)?function settleScheduledRun\(event, job, tabId = currentTabId\)/);
     const scheduledEnd = panel.indexOf('if (scheduledJobsEl)', scheduledStart);
     assert.notEqual(scheduledStart, -1, `${label}: scheduled run settlement helper missing`);
     assert.notEqual(scheduledEnd, -1, `${label}: scheduled job event block missing`);
     const scheduledBlock = panel.slice(scheduledStart, scheduledEnd);
-    const helperCalls = scheduledBlock.match(/drainQueuedPromptsAfterRunSettles\(\);/g) || [];
+    const helperCalls = scheduledBlock.match(/drainQueuedPromptsAfterRunSettles\(runTabId\);/g) || [];
     assert.equal(helperCalls.length >= 2, true, `${label}: scheduled terminal and waiting-idle paths should drain via the settlement helper`);
   }
 });
@@ -41368,7 +41646,7 @@ test('sidepanel drains scheduled-clarify rejection prompts', () => {
     assert.ok(match, `${label}: scheduled clarify rejection handler missing`);
     const body = match[1];
     const idleIdx = body.indexOf('setTabProcessing(tabId, false);');
-    const drainIdx = body.indexOf('drainQueuedPromptsAfterRunSettles();');
+    const drainIdx = body.indexOf('drainQueuedPromptsAfterRunSettles(tabId);');
     assert.notEqual(idleIdx, -1, `${label}: scheduled clarify rejection should clear processing state`);
     assert.notEqual(drainIdx, -1, `${label}: scheduled clarify rejection should drain queued prompts via the settlement helper`);
     assert.equal(body.includes('drainQueuedContextMenuPrompts();'), false, `${label}: scheduled clarify rejection must not drain against the stale tab`);
@@ -41502,6 +41780,9 @@ test('background awaits context-menu prompt clear before agent chat starts', () 
     assert.notEqual(processIdx, -1, `${label}: chat handler should start an agent run`);
     assert.equal(clearIdx < processIdx, true, `${label}: context-menu prompt clear must finish before the agent run starts`);
     assert.doesNotMatch(chatBody, /contextMenuStorage\.clear\(msg\.contextMenuClear\.tabId,\s*msg\.contextMenuClear\.promptId\)\.catch\(\(\) => \{\}\)/, `${label}: context-menu clear should not be fire-and-forget`);
+    const clearMatch = bg.match(/case 'clear_conversation': \{([\s\S]*?)\n\s+case '(?:disable_dev_diagnostics|compact_conversation)':/);
+    assert.ok(clearMatch, `${label}: clear-conversation handler missing`);
+    assert.match(clearMatch[1], /contextMenuStorage\.clearAlongside\([\s\S]*?additionalKeys => tabChatHandoff\.clear\(tabId, \{[\s\S]*?commitAfterRemove: commitSchedulerClear,[\s\S]*?agent\.clearConversation\(tabId\);/, `${label}: New conversation should commit prompt, transcript, and scheduler cleanup before clearing authoritative state`);
   }
 });
 
@@ -42959,6 +43240,9 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage, opti
       }
       if (action === 'release_context_menu_prompt_claim') {
         releases.push(params);
+        if (typeof options.releasePrompt === 'function') {
+          return await options.releasePrompt(params, releases.length);
+        }
         return { ok: true, released: true };
       }
       assert.equal(action, 'consume_context_menu_prompt');
@@ -43050,7 +43334,7 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
     const h = createContextMenuPromptHarness(createHandler, prompt, async (_extra, attempt) => attempt > 1);
 
     h.handler.acceptContextMenuPrompt(prompt);
-    await waitMicrotasks(3);
+    await waitMicrotasks(8);
     assert.equal(h.sends.length, 1, `${label}: direct prompt should attempt one send`);
     assert.equal(h.sends[0].text, prompt.text, `${label}: prompt text should be submitted`);
 
@@ -43067,6 +43351,59 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
     }, `${label}: retry should still clear the stored prompt when accepted`);
     assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: recovered sends should retain prompt ownership`);
     assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: recovered sends should remain retryable until reservation`);
+  }
+});
+
+test('context-menu prompts release and requeue after pre-run durable cleanup fails', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-cleanup-retry`, tabId: 7, text: 'Summarize this selection' };
+    const h = createContextMenuPromptHarness(
+      createHandler,
+      prompt,
+      async (_extra, attempt) => attempt > 1,
+      {
+        releasePrompt: async () => ({
+          ok: true,
+          released: true,
+          prompt,
+          retryAfterMs: 5,
+        }),
+      },
+    );
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await new Promise(resolve => setTimeout(resolve, 90));
+
+    assert.equal(h.releases.length, 1, `${label}: a pre-run cleanup failure should release the owned claim`);
+    assert.equal(h.claims.length, 2, `${label}: the surviving durable prompt should be reclaimed`);
+    assert.equal(h.sends.length, 2, `${label}: the surviving prompt should retry without a remount`);
+    assert.equal(h.sends[1].extra.contextMenuClear.promptId, prompt.id, `${label}: retry should retain durable cleanup identity`);
+  }
+});
+
+test('targeted conversation clears preserve newer queued context-menu prompts', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const oldPrompt = { id: `${label}-cleared-prompt`, tabId: 8, text: 'Old selection action' };
+    const newPrompt = { id: `${label}-fresh-prompt`, tabId: 8, text: 'Fresh selection action' };
+    const h = createContextMenuPromptHarness(createHandler, oldPrompt, async () => true);
+    h.setProcessing(true);
+    h.handler.acceptContextMenuPrompt(oldPrompt);
+    h.handler.acceptContextMenuPrompt(newPrompt);
+
+    h.handler.clearQueuedForTab(oldPrompt.tabId, { promptId: oldPrompt.id });
+    h.handler.acceptContextMenuPrompt(oldPrompt);
+    h.setProcessing(false);
+    h.handler.drainQueuedContextMenuPrompts();
+    await waitMicrotasks(8);
+
+    assert.equal(h.sends.length, 1, `${label}: releasing the clear interlock should drain one fresh prompt`);
+    assert.equal(h.sends[0].extra.contextMenuClear.promptId, newPrompt.id, `${label}: a targeted clear should preserve the newer prompt while suppressing a late old notification`);
   }
 });
 
@@ -43443,6 +43780,7 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
   ]) {
     const data = new Map();
     let nextSetGate = null;
+    let nextRemoveError = null;
     const store = {
       async set(values) {
         const gate = nextSetGate;
@@ -43454,6 +43792,11 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
         return data.has(key) ? { [key]: data.get(key) } : {};
       },
       async remove(keys) {
+        if (nextRemoveError) {
+          const error = nextRemoveError;
+          nextRemoveError = null;
+          throw error;
+        }
         (Array.isArray(keys) ? keys : [keys]).forEach(key => data.delete(key));
       },
     };
@@ -43519,6 +43862,49 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     await storage.clear(prompt.tabId, prompt.id);
     assert.equal(data.has(storage.key(prompt.tabId)), false, `${label}: accepting the run should clear the durable prompt`);
     assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: accepting the run should clear its lease`);
+
+    const clearFailurePrompt = { id: `${label}-clear-failure`, tabId: 13, text: 'Discard me' };
+    await storage.save(clearFailurePrompt.tabId, clearFailurePrompt);
+    await storage.claim(clearFailurePrompt.tabId, clearFailurePrompt.id, 'panel-clear', () => false, 1_500);
+    nextRemoveError = new Error('durable remove failed');
+    await assert.rejects(
+      storage.clear(clearFailurePrompt.tabId),
+      /durable remove failed/,
+      `${label}: a failed durable removal must reject the clear transaction`,
+    );
+    assert.equal(data.has(storage.key(clearFailurePrompt.tabId)), true, `${label}: failed removal should leave the durable prompt available for recovery`);
+    const retainedAfterFailure = await storage.consume(clearFailurePrompt.tabId);
+    assert.equal(retainedAfterFailure.prompt?.id, clearFailurePrompt.id, `${label}: failed removal should retain the in-memory prompt too`);
+    await storage.clear(clearFailurePrompt.tabId);
+    assert.equal(data.has(storage.key(clearFailurePrompt.tabId)), false, `${label}: retrying clear should remove the durable prompt`);
+    assert.equal(data.has(storage.claimKey(clearFailurePrompt.tabId)), false, `${label}: retrying clear should remove the durable lease`);
+
+    const combinedPrompt = { id: `${label}-combined-clear`, tabId: 15, text: 'Keep me atomically' };
+    const combinedTranscriptKey = `tabChat:${combinedPrompt.tabId}`;
+    const combinedHandoffKey = `tabChatHandoff:${combinedPrompt.tabId}`;
+    await storage.save(combinedPrompt.tabId, combinedPrompt);
+    await storage.claim(combinedPrompt.tabId, combinedPrompt.id, 'panel-combined', () => false, 2_000);
+    data.set(combinedTranscriptKey, '<div>old transcript</div>');
+    data.set(combinedHandoffKey, { ownerId: 'panel-combined', generation: 1 });
+    const combinedDurableClear = async (additionalKeys) => {
+      await store.remove([...additionalKeys, combinedTranscriptKey, combinedHandoffKey]);
+      return { ok: true };
+    };
+    nextRemoveError = new Error('combined durable remove failed');
+    await assert.rejects(
+      storage.clearAlongside(combinedPrompt.tabId, combinedDurableClear),
+      /combined durable remove failed/,
+      `${label}: a failed combined clear should reject the transaction`,
+    );
+    assert.equal(data.has(combinedTranscriptKey), true, `${label}: a failed combined clear should retain the transcript`);
+    assert.equal(data.has(storage.key(combinedPrompt.tabId)), true, `${label}: a failed combined clear should retain the prompt`);
+    const combinedRetained = await storage.consume(combinedPrompt.tabId);
+    assert.equal(combinedRetained.prompt?.id, combinedPrompt.id, `${label}: a failed combined clear should retain prompt recovery`);
+    const combinedClearResult = await storage.clearAlongside(combinedPrompt.tabId, combinedDurableClear);
+    assert.equal(combinedClearResult.clearedContextMenuPromptId, combinedPrompt.id, `${label}: combined clear should identify only the prompt removed by its durable transaction`);
+    assert.equal(data.has(combinedTranscriptKey), false, `${label}: retrying combined clear should remove the transcript`);
+    assert.equal(data.has(storage.key(combinedPrompt.tabId)), false, `${label}: retrying combined clear should remove the prompt`);
+    assert.equal(data.has(storage.claimKey(combinedPrompt.tabId)), false, `${label}: retrying combined clear should remove the lease`);
 
     const delayedClaimPrompt = {
       id: `${label}-queued-claim-clock`,
@@ -44247,7 +44633,8 @@ test('completion confetti is default-on and success-only in sidepanel completion
     assert.match(panel, /function isSuccessfulAskCompletion\(mode, response\)/, `${label}: sidepanel should classify successful Ask replies separately`);
     assert.match(panel, /if \(success\) triggerCompletionConfetti\(\);/, `${label}: confetti should only fire for successful completions`);
     assert.match(panel, /result\?\.outcome === 'success'/, `${label}: live done success should require explicit success outcome`);
-    assert.match(panel, /notifyCompletion\(\{\s*success:\s*job\?\.lastOutcome === 'success'\s*\}\)/, `${label}: scheduled completed jobs should celebrate only explicit success outcomes`);
+    assert.match(panel, /notifyCompletion\(\{\s*success:\s*(?:event === 'completed' && )?job\?\.lastOutcome === 'success'\s*[},]/, `${label}: scheduled completed jobs should celebrate only explicit success outcomes`);
+    assert.match(panel, /\(event === 'completed' \|\| event === 'failed'\) && job\?\.source !== 'watch'/, `${label}: failed scheduled runs should also reach the completion notification path with a failure badge`);
     assert.match(panel, /success:\s*currentTabId === tabId && completedSuccessfully/, `${label}: live confetti should be gated to the tab that completed`);
     assert.doesNotMatch(panel, /completedSuccessfully = !\(res\?\./, `${label}: live confetti should not treat every normal chat response as successful completion`);
 
@@ -44680,7 +45067,7 @@ test('/watch alert audio is background-owned, configurable, and distinct by styl
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'ui/sidepanel.js'), 'utf8');
     assert.match(alertRuntime, /playWatchAlert[\s\S]*?notifySound|notifySound[\s\S]*?playWatchAlert/, `${label}: background alert should honor the notification-sound setting`);
     assert.match(background, /playWatchAlert(?:,|:)/, `${label}: scheduler should own alert playback`);
-    assert.match(panel, /event === 'completed' && job\?\.source !== 'watch'/, `${label}: watch completion must not also play the side-panel completion sound`);
+    assert.match(panel, /\(event === 'completed' \|\| event === 'failed'\) && job\?\.source !== 'watch'/, `${label}: watch completion must not also play the side-panel completion sound`);
     assert.match(panel, /'polled', 'triggered'/, `${label}: continuing watch runs should settle their side-panel run state`);
     assert.match(
       panel,
@@ -58688,6 +59075,50 @@ test('Chat Completions streaming rejects premature EOF and accepts terminal comp
   }
 });
 
+test('OpenAI SSE parsers accept data fields without the optional space', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, Provider] of [
+      ['chrome', OpenAIProviderCh],
+      ['firefox', OpenAIProviderFx],
+    ]) {
+      globalThis.fetch = async () => new Response([
+        `data:${JSON.stringify({ choices: [{ delta: { content: 'chat' } }] })}\n\n`,
+        'data:[DONE]\n\n',
+      ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      const chatProvider = new Provider({
+        providerName: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.5',
+      });
+      const chatChunks = [];
+      for await (const chunk of chatProvider.chatStream([{ role: 'user', content: 'hello' }])) chatChunks.push(chunk);
+      assert.deepEqual(chatChunks, [
+        { type: 'text', content: 'chat' },
+        { type: 'done', content: '' },
+      ], `${label}: Chat Completions dropped a spec-valid data: line`);
+
+      globalThis.fetch = async () => new Response([
+        `data:${JSON.stringify({ type: 'response.output_text.delta', delta: 'responses' })}\n\n`,
+        `data:${JSON.stringify({ type: 'response.completed', response: { output: [] } })}\n\n`,
+      ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      const responsesProvider = new Provider({
+        providerName: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.6-terra',
+      });
+      const responseChunks = [];
+      for await (const chunk of responsesProvider.chatStream([{ role: 'user', content: 'hello' }])) responseChunks.push(chunk);
+      assert.deepEqual(responseChunks, [
+        { type: 'text', content: 'responses' },
+        { type: 'done', content: '', responseItems: [] },
+      ], `${label}: Responses API dropped a spec-valid data: line`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('_defaultConfigs: new cloud providers present and disabled by default', () => {
   // Don't enable cloud providers by default — they all require an API key.
   // Auto-enabling them would create dead entries in the UI.
@@ -60336,6 +60767,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
       const defaults = manager._defaultConfigs();
       for (const id of providerIds) {
         globalThis.fetch = async () => new Response([
+          'data:\n\n',
           `data: ${JSON.stringify({ choices: [{ delta: { content: `${id} answer` } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read_page', arguments: '{}' } }] } }] })}\n\n`,
           `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
@@ -85996,6 +86428,95 @@ test('detached runs reconnect to a live request without starting it twice', asyn
   }
 });
 
+test('detached run followers honor local cancellation before their next state probe', async () => {
+  for (const [label, runDetachedWithReconnect] of [
+    ['chrome', runDetachedWithReconnectCh],
+    ['firefox', runDetachedWithReconnectFx],
+  ]) {
+    const requestId = `${label}-locally-cancelled-follower`;
+    let shouldContinue = true;
+    let starts = 0;
+    let probes = 0;
+    let waits = 0;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 42, requestId, mode: 'act', text: 'stop this run' },
+        start: async () => {
+          starts += 1;
+          return { accepted: true, requestId };
+        },
+        probe: async () => {
+          probes += 1;
+          return { running: true, runUi: { requestId, status: 'running', events: [] } };
+        },
+        shouldContinue: () => shouldContinue,
+        isConnectionError: () => false,
+        wait: async () => {
+          waits += 1;
+          shouldContinue = false;
+        },
+      }),
+      /Run recovery was cancelled/,
+      `${label}: aborting the local follower should not wait for a terminal journal that clear may remove`,
+    );
+    assert.equal(starts, 1, `${label}: cancellation should not restart the request`);
+    assert.equal(waits, 1, `${label}: cancellation should be observed at the first poll boundary`);
+    assert.equal(probes, 0, `${label}: a cancelled follower should not race conversation clear with another probe`);
+
+    const probeRequestId = `${label}-cancelled-during-probe`;
+    let probeShouldContinue = true;
+    let appliedStates = 0;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 43, requestId: probeRequestId, mode: 'act', text: 'clear during probe' },
+        start: async () => ({ accepted: true, requestId: probeRequestId }),
+        probe: async () => {
+          probeShouldContinue = false;
+          return { running: true, runUi: { requestId: probeRequestId, status: 'running', events: [] } };
+        },
+        shouldContinue: () => probeShouldContinue,
+        onState: () => { appliedStates += 1; },
+        isConnectionError: () => false,
+        wait: async () => {},
+      }),
+      /Run recovery was cancelled/,
+      `${label}: cancellation during a probe should reject before applying stale state`,
+    );
+    assert.equal(appliedStates, 0, `${label}: a probe completed after clear must not replay old conversation state`);
+
+    const applyRequestId = `${label}-cancelled-during-state-apply`;
+    let applyShouldContinue = true;
+    let completedStateApplications = 0;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 44, requestId: applyRequestId, mode: 'act', text: 'clear during state apply' },
+        start: async () => ({ accepted: true, requestId: applyRequestId }),
+        probe: async () => ({
+          running: false,
+          starting: false,
+          submittedTurnDurable: true,
+          runUi: { requestId: applyRequestId, status: 'completed', finalContent: 'stale result', events: [] },
+        }),
+        shouldContinue: () => applyShouldContinue,
+        onState: async () => {
+          await Promise.resolve();
+          applyShouldContinue = false;
+          completedStateApplications += 1;
+          return false;
+        },
+        isConnectionError: () => false,
+        wait: async () => {},
+      }),
+      /Run recovery was cancelled/,
+      `${label}: cancellation while applying state should reject before consuming a terminal snapshot`,
+    );
+    assert.equal(completedStateApplications, 1, `${label}: cancellation should be observed immediately after the awaited state application`);
+  }
+});
+
 test('detached terminal journals win over duplicate task rejection records', async () => {
   for (const [label, runDetachedWithReconnect] of [
     ['chrome', runDetachedWithReconnectCh],
@@ -88177,7 +88698,7 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
       source,
-      /async function restorePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?await markStagedScreenshots\([\s\S]*?const pendingScreenshotIds = new Set\([\s\S]*?pending\.unshift\([\s\S]*?normalizeAttachmentTabId\(\) === numericTabId[\s\S]*?renderAttachmentPreviews\(\);[\s\S]*?syncSendButtonState\(\);/,
+      /async function restorePendingAttachmentsForTab\(tabId, attachments,[\s\S]*?\} = \{\}\) \{[\s\S]*?await markStagedScreenshots\([\s\S]*?const pendingScreenshotIds = new Set\([\s\S]*?pending\.unshift\([\s\S]*?normalizeAttachmentTabId\(\) === numericTabId[\s\S]*?renderAttachmentPreviews\(\);[\s\S]*?syncSendButtonState\(\);/,
       `${label} should restore sent attachments to their originating tab without duplicating existing objects`,
     );
     assert.match(

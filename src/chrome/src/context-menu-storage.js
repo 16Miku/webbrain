@@ -421,7 +421,12 @@ export function createContextMenuStorage(getStore) {
         try {
           await store.remove(ck);
         } catch {
-          return { ok: false, released: false, reason: 'storage' };
+          return {
+            ok: false,
+            released: false,
+            reason: 'storage',
+            leaseExpiresAt: Number(activeClaim.expiresAt) || undefined,
+          };
         }
       }
       claims.delete(numericTabId);
@@ -447,26 +452,59 @@ export function createContextMenuStorage(getStore) {
       const ck = claimKey(numericTabId);
       const store = getStore();
       const p = pending.get(numericTabId);
-      if (!promptId || p?.id === promptId) pending.delete(numericTabId);
       const inMemoryClaim = claims.get(numericTabId);
-      if (!promptId || inMemoryClaim?.promptId === promptId) claims.delete(numericTabId);
+      const shouldClearPrompt = !promptId || p?.id === promptId;
+      const shouldClearClaim = !promptId || inMemoryClaim?.promptId === promptId;
       if (store) {
-        const keysToRemove = [];
-        try {
+        const keysToRemove = !promptId ? [k, ck] : [];
+        if (promptId) {
           const stored = await store.get(k);
           const storedPrompt = stored?.[k] || null;
-          if (!promptId || storedPrompt?.id === promptId) keysToRemove.push(k);
-        } catch { /* best effort */ }
-        try {
+          if (storedPrompt?.id === promptId) {
+            keysToRemove.push(k);
+          }
+        }
+        if (promptId) {
           const stored = await store.get(ck);
           const storedClaim = stored?.[ck] || null;
-          if (!promptId || storedClaim?.promptId === promptId) keysToRemove.push(ck);
-        } catch { /* best effort */ }
-        if (keysToRemove.length) {
-          try { await store.remove(keysToRemove); } catch { /* best effort */ }
+          if (storedClaim?.promptId === promptId) {
+            keysToRemove.push(ck);
+          }
+        }
+        if (keysToRemove.length) await store.remove(keysToRemove);
+      }
+      // Keep the in-memory copies until durable deletion succeeds. Otherwise a
+      // failed clear can appear successful and resurrect the prompt on remount.
+      if (shouldClearPrompt) pending.delete(numericTabId);
+      if (shouldClearClaim) claims.delete(numericTabId);
+      return { ok: true };
+    });
+  }
+
+  async function clearAlongside(tabId, clearDurably) {
+    if (typeof clearDurably !== 'function') {
+      return { ok: false, error: 'A durable clear callback is required.' };
+    }
+    return enqueue(tabId, async (numericTabId) => {
+      const promptStorageKey = key(numericTabId);
+      let clearedPrompt = pending.get(numericTabId) || null;
+      if (!clearedPrompt) {
+        const store = getStore();
+        if (store) {
+          const stored = await store.get(promptStorageKey);
+          clearedPrompt = stored?.[promptStorageKey] || null;
         }
       }
-      return { ok: true };
+      const result = await clearDurably([key(numericTabId), claimKey(numericTabId)]);
+      if (result?.ok === false || result?.skipped) return result;
+      // The callback removes these keys in the same durable operation as its
+      // own state. Keep both memory copies until that combined removal commits.
+      pending.delete(numericTabId);
+      claims.delete(numericTabId);
+      return {
+        ...(result || { ok: true }),
+        clearedContextMenuPromptId: clearedPrompt?.id ? String(clearedPrompt.id) : null,
+      };
     });
   }
 
@@ -487,5 +525,16 @@ export function createContextMenuStorage(getStore) {
     });
   }
 
-  return { key, claimKey, save, consume, claim, reserve, release, clear, cleanup };
+  return {
+    key,
+    claimKey,
+    save,
+    consume,
+    claim,
+    reserve,
+    release,
+    clear,
+    clearAlongside,
+    cleanup,
+  };
 }

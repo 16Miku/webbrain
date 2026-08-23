@@ -267,6 +267,8 @@ export default {
   'st.display.notify_sound.desc': 'Reproduce un tono corto en el panel lateral cuando el agente termina una tarea. No suena si cancelas la ejecución.',
   'st.display.completion_confetti.label': 'Confeti al completar',
   'st.display.completion_confetti.desc': 'Muestra una breve animación de confeti desde arriba cuando una tarea termina correctamente. Activado de forma predeterminada; desactívalo si prefieres un final más discreto.',
+  'st.display.completion_flash_tab.label': "Hacer parpadear la pestaña terminada",
+  'st.display.completion_flash_tab.desc': "Cuando una tarea finaliza en una pestaña que has abandonado, el título y el favicon de esa pestaña parpadean para que veas de un vistazo cuál terminó.",
   'st.display.max_steps.label': 'Pasos máximos del agente',
   'st.display.max_steps.desc': 'Número máximo de pasos con herramientas que el agente puede dar por mensaje. Valores más altos permiten tareas más complejas pero pueden consumir más tokens. Pon el control en ∞ para pasos ilimitados.',
   'st.display.traces_link.label': 'Trazas',

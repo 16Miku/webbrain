@@ -143,6 +143,22 @@ function doneOutcomeFromUpdate(type, data) {
   return normalizeDoneOutcome(result.outcome);
 }
 
+// Ask-mode scheduled runs never emit a done update, so their success verdict
+// is derived here (once, at the source) instead of being guessed downstream.
+// Billing patterns mirror the side panel's parseSubscribeError and
+// parseCostAllowanceError exclusions.
+const SCHEDULED_ASK_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
+const SCHEDULED_ASK_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
+
+function askRunSucceeded(result, sawFailureLikeUpdate = false, error = null) {
+  if (error || sawFailureLikeUpdate) return false;
+  const content = String(result ?? '').trim();
+  if (!content) return false;
+  if (SCHEDULED_ASK_SUBSCRIBE_ERROR_RE.test(content)) return false;
+  if (SCHEDULED_ASK_COST_ALLOWANCE_ERROR_RE.test(content)) return false;
+  return true;
+}
+
 export function wrapWatchObservation(value) {
   const bytes = new Uint8Array(8);
   if (globalThis.crypto?.getRandomValues) {
@@ -1120,21 +1136,26 @@ export class ScheduledJobManager {
       const jobs = await this._getJobs();
       const next = [];
       const alarmsToClear = [];
+      const waitingJobIdsToClear = [];
       for (const job of jobs) {
         const matches = (job.tabId === tabId || job.target?.tabId === tabId) &&
           (!conversationId || job.conversationId === conversationId || job.target?.conversationId === conversationId);
         if (matches && ['pending', 'queued', 'paused', 'needs_user_input'].includes(job.status)) {
           alarmsToClear.push(job.id);
-          this._waitingForInput.delete(job.id);
+          waitingJobIdsToClear.push(job.id);
           next.push({ ...job, status: 'cancelled', lastError: reason, pendingClarify: null, updatedAt: iso(this.now()) });
         } else {
           next.push(job);
         }
       }
       await this._setJobs(next);
+      waitingJobIdsToClear.forEach((jobId) => this._waitingForInput.delete(jobId));
       return alarmsToClear;
     });
-    await Promise.all(alarmsToClear.map((id) => this._clearAlarm(id)));
+    // Once cancelled job state is durable, a stale alarm is harmless: its
+    // handler re-reads the cancelled job and exits. Do not reject a committed
+    // conversation clear merely because the browser could not remove an alarm.
+    await Promise.allSettled(alarmsToClear.map((id) => this._clearAlarm(id)));
   }
 
   async handleAlarm(alarmName) {
@@ -1592,9 +1613,14 @@ export class ScheduledJobManager {
     let runOutcome = null;
     let runStatus = null;
     let watchAlert = null;
+    let sawFailureLikeUpdate = false;
     const onUpdate = (type, data) => {
       const doneOutcome = doneOutcomeFromUpdate(type, data);
       if (doneOutcome) runOutcome = doneOutcome;
+      if (type === 'error' || type === 'attachment_rejected' || type === 'max_steps_reached'
+        || data?.error || data?.data?.error) {
+        sawFailureLikeUpdate = true;
+      }
       if (running.source === 'watch' && type === 'tool_result' && data?.name === 'beep') {
         const result = asObject(data?.result);
         if (result.success === true && (result.armed === true || result.duplicate === true)) {
@@ -1698,7 +1724,13 @@ export class ScheduledJobManager {
           result || 'Scheduled run reached the browser observation limit without a valid terminal result.',
         );
       } else {
-        await this._complete(running, result, runOutcome, { watchAlert });
+        // Persist an explicit verdict for Ask runs (they never emit a done
+        // update): downstream badge styling must not guess from null.
+        const effectiveOutcome = runOutcome
+          ?? ((running.mode || 'act') === 'ask' && askRunSucceeded(result, sawFailureLikeUpdate)
+            ? 'success'
+            : null);
+        await this._complete(running, result, effectiveOutcome, { watchAlert });
       }
     } catch (e) {
       this._waitingForInput.delete(job.id);

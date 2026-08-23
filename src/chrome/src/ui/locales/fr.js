@@ -275,6 +275,8 @@ export default {
   'st.display.notify_sound.desc': 'Joue un court carillon dans le panneau latéral quand l\'agent termine une tâche. Ne joue pas si vous annulez l\'exécution.',
   'st.display.completion_confetti.label': 'Confettis de fin',
   'st.display.completion_confetti.desc': 'Affiche une courte pluie de confettis depuis le haut quand une tâche réussit. Activé par défaut; désactivez-le si vous préférez une fin plus discrète.',
+  'st.display.completion_flash_tab.label': "Faire clignoter l’onglet terminé",
+  'st.display.completion_flash_tab.desc': "Quand une tâche se termine dans un onglet que vous avez quitté, son titre et son favicon clignotent pour repérer d’un seul coup d’œil lequel est terminé.",
   'st.display.max_steps.label': 'Étapes maximum de l\'agent',
   'st.display.max_steps.desc': 'Nombre maximum d\'étapes d\'outil que l\'agent peut effectuer par message. Des valeurs plus élevées permettent des tâches plus complexes mais peuvent consommer plus de tokens. Réglez le curseur sur ∞ pour des étapes illimitées.',
   'st.display.traces_link.label': 'Traces',

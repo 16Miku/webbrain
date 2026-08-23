@@ -1821,6 +1821,7 @@
     el.focus();
     showAgentWorkingTarget(el, 'type_text');
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+    const routeHrefBeforeType = location.href;
 
     if (el.isContentEditable) {
       if (params.clear) el.textContent = '';
@@ -1873,13 +1874,16 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
 
-    // Duplicate-field detection
-    const fieldIdent = `${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
+    // Duplicate-field detection. Input handlers can synchronously start a
+    // same-document navigation, so never attribute the old field to the route
+    // that happens to be current after verification yields.
+    const routeStayedCurrent = location.href === routeHrefBeforeType;
+    const fieldIdent = `${routeHrefBeforeType}|${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
     let typeWarning;
-    if (_lastTypeFieldIdent === fieldIdent) {
+    if (routeStayedCurrent && _lastTypeFieldIdent === fieldIdent) {
       typeWarning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
     }
-    _lastTypeFieldIdent = fieldIdent;
+    _lastTypeFieldIdent = routeStayedCurrent ? fieldIdent : null;
 
     return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
@@ -4860,6 +4864,22 @@
       'wait_for_element': () => waitForElement(msg.params || {}),
       'get_selection': () => ({ text: window.getSelection()?.toString() || '' }),
       'find_text': () => findText(msg.params || {}),
+      // ── Completion attention flash (tab title/favicon blink) ─────────
+      'attention_flash_start': () => {
+        try {
+          return { success: true, started: startAttentionFlash() };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
+      'attention_flash_stop': () => {
+        try {
+          stopAttentionFlash();
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
       // ── Accessibility-tree-backed reads and actions ──────────────────
       //
       // The tree is built by src/content/accessibility-tree.js (a port of
@@ -6296,4 +6316,186 @@
     }
     sendResponse(result);
   });
+
+  // ─── Tab attention flash ────────────────────────────────────────────
+  // When a run finishes on a tab the user has navigated away from, the side
+  // panel asks this page to blink its title and favicon so the finished tab
+  // can be found at a glance. With many tabs open the strip only shows the
+  // favicon, so the favicon itself alternates between the site's own icons
+  // and a bell alert icon — swapping the site's <link> hrefs outright,
+  // because an appended icon link loses to favicons the page injects later.
+  // Blinking stops when the tab becomes visible, after
+  // ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
+  //
+  // Declared at the end of this closure (function declarations hoist, so the
+  // message handlers above can call them) — code above this point is sliced
+  // and evaluated standalone by tests.
+  // Blink persists for minutes rather than seconds: the user is by
+  // definition looking elsewhere while it runs, and it stops the moment the
+  // tab becomes visible anyway. A short window is how completions get
+  // missed entirely.
+  const ATTENTION_FLASH_INTERVAL_MS = 700;
+  const ATTENTION_FLASH_TIMEOUT_MS = 300000;
+  const ATTENTION_FLASH_MARKER = '\u{1F514} ';
+  let attentionFlashTimer = null;
+  let attentionFlashTimeout = null;
+  let attentionFlashOnVisible = null;
+  // Exact title string this flash last wrote — ownership marker. Stripping
+  // by prefix alone would eat a page's own title that legitimately starts
+  // with the same bell character.
+  let attentionFlashOwnTitle = null;
+  // Favicon blink state. Every icon <link> present when the flash started is
+  // remembered with its original href so the browser's preferred icon can't
+  // outrank ours; the alert data URL replaces it each marked tick. A link
+  // whose href no longer holds either value was rewritten by the page
+  // mid-flash and is left alone from then on, mirroring the title rule.
+  let attentionFlashAlertUrl = null;
+  let attentionFlashIconLinks = null;
+  let attentionFlashFallbackEl = null;
+
+  function attentionFlashBuildAlertIcon() {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.font = '52px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ATTENTION_FLASH_MARKER.trim(), 32, 36);
+      }
+      return canvas.toDataURL('image/png');
+    } catch {
+      return null;
+    }
+  }
+
+  function attentionFlashStripMarker(title) {
+    const text = String(title ?? '');
+    return text.startsWith(ATTENTION_FLASH_MARKER)
+      ? text.slice(ATTENTION_FLASH_MARKER.length)
+      : text;
+  }
+
+  function attentionFlashCaptureIcons() {
+    try {
+      attentionFlashIconLinks = [];
+      for (const el of document.querySelectorAll('link[rel="icon" i], link[rel="shortcut icon" i]')) {
+        attentionFlashIconLinks.push({ el, href: el.getAttribute('href') });
+      }
+      // Pages declaring no icon link get a temporary one instead — browsers
+      // prefer the last-declared favicon, so dropping it at stop restores
+      // the original without touching site elements.
+      if (!attentionFlashIconLinks.length) {
+        attentionFlashFallbackEl = document.createElement('link');
+        attentionFlashFallbackEl.setAttribute('rel', 'icon');
+        attentionFlashFallbackEl.setAttribute('data-webbrain-attention', '1');
+        (document.head || document.documentElement).appendChild(attentionFlashFallbackEl);
+      }
+    } catch {
+      attentionFlashIconLinks = [];
+      attentionFlashFallbackEl = null;
+    }
+  }
+
+  function attentionFlashToggleFavicon(show) {
+    if (!attentionFlashAlertUrl) return;
+    try {
+      for (const entry of attentionFlashIconLinks || []) {
+        // Only touch links we own: still showing the captured original or
+        // the alert URL we last wrote. Anything else means the page swapped
+        // in its own new favicon mid-flash — leave it untouched.
+        const current = entry.el.getAttribute('href');
+        if (current !== entry.href && current !== attentionFlashAlertUrl) continue;
+        const target = show ? attentionFlashAlertUrl : entry.href;
+        if (target == null) entry.el.removeAttribute('href');
+        else entry.el.setAttribute('href', target);
+      }
+      if (attentionFlashFallbackEl) {
+        if (show) attentionFlashFallbackEl.setAttribute('href', attentionFlashAlertUrl);
+        else attentionFlashFallbackEl.removeAttribute('href');
+      }
+    } catch { /* favicon swap is best-effort */ }
+  }
+
+  function stopAttentionFlash() {
+    if (attentionFlashTimer) {
+      clearInterval(attentionFlashTimer);
+      attentionFlashTimer = null;
+    }
+    if (attentionFlashTimeout) {
+      clearTimeout(attentionFlashTimeout);
+      attentionFlashTimeout = null;
+    }
+    if (attentionFlashOnVisible) {
+      document.removeEventListener('visibilitychange', attentionFlashOnVisible);
+      attentionFlashOnVisible = null;
+    }
+    // Only undo our own write. If the page replaced the title since we last
+    // touched it, leave its value completely untouched.
+    if (attentionFlashOwnTitle != null && document.title === attentionFlashOwnTitle) {
+      document.title = attentionFlashStripMarker(document.title);
+    }
+    attentionFlashOwnTitle = null;
+    // Restore favicon links still holding exactly what we wrote; anything
+    // the page rewrote itself is left untouched.
+    if (attentionFlashIconLinks && attentionFlashAlertUrl) {
+      for (const entry of attentionFlashIconLinks) {
+        try {
+          if (entry.el.getAttribute('href') === attentionFlashAlertUrl) {
+            if (entry.href == null) entry.el.removeAttribute('href');
+            else entry.el.setAttribute('href', entry.href);
+          }
+        } catch { /* best-effort */ }
+      }
+    }
+    attentionFlashIconLinks = null;
+    if (attentionFlashFallbackEl) {
+      attentionFlashFallbackEl.remove();
+      attentionFlashFallbackEl = null;
+    }
+    attentionFlashAlertUrl = null;
+  }
+
+  function startAttentionFlash() {
+    if (typeof document === 'undefined') return false;
+    stopAttentionFlash();
+    // Already looking at the page — nothing to draw attention to.
+    if (document.visibilityState === 'visible') return false;
+    attentionFlashOnVisible = () => {
+      if (document.visibilityState === 'visible') stopAttentionFlash();
+    };
+    document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    attentionFlashAlertUrl = attentionFlashBuildAlertIcon();
+    if (attentionFlashAlertUrl) attentionFlashCaptureIcons();
+    // Chrome throttles hidden-tab timers hard (once per minute after ~5
+    // minutes) and Memory Saver may freeze the tab outright, so the phase
+    // is derived from wall-clock time instead of a boolean flip: however
+    // sparse or late the wake-ups land, each one shows the correct side of
+    // the blink and the bell is on immediately at start.
+    const attentionFlashEpoch = Date.now();
+    const applyAttentionTick = () => {
+      const flashing = Math.floor((Date.now() - attentionFlashEpoch) / ATTENTION_FLASH_INTERVAL_MS) % 2 === 0;
+      // Derive each toggle from the live title so changes the site makes
+      // while backgrounded survive the flash. A previous marker is only
+      // stripped when the current title is still exactly what we wrote.
+      const base = document.title === attentionFlashOwnTitle
+        ? attentionFlashStripMarker(document.title)
+        : String(document.title ?? '');
+      // Only the marked phase is extension-owned — during the quiet phase
+      // the title belongs to the page even though we just wrote it, so it
+      // must never be stripped on stop.
+      attentionFlashOwnTitle = flashing ? `${ATTENTION_FLASH_MARKER}${base}` : null;
+      document.title = flashing ? attentionFlashOwnTitle : base;
+      // The favicon blinks with the title: the bell alert icon replaces the
+      // site's own icons during the marked phase and they return during the
+      // quiet one — with many tabs open the favicon is all that shows.
+      attentionFlashToggleFavicon(flashing);
+    };
+    applyAttentionTick();
+    attentionFlashTimer = setInterval(applyAttentionTick, ATTENTION_FLASH_INTERVAL_MS);
+    attentionFlashTimeout = setTimeout(stopAttentionFlash, ATTENTION_FLASH_TIMEOUT_MS);
+    return true;
+  }
 })();

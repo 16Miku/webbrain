@@ -267,6 +267,8 @@ export default {
   'st.display.notify_sound.desc': 'Mainkan bunyi pendek di panel sisi apabila ejen menyelesaikan tugas. Tidak akan dimainkan jika anda membatalkan larian.',
   'st.display.completion_confetti.label': 'Konfeti selesai',
   'st.display.completion_confetti.desc': 'Paparkan animasi konfeti pendek dari atas apabila tugas berjaya diselesaikan. Dihidupkan secara lalai; matikan jika anda mahukan penamat yang lebih tenang.',
+  'st.display.completion_flash_tab.label': "Kelipkan tab yang selesai",
+  'st.display.completion_flash_tab.desc': "Apabila tugasan selesai pada tab yang anda tinggalkan, tajuk dan ikon tab tersebut berkelip supaya anda tahu sekilas tab mana yang selesai.",
   'st.display.max_steps.label': 'Langkah maksimum ejen',
   'st.display.max_steps.desc': 'Jumlah maksimum langkah penggunaan alat yang boleh dilakukan ejen bagi setiap mesej. Nilai lebih tinggi membenarkan tugas berbilang langkah yang lebih kompleks, tetapi mungkin menggunakan lebih banyak token. Tetapkan peluncur kepada ∞ untuk langkah tanpa had.',
   'st.display.traces_link.label': 'Jejak',

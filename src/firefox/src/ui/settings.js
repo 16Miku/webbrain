@@ -59,7 +59,7 @@ const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '33.1.1';
+const EXT_VERSION = '33.1.4';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -100,6 +100,7 @@ const planReviewConfidenceValueLabel = document.getElementById('plan-review-conf
 const planReviewConfidenceRow = document.getElementById('row-plan-review-confidence');
 const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
+const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
@@ -470,7 +471,7 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -535,6 +536,7 @@ async function init() {
   }
   if (notifySoundToggle) notifySoundToggle.checked = stored.notifySound ?? true;
   if (completionConfettiToggle) completionConfettiToggle.checked = stored.completionConfetti ?? true;
+  if (completionFlashTabToggle) completionFlashTabToggle.checked = stored.completionFlashTab ?? true;
   if (tracingToggle) tracingToggle.checked = stored.tracingEnabled === true;
   if (losslessTracingToggle) {
     losslessTracingToggle.checked = stored.losslessTrace === true;
@@ -1209,6 +1211,10 @@ notifySoundToggle?.addEventListener('change', async () => {
 
 completionConfettiToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ completionConfetti: completionConfettiToggle.checked }).catch(() => {});
+});
+
+completionFlashTabToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({ completionFlashTab: completionFlashTabToggle.checked }).catch(() => {});
 });
 
 tracingToggle?.addEventListener('change', async () => {

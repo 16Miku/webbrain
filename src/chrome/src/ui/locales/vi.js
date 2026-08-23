@@ -622,6 +622,8 @@ export default {
   'st.display.notify_sound.desc': "Phát một tiếng chuông ngắn trong bảng điều khiển bên cạnh khi tổng đài viên hoàn thành nhiệm vụ. Sẽ không chơi nếu bạn hủy cuộc chạy.",
   'st.display.completion_confetti.label': "Hoa giấy hoàn thành",
   'st.display.completion_confetti.desc': "Thả một hình ảnh động hoa giấy ngắn từ trên xuống khi một nhiệm vụ hoàn thành thành công. Bật theo mặc định; tắt nó đi nếu bạn thích một kết thúc nhẹ nhàng hơn.",
+  'st.display.completion_flash_tab.label': "Nhấp nháy tab hoàn thành",
+  'st.display.completion_flash_tab.desc': "Khi một tác vụ hoàn tất trong tab bạn đã rời đi, tiêu đề và biểu tượng của tab đó nhấp nháy để bạn nhìn một cái là biết tab nào đã xong.",
   'st.display.max_steps.label': "Số bước đại lý tối đa",
   'st.display.max_steps.desc': "Số bước sử dụng công cụ tối đa mà tác nhân có thể thực hiện trên mỗi tin nhắn. Giá trị cao hơn cho phép thực hiện các tác vụ nhiều bước phức tạp hơn nhưng có thể sử dụng nhiều mã thông báo hơn. Đặt thanh trượt thành ∞ để có số bước không giới hạn.",
   'st.display.request_timeout.label': "Hết thời gian yêu cầu LLM",

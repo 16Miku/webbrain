@@ -623,6 +623,8 @@ export default {
   'st.display.notify_sound.desc': 'Play a short chime in the side panel when the agent finishes a task. Won\'t play if you cancel the run.',
   'st.display.completion_confetti.label': 'Completion confetti',
   'st.display.completion_confetti.desc': 'Drop a short confetti animation from the top when a task completes successfully. On by default; turn it off if you prefer a calmer finish.',
+  'st.display.completion_flash_tab.label': 'Flash finished tab',
+  'st.display.completion_flash_tab.desc': 'When a task finishes on a tab you\'ve navigated away from, blink that tab\'s title and favicon so you can find it at a glance.',
   'st.display.max_steps.label': 'Max Agent Steps',
   'st.display.max_steps.desc': 'Maximum number of tool-use steps the agent can take per message. Higher values allow more complex multi-step tasks but may use more tokens. Set the slider to ∞ for unlimited steps.',
   'st.display.request_timeout.label': 'LLM request timeout',
