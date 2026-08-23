@@ -6320,8 +6320,12 @@
   // ─── Tab attention flash ────────────────────────────────────────────
   // When a run finishes on a tab the user has navigated away from, the side
   // panel asks this page to blink its title and favicon so the finished tab
-  // can be found at a glance. Blinking stops when the tab becomes visible,
-  // after ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
+  // can be found at a glance. With many tabs open the strip only shows the
+  // favicon, so the favicon itself alternates between the site's own icons
+  // and a bell alert icon — swapping the site's <link> hrefs outright,
+  // because an appended icon link loses to favicons the page injects later.
+  // Blinking stops when the tab becomes visible, after
+  // ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
   //
   // Declared at the end of this closure (function declarations hoist, so the
   // message handlers above can call them) — code above this point is sliced
@@ -6331,28 +6335,35 @@
   const ATTENTION_FLASH_MARKER = '\u{1F514} ';
   let attentionFlashTimer = null;
   let attentionFlashTimeout = null;
-  let attentionFlashFaviconEl = null;
   let attentionFlashOnVisible = null;
   // Exact title string this flash last wrote — ownership marker. Stripping
   // by prefix alone would eat a page's own title that legitimately starts
   // with the same bell character.
   let attentionFlashOwnTitle = null;
+  // Favicon blink state. Every icon <link> present when the flash started is
+  // remembered with its original href so the browser's preferred icon can't
+  // outrank ours; the alert data URL replaces it each marked tick. A link
+  // whose href no longer holds either value was rewritten by the page
+  // mid-flash and is left alone from then on, mirroring the title rule.
+  let attentionFlashAlertUrl = null;
+  let attentionFlashIconLinks = null;
+  let attentionFlashFallbackEl = null;
 
-  function attentionFlashDotDataUrl() {
+  function attentionFlashBuildAlertIcon() {
     try {
       const canvas = document.createElement('canvas');
       canvas.width = 64;
       canvas.height = 64;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = '#f59e0b';
-        ctx.beginPath();
-        ctx.arc(32, 32, 26, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.font = '52px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ATTENTION_FLASH_MARKER.trim(), 32, 36);
       }
       return canvas.toDataURL('image/png');
     } catch {
-      return 'data:image/gif;base64,R0lGODlhAQABAIAAAJ2cjQAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
+      return null;
     }
   }
 
@@ -6363,20 +6374,43 @@
       : text;
   }
 
-  function attentionFlashToggleFavicon(show) {
+  function attentionFlashCaptureIcons() {
     try {
-      if (show && !attentionFlashFaviconEl) {
-        // Append our icon link instead of editing the site's own <link>
-        // tags — browsers prefer the last-declared favicon, so removing
-        // ours restores the original without touching site elements.
-        attentionFlashFaviconEl = document.createElement('link');
-        attentionFlashFaviconEl.setAttribute('rel', 'icon');
-        attentionFlashFaviconEl.setAttribute('data-webbrain-attention', '1');
-        attentionFlashFaviconEl.setAttribute('href', attentionFlashDotDataUrl());
-        (document.head || document.documentElement).appendChild(attentionFlashFaviconEl);
-      } else if (!show && attentionFlashFaviconEl) {
-        attentionFlashFaviconEl.remove();
-        attentionFlashFaviconEl = null;
+      attentionFlashIconLinks = [];
+      for (const el of document.querySelectorAll('link[rel="icon" i], link[rel="shortcut icon" i]')) {
+        attentionFlashIconLinks.push({ el, href: el.getAttribute('href') });
+      }
+      // Pages declaring no icon link get a temporary one instead — browsers
+      // prefer the last-declared favicon, so dropping it at stop restores
+      // the original without touching site elements.
+      if (!attentionFlashIconLinks.length) {
+        attentionFlashFallbackEl = document.createElement('link');
+        attentionFlashFallbackEl.setAttribute('rel', 'icon');
+        attentionFlashFallbackEl.setAttribute('data-webbrain-attention', '1');
+        (document.head || document.documentElement).appendChild(attentionFlashFallbackEl);
+      }
+    } catch {
+      attentionFlashIconLinks = [];
+      attentionFlashFallbackEl = null;
+    }
+  }
+
+  function attentionFlashToggleFavicon(show) {
+    if (!attentionFlashAlertUrl) return;
+    try {
+      for (const entry of attentionFlashIconLinks || []) {
+        // Only touch links we own: still showing the captured original or
+        // the alert URL we last wrote. Anything else means the page swapped
+        // in its own new favicon mid-flash — leave it untouched.
+        const current = entry.el.getAttribute('href');
+        if (current !== entry.href && current !== attentionFlashAlertUrl) continue;
+        const target = show ? attentionFlashAlertUrl : entry.href;
+        if (target == null) entry.el.removeAttribute('href');
+        else entry.el.setAttribute('href', target);
+      }
+      if (attentionFlashFallbackEl) {
+        if (show) attentionFlashFallbackEl.setAttribute('href', attentionFlashAlertUrl);
+        else attentionFlashFallbackEl.removeAttribute('href');
       }
     } catch { /* favicon swap is best-effort */ }
   }
@@ -6400,10 +6434,24 @@
       document.title = attentionFlashStripMarker(document.title);
     }
     attentionFlashOwnTitle = null;
-    if (attentionFlashFaviconEl) {
-      attentionFlashFaviconEl.remove();
-      attentionFlashFaviconEl = null;
+    // Restore favicon links still holding exactly what we wrote; anything
+    // the page rewrote itself is left untouched.
+    if (attentionFlashIconLinks && attentionFlashAlertUrl) {
+      for (const entry of attentionFlashIconLinks) {
+        try {
+          if (entry.el.getAttribute('href') === attentionFlashAlertUrl) {
+            if (entry.href == null) entry.el.removeAttribute('href');
+            else entry.el.setAttribute('href', entry.href);
+          }
+        } catch { /* best-effort */ }
+      }
     }
+    attentionFlashIconLinks = null;
+    if (attentionFlashFallbackEl) {
+      attentionFlashFallbackEl.remove();
+      attentionFlashFallbackEl = null;
+    }
+    attentionFlashAlertUrl = null;
   }
 
   function startAttentionFlash() {
@@ -6415,6 +6463,8 @@
       if (document.visibilityState === 'visible') stopAttentionFlash();
     };
     document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    attentionFlashAlertUrl = attentionFlashBuildAlertIcon();
+    if (attentionFlashAlertUrl) attentionFlashCaptureIcons();
     let flashing = false;
     const applyAttentionTick = () => {
       flashing = !flashing;
@@ -6429,8 +6479,9 @@
       // must never be stripped on stop.
       attentionFlashOwnTitle = flashing ? `${ATTENTION_FLASH_MARKER}${base}` : null;
       document.title = flashing ? attentionFlashOwnTitle : base;
-      // The favicon alternates with the title: our icon shows during the
-      // marked phase and the site's own icons return during the quiet one.
+      // The favicon blinks with the title: the bell alert icon replaces the
+      // site's own icons during the marked phase and they return during the
+      // quiet one — with many tabs open the favicon is all that shows.
       attentionFlashToggleFavicon(flashing);
     };
     applyAttentionTick();
