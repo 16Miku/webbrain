@@ -331,6 +331,28 @@ export async function startRun(meta) {
   }
 }
 
+function _putEventWithLosslessTotal(db, runId, event, losslessBytes) {
+  return new Promise((resolve, reject) => {
+    const transaction = tx(db, ['events', 'runs']);
+    const eventsStore = transaction.objectStore('events');
+    const runsStore = transaction.objectStore('runs');
+    let totalUpdated = false;
+    transaction.oncomplete = () => resolve(totalUpdated);
+    transaction.onerror = () => reject(transaction.error || new Error('lossless trace write failed'));
+    transaction.onabort = () => reject(transaction.error || new Error('lossless trace write aborted'));
+    eventsStore.put(event);
+    const runRequest = runsStore.get(runId);
+    runRequest.onsuccess = () => {
+      const run = runRequest.result;
+      if (run?.lossless !== true) return;
+      run.losslessBytes = losslessBytes;
+      run.losslessBytesEncoding = 'utf8';
+      runsStore.put(run);
+      totalUpdated = true;
+    };
+  });
+}
+
 async function _appendEventNow(runId, kind, data) {
   if (!(await tracingEnabled())) return;
   try {
@@ -352,17 +374,18 @@ async function _appendEventNow(runId, kind, data) {
       console.warn('[trace] dropped invalid event:', kind);
       return null;
     }
-    await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
       let bytes = 0;
       try { bytes = new TextEncoder().encode(JSON.stringify(resolvedData)).length; } catch {}
-      state.losslessBytes = (state.losslessBytes || 0) + bytes;
-      const run = await promisifyReq(tx(db, ['runs']).objectStore('runs').get(runId));
-      if (run?.lossless === true) {
-        run.losslessBytes = state.losslessBytes;
-        await promisifyReq(tx(db, ['runs']).objectStore('runs').put(run));
+      const nextLosslessBytes = (state.losslessBytes || 0) + bytes;
+      const totalUpdated = await _putEventWithLosslessTotal(db, runId, ev, nextLosslessBytes);
+      if (totalUpdated) {
+        state.losslessBytes = nextLosslessBytes;
+        state.losslessBytesEncoding = 'utf8';
         await evictOldestLosslessRuns(runId, bytes);
       }
+    } else {
+      await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     }
     return seq;
   } catch (e) {
