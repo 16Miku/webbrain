@@ -108,18 +108,15 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_SECRET }}
         run: |
-          SYSTEM_PROMPT=$(cat .github/prompts/minor-release-changelog-system.txt)
-          USER_TEMPLATE=$(cat .github/prompts/minor-release-changelog-user.txt)
-          RELEASE_CONTEXT=$(cat .release/release-context.md)
           VERSION="${{ steps.release_meta.outputs.new_version }}"
           DATE="${{ steps.release_meta.outputs.release_date }}"
 
           jq -n \
-            --arg sys "$SYSTEM_PROMPT" \
-            --arg usr "$USER_TEMPLATE" \
+            --rawfile sys .github/prompts/minor-release-changelog-system.txt \
+            --rawfile usr .github/prompts/minor-release-changelog-user.txt \
+            --rawfile ctx .release/release-context.md \
             --arg ver "$VERSION" \
             --arg dt "$DATE" \
-            --arg ctx "$RELEASE_CONTEXT" \
             '{
               model: "gpt-5.4-nano-2026-03-17",
               messages: [
