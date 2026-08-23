@@ -39462,6 +39462,42 @@ test('settings provider save and test status updates are DOM-safe', () => {
   }
 });
 
+test('local provider API keys stay available in a collapsed advanced section', () => {
+  for (const [label, settingsRel] of [
+    ['chrome', 'src/chrome/src/ui/settings.js'],
+    ['firefox', 'src/firefox/src/ui/settings.js'],
+  ]) {
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+
+    assert.match(
+      settings,
+      /const OPTIONAL_LOCAL_API_KEY_FIELD = \{[\s\S]*?key: 'apiKey',[\s\S]*?collapsed: true,[\s\S]*?\};/,
+      `${label}: local providers should share one optional authentication field`,
+    );
+    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+      const start = settings.indexOf(`${id}: {`);
+      assert.notEqual(start, -1, `${label}: ${id} settings missing`);
+      const end = settings.indexOf('\n    },', start);
+      assert.ok(
+        settings.slice(start, end).includes('OPTIONAL_LOCAL_API_KEY_FIELD'),
+        `${label}: ${id} should expose optional authentication`,
+      );
+    }
+    assert.match(
+      settings,
+      /<details class="provider-compatibility provider-local-auth">[\s\S]*?st\.display\.advanced[\s\S]*?st\.provider\.field\.api_key[\s\S]*?\$\{collapsedFieldsHTML\}[\s\S]*?<\/details>/,
+      `${label}: optional local authentication should render closed by default`,
+    );
+    const proxyStart = settings.indexOf('local_openai_proxy: {');
+    const proxyEnd = settings.indexOf('\n    },', proxyStart);
+    assert.doesNotMatch(
+      settings.slice(proxyStart, proxyEnd),
+      /OPTIONAL_LOCAL_API_KEY_FIELD/,
+      `${label}: the required proxy API key must remain visible`,
+    );
+  }
+});
+
 test('settings warns on missing or short API keys and shows the Ollama localhost FAQ', () => {
   for (const [label, settingsRel, htmlRel, localeRel] of [
     ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/locales/en.js'],
@@ -60827,6 +60863,43 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
           { type: 'usage', usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } },
           { type: 'done', content: '', finishReason: 'tool_calls' },
         ], `${label}/${id}: compatible stream fixture mismatch`);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('llama.cpp sends configured API keys on chat and streaming requests', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const Provider of [LlamaCppProviderCh, LlamaCppProviderFx]) {
+      const requests = [];
+      const provider = new Provider({
+        baseUrl: 'http://localhost:8080',
+        model: 'local-model',
+        apiKey: 'local-secret-key',
+      });
+      globalThis.fetch = async (_url, options) => {
+        requests.push(options);
+        const body = JSON.parse(options.body);
+        if (body.stream) {
+          return new Response([
+            `data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\n`,
+            'data: [DONE]\n\n',
+          ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'ok' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+
+      await provider.chat([{ role: 'user', content: 'hello' }]);
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'hello' }])) {}
+
+      assert.equal(requests.length, 2);
+      for (const request of requests) {
+        assert.equal(request.headers.Authorization, 'Bearer local-secret-key');
       }
     }
   } finally {

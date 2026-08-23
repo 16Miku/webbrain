@@ -37,6 +37,12 @@ export class LlamaCppProvider extends BaseLLMProvider {
     return !!this.config.useCompactPrompt;
   }
 
+  _headers() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`;
+    return headers;
+  }
+
   _buildRequestBody(messages, options = {}, stream = false) {
     const body = {
       messages: this._chatMessages(messages),
@@ -60,7 +66,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
     try {
       res = await fetchWithTimeout(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._headers(),
         body: JSON.stringify(body),
       });
     } catch (e) {
@@ -96,7 +102,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
     try {
       res = await fetchWithTimeout(streamUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._headers(),
         body: JSON.stringify(body),
       });
     } catch (e) {
