@@ -2210,6 +2210,13 @@ const VISION_MODE_FIELD = {
   ],
 };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
+const OPTIONAL_LOCAL_API_KEY_FIELD = {
+  key: 'apiKey',
+  labelKey: 'st.provider.field.api_key',
+  type: 'password',
+  placeholder: 'optional',
+  collapsed: true,
+};
 
 function providerDefinitionId(id, config = providersData[id]) {
   return String(config?.sourceProviderId || config?.duplicateOf || id || '');
@@ -2303,6 +2310,7 @@ const ZERO_ALLOWED_NUMBER_FIELDS = new Set([
   'outputCostPerMillionUsd',
 ]);
 const MIN_API_KEY_LENGTH = 12;
+const DUMMY_API_KEYS = new Set(['ollama', 'lm-studio']);
 
 function providerInputValue(input) {
   if (input.dataset.type === 'checkbox' || input.type === 'checkbox') {
@@ -2334,7 +2342,8 @@ function setProviderConfigValue(config, path, value) {
 function providerApiKeyWarning(id, config) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="apiKey"]`);
   if (!input) return '';
-  const apiKey = String(config.apiKey || '').trim();
+  const rawApiKey = String(config.apiKey || '').trim();
+  const apiKey = DUMMY_API_KEYS.has(rawApiKey) ? '' : rawApiKey;
   const keyIsOptional = providersData[id]?.category === 'local' && config.requiresApiKey !== true;
   const looksInvalid = apiKey ? apiKey.length < MIN_API_KEY_LENGTH : !keyIsOptional;
   input.setAttribute('aria-invalid', looksInvalid ? 'true' : 'false');
@@ -2557,6 +2566,7 @@ function renderProviders() {
     llamacpp: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8080' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen/qwen3.5-9b' },
         CONTEXT_WINDOW_FIELD,
         VISION_MODE_FIELD,
@@ -2566,6 +2576,7 @@ function renderProviders() {
     ollama: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.6:35b-a3b' },
         CONTEXT_WINDOW_FIELD,
         OLLAMA_VISION_MODE_FIELD,
@@ -2575,6 +2586,7 @@ function renderProviders() {
     lmstudio: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1234/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model_optional', type: 'text', placeholderKey: 'st.provider.field.model_loaded_hint' },
         CONTEXT_WINDOW_FIELD,
         VISION_MODE_FIELD,
@@ -2584,7 +2596,7 @@ function renderProviders() {
     jan: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1337/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma-4-12b-qat' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
@@ -2594,7 +2606,7 @@ function renderProviders() {
     vllm: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8000/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma/gemma4-31b-qat' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
@@ -2604,7 +2616,7 @@ function renderProviders() {
     sglang: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:30000/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma/gemma4-31b-qat' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
@@ -2614,7 +2626,7 @@ function renderProviders() {
     localai: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8080/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-4' },
         CONTEXT_WINDOW_FIELD,
         VISION_MODE_FIELD,
@@ -2624,7 +2636,7 @@ function renderProviders() {
     gpt4all: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:4891/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'loaded model' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
@@ -2922,7 +2934,9 @@ function renderProviders() {
     visibleCount++;
 
     let fieldsHTML = '';
+    let collapsedFieldsHTML = '';
     for (const field of fieldDefs) {
+      let fieldHTML = '';
       const label = field.labelKey ? t(field.labelKey) : (field.label || field.key);
       const placeholder = field.placeholderKey ? t(field.placeholderKey) : (field.placeholder || '');
       if (field.type === 'select') {
@@ -2932,7 +2946,7 @@ function renderProviders() {
         const optionsHTML = field.options
           .map(o => `<option value="${escapeHtml(o.value)}"${o.value === current ? ' selected' : ''}>${escapeHtml(o.labelKey ? t(o.labelKey) : o.label)}</option>`)
           .join('');
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}</label>
             <select data-provider="${id}" data-key="${field.key}" data-type="select">${optionsHTML}</select>
@@ -2940,12 +2954,12 @@ function renderProviders() {
         `;
         if (VISION_UI_PROVIDER_IDS.has(definitionId) && field.key === 'visionMode') {
           const statusAttribute = definitionId === 'ollama' ? `data-ollama-vision-status="${id}"` : `data-vision-status="${id}"`;
-          fieldsHTML += `<div class="field-hint" ${statusAttribute}${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(visionStatusKey(id, config)))}</div>`;
+          fieldHTML += `<div class="field-hint" ${statusAttribute}${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(visionStatusKey(id, config)))}</div>`;
         }
       } else if (field.type === 'checkbox') {
         const isChecked = !!config[field.key];
         const checked = isChecked ? 'checked' : '';
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field" style="display:flex;align-items:center;gap:8px;flex-direction:row;">
             <input type="checkbox" data-provider="${id}" data-key="${field.key}" data-type="checkbox" ${checked}
                    style="width:auto;cursor:pointer;">
@@ -2962,7 +2976,7 @@ function renderProviders() {
           .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(field.suggestionLabels?.[s] || s)}</option>`)
           .join('') +
           `<option value="__custom__"${isCustom ? ' selected' : ''}>${escapeHtml(t('st.provider.field.model_custom'))}</option>`;
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}</label>
             <select class="model-select" data-model-for="${id}">${optionsHTML}</select>
@@ -3002,7 +3016,7 @@ function renderProviders() {
         const minAttr = field.min != null ? ` min="${escapeHtml(field.min)}"` : '';
         const stepAttr = field.step != null ? ` step="${escapeHtml(field.step)}"` : '';
         const value = config[field.key] ?? '';
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}${apiKeyLink}</label>
             <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}
@@ -3013,6 +3027,19 @@ function renderProviders() {
           </div>
         `;
       }
+      if (field.collapsed) collapsedFieldsHTML += fieldHTML;
+      else fieldsHTML += fieldHTML;
+    }
+    if (collapsedFieldsHTML) {
+      fieldsHTML += `
+        <details class="provider-compatibility provider-local-auth">
+          <summary>
+            <span class="provider-compatibility-title">${escapeHtml(t('st.display.advanced'))}</span>
+            <span class="provider-compatibility-summary">${escapeHtml(t('st.provider.field.api_key'))}</span>
+          </summary>
+          <div class="provider-compatibility-body">${collapsedFieldsHTML}</div>
+        </details>
+      `;
     }
 
     const subscribeHref = id === 'webbrain_cloud' ? webbrainSubscribeUrl(config.deviceGuid) : '';
