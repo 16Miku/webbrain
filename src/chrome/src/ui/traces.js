@@ -525,9 +525,10 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
       const usage = u ? `<span class="latency">${(u.prompt_tokens || 0).toLocaleString()} in / ${(u.completion_tokens || 0).toLocaleString()} out</span>` : '';
       const lat = ev.data?.latencyMs != null ? `<span class="latency">${ev.data.latencyMs} ms</span>` : '';
       const content = ev.data?.content;
+      const hasVisibleContent = typeof content === 'string' ? content.trim().length > 0 : !!content;
       const toolCalls = ev.data?.toolCalls || [];
       let body = '';
-      if (content) {
+      if (hasVisibleContent) {
         body += `<div class="content-text">${escapeHtml(content)}</div>`;
       }
       if (toolCalls.length > 0) {
@@ -537,6 +538,21 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
           return `<details><summary><span class="tool-name">${escapeHtml(tc.name)}</span>()</summary><pre>${escapeHtml(args)}</pre></details>`;
         }).join('');
         body += `<div style="margin-top:6px;">${tcList}</div>`;
+      }
+      if (!hasVisibleContent && toolCalls.length === 0) {
+        const emptyDetails = [
+          `reason=${ev.data?.emptyReason || 'unknown'}`,
+          ev.data?.finishReason ? `finish=${ev.data.finishReason}` : '',
+          Number.isInteger(ev.data?.outputTokens) ? `output_tokens=${ev.data.outputTokens}` : '',
+          Number.isInteger(ev.data?.reasoningTokens)
+            ? `reasoning_tokens=${ev.data.reasoningTokens}`
+            : (ev.data?.reasoningPresent === true ? 'reasoning_present=true' : ''),
+          Number.isInteger(ev.data?.requestedMaxTokens) ? `requested_max_tokens=${ev.data.requestedMaxTokens}` : '',
+          Number.isInteger(ev.data?.recoveryAttempt) ? `attempt=${ev.data.recoveryAttempt}` : '',
+          `content_chars=${Number.isInteger(ev.data?.contentChars) ? ev.data.contentChars : 0}`,
+          `tool_calls=${Number.isInteger(ev.data?.toolCallCount) ? ev.data.toolCallCount : 0}`,
+        ].filter(Boolean).join(' · ');
+        body = `<div class="tool-args">EMPTY_RESPONSE · ${escapeHtml(emptyDetails)}</div>`;
       }
       return `
         <div class="event llm_response">

@@ -292,6 +292,12 @@ const { tracesToMarkdown, sanitizeTraceExport } = await import(
 const { tracesToMarkdown: tracesToMarkdownFx, sanitizeTraceExport: sanitizeTraceExportFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
 );
+const ModelOutputDiagnosticsCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/model-output-diagnostics.js').replace(/\\/g, '/')
+);
+const ModelOutputDiagnosticsFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/model-output-diagnostics.js').replace(/\\/g, '/')
+);
 const Utf8BudgetCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/trace/utf8-budget.js').replace(/\\/g, '/')
 );
@@ -9794,6 +9800,9 @@ test('trace UI: renders the trajectory rows before the detailed event timeline',
     assert.match(traces, /getSessionStats\(run\.conversationId\)/, `${browser}: conversation panel does not read indexed session stats`);
     assert.match(traces, /trajectory-table/, `${browser}: trajectory table class missing from renderer`);
     assert.match(traces, /renderStepTrajectory\(events, compact\)/, `${browser}: run view does not render the trajectory before details`);
+    assert.match(traces, /EMPTY_RESPONSE · \$\{escapeHtml\(emptyDetails\)\}/, `${browser}: empty model responses have no visible diagnostics`);
+    assert.match(traces, /const hasVisibleContent = typeof content === 'string' \? content\.trim\(\)\.length > 0 : !!content/, `${browser}: whitespace-only responses are not rendered as empty`);
+    assert.match(traces, /emptyReason \|\| 'unknown'/, `${browser}: legacy empty responses should not receive an invented cause`);
     assert.match(html, /\.trajectory-table|\.trajectory-row/, `${browser}: trajectory table styles missing`);
     assert.match(html, /\.conv-summary/, `${browser}: conversation statistics style missing`);
   }
@@ -9820,6 +9829,134 @@ test('trace UI: renders collapsed session lineage groups with bounded-result war
       'tr.lineage.duplicate_id',
       'tr.lineage.cycle',
     ]) assert.match(locale, new RegExp(key.replaceAll('.', '\\.' )), `${browser}: missing ${key} locale fallback`);
+  }
+});
+
+test('model output diagnostics: classifies empty completions without retaining reasoning text', () => {
+  for (const [label, diagnostics] of [
+    ['chrome', ModelOutputDiagnosticsCh],
+    ['firefox', ModelOutputDiagnosticsFx],
+  ]) {
+    const limited = diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [],
+      reasoningContent: 'private reasoning text',
+      usage: {
+        completion_tokens: 4096,
+        completion_tokens_details: { reasoning_tokens: 4096 },
+      },
+      finishReason: 'length',
+    }, { requestedMaxTokens: 4096, recoveryAttempt: 2 });
+    assert.deepEqual(limited, {
+      empty: true,
+      emptyReason: 'output_limit',
+      finishReason: 'length',
+      contentChars: 0,
+      toolCallCount: 0,
+      reasoningPresent: true,
+      reasoningChars: 22,
+      reasoningTokens: 4096,
+      outputTokens: 4096,
+      requestedMaxTokens: 4096,
+      recoveryAttempt: 2,
+    }, `${label}: output-limit diagnostics changed`);
+    assert.doesNotMatch(JSON.stringify(limited), /private reasoning text/, `${label}: reasoning text leaked into diagnostics`);
+    assert.match(diagnostics.emptyOutputFailureMessage(limited), /response-token limit/i, `${label}: output-limit guidance missing`);
+    assert.doesNotMatch(diagnostics.emptyOutputFailureMessage(limited), /step limit/i, `${label}: model output failures must not blame the agent step limit`);
+    assert.doesNotMatch(diagnostics.emptyOutputFailureMessage(limited), /increase the response-token limit/i, `${label}: output-limit guidance must not recommend an unavailable setting`);
+
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: null,
+      reasoningContent: 'thought',
+      usage: { completion_tokens: 12 },
+    }, { requestedMaxTokens: 4096 }).emptyReason, 'reasoning_only', `${label}: reasoning-only response not classified`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [],
+      responseItems: [{ type: 'reasoning', encrypted_content: 'opaque' }],
+    }).emptyReason, 'reasoning_only', `${label}: encrypted reasoning item not detected without exposing it`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [],
+      usage: { completion_tokens: 42 },
+      responseItems: [{
+        type: 'webbrain_provider_replay',
+        content: [{ type: 'redacted_thinking', data: 'opaque' }],
+      }],
+    }, { requestedMaxTokens: 4096 }).emptyReason, 'reasoning_only', `${label}: provider replay reasoning envelope not detected`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [],
+      finishReason: 'content_filter',
+    }).emptyReason, 'content_filter', `${label}: filtered response not classified`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [],
+      usage: { completion_tokens: 0 },
+    }, { requestedMaxTokens: 4096 }).emptyReason, 'provider_empty', `${label}: unexplained empty response not classified`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [],
+      raw: { choices: [{ finish_reason: 'max_tokens' }] },
+    }).emptyReason, 'output_limit', `${label}: raw provider finish reason not classified`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: 'done',
+      toolCalls: [],
+      reasoningContent: 'thought',
+    }).emptyReason, null, `${label}: visible output must not receive an empty classification`);
+    assert.equal(diagnostics.modelOutputDiagnostics({
+      content: '',
+      toolCalls: [{ id: 'call_1' }],
+    }).empty, false, `${label}: tool output must not be empty`);
+    const reasoningMessage = diagnostics.emptyOutputFailureMessage({ emptyReason: 'reasoning_only' });
+    assert.match(reasoningMessage, /latest model response/i, `${label}: reasoning-only guidance should identify the observed attempt`);
+    assert.doesNotMatch(reasoningMessage, /twice/i, `${label}: reasoning-only guidance must not invent the first attempt's cause`);
+    const filteredMessage = diagnostics.emptyOutputFailureMessage({ emptyReason: 'content_filter' });
+    assert.match(filteredMessage, /latest response/i, `${label}: filter guidance should identify the observed attempt`);
+    assert.doesNotMatch(filteredMessage, /both attempts/i, `${label}: filter guidance must not invent the first attempt's cause`);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/model-output-diagnostics.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/model-output-diagnostics.js'), 'utf8'),
+    'Chrome/Firefox output diagnostics must remain mirrored',
+  );
+});
+
+test('trace export: renders privacy-safe empty-response diagnostics', () => {
+  const runs = [{
+    run: { runId: 'empty-output', userMessage: 'Continue', model: 'test-model', status: 'empty_output' },
+    events: [{
+      runId: 'empty-output',
+      seq: 1,
+      kind: 'llm_response',
+      data: {
+        step: 7,
+        content: null,
+        toolCalls: [],
+        empty: true,
+        emptyReason: 'output_limit',
+        finishReason: 'length',
+        contentChars: 0,
+        toolCallCount: 0,
+        reasoningPresent: true,
+        reasoningChars: 0,
+        reasoningTokens: 4096,
+        outputTokens: 4096,
+        requestedMaxTokens: 4096,
+        recoveryAttempt: 2,
+      },
+    }],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /Empty model response: reason=output_limit · finish=length · output=4096 tokens · reasoning=4096 tokens · limit=4096 tokens · attempt=2 · 0 visible chars · 0 tool calls/, `${label}: empty-response metadata remains hidden`);
+    const legacy = serialize([{
+      run: { runId: 'legacy-empty', userMessage: 'Continue', status: 'empty_output' },
+      events: [{ runId: 'legacy-empty', seq: 1, kind: 'llm_response', data: { content: null, toolCalls: [] } }],
+    }]).markdown;
+    assert.match(legacy, /Empty model response: reason=unknown/, `${label}: old empty events should stay visible without an invented cause`);
+    assert.doesNotMatch(legacy, /reason=provider_empty/, `${label}: legacy events cannot prove a provider-empty cause`);
   }
 });
 
@@ -9859,6 +9996,7 @@ test('trace recorder: turn/step boundary helpers and structured error codes are 
     const endRunBody = recorderSource.slice(recorderSource.indexOf('export async function endRun'), recorderSource.indexOf('/**\n * Repair trace records'));
     assert.doesNotMatch(endRunBody, /_runWriteQueues\.delete\(runId\)/, `${browser}: finalization must let the queue owner release itself after later queued migrations settle`);
     assert.match(recorderSource, /export function recordLLMRetry\([\s\S]*?_retryCount\(db, runId, step\)[\s\S]*?normalizeErrorCode\(code\)/, `${browser}: retry attempts are not derived from the durable event log`);
+    assert.match(recorderSource, /reasoningPresent[\s\S]*?reasoningTokens[\s\S]*?requestedMaxTokens/, `${browser}: privacy-safe model output diagnostics are not persisted`);
   }
 });
 
@@ -9877,6 +10015,10 @@ test('agent trace instrumentation: turn/step boundaries, retries-before-wait, an
     assert.match(startTraceBody, /recordTurnStart\(runId, 0, \{ mode \}\)/, `${browser}: every started trace must receive turn_start, including planner exits`);
     assert.match(nonStreamingBody, /recordStepStart\(runId, steps, \{\}\)/, `${browser}: non-streaming step_start missing`);
     assert.match(streamingBody, /recordStepStart\(runId, steps, \{\}\)/, `${browser}: streaming step_start missing`);
+    assert.match(agentSource, /modelOutputDiagnostics\(result,[\s\S]*?requestedMaxTokens: chatOpts\.maxTokens/, `${browser}: non-streaming responses omit output diagnostics`);
+    assert.match(streamingBody, /recordLLMResponse\(runId, steps,[\s\S]*?\.\.\.outputDiagnostics/, `${browser}: streaming responses omit output diagnostics`);
+    assert.match(streamingBody, /finishReason = String\(/, `${browser}: streaming terminal reason is discarded`);
+    assert.doesNotMatch(agentSource, /raise the step limit in settings/, `${browser}: empty response guidance still blames the unrelated agent step limit`);
     assert.match(nonStreamingBody, /_traceStepEndForResult\(result\)/, `${browser}: non-streaming output is not validated before step_end`);
     assert.match(streamingBody, /const closeTraceStep = \(payload\) => \{[\s\S]*?traceStepClosed = true/, `${browser}: streaming step_end is not single-shot`);
     const streamedClose = streamingBody.indexOf('closeTraceStep(this._traceStepEndForResult');
@@ -60558,7 +60700,7 @@ test('GPT-5.6 uses /responses while older and compatible-provider calls keep /ch
           }), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
         return new Response(JSON.stringify({
-          choices: [{ message: { content: 'legacy' } }],
+          choices: [{ message: { content: 'legacy' }, finish_reason: 'stop' }],
           usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       };
@@ -60579,6 +60721,7 @@ test('GPT-5.6 uses /responses while older and compatible-provider calls keep /ch
         response_items: [{ type: 'reasoning', encrypted_content: 'internal-only' }],
       }], { tools: [tool] });
       assert.equal(legacyResult.content, 'legacy');
+      assert.equal(legacyResult.finishReason, 'stop');
       assert.equal(requests.at(-1).url, 'https://api.openai.com/v1/chat/completions');
       assert.deepEqual(requests.at(-1).body.messages, [{ role: 'user', content: 'hello' }]);
       assert.equal(requests.at(-1).body.tools[0].function.name, 'read_page');
