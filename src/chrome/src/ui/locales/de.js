@@ -617,6 +617,8 @@ export default {
   'st.display.notify_sound.desc': 'Spielt einen kurzen Klang in der Seitenleiste, wenn der Agent eine Aufgabe abschließt.',
   'st.display.completion_confetti.label': 'Abschluss-Konfetti',
   'st.display.completion_confetti.desc': 'Lässt eine kurze Konfetti-Animation von oben fallen, wenn eine Aufgabe erfolgreich abgeschlossen wird.',
+  'st.display.completion_flash_tab.label': "Fertigen Tab aufblinken lassen",
+  'st.display.completion_flash_tab.desc': "Wenn eine Aufgabe in einem Tab abgeschlossen wird, den du verlassen hast, blinkt der Titel und das Favicon dieses Tabs, damit du auf einen Blick erkennst, welcher Tab fertig ist.",
   'st.display.max_steps.label': 'Maximale Agent-Schritte',
   'st.display.max_steps.desc': 'Maximale Anzahl an Tool-Schritten, die der Agent pro Nachricht ausführen kann. Höhere Werte ermöglichen komplexere mehrstufige Aufgaben, können aber mehr Token verbrauchen. Stellen Sie den Schieberegler für unbegrenzte Schritte auf ∞.',
   'st.display.request_timeout.label': 'LLM-Anfrage-Timeout',

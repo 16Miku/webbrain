@@ -147,13 +147,20 @@ function updateExpansionEvidence(state, result) {
 }
 
 function normalizedTreeScope(args = {}) {
+  const page = normalizedTreePage(args, null);
   return {
     filter: String(args?.filter || 'all'),
     maxDepth: args?.maxDepth == null ? 15 : Number(args.maxDepth),
     maxChars: normalizedTreeMaxChars(args),
     ref_id: typeof args?.ref_id === 'string' ? args.ref_id.trim() : '',
-    page: normalizedTreePage(args, null),
-    tree_revision: typeof args?.tree_revision === 'string' ? args.tree_revision.trim() : '',
+    page,
+    // Page 1 always starts a fresh snapshot. Models sometimes carry the
+    // previous document/subtree revision into a restart; treating that opaque
+    // value as part of the page-1 scope makes every otherwise valid restart
+    // look non-sequential and traps complete-thread reads in a retry loop.
+    tree_revision: page > 1 && typeof args?.tree_revision === 'string'
+      ? args.tree_revision.trim()
+      : '',
   };
 }
 
@@ -179,7 +186,8 @@ function restartGmailRootDiscovery(state) {
 
 function gmailAccessibilityTreeState(state, args, result) {
   const requestedRefId = typeof args?.ref_id === 'string' ? args.ref_id.trim() : '';
-  const requestedTreeRevision = typeof args?.tree_revision === 'string'
+  const requestedPage = normalizedTreePage(args, null);
+  const requestedTreeRevision = requestedPage > 1 && typeof args?.tree_revision === 'string'
     ? args.tree_revision.trim()
     : '';
   const resultRootRefId = typeof result?.conversationRootRefId === 'string'

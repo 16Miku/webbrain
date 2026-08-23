@@ -11,6 +11,7 @@
     "tabGroups",
     "scripting",
     "storage",
+    "notifications",
     "webNavigation",
     "webRequest",
     "debugger",

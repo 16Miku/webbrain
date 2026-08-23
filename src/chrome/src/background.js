@@ -244,6 +244,7 @@ const scheduler = new ScheduledJobManager({
       type,
       data,
     }).catch(() => {});
+    maybeFlashScheduledTerminalEvent(tabId, type, data);
   },
   showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
   hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
@@ -1713,8 +1714,36 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '') {
-  return runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false) {
+  const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
+  if (snapshot) {
+    // The journal carries an exact successful-'done' predicate for Act runs;
+    // Ask replies are classified by the caller and OR-ed in for badge styling.
+    snapshot.runSucceeded = snapshot.successfulDone === true || askSucceeded === true;
+  }
+  return snapshot;
+}
+
+// Mirror the sidepanel's successful-Ask classification for badge styling
+// only: non-empty content with no error/attachment/max-steps update and no
+// billing terminal (subscribe / cost-allowance messages are actionable
+// failures, not successes).
+const BADGE_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
+const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
+function askCompletionSucceededForBadge(result, updates = [], error = null) {
+  if (error) return false;
+  if (updates.some(update => (
+    update?.type === 'error'
+    || update?.type === 'attachment_rejected'
+    || update?.type === 'max_steps_reached'
+    || update?.error
+    || update?.data?.error
+  ))) return false;
+  const content = String(result ?? '').trim();
+  if (!content) return false;
+  if (BADGE_SUBSCRIBE_ERROR_RE.test(content)) return false;
+  if (BADGE_COST_ALLOWANCE_ERROR_RE.test(content)) return false;
+  return true;
 }
 
 async function getRunUiSnapshot(tabId) {
@@ -1950,6 +1979,21 @@ function standaloneRagFilterOptions(msg) {
 
 async function sendAgentRunComplete(tabId, snapshot = null) {
   if (tabId == null || !snapshot) return;
+  // Live runs continue in the background even if their side panel is closed
+  // or reloaded mid-run (and continuations settle here too), so terminal
+  // attention flashes are owned here rather than by the panel. User stops
+  // and cancellations never flash; the setting is honored inside
+  // flashTabAttention.
+  const liveStatus = String(snapshot.status || '');
+  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
+    // Badge styling uses the run's recorded outcome (successful done update
+    // or successful Ask reply), not just the terminal status — a completed
+    // status alone can still mean max-steps were reached without success.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
+  }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
       tabId,
@@ -2326,7 +2370,183 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   for (const [id, replay] of apiRequestReplayById.entries()) {
     if (replay?.tabId === tabId) apiRequestReplayById.delete(id);
   }
+  flashedBadgeTabs.delete(tabId);
 });
+
+// ─── Completion attention flash ─────────────────────────────────────
+// When a run settles on a background tab, the side panel asks us to make
+// that tab noticeable. The preferred path blinks the page title/favicon
+// via the content script; when no receiver answers (chrome:// pages, the
+// Chrome Web Store, discarded tabs, …) we fall back to a per-tab toolbar
+// badge that clears as soon as the user activates the tab.
+const flashedBadgeTabs = new Set();
+
+// Per-tab toolbar badges are only visible while their tab is selected, so
+// restricted/discarded targets additionally get a system notification (the
+// only fallback visible while another tab is selected). Clicking it focuses
+// the finished tab. The chime has already played, so notifications stay
+// silent and auto-clear.
+const COMPLETION_NOTIFICATION_VISIBLE_MS = 12000;
+const completionNotificationFocusHandlers = new Map();
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  const focus = completionNotificationFocusHandlers.get(notificationId);
+  if (!focus) return;
+  completionNotificationFocusHandlers.delete(notificationId);
+  void focus();
+});
+chrome.notifications.onClosed.addListener((notificationId) => {
+  completionNotificationFocusHandlers.delete(notificationId);
+});
+
+async function showCompletionNotification(tabId, success) {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch { return; }
+  const message = tab?.title || tab?.url || 'A background task finished.';
+  await new Promise((resolve) => {
+    try {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+        title: `WebBrain — ${success ? 'Task finished' : 'Task needs attention'}`,
+        message,
+        silent: true,
+      }, (notificationId) => {
+        if (!notificationId) return resolve();
+        setTimeout(() => {
+          completionNotificationFocusHandlers.delete(notificationId);
+          chrome.notifications.clear(notificationId, () => {});
+        }, COMPLETION_NOTIFICATION_VISIBLE_MS);
+        if (Number.isInteger(tabId)) {
+          completionNotificationFocusHandlers.set(notificationId, async () => {
+            try {
+              const target = await chrome.tabs.get(tabId);
+              if (target?.windowId != null) await chrome.windows.update(target.windowId, { focused: true });
+              await chrome.tabs.update(tabId, { active: true });
+            } catch { /* tab may be gone */ }
+          });
+        }
+        resolve();
+      });
+    } catch { resolve(); }
+  });
+}
+
+chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
+  flashedBadgeTabs.delete(tabId);
+  // Clear unconditionally: the Set only lives in service-worker memory, but
+  // a tab-scoped badge survives MV3 worker suspension/restarts. Resetting
+  // the per-tab override is idempotent and restores any global badge.
+  chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+});
+
+// Focusing a window does not fire tabs.onActivated for its already-active
+// tab, so badges set on restricted tabs in unfocused windows would linger
+// after the user returns to that window. Clear the focused window's active
+// tab badge as well — unconditionally, like the activation handler above,
+// since the tracking Set cannot survive MV3 worker restarts.
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId == null || windowId === chrome.windows.WINDOW_ID_NONE) return;
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, windowId });
+    const activeTabId = Number(activeTab?.id);
+    if (!Number.isInteger(activeTabId)) return;
+    flashedBadgeTabs.delete(activeTabId);
+    await chrome.action.setBadgeText({ tabId: activeTabId, text: '' });
+  } catch { /* best-effort cleanup */ }
+});
+
+// Scheduled jobs keep running even when no side panel is mounted, so the
+// background owns their attention flash: terminal events trigger it here
+// and the panel never duplicates it. flashTabAttention itself honors the
+// stored setting and suppresses the signal while the finished tab is being
+// actively watched.
+async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
+  if (type !== 'scheduled_job') return;
+  const event = data?.event;
+  const job = data?.job;
+  // clarification_required is terminal for unattended runs and waits on the
+  // user — they must be told, or the task stalls unnoticed forever.
+  if ((event !== 'completed' && event !== 'failed' && event !== 'clarification_required')
+    || job?.source === 'watch') return;
+  try {
+    const jobTabId = Number(job.tabId ?? job.target?.tabId ?? _tabId);
+    // lastOutcome is an explicit verdict: the scheduler classifies Ask runs
+    // at the source, so no null-outcome guessing happens here.
+    await flashTabAttention({
+      tabId: jobTabId,
+      success: event === 'completed' && job?.lastOutcome === 'success',
+    });
+  } catch { /* best-effort */ }
+}
+
+async function flashTabAttention(msg) {
+  try {
+    const stored = await chrome.storage.local.get('completionFlashTab');
+    if (stored?.completionFlashTab === false) return { ok: true, mode: 'disabled' };
+  } catch { /* setting defaults to on */ }
+  const tabId = Number(msg?.tabId);
+  const success = msg?.success !== false;
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
+  }
+  try {
+    await chrome.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  // Discarded/unloaded tabs and pages whose content script declines to
+  // blink (document already visible) both fall through to the badge
+  // fallback — which works without touching the page and survives until
+  // the user actually looks at the tab.
+  let flashAccepted = false;
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'attention_flash_start',
+      params: { success },
+    });
+    flashAccepted = response?.started === true;
+  } catch {
+    flashAccepted = false;
+  }
+  if (flashAccepted) return { ok: true, mode: 'title-flash' };
+  // No content-script receiver (or it declined) — fall back to a per-tab
+  // toolbar badge. But re-check first whether the user is actually looking
+  // at the tab: "active" only means selected within its own window, so an
+  // active tab in an unfocused window (user works elsewhere) still deserves
+  // the badge. The activation/focus listeners have already cleared any
+  // stale badge, and no further event would fire for an already-active tab.
+  let tabIsWatched = false;
+  try {
+    const fresh = await chrome.tabs.get(tabId);
+    if (fresh?.active) {
+      const tabWindow = fresh.windowId != null
+        ? await chrome.windows.get(fresh.windowId)
+        : null;
+      tabIsWatched = tabWindow?.focused === true;
+    }
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  if (tabIsWatched) return { ok: true, mode: 'skipped-tab-watched' };
+  try {
+    await chrome.action.setBadgeText({ tabId, text: success ? '✓' : '!' });
+    await chrome.action.setBadgeBackgroundColor({
+      tabId,
+      color: success ? '#22c55e' : '#ef4444',
+    });
+    flashedBadgeTabs.add(tabId);
+    // The badge itself is invisible while another tab is selected — pair it
+    // with a system notification so the completion is discoverable anyway.
+    await showCompletionNotification(tabId, success);
+    return { ok: true, mode: 'badge+notification' };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
 
 /**
  * Central message handler.
@@ -2351,6 +2571,7 @@ async function handleMessage(msg, sender) {
     'capture_screenshot_redaction_snapshot',
     'ensure_offscreen_offline_rag_host',
     EMERGENCY_DOWNLOAD_ACTION,
+    'flash_tab_attention',
   ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
@@ -2463,6 +2684,8 @@ async function handleMessage(msg, sender) {
       return await stopTabRecording({ expectedRecordingId: msg.expectedRecordingId || null });
     case 'recording_capture_ended':
       return await stopTabRecording({ reason: 'capture_ended' });
+    case 'flash_tab_attention':
+      return await flashTabAttention(msg);
     case 'get_recording_state':
       return {
         ok: true,
@@ -2933,6 +3156,7 @@ async function handleMessage(msg, sender) {
             runUi.requestId,
             terminalRunUiStatus(result, updates, runError),
             result || (runError ? `Error: ${runError.message}` : ''),
+            mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
           );
           await sendAgentRunComplete(tabId, snapshot);
         }
@@ -3010,6 +3234,7 @@ async function handleMessage(msg, sender) {
           runUi.requestId,
           terminalRunUiStatus(result, updates, runError),
           result || (runError ? `Error: ${runError.message}` : ''),
+          mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
         );
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
@@ -3078,6 +3303,7 @@ async function handleMessage(msg, sender) {
           runUi.requestId,
           terminalRunUiStatus(result, updates, runError),
           result || (runError ? `Error: ${runError.message}` : ''),
+          mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
         );
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');

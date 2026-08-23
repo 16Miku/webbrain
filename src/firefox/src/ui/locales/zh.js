@@ -267,6 +267,8 @@ export default {
   'st.display.notify_sound.desc': '代理完成任务时在侧边栏播放短促的提示音。取消运行则不播放。',
   'st.display.completion_confetti.label': '完成彩纸',
   'st.display.completion_confetti.desc': '任务成功完成时从顶部播放短暂的彩纸动画。默认开启；如果想要更安静的完成效果，可将其关闭。',
+  'st.display.completion_flash_tab.label': "闪烁已完成的标签页",
+  'st.display.completion_flash_tab.desc': "当任务在你离开的标签页中完成时，该标签页的标题和图标会闪烁，让你一眼看出是哪个标签页完成了。",
   'st.display.max_steps.label': '代理最大步骤数',
   'st.display.max_steps.desc': '代理每条消息可执行的最大工具调用步数。更高的值允许更复杂的多步任务，但可能消耗更多 token。将滑块设为 ∞ 可不限步骤数。',
   'st.display.traces_link.label': '轨迹',

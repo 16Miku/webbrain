@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-22T09:15:01.746Z",
+  "id": "070",
+  "model": "qwen3.5-4b-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "070",
+    "difficulty": {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced"
+    },
+    "category": "chart-reading",
+    "title": "Dönüşüm hunisi",
+    "image": "images/070.png",
+    "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Dönüşüm hunisi” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/070.png",
+    "bytes": 72807,
+    "sha256": "6a34f2a8df01fd37da75b40fee002e46043ccdc4720b572957d5c44c1a42b183"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "\n\n1) Page purpose: Analytics dashboard showing a conversion funnel chart.\n2) Visible text: WebScene, Home, Workspace, Activity, Dönüşüm hunisi, Updated now, Ziyaret, Sepet, Ödeme, Satın alma, 100, 62, 41, 29%, 29.\n3) Inputs: None visible.\n4) State signals: \"Updated now\" badge present; no loading spinners or error banners.\n5) Blockers: None.\n6) Unknowns: None.",
+    "reasoningChars": 999,
+    "usage": {
+      "prompt_tokens": 317,
+      "completion_tokens": 400,
+      "total_tokens": 717,
+      "completion_tokens_details": {
+        "reasoning_tokens": 278
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 5,
+    "total": 26810
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 8,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "chart",
+          "dashboard",
+          "dönüşüm hunisi"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "chart",
+          "dashboard"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Dönüşüm hunisi",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Dönüşüm hunisi"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-label",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "Satın alma"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Satın alma"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-value",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "100",
+          "29%"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "100",
+          "29%"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

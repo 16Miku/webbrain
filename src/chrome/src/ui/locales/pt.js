@@ -622,6 +622,8 @@ export default {
   'st.display.notify_sound.desc': "Toque um breve sinal sonoro no painel lateral quando o agente terminar uma tarefa. Não jogará se você cancelar a corrida.",
   'st.display.completion_confetti.label': "Confete de conclusão",
   'st.display.completion_confetti.desc': "Solte uma pequena animação de confete no topo quando uma tarefa for concluída com sucesso. Ativado por padrão; desligue-o se preferir um final mais calmo.",
+  'st.display.completion_flash_tab.label': "Piscar a aba concluída",
+  'st.display.completion_flash_tab.desc': "Quando uma tarefa é concluída em uma aba que você deixou, o título e o favicon dessa aba piscam para você saber de relance qual foi concluída.",
   'st.display.max_steps.label': "Máximo de etapas do agente",
   'st.display.max_steps.desc': "Número máximo de etapas de uso da ferramenta que o agente pode realizar por mensagem. Valores mais altos permitem tarefas mais complexas de várias etapas, mas podem usar mais tokens. Defina o controle deslizante para ∞ para etapas ilimitadas.",
   'st.display.request_timeout.label': "Tempo limite da solicitação LLM",

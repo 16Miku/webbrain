@@ -11,6 +11,7 @@ import {
   normalizedThreshold,
   TRACE_REPAIR_STALE_AFTER_MS,
 } from './repair.js';
+import { createTraceStats, addTraceEvent, aggregateTraceRuns } from './stats.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -399,6 +400,14 @@ export async function startRun(meta) {
       stepCount: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
+      llmRequestCount: 0,
+      llmResponseCount: 0,
+      toolCallCount: 0,
+      visionSubCallCount: 0,
+      errorCount: 0,
+      retryCount: 0,
+      totalLlmLatencyMs: 0,
+      totalToolLatencyMs: 0,
       finalContent: null,
     };
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
@@ -837,7 +846,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
       // Tally usage from events. `totalCost` is the sum of `usage.cost`
       // across all llm_response events — providers report this in their
       // native units (OpenRouter & OpenAI: USD).
-      let totalIn = 0, totalOut = 0, totalCost = 0, stepCount = 0;
+      const stats = createTraceStats();
       let sawLoopError = false;
       await new Promise((resolve) => {
         const idx = tx(db, ['events'], 'readonly').objectStore('events').index('runId');
@@ -847,15 +856,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
           if (!c) return resolve();
           const ev = c.value;
           if (ev.kind === 'error' && ev.data?.phase === 'loop') sawLoopError = true;
-          if (ev.kind === 'llm_response') {
-            stepCount = Math.max(stepCount, ev.data?.step || 0);
-            const u = ev.data?.usage;
-            if (u) {
-              totalIn += u.prompt_tokens || 0;
-              totalOut += u.completion_tokens || 0;
-              if (typeof u.cost === 'number' && Number.isFinite(u.cost)) totalCost += u.cost;
-            }
-          }
+          addTraceEvent(stats, ev);
           c.continue();
         };
         req.onerror = () => resolve();
@@ -871,10 +872,18 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
         existing.durationMs = existing.endedAt - existing.startedAt;
         existing.status = finalStatus;
         existing.finalContent = finalContent;
-        existing.stepCount = stepCount;
-        existing.totalInputTokens = totalIn;
-        existing.totalOutputTokens = totalOut;
-        existing.totalCost = totalCost;
+        existing.stepCount = stats.stepCount;
+        existing.totalInputTokens = stats.totalInputTokens;
+        existing.totalOutputTokens = stats.totalOutputTokens;
+        existing.totalCost = stats.totalCost;
+        existing.llmRequestCount = stats.llmRequestCount;
+        existing.llmResponseCount = stats.llmResponseCount;
+        existing.toolCallCount = stats.toolCallCount;
+        existing.visionSubCallCount = stats.visionSubCallCount;
+        existing.errorCount = stats.errorCount;
+        existing.retryCount = stats.retryCount;
+        existing.totalLlmLatencyMs = stats.totalLlmLatencyMs;
+        existing.totalToolLatencyMs = stats.totalToolLatencyMs;
         await promisifyReq(runStore.put(existing));
       }
     } catch (e) {
@@ -945,24 +954,33 @@ export async function repairStaleRuns({
 
 export async function listRuns({ limit = 500, conversationId = null } = {}) {
   const db = await openDB();
-  const idx = tx(db, ['runs'], 'readonly').objectStore('runs').index('startedAt');
+  const store = tx(db, ['runs'], 'readonly').objectStore('runs');
+  const sessionQuery = Boolean(conversationId && store.indexNames.contains('sessionId'));
+  const idx = store.index(sessionQuery ? 'sessionId' : 'startedAt');
   const out = [];
   // When conversationId is set, only matching runs count toward `limit`, so a
   // chat's tool-chain export is not starved by unrelated newer runs.
   await new Promise((resolve, reject) => {
-    const req = idx.openCursor(null, 'prev');
+    const req = sessionQuery
+      ? idx.openCursor(IDBKeyRange.only(conversationId))
+      : idx.openCursor(null, 'prev');
     req.onsuccess = () => {
       const c = req.result;
-      if (!c || out.length >= limit) return resolve();
+      if (!c || (!sessionQuery && out.length >= limit)) return resolve();
       const row = c.value;
-      if (!conversationId || row?.conversationId === conversationId) {
-        out.push(row);
-      }
+      if (sessionQuery || !conversationId || row?.conversationId === conversationId) out.push(row);
       c.continue();
     };
     req.onerror = () => reject(req.error || new Error('listRuns failed'));
   });
-  return out;
+  if (sessionQuery) out.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  return out.slice(0, limit);
+}
+
+export async function getSessionStats(conversationId, { limit = 500 } = {}) {
+  if (!conversationId) return aggregateTraceRuns([]);
+  const runs = await listRuns({ limit, conversationId });
+  return aggregateTraceRuns(runs);
 }
 
 export async function getRun(runId) {

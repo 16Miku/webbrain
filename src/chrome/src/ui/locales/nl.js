@@ -599,6 +599,8 @@ export default {
   'st.display.notify_sound.desc': 'Speel een kort deuntje in het zijpaneel wanneer de agent een taak voltooit...',
   'st.display.completion_confetti.label': 'Voltooiingsconfetti',
   'st.display.completion_confetti.desc': 'Laat een korte confetti-animatie vallen van boven wanneer een taak succesvol wordt voltooid...',
+  'st.display.completion_flash_tab.label': "Voltooid tabblad laten knipperen",
+  'st.display.completion_flash_tab.desc': "Wanneer een taak klaar is in een tabblad dat je hebt verlaten, knippert de titel en het favicon van dat tabblad zodat je in één oogopslag ziet welke tab klaar is.",
   'st.display.max_steps.label': 'Max Agentstappen',
   'st.display.max_steps.desc': 'Maximaal aantal toolstappen dat de agent per bericht kan uitvoeren. Hogere waarden maken complexere taken met meerdere stappen mogelijk, maar kunnen meer tokens gebruiken. Zet de schuifregelaar op ∞ voor onbeperkte stappen.',
   'st.display.request_timeout.label': 'LLM-verzoektime-out',

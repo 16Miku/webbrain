@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-22T18:56:14.901Z",
+  "id": "028",
+  "model": "qwen/qwen3-vl-32b-instruct",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "028",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "consent-banner",
+    "title": "Privacy choices",
+    "image": "images/028.png",
+    "question": "Which consent overlay is present and what exact choices does it offer? Focus on the “Privacy choices” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/028.png",
+    "bytes": 159902,
+    "sha256": "ae0adaae082b49c86ce5c654a99efa27ec303a565132a825c78e29b9b4371436"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: WebScene article page titled \"Field Notes\" with a privacy consent banner.\n\n2) Visible text:\n- Header: \"WebScene\"\n- Navigation: \"Home\", \"Workspace\", \"Activity\"\n- Main heading: \"Field Notes\"\n- Subheading: \"Independent stories about design, technology, and cities.\"\n- Placeholder text: \"A long-form article continues underneath the privacy surface.\"\n- Privacy banner heading: \"Privacy choices\"\n- Privacy banner subtext: \"Essential cookies are always on.\"\n- Buttons: \"Manage settings\", \"Save choices\"\n\n3) Inputs: None visible.\n\n4) State signals:\n- Privacy consent banner at bottom of viewport.\n- No loading spinners, toasts, modals, or CAPTCHAs visible.\n- Green circular icon in top-right corner (likely user status).\n\n5) Blockers:\n- Privacy consent banner overlays content; likely prevents full access to article until action taken (\"Save choices\" or \"Manage settings\").\n\n6) Unknowns:\n- The main content area is a blank gradient placeholder — no actual article text is visible.\n- No clear indication if the page is still loading or if the content is intentionally hidden.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1186,
+      "completion_tokens": 241,
+      "total_tokens": 1427,
+      "cost": 0.0002236,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0002236,
+        "upstream_inference_prompt_cost": 0.000123344,
+        "upstream_inference_completions_cost": 0.000100256
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1015,
+    "total": 5216
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 10,
+    "possible": 10,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "blockers": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "privacy",
+          "cookie",
+          "consent",
+          "video"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "privacy",
+          "consent"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "title",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Privacy choices",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Privacy choices"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "choice-1",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Manage settings",
+        "weight": 1,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Manage settings"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "choice-2",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Save choices",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Save choices"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "consent-signal",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "any",
+        "values": [
+          "cookie",
+          "consent",
+          "privacy",
+          "overlay",
+          "banner"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "consent",
+          "privacy",
+          "banner"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "consent-blocker",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "cookie",
+          "consent",
+          "overlay",
+          "blocked"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "consent",
+          "overlay"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

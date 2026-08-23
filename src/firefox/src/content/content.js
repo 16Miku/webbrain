@@ -4047,6 +4047,22 @@
       'wait_for_element': () => waitForElement(msg.params || {}),
       'get_selection': () => ({ text: window.getSelection()?.toString() || '' }),
       'find_text': () => findText(msg.params || {}),
+      // ── Completion attention flash (tab title/favicon blink) ─────────
+      'attention_flash_start': () => {
+        try {
+          return { success: true, started: startAttentionFlash() };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
+      'attention_flash_stop': () => {
+        try {
+          stopAttentionFlash();
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
       // execute_js — model-supplied JS body, evaluated in the content
       // script's isolated world via `new Function()`.
       //
@@ -5260,4 +5276,126 @@
     }
     sendResponse(result);
   });
+
+  // ─── Tab attention flash ────────────────────────────────────────────
+  // When a run finishes on a tab the user has navigated away from, the side
+  // panel asks this page to blink its title and favicon so the finished tab
+  // can be found at a glance. Blinking stops when the tab becomes visible,
+  // after ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
+  //
+  // Declared at the end of this closure (function declarations hoist, so the
+  // message handlers above can call them) — code above this point is sliced
+  // and evaluated standalone by tests.
+  const ATTENTION_FLASH_INTERVAL_MS = 700;
+  const ATTENTION_FLASH_TIMEOUT_MS = 30000;
+  const ATTENTION_FLASH_MARKER = '\u{1F514} ';
+  let attentionFlashTimer = null;
+  let attentionFlashTimeout = null;
+  let attentionFlashFaviconEl = null;
+  let attentionFlashOnVisible = null;
+  // Exact title string this flash last wrote — ownership marker. Stripping
+  // by prefix alone would eat a page's own title that legitimately starts
+  // with the same bell character.
+  let attentionFlashOwnTitle = null;
+
+  function attentionFlashDotDataUrl() {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(32, 32, 26, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return canvas.toDataURL('image/png');
+    } catch {
+      return 'data:image/gif;base64,R0lGODlhAQABAIAAAJ2cjQAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
+    }
+  }
+
+  function attentionFlashStripMarker(title) {
+    const text = String(title ?? '');
+    return text.startsWith(ATTENTION_FLASH_MARKER)
+      ? text.slice(ATTENTION_FLASH_MARKER.length)
+      : text;
+  }
+
+  function attentionFlashToggleFavicon(show) {
+    try {
+      if (show && !attentionFlashFaviconEl) {
+        // Append our icon link instead of editing the site's own <link>
+        // tags — browsers prefer the last-declared favicon, so removing
+        // ours restores the original without touching site elements.
+        attentionFlashFaviconEl = document.createElement('link');
+        attentionFlashFaviconEl.setAttribute('rel', 'icon');
+        attentionFlashFaviconEl.setAttribute('data-webbrain-attention', '1');
+        attentionFlashFaviconEl.setAttribute('href', attentionFlashDotDataUrl());
+        (document.head || document.documentElement).appendChild(attentionFlashFaviconEl);
+      } else if (!show && attentionFlashFaviconEl) {
+        attentionFlashFaviconEl.remove();
+        attentionFlashFaviconEl = null;
+      }
+    } catch { /* favicon swap is best-effort */ }
+  }
+
+  function stopAttentionFlash() {
+    if (attentionFlashTimer) {
+      clearInterval(attentionFlashTimer);
+      attentionFlashTimer = null;
+    }
+    if (attentionFlashTimeout) {
+      clearTimeout(attentionFlashTimeout);
+      attentionFlashTimeout = null;
+    }
+    if (attentionFlashOnVisible) {
+      document.removeEventListener('visibilitychange', attentionFlashOnVisible);
+      attentionFlashOnVisible = null;
+    }
+    // Only undo our own write. If the page replaced the title since we last
+    // touched it, leave its value completely untouched.
+    if (attentionFlashOwnTitle != null && document.title === attentionFlashOwnTitle) {
+      document.title = attentionFlashStripMarker(document.title);
+    }
+    attentionFlashOwnTitle = null;
+    if (attentionFlashFaviconEl) {
+      attentionFlashFaviconEl.remove();
+      attentionFlashFaviconEl = null;
+    }
+  }
+
+  function startAttentionFlash() {
+    if (typeof document === 'undefined') return false;
+    stopAttentionFlash();
+    // Already looking at the page — nothing to draw attention to.
+    if (document.visibilityState === 'visible') return false;
+    attentionFlashOnVisible = () => {
+      if (document.visibilityState === 'visible') stopAttentionFlash();
+    };
+    document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    let flashing = false;
+    const applyAttentionTick = () => {
+      flashing = !flashing;
+      // Derive each toggle from the live title so changes the site makes
+      // while backgrounded survive the flash. A previous marker is only
+      // stripped when the current title is still exactly what we wrote.
+      const base = document.title === attentionFlashOwnTitle
+        ? attentionFlashStripMarker(document.title)
+        : String(document.title ?? '');
+      // Only the marked phase is extension-owned — during the quiet phase
+      // the title belongs to the page even though we just wrote it, so it
+      // must never be stripped on stop.
+      attentionFlashOwnTitle = flashing ? `${ATTENTION_FLASH_MARKER}${base}` : null;
+      document.title = flashing ? attentionFlashOwnTitle : base;
+      // The favicon alternates with the title: our icon shows during the
+      // marked phase and the site's own icons return during the quiet one.
+      attentionFlashToggleFavicon(flashing);
+    };
+    applyAttentionTick();
+    attentionFlashTimer = setInterval(applyAttentionTick, ATTENTION_FLASH_INTERVAL_MS);
+    attentionFlashTimeout = setTimeout(stopAttentionFlash, ATTENTION_FLASH_TIMEOUT_MS);
+    return true;
+  }
 })();

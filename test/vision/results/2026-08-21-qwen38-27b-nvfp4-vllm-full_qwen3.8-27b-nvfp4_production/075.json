@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T09:34:27.958Z",
+  "id": "075",
+  "model": "qwen3.8-27b-nvfp4",
+  "endpoint": "http://192.168.1.48:8000/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "075",
+    "difficulty": {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced"
+    },
+    "category": "map-and-travel",
+    "title": "Tren rotası",
+    "image": "images/075.png",
+    "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Tren rotası” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/075.png",
+    "bytes": 107848,
+    "sha256": "587cb4b4ea563b39f477ee3274e761b2105deb74079f80f1cf98f895a910c3e3"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: WebScene \"Tren rotası\" (train route) map view with a list of stops.\n\n2) Visible text:\n- Top nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Tren rotası\"\n- Stop card 1 (selected): \"Ankara Garı\", \"18:42 varış\"\n- Stop card 2: \"Oak Corner\", \"View details\"\n- Stop card 3: \"River Point\", \"View details\"\n- Stop card 4: \"Central Stop\", \"View details\"\n- Map pins (numbers/icons): \"1\", \"2\", \"3\", \"4\", \"5\"\n\n3) Inputs: None visible.\n\n4) State signals: Stop card \"Ankara Garı\" is highlighted/selected (purple border, light purple fill). A purple line is drawn on the map connecting pin \"3\" to pin \"5\". No spinners, toasts, modals, or error banners.\n\n5) Blockers: None.\n\n6) Unknowns: The icon on pin \"4\" is unclear (appears to be a small symbol, not a number). The exact meaning of the purple line (route segment vs. selection) is not explicit.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1198,
+      "total_tokens": 1472,
+      "completion_tokens": 274
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 95,
+    "total": 8929
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 8,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "map",
+          "tracking",
+          "route",
+          "hotel",
+          "café"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "map",
+          "route"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Tren rotası",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Tren rotası"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "selection",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "Ankara Garı",
+          "18:42 varış"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Ankara Garı",
+          "18:42 varış"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "pin-count",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "5",
+          "five"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "5"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}
