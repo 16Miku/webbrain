@@ -39511,6 +39511,11 @@ test('settings warns on missing or short API keys and shows the Ollama localhost
     assert.match(settings, /const MIN_API_KEY_LENGTH = 12;/, `${label}: conservative API-key minimum missing`);
     assert.match(
       settings,
+      /const DUMMY_API_KEYS = new Set\(\['ollama', 'lm-studio'\]\);[\s\S]*?DUMMY_API_KEYS\.has\(rawApiKey\) \? '' : rawApiKey/,
+      `${label}: seeded local sentinel keys should be treated as empty instead of invalid`,
+    );
+    assert.match(
+      settings,
       /function providerApiKeyWarning\(id, config\) \{[\s\S]*?data-key="apiKey"[\s\S]*?const keyIsOptional = providersData\[id\]\?\.category === 'local' && config\.requiresApiKey !== true;[\s\S]*?apiKey\.length < MIN_API_KEY_LENGTH[\s\S]*?aria-invalid[\s\S]*?st\.providers\.api_key_warning/,
       `${label}: API-key warning should allow ordinary empty local auth while enforcing authenticated local proxies`,
     );

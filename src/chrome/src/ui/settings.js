@@ -2310,6 +2310,7 @@ const ZERO_ALLOWED_NUMBER_FIELDS = new Set([
   'outputCostPerMillionUsd',
 ]);
 const MIN_API_KEY_LENGTH = 12;
+const DUMMY_API_KEYS = new Set(['ollama', 'lm-studio']);
 
 function providerInputValue(input) {
   if (input.dataset.type === 'checkbox' || input.type === 'checkbox') {
@@ -2341,7 +2342,8 @@ function setProviderConfigValue(config, path, value) {
 function providerApiKeyWarning(id, config) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="apiKey"]`);
   if (!input) return '';
-  const apiKey = String(config.apiKey || '').trim();
+  const rawApiKey = String(config.apiKey || '').trim();
+  const apiKey = DUMMY_API_KEYS.has(rawApiKey) ? '' : rawApiKey;
   const keyIsOptional = providersData[id]?.category === 'local' && config.requiresApiKey !== true;
   const looksInvalid = apiKey ? apiKey.length < MIN_API_KEY_LENGTH : !keyIsOptional;
   input.setAttribute('aria-invalid', looksInvalid ? 'true' : 'false');
