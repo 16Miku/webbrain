@@ -34037,7 +34037,35 @@ test('web hero social proof uses recognizable brand and users icons', () => {
       /hero-proof-featured[\s\S]*?<polyline points="8\.5 12\.2 11 14\.7 15\.5 9\.5"/,
       `${label}: generic featured checkmark should not remain`,
     );
+
+    const productHuntIndex = html.indexOf('href="https://www.producthunt.com/products/webbrain"');
+    const markTechPostIndex = html.indexOf('href="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/"');
+    const usersIndex = html.indexOf('class="hero-proof-cell hero-proof-users"');
+    assert.ok(
+      productHuntIndex >= 0 && markTechPostIndex > productHuntIndex && usersIndex > markTechPostIndex,
+      `${label}: MarkTechPost article should be the third proof, immediately after Product Hunt`,
+    );
+    assert.match(
+      html,
+      /hero-proof-press[\s\S]*?<img class="hero-proof-icon" src="\/assets\/marktechpost\.svg" alt="" aria-hidden="true"/,
+      `${label}: MarkTechPost proof should use its bundled favicon`,
+    );
   }
+
+  assert.match(
+    template,
+    /\.hero-proof \{[\s\S]*?max-width: 900px;/,
+    'web: four social-proof items should keep enough room to share one desktop line',
+  );
+  assert.ok(
+    fs.existsSync(path.join(ROOT, 'web/assets/marktechpost.svg')),
+    'web assets: MarkTechPost favicon should be bundled locally',
+  );
+  assert.match(
+    fs.readFileSync(path.join(ROOT, 'web/assets/marktechpost.svg'), 'utf8'),
+    /<svg[^>]+width="32" height="32" viewBox="0 0 32 32"/,
+    'web assets: MarkTechPost favicon should preserve its square aspect ratio',
+  );
 });
 
 test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stack', () => {
