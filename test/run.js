@@ -68532,15 +68532,25 @@ test('progress ledger repairs persisted placeholder sets only when identities ar
     assert.ok(repaired.rows.every(row => row.fields.completionRequirement === true && row.fields.classifierTarget === true));
   }
 
-  const directPlaceholderRepair = reconcilePersistedLedgerRows([
+  const unrelatedConcreteRowsStaySeparate = reconcilePersistedLedgerRows([
     { id: 'expected:1', label: 'profile 1', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 1 } },
     { id: 'expected:2', label: 'profile 2', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 2 } },
     { id: 'alice', label: 'alice', action: 'follow', status: 'acted', sessionId },
     { id: 'bob', label: 'bob', action: 'follow', status: 'processed', sessionId },
   ]);
-  assert.equal(directPlaceholderRepair.rows.length, 2);
-  assert.deepEqual(directPlaceholderRepair.rows.map(row => row.id), ['expected:1', 'expected:2']);
-  assert.deepEqual(directPlaceholderRepair.rows.map(row => row.label), ['alice', 'bob']);
+  assert.equal(unrelatedConcreteRowsStaySeparate.changed, false, 'count agreement alone must not bind unrelated concrete rows');
+  assert.equal(unrelatedConcreteRowsStaySeparate.rows.length, 4);
+  assert.equal(unrelatedConcreteRowsStaySeparate.rows.find(row => row.id === 'expected:1').status, 'pending');
+
+  const identityBoundRepair = reconcilePersistedLedgerRows([
+    { id: 'expected:1', label: 'alice', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 1 } },
+    { id: 'expected:2', label: 'bob', action: 'follow', status: 'pending', sessionId, fields: { expectedOrdinal: 2 } },
+    { id: 'alice', label: 'Follow alice', target: 'alice', action: 'follow', status: 'acted', sessionId, attempts: 1 },
+    { id: 'bob', label: 'Follow bob', target: 'bob', action: 'follow', status: 'processed', sessionId, attempts: 1 },
+  ]);
+  assert.equal(identityBoundRepair.changed, true, 'identity agreement still allows hydration repair');
+  assert.deepEqual(identityBoundRepair.rows.map(row => row.id), ['expected:1', 'expected:2']);
+  assert.deepEqual(identityBoundRepair.rows.map(row => row.status), ['acted', 'processed']);
 
   const conflicting = reconcilePersistedLedgerRows([
     { id: 'expected:1', label: 'alice', action: 'follow', status: 'processed', sessionId, fields: { expectedOrdinal: 1 } },
@@ -68556,28 +68566,41 @@ test('progress ledger repairs persisted placeholder sets only when identities ar
 test('persisted reconciliation preserves canonical collected fields over duplicate nulls', () => {
   for (const reconcile of [reconcilePersistedLedgerRows, reconcilePersistedLedgerRowsFx]) {
     const keepsCollected = reconcile([
-      { id: 'expected:1', label: 'profile 1', action: 'follow', status: 'acted', sessionId: 'field-keep', fields: { expectedOrdinal: 1, email: 'alice@example.com' } },
-      { id: 'alice', label: 'Follow alice', action: 'follow', status: 'acted', sessionId: 'field-keep', attempts: 1, fields: { email: null } },
+      { id: 'expected:1', label: 'alice', action: 'follow', status: 'acted', sessionId: 'field-keep', fields: { expectedOrdinal: 1, email: 'alice@example.com' } },
+      { id: 'alice', label: 'Follow alice', target: 'alice', action: 'follow', status: 'acted', sessionId: 'field-keep', attempts: 1, fields: { email: null } },
     ]);
     assert.equal(keepsCollected.changed, true);
     assert.deepEqual(keepsCollected.rows.map(row => row.id), ['expected:1']);
     assert.equal(keepsCollected.rows[0].fields.email, 'alice@example.com');
 
     const fillsMissing = reconcile([
-      { id: 'expected:1', label: 'profile 2', action: 'follow', status: 'acted', sessionId: 'field-keep', fields: { expectedOrdinal: 1 } },
-      { id: 'carol', label: 'Follow carol', action: 'follow', status: 'acted', sessionId: 'field-keep', attempts: 1, fields: { email: 'carol@example.com' } },
+      { id: 'expected:1', label: 'carol', action: 'follow', status: 'acted', sessionId: 'field-keep', fields: { expectedOrdinal: 1 } },
+      { id: 'carol', label: 'Follow carol', target: 'carol', action: 'follow', status: 'acted', sessionId: 'field-keep', attempts: 1, fields: { email: 'carol@example.com' } },
     ]);
     assert.equal(fillsMissing.changed, true);
     assert.deepEqual(fillsMissing.rows.map(row => row.id), ['expected:1']);
     assert.equal(fillsMissing.rows[0].fields.email, 'carol@example.com');
 
     const keepsExplicitNulls = reconcile([
-      { id: 'expected:1', label: 'profile 3', action: 'follow', status: 'processed', sessionId: 'field-keep', fields: { expectedOrdinal: 1, email: null } },
-      { id: 'dave', label: 'Follow dave', action: 'follow', status: 'processed', sessionId: 'field-keep', attempts: 1 },
+      { id: 'expected:1', label: 'dave', action: 'follow', status: 'processed', sessionId: 'field-keep', fields: { expectedOrdinal: 1, email: null } },
+      { id: 'dave', label: 'Follow dave', target: 'dave', action: 'follow', status: 'processed', sessionId: 'field-keep', attempts: 1 },
     ]);
     assert.equal(keepsExplicitNulls.changed, true);
     assert.ok(Object.prototype.hasOwnProperty.call(keepsExplicitNulls.rows[0].fields || {}, 'email'));
     assert.equal(keepsExplicitNulls.rows[0].fields.email, null);
+  }
+});
+
+test('persisted hydration never binds unrelated clicks into pending expected slots', () => {
+  for (const reconcile of [reconcilePersistedLedgerRows, reconcilePersistedLedgerRowsFx]) {
+    const strayClick = reconcile([
+      { id: 'expected:1', label: 'profile 1', action: 'follow', status: 'pending', sessionId: 'stray-guard', fields: { expectedOrdinal: 1 } },
+      { id: 'stray-bob', label: 'Follow Bob', action: 'follow', status: 'processed', sessionId: 'stray-guard', attempts: 1 },
+    ]);
+    assert.equal(strayClick.changed, false);
+    assert.equal(strayClick.rows.length, 2);
+    assert.equal(strayClick.rows.find(row => row.id === 'expected:1').status, 'pending');
+    assert.ok(strayClick.rows.some(row => row.id === 'stray-bob'), 'unrelated evidence rows must survive hydration');
   }
 });
 

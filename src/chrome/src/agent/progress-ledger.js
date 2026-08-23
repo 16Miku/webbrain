@@ -463,8 +463,9 @@ export function reconcilePersistedLedgerRows(rows = []) {
       const identitiesAreUnique = progressIdentitiesAreUnique(concreteRows);
       const ordinalsAreComplete = unboundExpected.every((row, index) => Number(row.fields.expectedOrdinal) === index + 1);
       const compatible = unboundExpected.every((row, index) => actionsCompatible(row, concreteRows[index]));
+      const identityAgreement = unboundExpected.every((row, index) => identityMatchScore(row, concreteRows[index]) > 0);
       const merged = unboundExpected.map((row, index) => mergeCanonicalProgressRows(row, concreteRows[index]));
-      if (identitiesAreUnique && ordinalsAreComplete && compatible && merged.every(Boolean)) {
+      if (identitiesAreUnique && ordinalsAreComplete && compatible && identityAgreement && merged.every(Boolean)) {
         const replacementByKey = new Map(unboundExpected.map((row, index) => [ledgerRowKey(row), merged[index]]));
         const removedKeys = new Set(concreteRows.map(ledgerRowKey));
         next = next
