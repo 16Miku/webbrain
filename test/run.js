@@ -33965,6 +33965,77 @@ test('web landing language picker mirrors the extension flag listbox', () => {
   }
 });
 
+test('web provider constellation reuses the Settings brand icon set', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const build = fs.readFileSync(path.join(ROOT, 'web/build/build.mjs'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const providerIcons = [
+    'llamacpp', 'ollama', 'openai', 'anthropic', 'openrouter', 'lmstudio',
+    'vllm', 'xai', 'gemini', 'deepseek', 'mistral',
+  ];
+
+  assert.match(
+    build,
+    /async function syncProviderIconAssets\(\)[\s\S]*?copyFile\([\s\S]*?PROVIDER_ICON_SOURCE_DIR[\s\S]*?PROVIDER_ICON_OUTPUT_DIR/,
+    'web build: Settings provider artwork should be copied into website assets',
+  );
+  assert.match(
+    template,
+    /\.pn-logo \{[\s\S]*?background: rgba\(255,255,255,0\.94\);[\s\S]*?object-fit: contain;/,
+    'web: provider marks should keep the Settings-style light chip for theme-safe contrast',
+  );
+  assert.equal(
+    (template.match(/<img class="pn-logo"/g) || []).length,
+    providerIcons.length,
+    'web: every constellation node should render a real provider mark',
+  );
+
+  for (const icon of providerIcons) {
+    const assetPath = `/assets/providers/${icon}.svg`;
+    assert.equal(template.split(assetPath).length - 1, 1, `web template: ${icon} mark should appear once`);
+    assert.equal(generated.split(assetPath).length - 1, 1, `web build: ${icon} mark should appear once`);
+    assert.equal(
+      fs.readFileSync(path.join(ROOT, 'web/assets/providers', `${icon}.svg`), 'utf8'),
+      fs.readFileSync(path.join(ROOT, 'src/chrome/icons/providers', `${icon}.svg`), 'utf8'),
+      `web assets: ${icon} should match the Settings icon exactly`,
+    );
+  }
+
+  assert.doesNotMatch(
+    template,
+    /<div class="pn-bubble [^"]+">(?:🦙|◉|⬡|◈|◆|✦|▣|✕|◊|⬣|▲)<\/div>/,
+    'web: placeholder glyphs should not remain in provider bubbles',
+  );
+});
+
+test('web hero social proof uses recognizable brand and users icons', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+
+  for (const [label, html] of [['landing template', template], ['generated landing page', generated]]) {
+    assert.match(
+      html,
+      /hero-proof-featured[\s\S]*?<img class="hero-proof-icon" src="\/assets\/browser-chrome\.svg" alt="" aria-hidden="true"/,
+      `${label}: Chrome Web Store proof should use the bundled Chrome logo`,
+    );
+    assert.match(
+      html,
+      /hero-proof-hunt[\s\S]*?<circle cx="12" cy="12" r="12" fill="#da552f"\/>[\s\S]*?<path fill="#fff"/,
+      `${label}: Product Hunt proof should use its branded orange P mark`,
+    );
+    assert.match(
+      html,
+      /hero-proof-users[\s\S]*?<svg class="hero-proof-icon"[\s\S]*?<circle cx="9" cy="7" r="4"\/>/,
+      `${label}: user-count proof should include a decorative users icon`,
+    );
+    assert.doesNotMatch(
+      html,
+      /hero-proof-featured[\s\S]*?<polyline points="8\.5 12\.2 11 14\.7 15\.5 9\.5"/,
+      `${label}: generic featured checkmark should not remain`,
+    );
+  }
+});
+
 test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stack', () => {
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');

@@ -633,14 +633,21 @@
     }
     .hero-proof-users {
       z-index: 0;
+      gap: 6px;
       padding: 2px 1px;
     }
     .hero-proof-users::before {
       background: var(--marker-users);
       transform: rotate(-0.7deg) skewX(-8deg);
     }
-    .hero-proof-icon { width: 14px; height: 14px; flex-shrink: 0; }
-    .hero-proof-featured .hero-proof-icon { color: var(--accent); }
+    .hero-proof-icon {
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+      object-fit: contain;
+      display: block;
+    }
+    .hero-proof-users .hero-proof-icon { color: var(--success); }
     a.hero-proof-cell:hover { color: var(--text); text-decoration: none; transform: translateY(-1px); }
     a.hero-proof-cell:hover .hero-proof-label { text-decoration: none; }
     a.hero-proof-cell:hover .hero-proof-label::before {
@@ -2311,6 +2318,18 @@
       font-size: 22px;
       transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s, background 0.25s;
     }
+    /* Same provider artwork as Settings. The light chip keeps mono
+       currentColor SVGs legible in both site themes. */
+    .pn-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      background: rgba(255,255,255,0.94);
+      padding: 5px;
+      box-sizing: border-box;
+      object-fit: contain;
+      display: block;
+    }
     .provider-node:hover .pn-bubble,
     .provider-node:focus-visible .pn-bubble {
       transform: scale(1.12);
@@ -2987,6 +3006,7 @@
       .theme-toggle { display: none; }
       .provider-constellation { aspect-ratio: 4 / 5; max-width: 420px; }
       .pn-bubble { width: 46px; height: 46px; font-size: 18px; }
+      .pn-logo { width: 29px; height: 29px; border-radius: 8px; padding: 4px; }
       .pn-label { font-size: 11px; }
       .cc-core { width: 64px; height: 64px; font-size: 28px; }
       .video-showcase { max-width: 380px; }
@@ -3156,17 +3176,20 @@
   <div class="hero-proof">
     <a class="hero-proof-cell" href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer">
       <span class="hero-proof-label hero-proof-featured">
-        <svg class="hero-proof-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="8.5 12.2 11 14.7 15.5 9.5"/></svg>
+        <img class="hero-proof-icon" src="/assets/browser-chrome.svg" alt="" aria-hidden="true" width="15" height="15" decoding="async" draggable="false">
         Chrome ウェブストアの注目拡張機能
       </span>
     </a>
     <a class="hero-proof-cell" href="https://www.producthunt.com/products/webbrain" target="_blank" rel="noopener noreferrer">
       <span class="hero-proof-label hero-proof-hunt">
-        <svg class="hero-proof-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.2"/><path d="M10.2 16.8V7.2h3a2.8 2.8 0 0 1 0 5.6h-3"/></svg>
+        <svg class="hero-proof-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#da552f"/><path fill="#fff" d="M9 6.5h4.5a4 4 0 1 1 0 8H12v3H9v-11Zm3 3v2h1.5a1 1 0 1 0 0-2H12Z"/></svg>
         Product Hunt
       </span>
     </a>
-    <span class="hero-proof-cell hero-proof-users">複数のブラウザで数千人が利用</span>
+    <span class="hero-proof-cell hero-proof-users">
+      <svg class="hero-proof-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      複数のブラウザで数千人が利用
+    </span>
   </div>
 
   <!-- Browser mockup — 5 demo scenarios that cross-fade. The first scene
@@ -3665,47 +3688,47 @@
     </div>
 
     <a class="provider-node" href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener" style="--x: 10%; --y: 28%; --d: 0s;" data-line="0">
-      <div class="pn-bubble local">🦙</div>
+      <div class="pn-bubble local"><img class="pn-logo" src="/assets/providers/llamacpp.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">llama.cpp</div>
     </a>
     <a class="provider-node" href="https://ollama.com" target="_blank" rel="noopener" style="--x: 28%; --y: 12%; --d: 0.6s;" data-line="1">
-      <div class="pn-bubble ollama">◉</div>
+      <div class="pn-bubble ollama"><img class="pn-logo" src="/assets/providers/ollama.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">Ollama</div>
     </a>
     <a class="provider-node" href="https://platform.openai.com" target="_blank" rel="noopener" style="--x: 50%; --y: 6%; --d: 1.2s;" data-line="2">
-      <div class="pn-bubble openai">⬡</div>
+      <div class="pn-bubble openai"><img class="pn-logo" src="/assets/providers/openai.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">OpenAI</div>
     </a>
     <a class="provider-node" href="https://www.anthropic.com" target="_blank" rel="noopener" style="--x: 72%; --y: 12%; --d: 1.8s;" data-line="3">
-      <div class="pn-bubble anthropic">◈</div>
+      <div class="pn-bubble anthropic"><img class="pn-logo" src="/assets/providers/anthropic.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">Claude</div>
     </a>
     <a class="provider-node" href="https://openrouter.ai" target="_blank" rel="noopener" style="--x: 90%; --y: 28%; --d: 2.4s;" data-line="4">
-      <div class="pn-bubble openrouter">◆</div>
+      <div class="pn-bubble openrouter"><img class="pn-logo" src="/assets/providers/openrouter.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">OpenRouter</div>
     </a>
     <a class="provider-node" href="https://lmstudio.ai" target="_blank" rel="noopener" style="--x: 8%; --y: 72%; --d: 3.0s;" data-line="5">
-      <div class="pn-bubble studiolm">✦</div>
+      <div class="pn-bubble studiolm"><img class="pn-logo" src="/assets/providers/lmstudio.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">LM Studio</div>
     </a>
     <a class="provider-node" href="https://docs.vllm.ai" target="_blank" rel="noopener" style="--x: 24%; --y: 88%; --d: 3.6s;" data-line="6">
-      <div class="pn-bubble vllm">▣</div>
+      <div class="pn-bubble vllm"><img class="pn-logo" src="/assets/providers/vllm.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">vLLM</div>
     </a>
     <a class="provider-node" href="https://x.ai/api" target="_blank" rel="noopener" style="--x: 40%; --y: 95%; --d: 4.2s;" data-line="7">
-      <div class="pn-bubble grok">✕</div>
+      <div class="pn-bubble grok"><img class="pn-logo" src="/assets/providers/xai.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">Grok</div>
     </a>
     <a class="provider-node" href="https://ai.google.dev/gemini-api/docs/openai" target="_blank" rel="noopener" style="--x: 60%; --y: 95%; --d: 4.8s;" data-line="8">
-      <div class="pn-bubble gemini">◊</div>
+      <div class="pn-bubble gemini"><img class="pn-logo" src="/assets/providers/gemini.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">Gemini</div>
     </a>
     <a class="provider-node" href="https://api-docs.deepseek.com" target="_blank" rel="noopener" style="--x: 76%; --y: 88%; --d: 5.4s;" data-line="9">
-      <div class="pn-bubble deepseek">⬣</div>
+      <div class="pn-bubble deepseek"><img class="pn-logo" src="/assets/providers/deepseek.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">DeepSeek</div>
     </a>
     <a class="provider-node" href="https://docs.mistral.ai/api/" target="_blank" rel="noopener" style="--x: 92%; --y: 72%; --d: 6.0s;" data-line="10">
-      <div class="pn-bubble mistral">▲</div>
+      <div class="pn-bubble mistral"><img class="pn-logo" src="/assets/providers/mistral.svg" alt="" aria-hidden="true" width="34" height="34" decoding="async" loading="lazy" draggable="false"></div>
       <div class="pn-label">Mistral</div>
     </a>
   </div>
