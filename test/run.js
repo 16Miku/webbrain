@@ -292,6 +292,12 @@ const { tracesToMarkdown, sanitizeTraceExport } = await import(
 const { tracesToMarkdown: tracesToMarkdownFx, sanitizeTraceExport: sanitizeTraceExportFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
 );
+const Utf8BudgetCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/trace/utf8-budget.js').replace(/\\/g, '/')
+);
+const Utf8BudgetFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/trace/utf8-budget.js').replace(/\\/g, '/')
+);
 const { webbrainTraceToAtif } = await import(
   'file://' + path.join(ROOT, 'scripts/trace-to-atif.mjs').replace(/\\/g, '/')
 );
@@ -9139,7 +9145,7 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /const LOSSILESS_RESULT_CAP = 200_000;/, `${browser}: lossless result cap missing`);
     assert.match(recorderSource, /const LOSSILESS_REQUEST_CAP = 500_000;/, `${browser}: lossless request cap missing`);
     assert.match(recorderSource, /_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true && provenanceInput/, `${browser}: request lossless branch missing`);
-    assert.match(recorderSource, /const cap = state\?\.lossless === true \? LOSSILESS_RESULT_CAP : 20_000;/, `${browser}: tool-result cap does not branch on tier`);
+    assert.match(recorderSource, /const cap = state\?\.lossless === true\s*\? Math\.min\(LOSSILESS_RESULT_CAP, remainingBytes\)\s*:\s*20_000;/, `${browser}: tool-result cap does not branch on tier and remaining UTF-8 budget`);
     assert.match(recorderSource, /peekRunFlags|lossless: record\?\.lossless === true|lossless = record\?\.lossless === true/, `${browser}: SW-eviction recovery does not restore the tier`);
     assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
     assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
@@ -9157,10 +9163,25 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /_runState\.get\(run\.runId\)\?\.lossless === true[\s\S]*?void _queueRunWrite\(run\.runId, async \(\) => \{[\s\S]*?_recomputeLosslessBytes\(db, run, \{\s*refreshActiveState: false,\s*trustMarkedCurrent: false,[\s\S]*?state\.losslessBytes = refreshedBytes;/, `${browser}: migrated active-run byte totals should force-refresh only inside that run's serialized write queue`);
     assert.match(recorderSource, /clearAllRuns\(\) \{[\s\S]*?_losslessTotalEstimate = null;/, `${browser}: clearAllRuns does not reset the lossless total cache`);
     assert.match(recorderSource, /new TextEncoder\(\)\.encode\(JSON\.stringify\(resolvedData\)\)\.length/, `${browser}: lossless budgets should count serialized UTF-8 bytes`);
+    assert.match(recorderSource, /function clampLosslessRequest\(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP\)[\s\S]*?const byteLength = utf8ByteLength\(serialized\);[\s\S]*?length: byteLength,[\s\S]*?fitUtf8Prefix\(serialized, limit,/, `${browser}: lossless requests should clamp and report UTF-8 bytes`);
+    assert.match(recorderSource, /function clampTraceValue\(value, maxBytes\)[\s\S]*?const byteLength = utf8ByteLength\(serialized\);[\s\S]*?length: byteLength,[\s\S]*?fitUtf8Prefix\(serialized, limit,/, `${browser}: tool results should clamp and report UTF-8 bytes`);
+    assert.match(recorderSource, /const remainingBytes = Math\.max\(0, LOSSILESS_RUN_CAP - \(state\.losslessBytes \|\| 0\)\);\s*if \(losslessBytes > remainingBytes\) return null;/, `${browser}: a final lossless event must not overrun the per-run UTF-8 budget`);
     assert.match(recorderSource, /state\?\.lossless === true && state\.losslessBytesEncoding !== 'utf8'[\s\S]*?_recomputeLosslessBytes\(db, run, \{\s*refreshActiveState: false,\s*trustMarkedCurrent: false,[\s\S]*?state\.losslessBytesEncoding = 'utf8';[\s\S]*?const resolvedData = typeof data === 'function' \? data\(state\) : data;/, `${browser}: legacy active totals should force-migrate before the first payload cap guard runs`);
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
+  }
+});
+
+test('trace UTF-8 budget helpers keep multibyte truncation inside byte limits', () => {
+  for (const [browser, budget] of [['chrome', Utf8BudgetCh], ['firefox', Utf8BudgetFx]]) {
+    assert.equal(budget.utf8ByteLength('A漢🙂'), 8, `${browser}: UTF-8 byte length should count CJK and astral characters`);
+    assert.equal(budget.fitUtf8Prefix('漢🙂A', 6), '漢', `${browser}: a raw prefix should not split or overrun a multibyte character`);
+    const serializeMarker = head => JSON.stringify({ _truncated: true, head });
+    const markerLimit = budget.utf8ByteLength(serializeMarker('漢'));
+    const head = budget.fitUtf8Prefix('漢字🙂', markerLimit, serializeMarker);
+    assert.equal(head, '漢', `${browser}: marker overhead should be included in the byte boundary`);
+    assert.ok(budget.utf8ByteLength(serializeMarker(head)) <= markerLimit, `${browser}: serialized marker exceeded its UTF-8 budget`);
   }
 });
 
@@ -34197,6 +34218,7 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.match(resetBody, /let backgroundClearSucceeded = false;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);\s*backgroundClearSucceeded = true;[\s\S]*?catch \(error\) \{\s*if \(backgroundClearSucceeded\) \{[\s\S]*?renderClearedConversationForTab\(tabId, \{ allowCacheClearFailure: true \}\);[\s\S]*?\} else \{\s*shouldRecoverActiveRun = true;\s*holdFailedConversationClearRecovery\(tabId\);[\s\S]*?finally \{\s*setConversationClearInProgress\(tabId, false\);\s*if \(shouldRecoverActiveRun\) await recoverActiveRunAfterFailedConversationClear\(tabId\);\s*else if \(backgroundClearSucceeded\) await drainQueuedPromptsAfterRunSettles\(tabId\);/, `${label}: /reset should drain preserved prompts after a successful clear and recover the old run only when the background clear fails`);
     assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
     assert.match(panel, /msg\.action !== 'tab_chat_cleared'\) return;\s*if \(msg\.clearedContextMenuPromptId\) \{\s*clearQueuedForTab\(msg\.tabId, \{ promptId: msg\.clearedContextMenuPromptId \}\);/, `${label}: every panel should suppress only the prompt durably removed by a conversation clear`);
+    assert.match(panel, /msg\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?document\.visibilityState === 'hidden'[\s\S]*?isConversationClearInProgress\(msg\.tabId\)[\s\S]*?!sameTabId\(currentTabId, msg\.tabId\)\) return;[\s\S]*?requestVisibleSidePanelStateRefresh\(\);/, `${label}: the initiating panel should ignore its clear broadcast while the local clear transaction is active`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
     assert.match(panel, /async function drainQueuedPromptsAfterRunSettles\(tabId = currentTabId\) \{[\s\S]*?!sameTabId\(currentTabId, numericTabId\)[\s\S]*?!sameTabId\(renderedTabId, numericTabId\)[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return;/, `${label}: a settling run must drain only its visible initiating tab and never drain into an in-flight clear`);
     assert.match(panel, /await sendToBackground\('agent_run_state', \{ tabId: numericTabId \}\);[\s\S]*?if \(!sameTabId\(currentTabId, numericTabId\) \|\| !sameTabId\(renderedTabId, numericTabId\)\) \{\s*cancelQueuedPromptDrainRetry\(numericTabId\);\s*return;\s*\}\s*if \(isConversationClearInProgress\(numericTabId\)\) return;[\s\S]*?drainQueuedComposerMessageForCurrentTab\(\)/, `${label}: queued-prompt drains should revalidate their target tab and clear interlock after the awaited run-state probe`);

@@ -4,6 +4,7 @@ import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
 import { normalizeErrorCode } from './error-codes.js';
 import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
+import { fitUtf8Prefix, utf8ByteLength } from './utf8-budget.js';
 import {
   buildTraceRepairPlan,
   isStaleRunningTrace,
@@ -192,7 +193,7 @@ function boundedToolNames(tools) {
     : [];
 }
 
-function clampLosslessRequest(messages, tools) {
+function clampLosslessRequest(messages, tools, maxBytes = LOSSILESS_REQUEST_CAP) {
   const request = { messages: messages ?? null, tools: tools ?? null };
   let serialized;
   try { serialized = JSON.stringify(request); } catch { serialized = null; }
@@ -202,19 +203,38 @@ function clampLosslessRequest(messages, tools) {
       tools: null,
     };
   }
-  if (serialized.length <= LOSSILESS_REQUEST_CAP) return { messages, tools };
+  const byteLength = utf8ByteLength(serialized);
+  const limit = Math.max(0, Math.min(LOSSILESS_REQUEST_CAP, Number(maxBytes) || 0));
+  if (byteLength <= limit) return { messages, tools };
   // Keep one bounded head of the combined request. Tool names remain visible
   // even when the head ends before the dynamic tool catalog.
-  const headCap = Math.max(1, LOSSILESS_REQUEST_CAP - 2048);
-  return {
+  const toolNames = boundedToolNames(tools);
+  const buildMarker = head => ({
     messages: {
       _truncated: true,
-      length: serialized.length,
-      head: serialized.slice(0, headCap),
-      toolNames: boundedToolNames(tools),
+      length: byteLength,
+      head,
+      toolNames,
     },
     tools: null,
-  };
+  });
+  while (toolNames.length && utf8ByteLength(JSON.stringify(buildMarker(''))) > limit) {
+    toolNames.pop();
+  }
+  const head = fitUtf8Prefix(serialized, limit, prefix => JSON.stringify(buildMarker(prefix)));
+  return buildMarker(head);
+}
+
+function clampTraceValue(value, maxBytes) {
+  let serialized;
+  try { serialized = typeof value === 'string' ? value : JSON.stringify(value); } catch { return value; }
+  if (!serialized) return value;
+  const byteLength = utf8ByteLength(serialized);
+  const limit = Math.max(0, Number(maxBytes) || 0);
+  if (byteLength <= limit) return value;
+  const buildMarker = head => ({ _truncated: true, length: byteLength, head });
+  const head = fitUtf8Prefix(serialized, limit, prefix => JSON.stringify(buildMarker(prefix)));
+  return buildMarker(head);
 }
 
 function _repairRunInTransaction(db, runId, { now, staleAfterMs }) {
@@ -369,6 +389,12 @@ async function _appendEventNow(runId, kind, data) {
       }
     }
     const resolvedData = typeof data === 'function' ? data(state) : data;
+    let losslessBytes = 0;
+    if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
+      try { losslessBytes = new TextEncoder().encode(JSON.stringify(resolvedData)).length; } catch {}
+      const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state.losslessBytes || 0));
+      if (losslessBytes > remainingBytes) return null;
+    }
     const seq = _newSeq(runId);
     const ev = makeEvent(runId, seq, kind, resolvedData);
     if (!ev) {
@@ -378,8 +404,7 @@ async function _appendEventNow(runId, kind, data) {
       return null;
     }
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
-      let bytes = 0;
-      try { bytes = new TextEncoder().encode(JSON.stringify(resolvedData)).length; } catch {}
+      const bytes = losslessBytes;
       const nextLosslessBytes = (state.losslessBytes || 0) + bytes;
       const totalUpdated = await _putEventWithLosslessTotal(db, runId, ev, nextLosslessBytes);
       if (totalUpdated) {
@@ -524,10 +549,15 @@ export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
     if (state?.lossless === true && provenanceInput) {
       if ((state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
         let length = null;
-        try { length = JSON.stringify({ messages: provenanceInput.messages || null, tools: provenanceInput.tools || null }).length; } catch {}
+        try { length = utf8ByteLength(JSON.stringify({ messages: provenanceInput.messages || null, tools: provenanceInput.tools || null })); } catch {}
         return { step, ...payload, lossless: true, messages: { _truncated: true, length, head: '(per-run lossless budget reached)', toolNames: boundedToolNames(provenanceInput.tools) }, tools: null };
       }
-      const { messages, tools } = clampLosslessRequest(provenanceInput.messages || null, provenanceInput.tools || null);
+      const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state.losslessBytes || 0));
+      const { messages, tools } = clampLosslessRequest(
+        provenanceInput.messages || null,
+        provenanceInput.tools || null,
+        Math.min(LOSSILESS_REQUEST_CAP, remainingBytes),
+      );
       return { step, ...payload, lossless: true, messages, tools };
     }
   // Default tier: never persist full prompts, message text, tool schemas, or
@@ -568,15 +598,14 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   return _appendEvent(runId, 'tool', (state) => {
     if (state?.lossless === true && (state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
       let length = null;
-      try { const s = typeof result === 'string' ? result : JSON.stringify(result); length = s ? s.length : 0; } catch {}
+      try { const s = typeof result === 'string' ? result : JSON.stringify(result); length = s ? utf8ByteLength(s) : 0; } catch {}
       return { step, name, args: args || null, result: { _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
     }
-    const cap = state?.lossless === true ? LOSSILESS_RESULT_CAP : 20_000;
-    let shortResult = result;
-    try {
-      const s = typeof result === 'string' ? result : JSON.stringify(result);
-      if (s && s.length > cap) shortResult = { _truncated: true, length: s.length, head: s.slice(0, cap) };
-    } catch {}
+    const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state?.losslessBytes || 0));
+    const cap = state?.lossless === true
+      ? Math.min(LOSSILESS_RESULT_CAP, remainingBytes)
+      : 20_000;
+    const shortResult = clampTraceValue(result, cap);
     return { step, name, args: args || null, result: shortResult, latencyMs: latencyMs || null };
   });
 }
