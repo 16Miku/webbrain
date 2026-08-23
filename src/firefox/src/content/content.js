@@ -5290,8 +5290,12 @@
   // Declared at the end of this closure (function declarations hoist, so the
   // message handlers above can call them) — code above this point is sliced
   // and evaluated standalone by tests.
+  // Blink persists for minutes rather than seconds: the user is by
+  // definition looking elsewhere while it runs, and it stops the moment the
+  // tab becomes visible anyway. A short window is how completions get
+  // missed entirely.
   const ATTENTION_FLASH_INTERVAL_MS = 700;
-  const ATTENTION_FLASH_TIMEOUT_MS = 30000;
+  const ATTENTION_FLASH_TIMEOUT_MS = 300000;
   const ATTENTION_FLASH_MARKER = '\u{1F514} ';
   let attentionFlashTimer = null;
   let attentionFlashTimeout = null;
@@ -5425,9 +5429,14 @@
     document.addEventListener('visibilitychange', attentionFlashOnVisible);
     attentionFlashAlertUrl = attentionFlashBuildAlertIcon();
     if (attentionFlashAlertUrl) attentionFlashCaptureIcons();
-    let flashing = false;
+    // Chrome throttles hidden-tab timers hard (once per minute after ~5
+    // minutes) and Memory Saver may freeze the tab outright, so the phase
+    // is derived from wall-clock time instead of a boolean flip: however
+    // sparse or late the wake-ups land, each one shows the correct side of
+    // the blink and the bell is on immediately at start.
+    const attentionFlashEpoch = Date.now();
     const applyAttentionTick = () => {
-      flashing = !flashing;
+      const flashing = Math.floor((Date.now() - attentionFlashEpoch) / ATTENTION_FLASH_INTERVAL_MS) % 2 === 0;
       // Derive each toggle from the live title so changes the site makes
       // while backgrounded survive the flash. A previous marker is only
       // stripped when the current title is still exactly what we wrote.
