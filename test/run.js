@@ -899,7 +899,7 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
 );
-const { traceExportToOtlp, parseTraceToOtlpArgs } = await import(
+const { normalizeTraceExport, traceExportToOtlp, parseTraceToOtlpArgs } = await import(
   'file://' + path.join(ROOT, 'scripts/trace-to-otlp.mjs').replace(/\\/g, '/')
 );
 
@@ -9013,6 +9013,126 @@ test('OTLP trace converter rejects other schemas and malformed records', () => {
   assert.equal(root.startTimeUnixNano, '1234000000');
   assert.equal(tool.startTimeUnixNano, '1234000000');
   assert.doesNotMatch(JSON.stringify(legacy), /stringValue\":\"(?:undefined|null)\"/);
+});
+
+test('trace export compatibility: normalizes legacy and session bundle inputs', () => {
+  const legacy = normalizeTraceExport({
+    schema: 'webbrain-trace/1',
+    run: { runId: 'legacy-run', traceFormatVersion: 'not-a-version' },
+    events: [],
+  });
+  assert.equal(legacy.legacy, true);
+  assert.equal(legacy.sessionId, '');
+  assert.equal(legacy.runs.length, 1);
+  assert.equal(legacy.runs[0].run.traceFormatVersion, 0);
+  assert.deepEqual(legacy.runs[0].events, []);
+
+  const bundle = normalizeTraceExport({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'session-a' },
+    runs: [{ run: { runId: 'run-a', conversationId: 'session-a' }, events: [] }],
+  });
+  assert.equal(bundle.legacy, false);
+  assert.equal(bundle.sessionId, 'session-a');
+  assert.equal(bundle.runs[0].run.traceFormatVersion, 0);
+  assert.equal(bundle.runs[0].run.runId, 'run-a');
+});
+
+test('OTLP session bundles map runs to spans and steps to span events', () => {
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'session-a' },
+    exportedAt: 1_800_000_000_000,
+    runs: [
+      {
+        run: {
+          runId: 'root-run', conversationId: 'session-a', startedAt: 1_800_000_000_000,
+          endedAt: 1_800_000_000_200, status: 'done', model: 'root-model',
+        },
+        events: [{ seq: 1, ts: 1_800_000_000_100, kind: 'turn_start', data: { step: 0 } }],
+      },
+      {
+        run: {
+          runId: 'child-run', conversationId: 'session-a', parentRunId: 'root-run',
+          startedAt: 1_800_000_000_300, endedAt: 1_800_000_000_700, status: 'done', model: 'child-model',
+        },
+        events: [
+          { seq: 1, ts: 1_800_000_000_400, kind: 'step_start', data: { step: 1 } },
+          { seq: 2, ts: 1_800_000_000_500, kind: 'llm_response', data: { step: 1, usage: { prompt_tokens: 3, completion_tokens: 2 } } },
+          { seq: 3, ts: 1_800_000_000_600, kind: 'tool', data: { step: 1, name: 'read_page', result: { success: true } } },
+        ],
+      },
+    ],
+  });
+  const spans = payload.resourceSpans.flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans));
+  assert.equal(spans.length, 2);
+  const root = spans.find(span => otlpAttributes(span.attributes)['webbrain.run.id'] === 'root-run');
+  const child = spans.find(span => otlpAttributes(span.attributes)['webbrain.run.id'] === 'child-run');
+  assert.ok(root);
+  assert.ok(child);
+  assert.equal(root.traceId, child.traceId);
+  assert.equal(child.parentSpanId, root.spanId);
+  assert.equal(child.kind, 1);
+  assert.equal(child.events.length, 3);
+  assert.deepEqual(child.events.map(event => event.name), ['webbrain.step_start', 'webbrain.llm_response', 'webbrain.tool']);
+});
+
+test('OTLP session bundles preserve cross-session, missing, duplicate, and cyclic lineage', () => {
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'session-child' },
+    runs: [
+      { run: { runId: 'cross-child', conversationId: 'session-child', parentRunId: 'foreign', parentSessionId: 'session-parent' }, events: [] },
+      { run: { runId: 'missing-child', conversationId: 'session-child', parentRunId: 'not-loaded' }, events: [] },
+      { run: { runId: 'duplicate', conversationId: 'session-child' }, events: [] },
+      { run: { runId: 'duplicate', conversationId: 'session-child' }, events: [] },
+      { run: { runId: 'ambiguous-child', conversationId: 'session-child', parentRunId: 'duplicate' }, events: [] },
+      { run: { runId: 'cycle-a', conversationId: 'session-child', parentRunId: 'cycle-b' }, events: [] },
+      { run: { runId: 'cycle-b', conversationId: 'session-child', parentRunId: 'cycle-a' }, events: [] },
+    ],
+  });
+  const spans = payload.resourceSpans.flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans));
+  const spanFor = runId => spans.find(span => otlpAttributes(span.attributes)['webbrain.run.id'] === runId);
+  const spansFor = runId => spans.filter(span => otlpAttributes(span.attributes)['webbrain.run.id'] === runId);
+  assert.equal(spans.length, 7, 'session exporter dropped a persisted run');
+  const crossChild = spanFor('cross-child');
+  const crossAttrs = otlpAttributes(crossChild.attributes);
+  assert.equal(crossChild.parentSpanId, undefined);
+  assert.equal(crossChild.links.length, 1);
+  assert.notEqual(crossChild.links[0].traceId, crossChild.traceId);
+  assert.equal(otlpAttributes(crossChild.links[0].attributes)['webbrain.parent.run.id'], 'foreign');
+  assert.equal(crossAttrs['webbrain.lineage.state'], 'cross-session-parent');
+  assert.equal(otlpAttributes(spanFor('missing-child').attributes)['webbrain.lineage.state'], 'missing-parent');
+  assert.equal(otlpAttributes(spanFor('ambiguous-child').attributes)['webbrain.lineage.state'], 'ambiguous-parent');
+  assert.equal(otlpAttributes(spanFor('cycle-a').attributes)['webbrain.lineage.state'], 'cycle');
+  assert.equal(otlpAttributes(spanFor('cycle-b').attributes)['webbrain.lineage.state'], 'cycle');
+  const duplicateSpans = spansFor('duplicate');
+  assert.equal(duplicateSpans.length, 2);
+  assert.notEqual(duplicateSpans[0].spanId, duplicateSpans[1].spanId);
+});
+
+test('OTLP legacy output preserves unknown event kinds as generic events', () => {
+  const payload = traceExportToOtlp({
+    ...OTLP_TRACE_FIXTURE,
+    events: [
+      ...OTLP_TRACE_FIXTURE.events,
+      { runId: 'run_otlp_fixture', seq: 5, ts: 1_784_937_601_200, kind: 'future_kind', data: { secret: 'do not export by default' } },
+    ],
+  });
+  const root = payload.resourceSpans[0].scopeSpans[0].spans[0];
+  const unknown = root.events.find(event => otlpAttributes(event.attributes)['webbrain.event.kind'] === 'future_kind');
+  assert.ok(unknown);
+  assert.equal(unknown.name, 'webbrain.unknown');
+  assert.doesNotMatch(JSON.stringify(unknown), /do not export by default/);
+});
+
+test('trace format compatibility policy documents the version layers and reader obligations', () => {
+  const policy = fs.readFileSync(path.join(ROOT, 'docs/trace-format-compatibility.md'), 'utf8');
+  assert.match(policy, /webbrain-trace\/1/);
+  assert.match(policy, /traceFormatVersion/);
+  assert.match(policy, /DB_VERSION/);
+  assert.match(policy, /unknown event/i);
+  assert.match(policy, /new optional fields/i);
 });
 
 test('OTLP trace converter CLI parsing keeps content opt-in and output explicit', () => {

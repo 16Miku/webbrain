@@ -103,10 +103,17 @@ npm run trace:otlp -- webbrain-trace-example.json \
   --output webbrain-trace-example.otlp.json
 ```
 
+For a legacy single-run input, the output retains the existing root span with
+model-call and tool child spans. A session bundle uses one trace per persisted
+session, one span per run, same-session `parentRunId` parent links, and span
+events for turn/step activity. Cross-session parents are represented as span
+links rather than parent spans.
+
 The output is an
 [OTLP/HTTP JSON](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding)
-`ExportTraceServiceRequest`. It contains one `invoke_agent WebBrain` root span,
-child model-call and `execute_tool` spans, and lightweight lifecycle events.
+`ExportTraceServiceRequest`. Legacy input contains one `invoke_agent WebBrain`
+root span, child model-call and `execute_tool` spans, and lightweight lifecycle
+events; session bundles contain one `invoke_agent` span per run.
 The mappings follow the current
 [OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md),
 which are still marked development and may change.
@@ -133,6 +140,10 @@ npm run trace:otlp -- webbrain-trace-example.json \
   --output webbrain-trace-example.otlp.json \
   --include-content
 ```
+
+See [`trace-format-compatibility.md`](trace-format-compatibility.md) for the
+relationship between the storage version, run format version, and export
+schema, plus the reader obligations for unknown events and legacy records.
 
 This is a post-run conversion, not live OpenTelemetry instrumentation. Child
 span start times are reconstructed from the recorder's completion timestamp and
