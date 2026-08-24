@@ -9286,6 +9286,7 @@ test('OTLP collector contract: partitions sessions and keeps typed lineage links
   assert.equal(payload.resourceSpans.length, 2, 'each session must become one resource trace');
   const resources = payload.resourceSpans.map(resourceSpan => ({
     attributes: otlpAttributes(resourceSpan.resource.attributes),
+    attributesRaw: resourceSpan.resource.attributes,
     scope: resourceSpan.scopeSpans[0],
   }));
   const sessionA = resources.find(resource => resource.attributes['webbrain.session.id'] === 'session-a');
@@ -9302,14 +9303,31 @@ test('OTLP collector contract: partitions sessions and keeps typed lineage links
   assert.match(traceA, /^[0-9a-f]{32}$/);
   assert.match(traceB, /^[0-9a-f]{32}$/);
   assert.notEqual(traceA, traceB, 'different sessions must not share a trace ID');
-  for (const resource of resources) {
+  for (const [resource, expectedTraceId] of [[sessionA, traceA], [sessionB, traceB]]) {
+    for (const attribute of resource.attributesRaw || []) {
+      assert.equal(Object.keys(attribute.value || {}).length, 1, 'resource attributes must use one OTLP AnyValue field');
+      assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'resource attributes must not contain undefined values');
+    }
     for (const span of resource.scope.spans) {
+      assert.equal(span.traceId, expectedTraceId, 'every span must use its resource session trace ID');
       assert.match(span.spanId, /^[0-9a-f]{16}$/);
       assert.match(span.startTimeUnixNano, /^[0-9]+$/);
       assert.match(span.endTimeUnixNano, /^[0-9]+$/);
       for (const attribute of span.attributes || []) {
-        assert.equal(Object.keys(attribute.value || {}).length, 1, 'attributes must use one OTLP AnyValue field');
-        assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'attributes must not contain undefined values');
+        assert.equal(Object.keys(attribute.value || {}).length, 1, 'span attributes must use one OTLP AnyValue field');
+        assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'span attributes must not contain undefined values');
+      }
+      for (const event of span.events || []) {
+        for (const attribute of event.attributes || []) {
+          assert.equal(Object.keys(attribute.value || {}).length, 1, 'event attributes must use one OTLP AnyValue field');
+          assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'event attributes must not contain undefined values');
+        }
+      }
+      for (const link of span.links || []) {
+        for (const attribute of link.attributes || []) {
+          assert.equal(Object.keys(attribute.value || {}).length, 1, 'link attributes must use one OTLP AnyValue field');
+          assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'link attributes must not contain undefined values');
+        }
       }
     }
   }
@@ -9358,8 +9376,16 @@ test('OTLP collector contract: session content stays private unless explicitly e
   assert.doesNotMatch(privateOutput, /gen_ai\.tool\.call\.(?:arguments|result)/);
 
   const optedInOutput = JSON.stringify(traceExportToOtlp(input, { includeContent: true }));
-  assert.match(optedInOutput, /PRIVATE USER MESSAGE|PRIVATE FINAL RESPONSE|PRIVATE MODEL RESPONSE/);
-  assert.match(optedInOutput, /PRIVATE TOOL ARGUMENT|PRIVATE TOOL RESULT|PRIVATE UNKNOWN EVENT/);
+  for (const expectedContent of [
+    'PRIVATE USER MESSAGE',
+    'PRIVATE FINAL RESPONSE',
+    'PRIVATE MODEL RESPONSE',
+    'PRIVATE TOOL ARGUMENT',
+    'PRIVATE TOOL RESULT',
+    'PRIVATE UNKNOWN EVENT',
+  ]) {
+    assert.ok(optedInOutput.includes(expectedContent), `opted-in output is missing ${expectedContent}`);
+  }
   assert.doesNotMatch(optedInOutput, /PRIVATE SCREENSHOT/);
 });
 
