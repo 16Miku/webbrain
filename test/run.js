@@ -292,6 +292,12 @@ const { tracesToMarkdown, sanitizeTraceExport } = await import(
 const { tracesToMarkdown: tracesToMarkdownFx, sanitizeTraceExport: sanitizeTraceExportFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
 );
+const { buildTraceExportPayload: buildTraceExportPayloadCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/trace/export-contract.js').replace(/\\/g, '/')
+);
+const { buildTraceExportPayload: buildTraceExportPayloadFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/trace/export-contract.js').replace(/\\/g, '/')
+);
 const ModelOutputDiagnosticsCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/model-output-diagnostics.js').replace(/\\/g, '/')
 );
@@ -6948,6 +6954,82 @@ test('ATIF export: maps a WebBrain run, LLM calls, tools, metrics, and final res
   assert.ok(!JSON.stringify(atif).includes('sensitive-bytes'));
 });
 
+test('ATIF export: folds session bundles into one ordered multi-turn trajectory', () => {
+  const atif = webbrainTraceToAtif({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'bundle-session' },
+    exportedAt: 1_770_000_100_000,
+    exportedByWebBrainVersion: '25.8.5',
+    runs: [
+      {
+        run: {
+          runId: 'run-b', conversationId: 'bundle-session', startedAt: 200,
+          userMessage: 'Second turn', model: 'bundle-model', providerId: 'bundle-provider',
+          totalInputTokens: 20, totalOutputTokens: 3,
+        },
+        events: [
+          {
+            runId: 'run-b', seq: 1, kind: 'llm_response',
+            data: { step: 1, toolCalls: [{ id: 'shared-call', name: 'second_tool', args: '{}' }] },
+          },
+          {
+            runId: 'run-b', seq: 2, kind: 'tool',
+            data: { step: 1, name: 'second_tool', result: { ok: true } },
+          },
+        ],
+      },
+      {
+        run: {
+          runId: 'run-a', conversationId: 'bundle-session', startedAt: 100,
+          userMessage: 'First turn', model: 'bundle-model', providerId: 'bundle-provider',
+          totalInputTokens: 10, totalOutputTokens: 2,
+        },
+        events: [
+          {
+            runId: 'run-a', seq: 1, kind: 'llm_response',
+            data: { step: 1, toolCalls: [{ id: 'shared-call', name: 'first_tool', args: '{}' }] },
+          },
+          {
+            runId: 'run-a', seq: 2, kind: 'tool',
+            data: { step: 1, name: 'first_tool', result: { ok: true } },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(atif.schema_version, 'ATIF-v1.7');
+  assert.equal(atif.session_id, 'bundle-session');
+  assert.equal(atif.trajectory_id, 'bundle-session');
+  assert.equal(atif.agent.version, '25.8.5');
+  assert.equal(atif.agent.model_name, 'bundle-model');
+  assert.equal(atif.agent.extra.webbrain_run_count, 2);
+  assert.deepEqual(atif.steps.map(step => step.step_id), [1, 2, 3, 4]);
+  assert.deepEqual(
+    atif.steps.filter(step => step.source === 'user').map(step => step.message),
+    ['First turn', 'Second turn'],
+  );
+  assert.deepEqual(
+    atif.steps.map(step => step.extra.webbrain_run_id),
+    ['run-a', 'run-a', 'run-b', 'run-b'],
+  );
+  const toolSteps = atif.steps.filter(step => step.tool_calls);
+  assert.deepEqual(
+    toolSteps.map(step => step.tool_calls[0].tool_call_id),
+    ['shared-call', 'shared-call-run-b'],
+  );
+  assert.deepEqual(
+    toolSteps.map(step => step.observation.results[0].source_call_id),
+    ['shared-call', 'shared-call-run-b'],
+  );
+  assert.deepEqual(atif.final_metrics, {
+    total_prompt_tokens: 30,
+    total_completion_tokens: 5,
+    total_steps: 4,
+  });
+  assert.deepEqual(atif.extra.source_run_ids, ['run-a', 'run-b']);
+});
+
 test('ATIF export: synthesizes deterministic tool calls and preserves malformed arguments safely', () => {
   const input = {
     schema: 'webbrain-trace/1',
@@ -7038,6 +7120,16 @@ test('ATIF export: rejects unsupported or malformed WebBrain exports', () => {
     }),
     /event runId "foreign" does not match/,
   );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', session: {}, runs: [] }),
+    /session\.sessionId must be a non-empty string/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({
+      schema: 'webbrain-trace/1', session: { sessionId: 'empty' }, runs: [],
+    }),
+    /runs must be a non-empty array/,
+  );
 });
 
 test('ATIF export: CLI writes a sibling .atif.json file', () => {
@@ -7062,6 +7154,27 @@ test('ATIF export: CLI writes a sibling .atif.json file', () => {
     );
     assert.equal(output.schema_version, 'ATIF-v1.7');
     assert.equal(output.session_id, 'cli-run');
+
+    const bundlePath = path.join(tempDir, 'bundle.json');
+    fs.writeFileSync(bundlePath, JSON.stringify({
+      schema: 'webbrain-trace/1',
+      session: { sessionId: 'cli-session' },
+      runs: [
+        { run: { runId: 'cli-run-a', userMessage: 'First' }, events: [] },
+        { run: { runId: 'cli-run-b', userMessage: 'Second' }, events: [] },
+      ],
+    }));
+    const bundleResult = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts/trace-to-atif.mjs'), bundlePath],
+      { encoding: 'utf8' },
+    );
+    assert.equal(bundleResult.status, 0, bundleResult.stderr);
+    const bundleOutput = JSON.parse(
+      fs.readFileSync(path.join(tempDir, 'bundle.atif.json'), 'utf8'),
+    );
+    assert.equal(bundleOutput.session_id, 'cli-session');
+    assert.deepEqual(bundleOutput.steps.map(step => step.message), ['First', 'Second']);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -9563,6 +9676,66 @@ test('trace lossless tier: JSON exports redact lossless event credentials only',
   }
 });
 
+test('trace lossless tier: session JSON exports redact each lossless run', () => {
+  const payload = {
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'session-json' },
+    runs: [
+      {
+        run: { runId: 'lossless-run', lossless: true },
+        events: [{ data: { args: { api_key: 'bundle-api-sentinel', note: 'keep-this' } } }],
+      },
+      {
+        run: { runId: 'default-run', lossless: false },
+        events: [{ data: { args: { note: 'default-content' } } }],
+      },
+    ],
+  };
+  for (const [label, sanitize] of [['chrome', sanitizeTraceExport], ['firefox', sanitizeTraceExportFx]]) {
+    const exported = JSON.stringify(sanitize(payload));
+    assert.doesNotMatch(exported, /bundle-api-sentinel/, `${label}: session JSON leaked a lossless credential`);
+    assert.match(exported, /\[redacted\]/, `${label}: session JSON did not mark a lossless credential`);
+    assert.match(exported, /keep-this|default-content/, `${label}: session JSON redacted non-sensitive content`);
+  }
+});
+
+test('trace JSON export contract: preserves legacy runs and supports session bundles', () => {
+  const entries = [
+    { run: { runId: 'run-a', conversationId: 'session-a' }, events: [{ kind: 'turn_start' }] },
+    { run: { runId: 'run-b', conversationId: 'session-a' }, events: [{ kind: 'turn_end' }] },
+  ];
+  const options = {
+    exportedAt: 1_770_000_000_000,
+    exportedByWebBrainVersion: '25.8.5',
+  };
+  for (const [label, build] of [['chrome', buildTraceExportPayloadCh], ['firefox', buildTraceExportPayloadFx]]) {
+    const session = build(entries, { ...options, sessionId: 'session-a' });
+    assert.deepEqual(session, {
+      schema: 'webbrain-trace/1',
+      session: { sessionId: 'session-a' },
+      runs: entries,
+      ...options,
+    }, `${label}: session export contract changed`);
+    assert.equal('run' in session, false, `${label}: session export retained legacy run field`);
+    assert.equal('events' in session, false, `${label}: session export retained legacy events field`);
+
+    const legacy = build([entries[0]], options);
+    assert.deepEqual(legacy, {
+      schema: 'webbrain-trace/1',
+      run: entries[0].run,
+      events: entries[0].events,
+      ...options,
+    }, `${label}: legacy export contract changed`);
+    assert.equal('session' in legacy, false, `${label}: legacy export gained a session field`);
+    assert.equal('runs' in legacy, false, `${label}: legacy export gained a runs field`);
+  }
+  assert.deepEqual(
+    buildTraceExportPayloadFx(entries, { ...options, sessionId: 'session-a' }),
+    buildTraceExportPayloadCh(entries, { ...options, sessionId: 'session-a' }),
+    'Chrome and Firefox export contracts must agree',
+  );
+});
+
 test('trace lossless tier: default-tier privacy guard survives in both builds', () => {
   const chromeRecorder = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/recorder.js'), 'utf8');
   const firefoxRecorder = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/recorder.js'), 'utf8');
@@ -10027,6 +10200,26 @@ test('trace UI: renders collapsed session lineage groups with bounded-result war
       'tr.lineage.duplicate_id',
       'tr.lineage.cycle',
     ]) assert.match(locale, new RegExp(key.replaceAll('.', '\\.' )), `${browser}: missing ${key} locale fallback`);
+  }
+});
+
+test('trace UI: exports a session bundle while preserving standalone JSON shape', () => {
+  for (const [browser, runtimeName] of [['chrome', 'chrome'], ['firefox', 'browser']]) {
+    const traces = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/traces.js`), 'utf8');
+    assert.match(traces, /import \{ buildTraceExportPayload \} from '\.\.\/trace\/export-contract\.js';/, `${browser}: export contract import missing`);
+    assert.match(traces, /async function loadTraceExportEntry\(run\)/, `${browser}: trace entry loader missing`);
+    assert.match(traces, /listRuns\(\{ limit: Number\.MAX_SAFE_INTEGER, conversationId: sessionId \}\)/, `${browser}: session export retains the default 500-run cap`);
+    assert.match(traces, /for \(const candidate of \[\.\.\.sessionRuns, run\]\)/, `${browser}: selected run is not guaranteed in a session export`);
+    assert.match(traces, /exportRuns\.sort\(\(left, right\) => \([\s\S]*?left\.startedAt[\s\S]*?left\.runId/, `${browser}: session runs are not ordered deterministically`);
+    assert.match(traces, /for \(const exportRun of exportRuns\) entries\.push\(await loadTraceExportEntry\(exportRun\)\)/, `${browser}: session export does not load every run's events`);
+    assert.match(traces, /buildTraceExportPayload\(entries, \{[\s\S]*?sessionId,[\s\S]*?exportedAt: Date\.now\(\)/, `${browser}: UI does not build the versioned export envelope`);
+    assert.match(traces, /isSession\s*\?\s*`webbrain-session-\$\{safeFilenamePart\(sessionId, 'session'\)\}\.json`/, `${browser}: session export filename is not bounded`);
+    assert.match(traces, new RegExp(`exportedByWebBrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${browser}: export version metadata changed unexpectedly`);
+    assert.match(traces, /sanitizeTraceExport\(payload\)/, `${browser}: session export bypasses privacy sanitization`);
+    assert.match(traces, /function traceExportConfirmation\(exportRuns\)[\s\S]*?sensitiveRunCount[\s\S]*?tr\.lossless\.warning/, `${browser}: session export does not disclose lossless sibling runs`);
+    assert.match(traces, /isSession && !confirm\(traceExportConfirmation\(exportRuns\)\)/, `${browser}: session scope is not confirmed before export`);
+    assert.match(traces, /const exportSessionId = typeof run\.conversationId[\s\S]*?\.trim\(\)[\s\S]*?exportButton\.title = exportSessionId[\s\S]*?tr\.conversation\.label/, `${browser}: export tooltip still claims every download is one selected run`);
+    assert.match(traces, /catch \(error\) \{[\s\S]*?\[traces\] export failed:[\s\S]*?alert\(/, `${browser}: failed session reads can still produce a partial-looking download`);
   }
 });
 
@@ -10608,6 +10801,7 @@ test('trace record and JSON exports carry WebBrain version metadata', () => {
     ['firefox', 'src/firefox', 'browser'],
   ]) {
     const recorder = fs.readFileSync(path.join(ROOT, prefix, 'src/trace/recorder.js'), 'utf8');
+    const exportContract = fs.readFileSync(path.join(ROOT, prefix, 'src/trace/export-contract.js'), 'utf8');
     const traceUi = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/traces.js'), 'utf8');
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(recorder, /webbrainVersion: meta\.webbrainVersion \|\| ''/, `${label}: run record should retain the recording version`);
@@ -10620,7 +10814,8 @@ test('trace record and JSON exports carry WebBrain version metadata', () => {
       `${label}: workflow runs should snapshot effective runtime settings too`,
     );
     assert.match(traceUi, new RegExp(`exportedByWebBrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: JSON export should identify the exporting build`);
-    assert.match(traceUi, /schema: 'webbrain-trace\/1'/, `${label}: additive version metadata should retain the v1 schema`);
+    assert.match(traceUi, /buildTraceExportPayload\(entries/, `${label}: JSON export should use the shared export contract`);
+    assert.match(exportContract, /TRACE_EXPORT_SCHEMA = 'webbrain-trace\/1'/, `${label}: additive version metadata should retain the v1 schema`);
   }
 });
 
@@ -37265,14 +37460,18 @@ test('trace viewer toolbar actions use a captured run selection across awaits', 
     const exportCaptureIdx = exportBody.indexOf('const runId = selectedRunId;');
     const getRunIdx = exportBody.indexOf('const run = await getRun(runId);');
     const missingRunGuardIdx = exportBody.indexOf("if (!run) return alert(t('tr.select_first'));");
-    const eventsIdx = exportBody.indexOf('const events = await getRunEvents(runId).catch(() => []);');
-    const screenshotIdx = exportBody.indexOf('const shot = await getScreenshot(runId, ev.seq);');
+    const loaderStart = traces.indexOf('async function loadTraceExportEntry(run)');
+    const loaderBody = traces.slice(loaderStart, traces.indexOf("document.getElementById('btn-export')", loaderStart));
+    const eventsIdx = loaderBody.indexOf('const events = await getRunEvents(run.runId);');
+    const screenshotIdx = loaderBody.indexOf('const shot = await getScreenshot(run.runId, ev.seq);');
     assert.notEqual(exportCaptureIdx, -1, `${label}: trace export should capture selectedRunId once`);
     assert.notEqual(getRunIdx, -1, `${label}: trace export should load the captured run`);
     assert.notEqual(missingRunGuardIdx, -1, `${label}: trace export should handle a missing captured run`);
-    assert.notEqual(eventsIdx, -1, `${label}: trace export should load events for the captured run`);
-    assert.notEqual(screenshotIdx, -1, `${label}: trace export should load screenshots for the captured run`);
-    assert.equal(exportCaptureIdx < getRunIdx && getRunIdx < missingRunGuardIdx && missingRunGuardIdx < eventsIdx && eventsIdx < screenshotIdx, true, `${label}: trace export should keep the same run id across async work`);
+    assert.notEqual(loaderStart, -1, `${label}: trace export entry loader missing`);
+    assert.notEqual(eventsIdx, -1, `${label}: trace export should load events for each captured run`);
+    assert.notEqual(screenshotIdx, -1, `${label}: trace export should load screenshots for each captured run`);
+    assert.doesNotMatch(loaderBody, /getRunEvents\(run\.runId\)\.catch/, `${label}: trace export should not hide a failed event read as an empty run`);
+    assert.equal(exportCaptureIdx < getRunIdx && getRunIdx < missingRunGuardIdx, true, `${label}: trace export should keep the same run selection across async work`);
     assert.doesNotMatch(exportBody, /getRun\(selectedRunId\)|getRunEvents\(selectedRunId\)|getScreenshot\(selectedRunId,/, `${label}: trace export must not reread mutable selectedRunId after starting`);
 
     const deleteStart = traces.indexOf("document.getElementById('btn-delete').addEventListener('click', async () => {");

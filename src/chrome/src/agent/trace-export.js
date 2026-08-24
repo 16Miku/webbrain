@@ -55,7 +55,17 @@ function redactExportValue(value, key = '') {
 }
 
 export function sanitizeTraceExport(payload) {
-  return payload?.run?.lossless === true ? redactExportValue(payload) : payload;
+  if (payload?.run?.lossless === true) return redactExportValue(payload);
+  if (!Array.isArray(payload?.runs)) return payload;
+
+  let changed = false;
+  const runs = payload.runs.map((entry) => {
+    if (entry?.run?.lossless !== true) return entry;
+    changed = true;
+    return redactExportValue(entry);
+  });
+
+  return changed ? { ...payload, runs } : payload;
 }
 
 // Lossless requests carry the full message/tool shape. Render a bounded,

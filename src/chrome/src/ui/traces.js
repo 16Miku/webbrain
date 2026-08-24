@@ -11,6 +11,7 @@ import { isKnownKind, isIgnorableKind } from '../trace/event-model.js';
 import { buildTraceTrajectory } from '../trace/trajectory.js';
 import { aggregateTraceRuns } from '../trace/stats.js';
 import { buildTraceLineageGroups } from '../trace/lineage.js';
+import { buildTraceExportPayload } from '../trace/export-contract.js';
 import { sanitizeTraceExport } from '../agent/trace-export.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
@@ -308,6 +309,13 @@ async function renderRun(runId) {
     replaceTimelineObjectUrls(new Set());
     return;
   }
+  const exportButton = document.getElementById('btn-export');
+  const exportSessionId = typeof run.conversationId === 'string'
+    ? run.conversationId.trim()
+    : '';
+  exportButton.title = exportSessionId
+    ? `${t('tr.btn.export')} · ${t('tr.conversation.label')}`
+    : t('tr.btn.export.title');
   const events = await getRunEvents(runId).catch(() => []);
   if (!isCurrentRunRender(requestId, runId)) return;
   const objectUrls = new Set();
@@ -738,42 +746,87 @@ document.getElementById('btn-compare').addEventListener('click', () => {
   renderList();
 });
 
-document.getElementById('btn-export').addEventListener('click', async () => {
-  if (!selectedRunId) return alert(t('tr.select_first'));
-  const runId = selectedRunId;
-  const run = await getRun(runId);
-  if (!run) return alert(t('tr.select_first'));
-  const events = await getRunEvents(runId).catch(() => []);
+async function loadTraceExportEntry(run) {
+  const events = await getRunEvents(run.runId);
   // Resolve screenshot blobs to base64 for portability.
   for (const ev of events) {
     if (ev.kind === 'screenshot') {
-      const shot = await getScreenshot(runId, ev.seq);
+      const shot = await getScreenshot(run.runId, ev.seq);
       if (shot?.blob) {
         ev.data = ev.data || {};
         ev.data.screenshot_base64 = await blobToBase64(shot.blob);
       } else if (shot?.dataUrl) {
+        ev.data = ev.data || {};
         ev.data.screenshot_dataUrl = shot.dataUrl;
       }
     }
   }
-  const payload = {
-    run,
-    events,
-    exportedAt: Date.now(),
-    exportedByWebBrainVersion: chrome.runtime.getManifest().version || '',
-    schema: 'webbrain-trace/1',
-  };
-  const blob = new Blob([JSON.stringify(sanitizeTraceExport(payload), null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `webbrain-trace-${run.model || 'unknown'}-${run.runId}.json`;
-  document.body.appendChild(a);
+  return { run, events };
+}
+
+function traceExportConfirmation(exportRuns) {
+  const sensitiveRunCount = exportRuns.filter(run => run?.lossless === true).length;
+  const lines = [
+    t('tr.btn.export'),
+    `${t('tr.conversation.label')} · ${t(exportRuns.length === 1 ? 'tr.run' : 'tr.runs', { n: exportRuns.length })}`,
+  ];
+  if (sensitiveRunCount > 0) {
+    lines.push(
+      '',
+      `${t('tr.lossless.badge')} · ${t(sensitiveRunCount === 1 ? 'tr.run' : 'tr.runs', { n: sensitiveRunCount })}`,
+      t('tr.lossless.warning'),
+    );
+  }
+  return lines.join('\n');
+}
+
+document.getElementById('btn-export').addEventListener('click', async () => {
+  if (!selectedRunId) return alert(t('tr.select_first'));
+  const runId = selectedRunId;
   try {
-    a.click();
-  } finally {
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 7000);
+    const run = await getRun(runId);
+    if (!run) return alert(t('tr.select_first'));
+    const sessionId = typeof run.conversationId === 'string' ? run.conversationId.trim() : '';
+    const sessionRuns = sessionId
+      ? await listRuns({ limit: Number.MAX_SAFE_INTEGER, conversationId: sessionId })
+      : [];
+    const exportRuns = [];
+    const seenRunIds = new Set();
+    for (const candidate of [...sessionRuns, run]) {
+      if (!candidate?.runId || seenRunIds.has(candidate.runId)) continue;
+      seenRunIds.add(candidate.runId);
+      exportRuns.push(candidate);
+    }
+    exportRuns.sort((left, right) => (
+      ((left.startedAt || 0) - (right.startedAt || 0))
+      || String(left.runId).localeCompare(String(right.runId))
+    ));
+    const isSession = Boolean(sessionId);
+    if (isSession && !confirm(traceExportConfirmation(exportRuns))) return;
+    const entries = [];
+    for (const exportRun of exportRuns) entries.push(await loadTraceExportEntry(exportRun));
+    const payload = buildTraceExportPayload(entries, {
+      sessionId,
+      exportedAt: Date.now(),
+      exportedByWebBrainVersion: chrome.runtime.getManifest().version || '',
+    });
+    const blob = new Blob([JSON.stringify(sanitizeTraceExport(payload), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = isSession
+      ? `webbrain-session-${safeFilenamePart(sessionId, 'session')}.json`
+      : `webbrain-trace-${run.model || 'unknown'}-${run.runId}.json`;
+    document.body.appendChild(a);
+    try {
+      a.click();
+    } finally {
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 7000);
+    }
+  } catch (error) {
+    console.error('[traces] export failed:', error);
+    alert(`${t('tr.btn.export')}: ${error?.message || error}`);
   }
 });
 
@@ -831,6 +884,14 @@ filterModel.addEventListener('change', renderList);
 function safeClassToken(value, fallback = 'unknown') {
   const token = String(value == null ? '' : value).trim();
   return /^[A-Za-z0-9_-]+$/.test(token) ? token : fallback;
+}
+function safeFilenamePart(value, fallback = 'unknown') {
+  const token = String(value == null ? '' : value)
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .slice(0, 80)
+    .replace(/^[.-]+|[.-]+$/g, '');
+  return token || fallback;
 }
 function blobToBase64(blob) {
   return new Promise((resolve) => {
