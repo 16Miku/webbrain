@@ -18391,6 +18391,14 @@ test('YouTube video recommendations start with transcript skill and keep media d
       assert.equal(transcript?.runOptions?.autoExecute, true, `transcript summary should auto-execute first tool for ${pageInfo.url}`);
       assert.equal(transcript?.runOptions?.tool, 'read_youtube_transcript', `transcript summary should pin transcript tool for ${pageInfo.url}`);
 
+      const loop = actions.find((a) => a.id === 'loop-youtube-video');
+      assert.equal(loop?.label, 'Loop this video', `expected loop action for ${pageInfo.url}`);
+      assert.equal(loop?.mode, 'dev', `loop action should switch to Dev mode for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /execute_js/, `loop action should name the Dev tool for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /document\.querySelector\(['"]video['"]\)/, `loop action should target the active video for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /setInterval/, `loop action should keep the loop enabled across YouTube updates for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /addEventListener\(['"]ended['"]/, `loop action should restart videos when they end for ${pageInfo.url}`);
+
       const download = actions.find((a) => a.id === 'download-media');
       assert.equal(download?.runOptions?.tool, 'download_public_media', `YouTube download should use public media skill for ${pageInfo.url}`);
       assert.equal(download?.runOptions?.skipPlanner, true, `YouTube download should skip planner for ${pageInfo.url}`);
@@ -39858,7 +39866,7 @@ test('sidepanel drops stale recommended-action refreshes after tab changes or ru
   }
 });
 
-test('sidepanel drops stale recommended-action clicks after async act-mode switching', () => {
+test('sidepanel drops stale recommended-action clicks after async mode switching', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
@@ -39873,6 +39881,8 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     const sourceGuard = 'recommendedActionSourceStillCurrent(action, tabId)';
     const firstSourceGuardIdx = body.indexOf(sourceGuard);
     const ensureIdx = body.indexOf('await ensureActMode();');
+    const devModeGuardIdx = body.indexOf("action?.mode === 'act' || action?.mode === 'dev'");
+    const ensureDevIdx = body.indexOf('await ensureDevMode()');
     const staleGuard = '!ok) return';
     const staleGuardIdx = body.indexOf(staleGuard);
     const secondSourceGuardIdx = body.indexOf(sourceGuard, firstSourceGuardIdx + 1);
@@ -39888,6 +39898,8 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     assert.notEqual(initialGuardIdx, -1, `${label}: recommended-action click should reject missing tabs before sending`);
     assert.notEqual(firstSourceGuardIdx, -1, `${label}: recommended-action click should re-check the source URL before sending`);
     assert.notEqual(ensureIdx, -1, `${label}: act recommended-action click should await the mode switch`);
+    assert.notEqual(devModeGuardIdx, -1, `${label}: Dev recommended actions should use the guarded mode-switch path`);
+    assert.notEqual(ensureDevIdx, -1, `${label}: Dev recommended-action click should await the Dev mode switch`);
     assert.notEqual(staleGuardIdx, -1, `${label}: stale recommended-action clicks should be dropped after switching modes`);
     assert.notEqual(secondSourceGuardIdx, -1, `${label}: act recommended-action click should re-check the source URL after switching modes`);
     assert.notEqual(inputIdx, -1, `${label}: recommended-action click composer write missing`);

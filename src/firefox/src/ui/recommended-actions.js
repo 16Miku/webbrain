@@ -457,6 +457,40 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
         ['Call read_youtube_transcript for the active tab with timestamps:true, text_limit:6000, and include_segments:false.', 'Summarize the transcript with key points and timestamps when available.'],
       ),
     });
+    addUnique(actions, {
+      id: 'loop-youtube-video',
+      label: 'Loop this video',
+      prompt: `Use execute_js once with exactly this function body, then report whether a video was found and looping was enabled:
+const KEY = '__webbrainYouTubeLoop';
+const previous = window[KEY];
+if (previous?.timer) clearInterval(previous.timer);
+if (previous?.video && previous?.endedHandler) previous.video.removeEventListener('ended', previous.endedHandler);
+const state = { video: null, endedHandler: null, timer: null };
+const enforceLoop = () => {
+  const video = document.querySelector('video');
+  if (!video) return false;
+  if (state.video !== video) {
+    if (state.video && state.endedHandler) state.video.removeEventListener('ended', state.endedHandler);
+    state.video = video;
+    state.endedHandler = () => {
+      video.currentTime = 0;
+      video.play().catch(() => {});
+    };
+    video.addEventListener('ended', state.endedHandler);
+  }
+  video.loop = true;
+  try {
+    const player = document.querySelector('#movie_player');
+    if (player && typeof player.setLoop === 'function') player.setLoop(true);
+  } catch {}
+  return true;
+};
+const found = enforceLoop();
+state.timer = setInterval(enforceLoop, 1000);
+window[KEY] = state;
+return { found, loop: state.video?.loop === true, intervalSet: true, paused: state.video?.paused ?? null, duration: state.video?.duration ?? null };`,
+      mode: 'dev',
+    });
   }
 
   const publicMediaHost = PUBLIC_MEDIA_HOST_RE.test(host);
