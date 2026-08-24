@@ -18391,6 +18391,16 @@ test('YouTube video recommendations start with transcript skill and keep media d
       assert.equal(transcript?.runOptions?.autoExecute, true, `transcript summary should auto-execute first tool for ${pageInfo.url}`);
       assert.equal(transcript?.runOptions?.tool, 'read_youtube_transcript', `transcript summary should pin transcript tool for ${pageInfo.url}`);
 
+      const loop = actions.find((a) => a.id === 'loop-youtube-video');
+      assert.equal(loop?.label, 'Loop this video', `expected loop action for ${pageInfo.url}`);
+      assert.equal(loop?.mode, 'dev', `loop action should switch to Dev mode for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /execute_js/, `loop action should name the Dev tool for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /document\.querySelector\(['"]video['"]\)/, `loop action should target the active video for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /setInterval/, `loop action should keep the loop enabled across YouTube updates for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /addEventListener\(['"]ended['"]/, `loop action should restart videos when they end for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /route: location\.href/, `loop action should capture the requested route for ${pageInfo.url}`);
+      assert.match(loop?.prompt || '', /document\.querySelector\(['"]video['"]\) === state\.video/, `loop action should stay scoped to its original video for ${pageInfo.url}`);
+
       const download = actions.find((a) => a.id === 'download-media');
       assert.equal(download?.runOptions?.tool, 'download_public_media', `YouTube download should use public media skill for ${pageInfo.url}`);
       assert.equal(download?.runOptions?.skipPlanner, true, `YouTube download should skip planner for ${pageInfo.url}`);
@@ -18411,6 +18421,110 @@ test('YouTube video recommendations start with transcript skill and keep media d
       'download_public_media',
       'YouTube embed pages should keep the public media download shortcut',
     );
+
+    const focusedCommentActions = buildRecommendedActions({
+      ...pages[0],
+      activeElement: {
+        tag: 'div',
+        role: 'textbox',
+        editable: true,
+        ariaLabel: 'Add a comment',
+        textPreview: 'This is a draft comment.',
+      },
+    });
+    assert.deepEqual(
+      focusedCommentActions.map((action) => action.id),
+      ['tweet-webbrain', 'rewrite-focused-draft', 'summarize-youtube-video', 'download-media'],
+      'focused YouTube comments should keep the existing download shortcut ahead of the loop action',
+    );
+  }
+});
+
+test('YouTube loop recommendation stops when its route or video target changes', () => {
+  const exerciseCleanup = (action, changeTarget, label) => {
+    let endedHandler = null;
+    const documentHandlers = new Map();
+    const windowHandlers = new Map();
+    const video = {
+      loop: false,
+      paused: false,
+      duration: 120,
+      currentTime: 30,
+      play: () => Promise.resolve(),
+      addEventListener(name, handler) {
+        if (name === 'ended') endedHandler = handler;
+      },
+      removeEventListener(name, handler) {
+        if (name === 'ended' && endedHandler === handler) endedHandler = null;
+      },
+    };
+    const replacementVideo = { loop: false };
+    const playerLoopCalls = [];
+    const player = { setLoop: (enabled) => playerLoopCalls.push(enabled) };
+    let currentVideo = video;
+    const documentMock = {
+      querySelector(selector) {
+        if (selector === 'video') return currentVideo;
+        if (selector === '#movie_player') return player;
+        return null;
+      },
+      addEventListener: (name, handler) => documentHandlers.set(name, handler),
+      removeEventListener(name, handler) {
+        if (documentHandlers.get(name) === handler) documentHandlers.delete(name);
+      },
+    };
+    const windowMock = {
+      addEventListener: (name, handler) => windowHandlers.set(name, handler),
+      removeEventListener(name, handler) {
+        if (windowHandlers.get(name) === handler) windowHandlers.delete(name);
+      },
+    };
+    const locationMock = { href: 'https://www.youtube.com/watch?v=first' };
+    let intervalCallback = null;
+    let clearedTimer = null;
+    const functionBody = action.prompt.slice(action.prompt.indexOf('\n') + 1);
+    const result = Function('window', 'document', 'location', 'setInterval', 'clearInterval', functionBody)(
+      windowMock,
+      documentMock,
+      locationMock,
+      (callback) => {
+        intervalCallback = callback;
+        return 17;
+      },
+      (timer) => {
+        clearedTimer = timer;
+      },
+    );
+
+    assert.deepEqual(result, { found: true, loop: true, intervalSet: true, paused: false, duration: 120 }, `${label}: unexpected initial loop result`);
+    assert.equal(video.loop, true, `${label}: original video should be looped`);
+    assert.equal(typeof endedHandler, 'function', `${label}: ended fallback listener missing`);
+    assert.equal(typeof intervalCallback, 'function', `${label}: enforcement timer missing`);
+    assert.equal(documentHandlers.has('yt-navigate-start'), true, `${label}: YouTube navigation listener missing`);
+    assert.equal(windowHandlers.has('pagehide'), true, `${label}: pagehide listener missing`);
+
+    changeTarget({ location: locationMock, setVideo: (nextVideo) => { currentVideo = nextVideo; }, replacementVideo });
+    intervalCallback();
+
+    assert.equal(clearedTimer, 17, `${label}: enforcement timer should be cleared`);
+    assert.equal(video.loop, false, `${label}: original video loop flag should be reset`);
+    assert.equal(replacementVideo.loop, false, `${label}: replacement video should not be retargeted`);
+    assert.equal(endedHandler, null, `${label}: ended listener should be removed`);
+    assert.equal(documentHandlers.has('yt-navigate-start'), false, `${label}: navigation listener should be removed`);
+    assert.equal(windowHandlers.has('pagehide'), false, `${label}: pagehide listener should be removed`);
+    assert.deepEqual(playerLoopCalls, [true, false], `${label}: player loop state should be disabled during cleanup`);
+    assert.equal(windowMock.__webbrainYouTubeLoop, undefined, `${label}: stale global loop state should be removed`);
+  };
+
+  for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+    const action = buildRecommendedActions({
+      url: 'https://www.youtube.com/watch?v=first',
+      title: 'First video',
+      media: { videoCount: 1, imageCount: 0 },
+    }).find((candidate) => candidate.id === 'loop-youtube-video');
+    assert.ok(action, `${label}: loop recommendation missing`);
+    exerciseCleanup(action, ({ location }) => { location.href = 'https://www.youtube.com/watch?v=second'; }, `${label} route change`);
+    exerciseCleanup(action, ({ setVideo, replacementVideo }) => { setVideo(replacementVideo); }, `${label} video replacement`);
   }
 });
 
@@ -39858,7 +39972,7 @@ test('sidepanel drops stale recommended-action refreshes after tab changes or ru
   }
 });
 
-test('sidepanel drops stale recommended-action clicks after async act-mode switching', () => {
+test('sidepanel drops stale recommended-action clicks after async mode switching', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
@@ -39873,6 +39987,8 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     const sourceGuard = 'recommendedActionSourceStillCurrent(action, tabId)';
     const firstSourceGuardIdx = body.indexOf(sourceGuard);
     const ensureIdx = body.indexOf('await ensureActMode();');
+    const devModeGuardIdx = body.indexOf("action?.mode === 'act' || action?.mode === 'dev'");
+    const ensureDevIdx = body.indexOf('await ensureDevMode()');
     const staleGuard = '!ok) return';
     const staleGuardIdx = body.indexOf(staleGuard);
     const secondSourceGuardIdx = body.indexOf(sourceGuard, firstSourceGuardIdx + 1);
@@ -39888,6 +40004,8 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     assert.notEqual(initialGuardIdx, -1, `${label}: recommended-action click should reject missing tabs before sending`);
     assert.notEqual(firstSourceGuardIdx, -1, `${label}: recommended-action click should re-check the source URL before sending`);
     assert.notEqual(ensureIdx, -1, `${label}: act recommended-action click should await the mode switch`);
+    assert.notEqual(devModeGuardIdx, -1, `${label}: Dev recommended actions should use the guarded mode-switch path`);
+    assert.notEqual(ensureDevIdx, -1, `${label}: Dev recommended-action click should await the Dev mode switch`);
     assert.notEqual(staleGuardIdx, -1, `${label}: stale recommended-action clicks should be dropped after switching modes`);
     assert.notEqual(secondSourceGuardIdx, -1, `${label}: act recommended-action click should re-check the source URL after switching modes`);
     assert.notEqual(inputIdx, -1, `${label}: recommended-action click composer write missing`);

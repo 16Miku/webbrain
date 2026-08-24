@@ -488,6 +488,80 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
     });
   }
 
+  if (isYouTubeVideoPage(host, path, pageInfo.url || '')) {
+    addUnique(actions, {
+      id: 'loop-youtube-video',
+      label: 'Loop this video',
+      prompt: `Use execute_js once with exactly this function body, then report whether a video was found and looping was enabled:
+const KEY = '__webbrainYouTubeLoop';
+const previous = window[KEY];
+if (typeof previous?.stop === 'function') {
+  previous.stop();
+} else {
+  if (previous?.timer) clearInterval(previous.timer);
+  if (previous?.video && previous?.endedHandler) previous.video.removeEventListener('ended', previous.endedHandler);
+}
+const state = {
+  route: location.href,
+  video: document.querySelector('video'),
+  player: document.querySelector('#movie_player'),
+  endedHandler: null,
+  navigationHandler: null,
+  pagehideHandler: null,
+  timer: null,
+  stop: null,
+};
+const stop = () => {
+  if (state.timer) {
+    clearInterval(state.timer);
+    state.timer = null;
+  }
+  if (state.video && state.endedHandler) state.video.removeEventListener('ended', state.endedHandler);
+  if (state.navigationHandler) document.removeEventListener('yt-navigate-start', state.navigationHandler);
+  if (state.pagehideHandler) window.removeEventListener('pagehide', state.pagehideHandler);
+  try {
+    if (state.video) state.video.loop = false;
+    if (state.player && typeof state.player.setLoop === 'function') state.player.setLoop(false);
+  } catch {}
+  if (window[KEY] === state) delete window[KEY];
+};
+state.stop = stop;
+const targetIsCurrent = () => location.href === state.route && document.querySelector('video') === state.video;
+const enforceLoop = () => {
+  if (!state.video || !targetIsCurrent()) {
+    stop();
+    return false;
+  }
+  state.video.loop = true;
+  try {
+    if (state.player && typeof state.player.setLoop === 'function') state.player.setLoop(true);
+  } catch {}
+  return true;
+};
+const found = Boolean(state.video);
+if (found) {
+  state.endedHandler = () => {
+    if (!targetIsCurrent()) {
+      stop();
+      return;
+    }
+    state.video.currentTime = 0;
+    state.video.play().catch(() => {});
+  };
+  state.navigationHandler = stop;
+  state.pagehideHandler = stop;
+  state.video.addEventListener('ended', state.endedHandler);
+  document.addEventListener('yt-navigate-start', state.navigationHandler);
+  window.addEventListener('pagehide', state.pagehideHandler);
+  window[KEY] = state;
+  enforceLoop();
+  if (window[KEY] === state) state.timer = setInterval(enforceLoop, 1000);
+}
+return { found, loop: state.video?.loop === true, intervalSet: Boolean(state.timer), paused: state.video?.paused ?? null, duration: state.video?.duration ?? null };`,
+      mode: 'dev',
+    });
+  }
+
   if (isCouponShoppingContext(pageInfo, host, path)) {
     addUnique(actions, {
       id: 'find-coupons',

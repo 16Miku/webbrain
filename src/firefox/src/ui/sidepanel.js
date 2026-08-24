@@ -4956,8 +4956,8 @@ async function runRecommendedAction(action) {
     hideRecommendedActions();
     return;
   }
-  if (action?.mode === 'act') {
-    const ok = await ensureActMode();
+  if (action?.mode === 'act' || action?.mode === 'dev') {
+    const ok = action.mode === 'dev' ? await ensureDevMode() : await ensureActMode();
     if (!ok) return;
     if (!(await recommendedActionSourceStillCurrent(action, tabId)) || currentTabId !== tabId || isProcessing) {
       hideRecommendedActions();
