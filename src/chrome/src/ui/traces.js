@@ -309,6 +309,13 @@ async function renderRun(runId) {
     replaceTimelineObjectUrls(new Set());
     return;
   }
+  const exportButton = document.getElementById('btn-export');
+  const exportSessionId = typeof run.conversationId === 'string'
+    ? run.conversationId.trim()
+    : '';
+  exportButton.title = exportSessionId
+    ? `${t('tr.btn.export')} · ${t('tr.conversation.label')}`
+    : t('tr.btn.export.title');
   const events = await getRunEvents(runId).catch(() => []);
   if (!isCurrentRunRender(requestId, runId)) return;
   const objectUrls = new Set();
@@ -740,7 +747,7 @@ document.getElementById('btn-compare').addEventListener('click', () => {
 });
 
 async function loadTraceExportEntry(run) {
-  const events = await getRunEvents(run.runId).catch(() => []);
+  const events = await getRunEvents(run.runId);
   // Resolve screenshot blobs to base64 for portability.
   for (const ev of events) {
     if (ev.kind === 'screenshot') {
@@ -757,43 +764,69 @@ async function loadTraceExportEntry(run) {
   return { run, events };
 }
 
+function traceExportConfirmation(exportRuns) {
+  const sensitiveRunCount = exportRuns.filter(run => run?.lossless === true).length;
+  const lines = [
+    t('tr.btn.export'),
+    `${t('tr.conversation.label')} · ${t(exportRuns.length === 1 ? 'tr.run' : 'tr.runs', { n: exportRuns.length })}`,
+  ];
+  if (sensitiveRunCount > 0) {
+    lines.push(
+      '',
+      `${t('tr.lossless.badge')} · ${t(sensitiveRunCount === 1 ? 'tr.run' : 'tr.runs', { n: sensitiveRunCount })}`,
+      t('tr.lossless.warning'),
+    );
+  }
+  return lines.join('\n');
+}
+
 document.getElementById('btn-export').addEventListener('click', async () => {
   if (!selectedRunId) return alert(t('tr.select_first'));
   const runId = selectedRunId;
-  const run = await getRun(runId);
-  if (!run) return alert(t('tr.select_first'));
-  const sessionId = typeof run.conversationId === 'string' ? run.conversationId.trim() : '';
-  const sessionRuns = sessionId
-    ? await listRuns({ conversationId: run.conversationId }).catch(() => [])
-    : [];
-  const exportRuns = [];
-  const seenRunIds = new Set();
-  for (const candidate of [...sessionRuns, run]) {
-    if (!candidate?.runId || seenRunIds.has(candidate.runId)) continue;
-    seenRunIds.add(candidate.runId);
-    exportRuns.push(candidate);
-  }
-  const entries = [];
-  for (const exportRun of exportRuns) entries.push(await loadTraceExportEntry(exportRun));
-  const isSession = Boolean(sessionId);
-  const payload = buildTraceExportPayload(entries, {
-    sessionId,
-    exportedAt: Date.now(),
-    exportedByWebBrainVersion: chrome.runtime.getManifest().version || '',
-  });
-  const blob = new Blob([JSON.stringify(sanitizeTraceExport(payload), null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = isSession
-    ? `webbrain-session-${safeFilenamePart(sessionId, 'session')}.json`
-    : `webbrain-trace-${run.model || 'unknown'}-${run.runId}.json`;
-  document.body.appendChild(a);
   try {
-    a.click();
-  } finally {
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 7000);
+    const run = await getRun(runId);
+    if (!run) return alert(t('tr.select_first'));
+    const sessionId = typeof run.conversationId === 'string' ? run.conversationId.trim() : '';
+    const sessionRuns = sessionId
+      ? await listRuns({ limit: Number.MAX_SAFE_INTEGER, conversationId: sessionId })
+      : [];
+    const exportRuns = [];
+    const seenRunIds = new Set();
+    for (const candidate of [...sessionRuns, run]) {
+      if (!candidate?.runId || seenRunIds.has(candidate.runId)) continue;
+      seenRunIds.add(candidate.runId);
+      exportRuns.push(candidate);
+    }
+    exportRuns.sort((left, right) => (
+      ((left.startedAt || 0) - (right.startedAt || 0))
+      || String(left.runId).localeCompare(String(right.runId))
+    ));
+    const isSession = Boolean(sessionId);
+    if (isSession && !confirm(traceExportConfirmation(exportRuns))) return;
+    const entries = [];
+    for (const exportRun of exportRuns) entries.push(await loadTraceExportEntry(exportRun));
+    const payload = buildTraceExportPayload(entries, {
+      sessionId,
+      exportedAt: Date.now(),
+      exportedByWebBrainVersion: chrome.runtime.getManifest().version || '',
+    });
+    const blob = new Blob([JSON.stringify(sanitizeTraceExport(payload), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = isSession
+      ? `webbrain-session-${safeFilenamePart(sessionId, 'session')}.json`
+      : `webbrain-trace-${run.model || 'unknown'}-${run.runId}.json`;
+    document.body.appendChild(a);
+    try {
+      a.click();
+    } finally {
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 7000);
+    }
+  } catch (error) {
+    console.error('[traces] export failed:', error);
+    alert(`${t('tr.btn.export')}: ${error?.message || error}`);
   }
 });
 

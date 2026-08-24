@@ -87,7 +87,10 @@ changing the `webbrain-trace/1` schema:
 Lossless entries are redacted with the same credential-key safeguards as
 standalone JSON exports. Standalone exports keep the original `run` and
 `events` fields for existing consumers; session bundles use `session` and
-`runs` instead.
+`runs` instead. Before downloading a session bundle, the Traces page confirms
+the number of included runs and warns when any run uses the sensitive debug
+tier. A session export fails instead of silently producing a partial bundle if
+its run or event records cannot be read.
 
 ### Convert a trace to ATIF v1.7
 
@@ -106,6 +109,11 @@ trajectory to standard output:
 node scripts/trace-to-atif.mjs trace.json trajectory.json
 node scripts/trace-to-atif.mjs trace.json -
 ```
+
+Standalone exports remain one ATIF trajectory keyed by the run ID. Session
+bundles become one multi-turn ATIF trajectory keyed by the session ID; runs are
+ordered chronologically, step numbers stay contiguous, and each step records
+its source run in `extra.webbrain_run_id`.
 
 The converter maps user and agent messages, tool calls and observations, token
 metrics, errors, model metadata, and final content. It does not upload data.
