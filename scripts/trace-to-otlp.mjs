@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { isKnownKind } from '../src/chrome/src/trace/event-model.js';
+import { TRACE_FORMAT_VERSION, isKnownKind } from '../src/chrome/src/trace/event-model.js';
 import { buildTraceLineageGroups } from '../src/chrome/src/trace/lineage.js';
 
 const WEBBRAIN_TRACE_SCHEMA = 'webbrain-trace/1';
@@ -32,7 +32,13 @@ function normalizedId(value) {
 
 function normalizedFormatVersion(value) {
   const version = Number(value);
-  return Number.isInteger(version) && version >= 0 ? version : 0;
+  if (!Number.isInteger(version) || version < 0) return 0;
+  if (version > TRACE_FORMAT_VERSION) {
+    throw new Error(
+      `Unsupported trace format version ${version}; maximum supported version is ${TRACE_FORMAT_VERSION}.`,
+    );
+  }
+  return version;
 }
 
 function normalizedRun(run) {
@@ -297,7 +303,7 @@ function buildLineageRecords(bundle) {
     const sessionId = sessionIdForRun(run, bundle.sessionId, index);
     return {
       index,
-      run: run.conversationId ? run : { ...run, conversationId: sessionId },
+      run: { ...run, conversationId: sessionId },
       events: sortedEvents(events),
       runId: normalizedId(run.runId),
       sessionId,

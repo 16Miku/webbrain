@@ -9036,6 +9036,15 @@ test('trace export compatibility: normalizes legacy and session bundle inputs', 
   assert.equal(bundle.sessionId, 'session-a');
   assert.equal(bundle.runs[0].run.traceFormatVersion, 0);
   assert.equal(bundle.runs[0].run.runId, 'run-a');
+
+  assert.throws(
+    () => normalizeTraceExport({
+      schema: 'webbrain-trace/1',
+      session: { sessionId: 'session-future' },
+      runs: [{ run: { runId: 'future-run', traceFormatVersion: 2 }, events: [] }],
+    }),
+    /Unsupported trace format version 2.*maximum supported version is 1/,
+  );
 });
 
 test('OTLP session bundles map runs to spans and steps to span events', () => {
@@ -9075,6 +9084,32 @@ test('OTLP session bundles map runs to spans and steps to span events', () => {
   assert.equal(child.kind, 1);
   assert.equal(child.events.length, 3);
   assert.deepEqual(child.events.map(event => event.name), ['webbrain.step_start', 'webbrain.llm_response', 'webbrain.tool']);
+});
+
+test('OTLP session bundles use their session ID for blank run conversation IDs', () => {
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'session-a' },
+    runs: [
+      { run: { runId: 'root-run', conversationId: '   ' }, events: [] },
+      {
+        run: {
+          runId: 'child-run', conversationId: '\t', parentRunId: 'root-run',
+          parentSessionId: 'session-a',
+        },
+        events: [],
+      },
+    ],
+  });
+  const spans = payload.resourceSpans[0].scopeSpans[0].spans;
+  const root = spans.find(span => otlpAttributes(span.attributes)['webbrain.run.id'] === 'root-run');
+  const child = spans.find(span => otlpAttributes(span.attributes)['webbrain.run.id'] === 'child-run');
+  assert.ok(root);
+  assert.ok(child);
+  assert.equal(child.traceId, root.traceId);
+  assert.equal(child.parentSpanId, root.spanId);
+  assert.equal(child.links, undefined);
+  assert.equal(otlpAttributes(child.attributes)['gen_ai.conversation.id'], 'session-a');
 });
 
 test('OTLP session bundles preserve cross-session, missing, duplicate, and cyclic lineage', () => {
@@ -9133,6 +9168,7 @@ test('trace format compatibility policy documents the version layers and reader 
   assert.match(policy, /DB_VERSION/);
   assert.match(policy, /unknown event/i);
   assert.match(policy, /new optional fields/i);
+  assert.match(policy, /Reject a numeric `traceFormatVersion` newer/i);
 });
 
 test('OTLP trace converter CLI parsing keeps content opt-in and output explicit', () => {

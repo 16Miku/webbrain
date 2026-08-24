@@ -15,8 +15,10 @@ WebBrain trace data has three independent version layers:
 ## Reader obligations
 
 Treat a missing or malformed `traceFormatVersion` as the legacy baseline. Keep
-missing optional fields harmless. Readers must not fail an entire export because
-one event kind is unknown:
+missing optional fields harmless. Reject a numeric `traceFormatVersion` newer
+than the latest version the reader supports instead of interpreting `seq` and
+`ts` with older semantics. Readers must not fail an entire export because one
+event kind is unknown:
 
 - the Traces UI shows a labeled placeholder with the raw event view;
 - machine-readable exporters preserve an unknown event as a generic record with
