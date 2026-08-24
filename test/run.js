@@ -9259,6 +9259,136 @@ test('OTLP session bundles preserve cross-session, missing, duplicate, and cycli
   assert.notEqual(duplicateSpans[0].spanId, duplicateSpans[1].spanId);
 });
 
+test('OTLP collector contract: partitions sessions and keeps typed lineage links', () => {
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'bundle-session' },
+    exportedByWebBrainVersion: '33.2.1',
+    runs: [
+      {
+        run: { runId: 'session-a-root', conversationId: 'session-a', startedAt: 100, endedAt: 200 },
+        events: [],
+      },
+      {
+        run: { runId: 'session-b-root', conversationId: 'session-b', startedAt: 300, endedAt: 400 },
+        events: [],
+      },
+      {
+        run: {
+          runId: 'session-b-child', conversationId: 'session-b', parentRunId: 'session-a-root',
+          parentSessionId: 'session-a', startedAt: 500, endedAt: 600,
+        },
+        events: [{ seq: 1, ts: 550, kind: 'step_start', data: { step: 1 } }],
+      },
+    ],
+  });
+
+  assert.equal(payload.resourceSpans.length, 2, 'each session must become one resource trace');
+  const resources = payload.resourceSpans.map(resourceSpan => ({
+    attributes: otlpAttributes(resourceSpan.resource.attributes),
+    attributesRaw: resourceSpan.resource.attributes,
+    scope: resourceSpan.scopeSpans[0],
+  }));
+  const sessionA = resources.find(resource => resource.attributes['webbrain.session.id'] === 'session-a');
+  const sessionB = resources.find(resource => resource.attributes['webbrain.session.id'] === 'session-b');
+  assert.ok(sessionA, 'session A resource is missing');
+  assert.ok(sessionB, 'session B resource is missing');
+  assert.equal(sessionA.attributes['service.name'], 'webbrain');
+  assert.equal(sessionB.attributes['service.version'], '33.2.1');
+  assert.equal(sessionA.scope.scope.name, 'webbrain.trace-export');
+  assert.equal(sessionA.scope.scope.version, '33.2.1');
+
+  const traceA = sessionA.scope.spans[0].traceId;
+  const traceB = sessionB.scope.spans[0].traceId;
+  assert.match(traceA, /^[0-9a-f]{32}$/);
+  assert.match(traceB, /^[0-9a-f]{32}$/);
+  assert.notEqual(traceA, traceB, 'different sessions must not share a trace ID');
+  for (const [resource, expectedTraceId] of [[sessionA, traceA], [sessionB, traceB]]) {
+    for (const attribute of resource.attributesRaw || []) {
+      assert.equal(Object.keys(attribute.value || {}).length, 1, 'resource attributes must use one OTLP AnyValue field');
+      assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'resource attributes must not contain undefined values');
+    }
+    for (const span of resource.scope.spans) {
+      assert.equal(span.traceId, expectedTraceId, 'every span must use its resource session trace ID');
+      assert.match(span.spanId, /^[0-9a-f]{16}$/);
+      assert.match(span.startTimeUnixNano, /^[0-9]+$/);
+      assert.match(span.endTimeUnixNano, /^[0-9]+$/);
+      for (const attribute of span.attributes || []) {
+        assert.equal(Object.keys(attribute.value || {}).length, 1, 'span attributes must use one OTLP AnyValue field');
+        assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'span attributes must not contain undefined values');
+      }
+      for (const event of span.events || []) {
+        for (const attribute of event.attributes || []) {
+          assert.equal(Object.keys(attribute.value || {}).length, 1, 'event attributes must use one OTLP AnyValue field');
+          assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'event attributes must not contain undefined values');
+        }
+      }
+      for (const link of span.links || []) {
+        for (const attribute of link.attributes || []) {
+          assert.equal(Object.keys(attribute.value || {}).length, 1, 'link attributes must use one OTLP AnyValue field');
+          assert.notEqual(Object.values(attribute.value || {})[0], undefined, 'link attributes must not contain undefined values');
+        }
+      }
+    }
+  }
+
+  const child = sessionB.scope.spans.find(span => otlpAttributes(span.attributes)['webbrain.run.id'] === 'session-b-child');
+  assert.ok(child, 'cross-session child span is missing');
+  assert.equal(child.parentSpanId, undefined, 'cross-session lineage must not become a parent span');
+  assert.equal(child.links?.length, 1, 'cross-session lineage must become one span link');
+  assert.equal(child.links[0].traceId, traceA);
+  assert.match(child.links[0].spanId, /^[0-9a-f]{16}$/);
+  assert.deepEqual(otlpAttributes(child.links[0].attributes), {
+    'webbrain.parent.run.id': 'session-a-root',
+    'webbrain.parent.session.id': 'session-a',
+  });
+});
+
+test('OTLP collector contract: session content stays private unless explicitly enabled', () => {
+  const input = {
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'private-session' },
+    runs: [{
+      run: {
+        runId: 'private-session-run', conversationId: 'private-session',
+        userMessage: 'PRIVATE USER MESSAGE', finalContent: 'PRIVATE FINAL RESPONSE',
+      },
+      events: [
+        { seq: 1, ts: 100, kind: 'llm_response', data: { content: 'PRIVATE MODEL RESPONSE' } },
+        {
+          seq: 2, ts: 200, kind: 'tool',
+          data: { name: 'private_tool', args: { token: 'PRIVATE TOOL ARGUMENT' }, result: { value: 'PRIVATE TOOL RESULT' } },
+        },
+        { seq: 3, ts: 300, kind: 'screenshot', data: { screenshot_base64: 'PRIVATE SCREENSHOT' } },
+        { seq: 4, ts: 400, kind: 'future_event', data: { secret: 'PRIVATE UNKNOWN EVENT' } },
+      ],
+    }],
+  };
+  const privatePayload = traceExportToOtlp(input);
+  const privateSpans = privatePayload.resourceSpans[0].scopeSpans[0].spans;
+  assert.ok(
+    privateSpans[0].events.some(event => event.name === 'webbrain.unknown'),
+    'unknown session events must remain visible as generic collector events',
+  );
+  const privateOutput = JSON.stringify(privatePayload);
+  assert.doesNotMatch(privateOutput, /PRIVATE USER MESSAGE|PRIVATE FINAL RESPONSE|PRIVATE MODEL RESPONSE/);
+  assert.doesNotMatch(privateOutput, /PRIVATE TOOL ARGUMENT|PRIVATE TOOL RESULT|PRIVATE SCREENSHOT|PRIVATE UNKNOWN EVENT/);
+  assert.doesNotMatch(privateOutput, /gen_ai\.tool\.call\.(?:arguments|result)/);
+
+  const optedInOutput = JSON.stringify(traceExportToOtlp(input, { includeContent: true }));
+  for (const expectedContent of [
+    'PRIVATE USER MESSAGE',
+    'PRIVATE FINAL RESPONSE',
+    'PRIVATE MODEL RESPONSE',
+    'PRIVATE TOOL ARGUMENT',
+    'PRIVATE TOOL RESULT',
+    'PRIVATE UNKNOWN EVENT',
+  ]) {
+    assert.ok(optedInOutput.includes(expectedContent), `opted-in output is missing ${expectedContent}`);
+  }
+  assert.doesNotMatch(optedInOutput, /PRIVATE SCREENSHOT/);
+});
+
 test('OTLP legacy output preserves unknown event kinds as generic events', () => {
   const payload = traceExportToOtlp({
     ...OTLP_TRACE_FIXTURE,
