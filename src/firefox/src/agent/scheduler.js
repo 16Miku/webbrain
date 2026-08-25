@@ -1703,6 +1703,7 @@ export class ScheduledJobManager {
         // Persist an explicit verdict for Ask runs (they never emit a done
         // update): downstream badge styling must not guess from null.
         const effectiveOutcome = runOutcome
+          ?? normalizeDoneOutcome(runStatus)
           ?? ((running.mode || 'act') === 'ask' && askRunSucceeded(result, sawFailureLikeUpdate)
             ? 'success'
             : null);
