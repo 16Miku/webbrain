@@ -57628,25 +57628,33 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     assert.equal(infer({ category: 'cloud', providerName: 'openai', model: 'gpt-5.5' }), 400000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-4-8' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-4-6' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-fable-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-4-5' }), 200000);
     assert.equal(infer({ category: 'cloud', providerName: 'gemini', model: 'gemini-3.1-flash' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'gemini', model: 'gemini-3.7-flash' }), 1000000);
     assert.equal(infer({ category: 'router', providerName: 'cloudflare', model: '@cf/zai-org/glm-5.2' }), 262144);
     assert.equal(infer({ category: 'cloud', providerName: 'mistral', model: 'mistral-medium-3.5' }), 262144);
     assert.equal(infer({ category: 'cloud', providerName: 'deepseek', model: 'deepseek-v4-flash' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'xai', model: 'grok-4.3' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'xai', model: 'grok-4.6' }), 500000);
     assert.equal(infer({ category: 'router', providerName: 'groq', model: 'openai/gpt-oss-120b' }), 131072);
     assert.equal(infer({ category: 'router', providerName: 'nvidia', model: 'nvidia/llama-3.3-nemotron-super-49b' }), 131072);
     assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'minimax/minimax-m3' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'minimax', model: 'minimax-m2.7' }), 204800);
+    assert.equal(infer({ category: 'cloud', providerName: 'minimax', model: 'MiniMax-M3' }), 1000000);
     for (const model of ['kimi-k3', 'kimi-k-3']) {
       assert.equal(infer({ category: 'cloud', providerName: 'kimi', model }), 1000000);
     }
     for (const model of ['kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed']) {
       assert.equal(infer({ category: 'cloud', providerName: 'kimi', model }), 262144);
     }
-    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.7-max' }), 262144);
+    assert.equal(infer({ category: 'cloud', providerName: 'z_ai', model: 'glm-5.3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.7-max' }), 1000000);
     assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.7-plus' }), 1000000);
-    assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen-max' }), 32768);
+    assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen3.8-max' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen-max' }), 131072);
     assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen-plus' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'unknown', model: 'whatever' }), 128000);
   }
@@ -60210,13 +60218,13 @@ test('_defaultConfigs: new cloud providers present and disabled by default', () 
       assert.ok(defaults[id].model, `${PM.name}: ${id} missing default model`);
     }
     assert.equal(defaults.kimi.baseUrl, 'https://api.moonshot.ai/v1');
-    assert.equal(defaults.kimi.model, 'kimi-k2.5');
+    assert.equal(defaults.kimi.model, 'kimi-k3');
     assert.equal(defaults.kimi.supportsStreamUsageOptions, true);
     assert.equal(defaults.kimi.omitTemperature, true);
     assert.equal(defaults.kimi.compat?.maxTokensField, 'max_completion_tokens');
     assert.equal(defaults.kimi.compat?.omitTemperature, undefined);
     const kimi = mgr._createProvider('kimi', defaults.kimi);
-    assert.equal(kimi.contextWindow, 262144);
+    assert.equal(kimi.contextWindow, 1000000);
     assert.equal(kimi.supportsVision, true);
     const messages = [{ role: 'user', content: 'hello' }];
     const body = kimi._buildChatCompletionsBody(messages, { maxTokens: 123 }, false);
@@ -60878,14 +60886,14 @@ test('_defaultConfigs: OpenAI defaults to GPT-5.6 Terra and safely migrates the 
     assert.equal(defaults.openai.cacheReadCostPerMillionUsd, 0.25);
     assert.equal(defaults.openai.cacheWriteCostPerMillionUsd, 3.125);
     assert.equal(defaults.openai.outputCostPerMillionUsd, 15);
-    assert.equal(defaults.anthropic.cacheReadCostPerMillionUsd, 0.3);
-    assert.equal(defaults.anthropic.cacheWriteCostPerMillionUsd, 3.75);
-    assert.equal(defaults.anthropic.cacheWrite1hCostPerMillionUsd, 6);
-    assert.equal(defaults.aws_bedrock.inputCostPerMillionUsd, 3);
-    assert.equal(defaults.aws_bedrock.cacheReadCostPerMillionUsd, 0.3);
-    assert.equal(defaults.aws_bedrock.cacheWriteCostPerMillionUsd, 3.75);
-    assert.equal(defaults.aws_bedrock.cacheWrite1hCostPerMillionUsd, 6);
-    assert.equal(defaults.aws_bedrock.outputCostPerMillionUsd, 15);
+    assert.equal(defaults.anthropic.cacheReadCostPerMillionUsd, 0.2);
+    assert.equal(defaults.anthropic.cacheWriteCostPerMillionUsd, 2.5);
+    assert.equal(defaults.anthropic.cacheWrite1hCostPerMillionUsd, 4);
+    assert.equal(defaults.aws_bedrock.inputCostPerMillionUsd, 2);
+    assert.equal(defaults.aws_bedrock.cacheReadCostPerMillionUsd, 0.2);
+    assert.equal(defaults.aws_bedrock.cacheWriteCostPerMillionUsd, 2.5);
+    assert.equal(defaults.aws_bedrock.cacheWrite1hCostPerMillionUsd, 4);
+    assert.equal(defaults.aws_bedrock.outputCostPerMillionUsd, 10);
 
     const migrated = mgr._migrateStoredProviderConfigs({
       openai: {
@@ -60986,13 +60994,13 @@ test('provider settings expose cache pricing with zero-cost support', () => {
   }
 });
 
-test('Kimi settings keep K2.5 as the default and list every supported model', () => {
+test('Kimi settings default to K3 and list the current Moonshot models', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const source = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
     assert.match(
       source,
-      /kimi:\s*\{[\s\S]*?placeholder: 'kimi-k2\.5'[\s\S]*?suggestions: \['kimi-k2\.5', 'kimi-k3', 'kimi-k2\.7-code', 'kimi-k2\.7-code-highspeed', 'kimi-k2\.6'\][\s\S]*?https:\/\/api\.moonshot\.ai\/v1/,
-      `${prefix}: Kimi should default to K2.5 and list all five current model IDs`,
+      /kimi:\s*\{[\s\S]*?placeholder: 'kimi-k3'[\s\S]*?suggestions: \['kimi-k3', 'kimi-k2\.7-code', 'kimi-k2\.7-code-highspeed', 'kimi-k2\.6'\][\s\S]*?https:\/\/api\.moonshot\.ai\/v1/,
+      `${prefix}: Kimi should default to K3 and list the current Moonshot model IDs`,
     );
   }
 });

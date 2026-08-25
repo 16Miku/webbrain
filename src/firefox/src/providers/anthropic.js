@@ -22,7 +22,7 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   get model() {
-    return this.config.model || 'claude-sonnet-4-20250514';
+    return this.config.model || 'claude-sonnet-5';
   }
 
   get supportsTools() {
@@ -30,7 +30,7 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   get supportsVision() {
-    return /claude-(3|sonnet-4|opus-4|haiku-4|4)/.test(this.config.model || '');
+    return /claude-(?:3|4|5|sonnet-|opus-|haiku-|fable-|mythos-)/.test(this.config.model || '');
   }
 
   get supportsDocuments() {
