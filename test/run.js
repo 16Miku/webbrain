@@ -72508,7 +72508,7 @@ test('non-stream and stream runs block plain finals and unverified success until
   }
 });
 
-test('repeated plain finals stop after one completion-protocol recovery with a partial outcome', async () => {
+test('repeated plain finals stop after two completion-protocol recovery turns with a partial outcome', async () => {
   const buildResponses = (verified) => [
     {
       content: null,
@@ -72524,6 +72524,7 @@ test('repeated plain finals stop after one completion-protocol recovery with a p
         function: { name: 'read_page', arguments: '{}' },
       }],
     }] : []),
+    { content: 'The requested action completed successfully.', toolCalls: [] },
     { content: 'The requested action completed successfully.', toolCalls: [] },
     { content: 'The requested action completed successfully.', toolCalls: [] },
   ];
@@ -72608,14 +72609,14 @@ test('repeated plain finals stop after one completion-protocol recovery with a p
         const final = await run(tabId, 'perform the action', (type, data) => updates.push({ type, data }), 'act');
 
         assert.match(final, /Outcome: partial\./, `${AgentClass.name}/${streaming}/${verified}: repeated plain final did not end as partial`);
-        assert.equal(provider.calls, verified ? 4 : 3, `${AgentClass.name}/${streaming}/${verified}: completion recovery was not bounded to one turn`);
+        assert.equal(provider.calls, verified ? 5 : 4, `${AgentClass.name}/${streaming}/${verified}: completion recovery was not bounded to two turns`);
         assert.equal(responses.length, 0, `${AgentClass.name}/${streaming}/${verified}: expected response sequence was not consumed`);
         assert.equal(ended?.status, 'partial', `${AgentClass.name}/${streaming}/${verified}: trace did not record the partial terminal outcome`);
         assert.equal(ended?.finalContent, final, `${AgentClass.name}/${streaming}/${verified}: trace final content diverged from the visible partial`);
         assert.equal(
           agent.conversations.get(tabId).filter(message => message.role === 'user' && /RUNTIME COMPLETION BLOCK/.test(message.content || '')).length,
-          1,
-          `${AgentClass.name}/${streaming}/${verified}: completion nudge was repeated`,
+          2,
+          `${AgentClass.name}/${streaming}/${verified}: completion nudge was not sent twice`,
         );
         assert.ok(
           updates.some(update => update.type === 'run_status' && update.data?.status === 'partial' && update.data?.message === final),
@@ -72636,6 +72637,96 @@ test('repeated plain finals stop after one completion-protocol recovery with a p
         }
         assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}/${streaming}/${verified}: partial exit leaked completion state`);
       }
+    }
+  }
+});
+
+test('repeated plain finals at the step limit emit partial instead of max_steps', async () => {
+  for (const streaming of [false, true]) {
+    for (const [browserIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const responses = [
+        {
+          content: null,
+          toolCalls: [{
+            id: 'step_limit_click',
+            function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_6' }) },
+          }],
+        },
+        { content: 'Done.', toolCalls: [] },
+        { content: 'Done.', toolCalls: [] },
+        { content: 'Done.', toolCalls: [] },
+      ];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        calls: 0,
+      };
+      if (streaming) {
+        provider.chatStream = async function* () {
+          this.calls++;
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: step-limit test consumed all responses`);
+          if (next.content) yield { type: 'text', content: next.content };
+          if (next.toolCalls?.length) {
+            yield {
+              type: 'tool_call',
+              content: next.toolCalls.map((call, index) => ({
+                index,
+                id: call.id,
+                function: call.function,
+              })),
+            };
+          }
+          yield { type: 'done' };
+        };
+      } else {
+        provider.chat = async () => {
+          provider.calls++;
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: step-limit test consumed all responses`);
+          return next;
+        };
+      }
+
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 24900 + (streaming ? 100 : 0) + browserIndex;
+      agent.planBeforeAct = false;
+      agent._maybeRunPlannerGate = async () => ({
+        proceed: true,
+        requestKind: 'execute',
+        requiresStateChange: true,
+      });
+      agent.maxSteps = 3;
+      agent.autoScreenshot = 'off';
+      agent._skipPermissionGate = true;
+      agent._manageContext = async () => {};
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+      agent._maybeReinjectAdapter = async () => {};
+      agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+      agent._persist = () => {};
+      agent._startTraceRun = async () => {
+        const runId = `step_limit_${tabId}`;
+        agent.currentRunId.set(tabId, runId);
+        return runId;
+      };
+      agent._endTraceRun = () => {};
+      agent.executeTool = async (_toolTabId, name) => {
+        if (name === 'click_ax') return { success: true, verified: true, method: 'click_ax' };
+        throw new Error(`unexpected tool ${name}`);
+      };
+
+      const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
+      const final = await run(tabId, 'perform the action', () => {}, 'act');
+
+      assert.match(final, /Outcome: partial\./, `${AgentClass.name}/${streaming}: step-limit plain final did not emit partial`);
+      assert.equal(provider.calls, 3, `${AgentClass.name}/${streaming}: step-limit test used wrong number of calls`);
     }
   }
 });

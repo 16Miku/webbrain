@@ -21085,7 +21085,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
     let structuredOutputRecoveryAttempted = false;
-    let completionPlainFinalRecoveryAttempted = false;
+    let completionPlainFinalRecoveryAttempted = 0;
     let askStreamingDisabledForRun = false;
 
     // Keep trace persistence ordered without putting IndexedDB on the token
@@ -21642,7 +21642,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const readFinalBlock = this._readCompletenessBlock(tabId);
       const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
       if (plainFinalBlocks.length) {
-        if (completionFinalBlock && completionPlainFinalRecoveryAttempted) {
+        if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2) {
           finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
             progressBlocked: !!progressFinalBlock,
             readBlocked: !!readFinalBlock,
@@ -21655,7 +21655,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await this._persistNow(tabId);
           return finalResponse;
         }
-        if (completionFinalBlock) completionPlainFinalRecoveryAttempted = true;
+        if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
+        if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && steps >= this.maxSteps) {
+          finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
+            progressBlocked: !!progressFinalBlock,
+            readBlocked: !!readFinalBlock,
+          });
+          _traceStatus = 'partial';
+          messages.push({ role: 'assistant', content: finalResponse });
+          onUpdate('text', { content: finalResponse, replace: true });
+          onUpdate('warning', { message: 'Run stopped after a repeated unstructured completion response.' });
+          onUpdate('run_status', { status: 'partial', message: finalResponse });
+          await this._persistNow(tabId);
+          return finalResponse;
+        }
         messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
         messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
         onUpdate('warning', { message: readFinalBlock
@@ -22006,7 +22019,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // See processMessage — used to break the empty-response→nudge cycle.
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
-    let completionPlainFinalRecoveryAttempted = false;
+    let completionPlainFinalRecoveryAttempted = 0;
     let pendingVisionFallbackMessages = null;
     let visionFallbackAttempted = false;
     let streamEmittedOutput = false;
@@ -22363,7 +22376,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const readFinalBlock = this._readCompletenessBlock(tabId);
         const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
         if (plainFinalBlocks.length) {
-          if (completionFinalBlock && completionPlainFinalRecoveryAttempted) {
+          if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2) {
             const partial = this._completionPlainFinalPartial(tabId, fullText, {
               progressBlocked: !!progressFinalBlock,
               readBlocked: !!readFinalBlock,
@@ -22375,7 +22388,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             await this._persistNow(tabId);
             return finish(partial, 'partial');
           }
-          if (completionFinalBlock) completionPlainFinalRecoveryAttempted = true;
+          if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
+          if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && steps >= this.maxSteps) {
+            const partial = this._completionPlainFinalPartial(tabId, fullText, {
+              progressBlocked: !!progressFinalBlock,
+              readBlocked: !!readFinalBlock,
+            });
+            messages.push({ role: 'assistant', content: partial });
+            onUpdate('text', { content: partial, replace: true });
+            onUpdate('warning', { message: 'Run stopped after a repeated unstructured completion response.' });
+            onUpdate('run_status', { status: 'partial', message: partial });
+            await this._persistNow(tabId);
+            return finish(partial, 'partial');
+          }
           messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
           messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
           if (completionFinalBlock || readFinalBlock) onUpdate('text', { content: '', replace: true });
