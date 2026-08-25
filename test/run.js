@@ -47171,6 +47171,63 @@ test('ScheduledJobManager marks invalid delivery recovery as failed', async () =
   }
 });
 
+test('ScheduledJobManager preserves runtime-owned partial completion outcomes', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    const partialMessage = 'The completion protocol stopped after one recovery. Outcome: partial.';
+    const taskHarness = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (_tabId, _message, onUpdate) => {
+        onUpdate('run_status', { status: 'partial', message: partialMessage });
+        return partialMessage;
+      },
+    });
+    const task = await taskHarness.manager.createTaskJob({
+      tabId: 77,
+      conversationId: 'conv-1',
+      args: {
+        title: 'Partial completion task',
+        prompt: 'Perform the requested action.',
+        schedule: { type: 'once', after_seconds: 60 },
+        target: { type: 'current_tab' },
+      },
+      currentUrl: 'https://example.com/',
+      currentTitle: 'Example',
+    });
+
+    await taskHarness.manager.handleAlarm(taskHarness.alarmName(task.jobId));
+    assert.equal(taskHarness.jobs()[0].status, 'completed', `${label}: one-shot partial should settle the scheduled run`);
+    assert.equal(taskHarness.jobs()[0].lastOutcome, 'partial', `${label}: runtime partial was not persisted as the task outcome`);
+
+    const watchHarness = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (_tabId, _message, onUpdate) => {
+        onUpdate('run_status', { status: 'partial', message: partialMessage });
+        return partialMessage;
+      },
+    });
+    const watch = await watchHarness.manager.createWatchJob({
+      tabId: 77,
+      args: {
+        prompt: 'Check whether the requested condition is true.',
+        keep: true,
+        interval_seconds: 60,
+      },
+      currentUrl: 'https://example.com/',
+    });
+
+    await watchHarness.manager.handleAlarm(watchHarness.alarmName(watch.jobId));
+    const watchJob = watchHarness.jobs()[0];
+    assert.equal(watchJob.status, 'pending', `${label}: runtime partial incorrectly failed or completed the watch`);
+    assert.equal(watchJob.lastOutcome, 'partial', `${label}: runtime partial was not preserved as a watch poll`);
+    assert.equal(
+      watchHarness.updates.some(update => update.type === 'scheduled_job' && update.data?.event === 'polled'),
+      true,
+      `${label}: runtime partial did not emit a non-terminal watch poll`,
+    );
+  }
+});
+
 test('sidepanel settles terminal scheduled clarification events and renders their result', () => {
   for (const [label, rel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
@@ -72383,6 +72440,182 @@ test('non-stream and stream runs block plain finals and unverified success until
         `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: unverified done block was not persisted`,
       );
       assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: completed run leaked invariant state`);
+    }
+  }
+});
+
+test('repeated plain finals stop after one completion-protocol recovery with a partial outcome', async () => {
+  const buildResponses = (verified) => [
+    {
+      content: null,
+      toolCalls: [{
+        id: 'repeat_plain_click',
+        function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_6' }) },
+      }],
+    },
+    ...(verified ? [{
+      content: null,
+      toolCalls: [{
+        id: 'repeat_plain_observe',
+        function: { name: 'read_page', arguments: '{}' },
+      }],
+    }] : []),
+    { content: 'The requested action completed successfully.', toolCalls: [] },
+    { content: 'The requested action completed successfully.', toolCalls: [] },
+  ];
+
+  for (const streaming of [false, true]) {
+    for (const verified of [false, true]) {
+      for (const [browserIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+        const responses = buildResponses(verified);
+        const provider = {
+          supportsTools: true,
+          supportsVision: false,
+          promptTier: 'full',
+          contextWindow: 128000,
+          model: 'test-model',
+          name: 'test-provider',
+          calls: 0,
+        };
+        if (streaming) {
+          provider.chatStream = async function* () {
+            this.calls++;
+            const next = responses.shift();
+            assert.ok(next, `${AgentClass.name}: repeated streamed plain final caused an extra model call`);
+            if (next.content) yield { type: 'text', content: next.content };
+            if (next.toolCalls?.length) {
+              yield {
+                type: 'tool_call',
+                content: next.toolCalls.map((call, index) => ({
+                  index,
+                  id: call.id,
+                  function: call.function,
+                })),
+              };
+            }
+            yield { type: 'done' };
+          };
+        } else {
+          provider.chat = async () => {
+            provider.calls++;
+            const next = responses.shift();
+            assert.ok(next, `${AgentClass.name}: repeated plain final caused an extra model call`);
+            return next;
+          };
+        }
+
+        const agent = new AgentClass({
+          getActive: () => provider,
+          getVisionProvider: async () => null,
+        });
+        const tabId = 24820 + (streaming ? 100 : 0) + (verified ? 10 : 0) + browserIndex;
+        agent.planBeforeAct = false;
+        agent._maybeRunPlannerGate = async () => ({
+          proceed: true,
+          requestKind: 'execute',
+          requiresStateChange: true,
+        });
+        agent.maxSteps = 8;
+        agent.autoScreenshot = 'off';
+        agent._skipPermissionGate = true;
+        agent._manageContext = async () => {};
+        agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+        agent._maybeReinjectAdapter = async () => {};
+        agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+        agent._persist = () => {};
+        let ended = null;
+        agent._startTraceRun = async () => {
+          const runId = `repeat_plain_${tabId}`;
+          agent.currentRunId.set(tabId, runId);
+          return runId;
+        };
+        agent._endTraceRun = (_tabId, runId, status, finalContent) => {
+          ended = { runId, status, finalContent };
+          agent.currentRunId.delete(tabId);
+        };
+        agent.executeTool = async (_toolTabId, name) => {
+          if (name === 'click_ax') return { success: true, verified: true, method: 'click_ax' };
+          if (name === 'read_page') return { success: true, content: 'The requested state is visible.' };
+          throw new Error(`unexpected tool ${name}`);
+        };
+
+        const updates = [];
+        const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
+        const final = await run(tabId, 'perform the action', (type, data) => updates.push({ type, data }), 'act');
+
+        assert.match(final, /Outcome: partial\./, `${AgentClass.name}/${streaming}/${verified}: repeated plain final did not end as partial`);
+        assert.equal(provider.calls, verified ? 4 : 3, `${AgentClass.name}/${streaming}/${verified}: completion recovery was not bounded to one turn`);
+        assert.equal(responses.length, 0, `${AgentClass.name}/${streaming}/${verified}: expected response sequence was not consumed`);
+        assert.equal(ended?.status, 'partial', `${AgentClass.name}/${streaming}/${verified}: trace did not record the partial terminal outcome`);
+        assert.equal(ended?.finalContent, final, `${AgentClass.name}/${streaming}/${verified}: trace final content diverged from the visible partial`);
+        assert.equal(
+          agent.conversations.get(tabId).filter(message => message.role === 'user' && /RUNTIME COMPLETION BLOCK/.test(message.content || '')).length,
+          1,
+          `${AgentClass.name}/${streaming}/${verified}: completion nudge was repeated`,
+        );
+        assert.ok(
+          updates.some(update => update.type === 'run_status' && update.data?.status === 'partial' && update.data?.message === final),
+          `${AgentClass.name}/${streaming}/${verified}: visible partial run status missing`,
+        );
+        if (verified) {
+          assert.match(final, /Latest model output/, `${AgentClass.name}/${streaming}: verified partial discarded the useful model result`);
+          assert.match(final, /requested action completed successfully/, `${AgentClass.name}/${streaming}: verified partial lost the model result`);
+        } else {
+          assert.match(final, /final state was not verified/i, `${AgentClass.name}/${streaming}: unverified action warning missing`);
+          assert.doesNotMatch(final, /requested action completed successfully/i, `${AgentClass.name}/${streaming}: unverified success claim leaked into the terminal result`);
+        }
+        if (streaming) {
+          assert.ok(
+            updates.some(update => update.type === 'text' && update.data?.replace === true && update.data?.content === final),
+            `${AgentClass.name}: streamed repeated plain final was not replaced by the runtime partial`,
+          );
+        }
+        assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}/${streaming}/${verified}: partial exit leaked completion state`);
+      }
+    }
+  }
+});
+
+test('repeated plain-final partials preserve active progress and complete-read limitations', () => {
+  for (const [label, AgentClass, sourceRel] of [
+    ['chrome', AgentCh, 'src/chrome/src/agent/agent.js'],
+    ['firefox', AgentFx, 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = label === 'chrome' ? 24840 : 24841;
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Process every listed item.' },
+    ]);
+    agent.completionInvariants.set(tabId, {
+      hadAction: true,
+      verificationDebt: false,
+      iframeFormVerificationDebt: false,
+    });
+    allowProgress(agent, tabId, ['process_item'], { taskText: 'Process every listed item.' });
+    agent._progressUpdate(tabId, {
+      items: [{ id: 'item-1', label: 'Item one', action: 'process_item', status: 'pending' }],
+    });
+
+    const partial = agent._completionPlainFinalPartial(
+      tabId,
+      'Everything completed successfully.',
+      { progressBlocked: true, readBlocked: true },
+    );
+    assert.match(partial, /Outcome: partial\./, `${label}: blocker-aware terminal lost the partial outcome`);
+    assert.match(partial, /complete-thread read is still incomplete/i, `${label}: complete-read limitation was hidden`);
+    assert.match(partial, /unresolved progress rows/i, `${label}: progress limitation was hidden`);
+    assert.match(partial, /Progress ledger: 1 row\(s\)/, `${label}: progress counts were not delivered`);
+    assert.match(partial, /pending: Item one/, `${label}: unresolved row was not delivered`);
+    assert.doesNotMatch(partial, /Everything completed successfully/, `${label}: contradictory model success text leaked through active blockers`);
+
+    const source = fs.readFileSync(path.join(ROOT, sourceRel), 'utf8');
+    for (const terminalContent of ['result.content', 'fullText']) {
+      const callPattern = new RegExp(
+        `_completionPlainFinalPartial\\(tabId, ${terminalContent.replace('.', '\\.')}, \\{[\\s\\S]{0,180}progressBlocked: !!progressFinalBlock,[\\s\\S]{0,120}readBlocked: !!readFinalBlock,`,
+      );
+      assert.match(source, callPattern, `${label}: ${terminalContent} path did not forward coexisting blockers`);
     }
   }
 });

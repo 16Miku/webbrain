@@ -30,7 +30,7 @@ import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLe
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
-import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
+import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
 import { cdpClient } from '../cdp/cdp-client.js';
 import { getActiveAdapter, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getMessageRecipientGuardPolicy, parseCarouselSlideCount, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
@@ -1472,6 +1472,25 @@ export class Agent extends LoopDetector {
       return '[RUNTIME COMPLETION BLOCK: The last text-entry attempt targeted a rich-text formatting toolbar, so ordinary final text cannot complete this action. Enter the requested content in the associated editor body and verify that edit on a fresh turn. If recovery is impossible, call done with outcome="partial" or outcome="failed" instead of claiming completion.]';
     }
     return completionPlainFinalBlock(this.completionInvariants.get(tabId));
+  }
+
+  _completionPlainFinalPartial(tabId, content, { progressBlocked = false, readBlocked = false } = {}) {
+    const preserveModelOutput = !progressBlocked && !readBlocked;
+    let partial = completionPlainFinalPartial(
+      this.completionInvariants.get(tabId),
+      preserveModelOutput ? repairAssistantDisplayText(content) : '',
+      {
+        verificationPending: this._richTextToolbarGuard.hasPending(tabId),
+      },
+    );
+    if (readBlocked) {
+      partial += '\n\nThe requested complete-thread read is still incomplete, so no whole-thread answer or summary was verified.';
+    }
+    if (progressBlocked) {
+      partial += '\n\nThe repeated-item task still has unresolved progress rows.';
+      partial = this._appendProgressLedgerToFinal(tabId, partial);
+    }
+    return partial;
   }
 
   _consumeCompletionObservation(tabId) {
@@ -27437,6 +27456,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
     let structuredOutputRecoveryAttempted = false;
+    let completionPlainFinalRecoveryAttempted = false;
     let standaloneWikipediaModelSearchAttempted = false;
     let standaloneIncompleteAnswerRecoveryAttempted = false;
     let standaloneWebgpuBudgetRecoveryAttempted = false;
@@ -28083,6 +28103,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const readFinalBlock = this._readCompletenessBlock(tabId);
       const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
       if (plainFinalBlocks.length) {
+        if (completionFinalBlock && completionPlainFinalRecoveryAttempted) {
+          finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
+            progressBlocked: !!progressFinalBlock,
+            readBlocked: !!readFinalBlock,
+          });
+          _traceStatus = 'partial';
+          messages.push({ role: 'assistant', content: finalResponse });
+          onUpdate('text', { content: finalResponse, replace: true });
+          onUpdate('warning', { message: 'Run stopped after a repeated unstructured completion response.' });
+          onUpdate('run_status', { status: 'partial', message: finalResponse });
+          await this._persistNow(tabId);
+          return finalResponse;
+        }
+        if (completionFinalBlock) completionPlainFinalRecoveryAttempted = true;
         messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
         messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
         onUpdate('warning', { message: readFinalBlock
@@ -28515,6 +28549,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // See processMessage — used to break the empty-response→nudge cycle.
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
+    let completionPlainFinalRecoveryAttempted = false;
     let standaloneWikipediaModelSearchAttempted = false;
     let standaloneIncompleteAnswerRecoveryAttempted = false;
     let standaloneWebgpuBudgetRecoveryAttempted = false;
@@ -28925,6 +28960,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const readFinalBlock = this._readCompletenessBlock(tabId);
         const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
         if (plainFinalBlocks.length) {
+          if (completionFinalBlock && completionPlainFinalRecoveryAttempted) {
+            const partial = this._completionPlainFinalPartial(tabId, fullText, {
+              progressBlocked: !!progressFinalBlock,
+              readBlocked: !!readFinalBlock,
+            });
+            messages.push({ role: 'assistant', content: partial });
+            onUpdate('text', { content: partial, replace: true });
+            onUpdate('warning', { message: 'Run stopped after a repeated unstructured completion response.' });
+            onUpdate('run_status', { status: 'partial', message: partial });
+            await this._persistNow(tabId);
+            return finish(partial, 'partial');
+          }
+          if (completionFinalBlock) completionPlainFinalRecoveryAttempted = true;
           messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
           messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
           if (completionFinalBlock || readFinalBlock) onUpdate('text', { content: '', replace: true });
