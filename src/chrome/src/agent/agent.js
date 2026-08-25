@@ -28116,7 +28116,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await this._persistNow(tabId);
           return finalResponse;
         }
-          if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
+        if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
+        if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && steps >= this.maxSteps) {
+          finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
+            progressBlocked: !!progressFinalBlock,
+            readBlocked: !!readFinalBlock,
+          });
+          _traceStatus = 'partial';
+          messages.push({ role: 'assistant', content: finalResponse });
+          onUpdate('text', { content: finalResponse, replace: true });
+          onUpdate('warning', { message: 'Run stopped after a repeated unstructured completion response.' });
+          onUpdate('run_status', { status: 'partial', message: finalResponse });
+          await this._persistNow(tabId);
+          return finalResponse;
+        }
         messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
         messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
         onUpdate('warning', { message: readFinalBlock
@@ -28972,7 +28985,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             await this._persistNow(tabId);
             return finish(partial, 'partial');
           }
-        if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
+          if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
+          if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && steps >= this.maxSteps) {
+            const partial = this._completionPlainFinalPartial(tabId, fullText, {
+              progressBlocked: !!progressFinalBlock,
+              readBlocked: !!readFinalBlock,
+            });
+            messages.push({ role: 'assistant', content: partial });
+            onUpdate('text', { content: partial, replace: true });
+            onUpdate('warning', { message: 'Run stopped after a repeated unstructured completion response.' });
+            onUpdate('run_status', { status: 'partial', message: partial });
+            await this._persistNow(tabId);
+            return finish(partial, 'partial');
+          }
           messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
           messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
           if (completionFinalBlock || readFinalBlock) onUpdate('text', { content: '', replace: true });
