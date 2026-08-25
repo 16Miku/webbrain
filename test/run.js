@@ -9982,6 +9982,59 @@ test('trace repair: stale interrupted runs receive one ordered terminal repair',
   assert.equal(plan.run.repairedAt, 100_000);
 });
 
+test('trace repair: reconstructs the durable statistics snapshot before closing a run', () => {
+  const run = {
+    runId: 'run_with_metrics',
+    startedAt: 1_000,
+    status: 'running',
+    stepCount: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCost: 0,
+    llmRequestCount: 0,
+    llmResponseCount: 0,
+    toolCallCount: 0,
+    errorCount: 0,
+    retryCount: 0,
+    totalLlmLatencyMs: 0,
+    totalToolLatencyMs: 0,
+  };
+  const events = [
+    { runId: run.runId, seq: 1, kind: 'step_start', data: { step: 1 } },
+    { runId: run.runId, seq: 2, kind: 'llm_request', data: { step: 1 } },
+    { runId: run.runId, seq: 3, kind: 'llm_response', data: {
+      step: 1,
+      usage: { prompt_tokens: 10, completion_tokens: 4, cost: 0.12 },
+      latencyMs: 300,
+    } },
+    { runId: run.runId, seq: 4, kind: 'tool', data: { step: 1, latencyMs: 35, result: { success: false } } },
+    { runId: run.runId, seq: 5, kind: 'note', data: { step: 1, note: 'llm_retry' } },
+    { runId: run.runId, seq: 6, kind: 'error', data: { step: 1, phase: 'loop', code: 'TRANSPORT' } },
+  ];
+  const plan = TRACE_REPAIR_CH.buildTraceRepairPlan(run, events, {
+    now: 100_000,
+    staleAfterMs: 60_000,
+  });
+
+  assert.ok(plan, 'an old running run must produce a repair plan');
+  assert.equal(plan.run.stepCount, 1);
+  assert.equal(plan.run.totalInputTokens, 10);
+  assert.equal(plan.run.totalOutputTokens, 4);
+  assert.equal(plan.run.totalCost, 0.12);
+  assert.equal(plan.run.llmRequestCount, 1);
+  assert.equal(plan.run.llmResponseCount, 1);
+  assert.equal(plan.run.toolCallCount, 1);
+  assert.equal(plan.run.errorCount, 2, 'the repair error must join the existing error snapshot');
+  assert.equal(plan.run.retryCount, 1);
+  assert.equal(plan.run.totalLlmLatencyMs, 300);
+  assert.equal(plan.run.totalToolLatencyMs, 35);
+  assert.deepEqual(
+    TRACE_REPAIR_FX.buildTraceRepairPlan(run, events, { now: 100_000, staleAfterMs: 60_000 }).run,
+    plan.run,
+    'Firefox repair statistics must match Chrome',
+  );
+});
+
 test('trace repair: ignores recent and already repaired runs, with mirrored helpers', () => {
   const recent = { runId: 'recent', startedAt: 95_000, status: 'running' };
   const activeLongRun = { runId: 'active_long', startedAt: 1_000, status: 'running' };
@@ -10168,6 +10221,17 @@ test('trace stats: aggregates event metrics and mirrors browser modules', () => 
     hasLoopError: true,
   });
   assert.deepEqual(TRACE_STATS_FX.buildTraceStats(events), stats, 'Chrome/Firefox stats aggregators must agree');
+});
+
+test('trace stats: counts started steps when no response was recorded', () => {
+  const events = [
+    { kind: 'step_start', data: { step: 1 } },
+    { kind: 'step_end', data: { step: 1, ok: false, code: 'TRANSPORT' } },
+    { kind: 'step_start', data: { step: 2 } },
+  ];
+  const stats = TRACE_STATS_CH.buildTraceStats(events);
+  assert.equal(stats.stepCount, 2, 'failed or interrupted steps must remain visible in run statistics');
+  assert.equal(TRACE_STATS_FX.buildTraceStats(events).stepCount, 2, 'Firefox statistics must count the same incomplete steps');
 });
 
 test('trace stats: aggregates durable run snapshots without replaying events', () => {

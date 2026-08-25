@@ -1,5 +1,6 @@
 import { makeEvent } from './event-model.js';
 import { normalizeErrorCode } from './error-codes.js';
+import { buildTraceStats } from './stats.js';
 
 // A run can legitimately take a while, so repair only treats records older
 // than this conservative window as abandoned. Callers/tests may provide a
@@ -108,14 +109,30 @@ export function buildTraceRepairPlan(run, events, {
 
   const maxStep = orderedEvents.reduce((max, event) => Math.max(max, eventStep(event) ?? 0), 0);
   const startedAt = Number(run.startedAt);
+  const persistedEvents = repairedEvents.filter(Boolean);
+  // The run record may still contain its start-time zero snapshot because the
+  // normal endRun reducer never ran. Rebuild every durable metric from the
+  // original log plus the synthetic terminal events we are about to persist.
+  const stats = buildTraceStats([...orderedEvents, ...persistedEvents]);
   return {
-    events: repairedEvents.filter(Boolean),
+    events: persistedEvents,
     run: {
       ...run,
       endedAt: now,
       durationMs: Math.max(0, now - startedAt),
       status: 'error',
-      stepCount: Math.max(Number(run.stepCount) || 0, maxStep),
+      stepCount: Math.max(Number(run.stepCount) || 0, stats.stepCount, maxStep),
+      totalInputTokens: stats.totalInputTokens,
+      totalOutputTokens: stats.totalOutputTokens,
+      totalCost: stats.totalCost,
+      llmRequestCount: stats.llmRequestCount,
+      llmResponseCount: stats.llmResponseCount,
+      toolCallCount: stats.toolCallCount,
+      visionSubCallCount: stats.visionSubCallCount,
+      errorCount: stats.errorCount,
+      retryCount: stats.retryCount,
+      totalLlmLatencyMs: stats.totalLlmLatencyMs,
+      totalToolLatencyMs: stats.totalToolLatencyMs,
       repairedBy: TRACE_REPAIR_MARKER,
       repairedAt: now,
       repairReason: TRACE_REPAIR_REASON,
