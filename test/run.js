@@ -61115,6 +61115,103 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
   }
 });
 
+test('ProviderManager load persists untouched default-model migrations', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const validGuid = '11111111-1111-4111-8111-111111111111';
+
+  function makeRuntime(storageData) {
+    const local = {
+      async get(keys) {
+        if (Array.isArray(keys)) {
+          const out = {};
+          for (const key of keys) out[key] = storageData[key];
+          return out;
+        }
+        if (typeof keys === 'string') return { [keys]: storageData[keys] };
+        return { ...storageData };
+      },
+      async set(patch) {
+        Object.assign(storageData, patch);
+      },
+      async remove(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete storageData[key];
+      },
+    };
+    return {
+      storage: { local },
+      runtime: {
+        id: 'test-runtime',
+        getPlatformInfo(cb) {
+          const info = { os: 'test', arch: 'x64', nacl_arch: 'x64' };
+          if (typeof cb === 'function') cb(info);
+          return Promise.resolve(info);
+        },
+      },
+    };
+  }
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const defaults = new PM()._defaultConfigs();
+      const storageData = {
+        webbrainDeviceGuid: validGuid,
+        providers: {
+          anthropic: {
+            model: 'claude-sonnet-4-6',
+            inputCostPerMillionUsd: 3,
+            cacheReadCostPerMillionUsd: 0.3,
+            cacheWriteCostPerMillionUsd: 3.75,
+            cacheWrite1hCostPerMillionUsd: 6,
+            outputCostPerMillionUsd: 15,
+            apiKey: '',
+            configured: false,
+          },
+          cohere: {
+            model: 'command-a-03-2025',
+            contextWindow: 256000,
+            inputCostPerMillionUsd: 2.5,
+            outputCostPerMillionUsd: 10,
+            configured: false,
+            apiKey: '',
+          },
+        },
+      };
+      globalThis[runtimeKey] = makeRuntime(storageData);
+
+      await new PM().load();
+
+      assert.equal(
+        storageData.providers.anthropic.model,
+        defaults.anthropic.model,
+        `${label}: migrated Anthropic model must be saved`,
+      );
+      assert.equal(
+        storageData.providers.anthropic.inputCostPerMillionUsd,
+        defaults.anthropic.inputCostPerMillionUsd,
+        `${label}: migrated Anthropic costs must be saved`,
+      );
+      assert.equal(storageData.providers.anthropic.configured, false, `${label}: Anthropic should stay unconfigured`);
+      assert.equal(
+        storageData.providers.cohere.model,
+        defaults.cohere.model,
+        `${label}: migrated Cohere model must be saved`,
+      );
+      assert.equal(
+        storageData.providers.cohere.contextWindow,
+        defaults.cohere.contextWindow,
+        `${label}: migrated Cohere context window must be saved`,
+      );
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
 test('built-in StepFun catalog entry enables vision for step-3 models', () => {
   for (const [label, Catalog, Provider] of [
     ['chrome', ProviderCatalogCh, OpenAIProviderCh],
