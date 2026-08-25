@@ -529,7 +529,7 @@ export function completionPlainFinalPartial(state, content, { verificationPendin
     || !!state?.verificationDebt
     || !!state?.iframeFormVerificationDebt;
   const lines = [
-    'The run stopped after the model returned plain text twice instead of the required structured completion.',
+    'The run stopped after the model returned plain text repeatedly instead of the required structured completion.',
     'Outcome: partial.',
   ];
   if (mustVerify) {
@@ -539,7 +539,7 @@ export function completionPlainFinalPartial(state, content, { verificationPendin
   lines.push('The latest page state was observed, but the model did not complete the required done handoff.');
   const summary = String(content || '').trim();
   if (summary) {
-    const bounded = summary.length > 4000 ? `${summary.slice(0, 4000)}\n[Latest model output truncated]` : summary;
+    const bounded = summary.length > 12000 ? `${summary.slice(0, 12000)}\n[Latest model output truncated]` : summary;
     lines.push(`Latest model output (not accepted as verified completion):\n${bounded}`);
   }
   return lines.join('\n\n');
