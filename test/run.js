@@ -57628,25 +57628,40 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     assert.equal(infer({ category: 'cloud', providerName: 'openai', model: 'gpt-5.5' }), 400000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-4-8' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-4-6' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-fable-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-4-5' }), 200000);
     assert.equal(infer({ category: 'cloud', providerName: 'gemini', model: 'gemini-3.1-flash' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'gemini', model: 'gemini-3.7-flash' }), 1000000);
     assert.equal(infer({ category: 'router', providerName: 'cloudflare', model: '@cf/zai-org/glm-5.2' }), 262144);
     assert.equal(infer({ category: 'cloud', providerName: 'mistral', model: 'mistral-medium-3.5' }), 262144);
     assert.equal(infer({ category: 'cloud', providerName: 'deepseek', model: 'deepseek-v4-flash' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'xai', model: 'grok-4.3' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'xai', model: 'grok-4.6' }), 500000);
     assert.equal(infer({ category: 'router', providerName: 'groq', model: 'openai/gpt-oss-120b' }), 131072);
+    assert.equal(infer({ category: 'router', providerName: 'groq', model: 'qwen/qwen3.6-27b' }), 131072);
     assert.equal(infer({ category: 'router', providerName: 'nvidia', model: 'nvidia/llama-3.3-nemotron-super-49b' }), 131072);
+    assert.equal(infer({ category: 'router', providerName: 'nvidia', model: 'nvidia/nemotron-3-super-120b-a12b' }), 131072);
     assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'minimax/minimax-m3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.8-27b' }), 262144);
+    assert.equal(infer({ category: 'router', providerName: 'huggingface', model: 'Qwen/Qwen3.6-27B' }), 262144);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'moonshotai/kimi-k3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'z-ai/glm-5.3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'fireworks', model: 'accounts/fireworks/models/glm-5p2' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'minimax', model: 'minimax-m2.7' }), 204800);
+    assert.equal(infer({ category: 'cloud', providerName: 'minimax', model: 'MiniMax-M3' }), 1000000);
     for (const model of ['kimi-k3', 'kimi-k-3']) {
       assert.equal(infer({ category: 'cloud', providerName: 'kimi', model }), 1000000);
     }
     for (const model of ['kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed']) {
       assert.equal(infer({ category: 'cloud', providerName: 'kimi', model }), 262144);
     }
-    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.7-max' }), 262144);
+    assert.equal(infer({ category: 'cloud', providerName: 'z_ai', model: 'glm-5.3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.7-max' }), 1000000);
     assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.7-plus' }), 1000000);
-    assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen-max' }), 32768);
+    assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen3.8-max' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen-max' }), 131072);
     assert.equal(infer({ category: 'cloud', providerName: 'alibaba', model: 'qwen-plus' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'unknown', model: 'whatever' }), 128000);
   }
@@ -59848,6 +59863,10 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
 
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.morph.supportsTools, false);
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.perplexity.supportsTools, false);
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.supportsVision, true);
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.model, 'step-3.7-flash');
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.modelscope.supportsVision, true);
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.siliconflow.supportsVision, true);
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['perplexity-agent'].apiFormat, 'responses');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['azure-cognitive-services'].model, '');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['kimi-for-coding'].model, 'kimi-for-coding');
@@ -60210,13 +60229,13 @@ test('_defaultConfigs: new cloud providers present and disabled by default', () 
       assert.ok(defaults[id].model, `${PM.name}: ${id} missing default model`);
     }
     assert.equal(defaults.kimi.baseUrl, 'https://api.moonshot.ai/v1');
-    assert.equal(defaults.kimi.model, 'kimi-k2.5');
+    assert.equal(defaults.kimi.model, 'kimi-k3');
     assert.equal(defaults.kimi.supportsStreamUsageOptions, true);
     assert.equal(defaults.kimi.omitTemperature, true);
     assert.equal(defaults.kimi.compat?.maxTokensField, 'max_completion_tokens');
     assert.equal(defaults.kimi.compat?.omitTemperature, undefined);
     const kimi = mgr._createProvider('kimi', defaults.kimi);
-    assert.equal(kimi.contextWindow, 262144);
+    assert.equal(kimi.contextWindow, 1000000);
     assert.equal(kimi.supportsVision, true);
     const messages = [{ role: 'user', content: 'hello' }];
     const body = kimi._buildChatCompletionsBody(messages, { maxTokens: 123 }, false);
@@ -60733,10 +60752,13 @@ test('_defaultConfigs: router providers present and disabled by default', () => 
     assert.equal(defaults.cloudflare.supportsStreamUsageOptions, false);
     assert.equal(defaults.cloudflare.accountId, '');
     assert.equal(defaults.fireworks.baseUrl, 'https://api.fireworks.ai/inference/v1');
-    assert.equal(defaults.fireworks.model, 'accounts/fireworks/models/llama-v3p3-70b-instruct');
+    assert.equal(defaults.fireworks.model, 'accounts/fireworks/models/kimi-k3');
     assert.equal(defaults.fireworks.supportsStreamUsageOptions, true);
     assert.equal(defaults.together.baseUrl, 'https://api.together.xyz/v1');
-    assert.equal(defaults.together.model, 'meta-llama/Llama-3.3-70B-Instruct-Turbo');
+    assert.equal(defaults.together.model, 'moonshotai/Kimi-K3');
+    assert.equal(defaults.huggingface.model, 'moonshotai/Kimi-K3');
+    assert.equal(defaults.groq.model, 'openai/gpt-oss-120b');
+    assert.equal(defaults.nvidia.model, 'nvidia/nemotron-3-super-120b-a12b');
     assert.equal(defaults.together.supportsStreamUsageOptions, true);
   }
 });
@@ -60878,14 +60900,14 @@ test('_defaultConfigs: OpenAI defaults to GPT-5.6 Terra and safely migrates the 
     assert.equal(defaults.openai.cacheReadCostPerMillionUsd, 0.25);
     assert.equal(defaults.openai.cacheWriteCostPerMillionUsd, 3.125);
     assert.equal(defaults.openai.outputCostPerMillionUsd, 15);
-    assert.equal(defaults.anthropic.cacheReadCostPerMillionUsd, 0.3);
-    assert.equal(defaults.anthropic.cacheWriteCostPerMillionUsd, 3.75);
-    assert.equal(defaults.anthropic.cacheWrite1hCostPerMillionUsd, 6);
-    assert.equal(defaults.aws_bedrock.inputCostPerMillionUsd, 3);
-    assert.equal(defaults.aws_bedrock.cacheReadCostPerMillionUsd, 0.3);
-    assert.equal(defaults.aws_bedrock.cacheWriteCostPerMillionUsd, 3.75);
-    assert.equal(defaults.aws_bedrock.cacheWrite1hCostPerMillionUsd, 6);
-    assert.equal(defaults.aws_bedrock.outputCostPerMillionUsd, 15);
+    assert.equal(defaults.anthropic.cacheReadCostPerMillionUsd, 0.2);
+    assert.equal(defaults.anthropic.cacheWriteCostPerMillionUsd, 2.5);
+    assert.equal(defaults.anthropic.cacheWrite1hCostPerMillionUsd, 4);
+    assert.equal(defaults.aws_bedrock.inputCostPerMillionUsd, 2);
+    assert.equal(defaults.aws_bedrock.cacheReadCostPerMillionUsd, 0.2);
+    assert.equal(defaults.aws_bedrock.cacheWriteCostPerMillionUsd, 2.5);
+    assert.equal(defaults.aws_bedrock.cacheWrite1hCostPerMillionUsd, 4);
+    assert.equal(defaults.aws_bedrock.outputCostPerMillionUsd, 10);
 
     const migrated = mgr._migrateStoredProviderConfigs({
       openai: {
@@ -60927,6 +60949,453 @@ test('_defaultConfigs: OpenAI defaults to GPT-5.6 Terra and safely migrates the 
         mgr._migrateStoredProviderConfigs({ openai: configured }).openai,
         configured,
         'configured and custom-endpoint GPT-5.5 selections must remain untouched',
+      );
+    }
+  }
+});
+
+test('_defaultConfigs: migrates untouched shipped provider defaults without pinning customizations', () => {
+  for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+    const mgr = new PM();
+    const defaults = mgr._defaultConfigs();
+
+    const anthropic = mgr._migrateStoredProviderConfigs({
+      anthropic: {
+        model: 'claude-sonnet-4-6',
+        inputCostPerMillionUsd: 3,
+        cacheReadCostPerMillionUsd: 0.3,
+        cacheWriteCostPerMillionUsd: 3.75,
+        cacheWrite1hCostPerMillionUsd: 6,
+        outputCostPerMillionUsd: 15,
+        apiKey: '',
+        configured: false,
+      },
+    }).anthropic;
+    assert.equal(anthropic.model, defaults.anthropic.model);
+    assert.equal(anthropic.inputCostPerMillionUsd, defaults.anthropic.inputCostPerMillionUsd);
+    assert.equal(anthropic.cacheReadCostPerMillionUsd, defaults.anthropic.cacheReadCostPerMillionUsd);
+    assert.equal(anthropic.cacheWriteCostPerMillionUsd, defaults.anthropic.cacheWriteCostPerMillionUsd);
+    assert.equal(anthropic.cacheWrite1hCostPerMillionUsd, defaults.anthropic.cacheWrite1hCostPerMillionUsd);
+    assert.equal(anthropic.outputCostPerMillionUsd, defaults.anthropic.outputCostPerMillionUsd);
+
+    const configured = { model: 'claude-sonnet-4-6', configured: true, apiKey: 'kept' };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: configured }).anthropic, configured);
+
+    const keyed = { model: 'claude-sonnet-4-6', configured: false, apiKey: 'kept' };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: keyed }).anthropic, keyed);
+
+    const customModel = { model: 'claude-opus-4-6', configured: false, apiKey: '' };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: customModel }).anthropic, customModel);
+
+    const customCosts = {
+      model: 'claude-sonnet-4-6',
+      inputCostPerMillionUsd: 9,
+      outputCostPerMillionUsd: 15,
+      configured: false,
+      apiKey: '',
+    };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: customCosts }).anthropic, customCosts);
+
+    const customEndpoint = {
+      model: 'claude-sonnet-4-6',
+      configured: false,
+      baseUrl: 'https://proxy.example.test',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ anthropic: customEndpoint }).anthropic,
+      customEndpoint,
+    );
+
+    const groq = mgr._migrateStoredProviderConfigs({
+      groq: {
+        model: 'llama-3.3-70b-versatile',
+        inputCostPerMillionUsd: 0.59,
+        outputCostPerMillionUsd: 0.79,
+        configured: false,
+        apiKey: '',
+      },
+    }).groq;
+    assert.equal(groq.model, defaults.groq.model);
+    assert.equal(groq.inputCostPerMillionUsd, defaults.groq.inputCostPerMillionUsd);
+    assert.equal(groq.outputCostPerMillionUsd, defaults.groq.outputCostPerMillionUsd);
+
+    const siliconflow = mgr._migrateStoredProviderConfigs({
+      siliconflow: {
+        model: 'moonshotai/Kimi-K2.6',
+        contextWindow: 262000,
+        inputCostPerMillionUsd: 0.77,
+        cacheReadCostPerMillionUsd: 0.2,
+        outputCostPerMillionUsd: 4,
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).siliconflow;
+    assert.equal(siliconflow.model, defaults.siliconflow.model);
+    assert.equal(siliconflow.inputCostPerMillionUsd, defaults.siliconflow.inputCostPerMillionUsd);
+    assert.equal(siliconflow.contextWindow, defaults.siliconflow.contextWindow);
+    assert.equal(siliconflow.supportsVision, true);
+
+    const modelscope = mgr._migrateStoredProviderConfigs({
+      modelscope: {
+        model: 'Qwen/Qwen3-30B-A3B-Thinking-2507',
+        contextWindow: 262144,
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).modelscope;
+    assert.equal(modelscope.model, defaults.modelscope.model);
+    assert.equal(modelscope.supportsVision, true);
+
+    const cohere = mgr._migrateStoredProviderConfigs({
+      cohere: {
+        model: 'command-a-03-2025',
+        contextWindow: 256000,
+        inputCostPerMillionUsd: 2.5,
+        outputCostPerMillionUsd: 10,
+        configured: false,
+        apiKey: '',
+      },
+    }).cohere;
+    assert.equal(cohere.model, defaults.cohere.model);
+    assert.equal(cohere.contextWindow, defaults.cohere.contextWindow);
+
+    const cohereCustomWindow = mgr._migrateStoredProviderConfigs({
+      cohere: {
+        model: 'command-a-03-2025',
+        contextWindow: 64000,
+        inputCostPerMillionUsd: 2.5,
+        outputCostPerMillionUsd: 10,
+        configured: false,
+        apiKey: '',
+      },
+    }).cohere;
+    assert.equal(cohereCustomWindow.model, defaults.cohere.model);
+    assert.equal(cohereCustomWindow.contextWindow, 64000);
+
+    const codingPlan = mgr._migrateStoredProviderConfigs({
+      'zai-coding-plan': {
+        model: 'glm-4.7',
+        contextWindow: 204800,
+        configured: false,
+        apiKey: '',
+      },
+    })['zai-coding-plan'];
+    assert.equal(codingPlan.model, defaults['zai-coding-plan'].model);
+    assert.equal(codingPlan.contextWindow, defaults['zai-coding-plan'].contextWindow);
+
+    const stepfun = mgr._migrateStoredProviderConfigs({
+      stepfun: {
+        model: 'step-1-32k',
+        contextWindow: 32768,
+        inputCostPerMillionUsd: 2.05,
+        cacheReadCostPerMillionUsd: 0.41,
+        outputCostPerMillionUsd: 9.59,
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).stepfun;
+    assert.equal(stepfun.model, defaults.stepfun.model);
+    assert.equal(stepfun.supportsVision, true);
+    assert.equal(stepfun.contextWindow, defaults.stepfun.contextWindow);
+
+    const helicone = mgr._migrateStoredProviderConfigs({
+      helicone: {
+        model: 'chatgpt-4o-latest',
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).helicone;
+    assert.equal(helicone.model, defaults.helicone.model);
+    assert.equal(helicone.supportsVision, true);
+
+    const heliconeCustom = {
+      model: 'custom/model',
+      supportsVision: false,
+      configured: false,
+      apiKey: '',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ helicone: heliconeCustom }).helicone,
+      heliconeCustom,
+    );
+
+    const heliconeKeyed = {
+      model: 'chatgpt-4o-latest',
+      supportsVision: false,
+      configured: false,
+      apiKey: 'kept',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ helicone: heliconeKeyed }).helicone,
+      heliconeKeyed,
+    );
+
+    const vercel = mgr._migrateStoredProviderConfigs({
+      vercel: {
+        model: 'xai/grok-4.1-fast-reasoning',
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).vercel;
+    assert.equal(vercel.model, defaults.vercel.model);
+    assert.equal(vercel.supportsVision, true);
+
+    const alreadyVision = {
+      model: 'chatgpt-4o-latest',
+      supportsVision: true,
+      configured: false,
+      apiKey: '',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ helicone: alreadyVision }).helicone,
+      alreadyVision,
+    );
+
+    const bedrock = mgr._migrateStoredProviderConfigs({
+      aws_bedrock: {
+        model: '',
+        inputCostPerMillionUsd: 3,
+        cacheReadCostPerMillionUsd: 0.3,
+        cacheWriteCostPerMillionUsd: 3.75,
+        cacheWrite1hCostPerMillionUsd: 6,
+        outputCostPerMillionUsd: 15,
+        configured: false,
+        accessKeyId: '',
+        secretAccessKey: '',
+      },
+    }).aws_bedrock;
+    assert.equal(bedrock.model, '');
+    assert.equal(bedrock.inputCostPerMillionUsd, defaults.aws_bedrock.inputCostPerMillionUsd);
+    assert.equal(bedrock.outputCostPerMillionUsd, defaults.aws_bedrock.outputCostPerMillionUsd);
+
+    const bedrockCustom = {
+      model: 'anthropic.claude-sonnet-4-6',
+      inputCostPerMillionUsd: 3,
+      outputCostPerMillionUsd: 15,
+      configured: false,
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ aws_bedrock: bedrockCustom }).aws_bedrock,
+      bedrockCustom,
+    );
+  }
+});
+
+test('ProviderManager load persists untouched default-model migrations', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const validGuid = '11111111-1111-4111-8111-111111111111';
+
+  function makeRuntime(storageData) {
+    const local = {
+      async get(keys) {
+        if (Array.isArray(keys)) {
+          const out = {};
+          for (const key of keys) out[key] = storageData[key];
+          return out;
+        }
+        if (typeof keys === 'string') return { [keys]: storageData[keys] };
+        return { ...storageData };
+      },
+      async set(patch) {
+        Object.assign(storageData, patch);
+      },
+      async remove(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete storageData[key];
+      },
+    };
+    return {
+      storage: { local },
+      runtime: {
+        id: 'test-runtime',
+        getPlatformInfo(cb) {
+          const info = { os: 'test', arch: 'x64', nacl_arch: 'x64' };
+          if (typeof cb === 'function') cb(info);
+          return Promise.resolve(info);
+        },
+      },
+    };
+  }
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const defaults = new PM()._defaultConfigs();
+      const storageData = {
+        webbrainDeviceGuid: validGuid,
+        providers: {
+          anthropic: {
+            model: 'claude-sonnet-4-6',
+            inputCostPerMillionUsd: 3,
+            cacheReadCostPerMillionUsd: 0.3,
+            cacheWriteCostPerMillionUsd: 3.75,
+            cacheWrite1hCostPerMillionUsd: 6,
+            outputCostPerMillionUsd: 15,
+            apiKey: '',
+            configured: false,
+          },
+          cohere: {
+            model: 'command-a-03-2025',
+            contextWindow: 256000,
+            inputCostPerMillionUsd: 2.5,
+            outputCostPerMillionUsd: 10,
+            configured: false,
+            apiKey: '',
+          },
+          helicone: {
+            model: 'chatgpt-4o-latest',
+            supportsVision: false,
+            configured: false,
+            apiKey: '',
+          },
+        },
+      };
+      globalThis[runtimeKey] = makeRuntime(storageData);
+
+      await new PM().load();
+
+      assert.equal(
+        storageData.providers.anthropic.model,
+        defaults.anthropic.model,
+        `${label}: migrated Anthropic model must be saved`,
+      );
+      assert.equal(
+        storageData.providers.anthropic.inputCostPerMillionUsd,
+        defaults.anthropic.inputCostPerMillionUsd,
+        `${label}: migrated Anthropic costs must be saved`,
+      );
+      assert.equal(storageData.providers.anthropic.configured, false, `${label}: Anthropic should stay unconfigured`);
+      assert.equal(
+        storageData.providers.cohere.model,
+        defaults.cohere.model,
+        `${label}: migrated Cohere model must be saved`,
+      );
+      assert.equal(
+        storageData.providers.cohere.contextWindow,
+        defaults.cohere.contextWindow,
+        `${label}: migrated Cohere context window must be saved`,
+      );
+      assert.equal(
+        storageData.providers.helicone.supportsVision,
+        true,
+        `${label}: migrated Helicone vision flag must be saved`,
+      );
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('canonical stored provider snapshots do not rewrite or resave on load', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const validGuid = '11111111-1111-4111-8111-111111111111';
+
+  function makeRuntime(storageData) {
+    let setCount = 0;
+    const local = {
+      async get(keys) {
+        if (Array.isArray(keys)) {
+          const out = {};
+          for (const key of keys) out[key] = storageData[key];
+          return out;
+        }
+        if (typeof keys === 'string') return { [keys]: storageData[keys] };
+        return { ...storageData };
+      },
+      async set(patch) {
+        setCount += 1;
+        Object.assign(storageData, patch);
+      },
+      async remove(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete storageData[key];
+      },
+    };
+    return {
+      setCount: () => setCount,
+      storage: { local },
+      runtime: {
+        id: 'test-runtime',
+        getPlatformInfo(cb) {
+          const info = { os: 'test', arch: 'x64', nacl_arch: 'x64' };
+          if (typeof cb === 'function') cb(info);
+          return Promise.resolve(info);
+        },
+      },
+    };
+  }
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const mgr = new PM();
+      const ollama = { model: 'llama3', visionMode: 'auto', configured: true };
+      assert.equal(
+        mgr._migrateStoredProviderConfigs({ ollama }).ollama,
+        ollama,
+        `${label}: canonical Ollama snapshots must keep the same object`,
+      );
+
+      const lmstudio = { model: 'fixed', visionMode: 'auto', visionDetection: null, configured: true };
+      assert.equal(
+        mgr._migrateStoredProviderConfigs({ lmstudio }).lmstudio,
+        lmstudio,
+        `${label}: canonical LM Studio snapshots must keep the same object`,
+      );
+
+      const storageData = {
+        webbrainDeviceGuid: validGuid,
+        providers: {
+          ollama: { ...ollama },
+        },
+      };
+      const runtime = makeRuntime(storageData);
+      globalThis[runtimeKey] = runtime;
+      await new PM().load();
+      assert.equal(runtime.setCount(), 0, `${label}: canonical snapshots must not rewrite storage on load`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('built-in catalog defaults opt into vision when the model name is multimodal', () => {
+  for (const [label, Catalog, Provider] of [
+    ['chrome', ProviderCatalogCh, OpenAIProviderCh],
+    ['firefox', ProviderCatalogFx, OpenAIProviderFx],
+  ]) {
+    for (const id of ['stepfun', 'modelscope', 'siliconflow']) {
+      assert.equal(
+        Catalog.ADDITIONAL_PROVIDER_DEFAULTS[id].supportsVision,
+        true,
+        `${label}: ${id} catalog must opt into vision`,
+      );
+      const provider = new Provider(Catalog.ADDITIONAL_PROVIDER_DEFAULTS[id]);
+      assert.equal(provider.supportsVision, true, `${label}: ${id} provider must attach images`);
+    }
+    for (const [id, config] of Object.entries(Catalog.ADDITIONAL_PROVIDER_DEFAULTS)) {
+      const { supportsVision: _explicit, ...withoutFlag } = config;
+      if (!new Provider(withoutFlag).supportsVision) continue;
+      assert.equal(
+        config.supportsVision,
+        true,
+        `${label}: ${id} default model is vision-capable so the catalog must set supportsVision: true`,
+      );
+      assert.equal(
+        new Provider(config).supportsVision,
+        true,
+        `${label}: ${id} provider must attach images`,
       );
     }
   }
@@ -60986,13 +61455,13 @@ test('provider settings expose cache pricing with zero-cost support', () => {
   }
 });
 
-test('Kimi settings keep K2.5 as the default and list every supported model', () => {
+test('Kimi settings default to K3 and list the current Moonshot models', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const source = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
     assert.match(
       source,
-      /kimi:\s*\{[\s\S]*?placeholder: 'kimi-k2\.5'[\s\S]*?suggestions: \['kimi-k2\.5', 'kimi-k3', 'kimi-k2\.7-code', 'kimi-k2\.7-code-highspeed', 'kimi-k2\.6'\][\s\S]*?https:\/\/api\.moonshot\.ai\/v1/,
-      `${prefix}: Kimi should default to K2.5 and list all five current model IDs`,
+      /kimi:\s*\{[\s\S]*?placeholder: 'kimi-k3'[\s\S]*?suggestions: \['kimi-k3', 'kimi-k2\.7-code', 'kimi-k2\.7-code-highspeed', 'kimi-k2\.6'\][\s\S]*?https:\/\/api\.moonshot\.ai\/v1/,
+      `${prefix}: Kimi should default to K3 and list the current Moonshot model IDs`,
     );
   }
 });
