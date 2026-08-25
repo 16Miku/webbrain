@@ -59863,6 +59863,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
 
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.morph.supportsTools, false);
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.perplexity.supportsTools, false);
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.supportsVision, true);
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.model, 'step-3.7-flash');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['perplexity-agent'].apiFormat, 'responses');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['azure-cognitive-services'].model, '');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['kimi-for-coding'].model, 'kimi-for-coding');
@@ -60947,6 +60949,143 @@ test('_defaultConfigs: OpenAI defaults to GPT-5.6 Terra and safely migrates the 
         'configured and custom-endpoint GPT-5.5 selections must remain untouched',
       );
     }
+  }
+});
+
+test('_defaultConfigs: migrates untouched shipped provider defaults without pinning customizations', () => {
+  for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+    const mgr = new PM();
+    const defaults = mgr._defaultConfigs();
+
+    const anthropic = mgr._migrateStoredProviderConfigs({
+      anthropic: {
+        model: 'claude-sonnet-4-6',
+        inputCostPerMillionUsd: 3,
+        cacheReadCostPerMillionUsd: 0.3,
+        cacheWriteCostPerMillionUsd: 3.75,
+        cacheWrite1hCostPerMillionUsd: 6,
+        outputCostPerMillionUsd: 15,
+        apiKey: '',
+        configured: false,
+      },
+    }).anthropic;
+    assert.equal(anthropic.model, defaults.anthropic.model);
+    assert.equal(anthropic.inputCostPerMillionUsd, defaults.anthropic.inputCostPerMillionUsd);
+    assert.equal(anthropic.cacheReadCostPerMillionUsd, defaults.anthropic.cacheReadCostPerMillionUsd);
+    assert.equal(anthropic.cacheWriteCostPerMillionUsd, defaults.anthropic.cacheWriteCostPerMillionUsd);
+    assert.equal(anthropic.cacheWrite1hCostPerMillionUsd, defaults.anthropic.cacheWrite1hCostPerMillionUsd);
+    assert.equal(anthropic.outputCostPerMillionUsd, defaults.anthropic.outputCostPerMillionUsd);
+
+    const configured = { model: 'claude-sonnet-4-6', configured: true, apiKey: 'kept' };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: configured }).anthropic, configured);
+
+    const keyed = { model: 'claude-sonnet-4-6', configured: false, apiKey: 'kept' };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: keyed }).anthropic, keyed);
+
+    const customModel = { model: 'claude-opus-4-6', configured: false, apiKey: '' };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: customModel }).anthropic, customModel);
+
+    const customCosts = {
+      model: 'claude-sonnet-4-6',
+      inputCostPerMillionUsd: 9,
+      outputCostPerMillionUsd: 15,
+      configured: false,
+      apiKey: '',
+    };
+    assert.deepEqual(mgr._migrateStoredProviderConfigs({ anthropic: customCosts }).anthropic, customCosts);
+
+    const customEndpoint = {
+      model: 'claude-sonnet-4-6',
+      configured: false,
+      baseUrl: 'https://proxy.example.test',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ anthropic: customEndpoint }).anthropic,
+      customEndpoint,
+    );
+
+    const groq = mgr._migrateStoredProviderConfigs({
+      groq: {
+        model: 'llama-3.3-70b-versatile',
+        inputCostPerMillionUsd: 0.59,
+        outputCostPerMillionUsd: 0.79,
+        configured: false,
+        apiKey: '',
+      },
+    }).groq;
+    assert.equal(groq.model, defaults.groq.model);
+    assert.equal(groq.inputCostPerMillionUsd, defaults.groq.inputCostPerMillionUsd);
+    assert.equal(groq.outputCostPerMillionUsd, defaults.groq.outputCostPerMillionUsd);
+
+    const siliconflow = mgr._migrateStoredProviderConfigs({
+      siliconflow: {
+        model: 'moonshotai/Kimi-K2.6',
+        inputCostPerMillionUsd: 0.77,
+        cacheReadCostPerMillionUsd: 0.2,
+        outputCostPerMillionUsd: 4,
+        configured: false,
+        apiKey: '',
+      },
+    }).siliconflow;
+    assert.equal(siliconflow.model, defaults.siliconflow.model);
+    assert.equal(siliconflow.inputCostPerMillionUsd, defaults.siliconflow.inputCostPerMillionUsd);
+
+    const stepfun = mgr._migrateStoredProviderConfigs({
+      stepfun: {
+        model: 'step-1-32k',
+        inputCostPerMillionUsd: 2.05,
+        cacheReadCostPerMillionUsd: 0.41,
+        outputCostPerMillionUsd: 9.59,
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).stepfun;
+    assert.equal(stepfun.model, defaults.stepfun.model);
+    assert.equal(stepfun.supportsVision, true);
+
+    const bedrock = mgr._migrateStoredProviderConfigs({
+      aws_bedrock: {
+        model: '',
+        inputCostPerMillionUsd: 3,
+        cacheReadCostPerMillionUsd: 0.3,
+        cacheWriteCostPerMillionUsd: 3.75,
+        cacheWrite1hCostPerMillionUsd: 6,
+        outputCostPerMillionUsd: 15,
+        configured: false,
+        accessKeyId: '',
+        secretAccessKey: '',
+      },
+    }).aws_bedrock;
+    assert.equal(bedrock.model, '');
+    assert.equal(bedrock.inputCostPerMillionUsd, defaults.aws_bedrock.inputCostPerMillionUsd);
+    assert.equal(bedrock.outputCostPerMillionUsd, defaults.aws_bedrock.outputCostPerMillionUsd);
+
+    const bedrockCustom = {
+      model: 'anthropic.claude-sonnet-4-6',
+      inputCostPerMillionUsd: 3,
+      outputCostPerMillionUsd: 15,
+      configured: false,
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ aws_bedrock: bedrockCustom }).aws_bedrock,
+      bedrockCustom,
+    );
+  }
+});
+
+test('built-in StepFun catalog entry enables vision for step-3 models', () => {
+  for (const [label, Catalog, Provider] of [
+    ['chrome', ProviderCatalogCh, OpenAIProviderCh],
+    ['firefox', ProviderCatalogFx, OpenAIProviderFx],
+  ]) {
+    assert.equal(
+      Catalog.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.supportsVision,
+      true,
+      `${label}: StepFun catalog must opt into vision`,
+    );
+    const provider = new Provider(Catalog.ADDITIONAL_PROVIDER_DEFAULTS.stepfun);
+    assert.equal(provider.supportsVision, true, `${label}: StepFun provider must attach images`);
   }
 });
 

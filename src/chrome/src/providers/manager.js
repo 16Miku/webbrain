@@ -79,6 +79,155 @@ const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'webgpu', 'openai', 'azure
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
+const PROVIDER_COST_KEYS = [
+  'inputCostPerMillionUsd',
+  'cacheReadCostPerMillionUsd',
+  'cacheWriteCostPerMillionUsd',
+  'cacheWrite1hCostPerMillionUsd',
+  'outputCostPerMillionUsd',
+];
+// Last-shipped-on-main snapshots this upgrade replaced. OpenAI and OpenRouter
+// keep the special-case rules in _migrateStoredProviderConfigs instead.
+const UNTOUCHED_DEFAULT_MIGRATIONS = [
+  {
+    id: 'anthropic',
+    fromModel: 'claude-sonnet-4-6',
+    fromCosts: {
+      inputCostPerMillionUsd: 3,
+      cacheReadCostPerMillionUsd: 0.3,
+      cacheWriteCostPerMillionUsd: 3.75,
+      cacheWrite1hCostPerMillionUsd: 6,
+      outputCostPerMillionUsd: 15,
+    },
+  },
+  { id: 'gemini', fromModel: 'gemini-3.1-flash' },
+  {
+    id: 'xai',
+    fromModel: 'grok-4.3',
+    fromCosts: {
+      inputCostPerMillionUsd: 1.25,
+      outputCostPerMillionUsd: 2.5,
+    },
+  },
+  { id: 'minimax', fromModel: 'minimax-m2.7' },
+  { id: 'kimi', fromModel: 'kimi-k2.5' },
+  { id: 'alibaba', fromModel: 'qwen-max' },
+  {
+    id: 'mistral',
+    fromModel: 'mistral-large-latest',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.5,
+      outputCostPerMillionUsd: 1.5,
+    },
+  },
+  {
+    id: 'z_ai',
+    fromModel: 'glm-5.2',
+    fromCosts: {
+      inputCostPerMillionUsd: 1.4,
+      cacheReadCostPerMillionUsd: 0.26,
+      outputCostPerMillionUsd: 4.4,
+    },
+  },
+  {
+    id: 'groq',
+    fromModel: 'llama-3.3-70b-versatile',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.59,
+      outputCostPerMillionUsd: 0.79,
+    },
+  },
+  {
+    id: 'nvidia',
+    fromModel: 'meta/llama-3.1-8b-instruct',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.22,
+      outputCostPerMillionUsd: 0.22,
+    },
+  },
+  { id: 'together', fromModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
+  { id: 'huggingface', fromModel: 'zai-org/GLM-5.2' },
+  { id: 'fireworks', fromModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct' },
+  {
+    id: 'aws_bedrock',
+    fromModel: '',
+    fromCosts: {
+      inputCostPerMillionUsd: 3,
+      cacheReadCostPerMillionUsd: 0.3,
+      cacheWriteCostPerMillionUsd: 3.75,
+      cacheWrite1hCostPerMillionUsd: 6,
+      outputCostPerMillionUsd: 15,
+    },
+  },
+  {
+    id: 'baseten',
+    fromModel: 'moonshotai/Kimi-K2.6',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.95,
+      cacheReadCostPerMillionUsd: 0.16,
+      outputCostPerMillionUsd: 4,
+    },
+  },
+  {
+    id: 'siliconflow',
+    fromModel: 'moonshotai/Kimi-K2.6',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.77,
+      cacheReadCostPerMillionUsd: 0.2,
+      outputCostPerMillionUsd: 4,
+    },
+  },
+  {
+    id: 'cohere',
+    fromModel: 'command-a-03-2025',
+    fromCosts: {
+      inputCostPerMillionUsd: 2.5,
+      outputCostPerMillionUsd: 10,
+    },
+  },
+  {
+    id: 'deepinfra',
+    fromModel: 'meta-llama/Llama-4-Scout-17B-16E-Instruct',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.1,
+      outputCostPerMillionUsd: 0.3,
+    },
+  },
+  { id: 'google-vertex', fromModel: 'gemini-2.5-flash' },
+  {
+    id: 'google-vertex-anthropic',
+    fromModel: 'claude-haiku-4-5@20251001',
+    fromCosts: {
+      inputCostPerMillionUsd: 1,
+      cacheReadCostPerMillionUsd: 0.1,
+      cacheWriteCostPerMillionUsd: 1.25,
+      outputCostPerMillionUsd: 5,
+    },
+  },
+  { id: 'minimax-coding-plan', fromModel: 'MiniMax-M2.1' },
+  { id: 'minimax-cn-coding-plan', fromModel: 'MiniMax-M2.1' },
+  { id: 'modelscope', fromModel: 'Qwen/Qwen3-30B-A3B-Thinking-2507' },
+  {
+    id: 'stepfun',
+    fromModel: 'step-1-32k',
+    fromCosts: {
+      inputCostPerMillionUsd: 2.05,
+      cacheReadCostPerMillionUsd: 0.41,
+      outputCostPerMillionUsd: 9.59,
+    },
+  },
+  { id: 'zai-coding-plan', fromModel: 'glm-4.7' },
+  {
+    id: 'zhipuai',
+    fromModel: 'glm-5.1',
+    fromCosts: {
+      inputCostPerMillionUsd: 1.4,
+      cacheReadCostPerMillionUsd: 0.26,
+      outputCostPerMillionUsd: 4.4,
+    },
+  },
+  { id: 'zhipuai-coding-plan', fromModel: 'glm-5.1' },
+];
 const DUPLICATE_BLANK_CONFIG_KEYS = [
   ...PROVIDER_CREDENTIAL_KEYS,
   'baseUrl',
@@ -760,6 +909,7 @@ export class ProviderManager {
         model: OPENROUTER_DEFAULT_MODEL,
       };
     }
+    this._migrateUntouchedShippedDefaults(migrated);
     if (migrated.ollama) {
       const legacySupportsVision = migrated.ollama.supportsVision;
       migrated.ollama = {
@@ -813,6 +963,47 @@ export class ProviderManager {
       }
     }
     return migrated;
+  }
+
+  _storedCostsMatchShipped(stored, fromCosts) {
+    if (!fromCosts) return true;
+    return Object.entries(fromCosts).every(([key, value]) => (
+      stored[key] == null || Number(stored[key]) === value
+    ));
+  }
+
+  _isUntouchedShippedDefault(stored, next, { fromModel, fromCosts }) {
+    if (!stored || typeof stored !== 'object' || !next) return false;
+    if (stored.configured === true) return false;
+    if (this._hasStoredProviderCredentials(next, stored)) return false;
+    if (String(stored.model || '') !== String(fromModel || '')) return false;
+    const officialBaseUrl = String(next.baseUrl || '').replace(/\/+$/, '');
+    const storedBaseUrl = String(stored.baseUrl || next.baseUrl || '').replace(/\/+$/, '');
+    if (officialBaseUrl && storedBaseUrl !== officialBaseUrl) return false;
+    return this._storedCostsMatchShipped(stored, fromCosts);
+  }
+
+  _applyUntouchedDefaultMigration(stored, next, { applyCosts }) {
+    const migrated = { ...stored, model: next.model };
+    if (applyCosts) {
+      for (const key of PROVIDER_COST_KEYS) {
+        if (next[key] != null) migrated[key] = next[key];
+      }
+    }
+    if (Object.hasOwn(next, 'supportsVision')) {
+      migrated.supportsVision = next.supportsVision;
+    }
+    return migrated;
+  }
+
+  _migrateUntouchedShippedDefaults(migrated) {
+    const defaults = this._defaultConfigs();
+    for (const { id, fromModel, fromCosts } of UNTOUCHED_DEFAULT_MIGRATIONS) {
+      const stored = migrated[id];
+      const next = defaults[id];
+      if (!this._isUntouchedShippedDefault(stored, next, { fromModel, fromCosts })) continue;
+      migrated[id] = this._applyUntouchedDefaultMigration(stored, next, { applyCosts: !!fromCosts });
+    }
   }
 
   _storedDefaultOverride(defaultConfig, storedConfig) {
