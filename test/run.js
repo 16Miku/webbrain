@@ -72508,7 +72508,7 @@ test('non-stream and stream runs block plain finals and unverified success until
   }
 });
 
-test('repeated plain finals stop after one completion-protocol recovery with a partial outcome', async () => {
+test('repeated plain finals stop after two completion-protocol recovery turns with a partial outcome', async () => {
   const buildResponses = (verified) => [
     {
       content: null,
@@ -72524,6 +72524,7 @@ test('repeated plain finals stop after one completion-protocol recovery with a p
         function: { name: 'read_page', arguments: '{}' },
       }],
     }] : []),
+    { content: 'The requested action completed successfully.', toolCalls: [] },
     { content: 'The requested action completed successfully.', toolCalls: [] },
     { content: 'The requested action completed successfully.', toolCalls: [] },
   ];
@@ -72608,14 +72609,14 @@ test('repeated plain finals stop after one completion-protocol recovery with a p
         const final = await run(tabId, 'perform the action', (type, data) => updates.push({ type, data }), 'act');
 
         assert.match(final, /Outcome: partial\./, `${AgentClass.name}/${streaming}/${verified}: repeated plain final did not end as partial`);
-        assert.equal(provider.calls, verified ? 4 : 3, `${AgentClass.name}/${streaming}/${verified}: completion recovery was not bounded to one turn`);
+        assert.equal(provider.calls, verified ? 5 : 4, `${AgentClass.name}/${streaming}/${verified}: completion recovery was not bounded to two turns`);
         assert.equal(responses.length, 0, `${AgentClass.name}/${streaming}/${verified}: expected response sequence was not consumed`);
         assert.equal(ended?.status, 'partial', `${AgentClass.name}/${streaming}/${verified}: trace did not record the partial terminal outcome`);
         assert.equal(ended?.finalContent, final, `${AgentClass.name}/${streaming}/${verified}: trace final content diverged from the visible partial`);
         assert.equal(
           agent.conversations.get(tabId).filter(message => message.role === 'user' && /RUNTIME COMPLETION BLOCK/.test(message.content || '')).length,
-          1,
-          `${AgentClass.name}/${streaming}/${verified}: completion nudge was repeated`,
+          2,
+          `${AgentClass.name}/${streaming}/${verified}: completion nudge was not sent twice`,
         );
         assert.ok(
           updates.some(update => update.type === 'run_status' && update.data?.status === 'partial' && update.data?.message === final),
