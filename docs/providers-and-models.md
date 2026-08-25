@@ -46,6 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (loaded model) | Auto metadata / override |
 | `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
 | `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
+| `unsloth` | `openai` | local | (required) | Off / manual toggle |
 | `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (default) or opt-in Bonsai 27B; experimental custom HF ONNX repos | No |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
@@ -73,7 +74,7 @@ WebBrain also ships 77 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, Settings
-contains **107 built-in providers on Chromium** and **106 on Firefox**; the
+contains **108 built-in providers on Chromium** and **107 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs |
@@ -179,9 +180,9 @@ URL, localhost server, or OpenAI-compatible endpoint. Firefox does not expose
 the card because its build does not package the Chromium MV3 offscreen/WebGPU
 runtime.
 
-Nine local endpoint providers are enabled by default. The model runtimes need no
-API key unless the server was started with auth; the generic proxy card requires
-a client key so it does not encourage an unauthenticated subscription bridge:
+Ten local endpoint providers are enabled by default. The model runtimes need no
+API key unless the server was started with auth; Unsloth Studio and the generic
+proxy card require their configured client keys:
 
 - **llama.cpp**: `http://localhost:8080` — runs `llama-server -m model.gguf`
 - **Ollama**: `http://localhost:11434/v1` — `ollama serve`, or `ollama launch webbrain --model <model>`
@@ -193,6 +194,26 @@ a client key so it does not encourage an unauthenticated subscription bridge:
 - **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
 - **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
   authenticated local gateway; the model and proxy client API key are required
+- **Unsloth Studio**: `http://localhost:8888/v1` by default, with a configurable
+  port — Studio's API URL, loaded model, and generated API key are required
+
+#### Unsloth Studio
+
+Install or open [Unsloth Studio](https://unsloth.ai/docs/get-started/install),
+then start Studio and load a chat model. In Studio, open the avatar menu,
+choose **Settings → API Access**, and create an API key. Keys currently use the
+`sk-unsloth-` prefix; keep the full value private.
+
+In WebBrain, open **Settings → Providers → Unsloth Studio (Local)**. Enter the
+Studio API address as `http://localhost:8888/v1`, replacing `8888` when the
+running Studio instance shows a different port. Enter the generated API key,
+click **Load Models**, select the loaded model, then click **Test Connection**.
+WebBrain normalizes a
+base URL entered without the terminal `/v1` after a successful request.
+
+Unsloth model discovery, chat, interactive Ask streaming, and tool calls use
+the existing OpenAI-compatible endpoints. Vision starts off: enable the manual
+vision checkbox only when the model loaded in Studio accepts image input.
 
 #### Subscription proxy example (CLIProxyAPI)
 
@@ -294,7 +315,8 @@ OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ./ollama serve
 
 **Streaming.** Local streaming is primarily a runtime/server capability, not a
 property of the GGUF or other model weights. Interactive Ask streaming is
-enabled for llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, and current LocalAI
+enabled for llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, current LocalAI,
+and Unsloth Studio
 through their OpenAI-compatible Chat Completions endpoints. Each parser requires
 `[DONE]`; safe network/read, malformed-frame, and premature-EOF failures
 silently retry once with non-streaming generation. Tool-call streaming
@@ -302,7 +324,7 @@ additionally depends on the model's tool-use training, the runtime's chat
 template/parser, and a current runtime version (LocalAI added tool streaming in
 3.10).
 
-**Context window.** Load local models with **at least a 16k-token context window** for reliable agent runs — that's the usable minimum. 8k can work with the Compact tier selected; 4k is too small to hold the system prompt + tool schemas. The agent reads the window from `provider.contextWindow` (`providers/base.js`) to drive auto-compaction; when a provider config doesn't set `contextWindow`, local providers default to a conservative **16k** (cloud/router default to 128k). **Test connection** / **Load models** auto-detect for **llama.cpp**, **Ollama**, and **LM Studio** when reported (llama.cpp `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). Detection refreshes the 16k default; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / vLLM / SGLang / LocalAI do not auto-detect yet. You can still set `config.contextWindow` explicitly, and the model server must actually be started with that much context (e.g. `llama-server -c 16384`).
+**Context window.** Load local models with **at least a 16k-token context window** for reliable agent runs — that's the usable minimum. 8k can work with the Compact tier selected; 4k is too small to hold the system prompt + tool schemas. The agent reads the window from `provider.contextWindow` (`providers/base.js`) to drive auto-compaction; when a provider config doesn't set `contextWindow`, local providers default to a conservative **16k** (cloud/router default to 128k). **Test connection** / **Load models** auto-detect for **llama.cpp**, **Ollama**, and **LM Studio** when reported (llama.cpp `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). Detection refreshes the 16k default; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / vLLM / SGLang / LocalAI / Unsloth Studio do not auto-detect yet. You can still set `config.contextWindow` explicitly, and the model server must actually be started with that much context (e.g. `llama-server -c 16384`).
 
 ### Prompt/tool tiers and modes
 

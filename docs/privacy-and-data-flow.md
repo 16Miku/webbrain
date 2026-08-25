@@ -49,7 +49,8 @@ The user chooses their provider in Settings. Options include:
 - **WebBrain Cloud**: requests go through `api.webbrain.one`; selected interactions may be retained and used for evaluation, improvement, fine-tuning, and training while Help Improve WebBrain is enabled
 - **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials and are never collected by WebBrain
 - **Local model runtimes**: llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang,
-  LocalAI, and GPT4All — inference requests stay on the user's machine
+  LocalAI, GPT4All, and Unsloth Studio — inference requests stay on the user's
+  machine when Studio is configured with its loopback URL
 - **WebGPU (In-browser), Chromium only**: the selected text model runs in an extension
   Worker with no API key, base URL, localhost server, or model endpoint
 - **Local OpenAI-compatible Proxy**: WebBrain connects only to the configured

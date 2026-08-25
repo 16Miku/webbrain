@@ -57319,7 +57319,7 @@ test('subscription OAuth refreshes share in-flight work and retry after failures
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
+    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -58648,7 +58648,7 @@ test('listProviderModels sends saved API keys for auth-enabled OpenAI-compatible
 
   try {
     for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
+      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
         const mgr = new PM();
         const config = {
           ...mgr._defaultConfigs()[id],
@@ -59789,7 +59789,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 107 : 106;
+    const expectedDefaultCount = label === 'chrome' ? 108 : 107;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -60811,6 +60811,67 @@ test('_defaultConfigs: generic local OpenAI-compatible proxy is safe and configu
   }
 });
 
+test('Unsloth Studio defaults and settings stay mirrored and conservative', () => {
+  const configs = [];
+  for (const [label, PM, OpenAIProvider, prefix] of [
+    ['chrome', ProviderManagerCh, OpenAIProviderCh, 'src/chrome'],
+    ['firefox', ProviderManagerFx, OpenAIProviderFx, 'src/firefox'],
+  ]) {
+    const manager = new PM();
+    const config = manager._defaultConfigs().unsloth;
+    configs.push(config);
+    assert.deepEqual(config, {
+      type: 'openai',
+      category: 'local',
+      label: 'Unsloth Studio (Local)',
+      providerName: 'unsloth',
+      baseUrl: 'http://localhost:8888/v1',
+      model: '',
+      requiresModel: true,
+      contextWindow: 16384,
+      apiKey: '',
+      requiresApiKey: true,
+      supportsAskStreaming: true,
+      supportsVision: false,
+      enabled: true,
+    }, `${label}: unexpected Unsloth defaults`);
+
+    const provider = manager._createProvider('unsloth', {
+      ...config,
+      model: 'loaded-model',
+      apiKey: 'sk-unsloth-test',
+    });
+    assert.ok(provider instanceof OpenAIProvider, `${label}: should reuse the OpenAI-compatible adapter`);
+    assert.equal(provider.supportsTools, true, `${label}: OpenAI-compatible tools should remain available`);
+    assert.equal(provider.supportsVision, false, `${label}: unknown models should fail closed for vision`);
+    assert.equal(provider._supportsInteractiveAskStreaming(), true, `${label}: Ask streaming should be enabled`);
+    assert.equal(manager._createProvider('unsloth', {
+      ...config,
+      model: 'vision-model',
+      apiKey: 'sk-unsloth-test',
+      supportsVision: true,
+    }).supportsVision, true, `${label}: a user may explicitly enable vision`);
+
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const block = settings.slice(settings.indexOf('unsloth: {'), settings.indexOf('azure_openai: {'));
+    assert.match(block, /http:\/\/localhost:8888\/v1/);
+    assert.match(block, /type: 'password'/);
+    assert.match(block, /sk-unsloth-\.\.\./);
+    assert.match(block, /key: 'model'/);
+    assert.match(block, /CONTEXT_WINDOW_FIELD/);
+    assert.match(block, /key: 'supportsVision'/);
+    assert.match(block, /PROMPT_TIER_FIELD/);
+    assert.match(settings, /localModelProviders = \[[^\]]*'unsloth'/s);
+
+    const icons = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/provider-icons.js'), 'utf8');
+    assert.match(icons, /unsloth: 'local_openai_proxy\.svg'/);
+    assert.match(icons, /unsloth: 'Unsloth Studio'/);
+    const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(sidepanel, /LOCAL_PROVIDER_ORDER = \[\s*'unsloth'/);
+  }
+  assert.deepEqual(configs[0], configs[1], 'Chrome and Firefox defaults should match');
+});
+
 test('generic local proxy requires authentication and supports non-streaming chat', async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -60864,6 +60925,131 @@ test('generic local proxy requires authentication and supports non-streaming cha
     }
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('Unsloth Studio discovers models, tests connections, persists config, and reports safe failures', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const secret = 'sk-unsloth-test';
+  const makeRuntime = (writes) => ({
+    storage: { local: {
+      async get() { return {}; },
+      async set(patch) { writes.push(patch); },
+    } },
+    runtime: { id: 'test-runtime' },
+  });
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const writes = [];
+      globalThis[runtimeKey] = makeRuntime(writes);
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().unsloth;
+      manager.providers.set('unsloth', manager._createProvider('unsloth', {
+        ...defaults,
+        baseUrl: 'http://localhost:9999',
+      }));
+
+      let calls = [];
+      globalThis.fetch = async (url, init = {}) => {
+        calls.push({ url: String(url), init });
+        return new Response(JSON.stringify({ data: [
+          { id: 'zeta-model' },
+          { id: 'alpha-model' },
+          { id: 'zeta-model' },
+        ] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      assert.deepEqual(
+        await manager.listProviderModels('unsloth'),
+        { ok: false, error: 'Unsloth Studio (Local) API key is required' },
+        `${label}: discovery should fail closed without a key`,
+      );
+      assert.equal(calls.length, 0, `${label}: missing credentials must stop before fetch`);
+
+      await manager.updateProvider('unsloth', { apiKey: secret });
+      const discovered = await manager.listProviderModels('unsloth');
+      assert.deepEqual(discovered, {
+        ok: true,
+        models: ['alpha-model', 'zeta-model'],
+        baseUrl: 'http://localhost:9999/v1',
+      }, `${label}: standard /v1/models discovery should normalize and deduplicate`);
+      assert.equal(calls[0].url, 'http://localhost:9999/v1/models');
+      assert.equal(calls[0].init.method, 'GET');
+      assert.equal(calls[0].init.headers.Accept, 'application/json');
+      assert.equal(calls[0].init.headers.Authorization, `Bearer ${secret}`);
+      assert.equal(manager.providers.get('unsloth').config.baseUrl, 'http://localhost:9999/v1');
+      assert.ok(writes.some((patch) => patch.providers?.unsloth?.baseUrl === 'http://localhost:9999/v1'));
+
+      globalThis.fetch = async () => new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      assert.deepEqual(
+        await manager.listProviderModels('unsloth'),
+        { ok: true, models: [] },
+        `${label}: no loaded models should be reported as an empty selectable list`,
+      );
+
+      await manager.updateProvider('unsloth', { model: 'alpha-model' });
+      let chatRequest = null;
+      globalThis.fetch = async (url, init = {}) => {
+        chatRequest = { url: String(url), headers: init.headers, body: JSON.parse(init.body) };
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'connected' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const connected = await manager.testProvider('unsloth');
+      assert.equal(connected.ok, true, `${label}: Test Connection should use a tiny chat request`);
+      assert.equal(chatRequest.url, 'http://localhost:9999/v1/chat/completions');
+      assert.equal(chatRequest.headers.Authorization, `Bearer ${secret}`);
+      assert.equal(chatRequest.body.model, 'alpha-model');
+      assert.equal(chatRequest.body.max_tokens, 5);
+      assert.equal(JSON.stringify(connected).includes(secret), false, `${label}: connection result leaked the key`);
+      assert.ok(writes.some((patch) => patch.providers?.unsloth?.model === 'alpha-model'));
+
+      globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'invalid API key' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const unauthorized = await manager.testProvider('unsloth');
+      assert.equal(unauthorized.ok, false, `${label}: authentication errors should fail`);
+      assert.match(unauthorized.error, /401|invalid API key/i);
+      assert.equal(unauthorized.error.includes(secret), false, `${label}: auth error leaked the key`);
+
+      globalThis.fetch = async () => { throw new Error('connection refused'); };
+      const unreachable = await manager.testProvider('unsloth');
+      assert.equal(unreachable.ok, false, `${label}: unreachable Studio should fail`);
+      assert.match(unreachable.error, /connection refused/i);
+      assert.equal(unreachable.error.includes(secret), false, `${label}: network error leaked the key`);
+
+      await manager.updateProvider('unsloth', { model: '' });
+      let fetchCount = 0;
+      globalThis.fetch = async () => { fetchCount += 1; throw new Error('should not fetch'); };
+      const missingModel = await manager.testProvider('unsloth');
+      assert.equal(missingModel.ok, false);
+      assert.match(missingModel.error, /model is required/i);
+      assert.equal(fetchCount, 0, `${label}: missing model should stop before fetch`);
+
+      await manager.updateProvider('unsloth', { model: 'alpha-model' });
+      globalThis.fetch = async () => new Response('{', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const malformed = await manager.listProviderModels('unsloth');
+      assert.equal(malformed.ok, false, `${label}: malformed model JSON should fail safely`);
+      assert.equal(malformed.error.includes(secret), false, `${label}: malformed response leaked the key`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
@@ -61707,6 +61893,7 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     'localai',
     'gpt4all',
     'local_openai_proxy',
+    'unsloth',
     'azure_openai',
     'anthropic',
     'gemini',
@@ -62294,6 +62481,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
     'localai',
     'gpt4all',
     'local_openai_proxy',
+    'unsloth',
     'gemini',
     'mistral',
     'deepseek',
@@ -63666,6 +63854,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
       { category: 'local', providerName: 'localai' },
       { category: 'local', providerName: 'gpt4all' },
       { category: 'local', providerName: 'local-openai-proxy' },
+      { category: 'local', providerName: 'unsloth' },
       { category: 'local', providerName: 'openai' },
     ]) {
       const provider = new Provider(config);
@@ -63678,7 +63867,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
 
 test('OpenAI-compatible local providers always use legacy request token fields', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
+    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy', 'unsloth']) {
       const provider = new Provider({
         category: 'local',
         providerName,
