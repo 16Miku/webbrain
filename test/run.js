@@ -61020,6 +61020,7 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
     const siliconflow = mgr._migrateStoredProviderConfigs({
       siliconflow: {
         model: 'moonshotai/Kimi-K2.6',
+        contextWindow: 262000,
         inputCostPerMillionUsd: 0.77,
         cacheReadCostPerMillionUsd: 0.2,
         outputCostPerMillionUsd: 4,
@@ -61029,10 +61030,49 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
     }).siliconflow;
     assert.equal(siliconflow.model, defaults.siliconflow.model);
     assert.equal(siliconflow.inputCostPerMillionUsd, defaults.siliconflow.inputCostPerMillionUsd);
+    assert.equal(siliconflow.contextWindow, defaults.siliconflow.contextWindow);
+
+    const cohere = mgr._migrateStoredProviderConfigs({
+      cohere: {
+        model: 'command-a-03-2025',
+        contextWindow: 256000,
+        inputCostPerMillionUsd: 2.5,
+        outputCostPerMillionUsd: 10,
+        configured: false,
+        apiKey: '',
+      },
+    }).cohere;
+    assert.equal(cohere.model, defaults.cohere.model);
+    assert.equal(cohere.contextWindow, defaults.cohere.contextWindow);
+
+    const cohereCustomWindow = mgr._migrateStoredProviderConfigs({
+      cohere: {
+        model: 'command-a-03-2025',
+        contextWindow: 64000,
+        inputCostPerMillionUsd: 2.5,
+        outputCostPerMillionUsd: 10,
+        configured: false,
+        apiKey: '',
+      },
+    }).cohere;
+    assert.equal(cohereCustomWindow.model, defaults.cohere.model);
+    assert.equal(cohereCustomWindow.contextWindow, 64000);
+
+    const codingPlan = mgr._migrateStoredProviderConfigs({
+      'zai-coding-plan': {
+        model: 'glm-4.7',
+        contextWindow: 204800,
+        configured: false,
+        apiKey: '',
+      },
+    })['zai-coding-plan'];
+    assert.equal(codingPlan.model, defaults['zai-coding-plan'].model);
+    assert.equal(codingPlan.contextWindow, defaults['zai-coding-plan'].contextWindow);
 
     const stepfun = mgr._migrateStoredProviderConfigs({
       stepfun: {
         model: 'step-1-32k',
+        contextWindow: 32768,
         inputCostPerMillionUsd: 2.05,
         cacheReadCostPerMillionUsd: 0.41,
         outputCostPerMillionUsd: 9.59,
@@ -61043,6 +61083,7 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
     }).stepfun;
     assert.equal(stepfun.model, defaults.stepfun.model);
     assert.equal(stepfun.supportsVision, true);
+    assert.equal(stepfun.contextWindow, defaults.stepfun.contextWindow);
 
     const bedrock = mgr._migrateStoredProviderConfigs({
       aws_bedrock: {

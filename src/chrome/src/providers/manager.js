@@ -123,6 +123,7 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
   {
     id: 'z_ai',
     fromModel: 'glm-5.2',
+    fromContextWindow: 1000000,
     fromCosts: {
       inputCostPerMillionUsd: 1.4,
       cacheReadCostPerMillionUsd: 0.26,
@@ -162,6 +163,7 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
   {
     id: 'baseten',
     fromModel: 'moonshotai/Kimi-K2.6',
+    fromContextWindow: 262000,
     fromCosts: {
       inputCostPerMillionUsd: 0.95,
       cacheReadCostPerMillionUsd: 0.16,
@@ -171,6 +173,7 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
   {
     id: 'siliconflow',
     fromModel: 'moonshotai/Kimi-K2.6',
+    fromContextWindow: 262000,
     fromCosts: {
       inputCostPerMillionUsd: 0.77,
       cacheReadCostPerMillionUsd: 0.2,
@@ -180,6 +183,7 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
   {
     id: 'cohere',
     fromModel: 'command-a-03-2025',
+    fromContextWindow: 256000,
     fromCosts: {
       inputCostPerMillionUsd: 2.5,
       outputCostPerMillionUsd: 10,
@@ -188,15 +192,17 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
   {
     id: 'deepinfra',
     fromModel: 'meta-llama/Llama-4-Scout-17B-16E-Instruct',
+    fromContextWindow: 327680,
     fromCosts: {
       inputCostPerMillionUsd: 0.1,
       outputCostPerMillionUsd: 0.3,
     },
   },
-  { id: 'google-vertex', fromModel: 'gemini-2.5-flash' },
+  { id: 'google-vertex', fromModel: 'gemini-2.5-flash', fromContextWindow: 1048576 },
   {
     id: 'google-vertex-anthropic',
     fromModel: 'claude-haiku-4-5@20251001',
+    fromContextWindow: 200000,
     fromCosts: {
       inputCostPerMillionUsd: 1,
       cacheReadCostPerMillionUsd: 0.1,
@@ -204,29 +210,31 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
       outputCostPerMillionUsd: 5,
     },
   },
-  { id: 'minimax-coding-plan', fromModel: 'MiniMax-M2.1' },
-  { id: 'minimax-cn-coding-plan', fromModel: 'MiniMax-M2.1' },
-  { id: 'modelscope', fromModel: 'Qwen/Qwen3-30B-A3B-Thinking-2507' },
+  { id: 'minimax-coding-plan', fromModel: 'MiniMax-M2.1', fromContextWindow: 204800 },
+  { id: 'minimax-cn-coding-plan', fromModel: 'MiniMax-M2.1', fromContextWindow: 204800 },
+  { id: 'modelscope', fromModel: 'Qwen/Qwen3-30B-A3B-Thinking-2507', fromContextWindow: 262144 },
   {
     id: 'stepfun',
     fromModel: 'step-1-32k',
+    fromContextWindow: 32768,
     fromCosts: {
       inputCostPerMillionUsd: 2.05,
       cacheReadCostPerMillionUsd: 0.41,
       outputCostPerMillionUsd: 9.59,
     },
   },
-  { id: 'zai-coding-plan', fromModel: 'glm-4.7' },
+  { id: 'zai-coding-plan', fromModel: 'glm-4.7', fromContextWindow: 204800 },
   {
     id: 'zhipuai',
     fromModel: 'glm-5.1',
+    fromContextWindow: 200000,
     fromCosts: {
       inputCostPerMillionUsd: 1.4,
       cacheReadCostPerMillionUsd: 0.26,
       outputCostPerMillionUsd: 4.4,
     },
   },
-  { id: 'zhipuai-coding-plan', fromModel: 'glm-5.1' },
+  { id: 'zhipuai-coding-plan', fromModel: 'glm-5.1', fromContextWindow: 200000 },
 ];
 const DUPLICATE_BLANK_CONFIG_KEYS = [
   ...PROVIDER_CREDENTIAL_KEYS,
@@ -983,12 +991,20 @@ export class ProviderManager {
     return this._storedCostsMatchShipped(stored, fromCosts);
   }
 
-  _applyUntouchedDefaultMigration(stored, next, { applyCosts }) {
+  _applyUntouchedDefaultMigration(stored, next, { applyCosts, fromContextWindow }) {
     const migrated = { ...stored, model: next.model };
     if (applyCosts) {
       for (const key of PROVIDER_COST_KEYS) {
         if (next[key] != null) migrated[key] = next[key];
       }
+    }
+    if (
+      fromContextWindow != null
+      && next.contextWindow != null
+      && stored.contextWindow != null
+      && Number(stored.contextWindow) === fromContextWindow
+    ) {
+      migrated.contextWindow = next.contextWindow;
     }
     if (Object.hasOwn(next, 'supportsVision')) {
       migrated.supportsVision = next.supportsVision;
@@ -998,11 +1014,14 @@ export class ProviderManager {
 
   _migrateUntouchedShippedDefaults(migrated) {
     const defaults = this._defaultConfigs();
-    for (const { id, fromModel, fromCosts } of UNTOUCHED_DEFAULT_MIGRATIONS) {
+    for (const { id, fromModel, fromCosts, fromContextWindow } of UNTOUCHED_DEFAULT_MIGRATIONS) {
       const stored = migrated[id];
       const next = defaults[id];
       if (!this._isUntouchedShippedDefault(stored, next, { fromModel, fromCosts })) continue;
-      migrated[id] = this._applyUntouchedDefaultMigration(stored, next, { applyCosts: !!fromCosts });
+      migrated[id] = this._applyUntouchedDefaultMigration(stored, next, {
+        applyCosts: !!fromCosts,
+        fromContextWindow,
+      });
     }
   }
 
