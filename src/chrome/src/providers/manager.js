@@ -79,6 +79,171 @@ const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'webgpu', 'openai', 'azure
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
+const PROVIDER_COST_KEYS = [
+  'inputCostPerMillionUsd',
+  'cacheReadCostPerMillionUsd',
+  'cacheWriteCostPerMillionUsd',
+  'cacheWrite1hCostPerMillionUsd',
+  'outputCostPerMillionUsd',
+];
+// Last-shipped-on-main snapshots this upgrade replaced. OpenAI and OpenRouter
+// keep the special-case rules in _migrateStoredProviderConfigs instead.
+const UNTOUCHED_DEFAULT_MIGRATIONS = [
+  {
+    id: 'anthropic',
+    fromModel: 'claude-sonnet-4-6',
+    fromCosts: {
+      inputCostPerMillionUsd: 3,
+      cacheReadCostPerMillionUsd: 0.3,
+      cacheWriteCostPerMillionUsd: 3.75,
+      cacheWrite1hCostPerMillionUsd: 6,
+      outputCostPerMillionUsd: 15,
+    },
+  },
+  { id: 'gemini', fromModel: 'gemini-3.1-flash' },
+  {
+    id: 'xai',
+    fromModel: 'grok-4.3',
+    fromCosts: {
+      inputCostPerMillionUsd: 1.25,
+      outputCostPerMillionUsd: 2.5,
+    },
+  },
+  { id: 'minimax', fromModel: 'minimax-m2.7' },
+  { id: 'kimi', fromModel: 'kimi-k2.5' },
+  { id: 'alibaba', fromModel: 'qwen-max' },
+  {
+    id: 'mistral',
+    fromModel: 'mistral-large-latest',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.5,
+      outputCostPerMillionUsd: 1.5,
+    },
+  },
+  {
+    id: 'z_ai',
+    fromModel: 'glm-5.2',
+    fromContextWindow: 1000000,
+    fromCosts: {
+      inputCostPerMillionUsd: 1.4,
+      cacheReadCostPerMillionUsd: 0.26,
+      outputCostPerMillionUsd: 4.4,
+    },
+  },
+  {
+    id: 'groq',
+    fromModel: 'llama-3.3-70b-versatile',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.59,
+      outputCostPerMillionUsd: 0.79,
+    },
+  },
+  {
+    id: 'nvidia',
+    fromModel: 'meta/llama-3.1-8b-instruct',
+    fromCosts: {
+      inputCostPerMillionUsd: 0.22,
+      outputCostPerMillionUsd: 0.22,
+    },
+  },
+  { id: 'together', fromModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
+  { id: 'huggingface', fromModel: 'zai-org/GLM-5.2' },
+  { id: 'fireworks', fromModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct' },
+  {
+    id: 'aws_bedrock',
+    fromModel: '',
+    fromCosts: {
+      inputCostPerMillionUsd: 3,
+      cacheReadCostPerMillionUsd: 0.3,
+      cacheWriteCostPerMillionUsd: 3.75,
+      cacheWrite1hCostPerMillionUsd: 6,
+      outputCostPerMillionUsd: 15,
+    },
+  },
+  {
+    id: 'baseten',
+    fromModel: 'moonshotai/Kimi-K2.6',
+    fromContextWindow: 262000,
+    fromCosts: {
+      inputCostPerMillionUsd: 0.95,
+      cacheReadCostPerMillionUsd: 0.16,
+      outputCostPerMillionUsd: 4,
+    },
+  },
+  {
+    id: 'siliconflow',
+    fromModel: 'moonshotai/Kimi-K2.6',
+    fromContextWindow: 262000,
+    fromCosts: {
+      inputCostPerMillionUsd: 0.77,
+      cacheReadCostPerMillionUsd: 0.2,
+      outputCostPerMillionUsd: 4,
+    },
+  },
+  {
+    id: 'cohere',
+    fromModel: 'command-a-03-2025',
+    fromContextWindow: 256000,
+    fromCosts: {
+      inputCostPerMillionUsd: 2.5,
+      outputCostPerMillionUsd: 10,
+    },
+  },
+  {
+    id: 'deepinfra',
+    fromModel: 'meta-llama/Llama-4-Scout-17B-16E-Instruct',
+    fromContextWindow: 327680,
+    fromCosts: {
+      inputCostPerMillionUsd: 0.1,
+      outputCostPerMillionUsd: 0.3,
+    },
+  },
+  { id: 'google-vertex', fromModel: 'gemini-2.5-flash', fromContextWindow: 1048576 },
+  {
+    id: 'google-vertex-anthropic',
+    fromModel: 'claude-haiku-4-5@20251001',
+    fromContextWindow: 200000,
+    fromCosts: {
+      inputCostPerMillionUsd: 1,
+      cacheReadCostPerMillionUsd: 0.1,
+      cacheWriteCostPerMillionUsd: 1.25,
+      outputCostPerMillionUsd: 5,
+    },
+  },
+  { id: 'minimax-coding-plan', fromModel: 'MiniMax-M2.1', fromContextWindow: 204800 },
+  { id: 'minimax-cn-coding-plan', fromModel: 'MiniMax-M2.1', fromContextWindow: 204800 },
+  { id: 'modelscope', fromModel: 'Qwen/Qwen3-30B-A3B-Thinking-2507', fromContextWindow: 262144 },
+  {
+    id: 'stepfun',
+    fromModel: 'step-1-32k',
+    fromContextWindow: 32768,
+    fromCosts: {
+      inputCostPerMillionUsd: 2.05,
+      cacheReadCostPerMillionUsd: 0.41,
+      outputCostPerMillionUsd: 9.59,
+    },
+  },
+  { id: 'zai-coding-plan', fromModel: 'glm-4.7', fromContextWindow: 204800 },
+  {
+    id: 'zhipuai',
+    fromModel: 'glm-5.1',
+    fromContextWindow: 200000,
+    fromCosts: {
+      inputCostPerMillionUsd: 1.4,
+      cacheReadCostPerMillionUsd: 0.26,
+      outputCostPerMillionUsd: 4.4,
+    },
+  },
+  { id: 'zhipuai-coding-plan', fromModel: 'glm-5.1', fromContextWindow: 200000 },
+  // Model IDs unchanged; only the catalog vision flag flipped in this upgrade.
+  { id: 'helicone', fromModel: 'chatgpt-4o-latest', fromSupportsVision: false },
+  { id: 'vercel', fromModel: 'xai/grok-4.1-fast-reasoning', fromSupportsVision: false },
+  { id: 'modelscope', fromModel: 'Qwen/Qwen3.8-27B', fromSupportsVision: false },
+  { id: 'siliconflow', fromModel: 'moonshotai/Kimi-K3', fromSupportsVision: false },
+  { id: 'minimax-coding-plan', fromModel: 'MiniMax-M3', fromSupportsVision: false },
+  { id: 'minimax-cn-coding-plan', fromModel: 'MiniMax-M3', fromSupportsVision: false },
+  { id: 'stepfun', fromModel: 'step-3.7-flash', fromSupportsVision: false },
+];
 const DUPLICATE_BLANK_CONFIG_KEYS = [
   ...PROVIDER_CREDENTIAL_KEYS,
   'baseUrl',
@@ -161,7 +326,8 @@ export class ProviderManager {
       );
     });
     const hadLegacyClaudeSubscription = Object.hasOwn(data.providers || {}, 'claude_subscription');
-    const stored = this._migrateStoredProviderConfigs(data.providers || {});
+    const rawStoredProviders = data.providers || {};
+    const stored = this._migrateStoredProviderConfigs(rawStoredProviders);
     const legacyActiveProviderId = ['webbrain', 'openai_subscription'].includes(data.activeProvider)
       ? WEBBRAIN_CLOUD_PROVIDER_ID
       : data.activeProvider;
@@ -170,7 +336,9 @@ export class ProviderManager {
     // without dropping keys that don't exist in stored.
     const defaults = this._defaultConfigs();
     const configs = {};
-    let providerStateMigrated = ollamaVisionConfigMigrated || genericVisionConfigMigrated;
+    let providerStateMigrated = ollamaVisionConfigMigrated
+      || genericVisionConfigMigrated
+      || this._storedProviderConfigsChanged(rawStoredProviders, stored);
     for (const [id, config] of Object.entries(defaults)) {
       const storedConfig = stored[id];
       const hasConfiguredMarker = !!storedConfig && Object.hasOwn(storedConfig, 'configured');
@@ -473,19 +641,19 @@ export class ProviderManager {
         providerName: 'aws-bedrock',
         // Bedrock endpoint is derived from region; baseUrl is unused but kept for UI consistency.
         baseUrl: 'https://bedrock-runtime.{region}.amazonaws.com',
-        // "model" is the Bedrock model id, e.g. "anthropic.claude-3-sonnet-20240229-v1:0"
+        // "model" is the Bedrock model id, e.g. "anthropic.claude-sonnet-5"
         model: '',
         region: 'us-east-1',
         accessKeyId: '',
         secretAccessKey: '',
         sessionToken: '',
         supportsVision: false,
-        // Seed Claude-class rates; users should adjust for other Bedrock models.
-        inputCostPerMillionUsd: 3,
-        cacheReadCostPerMillionUsd: 0.3,
-        cacheWriteCostPerMillionUsd: 3.75,
-        cacheWrite1hCostPerMillionUsd: 6,
-        outputCostPerMillionUsd: 15,
+        // Seed Claude Sonnet 5 rates; users should adjust for other Bedrock models.
+        inputCostPerMillionUsd: 2,
+        cacheReadCostPerMillionUsd: 0.2,
+        cacheWriteCostPerMillionUsd: 2.5,
+        cacheWrite1hCostPerMillionUsd: 4,
+        outputCostPerMillionUsd: 10,
         enabled: false,
       },
       openai: {
@@ -510,12 +678,12 @@ export class ProviderManager {
         category: 'cloud',
         label: 'Anthropic Claude',
         baseUrl: 'https://api.anthropic.com',
-        model: 'claude-sonnet-4-6',
-        inputCostPerMillionUsd: 3,
-        cacheReadCostPerMillionUsd: 0.3,
-        cacheWriteCostPerMillionUsd: 3.75,
-        cacheWrite1hCostPerMillionUsd: 6,
-        outputCostPerMillionUsd: 15,
+        model: 'claude-sonnet-5',
+        inputCostPerMillionUsd: 2,
+        cacheReadCostPerMillionUsd: 0.2,
+        cacheWriteCostPerMillionUsd: 2.5,
+        cacheWrite1hCostPerMillionUsd: 4,
+        outputCostPerMillionUsd: 10,
         supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.anthropic.com/settings/keys',
@@ -530,7 +698,7 @@ export class ProviderManager {
         label: 'Google Gemini',
         providerName: 'gemini',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-        model: 'gemini-3.1-flash',
+        model: 'gemini-3.7-flash',
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         apiKey: '',
@@ -557,9 +725,9 @@ export class ProviderManager {
         label: 'Mistral AI',
         providerName: 'mistral',
         baseUrl: 'https://api.mistral.ai/v1',
-        model: 'mistral-large-latest',
-        inputCostPerMillionUsd: 0.5,
-        outputCostPerMillionUsd: 1.5,
+        model: 'mistral-medium-3.5',
+        inputCostPerMillionUsd: 1.5,
+        outputCostPerMillionUsd: 7.5,
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         apiKey: '',
@@ -588,9 +756,9 @@ export class ProviderManager {
         label: 'xAI Grok',
         providerName: 'xai',
         baseUrl: 'https://api.x.ai/v1',
-        model: 'grok-4.3',
-        inputCostPerMillionUsd: 1.25,
-        outputCostPerMillionUsd: 2.5,
+        model: 'grok-4.6',
+        inputCostPerMillionUsd: 2,
+        outputCostPerMillionUsd: 6,
         supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.x.ai/',
@@ -603,7 +771,7 @@ export class ProviderManager {
         label: 'Nvidia NIM',
         providerName: 'nvidia',
         baseUrl: 'https://integrate.api.nvidia.com/v1',
-        model: 'meta/llama-3.1-8b-instruct',
+        model: 'nvidia/nemotron-3-super-120b-a12b',
         inputCostPerMillionUsd: 0.22,
         outputCostPerMillionUsd: 0.22,
         supportsAskStreaming: true,
@@ -617,9 +785,9 @@ export class ProviderManager {
         label: 'Groq',
         providerName: 'groq',
         baseUrl: 'https://api.groq.com/openai/v1',
-        model: 'llama-3.3-70b-versatile',
-        inputCostPerMillionUsd: 0.59,
-        outputCostPerMillionUsd: 0.79,
+        model: 'openai/gpt-oss-120b',
+        inputCostPerMillionUsd: 0.15,
+        outputCostPerMillionUsd: 0.6,
         supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.groq.com/keys',
@@ -631,7 +799,7 @@ export class ProviderManager {
         label: 'MiniMax',
         providerName: 'minimax',
         baseUrl: 'https://api.minimax.chat/v1',
-        model: 'minimax-m2.7',
+        model: 'MiniMax-M3',
         apiKey: '',
         apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
         enabled: false,
@@ -642,7 +810,7 @@ export class ProviderManager {
         label: 'Kimi',
         providerName: 'kimi',
         baseUrl: 'https://api.moonshot.ai/v1',
-        model: 'kimi-k2.5',
+        model: 'kimi-k3',
         supportsStreamUsageOptions: true,
         omitTemperature: true,
         compat: { maxTokensField: 'max_completion_tokens' },
@@ -656,7 +824,7 @@ export class ProviderManager {
         label: 'Alibaba Cloud (Qwen)',
         providerName: 'alibaba',
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        model: 'qwen-max',
+        model: 'qwen3.8-max',
         supportsStreamUsageOptions: true,
         apiKey: '',
         apiKeyUrl: 'https://dashscope.console.aliyun.com/apiKey',
@@ -668,7 +836,7 @@ export class ProviderManager {
         label: 'Together AI',
         providerName: 'together',
         baseUrl: 'https://api.together.xyz/v1',
-        model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+        model: 'moonshotai/Kimi-K3',
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         apiKey: '',
@@ -694,7 +862,7 @@ export class ProviderManager {
         label: 'Hugging Face Inference',
         providerName: 'huggingface',
         baseUrl: 'https://router.huggingface.co/v1',
-        model: 'zai-org/GLM-5.2',
+        model: 'moonshotai/Kimi-K3',
         supportsStreamUsageOptions: true,
         apiKey: '',
         apiKeyUrl: 'https://huggingface.co/settings/tokens',
@@ -706,7 +874,7 @@ export class ProviderManager {
         label: 'Fireworks',
         providerName: 'fireworks',
         baseUrl: 'https://api.fireworks.ai/inference/v1',
-        model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+        model: 'accounts/fireworks/models/kimi-k3',
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         apiKey: '',
@@ -719,7 +887,7 @@ export class ProviderManager {
         label: 'z.ai GLM',
         providerName: 'z_ai',
         baseUrl: 'https://api.z.ai/api/paas/v4',
-        model: 'glm-5.2',
+        model: 'glm-5.3',
         contextWindow: 1000000,
         inputCostPerMillionUsd: 1.4,
         cacheReadCostPerMillionUsd: 0.26,
@@ -760,34 +928,46 @@ export class ProviderManager {
         model: OPENROUTER_DEFAULT_MODEL,
       };
     }
+    this._migrateUntouchedShippedDefaults(migrated);
     if (migrated.ollama) {
-      const legacySupportsVision = migrated.ollama.supportsVision;
-      migrated.ollama = {
-        ...migrated.ollama,
-        visionMode: OLLAMA_VISION_MODES.has(migrated.ollama.visionMode)
-          ? migrated.ollama.visionMode
-          : (legacySupportsVision === true
-            ? 'on'
-            : (legacySupportsVision === false ? 'off' : 'auto')),
-      };
-      delete migrated.ollama.supportsVision;
+      const config = migrated.ollama;
+      const visionMode = OLLAMA_VISION_MODES.has(config.visionMode)
+        ? config.visionMode
+        : (config.supportsVision === true
+          ? 'on'
+          : (config.supportsVision === false ? 'off' : 'auto'));
+      if (Object.hasOwn(config, 'supportsVision') || config.visionMode !== visionMode) {
+        migrated.ollama = {
+          ...config,
+          visionMode,
+        };
+        delete migrated.ollama.supportsVision;
+      }
     }
     for (const [id, config] of Object.entries(migrated)) {
       if (!visionProviderKind(config.duplicateOf || id, config)) continue;
       const legacySupportsVision = config.supportsVision;
       const hasConfiguredModel = !!String(config.model || '').trim();
-      migrated[id] = {
-        ...config,
-        visionMode: VISION_MODES.has(config.visionMode)
-          ? config.visionMode
-          : (legacySupportsVision === false
-            ? 'off'
-            : (legacySupportsVision === true ? 'on' : 'auto')),
-        // With an empty Model field the server's loaded model can change
-        // without a settings update, so never restore a persisted detection.
-        visionDetection: hasConfiguredModel ? (config.visionDetection || null) : null,
-      };
-      delete migrated[id].supportsVision;
+      const visionMode = VISION_MODES.has(config.visionMode)
+        ? config.visionMode
+        : (legacySupportsVision === false
+          ? 'off'
+          : (legacySupportsVision === true ? 'on' : 'auto'));
+      const visionDetection = hasConfiguredModel ? (config.visionDetection || null) : null;
+      if (
+        Object.hasOwn(config, 'supportsVision')
+        || config.visionMode !== visionMode
+        || config.visionDetection !== visionDetection
+      ) {
+        migrated[id] = {
+          ...config,
+          visionMode,
+          // With an empty Model field the server's loaded model can change
+          // without a settings update, so never restore a persisted detection.
+          visionDetection,
+        };
+        delete migrated[id].supportsVision;
+      }
     }
     // Existing installs stored omitToolsWhenImagesPresent:true for WebBrain
     // Cloud, which suppressed native tools on every screenshot turn and broke
@@ -813,6 +993,73 @@ export class ProviderManager {
       }
     }
     return migrated;
+  }
+
+  _storedCostsMatchShipped(stored, fromCosts) {
+    if (!fromCosts) return true;
+    return Object.entries(fromCosts).every(([key, value]) => (
+      stored[key] == null || Number(stored[key]) === value
+    ));
+  }
+
+  _isUntouchedShippedDefault(stored, next, { fromModel, fromCosts, fromSupportsVision }) {
+    if (!stored || typeof stored !== 'object' || !next) return false;
+    if (stored.configured === true) return false;
+    if (this._hasStoredProviderCredentials(next, stored)) return false;
+    if (String(stored.model || '') !== String(fromModel || '')) return false;
+    if (fromSupportsVision !== undefined && stored.supportsVision !== fromSupportsVision) return false;
+    const officialBaseUrl = String(next.baseUrl || '').replace(/\/+$/, '');
+    const storedBaseUrl = String(stored.baseUrl || next.baseUrl || '').replace(/\/+$/, '');
+    if (officialBaseUrl && storedBaseUrl !== officialBaseUrl) return false;
+    return this._storedCostsMatchShipped(stored, fromCosts);
+  }
+
+  _applyUntouchedDefaultMigration(stored, next, { applyCosts, fromContextWindow }) {
+    const migrated = { ...stored, model: next.model };
+    if (applyCosts) {
+      for (const key of PROVIDER_COST_KEYS) {
+        if (next[key] != null) migrated[key] = next[key];
+      }
+    }
+    if (
+      fromContextWindow != null
+      && next.contextWindow != null
+      && stored.contextWindow != null
+      && Number(stored.contextWindow) === fromContextWindow
+    ) {
+      migrated.contextWindow = next.contextWindow;
+    }
+    if (Object.hasOwn(next, 'supportsVision')) {
+      migrated.supportsVision = next.supportsVision;
+    }
+    return migrated;
+  }
+
+  _migrateUntouchedShippedDefaults(migrated) {
+    const defaults = this._defaultConfigs();
+    let changed = false;
+    for (const { id, fromModel, fromCosts, fromContextWindow, fromSupportsVision } of UNTOUCHED_DEFAULT_MIGRATIONS) {
+      const stored = migrated[id];
+      const next = defaults[id];
+      if (!this._isUntouchedShippedDefault(stored, next, { fromModel, fromCosts, fromSupportsVision })) continue;
+      migrated[id] = this._applyUntouchedDefaultMigration(stored, next, {
+        applyCosts: !!fromCosts,
+        fromContextWindow,
+      });
+      changed = true;
+    }
+    return changed;
+  }
+
+  _storedProviderConfigsChanged(before, after) {
+    const previous = before && typeof before === 'object' ? before : {};
+    const next = after && typeof after === 'object' ? after : {};
+    const ids = new Set([...Object.keys(previous), ...Object.keys(next)]);
+    for (const id of ids) {
+      if (previous[id] === next[id]) continue;
+      if (JSON.stringify(previous[id] ?? null) !== JSON.stringify(next[id] ?? null)) return true;
+    }
+    return false;
   }
 
   _storedDefaultOverride(defaultConfig, storedConfig) {

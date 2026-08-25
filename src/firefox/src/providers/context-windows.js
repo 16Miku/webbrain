@@ -282,7 +282,7 @@ export function inferContextWindow(config = {}) {
   if (/^gpt-5(?:[.\-]|$)/.test(model) || model.includes('/gpt-5')) return 400000;
 
   // Anthropic Claude
-  if (/claude-(?:fable-5|mythos-5|mythos|opus-4-[6-8]|sonnet-4-6)/.test(model)) return M1;
+  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) return M1;
   if (model.includes('claude-')) return 200000;
 
   // Google Gemini
@@ -298,14 +298,15 @@ export function inferContextWindow(config = {}) {
   if (model.includes('deepseek-v4')) return M1;
 
   // xAI
-  if (model.includes('grok-4.3')) return M1;
+  if (/grok-4\.[56](?:$|[^0-9])/.test(model)) return 500000;
+  if (/grok-4\.(?:3|20)/.test(model)) return M1;
 
   // Groq-hosted common models and OpenAI open-weight GPT-OSS models.
   if (model.includes('gpt-oss')) return K128;
-  if (provider === 'groq' && /(?:llama-3\.[13]|compound)/.test(model)) return K128;
+  if (provider === 'groq' && /(?:llama-3\.[13]|compound|qwen3\.6)/.test(model)) return K128;
 
   // NVIDIA NIM defaults in WebBrain.
-  if (/(?:nemotron.*49b|llama-3[._-]3-nemotron|llama-3\.1-8b)/.test(model)) return K128;
+  if (/(?:nemotron.*49b|llama-3[._-]3-nemotron|llama-3\.1-8b|nemotron-3)/.test(model)) return K128;
 
   // MiniMax direct and OpenRouter slugs.
   if (/minimax.*m3/.test(model)) return M1;
@@ -317,12 +318,17 @@ export function inferContextWindow(config = {}) {
   if (/kimi-k-?3(?:-|$|\/|\.)/.test(model)) return M1;
   if (/kimi-k2\.(?:5|6|7)(?:-|$|\/|\.)/.test(model)) return K256;
 
+  // Z.AI / Zhipu GLM, including Fireworks `glm-5p2` slugs.
+  if (/glm-5(?:\.(?:3|2)|p(?:3|2))(?:$|[^0-9])/.test(model)) return M1;
+
   // Alibaba / Qwen direct models and OpenRouter Qwen slugs.
-  if (model.includes('qwen3.7-plus')) return M1;
-  if (model.includes('qwen3.7-max')) return K256;
+  if (/qwen3p8-27b/.test(model) || /qwen3\.8-27b/.test(model)) return K256;
+  if (/qwen3p8/.test(model) || /qwen3\.[78]/.test(model)) return M1;
+  if (/qwen3\.6-27b/.test(model)) return K256;
+  if (/qwen3\.6-(?:plus|flash)/.test(model)) return M1;
   if (model.includes('qwen3-max')) return K256;
   if (/qwen(?:3\.5)?-(?:plus|turbo)/.test(model)) return M1;
-  if (model.includes('qwen-max')) return 32768;
+  if (model.includes('qwen-max')) return K128;
   if (/qwen3-(?:235b|30b|32b|next)/.test(model)) return K128;
 
   return DEFAULT_CLOUD_CONTEXT_WINDOW;
