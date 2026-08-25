@@ -11,6 +11,17 @@ const SPAN_KIND_INTERNAL = 1;
 const SPAN_KIND_CLIENT = 3;
 const STATUS_CODE_ERROR = 2;
 
+// Canonical session export mapping. The legacy { run, events } shape keeps
+// its historical child-span layout; session bundles use this profile so a
+// collector can reconstruct the WebBrain execution graph without guessing.
+export const TRACE_OTLP_MAPPING = Object.freeze({
+  session: 'trace',
+  run: 'span',
+  sameSessionParent: 'parentSpanId',
+  crossSessionParent: 'spanLink',
+  step: 'spanEvent',
+});
+
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;

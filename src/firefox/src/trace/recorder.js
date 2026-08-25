@@ -12,6 +12,7 @@ import {
   TRACE_REPAIR_STALE_AFTER_MS,
 } from './repair.js';
 import { createTraceStats, addTraceEvent, aggregateTraceRuns } from './stats.js';
+import { projectTraceEventData, projectTraceRun } from './privacy.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -369,7 +370,7 @@ export async function startRun(meta) {
     // Tier is decided once per run: explicit caller override wins, otherwise
     // the opt-in setting. Never forced for local runs by default.
     const lossless = meta.lossless === true || await losslessTraceEnabled();
-    const record = {
+    const record = projectTraceRun({
       runId,
       // Stable per-conversation id so the Traces UI can group sibling runs
       // (= turns of the same chat). Set by the agent from its conversationIds
@@ -409,7 +410,7 @@ export async function startRun(meta) {
       totalLlmLatencyMs: 0,
       totalToolLatencyMs: 0,
       finalContent: null,
-    };
+    }, { includeContent: lossless });
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
     _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
     return runId;
@@ -457,6 +458,7 @@ async function _appendEventNow(runId, kind, data) {
       }
     }
     let resolvedData = typeof data === 'function' ? data(state) : data;
+    resolvedData = projectTraceEventData(kind, resolvedData, { includeContent: state?.lossless === true });
     let losslessBytes = 0;
     let losslessBudgetOmitted = false;
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
@@ -724,21 +726,28 @@ export function recordScreenshot(runId, step, dataUrl, caption = '') {
     if (!dataUrl) return;
     try {
       const db = await openDB();
-      await _ensureRunState(runId, db);
+      const state = await _ensureRunState(runId, db);
       const seq = _newSeq(runId);
-      // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
-      let blob = null;
-      try {
-        const resp = await fetch(dataUrl);
-        blob = await resp.blob();
-      } catch {
-        // Fall back to storing the data URL as text.
+      if (state?.lossless === true) {
+        // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
+        let blob = null;
+        try {
+          const resp = await fetch(dataUrl);
+          blob = await resp.blob();
+        } catch {
+          // Fall back to storing the data URL as text.
+        }
+        const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
+        await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
       }
-      const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
-      await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
       // Also record a lightweight marker in the events log so the timeline
       // renders screenshots in order with everything else.
-      const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
+      const marker = makeEvent(
+        runId,
+        seq,
+        'screenshot',
+        projectTraceEventData('screenshot', { step, caption }, { includeContent: state?.lossless === true }),
+      );
       if (marker) {
         await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
       }
@@ -902,7 +911,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
         existing.endedAt = Date.now();
         existing.durationMs = existing.endedAt - existing.startedAt;
         existing.status = finalStatus;
-        existing.finalContent = finalContent;
+        existing.finalContent = existing.lossless === true ? finalContent : null;
         existing.stepCount = stats.stepCount;
         existing.totalInputTokens = stats.totalInputTokens;
         existing.totalOutputTokens = stats.totalOutputTokens;

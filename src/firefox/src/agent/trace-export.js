@@ -7,10 +7,11 @@
  * the right source for a tool chain; `this.conversations` is not (it is compacted,
  * enriched, and wrapped — see the closed PR #348 review).
  *
- * This renders the TOOL CHAIN: user/assistant/planner prose, streaming lifecycle
- * metadata, privacy-safe visual-delivery evidence, tool calls (name, args,
- * result), and errors — in order. Screenshot pixels and vision descriptions
- * remain omitted; the complete record is available in the Traces page.
+ * This renders the TOOL CHAIN: lifecycle metadata, privacy-safe visual-delivery
+ * evidence, tool names, and errors — in order. Explicit lossless runs may also
+ * render bounded request/response content. Screenshot pixels and vision
+ * descriptions remain omitted; the complete metadata record is available in
+ * the Traces page.
  *
  * Pure and browser-neutral → unit-tested in test/run.js without a DOM or IndexedDB.
  *

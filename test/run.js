@@ -905,7 +905,7 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
 );
-const { normalizeTraceExport, traceExportToOtlp, parseTraceToOtlpArgs } = await import(
+const { normalizeTraceExport, traceExportToOtlp, parseTraceToOtlpArgs, TRACE_OTLP_MAPPING } = await import(
   'file://' + path.join(ROOT, 'scripts/trace-to-otlp.mjs').replace(/\\/g, '/')
 );
 
@@ -8337,6 +8337,8 @@ const TRACE_STATS_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/
 const TRACE_STATS_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/stats.js').replace(/\\/g, '/'));
 const TRACE_LINEAGE_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/lineage.js').replace(/\\/g, '/'));
 const TRACE_LINEAGE_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/lineage.js').replace(/\\/g, '/'));
+const TRACE_PRIVACY_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/privacy.js').replace(/\\/g, '/'));
+const TRACE_PRIVACY_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/privacy.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -8399,6 +8401,73 @@ test('trace event model: mirrors are identical and browser-neutral', () => {
   assert.equal(EVENT_MODEL_CH.TRACE_FORMAT_VERSION, 1, 'first trace format version');
   assert.doesNotMatch(chromeSource, /chrome\./, 'event model must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'event model must not touch storage');
+});
+
+test('trace privacy: default persistence keeps metadata and content mode is explicit', () => {
+  const run = {
+    runId: 'privacy-run',
+    userMessage: 'PRIVATE USER MESSAGE',
+    finalContent: 'PRIVATE FINAL RESPONSE',
+    model: 'test-model',
+    status: 'done',
+  };
+  const response = {
+    step: 1,
+    content: 'PRIVATE MODEL RESPONSE',
+    toolCalls: [{ id: 'call-1', function: { name: 'private_tool', arguments: '{"secret":true}' } }],
+    usage: { prompt_tokens: 10, completion_tokens: 4, cost: 0.12 },
+    latencyMs: 120,
+    model: 'response-model',
+    finishReason: 'stop',
+  };
+  const tool = {
+    step: 1,
+    name: 'private_tool',
+    args: { secret: true },
+    result: { private: 'value' },
+    latencyMs: 40,
+  };
+  const error = { step: 1, phase: 'loop', code: 'TRANSPORT', message: 'PRIVATE ERROR MESSAGE' };
+  const note = {
+    step: 1,
+    note: 'llm_retry',
+    extra: { attempt: 2, delayMs: 50, code: 'RATE_LIMIT', message: 'PRIVATE NOTE' },
+  };
+
+  const safeRun = TRACE_PRIVACY_CH.projectTraceRun(run);
+  assert.equal(safeRun.userMessage, undefined);
+  assert.equal(safeRun.finalContent, undefined);
+  assert.equal(safeRun.model, 'test-model');
+
+  const safeResponse = TRACE_PRIVACY_CH.projectTraceEventData('llm_response', response);
+  assert.equal(safeResponse.content, undefined);
+  assert.equal(safeResponse.toolCalls, undefined);
+  assert.deepEqual(safeResponse.usage, response.usage);
+  assert.equal(safeResponse.latencyMs, 120);
+
+  const safeTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', tool);
+  assert.equal(safeTool.args, undefined);
+  assert.equal(safeTool.result, undefined);
+  assert.deepEqual(safeTool, { step: 1, name: 'private_tool', latencyMs: 40 });
+
+  const safeError = TRACE_PRIVACY_CH.projectTraceEventData('error', error);
+  assert.equal(safeError.message, undefined);
+  assert.equal(safeError.code, 'TRANSPORT');
+
+  const safeNote = TRACE_PRIVACY_CH.projectTraceEventData('note', note);
+  assert.deepEqual(safeNote.extra, { attempt: 2, delayMs: 50, code: 'RATE_LIMIT' });
+
+  assert.deepEqual(TRACE_PRIVACY_CH.projectTraceRun(run, { includeContent: true }), run);
+  assert.deepEqual(
+    TRACE_PRIVACY_CH.projectTraceEventData('llm_response', response, { includeContent: true }),
+    response,
+  );
+  assert.deepEqual(TRACE_PRIVACY_FX.projectTraceRun(run), safeRun, 'Firefox run projection drifted');
+  assert.deepEqual(
+    TRACE_PRIVACY_FX.projectTraceEventData('tool', tool),
+    safeTool,
+    'Firefox event projection drifted',
+  );
 });
 
 test('Cloud terminal runtime envelope pairs the terminal done call with its executed result', () => {
@@ -8654,9 +8723,9 @@ test('trace recorder: writes go through the event model and stamp the format ver
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /import \{ TRACE_FORMAT_VERSION, makeEvent \} from '\.\/event-model\.js';/, `${browser}: recorder does not import the event model`);
     assert.match(recorderSource, /traceFormatVersion: TRACE_FORMAT_VERSION/, `${browser}: run record does not stamp the format version`);
-    assert.match(recorderSource, /let resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the envelope`);
+    assert.match(recorderSource, /let resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?projectTraceEventData\(kind, resolvedData[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the privacy projection or envelope`);
     assert.match(recorderSource, /dropped invalid event/, `${browser}: invalid-event drop is not surfaced`);
-    assert.match(recorderSource, /const marker = makeEvent\(runId, seq, 'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
+    assert.match(recorderSource, /const marker = makeEvent\([\s\S]*?'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
   }
 });
 
@@ -9197,6 +9266,31 @@ test('OTLP session bundles map runs to spans and steps to span events', () => {
   assert.equal(child.kind, 1);
   assert.equal(child.events.length, 3);
   assert.deepEqual(child.events.map(event => event.name), ['webbrain.step_start', 'webbrain.llm_response', 'webbrain.tool']);
+});
+
+test('OTLP session mapping contract is explicit and collector-compatible', () => {
+  assert.deepEqual(TRACE_OTLP_MAPPING, {
+    session: 'trace',
+    run: 'span',
+    sameSessionParent: 'parentSpanId',
+    crossSessionParent: 'spanLink',
+    step: 'spanEvent',
+  });
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'mapping-session' },
+    runs: [{
+      run: { runId: 'mapping-root', conversationId: 'mapping-session', startedAt: 100, endedAt: 200 },
+      events: [
+        { seq: 1, ts: 120, kind: 'turn_start', data: { step: 0 } },
+        { seq: 2, ts: 150, kind: 'step_start', data: { step: 1 } },
+      ],
+    }],
+  });
+  const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+  assert.match(span.traceId, /^[0-9a-f]{32}$/, 'session must map to a valid OTLP trace ID');
+  assert.equal(span.parentSpanId, undefined, 'root run must not invent a parent span');
+  assert.deepEqual(span.events.map(event => event.name), ['webbrain.turn_start', 'webbrain.step_start']);
 });
 
 test('OTLP session bundles use their session ID for blank run conversation IDs', () => {
