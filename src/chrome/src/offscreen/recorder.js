@@ -31,6 +31,12 @@
   // offscreen doc, and concurrent recordings would conflict anyway).
   let session = null;
 
+  // Holds the full data URL after stop() so the service worker can retrieve
+  // it in small chunks via 'recorder-get-data-chunk'. Chrome's
+  // chrome.runtime.sendMessage / sendResponse channel caps at 64 MiB, which
+  // a base64-encoded .webm recording easily exceeds.
+  let pendingDataUrl = null;
+
   function ts() {
     return new Date().toISOString();
   }
@@ -366,13 +372,17 @@
       const blob = new Blob(s.chunks, { type: bareType });
       const dataUrl = await blobToDataUrl(blob);
 
+      // Store the data URL for chunked retrieval. The sendResponse channel
+      // has a 64 MiB limit; a base64-encoded .webm can easily exceed it.
+      pendingDataUrl = dataUrl;
+
       return {
         ok: true,
         mimeType: s.mimeType,        // original, with codecs param
         blobType: bareType,          // what the data URL actually carries
         sizeBytes: blob.size,
         durationMs: Date.now() - s.startedAt,
-        dataUrl,
+        dataUrlLength: dataUrl.length,
       };
     } finally {
       if (session === s) session = null;
@@ -490,6 +500,22 @@
           sendResponse(r);
         } else if (msg.type === 'recorder-state') {
           sendResponse(stateSnapshot());
+        } else if (msg.type === 'recorder-get-data-chunk') {
+          if (!pendingDataUrl) {
+            sendResponse({ ok: false, error: 'no pending recording data' });
+          } else {
+            const offset = msg.offset || 0;
+            const length = msg.length || 4 * 1024 * 1024;
+            sendResponse({
+              ok: true,
+              data: pendingDataUrl.substring(offset, offset + length),
+              offset,
+              total: pendingDataUrl.length,
+            });
+          }
+        } else if (msg.type === 'recorder-release-data') {
+          pendingDataUrl = null;
+          sendResponse({ ok: true });
         } else {
           sendResponse({ ok: false, error: `unknown recorder message: ${msg.type}` });
         }
