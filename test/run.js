@@ -61212,6 +61212,82 @@ test('ProviderManager load persists untouched default-model migrations', async (
   }
 });
 
+test('canonical stored provider snapshots do not rewrite or resave on load', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const validGuid = '11111111-1111-4111-8111-111111111111';
+
+  function makeRuntime(storageData) {
+    let setCount = 0;
+    const local = {
+      async get(keys) {
+        if (Array.isArray(keys)) {
+          const out = {};
+          for (const key of keys) out[key] = storageData[key];
+          return out;
+        }
+        if (typeof keys === 'string') return { [keys]: storageData[keys] };
+        return { ...storageData };
+      },
+      async set(patch) {
+        setCount += 1;
+        Object.assign(storageData, patch);
+      },
+      async remove(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete storageData[key];
+      },
+    };
+    return {
+      setCount: () => setCount,
+      storage: { local },
+      runtime: {
+        id: 'test-runtime',
+        getPlatformInfo(cb) {
+          const info = { os: 'test', arch: 'x64', nacl_arch: 'x64' };
+          if (typeof cb === 'function') cb(info);
+          return Promise.resolve(info);
+        },
+      },
+    };
+  }
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const mgr = new PM();
+      const ollama = { model: 'llama3', visionMode: 'auto', configured: true };
+      assert.equal(
+        mgr._migrateStoredProviderConfigs({ ollama }).ollama,
+        ollama,
+        `${label}: canonical Ollama snapshots must keep the same object`,
+      );
+
+      const lmstudio = { model: 'fixed', visionMode: 'auto', visionDetection: null, configured: true };
+      assert.equal(
+        mgr._migrateStoredProviderConfigs({ lmstudio }).lmstudio,
+        lmstudio,
+        `${label}: canonical LM Studio snapshots must keep the same object`,
+      );
+
+      const storageData = {
+        webbrainDeviceGuid: validGuid,
+        providers: {
+          ollama: { ...ollama },
+        },
+      };
+      const runtime = makeRuntime(storageData);
+      globalThis[runtimeKey] = runtime;
+      await new PM().load();
+      assert.equal(runtime.setCount(), 0, `${label}: canonical snapshots must not rewrite storage on load`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
 test('built-in StepFun catalog entry enables vision for step-3 models', () => {
   for (const [label, Catalog, Provider] of [
     ['chrome', ProviderCatalogCh, OpenAIProviderCh],

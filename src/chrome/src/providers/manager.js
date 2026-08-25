@@ -922,33 +922,44 @@ export class ProviderManager {
     }
     this._migrateUntouchedShippedDefaults(migrated);
     if (migrated.ollama) {
-      const legacySupportsVision = migrated.ollama.supportsVision;
-      migrated.ollama = {
-        ...migrated.ollama,
-        visionMode: OLLAMA_VISION_MODES.has(migrated.ollama.visionMode)
-          ? migrated.ollama.visionMode
-          : (legacySupportsVision === true
-            ? 'on'
-            : (legacySupportsVision === false ? 'off' : 'auto')),
-      };
-      delete migrated.ollama.supportsVision;
+      const config = migrated.ollama;
+      const visionMode = OLLAMA_VISION_MODES.has(config.visionMode)
+        ? config.visionMode
+        : (config.supportsVision === true
+          ? 'on'
+          : (config.supportsVision === false ? 'off' : 'auto'));
+      if (Object.hasOwn(config, 'supportsVision') || config.visionMode !== visionMode) {
+        migrated.ollama = {
+          ...config,
+          visionMode,
+        };
+        delete migrated.ollama.supportsVision;
+      }
     }
     for (const [id, config] of Object.entries(migrated)) {
       if (!visionProviderKind(config.duplicateOf || id, config)) continue;
       const legacySupportsVision = config.supportsVision;
       const hasConfiguredModel = !!String(config.model || '').trim();
-      migrated[id] = {
-        ...config,
-        visionMode: VISION_MODES.has(config.visionMode)
-          ? config.visionMode
-          : (legacySupportsVision === false
-            ? 'off'
-            : (legacySupportsVision === true ? 'on' : 'auto')),
-        // With an empty Model field the server's loaded model can change
-        // without a settings update, so never restore a persisted detection.
-        visionDetection: hasConfiguredModel ? (config.visionDetection || null) : null,
-      };
-      delete migrated[id].supportsVision;
+      const visionMode = VISION_MODES.has(config.visionMode)
+        ? config.visionMode
+        : (legacySupportsVision === false
+          ? 'off'
+          : (legacySupportsVision === true ? 'on' : 'auto'));
+      const visionDetection = hasConfiguredModel ? (config.visionDetection || null) : null;
+      if (
+        Object.hasOwn(config, 'supportsVision')
+        || config.visionMode !== visionMode
+        || config.visionDetection !== visionDetection
+      ) {
+        migrated[id] = {
+          ...config,
+          visionMode,
+          // With an empty Model field the server's loaded model can change
+          // without a settings update, so never restore a persisted detection.
+          visionDetection,
+        };
+        delete migrated[id].supportsVision;
+      }
     }
     // Existing installs stored omitToolsWhenImagesPresent:true for WebBrain
     // Cloud, which suppressed native tools on every screenshot turn and broke
@@ -1036,7 +1047,8 @@ export class ProviderManager {
     const next = after && typeof after === 'object' ? after : {};
     const ids = new Set([...Object.keys(previous), ...Object.keys(next)]);
     for (const id of ids) {
-      if (previous[id] !== next[id]) return true;
+      if (previous[id] === next[id]) continue;
+      if (JSON.stringify(previous[id] ?? null) !== JSON.stringify(next[id] ?? null)) return true;
     }
     return false;
   }
