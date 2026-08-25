@@ -368,7 +368,7 @@ const PLAN_BEFORE_ACT_MODES = new Set(['try', 'strict', 'off']);
 const PLAN_REVIEW_MODES = new Set(['confidence', 'always', 'never']);
 const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';
 const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';
-const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17373/extension';
+const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
 let cloudBridgeStatusPollTimer = null;
 let cloudBridgeStatusRequestPending = false;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.

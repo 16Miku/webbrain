@@ -62,7 +62,7 @@ export const config = {
   pollIntervalMs: durationFromEnv("WEBBRAIN_POLL_INTERVAL_MS", 1_000),
 } as const;
 
-/** The URL the user must paste into Settings → General → Advanced → Cloud bridge. */
+/** The URL the user must paste into Settings → General → Advanced → MCP. */
 export function bridgeUrl(): string {
   return `ws://127.0.0.1:${config.bridgePort}${config.bridgePath}`;
 }

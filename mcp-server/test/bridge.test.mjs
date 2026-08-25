@@ -133,7 +133,7 @@ test("no extension attached produces an actionable message", async () => {
     (error) => {
       assert.ok(error instanceof BridgeError);
       assert.match(error.message, /No WebBrain extension is connected/);
-      assert.match(error.message, /Cloud bridge/);
+      assert.match(error.message, /MCP/);
       return true;
     },
   );

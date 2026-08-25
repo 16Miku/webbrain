@@ -275,7 +275,7 @@ npx -y @webbrain/mcp-server
 ```
 
 Once the server is running, open **WebBrain → Settings → General → Advanced →
-Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+MCP**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
 **Chromium only** — the control and bridge runtime use the extension's off-screen
 document, which the Firefox build does not have.
 
@@ -307,7 +307,7 @@ examples, safety boundaries, and troubleshooting guide live at
 
 > The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
 > the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
-> the URL under **Settings → General → Advanced → Cloud bridge**.
+> the URL under **Settings → General → Advanced → MCP**.
 
 ## LM Studio plugin
 
