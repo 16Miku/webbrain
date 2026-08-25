@@ -303,10 +303,10 @@ export function inferContextWindow(config = {}) {
 
   // Groq-hosted common models and OpenAI open-weight GPT-OSS models.
   if (model.includes('gpt-oss')) return K128;
-  if (provider === 'groq' && /(?:llama-3\.[13]|compound)/.test(model)) return K128;
+  if (provider === 'groq' && /(?:llama-3\.[13]|compound|qwen3\.6)/.test(model)) return K128;
 
   // NVIDIA NIM defaults in WebBrain.
-  if (/(?:nemotron.*49b|llama-3[._-]3-nemotron|llama-3\.1-8b)/.test(model)) return K128;
+  if (/(?:nemotron.*49b|llama-3[._-]3-nemotron|llama-3\.1-8b|nemotron-3)/.test(model)) return K128;
 
   // MiniMax direct and OpenRouter slugs.
   if (/minimax.*m3/.test(model)) return M1;
@@ -318,11 +318,13 @@ export function inferContextWindow(config = {}) {
   if (/kimi-k-?3(?:-|$|\/|\.)/.test(model)) return M1;
   if (/kimi-k2\.(?:5|6|7)(?:-|$|\/|\.)/.test(model)) return K256;
 
-  // Z.AI / Zhipu GLM
-  if (/glm-5\.(?:3|2)(?:$|[^0-9])/.test(model)) return M1;
+  // Z.AI / Zhipu GLM, including Fireworks `glm-5p2` slugs.
+  if (/glm-5(?:\.(?:3|2)|p(?:3|2))(?:$|[^0-9])/.test(model)) return M1;
 
   // Alibaba / Qwen direct models and OpenRouter Qwen slugs.
-  if (/qwen3\.[78]/.test(model)) return M1;
+  if (/qwen3p8-27b/.test(model) || /qwen3\.8-27b/.test(model)) return K256;
+  if (/qwen3p8/.test(model) || /qwen3\.[78]/.test(model)) return M1;
+  if (/qwen3\.6-27b/.test(model)) return K256;
   if (/qwen3\.6-(?:plus|flash)/.test(model)) return M1;
   if (model.includes('qwen3-max')) return K256;
   if (/qwen(?:3\.5)?-(?:plus|turbo)/.test(model)) return M1;

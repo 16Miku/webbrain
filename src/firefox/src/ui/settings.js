@@ -2169,7 +2169,7 @@ function renderProviders() {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8080' },
         OPTIONAL_LOCAL_API_KEY_FIELD,
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen/qwen3.5-9b' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'unsloth/Qwen3.8-27B-GGUF' },
         CONTEXT_WINDOW_FIELD,
         VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
@@ -2179,7 +2179,7 @@ function renderProviders() {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
         OPTIONAL_LOCAL_API_KEY_FIELD,
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.6:35b-a3b' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.8:27b' },
         CONTEXT_WINDOW_FIELD,
         OLLAMA_VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
@@ -2199,7 +2199,7 @@ function renderProviders() {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1337/v1' },
         OPTIONAL_LOCAL_API_KEY_FIELD,
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma-4-12b-qat' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'google/gemma-4-12B-it' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2209,7 +2209,7 @@ function renderProviders() {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8000/v1' },
         OPTIONAL_LOCAL_API_KEY_FIELD,
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma/gemma4-31b-qat' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'Qwen/Qwen3.8-27B' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2219,7 +2219,7 @@ function renderProviders() {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:30000/v1' },
         OPTIONAL_LOCAL_API_KEY_FIELD,
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma/gemma4-31b-qat' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'Qwen/Qwen3.8-27B' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2299,7 +2299,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-or-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'openrouter/free',
-          suggestions: ['openrouter/free', 'minimax/minimax-m3', 'stepfun/step-3.7-flash', 'qwen/qwen3.7-max', 'xiaomi/mimo-v2.5-pro'] },
+          suggestions: ['openrouter/free', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
       ],
@@ -2307,8 +2307,8 @@ function renderProviders() {
     huggingface: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'hf_...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'zai-org/GLM-5.2',
-          suggestions: ['zai-org/GLM-5.2', 'Qwen/Qwen3.6-27B'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'moonshotai/Kimi-K3',
+          suggestions: ['moonshotai/Kimi-K3', 'zai-org/GLM-5.2', 'Qwen/Qwen3.8-2.4T-A95B', 'Qwen/Qwen3.6-27B'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://router.huggingface.co/v1' },
         // Hugging Face's catalog is huge and open-ended — unlike curated
         // routers, model-name sniffing (openai.js supportsVision) can't
@@ -2321,12 +2321,13 @@ function renderProviders() {
     fireworks: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'fw_...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'accounts/fireworks/models/kimi-k3',
           suggestions: [
-            'accounts/fireworks/models/llama-v3p3-70b-instruct',
-            'accounts/fireworks/models/llama4-scout-instruct-basic',
-            'accounts/fireworks/models/qwen3-235b-a22b',
-            'accounts/fireworks/models/deepseek-v3',
+            'accounts/fireworks/models/kimi-k3',
+            'accounts/fireworks/models/glm-5p2',
+            'accounts/fireworks/models/minimax-m3',
+            'accounts/fireworks/models/deepseek-v4-pro-0813',
+            'accounts/fireworks/models/qwen3p8-2p4t-a95b',
           ] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.fireworks.ai/inference/v1' },
         PROMPT_TIER_FIELD,
@@ -2356,7 +2357,7 @@ function renderProviders() {
         { key: 'accountId', label: 'Cloudflare Account ID', type: 'text', placeholder: '0123456789abcdef0123456789abcdef' },
         { key: 'gatewayId', label: 'AI Gateway ID (optional; @cf defaults to default)', type: 'text', placeholder: 'my-gateway' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: '@cf/zai-org/glm-5.2',
-          suggestions: ['@cf/zai-org/glm-5.2'] },
+          suggestions: ['@cf/zai-org/glm-5.2', '@cf/qwen/qwen3-30b-a3b-fp8'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2391,8 +2392,8 @@ function renderProviders() {
     nvidia: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'nvapi-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'nvidia/llama-3.3-nemotron-super-49b',
-          suggestions: ['nvidia/llama-3.3-nemotron-super-49b', 'nvidia/llama-3.1-nemotron-70b-instruct', 'nvidia/nemotron-nano-9b-v2', 'meta/llama-3.3-70b-instruct', 'meta/llama-3.1-8b-instruct', 'deepseek-ai/deepseek-r1'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'nvidia/nemotron-3-super-120b-a12b',
+          suggestions: ['nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-3-nano-30b-a3b', 'z-ai/glm-5.2', 'qwen/qwen3.5-397b-a17b', 'nvidia/llama-3.3-nemotron-super-49b-v1.5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://integrate.api.nvidia.com/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2427,12 +2428,13 @@ function renderProviders() {
     together: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'tgp_...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'moonshotai/Kimi-K3',
           suggestions: [
-            'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-            'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
-            'Qwen/Qwen2.5-72B-Instruct-Turbo',
-            'deepseek-ai/DeepSeek-V3',
+            'moonshotai/Kimi-K3',
+            'zai-org/GLM-5.2',
+            'MiniMaxAI/MiniMax-M3',
+            'Qwen/Qwen3.8-2.4T-A95B',
+            'google/gemma-4-31B-it',
           ] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.together.xyz/v1' },
         ...COST_ESTIMATE_FIELDS,
@@ -2442,7 +2444,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'gsk_...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'openai/gpt-oss-120b',
-          suggestions: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b'] },
+          suggestions: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.6-27b'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.groq.com/openai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],

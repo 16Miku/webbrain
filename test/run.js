@@ -57640,8 +57640,15 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     assert.equal(infer({ category: 'cloud', providerName: 'xai', model: 'grok-4.3' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'xai', model: 'grok-4.6' }), 500000);
     assert.equal(infer({ category: 'router', providerName: 'groq', model: 'openai/gpt-oss-120b' }), 131072);
+    assert.equal(infer({ category: 'router', providerName: 'groq', model: 'qwen/qwen3.6-27b' }), 131072);
     assert.equal(infer({ category: 'router', providerName: 'nvidia', model: 'nvidia/llama-3.3-nemotron-super-49b' }), 131072);
+    assert.equal(infer({ category: 'router', providerName: 'nvidia', model: 'nvidia/nemotron-3-super-120b-a12b' }), 131072);
     assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'minimax/minimax-m3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'qwen/qwen3.8-27b' }), 262144);
+    assert.equal(infer({ category: 'router', providerName: 'huggingface', model: 'Qwen/Qwen3.6-27B' }), 262144);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'moonshotai/kimi-k3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'openrouter', model: 'z-ai/glm-5.3' }), 1000000);
+    assert.equal(infer({ category: 'router', providerName: 'fireworks', model: 'accounts/fireworks/models/glm-5p2' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'minimax', model: 'minimax-m2.7' }), 204800);
     assert.equal(infer({ category: 'cloud', providerName: 'minimax', model: 'MiniMax-M3' }), 1000000);
     for (const model of ['kimi-k3', 'kimi-k-3']) {
@@ -60741,10 +60748,13 @@ test('_defaultConfigs: router providers present and disabled by default', () => 
     assert.equal(defaults.cloudflare.supportsStreamUsageOptions, false);
     assert.equal(defaults.cloudflare.accountId, '');
     assert.equal(defaults.fireworks.baseUrl, 'https://api.fireworks.ai/inference/v1');
-    assert.equal(defaults.fireworks.model, 'accounts/fireworks/models/llama-v3p3-70b-instruct');
+    assert.equal(defaults.fireworks.model, 'accounts/fireworks/models/kimi-k3');
     assert.equal(defaults.fireworks.supportsStreamUsageOptions, true);
     assert.equal(defaults.together.baseUrl, 'https://api.together.xyz/v1');
-    assert.equal(defaults.together.model, 'meta-llama/Llama-3.3-70B-Instruct-Turbo');
+    assert.equal(defaults.together.model, 'moonshotai/Kimi-K3');
+    assert.equal(defaults.huggingface.model, 'moonshotai/Kimi-K3');
+    assert.equal(defaults.groq.model, 'openai/gpt-oss-120b');
+    assert.equal(defaults.nvidia.model, 'nvidia/nemotron-3-super-120b-a12b');
     assert.equal(defaults.together.supportsStreamUsageOptions, true);
   }
 });
