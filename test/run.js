@@ -61101,6 +61101,61 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
     assert.equal(stepfun.supportsVision, true);
     assert.equal(stepfun.contextWindow, defaults.stepfun.contextWindow);
 
+    const helicone = mgr._migrateStoredProviderConfigs({
+      helicone: {
+        model: 'chatgpt-4o-latest',
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).helicone;
+    assert.equal(helicone.model, defaults.helicone.model);
+    assert.equal(helicone.supportsVision, true);
+
+    const heliconeCustom = {
+      model: 'custom/model',
+      supportsVision: false,
+      configured: false,
+      apiKey: '',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ helicone: heliconeCustom }).helicone,
+      heliconeCustom,
+    );
+
+    const heliconeKeyed = {
+      model: 'chatgpt-4o-latest',
+      supportsVision: false,
+      configured: false,
+      apiKey: 'kept',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ helicone: heliconeKeyed }).helicone,
+      heliconeKeyed,
+    );
+
+    const vercel = mgr._migrateStoredProviderConfigs({
+      vercel: {
+        model: 'xai/grok-4.1-fast-reasoning',
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).vercel;
+    assert.equal(vercel.model, defaults.vercel.model);
+    assert.equal(vercel.supportsVision, true);
+
+    const alreadyVision = {
+      model: 'chatgpt-4o-latest',
+      supportsVision: true,
+      configured: false,
+      apiKey: '',
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ helicone: alreadyVision }).helicone,
+      alreadyVision,
+    );
+
     const bedrock = mgr._migrateStoredProviderConfigs({
       aws_bedrock: {
         model: '',
@@ -61194,6 +61249,12 @@ test('ProviderManager load persists untouched default-model migrations', async (
             configured: false,
             apiKey: '',
           },
+          helicone: {
+            model: 'chatgpt-4o-latest',
+            supportsVision: false,
+            configured: false,
+            apiKey: '',
+          },
         },
       };
       globalThis[runtimeKey] = makeRuntime(storageData);
@@ -61220,6 +61281,11 @@ test('ProviderManager load persists untouched default-model migrations', async (
         storageData.providers.cohere.contextWindow,
         defaults.cohere.contextWindow,
         `${label}: migrated Cohere context window must be saved`,
+      );
+      assert.equal(
+        storageData.providers.helicone.supportsVision,
+        true,
+        `${label}: migrated Helicone vision flag must be saved`,
       );
     }
   } finally {

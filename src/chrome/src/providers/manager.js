@@ -235,6 +235,14 @@ const UNTOUCHED_DEFAULT_MIGRATIONS = [
     },
   },
   { id: 'zhipuai-coding-plan', fromModel: 'glm-5.1', fromContextWindow: 200000 },
+  // Model IDs unchanged; only the catalog vision flag flipped in this upgrade.
+  { id: 'helicone', fromModel: 'chatgpt-4o-latest', fromSupportsVision: false },
+  { id: 'vercel', fromModel: 'xai/grok-4.1-fast-reasoning', fromSupportsVision: false },
+  { id: 'modelscope', fromModel: 'Qwen/Qwen3.8-27B', fromSupportsVision: false },
+  { id: 'siliconflow', fromModel: 'moonshotai/Kimi-K3', fromSupportsVision: false },
+  { id: 'minimax-coding-plan', fromModel: 'MiniMax-M3', fromSupportsVision: false },
+  { id: 'minimax-cn-coding-plan', fromModel: 'MiniMax-M3', fromSupportsVision: false },
+  { id: 'stepfun', fromModel: 'step-3.7-flash', fromSupportsVision: false },
 ];
 const DUPLICATE_BLANK_CONFIG_KEYS = [
   ...PROVIDER_CREDENTIAL_KEYS,
@@ -994,11 +1002,12 @@ export class ProviderManager {
     ));
   }
 
-  _isUntouchedShippedDefault(stored, next, { fromModel, fromCosts }) {
+  _isUntouchedShippedDefault(stored, next, { fromModel, fromCosts, fromSupportsVision }) {
     if (!stored || typeof stored !== 'object' || !next) return false;
     if (stored.configured === true) return false;
     if (this._hasStoredProviderCredentials(next, stored)) return false;
     if (String(stored.model || '') !== String(fromModel || '')) return false;
+    if (fromSupportsVision !== undefined && stored.supportsVision !== fromSupportsVision) return false;
     const officialBaseUrl = String(next.baseUrl || '').replace(/\/+$/, '');
     const storedBaseUrl = String(stored.baseUrl || next.baseUrl || '').replace(/\/+$/, '');
     if (officialBaseUrl && storedBaseUrl !== officialBaseUrl) return false;
@@ -1029,10 +1038,10 @@ export class ProviderManager {
   _migrateUntouchedShippedDefaults(migrated) {
     const defaults = this._defaultConfigs();
     let changed = false;
-    for (const { id, fromModel, fromCosts, fromContextWindow } of UNTOUCHED_DEFAULT_MIGRATIONS) {
+    for (const { id, fromModel, fromCosts, fromContextWindow, fromSupportsVision } of UNTOUCHED_DEFAULT_MIGRATIONS) {
       const stored = migrated[id];
       const next = defaults[id];
-      if (!this._isUntouchedShippedDefault(stored, next, { fromModel, fromCosts })) continue;
+      if (!this._isUntouchedShippedDefault(stored, next, { fromModel, fromCosts, fromSupportsVision })) continue;
       migrated[id] = this._applyUntouchedDefaultMigration(stored, next, {
         applyCosts: !!fromCosts,
         fromContextWindow,
