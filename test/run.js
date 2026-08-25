@@ -52883,7 +52883,7 @@ test('inspect_event_listeners resolves marked ref targets through CDP and always
   }
 });
 
-test('Cloud bridge settings are Chromium-only, live under Advanced, and keep setup guidance in sync', () => {
+test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup guidance in sync', () => {
   const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const chromeSettings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const chromeLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
@@ -52904,6 +52904,7 @@ test('Cloud bridge settings are Chromium-only, live under Advanced, and keep set
   assert.match(generalPanel, /id="cloud-bridge-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
   assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'Cloud bridge must default off');
   assert.match(chromeHtml, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
+  assert.match(chromeHtml, /href="https:\/\/www\.webbrain\.one\/docs\/mcp\/"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/, 'MCP setting should link to the setup guide safely');
 
   assert.doesNotMatch(firefoxHtml, /cloud-bridge-setting|toggle-cloud-bridge|input-cloud-bridge-url/, 'Firefox should not show unsupported bridge controls');
   assert.doesNotMatch(firefoxSettings, /webbrainCloudBridgeEnabled|webbrainCloudBridgeUrl|cloud_bridge_status/, 'Firefox settings should not wire the Chromium bridge');
@@ -52911,6 +52912,7 @@ test('Cloud bridge settings are Chromium-only, live under Advanced, and keep set
 
   assert.match(chromeSettings, /const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';/, 'Chrome settings should use the runtime bridge enable key');
   assert.match(chromeSettings, /const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';/, 'Chrome settings should use the runtime bridge URL key');
+  assert.match(chromeSettings, /const DEFAULT_CLOUD_BRIDGE_URL = 'ws:\/\/127\.0\.0\.1:17374\/extension';/, 'MCP should default to its local listener');
   assert.match(chromeSettings, /cloudBridgeToggle\.checked = stored\[CLOUD_BRIDGE_ENABLED_KEY\] === true/, 'bridge should hydrate only explicit opt-in');
   assert.match(chromeSettings, /sendToBackground\('cloud_bridge_start', \{ url: normalized \}\)/, 'bridge controls should start the configured endpoint');
   assert.match(chromeSettings, /sendToBackground\('cloud_bridge_stop'\)/, 'bridge controls should stop the endpoint');
@@ -52921,12 +52923,19 @@ test('Cloud bridge settings are Chromium-only, live under Advanced, and keep set
   assert.doesNotMatch(saveUrlBody, /setCloudBridgeControlsBusy|cloudBridgeToggle\.disabled/, 'URL blur saves must not disable and cancel the pending bridge-toggle click');
   assert.match(chromeSettings, /status\.lastError === 'WebSocket error'[\s\S]*status_unreachable/, 'generic WebSocket failures should explain that the local bridge is unreachable');
   assert.match(chromeSettings, /url\.protocol !== 'ws:'[\s\S]*127\.0\.0\.1[\s\S]*localhost[\s\S]*\[::1\]/, 'settings should reject non-loopback bridge URLs before saving');
-  assert.match(chromeLocale, /'st\.display\.cloud_bridge\.label': 'Cloud bridge'/, 'Chrome English bridge label missing');
-  assert.match(chromeLocale, /Use port 17373 for WebBrain Cloud, 17374 for MCP clients, or 17375 for LM Studio/, 'bridge copy should explain the one-socket destinations');
+  assert.match(chromeLocale, /'st\.display\.cloud_bridge\.label': 'MCP'/, 'Chrome English MCP label missing');
+  assert.match(chromeLocale, /Connect one local controller to this Chromium profile using port 17374\./, 'MCP copy should explain the local listener');
+  assert.doesNotMatch(chromeLocale, /'st\.display\.cloud_bridge\.desc':[^\n]*WebBrain Cloud/, 'MCP description should not mention WebBrain Cloud');
+  for (const filename of fs.readdirSync(path.join(ROOT, 'src/chrome/src/ui/locales')).filter((name) => name.endsWith('.js'))) {
+    const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales', filename), 'utf8');
+    assert.match(locale, /'st\.display\.cloud_bridge\.label': 'MCP'/, `${filename}: MCP title should stay language-neutral`);
+    assert.match(locale, /'st\.display\.cloud_bridge\.url_placeholder': 'ws:\/\/127\.0\.0\.1:17374\/extension'/, `${filename}: MCP placeholder should use the MCP listener`);
+    assert.doesNotMatch(locale, /'st\.display\.cloud_bridge\.desc':[^\n]*(?:WebBrain Cloud|LM Studio|17373|17375)/, `${filename}: MCP description should mention only the MCP destination`);
+  }
 
   for (const rel of ['README.md', 'mcp-server/README.md', 'lmstudio-plugin/README.md']) {
     const readme = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    assert.match(readme, /Settings → General → Advanced → Cloud bridge/, `${rel}: bridge setup path should match the Chromium UI`);
+    assert.match(readme, /Settings → General → Advanced → MCP/, `${rel}: bridge setup path should match the Chromium UI`);
   }
   const rootReadme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   const mcpReadme = fs.readFileSync(path.join(ROOT, 'mcp-server/README.md'), 'utf8');
@@ -52939,7 +52948,7 @@ test('Cloud bridge settings are Chromium-only, live under Advanced, and keep set
   const mcpIndex = fs.readFileSync(path.join(ROOT, 'mcp-server/src/index.ts'), 'utf8');
   const lmBridge = fs.readFileSync(path.join(ROOT, 'lmstudio-plugin/src/util/bridgeClient.ts'), 'utf8');
   for (const [label, source] of [['MCP error', mcpBridge], ['MCP connection', mcpIndex], ['LM Studio connection', lmBridge]]) {
-    assert.match(source, /Settings → General → Advanced → Cloud bridge/, `${label}: runtime setup guidance should match the UI`);
+    assert.match(source, /Settings → General → Advanced → MCP/, `${label}: runtime setup guidance should match the UI`);
   }
 });
 

@@ -379,7 +379,7 @@ server.registerTool(
     return ok(
       `Not connected. Listening on ${bridgeUrl()}, but no extension has dialled in.\n\n` +
         "To connect: open a Chromium browser (Chrome, Edge, Brave), then in " +
-        "WebBrain → Settings → General → Advanced → Cloud bridge set the URL to\n" +
+        "WebBrain → Settings → General → Advanced → MCP set the URL to\n" +
         `  ${bridgeUrl()}\n` +
         "and enable it. The extension holds one bridge socket at a time, so this cannot " +
         "run at the same time as WebBrain Cloud on port 17373.\n\n" +

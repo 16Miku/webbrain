@@ -953,6 +953,14 @@
       gap: 12px;
       width: 100%;
     }
+    .cloud-bridge-docs-link {
+      margin-inline-start: 4px;
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .cloud-bridge-docs-link:hover { text-decoration: underline; }
     .cloud-bridge-url-field {
       display: block;
       width: 100%;
@@ -1591,7 +1599,10 @@
             <div class="cloud-bridge-header">
               <div class="setting-info">
                 <div class="setting-label" id="cloud-bridge-label" data-i18n="st.display.cloud_bridge.label"></div>
-                <div class="setting-desc" id="cloud-bridge-desc" data-i18n="st.display.cloud_bridge.desc"></div>
+                <div class="setting-desc" id="cloud-bridge-desc">
+                  <span data-i18n="st.display.cloud_bridge.desc"></span>
+                  <a class="cloud-bridge-docs-link" href="https://www.webbrain.one/docs/mcp/" target="_blank" rel="noopener noreferrer">More info →</a>
+                </div>
               </div>
               <label class="toggle">
                 <input type="checkbox" id="toggle-cloud-bridge" aria-labelledby="cloud-bridge-label" aria-describedby="cloud-bridge-desc cloud-bridge-status">

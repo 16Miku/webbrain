@@ -29,7 +29,7 @@
   let lastError = '';
 
   function normalizeBridgeUrl(value) {
-    const url = new URL(String(value || 'ws://127.0.0.1:17373/extension'));
+    const url = new URL(String(value || 'ws://127.0.0.1:17374/extension'));
     const host = url.hostname.toLowerCase();
     // WHATWG URL keeps the brackets on IPv6 literals: ws://[::1]/… parses to
     // hostname "[::1]", so both spellings must be allowlisted.

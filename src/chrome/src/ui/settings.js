@@ -65,7 +65,7 @@ const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '33.2.1';
+const EXT_VERSION = '33.2.2';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -368,7 +368,7 @@ const PLAN_BEFORE_ACT_MODES = new Set(['try', 'strict', 'off']);
 const PLAN_REVIEW_MODES = new Set(['confidence', 'always', 'never']);
 const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';
 const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';
-const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17373/extension';
+const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
 let cloudBridgeStatusPollTimer = null;
 let cloudBridgeStatusRequestPending = false;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.

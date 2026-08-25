@@ -27,10 +27,10 @@ cd mcp-server && npm install && npm run build
 The MCP server hosts the listener; the extension dials out to it. A Manifest V3 extension cannot listen on a socket, so the direction is fixed.
 
 1. Install the [WebBrain extension](https://webbrain.one) and open your browser.
-2. In **WebBrain → Settings → General → Advanced → Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
+2. In **WebBrain → Settings → General → Advanced → MCP**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
 3. Ask your MCP client to call `webbrain_connection` to confirm.
 
-> **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch it under **Settings → General → Advanced → Cloud bridge**.
+> **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch it under **Settings → General → Advanced → MCP**.
 
 ## Register with a client
 
@@ -80,7 +80,7 @@ npm start
 ```
 
 After it is running, enable `ws://127.0.0.1:17374/extension` under **WebBrain →
-Settings → General → Advanced → Cloud bridge**. Ask the MCP client to call
+Settings → General → Advanced → MCP**. Ask the MCP client to call
 `webbrain_connection` to verify the complete connection.
 
 ## Troubleshooting

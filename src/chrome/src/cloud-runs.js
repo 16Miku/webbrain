@@ -4,7 +4,7 @@ import {
 } from './agent/workflows.js';
 import { isCredentialField } from './agent/credential-fields.js';
 
-const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17373/extension';
+const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
 const CLOUD_RUN_STORAGE_KEY = 'webbrainCloudRunSnapshots';
 const CLOUD_UPDATE_LIMIT = 200;
 const CLOUD_RUN_LIMIT = 50;
