@@ -59865,6 +59865,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.perplexity.supportsTools, false);
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.supportsVision, true);
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.model, 'step-3.7-flash');
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.modelscope.supportsVision, true);
+  assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.siliconflow.supportsVision, true);
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['perplexity-agent'].apiFormat, 'responses');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['azure-cognitive-services'].model, '');
   assert.equal(ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['kimi-for-coding'].model, 'kimi-for-coding');
@@ -61024,6 +61026,7 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
         inputCostPerMillionUsd: 0.77,
         cacheReadCostPerMillionUsd: 0.2,
         outputCostPerMillionUsd: 4,
+        supportsVision: false,
         configured: false,
         apiKey: '',
       },
@@ -61031,6 +61034,19 @@ test('_defaultConfigs: migrates untouched shipped provider defaults without pinn
     assert.equal(siliconflow.model, defaults.siliconflow.model);
     assert.equal(siliconflow.inputCostPerMillionUsd, defaults.siliconflow.inputCostPerMillionUsd);
     assert.equal(siliconflow.contextWindow, defaults.siliconflow.contextWindow);
+    assert.equal(siliconflow.supportsVision, true);
+
+    const modelscope = mgr._migrateStoredProviderConfigs({
+      modelscope: {
+        model: 'Qwen/Qwen3-30B-A3B-Thinking-2507',
+        contextWindow: 262144,
+        supportsVision: false,
+        configured: false,
+        apiKey: '',
+      },
+    }).modelscope;
+    assert.equal(modelscope.model, defaults.modelscope.model);
+    assert.equal(modelscope.supportsVision, true);
 
     const cohere = mgr._migrateStoredProviderConfigs({
       cohere: {
@@ -61288,18 +61304,34 @@ test('canonical stored provider snapshots do not rewrite or resave on load', asy
   }
 });
 
-test('built-in StepFun catalog entry enables vision for step-3 models', () => {
+test('built-in catalog defaults opt into vision when the model name is multimodal', () => {
   for (const [label, Catalog, Provider] of [
     ['chrome', ProviderCatalogCh, OpenAIProviderCh],
     ['firefox', ProviderCatalogFx, OpenAIProviderFx],
   ]) {
-    assert.equal(
-      Catalog.ADDITIONAL_PROVIDER_DEFAULTS.stepfun.supportsVision,
-      true,
-      `${label}: StepFun catalog must opt into vision`,
-    );
-    const provider = new Provider(Catalog.ADDITIONAL_PROVIDER_DEFAULTS.stepfun);
-    assert.equal(provider.supportsVision, true, `${label}: StepFun provider must attach images`);
+    for (const id of ['stepfun', 'modelscope', 'siliconflow']) {
+      assert.equal(
+        Catalog.ADDITIONAL_PROVIDER_DEFAULTS[id].supportsVision,
+        true,
+        `${label}: ${id} catalog must opt into vision`,
+      );
+      const provider = new Provider(Catalog.ADDITIONAL_PROVIDER_DEFAULTS[id]);
+      assert.equal(provider.supportsVision, true, `${label}: ${id} provider must attach images`);
+    }
+    for (const [id, config] of Object.entries(Catalog.ADDITIONAL_PROVIDER_DEFAULTS)) {
+      const { supportsVision: _explicit, ...withoutFlag } = config;
+      if (!new Provider(withoutFlag).supportsVision) continue;
+      assert.equal(
+        config.supportsVision,
+        true,
+        `${label}: ${id} default model is vision-capable so the catalog must set supportsVision: true`,
+      );
+      assert.equal(
+        new Provider(config).supportsVision,
+        true,
+        `${label}: ${id} provider must attach images`,
+      );
+    }
   }
 });
 
