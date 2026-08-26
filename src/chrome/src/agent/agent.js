@@ -26515,6 +26515,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  async _cancelTrustedClickPress(tabId) {
+    // A delayed mousePressed may arrive after the action deadline. Releasing
+    // at the original target would complete the trusted click after the
+    // caller has already moved on. Move the held pointer outside the viewport
+    // and release with clickCount:0 so Chromium clears button state without
+    // synthesizing the target's click event.
+    try {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: -1, y: -1, button: 'left', buttons: 1, clickCount: 0,
+      });
+    } catch { /* best-effort pointer cleanup */ }
+    try {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0, clickCount: 0,
+      });
+    } catch { /* best-effort pointer cleanup */ }
+  }
+
   async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline) {
     try {
       return await this._withContentActionDeadline(
@@ -26755,6 +26773,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // retry could double-activate or leave mismatched pointer state.
       attempted.add(fallbackKey);
       this._clickAxCdpFallbacks.set(tabId, attempted);
+      try {
+        this._throwIfAborted(abortSignal);
+      } catch (error) {
+        await this._cancelTrustedClickPress(tabId);
+        throw error;
+      }
       dispatchStage = 'mouseReleased';
       await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y);
       dispatchedEvents++;

@@ -87149,6 +87149,101 @@ test('Chrome click_ax fallback deadline cancels late target resolution before CD
   }
 });
 
+test('Chrome click_ax timeout after mouse press unwinds without completing the click', async () => {
+  const originals = {
+    attach: cdpClientCh.attach,
+    armFileInputClickGuard: cdpClientCh.armFileInputClickGuard,
+    dispatchMouseEvent: cdpClientCh.dispatchMouseEvent,
+    consumeFileInputClickGuard: cdpClientCh.consumeFileInputClickGuard,
+    sendCommand: cdpClientCh.sendCommand,
+  };
+  try {
+    const agent = new AgentCh({});
+    agent._clickAxFinalSettleMs = () => 0;
+    agent._observeClickAxSideEffect = async () => ({
+      observable: true,
+      proved: false,
+      safetyVeto: false,
+      safetyReasons: [],
+      weakReasons: [],
+      snapshot: '{}',
+    });
+    agent._assessClickAxObservationRound = () => ({ done: false });
+    agent._resolveClickAxFallbackTarget = async () => ({
+      success: true,
+      fallbackEligible: true,
+      inViewport: true,
+      documentToken: 'press-timeout-document',
+      x: 120,
+      y: 80,
+    });
+    agent._captureClickAxObservation = async () => ({
+      startedAt: Date.now(),
+      snapshot: '{}',
+      sideEffectWatch: null,
+      preparedActive: '',
+    });
+
+    const controller = new AbortController();
+    const timeoutError = new Error('click_ax did not return a page response within 60 seconds.');
+    timeoutError.code = 'content_action_timeout';
+    const primaryEvents = [];
+    const unwindEvents = [];
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.armFileInputClickGuard = async () => ({ armed: true });
+    cdpClientCh.dispatchMouseEvent = async (_tabId, type, x, y) => {
+      primaryEvents.push({ type, x, y });
+      if (type === 'mousePressed') controller.abort(timeoutError);
+      return {};
+    };
+    cdpClientCh.consumeFileInputClickGuard = async () => {
+      throw new Error('an aborted press must not reach normal guard consumption');
+    };
+    cdpClientCh.sendCommand = async (_tabId, method, params) => {
+      assert.equal(method, 'Input.dispatchMouseEvent');
+      unwindEvents.push(params);
+      return {};
+    };
+
+    await assert.rejects(
+      agent._maybeFallbackClickAxWithCdpImpl(
+        42,
+        { ref_id: 'ref_press_timeout' },
+        { success: true },
+        { startedAt: Date.now(), preparedActive: '', sideEffectWatch: null },
+        controller.signal,
+      ),
+      candidate => candidate === timeoutError,
+    );
+
+    assert.deepEqual(
+      primaryEvents.map(event => event.type),
+      ['mouseMoved', 'mousePressed'],
+      'deadline expiry must prevent the target mouseReleased that synthesizes click',
+    );
+    assert.deepEqual(
+      unwindEvents.map(event => ({
+        type: event.type,
+        x: event.x,
+        y: event.y,
+        buttons: event.buttons,
+        clickCount: event.clickCount,
+      })),
+      [
+        { type: 'mouseMoved', x: -1, y: -1, buttons: 1, clickCount: 0 },
+        { type: 'mouseReleased', x: -1, y: -1, buttons: 0, clickCount: 0 },
+      ],
+      'expired press must be released outside the target without a click count',
+    );
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.armFileInputClickGuard = originals.armFileInputClickGuard;
+    cdpClientCh.dispatchMouseEvent = originals.dispatchMouseEvent;
+    cdpClientCh.consumeFileInputClickGuard = originals.consumeFileInputClickGuard;
+    cdpClientCh.sendCommand = originals.sendCommand;
+  }
+});
+
 test('page Stop WebBrain clears stale indicators without stopping recordings', () => {
   for (const [label, prefix, runtimeApi] of [
     ['chrome', 'src/chrome', 'chrome'],
