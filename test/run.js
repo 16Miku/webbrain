@@ -43371,6 +43371,7 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.match(serialized, /authoritative selected words/, `${label}: selected source missing from model request`);
       assert.doesNotMatch(serialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into selection-only model request`);
       assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: scoped system prompt should explain the selection boundary`);
+      assert.match(String(requests[0][0]?.content), /broader-conversation control/, `${label}: strict scope should offer the explicit recovery control`);
       assert.equal(
         agent.conversations.get(tabId).some(message => JSON.stringify(message).includes('PRIOR ATTACHMENT SECRET')),
         true,
@@ -43394,6 +43395,7 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.match(followUpSerialized, /My quiz answer is B\./, `${label}: follow-up answer missing`);
       assert.doesNotMatch(followUpSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded follow-up`);
       assert.match(String(requests[1][0]?.content), /only covers their selected text/, `${label}: grounded follow-up lost the scope note`);
+      assert.match(String(requests[1][0]?.content), /broader-conversation control/, `${label}: strict follow-up lost the explicit recovery control`);
 
       const continued = await agent.continueProcessing(tabId, () => {}, 'ask');
       assert.equal(continued, 'Grounded answer.', `${label}: grounded Continue final mismatch`);
