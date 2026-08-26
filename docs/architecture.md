@@ -299,10 +299,13 @@ turn; only that explicit action allows the normal conversation payload again.
 
 `source_grounding` and the selection anchor are persisted with the per-tab
 conversation, survive panel/service-worker restart, retries, tab switches, and
-compaction, and are cleared by New conversation. Trace runtime metadata records
-only the policy, anchor presence, and `selection_scope_excluded_messages` count —
-never the projected text itself — so a debug export can explain why context was included
-or excluded without exposing private content.
+compaction, and are cleared by New conversation. Standard trace runtime metadata
+records only the policy, anchor presence, and `selection_scope_excluded_messages`
+count — never the projected text itself — so the trace can explain why context
+was included or excluded without exposing private content by default. The
+in-memory deep-debug ring and opt-in lossless trace are separate diagnostic
+surfaces that retain their existing request/response payload behavior; exporting
+those diagnostics is an explicit, privacy-sensitive action.
 
 ### Step 6: Tool Execution
 

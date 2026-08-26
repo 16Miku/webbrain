@@ -2,8 +2,9 @@
 
 This record is the release checklist for the selected-text context contract. The
 same Node suite exercises the mirrored Chrome and Firefox agent, UI, background,
-locale, persistence, and trace paths; it is intentionally separate from the
-visible transcript, which is not a provider request.
+locale, persistence, and trace contract paths; it is intentionally separate from
+the visible transcript, which is not a provider request. These are source-level
+contract/integration checks, not a browser-automation run.
 
 ## Automated checks
 
@@ -30,7 +31,10 @@ this contract: the changelog test expects `33.2.2` while the repository contains
 `33.2.1`, and the Opera-safe distribution archive is absent from the checkout.
 No selection-context check failed.
 
-Real extension smoke tests are **unavailable** in this Node-only run because no
-Chrome or Firefox profile is attached. The browser-specific source parity and
-model-payload tests are **passed** by the same run; an installed-extension smoke
-run remains the final release check when browser profiles are available.
+Browser-specific result: Chrome mirrored agent/UI/background cases **passed**;
+Firefox mirrored agent/UI/background cases **passed**. The shared model-payload,
+persistence, and trace assertions also **passed** for both builds. Real extension
+smoke tests are **unavailable** in this Node-only run because no Chrome or Firefox
+profile is attached, so the browser smoke stage is **skipped** rather than
+treated as a failed contract check. An installed-extension smoke run remains the
+final release check when browser profiles are available.

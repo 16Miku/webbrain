@@ -43292,7 +43292,7 @@ test('selection-context documentation records the transcript/provider contract a
   assert.match(architectureZh, /tabChat/, 'Chinese architecture must identify visible transcript storage');
   assert.match(architectureZh, /恢复完整对话/, 'Chinese architecture must document the explicit recovery control');
   assert.match(guideZh, /selection_context[\s\S]*selection_only[\s\S]*恢复完整对话[\s\S]*Trace/, 'Chinese user guide must explain both policies, recovery, and trace limits');
-  assert.match(verification, /node test\/run\.js[\s\S]*2055 passed, 2 failed[\s\S]*unavailable/, 'verification record must retain the command and explicit pass/fail/unavailable status');
+  assert.match(verification, /node test\/run\.js[\s\S]*2055 passed, 2 failed[\s\S]*unavailable[\s\S]*skipped/, 'verification record must retain the command and explicit pass/fail/unavailable/skipped status');
   assert.doesNotMatch(verification, /A_PAGE_SECRET|private-dialogue-fingerprint/, 'verification record must not contain private conversation samples');
 });
 
