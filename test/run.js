@@ -42898,7 +42898,8 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
       selectionContextGrounding,
     );
     assert.match(broaderCustom, /You may use your intrinsic model knowledge/, `${label}: broader custom questions should explicitly permit intrinsic knowledge`);
-    assert.match(broaderCustom, /Do not use the live page, screenshots, tools, attachments, or earlier conversation/, `${label}: broader custom questions should retain the narrow context boundary`);
+    assert.match(broaderCustom, /You may use your intrinsic model knowledge and the earlier user\/assistant dialogue/, `${label}: broader custom questions should allow safe dialogue continuity`);
+    assert.match(broaderCustom, /Do not use the live page, screenshots, tools, attachments, or raw page content from earlier turns/, `${label}: broader custom questions should retain the narrow source boundary`);
     assert.doesNotMatch(broaderCustom, /Use only the text inside the selection block as source material/, `${label}: broader custom questions should not retain the selection-only source contract`);
     assert.match(broaderCustom, /<untrusted_page_content id="ctx-[^"]+">\nThe passage mentions cross-platform frameworks\.\n<\/untrusted_page_content>/, `${label}: broader selection context must remain inside the untrusted boundary`);
     assert.equal(
@@ -43412,10 +43413,22 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
   ]) {
     const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
     const tabId = label === 'chrome' ? 9648 : 9649;
+    const earlierSelection = buildSelectionPrompt(
+      'PRIOR PAGE SECRET',
+      'custom',
+      'What was the earlier conclusion?',
+      '',
+      sourceGrounding,
+    );
     const messages = [
       { role: 'system', content: 'system rules' },
-      { role: 'user', content: 'PRIOR PAGE AND ATTACHMENT SECRET' },
+      { role: 'user', content: earlierSelection },
       { role: 'assistant', content: 'Prior page answer.' },
+      { role: 'tool', content: '<untrusted_page_content id="prior">PRIOR TOOL SECRET</untrusted_page_content>' },
+      { role: 'user', content: [
+        { type: 'text', text: '[UNTRUSTED USER ATTACHMENTS] ATTACHMENT SECRET' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,ATTACHMENT_IMAGE_SECRET' } },
+      ] },
     ];
     agent._hydrate = async () => {};
     agent._persist = () => {};
@@ -43457,7 +43470,38 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
     assert.match(String(modelView[0]?.content), /intrinsic model knowledge/, `${label}: broader scope note should authorize intrinsic knowledge`);
     assert.match(serialized, /cross-platform frameworks/, `${label}: selected anchor should remain available on follow-up`);
     assert.match(serialized, /Which one is best for desktop apps/, `${label}: trusted follow-up should remain available`);
-    assert.doesNotMatch(serialized, /PRIOR PAGE AND ATTACHMENT SECRET|Prior page answer/, `${label}: broader scope must still exclude pre-selection context`);
+    assert.match(serialized, /What was the earlier conclusion\?/ , `${label}: earlier user wording should remain available for reference resolution`);
+    assert.match(serialized, /Prior page answer\./, `${label}: earlier assistant dialogue should remain available for reference resolution`);
+    assert.doesNotMatch(serialized, /PRIOR PAGE SECRET|PRIOR TOOL SECRET|ATTACHMENT SECRET|ATTACHMENT_IMAGE_SECRET/, `${label}: raw page, tool, and attachment content must not cross the selection boundary`);
+
+    const secondSelection = {
+      role: 'user',
+      content: buildSelectionPrompt(
+        'SECOND PAGE SECRET',
+        'custom',
+        'How does this relate to the earlier discussion?',
+        '',
+        sourceGrounding,
+      ),
+    };
+    messages.push(secondSelection);
+    const secondOptions = agent._selectionGroundedRunOptions(tabId, messages, {
+      sourceGrounding,
+      selectionAction: 'custom',
+    });
+    const secondPriorMessageSet = agent._selectionGroundingPriorMessageSet(tabId, messages);
+    const secondView = agent._messagesForSourceGroundedRun(
+      messages,
+      secondOptions,
+      secondSelection,
+      secondPriorMessageSet,
+    );
+    const secondSerialized = JSON.stringify(secondView);
+    assert.match(secondSerialized, /What was the earlier conclusion\?/, `${label}: cross-selection follow-up should retain earlier user wording`);
+    assert.match(secondSerialized, /Prior page answer\./, `${label}: cross-selection follow-up should retain earlier assistant dialogue`);
+    assert.match(secondSerialized, /How does this relate to the earlier discussion\?/, `${label}: newest selection question should remain available`);
+    assert.match(secondSerialized, /SECOND PAGE SECRET/, `${label}: newest selected text should remain available as the current source`);
+    assert.doesNotMatch(secondSerialized, /PRIOR PAGE SECRET|PRIOR TOOL SECRET|ATTACHMENT SECRET|ATTACHMENT_IMAGE_SECRET/, `${label}: cross-selection model view must exclude earlier raw page/tool/attachment bytes`);
   }
 });
 
