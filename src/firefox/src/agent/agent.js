@@ -4077,13 +4077,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const t = (el.type || '').toLowerCase();
             if (['file','hidden','submit','button','reset','search','checkbox','radio'].includes(t)) continue;
             if (el.getClientRects().length === 0) continue;
-            const searchText = [
-              el.getAttribute('role'),
-              el.getAttribute('name'),
-              el.getAttribute('aria-label'),
-              el.getAttribute('placeholder'),
-            ].filter(Boolean).join(' ').toLowerCase();
-            if (el.closest('[role="search"],search') || el.getAttribute('role') === 'searchbox' || /(?:^|\\s)(?:search|find|filter)(?:\\s|$)/.test(searchText)) continue;
+            if (el.closest('[role="search"],search') || el.getAttribute('role') === 'searchbox') continue;
             if (el.value && el.value !== el.defaultValue) dirtyFields++;
           }
           return { attachedFiles, dirtyFields };

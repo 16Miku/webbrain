@@ -6560,6 +6560,10 @@ test('unsaved-change probes ignore rendered search controls and hidden duplicate
     makeField({ value: 'label:github merged', ariaLabel: 'Search mail', searchContainer: true }),
     makeField({ value: 'Search Studio...', placeholder: 'Search Studio', rendered: false }),
   ];
+  const namedSearchDrafts = [
+    makeField({ value: 'My saved search', name: 'search name' }),
+    makeField({ value: 'label:github merged', placeholder: 'Search query' }),
+  ];
   const realDrafts = [
     makeField({ value: 'Release title' }),
     makeField({ value: 'Release notes' }),
@@ -6591,6 +6595,9 @@ test('unsaved-change probes ignore rendered search controls and hidden duplicate
   try {
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
       assert.equal(await runCase(label, AgentClass, searchOnly), null, `${label}: Gmail/search controls still blocked navigation`);
+      const namedSearchBlocked = await runCase(label, AgentClass, namedSearchDrafts);
+      assert.equal(namedSearchBlocked?.blockedUnsavedChanges, true, `${label}: ordinary fields named like search controls lost unsaved protection`);
+      assert.match(namedSearchBlocked.error, /2 filled field\(s\)/);
       const blocked = await runCase(label, AgentClass, [...searchOnly, ...realDrafts]);
       assert.equal(blocked?.blockedUnsavedChanges, true, `${label}: real filled form fields lost protection`);
       assert.match(blocked.error, /Finish or save the current form/);
