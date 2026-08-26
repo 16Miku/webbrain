@@ -59,6 +59,27 @@ function withGuideNavigation(html, file) {
     generated = withApocalypseMode;
   }
 
+  const subscriptionProxyHref = isChinese ? '/docs/zh/easy-cli-proxy/' : '/docs/easy-cli-proxy/';
+  const subscriptionProxyLabel = isChinese ? '订阅代理' : 'Subscription proxy';
+  const escapedSubscriptionProxyHref = subscriptionProxyHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedSubscriptionProxyLabel = subscriptionProxyLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hasSubscriptionProxyNavigation = new RegExp(
+    `<a href="${escapedSubscriptionProxyHref}"[^>]*>${escapedSubscriptionProxyLabel}<\\/a>`,
+  ).test(generated);
+  if (!hasSubscriptionProxyNavigation) {
+    const providersLink = isChinese
+      ? /(<a href="\/docs\/zh\/providers\/"[^>]*>提供商与模型<\/a>)/
+      : /(<a href="\/docs\/providers\/"[^>]*>Providers &(?:amp;)? models<\/a>)/;
+    const withSubscriptionProxy = generated.replace(
+      providersLink,
+      `$1<a href="${subscriptionProxyHref}">${subscriptionProxyLabel}</a>`,
+    );
+    if (withSubscriptionProxy === generated) {
+      throw new Error(`${path.relative(REPO_ROOT, file)} is missing the providers guide navigation anchor`);
+    }
+    generated = withSubscriptionProxy;
+  }
+
   return generated;
 }
 

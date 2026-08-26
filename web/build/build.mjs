@@ -624,6 +624,7 @@ async function main() {
     { loc: `${SITE_ORIGIN}/docs/` },
     { loc: `${SITE_ORIGIN}/docs/settings/` },
     { loc: `${SITE_ORIGIN}/docs/providers/` },
+    { loc: `${SITE_ORIGIN}/docs/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/safety/` },
     { loc: `${SITE_ORIGIN}/docs/apocalypse-mode/` },
     { loc: `${SITE_ORIGIN}/docs/mcp/` },
@@ -632,6 +633,7 @@ async function main() {
     { loc: `${SITE_ORIGIN}/docs/zh/` },
     { loc: `${SITE_ORIGIN}/docs/zh/settings/` },
     { loc: `${SITE_ORIGIN}/docs/zh/providers/` },
+    { loc: `${SITE_ORIGIN}/docs/zh/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/zh/safety/` },
   ];
   const sitemap = [
@@ -640,11 +642,17 @@ async function main() {
     '        xmlns:xhtml="http://www.w3.org/1999/xhtml">',
     ...sitemapUrls.map((u) => {
       const alternateUrlFor = u.alternates === 'faq' ? faqUrlFor : homeUrlFor;
-      const alts = u.alternates
-        ? LOCALES.map(
-            (l) => `    <xhtml:link rel="alternate" hreflang="${l.code}" href="${alternateUrlFor(l)}"/>`,
-          ).concat([`    <xhtml:link rel="alternate" hreflang="x-default" href="${alternateUrlFor(LOCALES[0])}"/>`]).join('\n') + '\n'
-        : '';
+      const alts = u.alternates === 'easy-cli-proxy'
+        ? [
+            `    <xhtml:link rel="alternate" hreflang="en" href="${SITE_ORIGIN}/docs/easy-cli-proxy/"/>`,
+            `    <xhtml:link rel="alternate" hreflang="zh" href="${SITE_ORIGIN}/docs/zh/easy-cli-proxy/"/>`,
+            `    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_ORIGIN}/docs/easy-cli-proxy/"/>`,
+          ].join('\n') + '\n'
+        : u.alternates
+          ? LOCALES.map(
+              (l) => `    <xhtml:link rel="alternate" hreflang="${l.code}" href="${alternateUrlFor(l)}"/>`,
+            ).concat([`    <xhtml:link rel="alternate" hreflang="x-default" href="${alternateUrlFor(LOCALES[0])}"/>`]).join('\n') + '\n'
+          : '';
       return `  <url>\n    <loc>${u.loc}</loc>\n${alts}  </url>`;
     }),
     '</urlset>',

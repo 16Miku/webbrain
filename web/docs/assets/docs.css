@@ -381,6 +381,61 @@ h1 { margin: 12px 0 16px; font-size: clamp(38px, 6vw, 64px); line-height: 1.02; 
   padding: 15px 18px;
 }
 .walkthrough-meta { color: var(--faint); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; font-weight: 500; }
+.trust-ledger {
+  margin: 30px 0 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--warn) 46%, var(--line));
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.trust-ledger-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--warn-soft);
+}
+.trust-ledger-heading h2 { margin: 4px 0 0; font-size: 23px; line-height: 1.2; }
+.trust-signal {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 5px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 1px var(--warn);
+}
+.trust-ledger dl { margin: 0; }
+.trust-ledger dl > div {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(0, 1.3fr);
+  gap: 18px;
+  padding: 13px 22px;
+  border-top: 1px solid var(--line);
+}
+.trust-ledger dl > div:first-child { border-top: 0; }
+.trust-ledger dt { color: var(--faint); font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
+.trust-ledger dd { margin: 0; color: var(--muted); font-size: 13px; }
+.trust-ledger dd strong { color: var(--danger); }
+.doc-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0 4px; }
+.doc-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 9px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration: none;
+}
+.doc-action:hover { border-color: var(--brand); color: var(--ink); }
+.doc-action.primary { border-color: var(--brand); background: var(--brand); color: #fff; }
+.doc-action.primary:hover { background: var(--brand-2); color: #fff; }
 .doc-section { padding: 38px 0 8px; }
 .doc-section h2 { margin: 0 0 14px; font-size: 29px; line-height: 1.2; }
 .doc-section h3 { margin: 30px 0 8px; font-size: 20px; }
@@ -591,6 +646,8 @@ tr:last-child td { border-bottom: 0; }
   .lede { font-size: 16px; }
   .walkthrough-copy { padding: 20px; }
   .walkthrough-copy h2 { font-size: 24px; }
+  .walkthrough-actions { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .trust-ledger dl > div { grid-template-columns: 1fr; gap: 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

@@ -1164,6 +1164,12 @@
     <loc>https://webbrain.one/docs/providers/</loc>
   </url>
   <url>
+    <loc>https://webbrain.one/docs/easy-cli-proxy/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webbrain.one/docs/easy-cli-proxy/"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/easy-cli-proxy/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/easy-cli-proxy/"/>
+  </url>
+  <url>
     <loc>https://webbrain.one/docs/safety/</loc>
   </url>
   <url>
@@ -1186,6 +1192,12 @@
   </url>
   <url>
     <loc>https://webbrain.one/docs/zh/providers/</loc>
+  </url>
+  <url>
+    <loc>https://webbrain.one/docs/zh/easy-cli-proxy/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webbrain.one/docs/easy-cli-proxy/"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/easy-cli-proxy/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/easy-cli-proxy/"/>
   </url>
   <url>
     <loc>https://webbrain.one/docs/zh/safety/</loc>
