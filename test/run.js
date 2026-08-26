@@ -43474,6 +43474,8 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
     );
     const serialized = JSON.stringify(modelView);
     assert.match(String(modelView[0]?.content), /intrinsic model knowledge/, `${label}: broader scope note should authorize intrinsic knowledge`);
+    assert.match(String(modelView[0]?.content), /broader-conversation control/, `${label}: out-of-scope references should point to the explicit recovery control`);
+    assert.match(String(modelView[0]?.content), /prior answers, not verified source material/, `${label}: earlier assistant claims should carry an unverified provenance distinction`);
     assert.match(serialized, /cross-platform frameworks/, `${label}: selected anchor should remain available on follow-up`);
     assert.match(serialized, /Which one is best for desktop apps/, `${label}: trusted follow-up should remain available`);
     assert.match(serialized, /What was the earlier conclusion\?/ , `${label}: earlier user wording should remain available for reference resolution`);
