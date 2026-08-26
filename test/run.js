@@ -67586,21 +67586,19 @@ test('submit detection times out before dispatch in both builds', async () => {
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 5119;
     let executeCalls = 0;
-    let releaseDetection;
-    let markDetectionStarted;
-    const detectionStarted = new Promise(resolve => { markDetectionStarted = resolve; });
-    const delayedDetection = new Promise(resolve => { releaseDetection = resolve; });
+    let releaseDetection = null;
+    let markDetectionStarted = null;
 
     agent._ensureGateSetting = async () => {};
-    agent._isBrowserMutationTool = () => false;
+    agent._captchaMutationPreflight = async () => null;
     agent._recordProgressObservation = async () => null;
     agent._autoRecordProgressAction = () => null;
     agent._progressWarningForAction = () => '';
     agent._persist = () => {};
-    agent._detectLikelySubmitAction = async () => {
-      markDetectionStarted();
-      return delayedDetection;
-    };
+    agent._detectLikelySubmitAction = () => new Promise(resolve => {
+      releaseDetection = resolve;
+      markDetectionStarted?.();
+    });
     agent.executeTool = async () => {
       executeCalls += 1;
       return { success: true, dispatched: true };
@@ -67609,38 +67607,44 @@ test('submit detection times out before dispatch in both builds', async () => {
     agent._withContentActionDeadline = async (operation, toolName) => {
       deadlineCalls += 1;
       assert.equal(toolName, 'click_ax', `${AgentClass.name}: submit preflight uses the wrong deadline class`);
-      if (deadlineCalls === 1) return operation(new AbortController().signal);
+      if (deadlineCalls % 2 === 1) return operation(new AbortController().signal);
       const error = new Error('click_ax did not return a page response within 60 seconds.');
       error.code = 'content_action_timeout';
       const controller = new AbortController();
+      const detectionStarted = new Promise(resolve => { markDetectionStarted = resolve; });
       const started = Promise.resolve().then(() => operation(controller.signal));
       await detectionStarted;
       controller.abort(error);
       releaseDetection(null);
       await assert.rejects(started, candidate => candidate === error);
+      markDetectionStarted = null;
+      releaseDetection = null;
       throw error;
     };
 
     const messages = [];
     const updates = [];
-    await agent._executeToolBatch(
-      tabId,
-      [{
-        id: `submit_preflight_timeout_${AgentClass.name}`,
-        function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' },
-      }],
-      messages,
-      (type, data) => updates.push({ type, data }),
-      { supportsVision: false },
-      '',
-      new Set(['click_ax']),
-      1,
-    );
+    const batchResults = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      batchResults.push(await agent._executeToolBatch(
+        tabId,
+        [{
+          id: `submit_preflight_timeout_${AgentClass.name}_${attempt}`,
+          function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' },
+        }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        attempt,
+      ));
+    }
 
     assert.equal(executeCalls, 0, `${AgentClass.name}: timed-out submit detection dispatched the action`);
-    assert.equal(deadlineCalls, 2, `${AgentClass.name}: submit detection did not start after the bounded CAPTCHA preflight`);
-    assert.equal(messages.length, 1, `${AgentClass.name}: submit preflight timeout did not produce one tool result`);
-    const result = JSON.parse(messages[0].content);
+    assert.equal(deadlineCalls, 6, `${AgentClass.name}: submit detection did not start after each bounded CAPTCHA preflight`);
+    assert.equal(messages.length, 3, `${AgentClass.name}: repeated submit preflight timeouts did not produce tool results`);
+    const result = JSON.parse(messages[0].content.split('\n', 1)[0]);
     assert.equal(result.success, false, `${AgentClass.name}: submit preflight timeout reported success`);
     assert.equal(result.dispatched, false, `${AgentClass.name}: pre-dispatch timeout claimed an action was sent`);
     assert.equal(result.noDispatch, true, `${AgentClass.name}: pre-dispatch timeout lost its no-dispatch marker`);
@@ -67651,6 +67655,12 @@ test('submit detection times out before dispatch in both builds', async () => {
       updates.some(update => update.type === 'warning' && /timed out before dispatch/i.test(update.data?.message || '')),
       `${AgentClass.name}: pre-dispatch timeout warning missing`,
     );
+    assert.match(messages[1].content, /FAILED ACTION LOOP/i,
+      `${AgentClass.name}: repeated pre-dispatch timeout did not reach loop nudging`);
+    assert.equal(batchResults[2]?.action, 'recover',
+      `${AgentClass.name}: third identical pre-dispatch timeout did not stop the loop`);
+    assert.equal(batchResults[2]?.status, 'loop_stopped',
+      `${AgentClass.name}: repeated pre-dispatch timeout used the wrong terminal status`);
   }
 });
 
@@ -96804,6 +96814,8 @@ test('workflow healing approval and persistence wiring is mirrored across browse
     const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/sidepanel.js`), 'utf8');
     assert.match(agent, /workflowHealing:[\s\S]*?previousTarget:[\s\S]*?candidates:/);
+    assert.match(agent, /const clarifyId = `workflow_heal_\$\{secureRandomBase36Token\(12\)\}`/,
+      `${build}: workflow-healing authorization IDs must use cryptographic randomness`);
     assert.match(agent, /\['timeout', 'auto'\]\.includes\(response\?\.source\)/,
       `${build}: unattended clarification could authorize workflow healing`);
     assert.match(agent, /rawResult\?\.success === true[\s\S]*?rawResult\?\.inconclusive !== true/,

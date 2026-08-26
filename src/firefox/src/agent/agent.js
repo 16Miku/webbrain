@@ -5484,16 +5484,52 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (argumentValidation.args) fnArgs = argumentValidation.args;
 
-      const recordPagePreparationTimeout = (error, stage) => {
+      const recordPagePreparationTimeout = async (error, stage) => {
         const timeoutResult = this._contentActionPreparationTimeoutResult(fnName, error, stage);
+        let loopCheck = { kind: 'none' };
+        const loopKey = this._loopCallKey(fnName, fnArgs, timeoutResult);
+        const failedApiMutation = this._isFailedApiMutationForLoop(fnName, fnArgs, timeoutResult);
+        if (!failedApiMutation || !failedApiMutationLoopKeysThisBatch.has(loopKey)) {
+          if (failedApiMutation) failedApiMutationLoopKeysThisBatch.add(loopKey);
+          loopCheck = this._checkLoop(tabId, fnName, fnArgs, timeoutResult);
+        }
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: timeoutResult });
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: JSON.stringify(timeoutResult),
+          content: JSON.stringify(timeoutResult)
+            + (loopCheck.kind === 'nudge' ? `\n${loopCheck.warning}` : ''),
         });
+        const runId = this.currentRunId.get(tabId);
+        if (runId) {
+          try {
+            await trace.recordToolCall(runId, step, {
+              name: fnName,
+              args: fnArgs,
+              result: timeoutResult,
+              latencyMs: 0,
+            });
+          } catch {}
+        }
         onUpdate('warning', { message: 'Page action preparation timed out before dispatch.' });
+        if (loopCheck.kind === 'nudge') {
+          onUpdate('warning', { message: 'Loop detected — nudging the agent.' });
+        }
+        if (loopCheck.kind !== 'stop') return null;
+        this._appendSyntheticToolResults(
+          tabId,
+          toolCalls,
+          toolIndex + 1,
+          messages,
+          onUpdate,
+          step,
+          () => ({ success: false, skipped: true, error: 'skipped: run stopped by loop detector' }),
+        );
+        if (runId) trace.recordError(runId, step, 'loop', loopCheck.message);
+        this._clearLoopState(tabId);
+        this._persist(tabId);
+        return { action: 'recover', value: loopCheck.message, status: 'loop_stopped' };
       };
       const detectSubmitWithDeadline = () => this._withContentActionDeadline(
         async abortSignal => {
@@ -5526,7 +5562,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
       } catch (error) {
         if (error?.code !== 'content_action_timeout') throw error;
-        recordPagePreparationTimeout(error, 'CAPTCHA safety preflight');
+        const loopStop = await recordPagePreparationTimeout(error, 'CAPTCHA safety preflight');
+        if (loopStop) return loopStop;
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -5727,7 +5764,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           formValidationBefore = preparation.before;
         } catch (error) {
           if (error?.code !== 'content_action_timeout') throw error;
-          recordPagePreparationTimeout(error, 'submit/form-validation preflight');
+          const loopStop = await recordPagePreparationTimeout(error, 'submit/form-validation preflight');
+          if (loopStop) return loopStop;
           if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
           continue;
         }
@@ -5773,7 +5811,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             submitConfirmation = await detectSubmitWithDeadline();
           } catch (error) {
             if (error?.code !== 'content_action_timeout') throw error;
-            recordPagePreparationTimeout(error, 'submit-action detection');
+            const loopStop = await recordPagePreparationTimeout(error, 'submit-action detection');
+            if (loopStop) return loopStop;
             if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
             continue;
           }
@@ -5830,7 +5869,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           formValidationBefore = await captureFormValidationWithDeadline(formValidationAllFrames);
         } catch (error) {
           if (error?.code !== 'content_action_timeout') throw error;
-          recordPagePreparationTimeout(error, 'form-validation snapshot');
+          const loopStop = await recordPagePreparationTimeout(error, 'form-validation snapshot');
+          if (loopStop) return loopStop;
           if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
           continue;
         }
@@ -6077,7 +6117,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
       } catch (error) {
         if (error?.code !== 'content_action_timeout') throw error;
-        recordPagePreparationTimeout(error, 'message-recipient safety preflight');
+        const loopStop = await recordPagePreparationTimeout(error, 'message-recipient safety preflight');
+        if (loopStop) return loopStop;
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -12812,7 +12853,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _promptWorkflowTargetHealing(tabId, workflow, step, stepIndex, candidates, onUpdate) {
     const choices = Array.isArray(candidates) ? candidates.slice(0, 5) : [];
     if (!choices.length) return null;
-    const clarifyId = `workflow_heal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const clarifyId = `workflow_heal_${secureRandomBase36Token(12)}`;
     const tabPending = this._pendingClarifications.get(tabId) || new Map();
     this._pendingClarifications.set(tabId, tabPending);
     const responsePromise = new Promise((resolve) => {
