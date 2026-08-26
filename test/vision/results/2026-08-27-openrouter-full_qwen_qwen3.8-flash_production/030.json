@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:23:18.187Z",
+  "id": "030",
+  "model": "qwen/qwen3.8-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "030",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "chart-reading",
+    "title": "Quarterly revenue",
+    "image": "images/030.png",
+    "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Quarterly revenue” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/030.png",
+    "bytes": 75299,
+    "sha256": "579f82a5176870179fd5300fd9f4c4910c7ff7f930f0fe22810c884de2a2bc97"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Analytics dashboard displaying a quarterly revenue bar chart.\n2) Visible text: \"WebScene\", \"Home\", \"Workspace\", \"Activity\", \"ANALYTICS\", \"Quarterly revenue\", \"Updated now\", \"$44K\", \"22\", \"31\", \"27\", \"44\", \"Q1\", \"Q2\", \"Q3\", \"Q4\"\n3) Inputs: None.\n4) State signals: \"Updated now\" status badge; Q4 bar highlighted with green outline and tooltip showing \"$44K\".\n5) Blockers: None.\n6) Unknowns: None.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 278,
+      "total_tokens": 1512,
+      "cost": 0.0003281,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0003281,
+        "upstream_inference_prompt_cost": 0.00019744,
+        "upstream_inference_completions_cost": 0.00013066
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 138,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1464,
+    "total": 4557
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 8,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "chart",
+          "dashboard",
+          "quarterly revenue"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "chart",
+          "dashboard",
+          "quarterly revenue"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Quarterly revenue",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Quarterly revenue"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-label",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "Q4"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Q4"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-value",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "44",
+          "$44K"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "44",
+          "$44K"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}
