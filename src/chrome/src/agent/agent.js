@@ -5324,13 +5324,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _probeGmailResultPage(tabId, policy, page, pageSizeState, onUpdate, executionContext) {
     const targetUrl = getGmailResultPageUrl(policy.baseUrl, page);
-    if (!targetUrl) return { valid: false, error: `Gmail page ${page} is not a valid result route.` };
+    if (!targetUrl) return { valid: false, probeError: true, error: `Gmail page ${page} is not a valid result route.` };
     const currentPolicy = getGmailResultCountPolicy(await this._currentUrl(tabId));
     const alreadyThere = currentPolicy?.baseHashPath === policy.baseHashPath && currentPolicy.currentPage === page;
     if (!alreadyThere) {
       const navigation = await this.executeTool(tabId, 'navigate', { url: targetUrl }, onUpdate, executionContext);
       if (navigation?.success !== true) {
-        return { valid: false, error: navigation?.error || `Could not navigate to Gmail page ${page}.` };
+        return { valid: false, probeError: true, error: navigation?.error || `Could not navigate to Gmail page ${page}.` };
       }
     }
 
@@ -5338,12 +5338,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let lastState = null;
     while (Date.now() <= deadline) {
       lastState = await this._gmailPaginationState(tabId);
+      if (lastState.error) {
+        return { valid: false, probeError: true, error: `Could not inspect Gmail page ${page}: ${lastState.error}` };
+      }
       const resolvedPolicy = getGmailResultCountPolicy(lastState.url || await this._currentUrl(tabId));
       const routeMatches = resolvedPolicy?.baseHashPath === policy.baseHashPath && resolvedPolicy.currentPage === page;
       const expectedStart = pageSizeState.value ? ((page - 1) * pageSizeState.value) + 1 : null;
+      const emptyRange = lastState.ranges.find(candidate => candidate.empty === true && candidate.total === 0);
       const range = lastState.ranges.find(candidate => (
         page === 1 ? candidate.start === 1 : expectedStart != null && candidate.start === expectedStart
       ));
+      if (routeMatches && emptyRange) {
+        if (page === 1) return { valid: true, empty: true, range: emptyRange, resolvedUrl: lastState.url };
+        return { valid: false, outOfRange: true, range: emptyRange, resolvedUrl: lastState.url };
+      }
+      const exactTotalBeforeRequestedPage = page > 1 && expectedStart != null
+        ? lastState.ranges.find(candidate => Number.isSafeInteger(candidate.total) && candidate.total < expectedStart)
+        : null;
+      if (routeMatches && exactTotalBeforeRequestedPage) {
+        return {
+          valid: false,
+          outOfRange: true,
+          range: exactTotalBeforeRequestedPage,
+          resolvedUrl: lastState.url,
+        };
+      }
       if (routeMatches && range) {
         if (page === 1) pageSizeState.value = Math.max(1, range.end - range.start + 1);
         return {
@@ -5352,12 +5371,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           resolvedUrl: lastState.url,
         };
       }
+      const redirectedWithinResultSet = resolvedPolicy?.baseHashPath === policy.baseHashPath
+        && resolvedPolicy.currentPage !== page;
+      if (redirectedWithinResultSet && lastState.ranges.length > 0) {
+        return {
+          valid: false,
+          outOfRange: true,
+          range: lastState.ranges[0],
+          resolvedUrl: lastState.url,
+        };
+      }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     return {
       valid: false,
+      probeError: true,
       resolvedUrl: lastState?.url || await this._currentUrl(tabId),
-      error: `Gmail page ${page} did not expose the expected result range.`,
+      error: `Gmail page ${page} did not expose an expected range or a verified out-of-range redirect before the probe deadline.`,
     };
   }
 
@@ -5389,6 +5419,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const probes = (counted.observations || []).map(observation => ({
       page: observation.page,
       valid: observation.valid === true,
+      outOfRange: observation.outOfRange === true,
       ...(observation.range ? {
         start: observation.range.start,
         end: observation.range.end,

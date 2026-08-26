@@ -17300,7 +17300,8 @@ export function parseGmailPaginationRange(value) {
   const start = gmailCountNumber(match[1]);
   const end = gmailCountNumber(match[2]);
   const total = /^many$/i.test(match[3] || '') ? null : gmailCountNumber(match[3]);
-  if (!start || !end || end < start || end - start >= 1000) return null;
+  const empty = start === 0 && end === 0 && total === 0;
+  if (start == null || end == null || (!empty && (start < 1 || end < start)) || end - start >= 1000) return null;
   if (total != null && total < end) return null;
   return {
     text: match[0].trim(),
@@ -17308,6 +17309,7 @@ export function parseGmailPaginationRange(value) {
     end,
     total,
     approximate: /many/i.test(match[3] || ''),
+    ...(empty ? { empty: true } : {}),
   };
 }
 
@@ -17332,7 +17334,12 @@ export async function findLastGmailResultPage(probe, { initialPage = 100, maxPro
     } catch (error) {
       observed = { valid: false, error: error?.message || String(error) };
     }
-    const normalized = { page, ...(observed || {}), valid: observed?.valid === true };
+    const normalized = {
+      page,
+      ...(observed || {}),
+      valid: observed?.valid === true,
+      outOfRange: observed?.outOfRange === true,
+    };
     observations.push(normalized);
     byPage.set(page, normalized);
     return normalized;
@@ -17341,6 +17348,9 @@ export async function findLastGmailResultPage(probe, { initialPage = 100, maxPro
   const first = await inspect(1);
   if (!first.valid || !first.range) {
     return { success: false, error: first.error || 'Could not verify Gmail result page 1.', observations };
+  }
+  if (first.range.empty === true || first.range.total === 0) {
+    return { success: true, total: 0, lastPage: 0, exactFromToolbar: true, observations };
   }
   if (Number.isSafeInteger(first.range.total)) {
     return {
@@ -17362,6 +17372,9 @@ export async function findLastGmailResultPage(probe, { initialPage = 100, maxPro
     if (high === low) break;
     highObservation = await inspect(high);
   }
+  if (!highObservation.valid && !highObservation.outOfRange && !highObservation.probeLimitReached) {
+    return { success: false, error: highObservation.error || `Could not verify whether Gmail result page ${high} exists.`, observations };
+  }
   if (highObservation.probeLimitReached || highObservation.valid) {
     return { success: false, error: 'Gmail result counting reached its bounded probe limit before finding an invalid page.', observations };
   }
@@ -17372,8 +17385,13 @@ export async function findLastGmailResultPage(probe, { initialPage = 100, maxPro
     if (middleObservation.probeLimitReached) {
       return { success: false, error: 'Gmail result counting reached its bounded probe limit during binary search.', observations };
     }
-    if (middleObservation.valid) low = middle;
-    else high = middle;
+    if (middleObservation.valid) {
+      low = middle;
+    } else if (middleObservation.outOfRange) {
+      high = middle;
+    } else {
+      return { success: false, error: middleObservation.error || `Could not verify whether Gmail result page ${middle} exists.`, observations };
+    }
   }
 
   const last = await inspect(low);

@@ -6371,6 +6371,9 @@ test('Gmail result-count routes and toolbar ranges are parsed conservatively in 
     assert.deepEqual(parseRange('551-575 of 575'), {
       text: '551-575 of 575', start: 551, end: 575, total: 575, approximate: false,
     }, `${label}: exact Gmail toolbar range was not parsed`);
+    assert.deepEqual(parseRange('0-0 of 0'), {
+      text: '0-0 of 0', start: 0, end: 0, total: 0, approximate: false, empty: true,
+    }, `${label}: verified empty Gmail range was not parsed`);
     assert.equal(getTools('act').some(tool => tool.function.name === 'gmail_count_results'), false, `${label}: Gmail helper leaked onto unrelated sites`);
     assert.equal(getTools('act', { gmailResultCounting: true }).some(tool => tool.function.name === 'gmail_count_results'), true, `${label}: Gmail helper was not exposed on result routes`);
   }
@@ -6385,7 +6388,7 @@ test('Gmail result counting probes p100/p200 then binary-searches the verified l
     const result = await findLast(async (page) => {
       calls.push(page);
       const start = ((page - 1) * 50) + 1;
-      if (start > 5531) return { valid: false };
+      if (start > 5531) return { valid: false, outOfRange: true };
       return { valid: true, range: { start, end: Math.min(start + 49, 5531), total: null } };
     });
     assert.equal(result.success, true, `${label}: deterministic Gmail count failed`);
@@ -6402,6 +6405,23 @@ test('Gmail result counting probes p100/p200 then binary-searches the verified l
     });
     assert.equal(exact.total, 17);
     assert.deepEqual(exactCalls, [1], `${label}: exact toolbar total still triggered route probes`);
+
+    const empty = await findLast(async () => ({
+      valid: true,
+      range: { start: 0, end: 0, total: 0, empty: true },
+    }));
+    assert.equal(empty.success, true, `${label}: verified empty result set failed`);
+    assert.equal(empty.total, 0);
+    assert.equal(empty.lastPage, 0);
+
+    const probeFailure = await findLast(async (page) => {
+      const start = ((page - 1) * 50) + 1;
+      if (page === 150) return { valid: false, probeError: true, error: 'transient inspection failure' };
+      if (start > 5531) return { valid: false, outOfRange: true };
+      return { valid: true, range: { start, end: Math.min(start + 49, 5531), total: null } };
+    });
+    assert.equal(probeFailure.success, false, `${label}: probe error was mistaken for an out-of-range page`);
+    assert.match(probeFailure.error, /transient inspection failure/);
   }
 });
 
@@ -6419,7 +6439,7 @@ test('Gmail result counting restores the exact starting route after deterministi
       currentUrl = getPageUrl(policy.baseUrl, page);
       if (page === 1) pageSizeState.value = 50;
       const start = ((page - 1) * 50) + 1;
-      if (start > 5531) return { valid: false, resolvedUrl: currentUrl };
+      if (start > 5531) return { valid: false, outOfRange: true, resolvedUrl: currentUrl };
       return {
         valid: true,
         resolvedUrl: currentUrl,
@@ -6440,6 +6460,53 @@ test('Gmail result counting restores the exact starting route after deterministi
     assert.equal(currentUrl, originalUrl, `${label}: helper left the tab on a probe route`);
     assert.deepEqual(navigations, [originalUrl], `${label}: restore navigation did not target the exact starting route`);
     assert.deepEqual(result.probes.slice(0, 3).map(({ page }) => page), [1, 100, 200]);
+  }
+});
+
+test('Gmail page probes separate verified empty, out-of-range, and inspection errors', async () => {
+  for (const [label, AgentClass, getPolicy, getPageUrl, parseRange] of [
+    ['chrome', AgentCh, getGmailResultCountPolicy, getGmailResultPageUrl, parseGmailPaginationRange],
+    ['firefox', AgentFx, getGmailResultCountPolicyFx, getGmailResultPageUrlFx, parseGmailPaginationRangeFx],
+  ]) {
+    const baseUrl = 'https://mail.google.com/mail/u/1/#search/label%3Agithub';
+    const policy = getPolicy(baseUrl);
+    const agent = new AgentClass({});
+
+    agent._currentUrl = async () => baseUrl;
+    agent._gmailPaginationState = async () => ({
+      url: baseUrl,
+      ranges: [parseRange('0-0 of 0')],
+    });
+    const empty = await agent._probeGmailResultPage(77, policy, 1, { value: 0 }, null, {});
+    assert.equal(empty.valid, true, `${label}: verified empty page was rejected`);
+    assert.equal(empty.empty, true);
+    assert.equal(empty.range.total, 0);
+
+    const requestedPage = 200;
+    agent._currentUrl = async () => getPageUrl(baseUrl, requestedPage);
+    agent._gmailPaginationState = async () => ({
+      url: getPageUrl(baseUrl, 111),
+      ranges: [parseRange('5501-5531 of 5531')],
+    });
+    const outOfRange = await agent._probeGmailResultPage(77, policy, requestedPage, { value: 50 }, null, {});
+    assert.equal(outOfRange.valid, false);
+    assert.equal(outOfRange.outOfRange, true, `${label}: verified Gmail redirect was not treated as out of range`);
+
+    agent._currentUrl = async () => getPageUrl(baseUrl, requestedPage);
+    agent._gmailPaginationState = async () => ({
+      url: getPageUrl(baseUrl, requestedPage),
+      ranges: [parseRange('5501-5531 of 5531')],
+    });
+    const exactTotalOutOfRange = await agent._probeGmailResultPage(77, policy, requestedPage, { value: 50 }, null, {});
+    assert.equal(exactTotalOutOfRange.valid, false);
+    assert.equal(exactTotalOutOfRange.outOfRange, true, `${label}: exact total below the requested page was not treated as out of range`);
+
+    agent._currentUrl = async () => baseUrl;
+    agent._gmailPaginationState = async () => ({ url: baseUrl, ranges: [], error: 'script injection failed' });
+    const inspectionError = await agent._probeGmailResultPage(77, policy, 1, { value: 0 }, null, {});
+    assert.equal(inspectionError.valid, false);
+    assert.equal(inspectionError.probeError, true, `${label}: inspection failure was not kept distinct`);
+    assert.equal(inspectionError.outOfRange, undefined);
   }
 });
 
