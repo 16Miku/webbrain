@@ -4306,6 +4306,50 @@ export class CDPClient {
         });
       } catch {}
     };
+    const dispatchKeyPress = async ({ key, code, windowsVirtualKeyCode, modifiers = 0 }) => {
+      const keyParams = { key, code, windowsVirtualKeyCode, ...(modifiers ? { modifiers } : {}) };
+      const releaseKey = async () => {
+        try {
+          await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            ...keyParams,
+          });
+        } catch {}
+      };
+      markDispatch();
+      try {
+        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          ...keyParams,
+        });
+      } catch (error) {
+        if (abortSignal?.aborted) {
+          // A delayed debugger response can mean keyDown reached the page even
+          // though the action deadline already expired. Release defensively so
+          // later user or agent input cannot inherit a stuck key state.
+          await releaseKey();
+          throwIfAborted();
+        }
+        throw error;
+      }
+      if (abortSignal?.aborted) {
+        await releaseKey();
+        throwIfAborted();
+      }
+      try {
+        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          ...keyParams,
+        });
+      } catch (error) {
+        if (abortSignal?.aborted) {
+          await releaseKey();
+          throwIfAborted();
+        }
+        throw error;
+      }
+      throwIfAborted();
+    };
     throwIfAborted();
     const expectedNodeId = Number(expectedBackendNodeId);
     if (Number.isInteger(expectedNodeId) && expectedNodeId > 0) {
@@ -4455,30 +4499,18 @@ export class CDPClient {
       }
 
       // Close any open native dropdown
-      markDispatch();
-      await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+      await dispatchKeyPress({
+        key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
-      throwIfAborted();
-      await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-      });
-      throwIfAborted();
 
       // Navigate with arrow keys
       const delta = sInfo.targetIndex - sInfo.currentIndex;
       const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
       const arrowVK = delta > 0 ? 40 : 38;
       for (let i = 0; i < Math.abs(delta); i++) {
-        markDispatch();
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+        await dispatchKeyPress({
+          key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
-        throwIfAborted();
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-        });
-        throwIfAborted();
       }
       const selectorJSONAfter = JSON.stringify(selector);
       const verifiedResult = await this.evaluate(tabId, `
@@ -4659,24 +4691,13 @@ export class CDPClient {
       try {
         // Select all
         dispatched = true;
-        markDispatch();
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2 /* Ctrl */, windowsVirtualKeyCode: 65,
+        await dispatchKeyPress({
+          key: 'a', code: 'KeyA', modifiers: 2 /* Ctrl */, windowsVirtualKeyCode: 65,
         });
-        throwIfAborted();
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
-        });
-        throwIfAborted();
         // Delete selection
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+        await dispatchKeyPress({
+          key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
         });
-        throwIfAborted();
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-        });
-        throwIfAborted();
       } catch (e) {
         if (abortSignal?.aborted) throwIfAborted();
         // best effort

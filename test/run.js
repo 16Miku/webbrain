@@ -51234,6 +51234,65 @@ test('Chrome select typing reports verification as a positive proof only', async
   assert.equal(proven.verified, true, 'a proven select change must be verified');
 });
 
+test('Chrome select typing releases a delayed keyDown before propagating deadline expiry', async () => {
+  for (const stalledKey of ['Escape', 'ArrowDown']) {
+    const client = new CDPClient();
+    client.resolveSelector = async () => ({
+      inViewport: false, hitOk: false, nodeId: null, tag: 'SELECT', x: 1, y: 2, width: 3, height: 4,
+    });
+    client.evaluate = async () => ({
+      result: {
+        value: {
+          success: true, currentIndex: 0, targetIndex: 1, targetText: 'Large', targetValue: 'lg',
+        },
+      },
+    });
+    let releaseKeyDown;
+    let markKeyDownStarted;
+    const keyDownStarted = new Promise(resolve => { markKeyDownStarted = resolve; });
+    const delayedKeyDown = new Promise(resolve => { releaseKeyDown = resolve; });
+    const keyEvents = [];
+    client.sendCommand = async (_tabId, command, params = {}) => {
+      assert.equal(command, 'Input.dispatchKeyEvent');
+      keyEvents.push({ type: params.type, key: params.key });
+      if (params.type === 'keyDown' && params.key === stalledKey) {
+        markKeyDownStarted();
+        await delayedKeyDown;
+      }
+      return {};
+    };
+
+    const controller = new AbortController();
+    const timeoutError = new Error('type_text did not return a page response within 60 seconds.');
+    timeoutError.code = 'content_action_timeout';
+    const started = client.typeText(42, '#size', 'Large', false, null, {
+      abortSignal: controller.signal,
+    });
+    await keyDownStarted;
+    controller.abort(timeoutError);
+    releaseKeyDown();
+    await assert.rejects(started, candidate => candidate === timeoutError);
+
+    const stalledIndex = keyEvents.findIndex(event => (
+      event.type === 'keyDown' && event.key === stalledKey
+    ));
+    assert.ok(stalledIndex >= 0, `${stalledKey}: stalled keyDown was not sent`);
+    assert.deepEqual(
+      keyEvents.slice(stalledIndex, stalledIndex + 2),
+      [
+        { type: 'keyDown', key: stalledKey },
+        { type: 'keyUp', key: stalledKey },
+      ],
+      `${stalledKey}: cancellation did not release the delayed keyDown`,
+    );
+    assert.equal(
+      keyEvents.some((event, index) => index > stalledIndex + 1 && event.type === 'keyDown'),
+      false,
+      `${stalledKey}: select navigation continued after deadline expiry`,
+    );
+  }
+});
+
 test('Chrome append verification proves the requested insertion delta', async () => {
   const client = new CDPClient();
   let afterValue = 'requested content alreadY';
@@ -88105,8 +88164,11 @@ test('Chrome clear typing checks cancellation before Delete in focused paths', a
       );
       assert.deepEqual(
         keyEvents,
-        [{ type: 'keyDown', key: 'a' }],
-        `${bound ? 'bound' : 'unbound'} clear path dispatched after deadline`,
+        [
+          { type: 'keyDown', key: 'a' },
+          { type: 'keyUp', key: 'a' },
+        ],
+        `${bound ? 'bound' : 'unbound'} clear path did not release the delayed key or stop before Delete`,
       );
       assert.equal(result.outcomeUnknown, true);
       assert.equal(result.retryable, false);

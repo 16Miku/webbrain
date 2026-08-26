@@ -21112,6 +21112,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       } catch {}
     };
+    const dispatchEarlyCdpKeyPress = async ({ key, code, windowsVirtualKeyCode, modifiers = 0 }) => {
+      const keyParams = { key, code, windowsVirtualKeyCode, ...(modifiers ? { modifiers } : {}) };
+      const releaseKey = async () => {
+        try {
+          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            ...keyParams,
+          });
+        } catch {}
+      };
+      throwIfEarlyCdpAborted();
+      markEarlyCdpDispatched();
+      try {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          ...keyParams,
+        });
+      } catch (error) {
+        if (earlyCdpAbortSignal?.aborted) {
+          await releaseKey();
+          throwIfEarlyCdpAborted();
+        }
+        throw error;
+      }
+      if (earlyCdpAbortSignal?.aborted) {
+        await releaseKey();
+        throwIfEarlyCdpAborted();
+      }
+      try {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          ...keyParams,
+        });
+      } catch (error) {
+        if (earlyCdpAbortSignal?.aborted) {
+          await releaseKey();
+          throwIfEarlyCdpAborted();
+        }
+        throw error;
+      }
+      throwIfEarlyCdpAborted();
+    };
     args = this._normalizeContinuationToolArgs(name, args);
     let coordinatePoint = null;
     let coordinateDiagnostic = null;
@@ -25931,25 +25973,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 };
               }
               dispatched = true;
-              markEarlyCdpDispatched();
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+              await dispatchEarlyCdpKeyPress({
+                key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
               });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-              });
-              throwIfEarlyCdpAborted();
               const delta = selectInfo.targetIndex - selectInfo.currentIndex;
               const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
               const arrowVK = delta > 0 ? 40 : 38;
               for (let i = 0; i < Math.abs(delta); i += 1) {
-                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                  type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+                await dispatchEarlyCdpKeyPress({
+                  key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
                 });
-                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                  type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-                });
-                throwIfEarlyCdpAborted();
               }
               const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
                 targetText: selectInfo.targetText,
@@ -25974,22 +26007,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
             if (args.clear) {
               dispatched = true;
-              markEarlyCdpDispatched();
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+              await dispatchEarlyCdpKeyPress({
+                key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
               });
-              throwIfEarlyCdpAborted();
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+              await dispatchEarlyCdpKeyPress({
+                key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
               });
-              throwIfEarlyCdpAborted();
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-              });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-              });
-              throwIfEarlyCdpAborted();
             }
             dispatched = true;
             markEarlyCdpDispatched();
@@ -26180,14 +26203,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
             // Close any open native dropdown first
             dispatched = true;
-            markEarlyCdpDispatched();
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+            await dispatchEarlyCdpKeyPress({
+              key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
             });
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-            });
-            throwIfEarlyCdpAborted();
             // Re-focus the select (Escape may have blurred it)
             await cdpClient.evaluate(tabId, `
               (() => {
@@ -26207,13 +26225,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const arrowCode = delta > 0 ? 'ArrowDown' : 'ArrowUp';
             const arrowVK = delta > 0 ? 40 : 38;
             for (let i = 0; i < Math.abs(delta); i++) {
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
+              await dispatchEarlyCdpKeyPress({
+                key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
               });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
-              });
-              throwIfEarlyCdpAborted();
             }
 
             // Verify the selection actually changed
@@ -26247,22 +26261,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           throwIfEarlyCdpAborted();
           if (args.clear) {
             dispatched = true;
-            markEarlyCdpDispatched();
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+            await dispatchEarlyCdpKeyPress({
+              key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
             });
-            throwIfEarlyCdpAborted();
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+            await dispatchEarlyCdpKeyPress({
+              key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
             });
-            throwIfEarlyCdpAborted();
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-            });
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-            });
-            throwIfEarlyCdpAborted();
           }
           dispatched = true;
           markEarlyCdpDispatched();
