@@ -827,7 +827,7 @@ body {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
 }
 
 .status-dot {
@@ -1240,7 +1240,7 @@ body {
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px;
+  padding: 4px 3px;
   border-radius: 4px;
   display: flex;
   align-items: center;
