@@ -8489,6 +8489,17 @@ test('trace privacy: default persistence keeps metadata and content mode is expl
   );
 });
 
+test('trace privacy documentation distinguishes metadata-only and lossless retention', () => {
+  const privacy = fs.readFileSync(path.join(ROOT, 'docs/privacy-and-data-flow.md'), 'utf8');
+  const security = fs.readFileSync(path.join(ROOT, 'docs/security-model.md'), 'utf8');
+  for (const [label, document] of [['privacy data flow', privacy], ['security model', security]]) {
+    assert.match(document, /default (?:metadata-only )?tier[\s\S]*(?:omit|omits|omitting)[\s\S]*user[\s\S]*final assistant\s+text/i, `${label}: default run-content omission is undocumented`);
+    assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*tool arguments\/results/i, `${label}: default event-payload omission is undocumented`);
+    assert.match(document, /default[\s\S]*do(?:es)? not write screenshot blobs/i, `${label}: default screenshot-byte omission is undocumented`);
+    assert.match(document, /lossless[\s\S]*explicit\s+(?:user\s+)?opt-in[\s\S]*screenshot\s+bytes/i, `${label}: lossless content retention is undocumented`);
+  }
+});
+
 test('Cloud terminal runtime envelope pairs the terminal done call with its executed result', () => {
   const messages = [
     { role: 'user', content: 'Complete the task' },

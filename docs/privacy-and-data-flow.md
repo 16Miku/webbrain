@@ -182,13 +182,31 @@ the stored copies are not separately synced to WebBrain.
 
 ### Trace Recorder
 
-When enabled (Settings → Display → "Record traces"), every agent run is written to an IndexedDB database (`webbrain_traces`):
+When enabled (Settings → Display → "Record traces"), every agent run is written
+to the local `webbrain_traces` IndexedDB database in one of two privacy tiers:
 
-- **`runs` store**: model, provider, token totals, timestamps, user message, final content
-- **`events` store**: per-step LLM request provenance, model responses, and tool calls with args and results. By default, request provenance contains counts, controlled prompt/mode labels, and declared prompt/tool policy revisions; it neither duplicates nor fingerprints raw system prompts, message text, tool schemas, or tool names. Users can explicitly enable the lossless debug tier in Settings → Display; those runs are visibly marked and retain bounded request messages and tool schemas for debugging. Both Markdown and JSON exports mask credential-shaped values for lossless runs before writing a file.
-- **`shots` store**: screenshot blobs
+- **Default metadata-only tier.** The `runs` store keeps run identifiers and
+  lineage, model/provider identifiers, token and event totals, timestamps,
+  status, and the allowlisted runtime snapshot. It omits the user's message and
+  final assistant text. The `events` store keeps allowlisted diagnostic fields
+  such as event kind, step, counts, timings, usage, finish/status/error codes,
+  called tool name and outcome status, and screenshot marker/caption. It omits
+  raw LLM request/response text, tool schemas, tool arguments/results, and error
+  messages. Default traces do not write screenshot blobs or data URLs to the
+  `shots` store.
+- **Lossless debug tier (explicit opt-in).** Enabling lossless tracing under
+  Settings → Display adds user/final text, bounded request messages and tool
+  schemas, model responses and tool calls, tool arguments/results, detailed
+  errors, and screenshot bytes. Lossless payloads have per-request,
+  per-result, per-run, and aggregate storage bounds; old completed lossless
+  runs may be evicted to remain within the aggregate limit. These runs are
+  visibly marked in the Traces UI.
 
-The Traces page (`ui/traces.html`) reads from local IndexedDB only. Export produces a JSON blob saved to the user's Downloads folder. **No trace data ever leaves the browser.** Lossless recording is off by default and uses per-request/result bounds; treat a lossless trace as sensitive even though exported credentials are masked.
+The Traces page (`ui/traces.html`) reads from local IndexedDB only. Export saves
+a local file to the user's Downloads folder; trace recording itself makes no
+network request. Both Markdown and JSON export paths mask credential-shaped
+values in lossless structured data, but screenshots and remaining page/chat
+content can still be sensitive. Lossless recording is off by default.
 
 Each run also records an allowlisted effective runtime snapshot (including mode
 and prompt tier). Trace Markdown surfaces that snapshot and the privacy-safe
