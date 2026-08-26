@@ -2905,6 +2905,8 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
       { ref_id: 'ref_7', checked: true },
       {
         success: true,
+        dispatched: false,
+        noDispatch: true,
         needsTrustedClick: true,
         marker: 'marker-7',
         trustedSelector: '[data-webbrain-set-checked-target="marker-7"]',
@@ -2935,6 +2937,88 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
     assert.equal(response.checkboxState.actualChecked, true);
     assert.equal(response.marker, undefined);
     assert.equal(response.trustedSelector, undefined);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.clickElement = originalClickElement;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome set_checked bounds post-click verification and preserves unknown outcome', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalClickElement = cdpClientCh.clickElement;
+  try {
+    globalThis.chrome = {
+      runtime: {},
+      tabs: {
+        async sendMessage() {
+          throw new Error('set_checked verification bypassed the content-action deadline');
+        },
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.clickElement = async () => ({
+      success: true,
+      method: 'cdp-mouse',
+      dispatched: true,
+      rect: { x: 1, y: 2, w: 20, h: 20 },
+    });
+
+    const deadlineTools = [];
+    const agent = new AgentCh({});
+    agent._getDevDocumentIdentity = async () => ({
+      documentId: 'doc-timeout',
+      pageUrl: 'https://example.test/checkboxes',
+    });
+    agent._withContentActionDeadline = async (_operation, toolName) => {
+      deadlineTools.push(toolName);
+      const error = new Error('set_checked did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      throw error;
+    };
+
+    const response = await agent._completeSetCheckedWithCdp(
+      42,
+      { ref_id: 'ref_timeout', checked: true },
+      {
+        success: true,
+        dispatched: false,
+        noDispatch: true,
+        needsTrustedClick: true,
+        marker: 'marker-timeout',
+        trustedSelector: '[data-webbrain-set-checked-target="marker-timeout"]',
+        selector: '#timeout-checkbox',
+        checkedBefore: false,
+        checkedAfter: false,
+        checkboxIdentity: 'id:timeout-checkbox',
+        _confirmationSurfaces: [],
+      },
+      {
+        ref_id: 'ref_timeout',
+        checked: true,
+        expectedDocumentToken: 'doc-timeout',
+        probeOnly: true,
+        markForTrustedClick: true,
+      },
+    );
+
+    assert.deepEqual(deadlineTools, ['set_checked']);
+    assert.equal(response.success, false);
+    assert.equal(response.dispatched, true);
+    assert.equal(response.noDispatch, undefined);
+    assert.equal(response.trusted, true);
+    assert.equal(response.verified, false);
+    assert.equal(response.outcomeUnknown, true);
+    assert.equal(response.retryable, false);
+    assert.equal(response.needsTrustedClick, false);
+    assert.equal(response.checkedBefore, false);
+    assert.equal(response.checkedAfter, undefined);
+    assert.equal(response.marker, undefined);
+    assert.equal(response.trustedSelector, undefined);
+    assert.equal(response._confirmationSurfaces, undefined);
+    assert.match(response.error, /may have reached the page.*inspect the current state/i);
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.clickElement = originalClickElement;
@@ -81207,6 +81291,11 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
     };
     try {
       const agent = Object.create(AgentClass.prototype);
+      const deadlineTools = [];
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        deadlineTools.push(toolName);
+        return operation();
+      };
       const delivered = {
         success: true,
         dispatched: true,
@@ -81220,6 +81309,7 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
         rect: { x: 1, y: 2, w: 3, h: 4 },
       }, `${label}: navigation must preserve the delivered click result`);
       assert.equal(probeCalls, 1, `${label}: a lost old document must not trigger a replay`);
+      assert.deepEqual(deadlineTools, ['consume_file_picker_guard'], `${label}: deferred guard probe bypassed the content-action deadline`);
     } finally {
       if (previousApi === undefined) delete globalThis[apiName];
       else globalThis[apiName] = previousApi;

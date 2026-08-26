@@ -17083,21 +17083,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!guardId) return response;
     const originalResponse = { ...response };
     delete originalResponse._filePickerGuardId;
-
-    await new Promise(resolve => setTimeout(resolve, 525));
-    try {
-      let settled = await browser.tabs.sendMessage(tabId, {
+    const consumeGuard = () => this._withContentActionDeadline(
+      () => browser.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'consume_file_picker_guard',
         params: { guardId },
-      });
+      }),
+      'consume_file_picker_guard',
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 525));
+    try {
+      let settled = await consumeGuard();
       if (settled?.settled === false) {
         await new Promise(resolve => setTimeout(resolve, 50));
-        settled = await browser.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'consume_file_picker_guard',
-          params: { guardId },
-        });
+        settled = await consumeGuard();
       }
       if (settled?.filePickerBlocked) {
         const blockedResponse = { ...settled };

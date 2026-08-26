@@ -19729,21 +19729,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!guardId) return response;
     const originalResponse = { ...response };
     delete originalResponse._filePickerGuardId;
-
-    await new Promise(resolve => setTimeout(resolve, 525));
-    try {
-      let settled = await chrome.tabs.sendMessage(tabId, {
+    const consumeGuard = () => this._withContentActionDeadline(
+      () => chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'consume_file_picker_guard',
         params: { guardId },
-      });
+      }),
+      'consume_file_picker_guard',
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 525));
+    try {
+      let settled = await consumeGuard();
       if (settled?.settled === false) {
         await new Promise(resolve => setTimeout(resolve, 50));
-        settled = await chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'consume_file_picker_guard',
-          params: { guardId },
-        });
+        settled = await consumeGuard();
       }
       if (settled?.filePickerBlocked) {
         const blockedResponse = { ...settled };
@@ -19804,19 +19804,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // document token and one-shot marker still identify the exact control,
       // while the pre-click URL would incorrectly reject the post-click probe.
       delete verificationArgs.expectedPageUrl;
-      verified = await chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'set_checked',
-        params: {
-          ...verificationArgs,
-          probeOnly: true,
-          markForTrustedClick: false,
-          cleanupMarker: marker || undefined,
-        },
-      });
+      verified = await this._withContentActionDeadline(
+        () => chrome.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'set_checked',
+          params: {
+            ...verificationArgs,
+            probeOnly: true,
+            markForTrustedClick: false,
+            cleanupMarker: marker || undefined,
+          },
+        }),
+        'set_checked',
+      );
     } catch (error) {
       verificationError = error;
       if (!clickError) clickError = error;
+    }
+
+    if (verificationError?.code === 'content_action_timeout' && clickDispatched) {
+      const timedOut = {
+        ...response,
+        ...this._contentActionTimeoutResult('set_checked', verificationError),
+        dispatched: true,
+        noDispatch: undefined,
+        trusted: trustedClickSucceeded,
+        verified: false,
+        needsTrustedClick: false,
+        checkedBefore: response.checkedBefore,
+        checkedAfter: undefined,
+        desiredChecked: args.checked,
+        changed: undefined,
+        checkboxIdentity: String(response.checkboxIdentity || ''),
+        checkboxState: undefined,
+        selector: response.selector || trustedSelector,
+        rect: clickResult?.rect || response.rect,
+        marker: undefined,
+        trustedSelector: undefined,
+      };
+      delete timedOut._confirmationSurfaces;
+      return timedOut;
     }
 
     const verificationObservedState = typeof verified?.checkedAfter === 'boolean';
