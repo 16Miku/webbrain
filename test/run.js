@@ -61317,7 +61317,7 @@ test('Unsloth Studio defaults and settings stay mirrored and conservative', () =
     assert.match(settings, /localModelProviders = \[[^\]]*'unsloth'/s);
 
     const icons = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/provider-icons.js'), 'utf8');
-    assert.match(icons, /unsloth: 'local_openai_proxy\.svg'/);
+    assert.match(icons, /unsloth: 'unsloth\.svg'/);
     assert.match(icons, /unsloth: 'Unsloth Studio'/);
     const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     assert.match(sidepanel, /LOCAL_PROVIDER_ORDER = \[\s*'unsloth'/);

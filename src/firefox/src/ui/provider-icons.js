@@ -21,7 +21,7 @@ export const PROVIDER_ICON_FILES = {
   localai: 'localai.png',
   gpt4all: 'gpt4all.svg',
   local_openai_proxy: 'local_openai_proxy.svg',
-  unsloth: 'local_openai_proxy.svg',
+  unsloth: 'unsloth.svg',
   azure_openai: 'azure_openai.svg',
   aws_bedrock: 'aws_bedrock.svg',
   openai: 'openai.svg',
