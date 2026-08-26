@@ -67576,6 +67576,79 @@ test('form validation polling stops when the shared action deadline expires', as
   }
 });
 
+test('submit detection times out before dispatch in both builds', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5119;
+    let executeCalls = 0;
+    let releaseDetection;
+    let markDetectionStarted;
+    const detectionStarted = new Promise(resolve => { markDetectionStarted = resolve; });
+    const delayedDetection = new Promise(resolve => { releaseDetection = resolve; });
+
+    agent._ensureGateSetting = async () => {};
+    agent._isBrowserMutationTool = () => false;
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => {};
+    agent._detectLikelySubmitAction = async () => {
+      markDetectionStarted();
+      return delayedDetection;
+    };
+    agent.executeTool = async () => {
+      executeCalls += 1;
+      return { success: true, dispatched: true };
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click_ax', `${AgentClass.name}: submit preflight uses the wrong deadline class`);
+      if (deadlineCalls === 1) return operation(new AbortController().signal);
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await detectionStarted;
+      controller.abort(error);
+      releaseDetection(null);
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+
+    const messages = [];
+    const updates = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{
+        id: `submit_preflight_timeout_${AgentClass.name}`,
+        function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' },
+      }],
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { supportsVision: false },
+      '',
+      new Set(['click_ax']),
+      1,
+    );
+
+    assert.equal(executeCalls, 0, `${AgentClass.name}: timed-out submit detection dispatched the action`);
+    assert.equal(deadlineCalls, 2, `${AgentClass.name}: submit detection did not start after the bounded CAPTCHA preflight`);
+    assert.equal(messages.length, 1, `${AgentClass.name}: submit preflight timeout did not produce one tool result`);
+    const result = JSON.parse(messages[0].content);
+    assert.equal(result.success, false, `${AgentClass.name}: submit preflight timeout reported success`);
+    assert.equal(result.dispatched, false, `${AgentClass.name}: pre-dispatch timeout claimed an action was sent`);
+    assert.equal(result.noDispatch, true, `${AgentClass.name}: pre-dispatch timeout lost its no-dispatch marker`);
+    assert.equal(result.outcomeUnknown, false, `${AgentClass.name}: pre-dispatch timeout reported an unknown outcome`);
+    assert.equal(result.retryable, true, `${AgentClass.name}: safe pre-dispatch timeout blocked recovery`);
+    assert.match(result.error, /submit\/form-validation preflight did not finish/i);
+    assert.ok(
+      updates.some(update => update.type === 'warning' && /timed out before dispatch/i.test(update.data?.message || '')),
+      `${AgentClass.name}: pre-dispatch timeout warning missing`,
+    );
+  }
+});
+
 test('coordinate iframe submits capture validation state in all frames', async () => {
   const agent = new AgentCh({ getVisionProvider: async () => null });
   const tabId = 5118;

@@ -1139,6 +1139,17 @@ export class Agent extends LoopDetector {
     };
   }
 
+  _contentActionPreparationTimeoutResult(toolName, error, stage = 'page preparation') {
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      outcomeUnknown: false,
+      retryable: true,
+      error: `${error?.message || `${toolName} timed out`} No ${toolName} action was sent because ${stage} did not finish. Re-observe the page before retrying.`,
+    };
+  }
+
   _recordVisionRouteTrace(tabId, route, capture, context, fallbackReason = null) {
     const runId = this.currentRunId.get(tabId);
     if (!route?.route) return;
@@ -6260,7 +6271,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _captchaMutationPreflight(tabId, toolName, toolArgs = {}) {
+  async _captchaMutationPreflight(tabId, toolName, toolArgs = {}, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
@@ -6273,6 +6285,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && !this._shouldRetryCaptchaManualGate(activeGate)
     ) return null;
     const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId);
+    this._throwIfAborted(abortSignal);
     const challenge = detectedChallenge?.label
       ? detectedChallenge
       : activeGate?.status === 'cleared'
@@ -6281,6 +6294,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!challenge?.label) return null;
     let pageUrl = '';
     try { pageUrl = await this._currentUrl(tabId); } catch {}
+    this._throwIfAborted(abortSignal);
     const observation = await this._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -6295,6 +6309,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       },
       {},
     );
+    this._throwIfAborted(abortSignal);
     return observation.gate;
   }
 
@@ -6877,12 +6892,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // exactly like other tool results.
       const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);
 
+      const recordPagePreparationTimeout = (error, stage) => {
+        const timeoutResult = this._contentActionPreparationTimeoutResult(fnName, error, stage);
+        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+        onUpdate('tool_result', { name: fnName, result: timeoutResult });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(timeoutResult),
+        });
+        onUpdate('warning', { message: 'Page action preparation timed out before dispatch.' });
+      };
+      const detectSubmitWithDeadline = () => this._withContentActionDeadline(
+        async abortSignal => {
+          const detected = await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+          this._throwIfAborted(abortSignal);
+          return detected;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+      const captureFormValidationWithDeadline = allFrames => this._withContentActionDeadline(
+        async abortSignal => {
+          const state = await this._captureFormValidationState(tabId, { allFrames });
+          this._throwIfAborted(abortSignal);
+          return state;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+
       // A verification challenge is a runtime state boundary, not a prompt
       // suggestion. Once observed, no model-authored click/close/submit or
       // other page mutation may run until one supported solve completes.
-      const captchaPreflight = protectedPageFailure
-        ? null
-        : await this._captchaMutationPreflight(tabId, fnName, fnArgs);
+      let captchaPreflight = null;
+      if (!protectedPageFailure) {
+        try {
+          captchaPreflight = await this._withContentActionDeadline(
+            abortSignal => this._captchaMutationPreflight(tabId, fnName, fnArgs, abortSignal),
+            fnName,
+            this._contentActionDeadlineMs(fnName, fnArgs),
+          );
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          recordPagePreparationTimeout(error, 'CAPTCHA safety preflight');
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+      }
       if (captchaPreflight) onUpdate('captcha_gate', captchaPreflight);
       const captchaGateBlock = protectedPageFailure
         ? null
@@ -7077,34 +7134,66 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const formValidationCandidate = !protectedPageFailure
         && this._isFormValidationCandidate(fnName, fnArgs);
-      let formValidationCoordinateFrames = null;
-      if (
-        formValidationCandidate
-        && fnName === 'click'
-        && fnArgs?.x != null
-        && fnArgs?.y != null
-      ) {
-        formValidationCoordinateFrames = await this._iframeRectsForCoordinate(
-          tabId,
-          fnArgs.x,
-          fnArgs.y,
-        );
+      let formValidationAllFrames = false;
+      let detectedSubmitAction = null;
+      let formValidationBefore = [];
+      let validationBlock = null;
+      if (formValidationCandidate) {
+        try {
+          const preparation = await this._withContentActionDeadline(async abortSignal => {
+            let coordinateFrames = null;
+            if (
+              fnName === 'click'
+              && fnArgs?.x != null
+              && fnArgs?.y != null
+            ) {
+              coordinateFrames = await this._iframeRectsForCoordinate(
+                tabId,
+                fnArgs.x,
+                fnArgs.y,
+              );
+              this._throwIfAborted(abortSignal);
+            }
+            // CDP selector resolution pierces same-process iframe documents,
+            // so a plain click({selector}) can still dispatch inside a child
+            // frame.
+            const allFrames = fnName === 'iframe_click'
+              || fnName === 'press_keys'
+              || (fnName === 'click' && !!fnArgs?.selector)
+              || (Array.isArray(coordinateFrames) && coordinateFrames.length > 0);
+            const shouldDetectSubmit = ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
+            const detected = shouldDetectSubmit
+              ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs, {
+                  ...(Array.isArray(coordinateFrames)
+                    ? { coordinateFrames }
+                    : {}),
+                })
+              : null;
+            this._throwIfAborted(abortSignal);
+            const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
+            const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
+            const before = (currentValidationBlock || obviousSubmit)
+              ? await this._captureFormValidationState(tabId, { allFrames })
+              : [];
+            this._throwIfAborted(abortSignal);
+            return {
+              allFrames,
+              detected,
+              validationBlock: currentValidationBlock,
+              before,
+            };
+          }, fnName, this._contentActionDeadlineMs(fnName, fnArgs));
+          formValidationAllFrames = preparation.allFrames;
+          detectedSubmitAction = preparation.detected;
+          validationBlock = preparation.validationBlock;
+          formValidationBefore = preparation.before;
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          recordPagePreparationTimeout(error, 'submit/form-validation preflight');
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
       }
-      // CDP selector resolution pierces same-process iframe documents, so a
-      // plain click({selector}) can still dispatch inside a child frame.
-      const formValidationAllFrames = fnName === 'iframe_click'
-        || fnName === 'press_keys'
-        || (fnName === 'click' && !!fnArgs?.selector)
-        || (Array.isArray(formValidationCoordinateFrames) && formValidationCoordinateFrames.length > 0);
-      const preflightSubmitDetection = formValidationCandidate
-        && ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
-      let detectedSubmitAction = preflightSubmitDetection
-        ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs, {
-            ...(Array.isArray(formValidationCoordinateFrames)
-              ? { coordinateFrames: formValidationCoordinateFrames }
-              : {}),
-          })
-        : null;
       if (fnName === 'chrome_web_store_publish') {
         detectedSubmitAction = {
           isSubmit: true,
@@ -7112,14 +7201,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: 'submit the configured Chrome Web Store release for review',
         };
       }
-      const validationBlock = formValidationCandidate ? this._formValidationBlocks.get(tabId) : null;
       let priorValidationFailure = !!validationBlock;
       let correctedPriorValidationFailure = false;
-      const obviousSubmitAction = formValidationCandidate
-        && this._formValidationActionLooksSubmit(fnName, fnArgs, null, detectedSubmitAction);
-      let formValidationBefore = (validationBlock || obviousSubmitAction)
-        ? await this._captureFormValidationState(tabId, { allFrames: formValidationAllFrames })
-        : [];
       if (validationBlock) {
         const currentValidationStateKey = this._formValidationStateKey(formValidationBefore);
         if (currentValidationStateKey !== validationBlock.stateKey) {
@@ -7153,7 +7236,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const bypassesConsequentialGates = !requiresMandatoryWebMCPGates
         && (this._skipPermissionGate || scheduledBypassesGate);
       if (!protectedPageFailure && !bypassesConsequentialGates) {
-        const submitConfirmation = detectedSubmitAction || await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+        let submitConfirmation = detectedSubmitAction;
+        if (!submitConfirmation) {
+          try {
+            submitConfirmation = await detectSubmitWithDeadline();
+          } catch (error) {
+            if (error?.code !== 'content_action_timeout') throw error;
+            recordPagePreparationTimeout(error, 'submit-action detection');
+            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+            continue;
+          }
+        }
         detectedSubmitAction = submitConfirmation;
         if (submitConfirmation?.isSubmit) {
           const choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
@@ -7202,9 +7295,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           || scheduledBypassesGate
         )
       ) {
-        formValidationBefore = await this._captureFormValidationState(tabId, {
-          allFrames: formValidationAllFrames,
-        });
+        try {
+          formValidationBefore = await captureFormValidationWithDeadline(formValidationAllFrames);
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          recordPagePreparationTimeout(error, 'form-validation snapshot');
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
       }
       if (capabilities.length && !bypassesConsequentialGates) {
         await this.permissions.hydrate();
@@ -7434,11 +7532,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // close to dispatch as possible: permission and confirmation can happen
       // first, but a mismatched conversation never reaches executeTool().
       const messageRecipientExecutionContext = {};
-      const messageRecipientBlock = protectedPageFailure
-        ? null
-        : await this._messageRecipientGuardBlock(
-            tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+      let messageRecipientBlock = null;
+      if (!protectedPageFailure) {
+        try {
+          messageRecipientBlock = await this._withContentActionDeadline(
+            async abortSignal => {
+              const block = await this._messageRecipientGuardBlock(
+                tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+              );
+              this._throwIfAborted(abortSignal);
+              return block;
+            },
+            fnName,
+            this._contentActionDeadlineMs(fnName, fnArgs),
           );
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          recordPagePreparationTimeout(error, 'message-recipient safety preflight');
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+      }
       if (messageRecipientBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
