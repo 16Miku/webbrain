@@ -87648,8 +87648,18 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.notEqual(coordinateDeadlineEnd, -1, `${label}: coordinate reconciliation deadline wrapper boundary missing`);
     const coordinateDeadlineSource = source.slice(coordinateDeadlineStart, coordinateDeadlineEnd);
     assert.match(coordinateDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._reconcileCoordinateClick\([\s\S]*'click'/, `${label}: coordinate reconciliation bypasses the deadline`);
-    assert.match(coordinateDeadlineSource, /abortSignal =>[\s\S]*messageRecipientContext,[\s\S]*abortSignal/, `${label}: coordinate reconciliation deadline does not propagate cancellation`);
-    assert.match(source, /const reconciled = await this\._reconcileCoordinateClickWithDeadline\(/, `${label}: screenshot coordinate clicks bypass the reconciliation deadline wrapper`);
+    assert.match(
+      coordinateDeadlineSource,
+      /deadlineAbortSignal =>[\s\S]*this\._linkAbortSignals\(deadlineAbortSignal, upstreamAbortSignal\)[\s\S]*messageRecipientContext,[\s\S]*linked\.signal/,
+      `${label}: coordinate reconciliation does not combine its local deadline with the outer action deadline`,
+    );
+    assert.match(
+      source,
+      label === 'chrome'
+        ? /const reconciled = await this\._reconcileCoordinateClickWithDeadline\([\s\S]*\}, earlyCdpAbortSignal\);/
+        : /const reconciled = await this\._reconcileCoordinateClickWithDeadline\([\s\S]*\}, contentPipelineAbortSignal\);/,
+      `${label}: screenshot coordinate clicks do not propagate the outer action deadline`,
+    );
 
     if (label === 'chrome') {
       assert.match(source, /const EARLY_CDP_ACTION_TOOLS = new Set\(\['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file'\]\);/, 'chrome: early CDP action list is incomplete');
@@ -87761,6 +87771,54 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.equal(coordinateResult.result.retryable, true, `${label}: pre-dispatch coordinate timeout blocked safe recovery`);
     assert.equal(coordinateResult.diagnostic, null, `${label}: timed-out coordinate reconciliation fabricated a diagnostic`);
     assert.equal(semanticDispatches, 0, `${label}: timed-out coordinate reconciliation dispatched a late semantic click`);
+
+    const upstreamCoordinateAgent = new AgentClass({});
+    const upstreamController = new AbortController();
+    let releaseUpstreamResolution;
+    let markUpstreamResolutionStarted;
+    const upstreamResolutionStarted = new Promise(resolve => { markUpstreamResolutionStarted = resolve; });
+    const delayedUpstreamResolution = new Promise(resolve => { releaseUpstreamResolution = resolve; });
+    let upstreamSemanticDispatches = 0;
+    upstreamCoordinateAgent._resolveCoordinateVisualTarget = async () => {
+      markUpstreamResolutionStarted();
+      return delayedUpstreamResolution;
+    };
+    upstreamCoordinateAgent._dispatchClickAx = async () => {
+      upstreamSemanticDispatches += 1;
+      return { success: true };
+    };
+    upstreamCoordinateAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click', `${label}: upstream cancellation uses the wrong deadline class`);
+      const upstreamError = new Error('The outer click pipeline timed out.');
+      upstreamError.code = 'content_action_timeout';
+      const independentInnerController = new AbortController();
+      const started = Promise.resolve().then(() => operation(independentInnerController.signal));
+      await upstreamResolutionStarted;
+      upstreamController.abort(upstreamError);
+      releaseUpstreamResolution({
+        success: true,
+        semanticTarget: {
+          ref_id: 'ref_outer_late',
+          role: 'button',
+          name: 'Outer late action',
+          eligibility: 'semantic-button',
+        },
+        documentToken: 'outer-late-document',
+      });
+      await assert.rejects(started, candidate => candidate === upstreamError);
+      throw upstreamError;
+    };
+    const upstreamCoordinateResult = await upstreamCoordinateAgent._reconcileCoordinateClickWithDeadline(
+      8,
+      { x: 30, y: 40 },
+      {},
+      upstreamController.signal,
+    );
+    assert.equal(upstreamCoordinateResult.result.success, false, `${label}: outer timeout reported coordinate success`);
+    assert.equal(upstreamCoordinateResult.result.dispatched, false, `${label}: outer timeout claimed a coordinate click`);
+    assert.equal(upstreamCoordinateResult.result.noDispatch, true, `${label}: outer timeout lost its no-dispatch marker`);
+    assert.equal(upstreamCoordinateResult.result.retryable, true, `${label}: outer pre-dispatch timeout blocked safe recovery`);
+    assert.equal(upstreamSemanticDispatches, 0, `${label}: outer timeout allowed a late semantic click`);
 
     const readResult = agent._contentActionTimeoutResult('read_page', {
       message: 'read_page did not return a page response within 60 seconds.',

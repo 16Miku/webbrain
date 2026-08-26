@@ -769,6 +769,30 @@ export class Agent extends LoopDetector {
     throw error;
   }
 
+  _linkAbortSignals(...signals) {
+    const controller = new AbortController();
+    const listeners = [];
+    const dispose = () => {
+      for (const [signal, listener] of listeners.splice(0)) {
+        try { signal.removeEventListener('abort', listener); } catch {}
+      }
+    };
+    controller.signal.addEventListener('abort', dispose, { once: true });
+    for (const signal of signals) {
+      if (!signal) continue;
+      if (signal.aborted) {
+        controller.abort(signal.reason);
+        break;
+      }
+      const listener = () => {
+        if (!controller.signal.aborted) controller.abort(signal.reason);
+      };
+      signal.addEventListener('abort', listener, { once: true });
+      listeners.push([signal, listener]);
+    }
+    return { signal: controller.signal, dispose };
+  }
+
   async _withVisionDeadline(operation) {
     const controller = new AbortController();
     let timeoutId = null;
@@ -7481,17 +7505,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _reconcileCoordinateClickWithDeadline(tabId, point, messageRecipientContext = {}) {
+  async _reconcileCoordinateClickWithDeadline(
+    tabId,
+    point,
+    messageRecipientContext = {},
+    upstreamAbortSignal = null,
+  ) {
     const dispatchState = { started: false };
     try {
       return await this._withContentActionDeadline(
-        abortSignal => this._reconcileCoordinateClick(
-          tabId,
-          point,
-          messageRecipientContext,
-          abortSignal,
-          dispatchState,
-        ),
+        deadlineAbortSignal => {
+          const linked = this._linkAbortSignals(deadlineAbortSignal, upstreamAbortSignal);
+          return Promise.resolve(this._reconcileCoordinateClick(
+            tabId,
+            point,
+            messageRecipientContext,
+            linked.signal,
+            dispatchState,
+          )).finally(linked.dispose);
+        },
         'click',
         this._contentActionDeadlineMs('click'),
       );
@@ -21235,7 +21267,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           messageRecipientDispatchBinding,
           expectedName: args.expected_name,
           expectedRole: args.expected_role,
-        });
+        }, contentPipelineAbortSignal);
         if (reconciled.result) return reconciled.result;
         coordinateDiagnostic = reconciled.diagnostic;
       }
