@@ -6956,6 +6956,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  async _reconcileCoordinateClickWithDeadline(tabId, point, messageRecipientContext = {}) {
+    try {
+      return await this._withContentActionDeadline(
+        () => this._reconcileCoordinateClick(tabId, point, messageRecipientContext),
+        'click',
+        this._contentActionDeadlineMs('click'),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return {
+          result: this._contentActionTimeoutResult('click', error),
+          diagnostic: null,
+        };
+      }
+      throw error;
+    }
+  }
+
   /**
    * Coordinate-system sentence for screenshot notes shown to the model.
    * Captures are CSS-locked (scale:1) but may be downscaled when a viewport
@@ -20489,7 +20507,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (duplicateSubmit) return duplicateSubmit;
       if (coordinatePoint && !dispatchBinding?.token) {
-        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint, {
+        const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
           messageRecipientGuardRequired,
           messageRecipientDispatchBinding,
           expectedName: args.expected_name,

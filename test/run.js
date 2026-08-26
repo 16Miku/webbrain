@@ -86872,7 +86872,7 @@ test('agent viewport indicator heartbeat auto-cleans stale page UI', () => {
   }
 });
 
-test('content-script actions have a bounded unknown-outcome timeout', () => {
+test('content-script actions have a bounded unknown-outcome timeout', async () => {
   for (const [label, prefix, AgentClass] of [
     ['chrome', 'src/chrome', AgentCh],
     ['firefox', 'src/firefox', AgentFx],
@@ -86901,6 +86901,14 @@ test('content-script actions have a bounded unknown-outcome timeout', () => {
     assert.notEqual(clickAxReinject, -1, `${label}: click_ax reinjection fallback missing`);
     assert.equal(clickAxTimeoutCatch < clickAxReinject, true, `${label}: timed-out click_ax may be blindly dispatched a second time`);
 
+    const coordinateDeadlineStart = source.indexOf('async _reconcileCoordinateClickWithDeadline(');
+    const coordinateDeadlineEnd = source.indexOf('/**', coordinateDeadlineStart);
+    assert.notEqual(coordinateDeadlineStart, -1, `${label}: coordinate reconciliation deadline wrapper missing`);
+    assert.notEqual(coordinateDeadlineEnd, -1, `${label}: coordinate reconciliation deadline wrapper boundary missing`);
+    const coordinateDeadlineSource = source.slice(coordinateDeadlineStart, coordinateDeadlineEnd);
+    assert.match(coordinateDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._reconcileCoordinateClick\([\s\S]*'click'/, `${label}: coordinate reconciliation bypasses the deadline`);
+    assert.match(source, /const reconciled = await this\._reconcileCoordinateClickWithDeadline\(/, `${label}: screenshot coordinate clicks bypass the reconciliation deadline wrapper`);
+
     const agent = new AgentClass({});
     assert.equal(
       agent._contentActionDeadlineMs('wait_for_element', { timeout: 120_000 }),
@@ -86926,6 +86934,23 @@ test('content-script actions have a bounded unknown-outcome timeout', () => {
     assert.equal(result.outcomeUnknown, true, `${label}: timed-out action did not preserve unknown outcome`);
     assert.equal(result.retryable, false, `${label}: timed-out action invited a blind retry`);
     assert.match(result.error, /may have reached the page.*inspect the current state/i, `${label}: timeout recovery instruction is unsafe`);
+
+    const coordinateAgent = new AgentClass({});
+    coordinateAgent._withContentActionDeadline = async (_operation, toolName) => {
+      assert.equal(toolName, 'click', `${label}: coordinate reconciliation uses the wrong deadline class`);
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      throw error;
+    };
+    const coordinateResult = await coordinateAgent._reconcileCoordinateClickWithDeadline(
+      7,
+      { x: 10, y: 20 },
+    );
+    assert.equal(coordinateResult.result.success, false, `${label}: timed-out coordinate reconciliation reported success`);
+    assert.equal(coordinateResult.result.dispatched, true, `${label}: timed-out coordinate reconciliation lost dispatch uncertainty`);
+    assert.equal(coordinateResult.result.outcomeUnknown, true, `${label}: timed-out coordinate reconciliation did not preserve unknown outcome`);
+    assert.equal(coordinateResult.result.retryable, false, `${label}: timed-out coordinate reconciliation invited a blind retry`);
+    assert.equal(coordinateResult.diagnostic, null, `${label}: timed-out coordinate reconciliation fabricated a diagnostic`);
 
     const readResult = agent._contentActionTimeoutResult('read_page', {
       message: 'read_page did not return a page response within 60 seconds.',
