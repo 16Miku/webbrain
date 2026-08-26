@@ -4,6 +4,29 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.3.0] - 2026-08-26
+
+### Added
+- Immediate broader context option for selection (Chrome + Firefox)
+
+### Changed
+- Simplified selection grounding controls and refined scope/provider guidance
+- Updated selection context controls to improve how selection scope is exposed and recovered
+- Added EasyCLIProxy subscription guide
+- Added Unsloth provider icon and improved Unsloth model listing (resident models only)
+
+### Fixed
+- Preserved private workflow compilation during trace handling
+- Prevented selection scope restore races by rejecting busy restore and disabling scope restore while busy
+- Improved selection scope recovery messaging and disclosure of full selection scope restore
+- Bounded safe selection dialogue context to avoid over-expanding selection context
+- Preserved redacted outcome metadata in traces
+- Fixed trace privacy/retention messaging and clarified metadata-only retention
+- Fixed busy scope restore race conditions in chat selection context continuity
+
+### Tests
+- Added/updated vision benchmark fixtures and expectations used by the test suite
+
 ## [33.2.1] - 2026-08-23
 
 ### Changed
