@@ -3257,7 +3257,27 @@ export class CDPClient {
    *
    * Returns: { nodeId?, x, y, width, height, inViewport, hitOk, tag, text } or null.
    */
+  _selectorActionDeadline(options = {}) {
+    const abortSignal = options?.abortSignal || null;
+    const deadlineAt = Number(options?.deadlineAt) || 0;
+    const deadlineError = options?.deadlineError instanceof Error
+      ? options.deadlineError
+      : null;
+    const expired = () => abortSignal?.aborted || (deadlineAt > 0 && Date.now() >= deadlineAt);
+    const throwIfExpired = (force = false) => {
+      if (!force && !expired()) return;
+      if (abortSignal?.reason instanceof Error) throw abortSignal.reason;
+      if (deadlineError) throw deadlineError;
+      const error = new Error('Selector resolution was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    };
+    return { abortSignal, deadlineAt, expired, throwIfExpired };
+  }
+
   async resolveSelector(tabId, selector, options = {}) {
+    const deadline = this._selectorActionDeadline(options);
+    deadline.throwIfExpired();
     // Retry the resolution a few times so we tolerate elements that get
     // attached asynchronously after a click (framework hydration, dynamic
     // shadow root attachment, modal/menu open animations). Each attempt is
@@ -3282,7 +3302,9 @@ export class CDPClient {
 
     let lastResult = null;
     for (let i = 0; i <= retries; i++) {
+      deadline.throwIfExpired();
       const result = await this._resolveSelectorOnce(tabId, selector, options);
+      deadline.throwIfExpired();
       // Found and usable → done.
       if (result && result.found && (result.inViewport || result.nodeId)) {
         return result;
@@ -3290,7 +3312,10 @@ export class CDPClient {
       // Hard error from invalid selector — no point retrying.
       if (result && result.error) return result;
       lastResult = result;
-      if (i < retries) await new Promise(r => setTimeout(r, delayMs));
+      if (i < retries) {
+        await new Promise(r => setTimeout(r, delayMs));
+        deadline.throwIfExpired();
+      }
     }
     return lastResult;
   }
@@ -3301,9 +3326,12 @@ export class CDPClient {
    * The content-script probe cannot see closed shadow roots, so selector-based
    * type_text preflight must live beside the trusted CDP resolver.
    */
-  async probeRichTextToolbarSelector(tabId, selector) {
+  async probeRichTextToolbarSelector(tabId, selector, options = {}) {
+    const deadline = this._selectorActionDeadline(options);
+    deadline.throwIfExpired();
     if (typeof selector !== 'string' || !selector.trim()) return { resolved: false };
-    const info = await this.resolveSelector(tabId, selector);
+    const info = await this.resolveSelector(tabId, selector, options);
+    deadline.throwIfExpired();
     if (!info) return { resolved: false };
     if (info.error) return { resolved: false, error: info.error };
 
@@ -3313,7 +3341,9 @@ export class CDPClient {
     try {
       if (info.nodeId) {
         await this.sendCommand(tabId, 'DOM.enable');
+        deadline.throwIfExpired();
         const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+        deadline.throwIfExpired();
         objectId = resolved?.object?.objectId || null;
         releaseObject = !!objectId;
       } else {
@@ -3324,11 +3354,14 @@ export class CDPClient {
       if (!objectId) return { resolved: false };
 
       await this.sendCommand(tabId, 'DOM.enable');
+      deadline.throwIfExpired();
       const described = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }).catch(() => null);
+      deadline.throwIfExpired();
       const selectorBackendNodeId = Number(described?.node?.backendNodeId) || null;
       if (!selectorBackendNodeId) return { resolved: false };
 
       const heuristicSource = await CDPClient._richTextToolbarHeuristicSource();
+      deadline.throwIfExpired();
       if (!heuristicSource.trim()) {
         return {
           resolved: false,
@@ -3346,12 +3379,15 @@ export class CDPClient {
         objectId,
         returnByValue: true,
         awaitPromise: true,
-        functionDeclaration: `async function () {
+        functionDeclaration: `async function (actionDeadlineAt) {
           ${heuristicPrelude}
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { deadlineExpired: true };
           const el = this;
           if (!el || el.nodeType !== 1 || !el.isConnected) return null;
           const settledRect = async (shouldScroll) => {
             if (shouldScroll) {
+              if (deadlineExpired()) return { __deadlineExpired: true };
               try {
                 el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
               } catch {
@@ -3372,6 +3408,7 @@ export class CDPClient {
                 setTimeout(finish, 40);
                 try { requestAnimationFrame(finish); } catch {}
               });
+              if (deadlineExpired()) return { __deadlineExpired: true };
               if (!el.isConnected) return null;
               const next = el.getBoundingClientRect();
               const delta = Math.max(
@@ -3495,6 +3532,7 @@ export class CDPClient {
           // annotated into a screenshot. Ordinary selector typing must not
           // move the page to centre its target.
           const rect = await settledRect(Number(candidate?.score) >= 4);
+          if (rect?.__deadlineExpired) return { deadlineExpired: true };
           if (!rect) return null;
           return {
             pageUrl: location.href,
@@ -3511,8 +3549,11 @@ export class CDPClient {
               : (candidate?.regionKey || ''),
           };
         }`,
+        arguments: [{ value: deadline.deadlineAt }],
       });
+      deadline.throwIfExpired();
       const value = inspected?.result?.value;
+      if (value?.deadlineExpired) deadline.throwIfExpired(true);
       if (!value?.rect || !value?.fieldMeta) return { resolved: false };
       return {
         resolved: true,
@@ -3536,7 +3577,11 @@ export class CDPClient {
   }
 
   async _resolveSelectorOnce(tabId, selector, options = {}) {
+    const deadline = this._selectorActionDeadline(options);
+    const scrollRequested = options?.scroll !== false;
+    deadline.throwIfExpired();
     await this.sendCommand(tabId, 'Runtime.enable');
+    deadline.throwIfExpired();
 
     const selectorJSON = JSON.stringify(selector);
     const requireUnique = options?.requireUnique === true;
@@ -3546,6 +3591,10 @@ export class CDPClient {
       (() => {
         const sel = ${selectorJSON};
         const requireUnique = ${requireUnique};
+        const scrollRequested = ${scrollRequested};
+        const actionDeadlineAt = ${deadline.deadlineAt};
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+        if (deadlineExpired()) return { found: false, deadlineExpired: true };
         const matches = [];
         const queryDeep = (root) => {
           try {
@@ -3587,7 +3636,11 @@ export class CDPClient {
           : tag === 'BUTTON'
             ? type === 'submit' || (!type && !!(found.form || found.closest?.('form')))
             : false;
-        if (found.tagName !== 'SELECT') { try { found.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {} }
+        if (deadlineExpired()) return { found: false, deadlineExpired: true };
+        if (scrollRequested && found.tagName !== 'SELECT') {
+          if (deadlineExpired()) return { found: false, deadlineExpired: true };
+          try { found.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+        }
         const r = found.getBoundingClientRect();
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
@@ -3617,15 +3670,21 @@ export class CDPClient {
     `;
 
     const jsRes = await this.evaluate(tabId, jsExpr);
+    deadline.throwIfExpired();
     const jsInfo = jsRes?.result?.value;
+    if (jsInfo?.deadlineExpired) deadline.throwIfExpired(true);
     if (jsInfo?.error) return jsInfo;
     if (jsInfo?.found) {
       // Wait briefly for scroll to settle, then re-measure once.
       await new Promise(r => setTimeout(r, 60));
+      deadline.throwIfExpired();
       const reMeasure = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
           const requireUnique = ${requireUnique};
+          const actionDeadlineAt = ${deadline.deadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { deadlineExpired: true };
           const matches = [];
           const queryDeep = (root) => {
             try {
@@ -3656,11 +3715,14 @@ export class CDPClient {
           }
           const el = requireUnique ? matches[0] : firstMatch;
           if (!el) return null;
+          if (deadlineExpired()) return { deadlineExpired: true };
           const r = el.getBoundingClientRect();
           return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
         })()
       `);
+      deadline.throwIfExpired();
       const m = reMeasure?.result?.value;
+      if (m?.deadlineExpired) deadline.throwIfExpired(true);
       if (m?.error) return m;
       if (m) { jsInfo.x = m.x; jsInfo.y = m.y; jsInfo.width = m.width; jsInfo.height = m.height; }
       return jsInfo;
@@ -3668,8 +3730,11 @@ export class CDPClient {
 
     // ---- Strategy 2: CDP traversal (closed shadow roots) ----
     try {
+      deadline.throwIfExpired();
       await this.sendCommand(tabId, 'DOM.enable');
+      deadline.throwIfExpired();
       const { root } = await this.sendCommand(tabId, 'DOM.getDocument', { depth: -1, pierce: true });
+      deadline.throwIfExpired();
 
       // Walk the tree, collecting the document nodeId plus every shadow root nodeId.
       const searchRoots = [];
@@ -3689,18 +3754,21 @@ export class CDPClient {
 
       const foundNodeIds = [];
       for (const rootId of searchRoots) {
+        deadline.throwIfExpired();
         try {
           if (requireUnique) {
             // querySelector reports only the first hit in a root, so two
             // matches inside one closed shadow root would pass the uniqueness
             // check below as a single identity. Count them all.
             const { nodeIds } = await this.sendCommand(tabId, 'DOM.querySelectorAll', { nodeId: rootId, selector });
+            deadline.throwIfExpired();
             for (const nodeId of nodeIds || []) {
               if (nodeId && !foundNodeIds.includes(nodeId)) foundNodeIds.push(nodeId);
             }
             if (foundNodeIds.length > 1) break;
           } else {
             const { nodeId } = await this.sendCommand(tabId, 'DOM.querySelector', { nodeId: rootId, selector });
+            deadline.throwIfExpired();
             if (nodeId && !foundNodeIds.includes(nodeId)) {
               foundNodeIds.push(nodeId);
               break;
@@ -3720,12 +3788,56 @@ export class CDPClient {
       const foundNodeId = foundNodeIds[0] || null;
       if (!foundNodeId) return null;
 
-      // Scroll into view and measure.
-      try {
-        await this.sendCommand(tabId, 'DOM.scrollIntoViewIfNeeded', { nodeId: foundNodeId });
-      } catch (e) { /* not all targets support this */ }
+      // Scroll in the page only after re-checking the absolute action deadline.
+      // A queued DOM.scrollIntoViewIfNeeded command cannot inspect that
+      // deadline when a frozen renderer resumes, so deadline-bound callers use
+      // a guarded Runtime function on the exact closed-shadow node instead.
+      if (scrollRequested) {
+        if (deadline.deadlineAt > 0) {
+          let scrollObjectId = null;
+          try {
+            deadline.throwIfExpired();
+            const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: foundNodeId });
+            deadline.throwIfExpired();
+            scrollObjectId = resolved?.object?.objectId || null;
+            if (scrollObjectId) {
+              const scrolled = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+                objectId: scrollObjectId,
+                returnByValue: true,
+                functionDeclaration: `function (actionDeadlineAt) {
+                  const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+                  if (deadlineExpired()) return { scrolled: false, deadlineExpired: true };
+                  try {
+                    this.scrollIntoView({ block: 'center', inline: 'center' });
+                  } catch {
+                    try { this.scrollIntoView(); } catch {}
+                  }
+                  return { scrolled: true };
+                }`,
+                arguments: [{ value: deadline.deadlineAt }],
+              });
+              deadline.throwIfExpired();
+              if (scrolled?.result?.value?.deadlineExpired) deadline.throwIfExpired(true);
+            }
+          } finally {
+            if (scrollObjectId) {
+              try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId: scrollObjectId }); } catch {}
+            }
+          }
+        } else {
+          try {
+            deadline.throwIfExpired();
+            await this.sendCommand(tabId, 'DOM.scrollIntoViewIfNeeded', { nodeId: foundNodeId });
+            deadline.throwIfExpired();
+          } catch (error) {
+            deadline.throwIfExpired();
+            // Not all targets support this command.
+          }
+        }
+      }
 
       const box = await this.sendCommand(tabId, 'DOM.getBoxModel', { nodeId: foundNodeId }).catch(() => null);
+      deadline.throwIfExpired();
       if (!box?.model) return { nodeId: foundNodeId, found: true, inViewport: false, hitOk: false };
 
       // content quad: [x1,y1,x2,y2,x3,y3,x4,y4]
@@ -3735,6 +3847,7 @@ export class CDPClient {
 
       // Check viewport via window dims.
       const vp = await this.evaluate(tabId, '({w: window.innerWidth, h: window.innerHeight})');
+      deadline.throwIfExpired();
       const vw = vp?.result?.value?.w || 1920;
       const vh = vp?.result?.value?.h || 1080;
       const inViewport = cx >= 0 && cy >= 0 && cx <= vw && cy <= vh && box.model.width > 0 && box.model.height > 0;
@@ -3752,6 +3865,12 @@ export class CDPClient {
         viaCDP: true,
       };
     } catch (e) {
+      if (
+        e === options?.deadlineError
+        || e === options?.abortSignal?.reason
+        || e?.name === 'AbortError'
+      ) throw e;
+      deadline.throwIfExpired();
       return null;
     }
   }
@@ -4385,7 +4504,7 @@ export class CDPClient {
     throwIfAborted();
     const expectedNodeId = Number(expectedBackendNodeId);
     if (Number.isInteger(expectedNodeId) && expectedNodeId > 0) {
-      const currentInfo = await this.resolveSelector(tabId, selector);
+      const currentInfo = await this.resolveSelector(tabId, selector, resolveOptions);
       throwIfAborted();
       if (!currentInfo) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
       if (currentInfo.error) return { success: false, dispatched: false, noDispatch: true, error: currentInfo.error };

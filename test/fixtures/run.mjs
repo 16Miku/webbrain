@@ -393,6 +393,32 @@ async function selectFixtureText(page, selector = '#copy') {
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+test('expired content messages are rejected before page mutation in both builds', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <button id="late-action" onclick="window.__lateActionClicks = (window.__lateActionClicks || 0) + 1">Late action</button>
+    `, browserKind);
+    const response = await page.evaluate(() => new Promise((resolve) => {
+      window.__wb_handler({
+        target: 'content',
+        action: 'click',
+        params: { selector: '#late-action' },
+        actionDeadlineAt: Date.now() - 1,
+      }, {}, resolve);
+    }));
+    const clicks = await page.evaluate(() => window.__lateActionClicks || 0);
+    if (
+      response?.success !== false
+      || response.dispatched !== false
+      || response.noDispatch !== true
+      || response.deadlineExpired !== true
+      || clicks !== 0
+    ) {
+      throw new Error(`${browserKind} expired content message mutated the page: ${JSON.stringify({ response, clicks })}`);
+    }
+  }
+});
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 
@@ -1639,6 +1665,7 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
     </div>
     <script>
       document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') window.__escapeActiveId = document.activeElement?.id || '';
         if (event.key === 'Escape' && document.activeElement?.id === 'dialog-select') {
           document.activeElement.blur();
         }
@@ -1673,6 +1700,7 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
     background: document.getElementById('background-select').value,
     dialog: document.getElementById('dialog-select').value,
     backgroundButtonClicked: window.__backgroundYearlyClicked === true,
+    escapeActiveId: window.__escapeActiveId || '',
     leakedTargetSlots: Object.keys(globalThis).filter((key) => key.startsWith('__webbrainAutoSelectTarget_')),
   }));
 
@@ -1681,6 +1709,9 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
   }
   if (values.background !== 'monthly' || values.dialog !== 'yearly' || values.backgroundButtonClicked) {
     throw new Error(`auto-select changed the wrong dropdown after refocus: ${JSON.stringify(values)}`);
+  }
+  if (values.escapeActiveId !== 'dialog-select') {
+    throw new Error(`auto-select sent Escape to the wrong control: ${JSON.stringify(values)}`);
   }
   if (values.leakedTargetSlots.length) {
     throw new Error(`auto-select target reference was not cleaned up: ${JSON.stringify(values.leakedTargetSlots)}`);

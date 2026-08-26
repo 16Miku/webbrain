@@ -4829,6 +4829,18 @@
   // --- Message handler ---
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
+    const actionDeadlineAt = Number(msg.actionDeadlineAt) || 0;
+    if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) {
+      sendResponse({
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        deadlineExpired: true,
+        error: 'The page action deadline expired before dispatch.',
+      });
+      return;
+    }
 
     const handlers = {
       'get_page_info': () => getPageInfo(),

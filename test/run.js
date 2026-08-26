@@ -49437,6 +49437,92 @@ test('CDP querySelectorPierce keeps open-shadow Runtime object handles alive unt
   assert.deepEqual(commands.at(-1).params, { objectGroup: query.objectGroup });
 });
 
+test('CDP selector resolution rejects queued open- and closed-shadow scrolls after the absolute deadline', async () => {
+  const deadlineAt = Date.now() + 60_000;
+  const deadlineError = new Error('selector deadline expired');
+  deadlineError.code = 'content_action_timeout';
+
+  const openClient = new CDPClient();
+  let openScrolls = 0;
+  openClient.sendCommand = async (_tabId, method) => {
+    assert.equal(method, 'Runtime.enable');
+    return {};
+  };
+  openClient.evaluate = async (_tabId, expression) => {
+    const element = {
+      tagName: 'BUTTON',
+      getAttribute: () => '',
+      scrollIntoView: () => { openScrolls += 1; },
+    };
+    const document = {
+      querySelectorAll: () => [element],
+      elementFromPoint: () => element,
+      createTreeWalker: () => ({ currentNode: null, nextNode: () => null }),
+    };
+    const value = vm.runInNewContext(expression, {
+      document,
+      window: { innerWidth: 1280, innerHeight: 800 },
+      NodeFilter: { SHOW_ELEMENT: 1 },
+      Date: { now: () => deadlineAt + 1 },
+    });
+    return { result: { value } };
+  };
+  await assert.rejects(
+    openClient.resolveSelector(42, '#late-open-shadow', {
+      retries: 0,
+      deadlineAt,
+      deadlineError,
+    }),
+    candidate => candidate === deadlineError,
+  );
+  assert.equal(openScrolls, 0, 'an expired open-shadow resolver scrolled the page');
+
+  const closedClient = new CDPClient();
+  const commands = [];
+  closedClient.evaluate = async () => ({ result: { value: { found: false } } });
+  closedClient.sendCommand = async (_tabId, method, params = {}) => {
+    commands.push({ method, params });
+    if (method === 'DOM.getDocument') {
+      return {
+        root: {
+          nodeId: 1,
+          nodeName: '#document',
+          nodeType: 9,
+          children: [{ nodeId: 10, shadowRoots: [{ nodeId: 2 }] }],
+        },
+      };
+    }
+    if (method === 'DOM.querySelector') {
+      return { nodeId: params.nodeId === 2 ? 77 : 0 };
+    }
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'late-closed-shadow-target' } };
+    if (method === 'Runtime.callFunctionOn') {
+      assert.match(params.functionDeclaration, /deadlineExpired[\s\S]*scrollIntoView/);
+      assert.deepEqual(params.arguments, [{ value: deadlineAt }]);
+      return { result: { value: { scrolled: false, deadlineExpired: true } } };
+    }
+    return {};
+  };
+  await assert.rejects(
+    closedClient.resolveSelector(42, '#late-closed-shadow', {
+      retries: 0,
+      deadlineAt,
+      deadlineError,
+    }),
+    candidate => candidate === deadlineError,
+  );
+  assert.equal(
+    commands.some(command => command.method === 'DOM.scrollIntoViewIfNeeded'),
+    false,
+    'deadline-bound closed-shadow resolution used an unguarded protocol scroll',
+  );
+  assert.equal(
+    commands.some(command => command.method === 'Runtime.releaseObject'),
+    true,
+    'closed-shadow deadline guard leaked its resolved Runtime object',
+  );
+});
+
 test('Chrome toolbar preflight probes closed-shadow type_text selectors through the dispatch resolver', async () => {
   const client = new CDPClient();
   const commands = [];
@@ -70818,6 +70904,10 @@ test('chrome CDP auto-select scopes to blocking dialogs and refuses ambiguous dr
   assert.match(body, /matchingSelects\.length !== 1/, 'chrome: auto-select should yield instead of choosing among multiple matching selects');
   assert.match(body, /globalThis\[targetSlot\] = sel/, 'chrome: auto-select should preserve the exact scoped select for refocus');
   assert.match(body, /const target = globalThis\[/, 'chrome: auto-select should refocus and verify the preserved select');
+  const dispatchStart = body.indexOf('// Escape must belong to the exact select');
+  const initialFocus = body.indexOf('if (!await focusExactTarget()) return null;', dispatchStart);
+  const escapeDispatch = body.indexOf("type: 'keyDown', key: 'Escape'", dispatchStart);
+  assert.ok(dispatchStart >= 0 && initialFocus > dispatchStart && escapeDispatch > initialFocus, 'chrome: auto-select must focus the matched select before sending Escape');
   assert.doesNotMatch(
     body.slice(body.indexOf('const scanResult = await cdpClient.evaluate'), body.indexOf('const scan = scanResult?.result?.value;')),
     /sel\.focus\s*\(/,
@@ -87809,6 +87899,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     const source = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(source, /const CONTENT_ACTION_TIMEOUT_MS = 60_000;/, `${label}: content action deadline missing`);
     assert.match(source, /const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;/, `${label}: requested wait grace missing`);
+    assert.match(source, /const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap\(\);/, `${label}: absolute page-action deadlines are not tracked by signal`);
     assert.match(source, /const controller = new AbortController\(\);[\s\S]*controller\.abort\(timeoutError\)[\s\S]*operation\(controller\.signal\)/, `${label}: content action deadline does not cancel late pipeline work`);
     assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
     assert.match(
@@ -87820,6 +87911,18 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     );
     assert.match(source, /runContentActionStage = operation => this\._withContentActionDeadline\([\s\S]*remainingContentActionDeadlineMs\(\)/, `${label}: page pipeline does not share one bounded deadline`);
     assert.match(source, /dispatchContentAction = \(\) => runContentActionStage\(sendContentAction\);/, `${label}: page dispatch bypasses the pipeline deadline`);
+    assert.match(
+      source,
+      /const actionDeadlineAt = Number\(CONTENT_ACTION_SIGNAL_DEADLINES\.get\(actionSignal\)\?\.deadlineAt\) \|\| 0;[\s\S]*?target: 'content',[\s\S]*?\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
+      `${label}: the absolute deadline is not delivered to the content-script mutation boundary`,
+    );
+    const contentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const messageHandlerStart = contentSource.indexOf(`${label === 'chrome' ? 'chrome' : 'browser'}.runtime.onMessage.addListener((msg, sender, sendResponse) => {`);
+    const handlersStart = contentSource.indexOf('const handlers = {', messageHandlerStart);
+    assert.ok(messageHandlerStart >= 0 && handlersStart > messageHandlerStart, `${label}: content message handler boundary missing`);
+    const messageDeadlineGuard = contentSource.slice(messageHandlerStart, handlersStart);
+    assert.match(messageDeadlineGuard, /Date\.now\(\) >= actionDeadlineAt/, `${label}: expired messages can reach a page handler`);
+    assert.match(messageDeadlineGuard, /dispatched: false,[\s\S]*noDispatch: true,[\s\S]*deadlineExpired: true/, `${label}: expired page messages do not fail as proven no-dispatch`);
     const toolPipelineStart = source.indexOf('const _toolStart = Date.now();');
     const toolPipelineEnd = source.indexOf("if (fnName !== 'done')", toolPipelineStart);
     assert.ok(toolPipelineStart >= 0 && toolPipelineEnd > toolPipelineStart, `${label}: shared tool pipeline boundary missing`);
@@ -87876,6 +87979,9 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       const setCheckedImplStart = source.indexOf('async _completeSetCheckedWithCdpImpl(', setCheckedStart);
       assert.ok(setCheckedStart >= 0 && setCheckedImplStart > setCheckedStart, 'chrome: set_checked recovery deadline wrapper missing');
       assert.match(source.slice(setCheckedStart, setCheckedImplStart), /this\._withContentActionDeadline\([\s\S]*this\._completeSetCheckedWithCdpImpl\([\s\S]*'set_checked'/, 'chrome: trusted checkbox recovery bypasses the pipeline deadline');
+      const setCheckedImplEnd = source.indexOf('\n  async ', setCheckedImplStart + 10);
+      const setCheckedImpl = source.slice(setCheckedImplStart, setCheckedImplEnd);
+      assert.match(setCheckedImpl, /cdpClient\.clickElement\([\s\S]*deadlineAt: Number\(CONTENT_ACTION_SIGNAL_DEADLINES\.get\(abortSignal\)\?\.deadlineAt\)[\s\S]*deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES\.get\(abortSignal\)\?\.error/, 'chrome: trusted checkbox click loses the absolute deadline inside selector resolution');
       assert.match(clickAxSource, /return await this\._withContentActionDeadline\([\s\S]*this\._dispatchClickAxImpl\([\s\S]*'click_ax'/, 'chrome: click_ax baseline and annotation bypass the pipeline deadline');
       const fallbackDeadlineStart = source.indexOf('async _maybeFallbackClickAxWithCdp(');
       const fallbackImplStart = source.indexOf('async _maybeFallbackClickAxWithCdpImpl(', fallbackDeadlineStart);
@@ -87886,7 +87992,20 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     } else {
       assert.match(source, /runContentActionStage\([\s\S]*this\._keyProgressSnapshot\(tabId, abortSignal\)/, 'firefox: pre-dispatch Arrow snapshot bypasses the pipeline deadline');
       assert.match(source, /runContentActionStage\([\s\S]*this\._verifyProvisionalKeyProgress\([\s\S]*abortSignal/, 'firefox: post-dispatch Arrow verification bypasses the pipeline deadline');
+      const uploadStart = source.indexOf('const buildInjectCode = actionDeadlineAt =>');
+      const uploadEnd = source.indexOf('const runUploadPagePhase = async abortSignal =>', uploadStart);
+      assert.ok(uploadStart >= 0 && uploadEnd > uploadStart, 'firefox: upload page-injection deadline guard missing');
+      const uploadInjection = source.slice(uploadStart, uploadEnd);
+      assert.match(uploadInjection, /if \(deadlineExpired\(\)\)[\s\S]*el\.files = dt\.files/, 'firefox: late upload injection can assign FileList after its deadline');
     }
+
+    const toolbarProbe = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/rich-text-toolbar-probe.js'), 'utf8');
+    const legacyTypeStart = toolbarProbe.indexOf('async legacyIframeTypeAllFrames(');
+    const legacyTypeEnd = toolbarProbe.indexOf('\n  async ', legacyTypeStart + 10);
+    assert.ok(legacyTypeStart >= 0 && legacyTypeEnd > legacyTypeStart, `${label}: legacy iframe typing boundary missing`);
+    const legacyType = toolbarProbe.slice(legacyTypeStart, legacyTypeEnd);
+    assert.match(legacyType, /actionDeadlineAt[\s\S]*deadlineExpired[\s\S]*el\.focus\(\)/, `${label}: legacy iframe typing does not reject expired page injection before focus`);
+    assert.match(legacyType, /if \(deadlineExpired\(\)\)[\s\S]*el\.textContent|if \(deadlineExpired\(\)\)[\s\S]*setter\.call/, `${label}: legacy iframe typing does not guard field mutation after focus`);
 
     const agent = new AgentClass({});
     assert.equal(

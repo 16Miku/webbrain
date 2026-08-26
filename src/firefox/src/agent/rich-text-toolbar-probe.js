@@ -175,12 +175,17 @@ export class RichTextToolbarProbe {
   async legacyIframeTypeAllFrames(
     tabId,
     { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex },
-    { abortSignal = null, beforeDispatch = null } = {},
+    { abortSignal = null, deadlineAt = 0, deadlineError = null, beforeDispatch = null } = {},
   ) {
+    const actionDeadlineAt = Number(deadlineAt) || 0;
+    const actionExpired = () => abortSignal?.aborted
+      || (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt);
     const throwIfAborted = () => {
-      if (!abortSignal?.aborted) return;
-      throw abortSignal.reason instanceof Error
+      if (!actionExpired()) return;
+      throw abortSignal?.reason instanceof Error
         ? abortSignal.reason
+        : deadlineError instanceof Error
+          ? deadlineError
         : new Error('Iframe typing was cancelled.');
     };
     throwIfAborted();
@@ -236,11 +241,16 @@ export class RichTextToolbarProbe {
     const code = `
       (() => {
         let targetDispatched = false;
+        const actionDeadlineAt = ${Number(deadlineAt) || 0};
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
         try {
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: false };
           const el = document.querySelectorAll(${JSON.stringify(selector)})[${selectedIndex}];
           if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: false };
           targetDispatched = true;
           el.focus();
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           if (el.isContentEditable) {
             if (${!!clear}) el.textContent = '';
             el.textContent += ${JSON.stringify(text)};
@@ -269,6 +279,7 @@ export class RichTextToolbarProbe {
       return { success: false, dispatched: false, noDispatch: true, retryable: true, error: `The iframe target changed before typing: ${error.message}` };
     }
     throwIfAborted();
+    if (result?.deadlineExpired) throwIfAborted();
     if (result?.ok) {
       return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
     }

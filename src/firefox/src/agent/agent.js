@@ -134,6 +134,7 @@ const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
   'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
 ]);
@@ -762,8 +763,12 @@ export class Agent extends LoopDetector {
   }
 
   _throwIfAborted(signal) {
-    if (!signal?.aborted) return;
+    const deadline = signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null;
+    const deadlineAt = Number(deadline?.deadlineAt);
+    const deadlineExpired = Number.isFinite(deadlineAt) && deadlineAt > 0 && Date.now() >= deadlineAt;
+    if (!signal?.aborted && !deadlineExpired) return;
     if (signal.reason instanceof Error) throw signal.reason;
+    if (deadline?.error instanceof Error) throw deadline.error;
     const error = new Error('The operation was aborted.');
     error.name = 'AbortError';
     throw error;
@@ -771,6 +776,11 @@ export class Agent extends LoopDetector {
 
   _linkAbortSignals(...signals) {
     const controller = new AbortController();
+    const linkedDeadline = signals
+      .map(signal => signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null)
+      .filter(deadline => Number.isFinite(Number(deadline?.deadlineAt)))
+      .sort((a, b) => Number(a.deadlineAt) - Number(b.deadlineAt))[0];
+    if (linkedDeadline) CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, linkedDeadline);
     const listeners = [];
     const dispose = () => {
       for (const [signal, listener] of listeners.splice(0)) {
@@ -850,6 +860,8 @@ export class Agent extends LoopDetector {
     );
     timeoutError.code = 'content_action_timeout';
     const controller = new AbortController();
+    const deadlineAt = Date.now() + timeoutMs;
+    CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, { deadlineAt, error: timeoutError });
     const timeout = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
@@ -19762,8 +19774,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return { success: true, dispatched: false };
           })();
         `;
-        const injectCode = `
+        const buildInjectCode = actionDeadlineAt => `
           (function() {
+            const actionDeadlineAt = ${Number(actionDeadlineAt) || 0};
+            const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+            if (deadlineExpired()) {
+              return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+            }
             const selector = ${JSON.stringify(args.selector)};
             const matches = [];
             const collectDeepMatches = (root) => {
@@ -19807,6 +19824,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               const file = new File([bytes], ${JSON.stringify(filename)}, { type: ${JSON.stringify(mimeType)} });
               const dt = new DataTransfer();
               dt.items.add(file);
+              if (deadlineExpired()) {
+                return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+              }
               el.files = dt.files;
               dispatched = true;
               el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -19822,6 +19842,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         `;
         const runUploadPagePhase = async abortSignal => {
           this._throwIfAborted(abortSignal);
+          const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0;
           let targetProbeResults;
           try {
             targetProbeResults = await browser.tabs.executeScript(tabId, { code: targetProbeCode });
@@ -19871,7 +19892,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           markContentPipelineDispatched();
           let results;
           try {
-            results = await browser.tabs.executeScript(tabId, { code: injectCode });
+            results = await browser.tabs.executeScript(tabId, { code: buildInjectCode(actionDeadlineAt) });
             this._throwIfAborted(abortSignal);
           } catch (e) {
             this._throwIfAborted(abortSignal);
@@ -19884,6 +19905,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
           const res = results && results[0];
+          if (res?.deadlineExpired) this._throwIfAborted(abortSignal);
           if (!res) {
             return {
               success: false,
@@ -21109,6 +21131,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             matchIndex: args.matchIndex,
           }, {
             abortSignal: contentPipelineAbortSignal,
+            deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.deadlineAt) || 0,
+            deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.error || null,
             beforeDispatch: markContentPipelineDispatched,
           });
         }
@@ -21345,13 +21369,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throw error;
       }
     }
-    const sendContentAction = () => {
+    const sendContentAction = stageAbortSignal => {
       throwIfContentPipelineAborted();
+      this._throwIfAborted(stageAbortSignal);
       if (Agent.STATE_CHANGE_TOOLS.has(name)) markContentPipelineDispatched();
+      const actionSignal = contentPipelineAbortSignal || stageAbortSignal;
+      const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(actionSignal)?.deadlineAt) || 0;
       return browser.tabs.sendMessage(tabId, {
         target: 'content',
         action,
         params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
       }, messageOptions);
     };
     const dispatchContentAction = () => runContentActionStage(sendContentAction);

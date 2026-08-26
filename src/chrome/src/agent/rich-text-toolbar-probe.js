@@ -176,12 +176,17 @@ export class RichTextToolbarProbe {
   async legacyIframeTypeAllFrames(
     tabId,
     { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex },
-    { abortSignal = null, beforeDispatch = null } = {},
+    { abortSignal = null, deadlineAt = 0, deadlineError = null, beforeDispatch = null } = {},
   ) {
+    const actionDeadlineAt = Number(deadlineAt) || 0;
+    const actionExpired = () => abortSignal?.aborted
+      || (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt);
     const throwIfAborted = () => {
-      if (!abortSignal?.aborted) return;
-      throw abortSignal.reason instanceof Error
+      if (!actionExpired()) return;
+      throw abortSignal?.reason instanceof Error
         ? abortSignal.reason
+        : deadlineError instanceof Error
+          ? deadlineError
         : new Error('Iframe typing was cancelled.');
     };
     throwIfAborted();
@@ -233,13 +238,17 @@ export class RichTextToolbarProbe {
     if (typeof beforeDispatch === 'function') beforeDispatch();
     const results = await chrome.scripting.executeScript({
       target: { tabId, frameIds: [selected.frameId] },
-      func: (sel, index, txt, clr) => {
+      func: (sel, index, txt, clr, actionDeadlineAt) => {
         let targetDispatched = false;
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
         try {
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: false };
           const el = document.querySelectorAll(sel)[index];
           if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: false };
           targetDispatched = true;
           el.focus();
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           if (el.isContentEditable) {
             if (clr) el.textContent = '';
             el.textContent += txt;
@@ -257,10 +266,11 @@ export class RichTextToolbarProbe {
           return { ok: false, url: location.href, dispatched: targetDispatched, error: error.message };
         }
       },
-      args: [selector, selectedIndex, text, clear],
+      args: [selector, selectedIndex, text, clear, actionDeadlineAt],
     });
     throwIfAborted();
     const result = results?.[0]?.result;
+    if (result?.deadlineExpired) throwIfAborted();
     if (result?.ok) {
       return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
     }

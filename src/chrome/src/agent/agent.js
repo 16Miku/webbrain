@@ -8785,6 +8785,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.evaluate(tabId, `delete globalThis[${JSON.stringify(targetSlot)}]`);
       } catch {}
     };
+    const focusExactTarget = async () => {
+      throwIfAborted();
+      const focusResult = await cdpClient.evaluate(tabId, `
+        (() => {
+          const actionDeadlineAt = ${actionDeadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
+          const target = globalThis[${JSON.stringify(targetSlot)}];
+          if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { focused: false };
+          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
+          if (document.activeElement !== target) target.focus();
+          return { focused: document.activeElement === target };
+        })()
+      `);
+      throwIfAborted();
+      return focusResult?.result?.value?.focused === true;
+    };
     const scanResult = await cdpClient.evaluate(tabId, `
       (() => {
         const actionDeadlineAt = ${actionDeadlineAt};
@@ -8905,8 +8922,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     try {
-      // Close any open native dropdown.
+      // Escape must belong to the exact select found by the modal-scoped,
+      // ambiguity-checked scan. Sending it to the previously focused control
+      // can close a dialog or cancel unrelated UI before this select is used.
       markDispatch();
+      if (!await focusExactTarget()) return null;
       await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
@@ -8914,23 +8934,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
       throwIfAborted();
-      // Escape may blur the control. Re-focus only the exact select chosen by
-      // the modal-scoped, ambiguity-checked scan; never perform a global
-      // option-text lookup here.
-      const focusResult = await cdpClient.evaluate(tabId, `
-        (() => {
-          const actionDeadlineAt = ${actionDeadlineAt};
-          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
-          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
-          const target = globalThis[${JSON.stringify(targetSlot)}];
-          if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { focused: false };
-          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
-          if (document.activeElement !== target) target.focus();
-          return { focused: document.activeElement === target };
-        })()
-      `);
-      throwIfAborted();
-      if (!focusResult?.result?.value?.focused) return null;
+      // Escape may blur the control, so repeat the same exact-reference focus
+      // before navigating its options.
+      if (!await focusExactTarget()) return null;
 
       // Navigate with ArrowDown/ArrowUp.
       const delta = scan.targetIndex - scan.currentIndex;
@@ -14815,7 +14821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       if (!selector || !globalThis.chrome?.debugger || typeof cdpClient?.resolveSelector !== 'function') return null;
       await cdpClient.attach(tabId);
-      const info = await cdpClient.resolveSelector(tabId, String(selector), { retries: 0, delayMs: 0 });
+      const info = await cdpClient.resolveSelector(tabId, String(selector), { retries: 0, delayMs: 0, scroll: false });
       if (!info?.found || !info.nodeId) return null;
       const described = await cdpClient.describeNode(tabId, info.nodeId);
       const node = described?.node || {};
@@ -20519,6 +20525,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         trustedOnly: true,
         requireUnique: true,
         abortSignal,
+        deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0,
+        deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.error || null,
         beforeDispatch: () => {
           recoveryState.clickStarted = true;
           if (upstreamDispatchState) upstreamDispatchState.started = true;
@@ -24122,6 +24130,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             matchIndex: args.matchIndex,
           }, {
             abortSignal: earlyCdpAbortSignal,
+            deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+            deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
             beforeDispatch: markEarlyCdpDispatched,
           });
         }
@@ -26100,7 +26110,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let expectedBackendNodeId = Number(dispatchBinding?.backendNodeId) || null;
           if (!expectedBackendNodeId) {
             try {
-              const probe = await cdpClient.probeRichTextToolbarSelector(tabId, args.selector);
+              const probe = await cdpClient.probeRichTextToolbarSelector(tabId, args.selector, {
+                abortSignal: earlyCdpAbortSignal,
+                deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+                deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
+              });
               throwIfEarlyCdpAborted();
               expectedBackendNodeId = Number(probe?.selectorBackendNodeId) || null;
             } catch {
@@ -26786,17 +26800,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const sendContentAction = () => {
+    const sendContentAction = stageAbortSignal => {
       if (earlyCdpAbortSignal) {
         throwIfEarlyCdpAborted();
         if (Agent.STATE_CHANGE_TOOLS.has(name) && name !== 'set_checked') {
           markEarlyCdpDispatched();
         }
+      } else {
+        this._throwIfAborted(stageAbortSignal);
       }
+      const actionSignal = earlyCdpAbortSignal || stageAbortSignal;
+      const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(actionSignal)?.deadlineAt) || 0;
       return chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action,
         params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
       }, messageOptions);
     };
     const dispatchContentAction = () => runContentActionStage(sendContentAction);
