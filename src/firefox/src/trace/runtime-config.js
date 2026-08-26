@@ -5,6 +5,7 @@ const STRING_ENUMS = Object.freeze({
   plan_before_act_mode: new Set(['off', 'try', 'strict']),
   auto_screenshot: new Set(['off', 'navigation', 'state_change', 'every_step']),
   image_detail: new Set(['auto', 'low', 'high']),
+  selection_scope_policy: new Set(['selection_only', 'selection_context']),
 });
 
 const BOOLEAN_FIELDS = Object.freeze([
@@ -18,6 +19,7 @@ const BOOLEAN_FIELDS = Object.freeze([
   'standalone_chat_profile',
   'standalone_webgpu_profile',
   'lossless_trace',
+  'selection_scope_anchor_present',
 ]);
 
 // Bounds keep the payload sane, not to re-validate settings: each range is a
@@ -28,6 +30,7 @@ const INTEGER_RANGES = Object.freeze({
   max_agent_steps: [0, 10_000],
   max_image_dimension: [1, 16_384],
   max_screenshots_per_turn: [0, 1_000],
+  selection_scope_excluded_messages: [0, 10_000],
 });
 
 function safeVersion(value) {
