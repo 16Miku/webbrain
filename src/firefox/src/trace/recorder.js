@@ -121,6 +121,11 @@ async function losslessTraceEnabled() {
 
 const _runState = new Map(); // runId -> { seq, model, providerId, ... }
 const _runWriteQueues = new Map(); // runId -> serialized event-write promise
+// Bounded raw tool payloads live only for the active background lifetime. The
+// agent turns them into the existing value-free saved-workflow schema at
+// successful run completion; they never cross the default durable trace
+// boundary.
+const _workflowTraceCaptures = new Map(); // runId -> { run, events, nextSeq }
 
 function _queueRunWrite(runId, write) {
   if (!runId) return Promise.resolve();
@@ -413,6 +418,17 @@ export async function startRun(meta) {
     }, { includeContent: lossless });
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
     _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
+    _workflowTraceCaptures.set(runId, {
+      run: {
+        runId,
+        conversationId: meta.conversationId || null,
+        status: 'running',
+        tabUrl: meta.tabUrl || '',
+        webbrainVersion: meta.webbrainVersion || '',
+      },
+      events: [],
+      nextSeq: 0,
+    });
     return runId;
   } catch (e) {
     console.warn('[trace] startRun failed:', e);
@@ -702,6 +718,21 @@ export function recordLLMResponse(runId, step, {
 }
 
 export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
+  const workflowCapture = _workflowTraceCaptures.get(runId);
+  if (workflowCapture) {
+    workflowCapture.nextSeq += 1;
+    workflowCapture.events.push({
+      seq: workflowCapture.nextSeq,
+      kind: 'tool',
+      data: {
+        step,
+        name,
+        args: clampUtf8Value(args ?? null, 20_000),
+        result: clampUtf8Value(result ?? null, 20_000),
+        latencyMs: latencyMs ?? null,
+      },
+    });
+  }
   // Truncate very large tool results (a11y trees can be huge). Keep the first
   // 20KB verbatim by default — plenty for debugging flow — and 200KB in the
   // opt-in lossless tier; note the truncation either way.
@@ -880,8 +911,12 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
   // Finalization is a write in the same per-run sequence as events and any
   // migration refresh queued while those event writes are still settling.
   return _queueRunWrite(runId, async () => {
+    let resolvedStatus = status;
     try {
-      if (!(await tracingEnabled())) return;
+      if (!(await tracingEnabled())) {
+        _workflowTraceCaptures.delete(runId);
+        return null;
+      }
       const db = await openDB();
       // Tally usage from events. `totalCost` is the sum of `usage.cost`
       // across all llm_response events — providers report this in their
@@ -908,6 +943,7 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
       const existing = await promisifyReq(runStore.get(runId));
       if (existing) {
         const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
+        resolvedStatus = finalStatus;
         existing.endedAt = Date.now();
         existing.durationMs = existing.endedAt - existing.startedAt;
         existing.status = finalStatus;
@@ -931,6 +967,11 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     } finally {
       _runState.delete(runId);
     }
+    const workflowCapture = _workflowTraceCaptures.get(runId) || null;
+    _workflowTraceCaptures.delete(runId);
+    if (!workflowCapture) return null;
+    workflowCapture.run.status = resolvedStatus;
+    return { run: workflowCapture.run, events: workflowCapture.events };
   });
 }
 
@@ -1052,6 +1093,7 @@ export async function getScreenshot(runId, seq) {
 }
 
 export async function deleteRun(runId) {
+  _workflowTraceCaptures.delete(runId);
   const db = await openDB();
   const t = tx(db, ['runs', 'events', 'shots']);
   await promisifyReq(t.objectStore('runs').delete(runId));
@@ -1080,6 +1122,7 @@ export async function deleteRun(runId) {
 
 export async function clearAllRuns() {
   _losslessTotalEstimate = null;
+  _workflowTraceCaptures.clear();
   const db = await openDB();
   const t = tx(db, ['runs', 'events', 'shots']);
   await promisifyReq(t.objectStore('runs').clear());

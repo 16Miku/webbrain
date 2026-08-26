@@ -108,8 +108,10 @@ import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefi
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
 import {
+  compileWorkflowFromTrace,
   findWorkflowHealingCandidates,
   findWorkflowTarget,
+  normalizeSavedWorkflow,
   parseAccessibilityTreeDescriptors,
   redactWorkflowArgsForTelemetry,
   redactWorkflowClarifyForTelemetry,
@@ -589,6 +591,7 @@ export class Agent extends LoopDetector {
     this.persistTimers = new Map(); // tabId -> debounce handle
     this.abortFlags = new Map(); // tabId -> boolean
     this.currentRunId = new Map(); // tabId -> active trace runId (for recorder hooks)
+    this._latestWorkflowDrafts = new Map(); // tabId -> sanitized, session-scoped workflow draft
     this.currentCostState = new Map(); // tabId -> active cloud/router cost state
     this.maxSteps = 130; // safety limit for autonomous loops (configurable via settings)
     // Seconds to wait on clarify() before auto-picking the first option.
@@ -1594,6 +1597,16 @@ export class Agent extends LoopDetector {
     return this.conversationIds.get(tabId) || null;
   }
 
+  async getLatestWorkflowDraft(tabId) {
+    await this._hydrate(tabId);
+    const draft = this._latestWorkflowDrafts.get(tabId) || null;
+    const conversationId = this.conversationIds.get(tabId) || null;
+    if (!draft || !conversationId || draft.conversationId !== conversationId) return null;
+    const workflow = normalizeSavedWorkflow(draft.workflow);
+    if (!workflow) return null;
+    return { ...draft, workflow, warnings: [...(draft.warnings || [])] };
+  }
+
   async getConversationState(tabId, mode = null) {
     await this._hydrate(tabId);
     if (mode) {
@@ -1624,6 +1637,33 @@ export class Agent extends LoopDetector {
 
   async ensureConversationId(tabId, mode = 'ask') {
     return (await this.getConversationState(tabId, mode)).conversationId;
+  }
+
+  _rememberWorkflowDraftFromCapture(tabId, capture) {
+    if (!capture?.run || capture.run.status !== 'done') return false;
+    const conversationId = this.conversationIds.get(tabId) || null;
+    if (!conversationId || (capture.run.conversationId && capture.run.conversationId !== conversationId)) {
+      return false;
+    }
+    // A completed run supersedes the previous successful draft even when it
+    // contains no replayable actions. Otherwise `/workflow --save` could
+    // silently save an older run after a newer read-only conversation turn.
+    this._latestWorkflowDrafts.delete(tabId);
+    try {
+      const compiled = compileWorkflowFromTrace(capture.run, capture.events, {
+        name: 'Unsaved workflow',
+      });
+      if (!compiled.workflow) return true;
+      this._latestWorkflowDrafts.set(tabId, {
+        conversationId,
+        sourceRunId: capture.run.runId,
+        workflow: compiled.workflow,
+        warnings: compiled.warnings || [],
+      });
+      return true;
+    } catch {
+      return true;
+    }
   }
 
   /**
@@ -10136,6 +10176,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (entry.conversationId) {
           this.conversationIds.set(tabId, entry.conversationId);
         }
+        const workflowDraft = normalizeSavedWorkflow(entry.workflowDraft?.workflow);
+        if (
+          workflowDraft
+          && entry.workflowDraft?.conversationId
+          && entry.workflowDraft.conversationId === entry.conversationId
+        ) {
+          this._latestWorkflowDrafts.set(tabId, {
+            conversationId: entry.workflowDraft.conversationId,
+            sourceRunId: String(entry.workflowDraft.sourceRunId || workflowDraft.source?.runId || ''),
+            workflow: workflowDraft,
+            warnings: (Array.isArray(entry.workflowDraft.warnings) ? entry.workflowDraft.warnings : [])
+              .slice(0, 100)
+              .map(value => String(value || '').slice(0, 500))
+              .filter(Boolean),
+          });
+        }
         const persistedContinuationLanguage = entry.continuationResponseLanguagePolicy;
         if (
           typeof entry.conversationId === 'string'
@@ -10256,6 +10312,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sessionSnapshotCompacted: serialized.compacted,
       sessionSnapshotBytes: serialized.bytes,
       conversationId,
+      workflowDraft: this._latestWorkflowDrafts.get(tabId) || null,
       submittedRunRequestId: this.submittedRunRequestIds.get(tabId) || null,
       progressLedger: this.progressLedgers.get(tabId) || [],
       progressSession: this.progressSessions.get(tabId) || null,
@@ -10851,7 +10908,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (runId) {
       try {
-        await trace.endRun(runId, { status, finalContent });
+        const workflowCapture = await trace.endRun(runId, { status, finalContent });
+        if (this._rememberWorkflowDraftFromCapture(tabId, workflowCapture)) {
+          await this._persistNow(tabId);
+        }
       } catch {}
       this.currentRunId.delete(tabId);
     }
@@ -15174,6 +15234,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.mastodonStates.delete(tabId);
     this.conversationModes.delete(tabId);
     this.conversationIds.delete(tabId);
+    this._latestWorkflowDrafts.delete(tabId);
     this.submittedRunRequestIds.delete(tabId);
     this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.delete(tabId);

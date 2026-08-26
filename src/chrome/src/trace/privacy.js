@@ -7,7 +7,9 @@
  * and intentionally bypasses these projections.
  */
 
-const RUN_CONTENT_FIELDS = ['userMessage', 'finalContent'];
+const RUN_CONTENT_FIELDS = [
+  'userMessage', 'finalContent', 'tabUrl', 'tabTitle', 'attachments',
+];
 
 const RESPONSE_METADATA_FIELDS = [
   'step', 'usage', 'latencyMs', 'model', 'phase', 'attempt', 'repair', 'empty',

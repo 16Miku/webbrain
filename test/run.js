@@ -8408,6 +8408,9 @@ test('trace privacy: default persistence keeps metadata and content mode is expl
     runId: 'privacy-run',
     userMessage: 'PRIVATE USER MESSAGE',
     finalContent: 'PRIVATE FINAL RESPONSE',
+    tabUrl: 'https://private.example/account?token=PRIVATE',
+    tabTitle: 'PRIVATE PAGE TITLE',
+    attachments: [{ name: 'PRIVATE-FILENAME.pdf', kind: 'document' }],
     model: 'test-model',
     status: 'done',
   };
@@ -8437,6 +8440,9 @@ test('trace privacy: default persistence keeps metadata and content mode is expl
   const safeRun = TRACE_PRIVACY_CH.projectTraceRun(run);
   assert.equal(safeRun.userMessage, undefined);
   assert.equal(safeRun.finalContent, undefined);
+  assert.equal(safeRun.tabUrl, undefined);
+  assert.equal(safeRun.tabTitle, undefined);
+  assert.equal(safeRun.attachments, undefined);
   assert.equal(safeRun.model, 'test-model');
 
   const safeResponse = TRACE_PRIVACY_CH.projectTraceEventData('llm_response', response);
@@ -8495,8 +8501,10 @@ test('trace privacy documentation distinguishes metadata-only and lossless reten
   for (const [label, document] of [['privacy data flow', privacy], ['security model', security]]) {
     assert.match(document, /default (?:metadata-only )?tier[\s\S]*(?:omit|omits|omitting)[\s\S]*user[\s\S]*final assistant\s+text/i, `${label}: default run-content omission is undocumented`);
     assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*tool arguments\/results/i, `${label}: default event-payload omission is undocumented`);
+    assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*(?:tab URLs\/titles|tab URL\/title)[\s\S]*attachment filename/i, `${label}: sensitive run metadata omission is undocumented`);
     assert.match(document, /default[\s\S]*do(?:es)? not write screenshot blobs/i, `${label}: default screenshot-byte omission is undocumented`);
     assert.match(document, /lossless[\s\S]*explicit\s+(?:user\s+)?opt-in[\s\S]*screenshot\s+bytes/i, `${label}: lossless content retention is undocumented`);
+    assert.match(document, /historical[\s\S]*(?:not\s+(?:migrated|rewrite|rewritten)|do(?:es)? not rewrite)/i, `${label}: historical trace retention is undocumented`);
   }
 });
 
@@ -9830,6 +9838,9 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
     assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
     assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
+    assert.match(recorderSource, /const _workflowTraceCaptures = new Map\(\)[\s\S]*?function recordToolCall[\s\S]*?_workflowTraceCaptures\.get\(runId\)[\s\S]*?workflowCapture\.events\.push[\s\S]*?return _appendEvent\(runId, 'tool'/, `${browser}: raw workflow inputs are not isolated to the in-memory pre-projection capture`);
+    assert.match(recorderSource, /args: clampUtf8Value\(args \?\? null, 20_000\)[\s\S]*?result: clampUtf8Value\(result \?\? null, 20_000\)/, `${browser}: transient workflow inputs are not size-bounded`);
+    assert.match(recorderSource, /const workflowCapture = _workflowTraceCaptures\.get\(runId\) \|\| null;[\s\S]*?_workflowTraceCaptures\.delete\(runId\);[\s\S]*?return \{ run: workflowCapture\.run, events: workflowCapture\.events \};/, `${browser}: completed runs do not release their transient workflow capture`);
     assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' \} : \{\}\)/, `${browser}: default run records should omit lossless accounting fields`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
@@ -9854,6 +9865,9 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
+    const agentSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    assert.match(agentSource, /_rememberWorkflowDraftFromCapture\(tabId, capture\)[\s\S]*?compileWorkflowFromTrace\(capture\.run, capture\.events[\s\S]*?_latestWorkflowDrafts\.set\(tabId[\s\S]*?workflowDraft: this\._latestWorkflowDrafts\.get\(tabId\) \|\| null/, `${browser}: successful raw captures are not reduced to session-scoped value-free drafts`);
+    assert.match(agentSource, /const workflowCapture = await trace\.endRun\(runId, \{ status, finalContent \}\);[\s\S]*?_rememberWorkflowDraftFromCapture\(tabId, workflowCapture\)[\s\S]*?await this\._persistNow\(tabId\)/, `${browser}: workflow draft persistence is not ordered after trace completion`);
   }
 });
 
@@ -93080,6 +93094,66 @@ test('saved workflow compiler removes historical refs and parameterizes every ty
     assert.deepEqual(result.workflow.steps[0].args.text, { [module.WORKFLOW_PARAM_REF_KEY]: 'password' });
     const serialized = JSON.stringify(result.workflow);
     assert.doesNotMatch(serialized, /correct horse|ref_2|do-not-store|#secret/);
+
+    const privacy = module === SavedWorkflowsCh ? TRACE_PRIVACY_CH : TRACE_PRIVACY_FX;
+    const durableRun = privacy.projectTraceRun(run);
+    const durableEvents = events.map(event => ({
+      ...event,
+      data: privacy.projectTraceEventData(event.kind, event.data),
+    }));
+    const durableCompile = module.compileWorkflowFromTrace(durableRun, durableEvents, {
+      name: 'Must not depend on redacted trace payloads',
+      now: 1100,
+    });
+    assert.equal(durableCompile.workflow, null, 'metadata-only traces unexpectedly retained workflow source content');
+
+    const finalized = module.finalizeSavedWorkflowDraft({
+      conversationId: 'conv-draft',
+      sourceRunId: run.runId,
+      workflow: result.workflow,
+      warnings: result.warnings,
+    }, { name: 'Saved after redaction', now: 1200 });
+    assert.equal(finalized.reason, '');
+    assert.equal(finalized.workflow.name, 'Saved after redaction');
+    assert.notEqual(finalized.workflow.id, result.workflow.id);
+    assert.doesNotMatch(JSON.stringify(finalized.workflow), /correct horse|ref_2|do-not-store|#secret/);
+  }
+});
+
+test('a newer successful non-action run cannot leave an older workflow draft eligible to save', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const tabId = 917;
+    const conversationId = 'conv_workflow_draft';
+    agent.conversationIds.set(tabId, conversationId);
+    agent._latestWorkflowDrafts.set(tabId, {
+      conversationId,
+      sourceRunId: 'older_run',
+      workflow: { schema: 'stale-test-fixture' },
+      warnings: [],
+    });
+    assert.equal(agent._rememberWorkflowDraftFromCapture(tabId, {
+      run: {
+        runId: 'newer_run',
+        conversationId,
+        status: 'done',
+        tabUrl: 'https://example.test/account',
+      },
+      events: [],
+    }), true);
+    assert.equal(agent._latestWorkflowDrafts.has(tabId), false, `${AgentClass.name}: stale draft survived a newer successful run`);
+
+    agent._latestWorkflowDrafts.set(tabId, {
+      conversationId,
+      sourceRunId: 'last_successful_run',
+      workflow: { schema: 'failure-preservation-fixture' },
+      warnings: [],
+    });
+    assert.equal(agent._rememberWorkflowDraftFromCapture(tabId, {
+      run: { runId: 'failed_run', conversationId, status: 'error' },
+      events: [],
+    }), false);
+    assert.equal(agent._latestWorkflowDrafts.get(tabId)?.sourceRunId, 'last_successful_run', `${AgentClass.name}: failed run cleared the last successful draft`);
   }
 });
 
@@ -93638,6 +93712,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
   for (const background of ['src/chrome/src/background.js', 'src/firefox/src/background.js']) {
     const source = fs.readFileSync(path.join(ROOT, background), 'utf8');
     assert.match(source, /case 'save_latest_workflow':/);
+    assert.match(source, /agent\.getLatestWorkflowDraft\(tabId\)[\s\S]*?finalizeSavedWorkflowDraft\(draft, \{ name: msg\.name \}\)[\s\S]*?compileLatestSuccessfulWorkflow\(workflowTrace/, `${background}: workflow save does not prefer the sanitized session draft`);
     assert.match(source, /compileLatestSuccessfulWorkflow\(workflowTrace/);
     assert.match(source, /case 'list_saved_workflows':/);
     assert.match(source, /case 'rename_saved_workflow':/);
@@ -93650,6 +93725,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], \{\s*\.\.\.runOptions,\s*preserveRichTextToolbarAudit: true,/);
   }
   const cloudRunsSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRunsSource, /agent\.getLatestWorkflowDraft\(run\.tabId\)[\s\S]*?draft\?\.sourceRunId === run\.traceRunId[\s\S]*?finalizeSavedWorkflowDraft\(draft, \{ name \}\)/, 'cloud workflow compilation does not use the matching sanitized draft');
   assert.match(cloudRunsSource, /replay\.prompt, publishUpdate, 'act', \[\], \{\s*cloudRun: true,\s*independentRun: true,\s*preserveRichTextToolbarAudit: true,/);
 });
 
