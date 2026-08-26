@@ -23,18 +23,18 @@ The selection-context checks must cover:
   compaction, explicit restore, and New conversation cleanup;
 - Chrome/Firefox mirrored runtime trace metadata with no private scope text.
 
-## Local run record
+## Verification record (2026-08-26)
 
-The latest local run is recorded as **2055 passed, 2 failed** in both mirrored
-browser paths. The two failures are pre-existing repository checks unrelated to
-this contract: the changelog test expects `33.2.2` while the repository contains
-`33.2.1`, and the Opera-safe distribution archive is absent from the checkout.
-No selection-context check failed.
+The shared Node suite run for this PR recorded **2055 passed, 2 failed** while
+exercising both mirrored browser paths. The two failures are pre-existing
+repository checks unrelated to this contract: the changelog test expects
+`33.2.2` while the repository contains `33.2.1`, and the Opera-safe distribution
+archive is absent from the checkout. No selection-context check failed.
 
 Browser-specific result: Chrome mirrored agent/UI/background cases **passed**;
 Firefox mirrored agent/UI/background cases **passed**. The shared model-payload,
-persistence, and trace assertions also **passed** for both builds. Real extension
-smoke tests are **unavailable** in this Node-only run because no Chrome or Firefox
-profile is attached, so the browser smoke stage is **skipped** rather than
-treated as a failed contract check. An installed-extension smoke run remains the
-final release check when browser profiles are available.
+persistence, and trace assertions also **passed** for both builds. The hosted
+WebMCP E2E real-Chrome smoke is a separate required PR check and must pass for the
+current head. A manual installed-extension smoke with attached Chrome and Firefox
+profiles was not performed by this Node-only run and is not represented as a
+passing browser-profile check.

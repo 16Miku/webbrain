@@ -43297,12 +43297,14 @@ test('selection-context documentation records the transcript/provider contract a
   const guideZh = fs.readFileSync(path.join(ROOT, 'docs/zh-CN/selection-context.md'), 'utf8');
   const verification = fs.readFileSync(path.join(ROOT, 'docs/selection-context-verification.md'), 'utf8');
   assert.match(architecture, /source_grounding[\s\S]*selection_context[\s\S]*provider payload[\s\S]*selection_scope_excluded_messages/, 'English architecture must define the provider boundary and secret-free trace fields');
+  assert.match(architecture, /allowlist does not change the broader Trace retention contract/, 'English architecture must not describe scope metadata as the entire Trace payload');
+  assert.doesNotMatch(architecture, /without exposing private content by default/, 'English architecture must not overpromise default Trace privacy');
   assert.match(architectureZh, /对话记忆与选中文本作用域/, 'Chinese architecture must name the memory/scope contract');
   assert.match(architectureZh, /agentConv/, 'Chinese architecture must identify provider-facing conversation storage');
   assert.match(architectureZh, /tabChat/, 'Chinese architecture must identify visible transcript storage');
   assert.match(architectureZh, /恢复完整对话/, 'Chinese architecture must document the explicit recovery control');
   assert.match(guideZh, /selection_context[\s\S]*selection_only[\s\S]*恢复完整对话[\s\S]*Trace/, 'Chinese user guide must explain both policies, recovery, and trace limits');
-  assert.match(verification, /node test\/run\.js[\s\S]*2055 passed, 2 failed[\s\S]*unavailable[\s\S]*skipped/, 'verification record must retain the command and explicit pass/fail/unavailable/skipped status');
+  assert.match(verification, /node test\/run\.js[\s\S]*Verification record \(2026-08-26\)[\s\S]*2055 passed, 2 failed[\s\S]*WebMCP E2E[\s\S]*must pass[\s\S]*not performed/, 'verification record must retain the dated command, result, hosted gate, and unperformed manual check');
   assert.doesNotMatch(verification, /A_PAGE_SECRET|private-dialogue-fingerprint/, 'verification record must not contain private conversation samples');
 });
 
