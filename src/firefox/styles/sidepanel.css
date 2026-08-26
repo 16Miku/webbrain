@@ -2236,8 +2236,13 @@ body {
   white-space: nowrap;
 }
 
-.selection-scope-banner button:hover {
+.selection-scope-banner button:not(:disabled):hover {
   border-color: var(--warning);
+}
+
+.selection-scope-banner button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .selection-scope-banner button:focus-visible {
