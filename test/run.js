@@ -43419,6 +43419,10 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
   ]) {
     const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
     const tabId = label === 'chrome' ? 9648 : 9649;
+    const runtimeContext = buildTrustedRuntimeContextCh({
+      now: new Date('2026-08-26T09:00:00.000Z'),
+      timeZone: 'Europe/Istanbul',
+    });
     const earlierSelection = buildSelectionPrompt(
       'PRIOR PAGE SECRET',
       'custom',
@@ -43431,6 +43435,21 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
       { role: 'user', content: earlierSelection },
       { role: 'assistant', content: 'Prior page answer.' },
       { role: 'tool', content: '<untrusted_page_content id="prior">PRIOR TOOL SECRET</untrusted_page_content>' },
+      {
+        role: 'user',
+        content: `${runtimeContext}\n\n[Current page context - URL: https://INJECTED_URL_SECRET.test - Title: INJECTED_TITLE_SECRET]\n\n[Site guidance for injected.test]\nINJECTED_ADAPTER_SECRET\n\nCompare that answer with my original question.`,
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `${runtimeContext}\n\n[Current page context - URL: https://MULTIMODAL_PAGE_SECRET.test]\n\n[UNTRUSTED SCREENSHOT - MULTIMODAL_SCREENSHOT_SECRET]\n\nWhich earlier option works offline?`,
+          },
+          { type: 'text', text: '[UNTRUSTED USER ATTACHMENTS] MULTIMODAL_ATTACHMENT_SECRET' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,MULTIMODAL_IMAGE_SECRET' } },
+        ],
+      },
       { role: 'user', content: [
         { type: 'text', text: '[UNTRUSTED USER ATTACHMENTS] ATTACHMENT SECRET' },
         { type: 'image_url', image_url: { url: 'data:image/png;base64,ATTACHMENT_IMAGE_SECRET' } },
@@ -43478,7 +43497,9 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
     assert.match(serialized, /Which one is best for desktop apps/, `${label}: trusted follow-up should remain available`);
     assert.match(serialized, /What was the earlier conclusion\?/ , `${label}: earlier user wording should remain available for reference resolution`);
     assert.match(serialized, /Prior page answer\./, `${label}: earlier assistant dialogue should remain available for reference resolution`);
-    assert.doesNotMatch(serialized, /PRIOR PAGE SECRET|PRIOR TOOL SECRET|ATTACHMENT SECRET|ATTACHMENT_IMAGE_SECRET/, `${label}: raw page, tool, and attachment content must not cross the selection boundary`);
+    assert.match(serialized, /Compare that answer with my original question\./, `${label}: user wording should survive injected page and adapter prefixes`);
+    assert.match(serialized, /Which earlier option works offline\?/, `${label}: user wording should survive multimodal screenshot and attachment blocks`);
+    assert.doesNotMatch(serialized, /Trusted runtime context|PRIOR PAGE SECRET|PRIOR TOOL SECRET|INJECTED_URL_SECRET|INJECTED_TITLE_SECRET|INJECTED_ADAPTER_SECRET|MULTIMODAL_PAGE_SECRET|MULTIMODAL_SCREENSHOT_SECRET|MULTIMODAL_ATTACHMENT_SECRET|MULTIMODAL_IMAGE_SECRET|ATTACHMENT SECRET|ATTACHMENT_IMAGE_SECRET/, `${label}: injected page, runtime, tool, and attachment content must not cross the selection boundary`);
 
     const secondSelection = {
       role: 'user',
@@ -43505,9 +43526,28 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
     const secondSerialized = JSON.stringify(secondView);
     assert.match(secondSerialized, /What was the earlier conclusion\?/, `${label}: cross-selection follow-up should retain earlier user wording`);
     assert.match(secondSerialized, /Prior page answer\./, `${label}: cross-selection follow-up should retain earlier assistant dialogue`);
+    assert.match(secondSerialized, /Compare that answer with my original question\./, `${label}: cross-selection follow-up should retain stripped page-aware user wording`);
+    assert.match(secondSerialized, /Which earlier option works offline\?/, `${label}: cross-selection follow-up should retain multimodal user wording`);
     assert.match(secondSerialized, /How does this relate to the earlier discussion\?/, `${label}: newest selection question should remain available`);
     assert.match(secondSerialized, /SECOND PAGE SECRET/, `${label}: newest selected text should remain available as the current source`);
-    assert.doesNotMatch(secondSerialized, /PRIOR PAGE SECRET|PRIOR TOOL SECRET|ATTACHMENT SECRET|ATTACHMENT_IMAGE_SECRET/, `${label}: cross-selection model view must exclude earlier raw page/tool/attachment bytes`);
+    assert.doesNotMatch(secondSerialized, /Trusted runtime context|PRIOR PAGE SECRET|PRIOR TOOL SECRET|INJECTED_URL_SECRET|INJECTED_TITLE_SECRET|INJECTED_ADAPTER_SECRET|MULTIMODAL_PAGE_SECRET|MULTIMODAL_SCREENSHOT_SECRET|MULTIMODAL_ATTACHMENT_SECRET|MULTIMODAL_IMAGE_SECRET|ATTACHMENT SECRET|ATTACHMENT_IMAGE_SECRET/, `${label}: cross-selection model view must exclude earlier injected page/tool/attachment bytes`);
+
+    const bulkPrior = Array.from({ length: 40 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `DIALOGUE_${index} ${'x'.repeat(1000)}`,
+    }));
+    const bulkCurrent = { role: 'user', content: 'Current bounded selection question.' };
+    const bulkView = agent._messagesForSourceGroundedRun(
+      [{ role: 'system', content: 'system rules' }, ...bulkPrior, bulkCurrent],
+      { sourceGrounding },
+      bulkCurrent,
+      new Set(bulkPrior),
+    );
+    const projectedDialogue = bulkView.filter(message => /^\[Earlier (?:user message|assistant response)/.test(String(message.content || '')));
+    assert.ok(projectedDialogue.length <= 12, `${label}: selection dialogue projection exceeded its message bound`);
+    assert.ok(projectedDialogue.reduce((sum, message) => sum + message.content.length, 0) <= 12000, `${label}: selection dialogue projection exceeded its aggregate character bound`);
+    assert.match(JSON.stringify(projectedDialogue), /DIALOGUE_39/, `${label}: bounded projection should retain the most recent prior dialogue`);
+    assert.doesNotMatch(JSON.stringify(projectedDialogue), /DIALOGUE_0\b/, `${label}: bounded projection should discard the oldest prior dialogue`);
   }
 });
 
