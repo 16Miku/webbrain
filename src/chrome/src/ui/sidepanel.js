@@ -1125,7 +1125,10 @@ function setTabProcessing(tabId, processing) {
   const effectiveProcessing = !!processing || failedConversationClearRecoveryTabs.has(numericTabId);
   if (effectiveProcessing) processingTabs.add(numericTabId);
   else processingTabs.delete(numericTabId);
-  if (sameTabId(currentTabId, numericTabId)) isProcessing = effectiveProcessing;
+  if (sameTabId(currentTabId, numericTabId)) {
+    isProcessing = effectiveProcessing;
+    syncSelectionScopeRestoreAvailability();
+  }
 }
 
 function isTabProcessing(tabId) {
@@ -1166,10 +1169,17 @@ function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding =
   return true;
 }
 
+function syncSelectionScopeRestoreAvailability() {
+  if (!selectionScopeRestoreBtn) return;
+  selectionScopeRestoreBtn.disabled = !isSelectionGroundedForTab(currentTabId)
+    || isTabProcessing(currentTabId);
+}
+
 function syncSelectionScopeUi() {
   const scoped = isSelectionGroundedForTab(currentTabId);
   const sourceGrounding = selectionGroundingForTab(currentTabId);
   selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
+  syncSelectionScopeRestoreAvailability();
   if (selectionScopeTitleEl) {
     selectionScopeTitleEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
       ? 'sp.selection_scope.context_title'
