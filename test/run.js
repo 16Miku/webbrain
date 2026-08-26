@@ -43170,7 +43170,7 @@ test('selection shortcut localizations cover every interface locale with browser
     'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
   ];
   const expectedKeys = [
-    'askAbout', 'askQuestion', 'askSelection', 'explain', 'generalKnowledge', 'hideShortcut',
+    'askAbout', 'askQuestion', 'askSelection', 'explain', 'hideShortcut',
     'humanize', 'openChat', 'proofread', 'quiz', 'sendFailed', 'sendQuestion',
     'sentManual', 'summarize', 'translate', 'translateTo',
   ];
@@ -44564,15 +44564,13 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /data-action="translate">[\s\S]*?<span class="action-label">Translate<\/span>[\s\S]*?<\/button>/, `${label}: floating popup should expose one-click Translate`);
     assert.equal((content.match(/<svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">/g) || []).length, 6, `${label}: all six floating actions should use the same accessible icon shell`);
     assert.match(content, /\.action-icon \{[\s\S]*?width:17px; height:17px; flex:0 0 17px; color:var\(--accent\);[\s\S]*?stroke-width:1\.7;[\s\S]*?stroke-linecap:round; stroke-linejoin:round;/, `${label}: action icons should share one compact line-icon treatment`);
-    assert.match(content, /class="knowledge-option"[\s\S]*?<input type="checkbox" checked>[\s\S]*?<span>Use general knowledge<\/span>/, `${label}: custom question UI should expose a default-on general-knowledge choice`);
+    assert.doesNotMatch(content, /knowledge-option|Use general knowledge|generalKnowledge|allowGeneralKnowledge/, `${label}: custom questions should not expose or retain a redundant grounding checkbox`);
     assert.match(content, /\.hide-row \{ display:flex; \}[\s\S]*?\.hide \{[\s\S]*?width:auto; margin-left:auto; padding:5px 8px;[\s\S]*?font-size:12px;/, `${label}: Hide this should be compact and right-aligned`);
     assert.match(content, /<button class="hide" type="button">Hide this<\/button>/, `${label}: the footer action should use the concise Hide this label`);
-    assert.doesNotMatch(content, /generalKnowledge\.checked = false;/, `${label}: new selection surfaces should not reset general knowledge to off`);
     assert.doesNotMatch(content, /class="language-select"|class="translate-view"/, `${label}: floating Translate should not open a second screen`);
     assert.match(content, /submitSelection\(button\.dataset\.action, '', interfaceLanguage\)/, `${label}: every floating preset should submit directly in the plugin language`);
     assert.match(content, /const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';/, `${label}: floating shortcuts should request their labels from the extension background`);
     assert.match(content, /language: action === 'custom' \? undefined : \(language \|\| interfaceLanguage\)/, `${label}: fixed actions should carry the interface language while custom questions stay untouched`);
-    assert.match(content, /allowGeneralKnowledge: action === 'custom' \? generalKnowledge\?\.checked === true : undefined/, `${label}: only custom questions should submit the broader grounding choice`);
     assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?\.action-label`\);[\s\S]*?label\.textContent = strings\[action\];/, `${label}: localization should update action labels without replacing their icons`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
@@ -44603,7 +44601,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /selectionTranslationLanguageLabel\(code, localization\.locale\) \|\| title/, `${label}: native translation targets should use localized language names with an English fallback`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
-    assert.match(background, /const sourceGrounding = selectionAction === 'custom' && msg\.allowGeneralKnowledge === true[\s\S]*?SELECTION_CONTEXT_SOURCE_GROUNDING[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING;/, `${label}: only custom questions should opt into broader structural grounding`);
+    assert.match(background, /const sourceGrounding = selectionAction === 'custom'\s*\?[\s\S]*?SELECTION_CONTEXT_SOURCE_GROUNDING[\s\S]*?: SELECTION_ONLY_SOURCE_GROUNDING;/, `${label}: custom questions should always use selection context while fixed actions remain selection-only`);
+    assert.doesNotMatch(background, /allowGeneralKnowledge/, `${label}: background grounding should not depend on a removed checkbox field`);
     assert.match(background, /\.\.\.\(normalizeSelectionSourceGrounding\(msg\.sourceGrounding\)[\s\S]*?sourceGrounding: normalizeSelectionSourceGrounding\(msg\.sourceGrounding\),/, `${label}: only allowlisted grounding should reach agent run options`);
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'humanize'\]/, `${label}: native submenu should include localized Humanize`);
     assert.match(background, /changes\.wbLocale[\s\S]*?selectionShortcutLocale = normalizeSelectionShortcutLocale\(changes\.wbLocale\.newValue\);[\s\S]*?createContextMenus\(\)\.catch/, `${label}: changing the interface locale should rebuild native context menus`);

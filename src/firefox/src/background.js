@@ -1291,7 +1291,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
   const tab = sender?.tab;
   const selectionAction = normalizeSelectionAction(msg.action);
-  const sourceGrounding = selectionAction === 'custom' && msg.allowGeneralKnowledge === true
+  const sourceGrounding = selectionAction === 'custom'
     ? SELECTION_CONTEXT_SOURCE_GROUNDING
     : SELECTION_ONLY_SOURCE_GROUNDING;
   const text = buildSelectionPrompt(
