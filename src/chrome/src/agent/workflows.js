@@ -695,6 +695,33 @@ export function normalizeSavedWorkflow(input, options = {}) {
   };
 }
 
+/**
+ * Promote a session-scoped, value-free workflow draft only after the user
+ * supplies its durable name. Drafts already passed the normal compiler, so
+ * this boundary re-normalizes them and assigns fresh persistent identity.
+ */
+export function finalizeSavedWorkflowDraft(input, options = {}) {
+  const ts = timestamp(options.now, nowMs());
+  const name = normalizeSavedWorkflowName(options.name);
+  if (!name) return { workflow: null, warnings: [], reason: 'name_required' };
+  const source = normalizeSavedWorkflow(input?.workflow || input, { now: ts });
+  if (!source) return { workflow: null, warnings: [], reason: 'invalid_workflow_draft' };
+  const workflow = normalizeSavedWorkflow({
+    ...source,
+    id: options.id || createSavedWorkflowId(ts),
+    name,
+    createdAt: ts,
+    updatedAt: ts,
+  }, { now: ts });
+  const warnings = (Array.isArray(input?.warnings) ? input.warnings : [])
+    .slice(0, 100)
+    .map(value => cleanText(value, 500))
+    .filter(Boolean);
+  return workflow
+    ? { workflow, warnings, reason: '' }
+    : { workflow: null, warnings, reason: 'invalid_workflow_draft' };
+}
+
 function portableWorkflowByteLength(input) {
   try {
     return new TextEncoder().encode(JSON.stringify(input)).byteLength;

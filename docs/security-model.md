@@ -175,13 +175,38 @@ persistent setting, which remains active until the user turns it off.
 
 ## Trace Data Isolation
 
-The trace recorder (`trace/recorder.js`) writes to IndexedDB on the user's machine when explicitly enabled (Settings → Display → "Record traces"). Data never leaves the browser:
+The trace recorder (`trace/recorder.js`) writes to IndexedDB on the user's
+machine only when explicitly enabled (Settings → Display → "Record traces").
+The default tier is metadata-only: run records omit user and final assistant
+text; event records keep allowlisted counts, timings, usage, status/error codes,
+tool names/outcome status, and screenshot markers while omitting raw model
+messages, tool schemas, tool arguments/results, and detailed error text. Default
+run records also omit full tab URLs/titles and attachment filenames, and default
+traces do not write screenshot blobs or data URLs to the `shots` store.
 
-- `runs` store: model, provider, token totals, timestamps
-- `events` store: LLM requests/responses, tool calls, screenshot metadata
-- `shots` store: screenshot blobs
+The separate lossless debug tier is off by default and requires explicit user
+opt-in. A lossless run may retain bounded user/final text, request and response
+payloads, tool schemas/calls/arguments/results, error details, screenshot
+bytes, tab URL/title, and attachment filename metadata. It is visibly marked,
+subject to per-payload, per-run, and aggregate storage bounds, and should be
+treated as sensitive. Export masks
+credential-shaped values in lossless structured data but cannot make page/chat
+content or screenshots non-sensitive.
 
-The traces page (`ui/traces.html`) reads from local IndexedDB only. Export produces a JSON blob identical to what the user sees on screen — no telemetry, no network calls.
+Saved-workflow compatibility does not restore raw payloads to default traces.
+The recorder holds bounded copies in memory only while the run is active, then
+compiles a successful run into a value-free workflow draft. Only the sanitized
+draft is added to the existing session-scoped conversation recovery record; it is
+cleared with that conversation and becomes durable only after an explicit
+`/workflow --save <name>` command.
+
+The traces page (`ui/traces.html`) reads from local IndexedDB only. Export saves
+a local file; recording and viewing traces perform no telemetry or network
+upload.
+
+These rules apply to newly written trace rows. Historical rows are not migrated
+or rewritten during an extension update and retain the behavior of the version
+that recorded them.
 
 ---
 

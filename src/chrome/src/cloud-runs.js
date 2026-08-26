@@ -1,5 +1,6 @@
 import {
   compileSuccessfulWorkflowByRunId,
+  finalizeSavedWorkflowDraft,
   normalizeSavedWorkflow,
 } from './agent/workflows.js';
 import { isCredentialField } from './agent/credential-fields.js';
@@ -1302,14 +1303,21 @@ export function createCloudRunController({
     if (!run.traceRunId || !workflowTrace) {
       return { ok: false, status: 409, reason: 'trace_unavailable', warnings: [] };
     }
-    let compiled = null;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      compiled = await compileSuccessfulWorkflowByRunId(workflowTrace, {
-        runId: run.traceRunId,
-        name,
-      });
-      if (compiled.workflow || compiled.reason !== 'successful_run_required') break;
-      await new Promise(resolve => setTimeout(resolve, 50));
+    const draft = typeof agent.getLatestWorkflowDraft === 'function'
+      ? await agent.getLatestWorkflowDraft(run.tabId)
+      : null;
+    let compiled = draft?.sourceRunId === run.traceRunId
+      ? finalizeSavedWorkflowDraft(draft, { name })
+      : null;
+    if (!compiled) {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        compiled = await compileSuccessfulWorkflowByRunId(workflowTrace, {
+          runId: run.traceRunId,
+          name,
+        });
+        if (compiled.workflow || compiled.reason !== 'successful_run_required') break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     }
     if (!compiled?.workflow) {
       return {

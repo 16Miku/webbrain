@@ -905,7 +905,7 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
 );
-const { normalizeTraceExport, traceExportToOtlp, parseTraceToOtlpArgs } = await import(
+const { normalizeTraceExport, traceExportToOtlp, parseTraceToOtlpArgs, TRACE_OTLP_MAPPING } = await import(
   'file://' + path.join(ROOT, 'scripts/trace-to-otlp.mjs').replace(/\\/g, '/')
 );
 
@@ -8337,6 +8337,8 @@ const TRACE_STATS_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/
 const TRACE_STATS_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/stats.js').replace(/\\/g, '/'));
 const TRACE_LINEAGE_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/lineage.js').replace(/\\/g, '/'));
 const TRACE_LINEAGE_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/lineage.js').replace(/\\/g, '/'));
+const TRACE_PRIVACY_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/privacy.js').replace(/\\/g, '/'));
+const TRACE_PRIVACY_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/privacy.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 
@@ -8399,6 +8401,111 @@ test('trace event model: mirrors are identical and browser-neutral', () => {
   assert.equal(EVENT_MODEL_CH.TRACE_FORMAT_VERSION, 1, 'first trace format version');
   assert.doesNotMatch(chromeSource, /chrome\./, 'event model must not depend on chrome APIs');
   assert.doesNotMatch(chromeSource, /indexedDB|storage\./, 'event model must not touch storage');
+});
+
+test('trace privacy: default persistence keeps metadata and content mode is explicit', () => {
+  const run = {
+    runId: 'privacy-run',
+    userMessage: 'PRIVATE USER MESSAGE',
+    finalContent: 'PRIVATE FINAL RESPONSE',
+    tabUrl: 'https://private.example/account?token=PRIVATE',
+    tabTitle: 'PRIVATE PAGE TITLE',
+    attachments: [{ name: 'PRIVATE-FILENAME.pdf', kind: 'document' }],
+    model: 'test-model',
+    status: 'done',
+  };
+  const response = {
+    step: 1,
+    content: 'PRIVATE MODEL RESPONSE',
+    toolCalls: [{ id: 'call-1', function: { name: 'private_tool', arguments: '{"secret":true}' } }],
+    usage: { prompt_tokens: 10, completion_tokens: 4, cost: 0.12 },
+    latencyMs: 120,
+    model: 'response-model',
+    finishReason: 'stop',
+  };
+  const tool = {
+    step: 1,
+    name: 'private_tool',
+    args: { secret: true },
+    result: { private: 'value' },
+    latencyMs: 40,
+  };
+  const error = { step: 1, phase: 'loop', code: 'TRANSPORT', message: 'PRIVATE ERROR MESSAGE' };
+  const note = {
+    step: 1,
+    note: 'llm_retry',
+    extra: { attempt: 2, delayMs: 50, code: 'RATE_LIMIT', message: 'PRIVATE NOTE' },
+  };
+
+  const safeRun = TRACE_PRIVACY_CH.projectTraceRun(run);
+  assert.equal(safeRun.userMessage, undefined);
+  assert.equal(safeRun.finalContent, undefined);
+  assert.equal(safeRun.tabUrl, undefined);
+  assert.equal(safeRun.tabTitle, undefined);
+  assert.equal(safeRun.attachments, undefined);
+  assert.equal(safeRun.model, 'test-model');
+
+  const safeResponse = TRACE_PRIVACY_CH.projectTraceEventData('llm_response', response);
+  assert.equal(safeResponse.content, undefined);
+  assert.equal(safeResponse.toolCalls, undefined);
+  assert.deepEqual(safeResponse.usage, response.usage);
+  assert.equal(safeResponse.latencyMs, 120);
+
+  const safeTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', tool);
+  assert.equal(safeTool.args, undefined);
+  assert.equal(safeTool.result, undefined);
+  assert.deepEqual(safeTool, {
+    step: 1,
+    name: 'private_tool',
+    latencyMs: 40,
+    resultStatus: 'success',
+  });
+
+  const safeFailedTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', {
+    step: 1,
+    name: 'private_tool',
+    result: { success: false, code: 'RATE_LIMIT', message: 'PRIVATE FAILURE' },
+    latencyMs: 40,
+  });
+  assert.deepEqual(safeFailedTool, {
+    step: 1,
+    name: 'private_tool',
+    latencyMs: 40,
+    resultStatus: 'error',
+    resultErrorCode: 'RATE_LIMIT',
+  });
+
+  const safeError = TRACE_PRIVACY_CH.projectTraceEventData('error', error);
+  assert.equal(safeError.message, undefined);
+  assert.equal(safeError.code, 'TRANSPORT');
+
+  const safeNote = TRACE_PRIVACY_CH.projectTraceEventData('note', note);
+  assert.deepEqual(safeNote.extra, { attempt: 2, delayMs: 50, code: 'RATE_LIMIT' });
+
+  assert.deepEqual(TRACE_PRIVACY_CH.projectTraceRun(run, { includeContent: true }), run);
+  assert.deepEqual(
+    TRACE_PRIVACY_CH.projectTraceEventData('llm_response', response, { includeContent: true }),
+    response,
+  );
+  assert.deepEqual(TRACE_PRIVACY_FX.projectTraceRun(run), safeRun, 'Firefox run projection drifted');
+  assert.deepEqual(
+    TRACE_PRIVACY_FX.projectTraceEventData('tool', tool),
+    safeTool,
+    'Firefox event projection drifted',
+  );
+});
+
+test('trace privacy documentation distinguishes metadata-only and lossless retention', () => {
+  const privacy = fs.readFileSync(path.join(ROOT, 'docs/privacy-and-data-flow.md'), 'utf8');
+  const security = fs.readFileSync(path.join(ROOT, 'docs/security-model.md'), 'utf8');
+  for (const [label, document] of [['privacy data flow', privacy], ['security model', security]]) {
+    assert.match(document, /default (?:metadata-only )?tier[\s\S]*(?:omit|omits|omitting)[\s\S]*user[\s\S]*final assistant\s+text/i, `${label}: default run-content omission is undocumented`);
+    assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*tool arguments\/results/i, `${label}: default event-payload omission is undocumented`);
+    assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*(?:tab URLs\/titles|tab URL\/title)[\s\S]*attachment filename/i, `${label}: sensitive run metadata omission is undocumented`);
+    assert.match(document, /default[\s\S]*do(?:es)? not write screenshot blobs/i, `${label}: default screenshot-byte omission is undocumented`);
+    assert.match(document, /lossless[\s\S]*explicit\s+(?:user\s+)?opt-in[\s\S]*screenshot\s+bytes/i, `${label}: lossless content retention is undocumented`);
+    assert.match(document, /historical[\s\S]*(?:not\s+(?:migrated|rewrite|rewritten)|do(?:es)? not rewrite)/i, `${label}: historical trace retention is undocumented`);
+  }
 });
 
 test('Cloud terminal runtime envelope pairs the terminal done call with its executed result', () => {
@@ -8654,9 +8761,9 @@ test('trace recorder: writes go through the event model and stamp the format ver
     const recorderSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/trace/recorder.js`), 'utf8');
     assert.match(recorderSource, /import \{ TRACE_FORMAT_VERSION, makeEvent \} from '\.\/event-model\.js';/, `${browser}: recorder does not import the event model`);
     assert.match(recorderSource, /traceFormatVersion: TRACE_FORMAT_VERSION/, `${browser}: run record does not stamp the format version`);
-    assert.match(recorderSource, /let resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the envelope`);
+    assert.match(recorderSource, /let resolvedData = typeof data === 'function' \? data\(state\) : data;[\s\S]*?projectTraceEventData\(kind, resolvedData[\s\S]*?const ev = makeEvent\(runId, seq, kind, resolvedData\);/, `${browser}: queued event writes bypass the privacy projection or envelope`);
     assert.match(recorderSource, /dropped invalid event/, `${browser}: invalid-event drop is not surfaced`);
-    assert.match(recorderSource, /const marker = makeEvent\(runId, seq, 'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
+    assert.match(recorderSource, /const marker = makeEvent\([\s\S]*?'screenshot'/, `${browser}: screenshot marker bypasses the envelope`);
   }
 });
 
@@ -8786,6 +8893,54 @@ test('trace export: missing tool results are rendered as failures', () => {
   }]);
   assert.equal(toolCount, 1);
   assert.match(markdown, /click_ax[^\n]*✗ \(missing tool result\)/);
+});
+
+test('trace privacy projection keeps redacted outcomes and tool-call counts meaningful', () => {
+  const projectedTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', {
+    step: 1,
+    name: 'click_ax',
+    args: { secret: 'x' },
+    result: { success: true },
+    latencyMs: 4,
+  });
+  const projectedResponse = TRACE_PRIVACY_CH.projectTraceEventData('llm_response', {
+    step: 1,
+    content: '',
+    toolCalls: [{ id: 'call-1' }],
+    toolCallCount: 1,
+    empty: false,
+  });
+  assert.equal(projectedTool.result, undefined);
+  assert.equal(projectedTool.resultStatus, 'success');
+  assert.equal(projectedResponse.toolCalls, undefined);
+  assert.equal(projectedResponse.toolCallCount, 1);
+
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize([{
+      run: { runId: 'privacy-consumer', status: 'done' },
+      events: [
+        { kind: 'llm_response', data: projectedResponse },
+        { kind: 'tool', data: projectedTool },
+      ],
+    }]);
+    assert.doesNotMatch(markdown, /EMPTY_RESPONSE/, `${label}: redacted tool-call response was classified as empty`);
+    assert.doesNotMatch(markdown, /✗/, `${label}: redacted successful tool result was classified as failed`);
+    assert.match(markdown, /tool result redacted; success/, `${label}: redacted result status is missing`);
+    assert.match(markdown, /contained 1 tool call/, `${label}: redacted tool-call count is missing`);
+  }
+
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'privacy-consumer' },
+    runs: [{
+      run: { runId: 'privacy-run', conversationId: 'privacy-consumer' },
+      events: [{ seq: 1, kind: 'tool', data: projectedTool }],
+    }],
+  });
+  const event = payload.resourceSpans[0].scopeSpans[0].spans[0].events[0];
+  const attrs = otlpAttributes(event.attributes);
+  assert.equal(attrs['webbrain.tool.result.status'], 'success');
+  assert.equal(attrs['error.type'], undefined);
 });
 
 test('trace export: notes appear before the footer', () => {
@@ -9197,6 +9352,31 @@ test('OTLP session bundles map runs to spans and steps to span events', () => {
   assert.equal(child.kind, 1);
   assert.equal(child.events.length, 3);
   assert.deepEqual(child.events.map(event => event.name), ['webbrain.step_start', 'webbrain.llm_response', 'webbrain.tool']);
+});
+
+test('OTLP session mapping contract is explicit and collector-compatible', () => {
+  assert.deepEqual(TRACE_OTLP_MAPPING, {
+    session: 'trace',
+    run: 'span',
+    sameSessionParent: 'parentSpanId',
+    crossSessionParent: 'spanLink',
+    step: 'spanEvent',
+  });
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'mapping-session' },
+    runs: [{
+      run: { runId: 'mapping-root', conversationId: 'mapping-session', startedAt: 100, endedAt: 200 },
+      events: [
+        { seq: 1, ts: 120, kind: 'turn_start', data: { step: 0 } },
+        { seq: 2, ts: 150, kind: 'step_start', data: { step: 1 } },
+      ],
+    }],
+  });
+  const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+  assert.match(span.traceId, /^[0-9a-f]{32}$/, 'session must map to a valid OTLP trace ID');
+  assert.equal(span.parentSpanId, undefined, 'root run must not invent a parent span');
+  assert.deepEqual(span.events.map(event => event.name), ['webbrain.turn_start', 'webbrain.step_start']);
 });
 
 test('OTLP session bundles use their session ID for blank run conversation IDs', () => {
@@ -9658,6 +9838,9 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.match(recorderSource, /async function _ensureRunState\(runId(?:, db = null)?\)/, `${browser}: recorder has no shared SW-recovery state loader`);
     assert.match(recorderSource, /function recordLLMRequest[\s\S]*?_appendEvent\(runId, 'llm_request', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: request recovery is not serialized inside the write queue`);
     assert.match(recorderSource, /function recordToolCall[\s\S]*?_appendEvent\(runId, 'tool', \(state\)[\s\S]*?state\?\.lossless === true/, `${browser}: tool recovery is not serialized inside the write queue`);
+    assert.match(recorderSource, /const _workflowTraceCaptures = new Map\(\)[\s\S]*?function recordToolCall[\s\S]*?_workflowTraceCaptures\.get\(runId\)[\s\S]*?workflowCapture\.events\.push[\s\S]*?return _appendEvent\(runId, 'tool'/, `${browser}: raw workflow inputs are not isolated to the in-memory pre-projection capture`);
+    assert.match(recorderSource, /args: clampUtf8Value\(args \?\? null, 20_000\)[\s\S]*?result: clampUtf8Value\(result \?\? null, 20_000\)/, `${browser}: transient workflow inputs are not size-bounded`);
+    assert.match(recorderSource, /const workflowCapture = _workflowTraceCaptures\.get\(runId\) \|\| null;[\s\S]*?_workflowTraceCaptures\.delete\(runId\);[\s\S]*?return \{ run: workflowCapture\.run, events: workflowCapture\.events \};/, `${browser}: completed runs do not release their transient workflow capture`);
     assert.match(recorderSource, /\.\.\.\(lossless \? \{ lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' \} : \{\}\)/, `${browser}: default run records should omit lossless accounting fields`);
     assert.match(recorderSource, /LOSSILESS_TOOLS_CAP|clampLosslessRequest|tools: \{ _truncated/, `${browser}: lossless tool schemas are not independently bounded`);
     assert.match(recorderSource, /evictOldestLosslessRuns[\s\S]*?status !== 'running'[\s\S]*?sort\(\(a, b\) => \(a\.startedAt \|\| 0\) - \(b\.startedAt \|\| 0\)\)[\s\S]*?await deleteRun\(run\.runId\)/, `${browser}: lossless runs are not evicted oldest-first`);
@@ -9682,6 +9865,9 @@ test('trace lossless tier: recorder branches on the tier and clamps payloads', (
     assert.doesNotMatch(recorderSource, /length: 0, head: '\(per-run lossless budget reached\)'/, `${browser}: budget-reached markers lost the true payload length`);
     // Default tier must keep the content-free provenance path.
     assert.match(recorderSource, /buildPromptTraceProvenance\(/, `${browser}: default tier lost its provenance reduction`);
+    const agentSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    assert.match(agentSource, /_rememberWorkflowDraftFromCapture\(tabId, capture\)[\s\S]*?compileWorkflowFromTrace\(capture\.run, capture\.events[\s\S]*?_latestWorkflowDrafts\.set\(tabId[\s\S]*?workflowDraft: this\._latestWorkflowDrafts\.get\(tabId\) \|\| null/, `${browser}: successful raw captures are not reduced to session-scoped value-free drafts`);
+    assert.match(agentSource, /const workflowCapture = await trace\.endRun\(runId, \{ status, finalContent \}\);[\s\S]*?_rememberWorkflowDraftFromCapture\(tabId, workflowCapture\)[\s\S]*?await this\._persistNow\(tabId\)/, `${browser}: workflow draft persistence is not ordered after trace completion`);
   }
 });
 
@@ -10367,6 +10553,9 @@ test('trace UI: renders the trajectory rows before the detailed event timeline',
     assert.match(traces, /renderStepTrajectory\(events, compact\)/, `${browser}: run view does not render the trajectory before details`);
     assert.match(traces, /EMPTY_RESPONSE · \$\{escapeHtml\(emptyDetails\)\}/, `${browser}: empty model responses have no visible diagnostics`);
     assert.match(traces, /const hasVisibleContent = typeof content === 'string' \? content\.trim\(\)\.length > 0 : !!content/, `${browser}: whitespace-only responses are not rendered as empty`);
+    assert.match(traces, /const toolCallCount = Math\.max\(declaredToolCallCount, toolCalls\.length\)/, `${browser}: redacted tool-call count is not used by the UI`);
+    assert.match(traces, /TOOL_CALLS_REDACTED/, `${browser}: redacted tool-call responses have no neutral marker`);
+    assert.match(traces, /resultStatus/, `${browser}: tool outcome metadata is not consumed`);
     assert.match(traces, /emptyReason \|\| 'unknown'/, `${browser}: legacy empty responses should not receive an invented cause`);
     assert.match(html, /\.trajectory-table|\.trajectory-row/, `${browser}: trajectory table styles missing`);
     assert.match(html, /\.conv-summary/, `${browser}: conversation statistics style missing`);
@@ -92905,6 +93094,66 @@ test('saved workflow compiler removes historical refs and parameterizes every ty
     assert.deepEqual(result.workflow.steps[0].args.text, { [module.WORKFLOW_PARAM_REF_KEY]: 'password' });
     const serialized = JSON.stringify(result.workflow);
     assert.doesNotMatch(serialized, /correct horse|ref_2|do-not-store|#secret/);
+
+    const privacy = module === SavedWorkflowsCh ? TRACE_PRIVACY_CH : TRACE_PRIVACY_FX;
+    const durableRun = privacy.projectTraceRun(run);
+    const durableEvents = events.map(event => ({
+      ...event,
+      data: privacy.projectTraceEventData(event.kind, event.data),
+    }));
+    const durableCompile = module.compileWorkflowFromTrace(durableRun, durableEvents, {
+      name: 'Must not depend on redacted trace payloads',
+      now: 1100,
+    });
+    assert.equal(durableCompile.workflow, null, 'metadata-only traces unexpectedly retained workflow source content');
+
+    const finalized = module.finalizeSavedWorkflowDraft({
+      conversationId: 'conv-draft',
+      sourceRunId: run.runId,
+      workflow: result.workflow,
+      warnings: result.warnings,
+    }, { name: 'Saved after redaction', now: 1200 });
+    assert.equal(finalized.reason, '');
+    assert.equal(finalized.workflow.name, 'Saved after redaction');
+    assert.notEqual(finalized.workflow.id, result.workflow.id);
+    assert.doesNotMatch(JSON.stringify(finalized.workflow), /correct horse|ref_2|do-not-store|#secret/);
+  }
+});
+
+test('a newer successful non-action run cannot leave an older workflow draft eligible to save', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const tabId = 917;
+    const conversationId = 'conv_workflow_draft';
+    agent.conversationIds.set(tabId, conversationId);
+    agent._latestWorkflowDrafts.set(tabId, {
+      conversationId,
+      sourceRunId: 'older_run',
+      workflow: { schema: 'stale-test-fixture' },
+      warnings: [],
+    });
+    assert.equal(agent._rememberWorkflowDraftFromCapture(tabId, {
+      run: {
+        runId: 'newer_run',
+        conversationId,
+        status: 'done',
+        tabUrl: 'https://example.test/account',
+      },
+      events: [],
+    }), true);
+    assert.equal(agent._latestWorkflowDrafts.has(tabId), false, `${AgentClass.name}: stale draft survived a newer successful run`);
+
+    agent._latestWorkflowDrafts.set(tabId, {
+      conversationId,
+      sourceRunId: 'last_successful_run',
+      workflow: { schema: 'failure-preservation-fixture' },
+      warnings: [],
+    });
+    assert.equal(agent._rememberWorkflowDraftFromCapture(tabId, {
+      run: { runId: 'failed_run', conversationId, status: 'error' },
+      events: [],
+    }), false);
+    assert.equal(agent._latestWorkflowDrafts.get(tabId)?.sourceRunId, 'last_successful_run', `${AgentClass.name}: failed run cleared the last successful draft`);
   }
 });
 
@@ -93463,6 +93712,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
   for (const background of ['src/chrome/src/background.js', 'src/firefox/src/background.js']) {
     const source = fs.readFileSync(path.join(ROOT, background), 'utf8');
     assert.match(source, /case 'save_latest_workflow':/);
+    assert.match(source, /agent\.getLatestWorkflowDraft\(tabId\)[\s\S]*?finalizeSavedWorkflowDraft\(draft, \{ name: msg\.name \}\)[\s\S]*?compileLatestSuccessfulWorkflow\(workflowTrace/, `${background}: workflow save does not prefer the sanitized session draft`);
     assert.match(source, /compileLatestSuccessfulWorkflow\(workflowTrace/);
     assert.match(source, /case 'list_saved_workflows':/);
     assert.match(source, /case 'rename_saved_workflow':/);
@@ -93475,6 +93725,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], \{\s*\.\.\.runOptions,\s*preserveRichTextToolbarAudit: true,/);
   }
   const cloudRunsSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRunsSource, /agent\.getLatestWorkflowDraft\(run\.tabId\)[\s\S]*?draft\?\.sourceRunId === run\.traceRunId[\s\S]*?finalizeSavedWorkflowDraft\(draft, \{ name \}\)/, 'cloud workflow compilation does not use the matching sanitized draft');
   assert.match(cloudRunsSource, /replay\.prompt, publishUpdate, 'act', \[\], \{\s*cloudRun: true,\s*independentRun: true,\s*preserveRichTextToolbarAudit: true,/);
 });
 

@@ -12,6 +12,7 @@ import {
   TRACE_REPAIR_STALE_AFTER_MS,
 } from './repair.js';
 import { createTraceStats, addTraceEvent, aggregateTraceRuns } from './stats.js';
+import { projectTraceEventData, projectTraceRun } from './privacy.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -145,6 +146,11 @@ async function peekRunFlags(db, runId) {
 
 const _runState = new Map(); // runId -> { seq, model, providerId, ... }
 const _runWriteQueues = new Map(); // runId -> serialized event-write promise
+// Bounded raw tool payloads live only for the active worker lifetime. The
+// agent turns them into the existing value-free saved-workflow schema at
+// successful run completion; they never cross the default durable trace
+// boundary.
+const _workflowTraceCaptures = new Map(); // runId -> { run, events, nextSeq }
 
 function _queueRunWrite(runId, write) {
   if (!runId) return Promise.resolve();
@@ -384,7 +390,7 @@ export async function startRun(meta = {}) {
     // Tier is decided once per run: explicit caller override wins, otherwise
     // the opt-in setting. Never forced for local runs by default.
     const lossless = meta.lossless === true || await losslessTraceEnabled();
-    const record = {
+    const record = projectTraceRun({
       runId,
       // Stable per-conversation id so the Traces UI can group sibling runs
       // (= turns of the same chat). Set by the agent from its conversationIds
@@ -425,9 +431,20 @@ export async function startRun(meta = {}) {
       totalLlmLatencyMs: 0,
       totalToolLatencyMs: 0,
       finalContent: null,
-    };
+    }, { includeContent: lossless });
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
     _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
+    _workflowTraceCaptures.set(runId, {
+      run: {
+        runId,
+        conversationId: meta.conversationId || null,
+        status: 'running',
+        tabUrl: meta.tabUrl || '',
+        webbrainVersion: meta.webbrainVersion || '',
+      },
+      events: [],
+      nextSeq: 0,
+    });
     return runId;
   } catch (e) {
     console.warn('[trace] startRun failed:', e);
@@ -473,6 +490,7 @@ async function _appendEventNow(runId, kind, data) {
       }
     }
     let resolvedData = typeof data === 'function' ? data(state) : data;
+    resolvedData = projectTraceEventData(kind, resolvedData, { includeContent: state?.lossless === true });
     let losslessBytes = 0;
     let losslessBudgetOmitted = false;
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
@@ -717,6 +735,21 @@ export function recordLLMResponse(runId, step, {
 }
 
 export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
+  const workflowCapture = _workflowTraceCaptures.get(runId);
+  if (workflowCapture) {
+    workflowCapture.nextSeq += 1;
+    workflowCapture.events.push({
+      seq: workflowCapture.nextSeq,
+      kind: 'tool',
+      data: {
+        step,
+        name,
+        args: clampUtf8Value(args ?? null, 20_000),
+        result: clampUtf8Value(result ?? null, 20_000),
+        latencyMs: latencyMs ?? null,
+      },
+    });
+  }
   // Truncate very large tool results (a11y trees can be huge). Keep the first
   // 20KB verbatim by default — plenty for debugging flow — and 200KB in the
   // opt-in lossless tier; note the truncation either way.
@@ -741,21 +774,28 @@ export function recordScreenshot(runId, step, dataUrl, caption = '') {
     if (!dataUrl) return;
     try {
       const db = await openDB();
-      await _ensureRunState(runId, db);
+      const state = await _ensureRunState(runId, db);
       const seq = _newSeq(runId);
-      // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
-      let blob = null;
-      try {
-        const resp = await fetch(dataUrl);
-        blob = await resp.blob();
-      } catch {
-        // Fall back to storing the data URL as text.
+      if (state?.lossless === true) {
+        // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
+        let blob = null;
+        try {
+          const resp = await fetch(dataUrl);
+          blob = await resp.blob();
+        } catch {
+          // Fall back to storing the data URL as text.
+        }
+        const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
+        await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
       }
-      const shot = { runId, seq, ts: Date.now(), caption, step, blob, dataUrl: blob ? null : dataUrl };
-      await promisifyReq(tx(db, ['shots']).objectStore('shots').put(shot));
       // Also record a lightweight marker in the events log so the timeline
       // renders screenshots in order with everything else.
-      const marker = makeEvent(runId, seq, 'screenshot', { step, caption });
+      const marker = makeEvent(
+        runId,
+        seq,
+        'screenshot',
+        projectTraceEventData('screenshot', { step, caption }, { includeContent: state?.lossless === true }),
+      );
       if (marker) {
         await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
       }
@@ -888,8 +928,12 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
   // Finalization is a write in the same per-run sequence as events and any
   // migration refresh queued while those event writes are still settling.
   return _queueRunWrite(runId, async () => {
+    let resolvedStatus = status;
     try {
-      if (!(await tracingEnabledForRun(runId))) return;
+      if (!(await tracingEnabledForRun(runId))) {
+        _workflowTraceCaptures.delete(runId);
+        return null;
+      }
       const db = await openDB();
       // Tally usage from events. `totalCost` is the sum of `usage.cost` across
       // all llm_response events — providers report this in their native units
@@ -917,10 +961,11 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
       const existing = await promisifyReq(runStore.get(runId));
       if (existing) {
         const finalStatus = status === 'done' && sawLoopError ? 'loop_stopped' : status;
+        resolvedStatus = finalStatus;
         existing.endedAt = Date.now();
         existing.durationMs = existing.endedAt - existing.startedAt;
         existing.status = finalStatus;
-        existing.finalContent = finalContent;
+        existing.finalContent = existing.lossless === true ? finalContent : null;
         existing.stepCount = stats.stepCount;
         existing.totalInputTokens = stats.totalInputTokens;
         existing.totalOutputTokens = stats.totalOutputTokens;
@@ -940,6 +985,11 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     } finally {
       _runState.delete(runId);
     }
+    const workflowCapture = _workflowTraceCaptures.get(runId) || null;
+    _workflowTraceCaptures.delete(runId);
+    if (!workflowCapture) return null;
+    workflowCapture.run.status = resolvedStatus;
+    return { run: workflowCapture.run, events: workflowCapture.events };
   });
 }
 
@@ -1061,6 +1111,7 @@ export async function getScreenshot(runId, seq) {
 }
 
 export async function deleteRun(runId) {
+  _workflowTraceCaptures.delete(runId);
   const db = await openDB();
   const t = tx(db, ['runs', 'events', 'shots']);
   await promisifyReq(t.objectStore('runs').delete(runId));
@@ -1089,6 +1140,7 @@ export async function deleteRun(runId) {
 
 export async function clearAllRuns() {
   _losslessTotalEstimate = null;
+  _workflowTraceCaptures.clear();
   const db = await openDB();
   const t = tx(db, ['runs', 'events', 'shots']);
   await promisifyReq(t.objectStore('runs').clear());
