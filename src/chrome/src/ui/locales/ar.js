@@ -153,7 +153,9 @@ export default {
   "sp.selection_scope.title": "النص المحدد فقط",
   "sp.selection_scope.description": "ابدأ محادثة جديدة للوصول إلى الصفحة أو الشاشة.",
   "sp.selection_scope.context_title": "النص المحدد + المعرفة العامة",
-  "sp.selection_scope.context_description": "يستخدم النص المحدد ومعرفة النموذج. تظل الصفحة والأدوات والملفات والمحادثة السابقة غير متاحة.",
+  "sp.selection_scope.context_description": "يستخدم النص المحدد والحوار السابق الآمن ومعرفة النموذج. تظل الصفحة والأدوات والملفات والمرفقات ومحتوى الصفحات السابقة الخام غير متاحة.",
+  "sp.selection_scope.restore": "استخدام المحادثة الأوسع",
+  "sp.selection_scope.restore_description": "استعادة المحادثة تزيل حدود النص المحدد. يمكن للرسائل اللاحقة استخدام الصفحة الحالية وأدوات المتصفح والملفات والمرفقات والمحادثة السابقة الكاملة، بما في ذلك سياق الصفحة.",
   "sp.input.selection_placeholder": "اسأل عن النص المحدد...",
 
   'sp.mode.ask': 'سؤال',

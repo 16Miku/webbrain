@@ -7,10 +7,11 @@
  * the right source for a tool chain; `this.conversations` is not (it is compacted,
  * enriched, and wrapped — see the closed PR #348 review).
  *
- * This renders the TOOL CHAIN: user/assistant/planner prose, streaming lifecycle
- * metadata, privacy-safe visual-delivery evidence, tool calls (name, args,
- * result), and errors — in order. Screenshot pixels and vision descriptions
- * remain omitted; the complete record is available in the Traces page.
+ * This renders the TOOL CHAIN: lifecycle metadata, privacy-safe visual-delivery
+ * evidence, tool names, and errors — in order. Explicit lossless runs may also
+ * render bounded request/response content. Screenshot pixels and vision
+ * descriptions remain omitted; the complete metadata record is available in
+ * the Traces page.
  *
  * Pure and browser-neutral → unit-tested in test/run.js without a DOM or IndexedDB.
  *
@@ -175,7 +176,15 @@ function stringifyArgs(args) {
 
 // A trace tool result is a RAW value: a structured object ({success,error,...}),
 // a string, or the recorder's large-result marker { _truncated, length, head }.
-function renderResult(result) {
+function renderResult(result, resultStatus = '', resultErrorCode = '') {
+  const explicitStatus = ['success', 'error', 'unknown'].includes(resultStatus);
+  if (explicitStatus && result == null) {
+    const code = resultErrorCode ? ` · code=${oneLine(resultErrorCode)}` : '';
+    return {
+      text: `(tool result redacted; ${resultStatus}${code})`,
+      failed: resultStatus === 'error',
+    };
+  }
   if (result == null) return { text: '(missing tool result)', failed: true };
   if (typeof result === 'object' && result._truncated) {
     return {
@@ -308,9 +317,15 @@ export function tracesToMarkdown(runsWithEvents, {
         md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderLocalWikipediaRag(d.localWikipediaRag)}${renderPromptProvenance(d.promptProvenance)}${d.lossless === true ? renderLosslessRequest(d.messages, d.tools) : ''}\n`;
       } else if (ev.kind === 'llm_response') {
         const content = String(d.content || '').trim();
+        const declaredToolCallCount = Number.isInteger(d.toolCallCount) ? Math.max(0, d.toolCallCount) : 0;
+        const recordedToolCallCount = Array.isArray(d.toolCalls) ? d.toolCalls.length : 0;
+        const toolCallCount = Math.max(declaredToolCallCount, recordedToolCallCount);
+        const hasToolCalls = toolCallCount > 0;
         if (!content) {
-          if (!Array.isArray(d.toolCalls) || d.toolCalls.length === 0) {
+          if (!hasToolCalls && d.empty !== false) {
             md += renderEmptyModelResponse(d);
+          } else if (hasToolCalls && recordedToolCallCount === 0) {
+            md += `- 🧠 Model response contained ${toolCallCount} tool call(s); call details omitted by the active privacy mode.\n`;
           }
           continue;
         }
@@ -326,7 +341,7 @@ export function tracesToMarkdown(runsWithEvents, {
         }
       } else if (ev.kind === 'tool') {
         toolCount += 1;
-        const { text, failed } = renderResult(d.result);
+        const { text, failed } = renderResult(d.result, d.resultStatus, d.resultErrorCode);
         md += `- 🔧 \`${d.name || 'tool'}\`(${stringifyArgs(d.args)}) → ${failed ? '✗ ' : ''}${text}\n`;
       } else if (ev.kind === 'streaming') {
         md += renderStreaming(d);

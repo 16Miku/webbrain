@@ -23,6 +23,7 @@ import {
   compileLatestSuccessfulWorkflow,
   createSavedWorkflowStore,
   exportPortableWorkflowDefinition,
+  finalizeSavedWorkflowDraft,
   importPortableWorkflowDefinition,
 } from './agent/workflows.js';
 import { createTeacherRunInterlock, createTeacherSessionStore } from './agent/teacher-mode.js';
@@ -2457,10 +2458,13 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, reason: 'tab_required' };
       const conversationId = await agent.getConversationId(tabId);
-      const compiled = await compileLatestSuccessfulWorkflow(workflowTrace, {
-        conversationId,
-        name: msg.name,
-      });
+      const draft = await agent.getLatestWorkflowDraft(tabId);
+      const compiled = draft?.conversationId === conversationId
+        ? finalizeSavedWorkflowDraft(draft, { name: msg.name })
+        : await compileLatestSuccessfulWorkflow(workflowTrace, {
+            conversationId,
+            name: msg.name,
+          });
       if (!compiled.workflow) return { ok: false, ...compiled };
       const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(compiled.workflow));
       return { ok: saved.changed, workflow: saved.workflow, warnings: compiled.warnings, reason: saved.reason || '' };
@@ -2846,6 +2850,16 @@ async function handleMessage(msg, sender) {
         }).catch(() => {});
       }
       return { ok: true, clearedContextMenuPromptId };
+    }
+
+    case 'restore_selection_scope': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'No tab ID' };
+      if (detachedRunStarts.has(tabId) || agent.activeRunState(tabId)?.running) {
+        return { ok: false, error: 'Wait for the current response to finish before restoring the full conversation.' };
+      }
+      const restored = agent.restoreSelectionGroundingScope(tabId);
+      return { ok: true, restored, ...(await agent.getConversationState(tabId)) };
     }
 
     case 'compact_conversation': {

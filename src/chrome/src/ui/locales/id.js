@@ -153,7 +153,9 @@ export default {
   "sp.selection_scope.title": "Hanya teks yang dipilih",
   "sp.selection_scope.description": "Mulai percakapan baru untuk mengakses halaman atau layar.",
   "sp.selection_scope.context_title": "Teks pilihan + pengetahuan umum",
-  "sp.selection_scope.context_description": "Menggunakan teks pilihan dan pengetahuan model. Halaman, alat, file, dan percakapan sebelumnya tetap tidak tersedia.",
+  "sp.selection_scope.context_description": "Menggunakan teks yang dipilih, dialog sebelumnya yang aman, dan pengetahuan model. Halaman, alat, file, lampiran, serta konten mentah halaman sebelumnya tetap tidak tersedia.",
+  "sp.selection_scope.restore": "Gunakan percakapan yang lebih luas",
+  "sp.selection_scope.restore_description": "Pemulihan menghapus batas teks yang dipilih. Pesan berikutnya dapat menggunakan halaman saat ini, alat browser, file, lampiran, dan seluruh percakapan sebelumnya, termasuk konteks halaman.",
   "sp.input.selection_placeholder": "Tanyakan tentang teks yang dipilih...",
 
   'sp.mode.ask': 'Tanya',
