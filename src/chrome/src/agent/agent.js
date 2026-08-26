@@ -25780,9 +25780,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'scroll') {
       args = await this._augmentScrollArgsWithLastInteraction(tabId, args);
     }
-    const clickProgressBefore = name === 'click'
-      ? await this._clickProgressSnapshot(tabId)
-      : '';
+    let clickProgressBefore = '';
+    if (name === 'click') {
+      try {
+        clickProgressBefore = await this._withContentActionDeadline(
+          () => this._clickProgressSnapshot(tabId),
+          name,
+          this._contentActionDeadlineMs(name, args),
+        );
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No click was sent because the pre-dispatch page snapshot did not finish. Re-observe the page before retrying.`,
+          }, coordinateDiagnostic);
+        }
+        throw error;
+      }
+    }
 
     const axScope = this._lastAxScopes.get(tabId);
     let contentArgs = name === 'set_checked' && axScope?.documentToken

@@ -87149,6 +87149,67 @@ test('Chrome click_ax fallback deadline cancels late target resolution before CD
   }
 });
 
+test('Chrome bounds the pre-dispatch click snapshot and does not claim a click on timeout', async () => {
+  const originalChrome = globalThis.chrome;
+  let contentDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 43, url: 'https://example.test/' }),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true };
+        },
+      },
+    };
+
+    const agent = new AgentCh({});
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._chromeProtectedPageFailure = async () => null;
+    agent._currentUrl = async () => 'https://example.test/';
+    let snapshotCalls = 0;
+    agent._clickProgressSnapshot = async () => {
+      snapshotCalls += 1;
+      return '{"text":"before"}';
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName, deadlineMs) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click');
+      assert.equal(deadlineMs, 60_000);
+      assert.equal(await operation(), '{"text":"before"}');
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      throw error;
+    };
+
+    const result = await agent.executeTool(
+      43,
+      'click',
+      { index: 1 },
+      null,
+      { dispatchBinding: { token: 'bound-click', frameId: 0 } },
+    );
+
+    assert.equal(snapshotCalls, 1, 'pre-dispatch snapshot did not run inside the deadline');
+    assert.equal(deadlineCalls, 1, 'timed-out snapshot continued into the content dispatch');
+    assert.equal(contentDispatches, 0, 'snapshot timeout still dispatched the click');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+    assert.match(result.error, /No click was sent.*Re-observe the page/i);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('Chrome click_ax timeout after mouse press unwinds without completing the click', async () => {
   const originals = {
     attach: cdpClientCh.attach,
