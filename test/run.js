@@ -39168,7 +39168,7 @@ test('settings Providers tab has a search box beside provider filters', () => {
     assert.match(settings, /function providerSearchRank\(id, config, query\) \{[\s\S]*?name === query[\s\S]*?name\.startsWith\(query\)[\s\S]*?name\.includes\(query\)[\s\S]*?\}/, `${label}: exact provider names should rank above prefix and substring matches`);
     assert.match(settings, /if \(providerQuery\) \{[\s\S]*?rank: providerSearchRank\(entry\[0\], entry\[1\], providerQuery\),[\s\S]*?\.sort\(\(a, b\) => a\.rank - b\.rank \|\| a\.index - b\.index\)[\s\S]*?\}/, `${label}: provider search should sort matches by relevance while preserving the original order for ties`);
     const rankStart = settings.indexOf('function providerSearchRank(');
-    const rankEnd = settings.indexOf('\n}\n\nfunction renderProviders', rankStart);
+    const rankEnd = settings.indexOf('\n}\n\nfunction ', rankStart);
     const providerSearchRank = vm.runInNewContext(`(${settings.slice(rankStart, rankEnd + 2)})`, {
       normalizeGeneralSearchText: (value) => String(value || '').toLowerCase(),
     });
@@ -99606,6 +99606,225 @@ test('message info toggles behaviorally through a semantic button, terminal repl
     };
     return element;
   }
+});
+
+test('Settings exposes the subscription proxy guide without presenting it as an official provider', async () => {
+  for (const [label, runtime, htmlRel, settingsRel, i18nRel] of [
+    ['chrome', 'chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
+    ['firefox', 'browser', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const i18n = fs.readFileSync(path.join(ROOT, i18nRel), 'utf8');
+    const productMap = settings.match(/const SUBSCRIPTION_GUIDE_PRODUCTS = Object\.freeze\(\{[\s\S]*?\}\);/)?.[0] || '';
+
+    assert.match(settings, /const EASY_CLI_PROXY_GUIDE_URL = 'https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/';/,
+      `${label}: Settings should use the canonical HTTPS guide URL`);
+    assert.match(settings, /const EASY_CLI_PROXY_BANNER_DISMISSED_KEY = 'easyCliProxyBannerDismissed';/,
+      `${label}: the banner dismissal key should be stable`);
+    assert.match(settings, /storage\.local\.get\(\[[\s\S]*?EASY_CLI_PROXY_BANNER_DISMISSED_KEY[\s\S]*?\]\)/,
+      `${label}: banner dismissal should hydrate before providers render`);
+    assert.match(settings, /subscriptionGuideBannerDismissed = stored\[EASY_CLI_PROXY_BANNER_DISMISSED_KEY\] === true;/,
+      `${label}: stored dismissal should be interpreted strictly`);
+    assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[EASY_CLI_PROXY_BANNER_DISMISSED_KEY\\]: true \\}\\)`),
+      `${label}: dismissing the banner should persist`);
+    assert.match(settings, /if \(!subscriptionGuideBannerDismissed\) \{[\s\S]*?appendChild\(renderSubscriptionGuideBanner\(\)\)[\s\S]*?\}[\s\S]*?appendChild\(renderProviderFilterBar\(\)\)/,
+      `${label}: the optional banner should render above provider filters`);
+    assert.match(settings, /provider-subscription-dismiss[\s\S]*?aria-label="\$\{escapeHtml\(t\('st\.providers\.subscription_guide\.dismiss'\)\)\}"/,
+      `${label}: the dismiss control should have a translated accessible name`);
+    assert.doesNotMatch(settings, /provider-subscription-badge|subscription_guide\.badge/,
+      `${label}: the compact banner should not render a Third-party pill`);
+    assert.match(settings, /<span class="provider-subscription-icon" aria-hidden="true">🔌<\/span>/,
+      `${label}: the banner should use one decorative plug icon without adding an accessible label`);
+    assert.match(settings, /href="\$\{EASY_CLI_PROXY_GUIDE_URL\}" target="_blank" rel="noopener noreferrer"/,
+      `${label}: guide links should open securely`);
+
+    for (const [id, product] of [
+      ['openai', 'ChatGPT/Codex'],
+      ['anthropic', 'Claude'],
+      ['gemini', 'Google/Gemini'],
+      ['xai', 'Grok/xAI'],
+      ['kimi', 'Kimi'],
+    ]) {
+      assert.match(productMap, new RegExp(`${id}: '${escapeRegExpLiteral(product)}'`),
+        `${label}: ${id} should use the intended consumer product name`);
+    }
+    for (const unsupported of ['openrouter', 'mistral', 'deepseek', 'ollama']) {
+      assert.doesNotMatch(productMap, new RegExp(`${unsupported}:`),
+        `${label}: ${unsupported} should not receive subscription-proxy promotion`);
+    }
+    assert.match(settings, /if \(definitionId === 'local_openai_proxy'\)[\s\S]*?provider-local-proxy-guide/,
+      `${label}: the generic local proxy card should have permanent guide context`);
+    assert.match(settings, /const subscriptionGuide = providerSubscriptionGuideHtml\(definitionId\);[\s\S]*?const body = `\s*\$\{subscriptionGuide\}\s*\$\{fieldsHTML\}/,
+      `${label}: contextual guidance should appear before API-key fields and work for duplicates`);
+    assert.equal((settings.match(/provider-subscription-guide-icon/g) || []).length, 2,
+      `${label}: cloud-account and local-proxy guide branches should both include the decorative plug`);
+    assert.match(settings, /provider-subscription-guide-icon" aria-hidden="true">🔌<\/span>/,
+      `${label}: provider-card plugs should stay hidden from assistive technology`);
+
+    assert.match(html, /\.provider-subscription-banner \{[\s\S]*?grid-template-columns:[\s\S]*?border-inline-start: 3px solid var\(--warning\)/,
+      `${label}: the banner should be compact and visually marked as cautionary`);
+    assert.doesNotMatch(html, /\.provider-subscription-badge/,
+      `${label}: removed banner pill styles should not remain`);
+    assert.match(html, /\.provider-subscription-icon \{[\s\S]*?place-items: center;[\s\S]*?border-radius: 50%;/,
+      `${label}: the plug should have a compact circular treatment`);
+    assert.match(html, /\.provider-subscription-guide \{[\s\S]*?border-inline-start: 2px solid var\(--warning\)/,
+      `${label}: card guidance should stay smaller than the provider form`);
+    assert.match(html, /\.provider-subscription-guide-icon \{[\s\S]*?margin-inline-end: 5px;/,
+      `${label}: provider-card plug spacing should remain RTL-safe`);
+    assert.match(html, /\.provider-subscription-dismiss:focus-visible,[\s\S]*?outline: 2px solid var\(--accent\)/,
+      `${label}: the new controls should retain keyboard focus visibility`);
+    assert.match(i18n, /providerGuideEnglish[\s\S]*?providerGuideTranslations[\s\S]*?\.\.\.providerGuideEnglish,[\s\S]*?providerGuideTranslations\[code\]/,
+      `${label}: the modular guide translations should merge into every runtime locale`);
+  }
+
+  const chromeCopy = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/provider-guide-copy.mjs')).href);
+  const firefoxCopy = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales/provider-guide-copy.mjs')).href);
+  assert.deepEqual(firefoxCopy.providerGuideEnglish, chromeCopy.providerGuideEnglish,
+    'Chrome and Firefox English subscription-guide copy should stay mirrored');
+  assert.deepEqual(firefoxCopy.providerGuideTranslations, chromeCopy.providerGuideTranslations,
+    'Chrome and Firefox subscription-guide translations should stay mirrored');
+  assert.equal('st.providers.subscription_guide.badge' in chromeCopy.providerGuideEnglish, false,
+    'subscription-guide copy should not retain the removed Third-party pill label');
+
+  const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
+  const englishKeys = Object.keys(chromeCopy.providerGuideEnglish).sort();
+  for (const code of localeCodes) {
+    const translated = chromeCopy.providerGuideTranslations[code];
+    assert.ok(translated, `${code}: subscription-guide translation block is missing`);
+    assert.deepEqual(Object.keys(translated).sort(), englishKeys, `${code}: subscription-guide keys diverged`);
+    for (const key of englishKeys) {
+      assert.ok(translated[key]?.trim(), `${code}: ${key} is empty`);
+      const expectedPlaceholders = [...String(chromeCopy.providerGuideEnglish[key]).matchAll(/\{\w+\}/g)].map((match) => match[0]);
+      const actualPlaceholders = [...String(translated[key]).matchAll(/\{\w+\}/g)].map((match) => match[0]);
+      assert.deepEqual(actualPlaceholders, expectedPlaceholders, `${code}: ${key} changed interpolation placeholders`);
+    }
+  }
+});
+
+test('public EasyCLIProxy guide keeps executable, account, network, and media boundaries explicit', () => {
+  const guide = fs.readFileSync(path.join(ROOT, 'web/docs/easy-cli-proxy/index.html'), 'utf8');
+  const chineseGuide = fs.readFileSync(path.join(ROOT, 'web/docs/zh/easy-cli-proxy/index.html'), 'utf8');
+  const docsCss = fs.readFileSync(path.join(ROOT, 'web/docs/assets/docs.css'), 'utf8');
+  const docsBuild = fs.readFileSync(path.join(ROOT, 'scripts/build-docs.mjs'), 'utf8');
+  const providerInternals = fs.readFileSync(path.join(ROOT, 'docs/providers-and-models.md'), 'utf8');
+  const vercel = fs.readFileSync(path.join(ROOT, 'web/vercel.json'), 'utf8');
+  const sitemap = fs.readFileSync(path.join(ROOT, 'web/sitemap.xml'), 'utf8');
+  const videoPath = path.join(ROOT, 'web/docs/assets/media/easy-cli-proxy-tutorial.mp4');
+  const chineseVideoPath = path.join(ROOT, 'web/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.mp4');
+  const posterPath = path.join(ROOT, 'web/docs/assets/media/easy-cli-proxy-poster.webp');
+  const captionsPath = path.join(ROOT, 'web/docs/assets/media/easy-cli-proxy-tutorial.en.vtt');
+  const captions = fs.readFileSync(captionsPath, 'utf8');
+  const chineseCaptionsPath = path.join(ROOT, 'web/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.vtt');
+  const chineseCaptions = fs.readFileSync(chineseCaptionsPath, 'utf8');
+  const guideVideo = guide.match(/<video controls[\s\S]*?<\/video>/)?.[0] || '';
+  const chineseGuideVideo = chineseGuide.match(/<video controls[\s\S]*?<\/video>/)?.[0] || '';
+
+  assert.match(guide, /<link rel="canonical" href="https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/">/,
+    'docs: the EasyCLIProxy guide should own a canonical URL');
+  assert.match(guide, /hreflang="zh" href="https:\/\/webbrain\.one\/docs\/zh\/easy-cli-proxy\/"/,
+    'docs: the English guide should advertise its Chinese translation');
+  assert.match(chineseGuide, /<html lang="zh-CN"[\s\S]*?<link rel="canonical" href="https:\/\/webbrain\.one\/docs\/zh\/easy-cli-proxy\/">/,
+    'docs: the Chinese EasyCLIProxy guide should own its localized canonical URL');
+  assert.match(chineseGuide, /hreflang="en" href="https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/"[\s\S]*?hreflang="zh" href="https:\/\/webbrain\.one\/docs\/zh\/easy-cli-proxy\/"/,
+    'docs: the Chinese guide should advertise both language versions');
+  assert.match(guide, /Last verified 26 August 2026 · EasyCLIProxyAPI v0\.2\.62/,
+    'docs: drift-prone upstream facts should be date and version stamped');
+  assert.match(guide, /Not built, hosted, audited, or guaranteed by WebBrain[\s\S]*?WebBrain cannot inspect what a future upstream build does/,
+    'docs: executable ownership and future-update risk should appear before download');
+  assert.ok(guide.indexOf('Not built, hosted, audited, or guaranteed by WebBrain') < guide.indexOf('releases/latest'),
+    'docs: the third-party warning should precede the download link');
+  assert.match(guide, /ChatGPT subscriptions and API billing are separate products[\s\S]*?consumer terms restrict automated or non-human access[\s\S]*?Gemini CLI's terms say its OAuth authentication may not be used with third-party tools or services/,
+    'docs: provider-policy risk should be described specifically without calling the tool illegal');
+  assert.match(guide, /Codex OAuth[\s\S]*?Claude OAuth[\s\S]*?Antigravity OAuth[\s\S]*?Kimi OAuth[\s\S]*?xAI OAuth/,
+    'docs: all five upstream OAuth labels should be covered');
+  assert.match(guide, /127\.0\.0\.1:8317[\s\S]*?Provider account[\s\S]*?The first connection stays on your computer\. The second does not\./,
+    'docs: the request diagram should distinguish loopback from remote inference');
+  assert.match(guide, /never forward port <code>8317<\/code>[\s\S]*?strong random value/,
+    'docs: setup should harden the listener and require a strong client key');
+  assert.match(guide, /Paste the server URL and the proxy client key—not the provider OAuth token/,
+    'docs: setup should distinguish the local client key from upstream OAuth tokens');
+  assert.match(guideVideo, /<video controls preload="metadata" playsinline poster="\/docs\/assets\/media\/easy-cli-proxy-poster\.webp">[\s\S]*?<source src="\/docs\/assets\/media\/easy-cli-proxy-tutorial\.mp4" type="video\/mp4">[\s\S]*?<track kind="captions" srclang="en" label="English" src="\/docs\/assets\/media\/easy-cli-proxy-tutorial\.en\.vtt">/,
+    'docs: the tutorial should be lazy, poster-backed, and English-captioned');
+  assert.match(guideVideo, /<track kind="captions" srclang="zh-CN" label="简体中文" src="\/docs\/assets\/media\/easy-cli-proxy-tutorial\.zh-CN\.vtt">/,
+    'docs: the English tutorial should keep Chinese captions available');
+  assert.doesNotMatch(guideVideo, /<track[^>]*\sdefault(?:\s|>)/,
+    'docs: hardcoded English captions mean no external track should start automatically');
+  assert.match(chineseGuideVideo, /<source src="\/docs\/assets\/media\/easy-cli-proxy-tutorial\.zh-CN\.mp4" type="video\/mp4">[\s\S]*?<track kind="captions" srclang="zh-CN" label="简体中文" src="\/docs\/assets\/media\/easy-cli-proxy-tutorial\.zh-CN\.vtt">/,
+    'docs: the Chinese page should use the Mandarin video and retain optional Chinese captions');
+  assert.doesNotMatch(chineseGuideVideo, /<track[^>]*\sdefault(?:\s|>)/,
+    'docs: Chinese captions should stay off by default to avoid overlapping hardcoded English captions');
+  assert.match(chineseGuide, /本教程使用普通话旁白[\s\S]*?简体中文字幕可在播放器中手动开启，默认关闭/,
+    'docs: the Chinese page should explain its Mandarin audio and opt-in caption behavior');
+  assert.match(chineseGuide, /并非由 WebBrain 开发、托管、审计或担保[\s\S]*?WebBrain 无法检查未来的上游构建[\s\S]*?不要使用 <code>0\.0\.0\.0<\/code>/,
+    'docs: the Chinese translation should preserve executable and network-risk warnings');
+  assert.match(docsCss, /\.trust-ledger \{[\s\S]*?var\(--warn\)[\s\S]*?\.trust-ledger dl > div/,
+    'docs: the trust boundary should be a deliberate visual component');
+  assert.match(docsBuild, /\/docs\/easy-cli-proxy\/[\s\S]*?Subscription proxy/,
+    'docs build: shared English navigation should expose the guide');
+  assert.match(docsBuild, /\/docs\/zh\/easy-cli-proxy\/[\s\S]*?订阅代理/,
+    'docs build: shared Chinese navigation should expose the translated guide');
+  assert.match(vercel, /mp4\|webm\|vtt/, 'web: Vercel should serve WebVTT as a static asset');
+  assert.match(sitemap, /<loc>https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/<\/loc>/,
+    'web: the guide should appear in the generated sitemap');
+  assert.match(sitemap, /<loc>https:\/\/webbrain\.one\/docs\/zh\/easy-cli-proxy\/<\/loc>/,
+    'web: the Chinese guide should appear in the generated sitemap');
+  assert.match(sitemap, /<loc>https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/<\/loc>[\s\S]*?hreflang="zh" href="https:\/\/webbrain\.one\/docs\/zh\/easy-cli-proxy\/"/,
+    'web: the guide sitemap entry should connect its Chinese alternate');
+  assert.match(providerInternals, /canonical \[EasyCLIProxyAPI subscription proxy guide\]\(https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/\)/,
+    'developer docs should defer drift-prone setup details to the canonical guide');
+  assert.doesNotMatch(providerInternals.match(/#### Subscription proxy guide[\s\S]*?#### Ollama launch handoff/)?.[0] || '', /--codex-login|config\.example\.yaml/,
+    'developer docs should not retain a second command-by-command setup source');
+
+  for (const rel of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html', 'easy-cli-proxy/index.html']) {
+    const html = fs.readFileSync(path.join(ROOT, 'web/docs', rel), 'utf8');
+    assert.match(html, /<a href="\/docs\/easy-cli-proxy\/"[^>]*>Subscription proxy<\/a>/,
+      `docs/${rel}: shared navigation should expose the subscription proxy guide`);
+  }
+  for (const rel of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html', 'apocalypse-mode/index.html', 'easy-cli-proxy/index.html']) {
+    const html = fs.readFileSync(path.join(ROOT, 'web/docs/zh', rel), 'utf8');
+    assert.match(html, /<a href="\/docs\/zh\/easy-cli-proxy\/"[^>]*>订阅代理<\/a>/,
+      `docs/zh/${rel}: shared navigation should expose the translated subscription proxy guide`);
+  }
+
+  const videoSize = fs.statSync(videoPath).size;
+  assert.ok(videoSize >= 8_000_000 && videoSize <= 16_000_000,
+    `docs media: optimized tutorial should stay near the 10–15 MB target, got ${videoSize}`);
+  const chineseVideoSize = fs.statSync(chineseVideoPath).size;
+  assert.ok(chineseVideoSize >= 8_000_000 && chineseVideoSize <= 16_000_000,
+    `docs media: Mandarin tutorial should stay near the 10–15 MB target, got ${chineseVideoSize}`);
+  assert.ok(fs.statSync(posterPath).size > 20_000, 'docs media: poster should be a real rendered frame');
+  const mp4Header = fs.readFileSync(videoPath).subarray(0, 32).toString('latin1');
+  assert.match(mp4Header, /ftyp/, 'docs media: tutorial should be an MP4 file');
+  const chineseMp4Header = fs.readFileSync(chineseVideoPath).subarray(0, 32).toString('latin1');
+  assert.match(chineseMp4Header, /ftyp/, 'docs media: Mandarin tutorial should be an MP4 file');
+  assert.match(captions, /^WEBVTT\n/, 'docs media: captions should be WebVTT');
+  assert.match(chineseCaptions, /^WEBVTT\n/, 'docs media: Chinese captions should be WebVTT');
+  assert.match(chineseCaptions, /把 AI 订阅连接到 WebBrain[\s\S]*?本地 OpenAI 兼容代理[\s\S]*?操作模式/,
+    'docs media: the Chinese captions should translate the setup, provider, and mode narration');
+  assert.doesNotMatch(captions, /no extra charge|fully integrated/i,
+    'docs media: captions should not retain the removed guarantee claim');
+
+  const toSeconds = (stamp) => {
+    const [hours, minutes, rest] = stamp.split(':');
+    return Number(hours) * 3600 + Number(minutes) * 60 + Number(rest);
+  };
+  const captionCues = (source) => [...source.matchAll(/(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})/g)]
+    .map((match) => ({ start: toSeconds(match[1]), end: toSeconds(match[2]) }));
+  const cues = captionCues(captions);
+  const chineseCues = captionCues(chineseCaptions);
+  for (const [label, captionSet] of [['English', cues], ['Chinese', chineseCues]]) {
+    assert.ok(captionSet.length >= 28, `docs media: ${label} captions should represent every retained spoken cue`);
+    let previousEnd = 0;
+    for (const cue of captionSet) {
+      assert.ok(cue.start >= previousEnd, `docs media: ${label} caption cue ${cue.start} overlaps or is out of order`);
+      assert.ok(cue.end > cue.start, `docs media: ${label} caption cue ${cue.start} has no duration`);
+      previousEnd = cue.end;
+    }
+    assert.ok(previousEnd <= 138.3, `docs media: ${label} captions should stop before the removed closing claim`);
+  }
+  assert.equal(chineseCues[0]?.start, 0.38,
+    'docs media: Chinese caption timing should follow the Mandarin narration track');
 });
 
 await run();

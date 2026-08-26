@@ -215,69 +215,20 @@ Unsloth model discovery, chat, interactive Ask streaming, and tool calls use
 the existing OpenAI-compatible endpoints. Vision starts off: enable the manual
 vision checkbox only when the model loaded in Studio accepts image input.
 
-#### Subscription proxy example (CLIProxyAPI)
+#### Subscription proxy guide (EasyCLIProxyAPI / CLIProxyAPI)
 
 The generic **Local OpenAI-compatible Proxy** card can connect WebBrain to a
-separately managed [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
-instance. CLIProxyAPI exposes OpenAI-compatible model listing, Chat Completions,
-and tool calling while keeping upstream OAuth credentials outside WebBrain.
+separately managed [EasyCLIProxyAPI](https://github.com/router-for-me/EasyCLIProxyAPI)
+or [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance. WebBrain
+uses only the local OpenAI-compatible endpoint and its client key; it does not
+bundle, launch, update, audit, or manage the proxy or its upstream OAuth tokens.
 
-Install CLIProxyAPI using its [official quick start](https://help.router-for.me/introduction/quick-start),
-or build it from source:
-
-```bash
-git clone https://github.com/router-for-me/CLIProxyAPI.git
-cd CLIProxyAPI
-go build -o cli-proxy-api ./cmd/server
-cp config.example.yaml config.yaml
-```
-
-Generate a client key (for example, `openssl rand -hex 32`), then edit the
-active configuration file before starting the proxy:
-
-```yaml
-host: "127.0.0.1"
-port: 8317
-api-keys:
-  - "replace-with-a-strong-random-local-key"
-```
-
-Authenticate one or more upstream accounts. The source-build commands are:
-
-```bash
-./cli-proxy-api --config ./config.yaml --codex-login   # ChatGPT/Codex account
-./cli-proxy-api --config ./config.yaml --claude-login  # Claude account
-```
-
-Gemini CLI OAuth requires CLIProxyAPI v7's
-[official Gemini CLI plugin](https://github.com/router-for-me/cpa-plugin-gemini-cli).
-Enable trusted plugins, install `gemini-cli` from CLIProxyAPI's official Plugin
-Store (the official registry is built in), and restart the proxy before running
-it with `--geminicli-login`; see the upstream
-[plugin management guide](https://help.router-for.me/management/api#plugins).
-Finally, start the source build with
-`./cli-proxy-api --config ./config.yaml` (Homebrew/systemd users should restart
-the installed service instead). Login flags, plugin packaging, and service paths
-can change, so check the linked upstream quick start when commands differ.
-
-Then open **Settings → Providers → Local OpenAI-compatible Proxy**, keep the
-Base URL at `http://127.0.0.1:8317/v1`, enter the same client API key, click
-**Load Models**, choose a model, and run **Test Connection**. The proxy's
-current official flows cover ChatGPT/Codex and Claude OAuth; Gemini CLI OAuth
-is supplied through its official plugin. Available models and quotas still
-depend on the connected account.
-
-Keep this integration on loopback. CLIProxyAPI's empty-host default listens on
-all IPv4 and IPv6 interfaces, TLS is off by default, and an empty `api-keys`
-list permits unauthenticated requests. Do not expose the proxy to a LAN or the
-public internet. This is an experimental, community-supported compatibility
-path that may change when provider authentication policies change; official
-provider API keys remain the stable option.
-
-The proxy process is local, but inference is not necessarily local: WebBrain's
-request context is forwarded to whichever upstream account the proxy selects.
-WebBrain stores only the proxy client key; upstream OAuth credentials remain in
-CLIProxyAPI.
+For the current desktop walkthrough, supported upstream sign-in labels,
+loopback hardening, provider-terms warnings, video, and troubleshooting, use the
+canonical [EasyCLIProxyAPI subscription proxy guide](https://webbrain.one/docs/easy-cli-proxy/).
+Keep the listener on `127.0.0.1`, require a strong random client key, and never
+publish the endpoint to a LAN or the internet. Official provider API keys remain
+the stable default.
 
 Ollama, llama.cpp, LM Studio, and LocalAI default to `visionMode: auto`. WebBrain asks
 the selected server for model capability metadata before enrichment and sends

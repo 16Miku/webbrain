@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>通过 EasyCLIProxyAPI 使用账户订阅 — WebBrain 用户指南</title>
+  <meta name="description" content="将 WebBrain 连接到 EasyCLIProxyAPI 的本地 OpenAI 兼容端点，并了解可执行文件、OAuth、账户和网络风险边界。">
+  <link rel="canonical" href="https://webbrain.one/docs/zh/easy-cli-proxy/">
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/docs/easy-cli-proxy/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/easy-cli-proxy/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/easy-cli-proxy/">
+  <link rel="icon" href="/favicon.png">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script>
+  <link rel="stylesheet" href="/docs/assets/docs.css?v=20260826">
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+</head>
+<body class="doc-page">
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><img src="/logo-github.png" alt=""><span>WebBrain</span><span class="brand-docs">用户指南</span></a><nav class="top-nav" aria-label="主导航"><a href="/">首页</a><a href="/docs/zh/" aria-current="page">文档</a><a href="/blog/">博客</a><a href="https://github.com/webbrain-one/webbrain">GitHub</a></nav><div class="header-tools"><a class="lang-switch" href="/docs/easy-cli-proxy/" aria-label="Read in English"><span>EN</span><span class="active">中文</span></a><button class="icon-button" type="button" data-theme-toggle aria-label="切换主题">☀</button><button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="打开文档菜单">☰</button></div></div></header>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" aria-label="文档目录"><div class="sidebar-group"><div class="sidebar-label">从这里开始</div><nav><a href="/docs/zh/">概览</a><a href="/docs/zh/faq/">常见问题</a></nav></div><div class="sidebar-group"><div class="sidebar-label">使用 WebBrain</div><nav><a href="/docs/zh/settings/">设置说明</a><a href="/docs/zh/providers/">提供商与模型</a><a href="/docs/zh/easy-cli-proxy/" aria-current="page">订阅代理</a><a href="/docs/zh/safety/">模式、安全与隐私</a><a href="/docs/zh/apocalypse-mode/">末日模式</a><a href="/docs/zh/formats/">导出与工作流</a><a href="/docs/zh/mcp/">MCP 服务器</a><a href="/docs/zh/lm-studio/">LM Studio 插件</a><a href="/docs/zh/ollama/">Ollama</a></nav></div><div class="sidebar-group"><div class="sidebar-label">开发者</div><nav><a href="https://github.com/webbrain-one/webbrain/blob/main/docs/providers-and-models.md">提供商内部原理 ↗</a></nav></div><div class="sidebar-group"><div class="sidebar-label">社区</div><nav><a href="https://discord.gg/cgC325ssfw">Discord 支持</a></nav></div></aside>
+    <main class="doc-main" id="main">
+      <div class="breadcrumb"><a href="/docs/zh/">文档</a> / <a href="/docs/zh/providers/">提供商与模型</a> / 订阅代理</div>
+      <section class="doc-hero"><div class="eyebrow">独立的本地兼容方案</div><h1>使用账户而不是 API 密钥，但不要忽视信任边界。</h1><p class="lede">EasyCLIProxyAPI 可以把支持的提供商账户暴露为一个本地 OpenAI 兼容端点。WebBrain 能使用该端点，但不会开发、审计、分发或认可这个代理程序。</p><p class="meta">最后核验：2026 年 8 月 26 日 · EasyCLIProxyAPI v0.2.62</p></section>
+
+      <section class="trust-ledger" aria-labelledby="trust-ledger-title">
+        <div class="trust-ledger-heading"><span class="trust-signal" aria-hidden="true"></span><div><div class="eyebrow">信任边界</div><h2 id="trust-ledger-title">先分清每一部分由谁负责。</h2></div></div>
+        <dl>
+          <div><dt>WebBrain 集成范围</dt><dd>仅限本地 OpenAI 兼容 HTTP 端点</dd></div>
+          <div><dt>可执行文件与更新</dt><dd><a href="https://github.com/router-for-me/EasyCLIProxyAPI">EasyCLIProxyAPI 上游项目</a></dd></div>
+          <div><dt>WebBrain 审计或担保</dt><dd><strong>没有</strong></dd></div>
+          <div><dt>更安全、稳定的默认方案</dt><dd>提供商签发的 API 密钥</dd></div>
+        </dl>
+      </section>
+
+      <section class="doc-section" id="before-download"><div class="eyebrow">下载前请阅读</div><h2>这是一个能够访问 OAuth 凭据的第三方可执行程序。</h2><div class="callout danger"><strong class="callout-title">并非由 WebBrain 开发、托管、审计或担保</strong><p>EasyCLIProxyAPI 会管理提供商登录信息、本地凭据、另行安装的 CLIProxyAPI 核心及其自身更新。请审查源代码和当前版本，只从上游仓库下载，并在上游提供摘要时核对发行文件。WebBrain 无法检查未来的上游构建会执行什么操作。</p></div><p>使用本地代理并不代表推理也在本地完成。网页上下文和提示词仍会发送到代理所选的提供商账户。提供商规则可能变化；某个 OAuth 流程能够运行，不代表提供商允许所有第三方客户端使用它。</p><ul><li><strong>OpenAI：</strong>ChatGPT 订阅与 API 计费是两个独立产品。请查看<a href="https://help.openai.com/en/articles/6950777">订阅与 API 的区别</a>以及<a href="https://openai.com/policies/terms-of-use/">当前使用条款</a>。</li><li><strong>Anthropic：</strong>其消费者条款限制通过 API 密钥或其他明确许可的接口之外的自动化或非人工访问。请查看<a href="https://www.anthropic.com/legal/consumer-terms">当前消费者条款</a>。</li><li><strong>Google：</strong>Gemini CLI 条款说明，其 OAuth 身份验证不得用于第三方工具或服务。请查看<a href="https://geminicli.com/docs/resources/tos-privacy/">当前 Gemini CLI 条款</a>。</li><li><strong>Kimi 和 xAI：</strong>上游提供 OAuth 只代表技术能力，并不代表获得许可或保证兼容。登录前请检查与你的产品、套餐、地区和账户对应的条款。</li></ul><p>本指南介绍的是兼容性配置，不构成法律建议。账户、数据和合规决定仍由你负责。</p><div class="doc-actions"><a class="doc-action primary" href="https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest">打开上游发行页面 ↗</a><a class="doc-action" href="https://github.com/router-for-me/EasyCLIProxyAPI">审查源代码 ↗</a></div></section>
+
+      <section class="doc-section" id="supported"><h2>上游应用目前提供的功能</h2><p>EasyCLIProxyAPI 目前列出了五种基于浏览器的登录方式。这些名称来自上游应用，并不是 WebBrain 的官方集成；它们可能停止工作，也可能在没有通知的情况下暴露不同模型。</p><div class="table-wrap"><table><thead><tr><th>EasyCLIProxyAPI 名称</th><th>账户类别</th><th>指向本指南的 WebBrain 卡片</th></tr></thead><tbody><tr><td>Codex OAuth</td><td>OpenAI / ChatGPT / Codex</td><td>OpenAI</td></tr><tr><td>Claude OAuth</td><td>Anthropic / Claude</td><td>Anthropic Claude</td></tr><tr><td>Antigravity OAuth</td><td>Google</td><td>Google Gemini</td></tr><tr><td>Kimi OAuth</td><td>Kimi</td><td>Kimi</td></tr><tr><td>xAI OAuth</td><td>xAI / Grok</td><td>xAI</td></tr></tbody></table></div><p>这五种方式都通过同一个<strong>本地 OpenAI 兼容代理</strong>卡片连接 WebBrain。OpenAI、Anthropic、Gemini、Kimi 和 xAI 的直连卡片仍然使用 API 密钥。</p></section>
+
+      <section class="doc-section" id="video"><div class="walkthrough-card"><div class="walkthrough-copy"><div class="eyebrow">2 分 18 秒</div><h2>完整观看一次连接流程。</h2><p>本教程使用普通话旁白，演示 Antigravity OAuth、回环端点、模型发现、连接测试、询问模式和操作模式。画面仍保留英文字幕；简体中文字幕可在播放器中手动开启，默认关闭，以免两层字幕同时显示。后续上游版本的界面标签可能变化，请使用已安装版本显示的确切端点。</p></div><div class="walkthrough-player"><video controls preload="metadata" playsinline poster="/docs/assets/media/easy-cli-proxy-poster.webp"><source src="/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.mp4" type="video/mp4"><track kind="captions" srclang="zh-CN" label="简体中文" src="/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.vtt">你的浏览器不支持嵌入式视频。<a href="/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.mp4">下载普通话教程视频</a>。</video></div><div class="walkthrough-actions"><a href="/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.mp4">下载普通话视频</a><a href="/docs/assets/media/easy-cli-proxy-tutorial.zh-CN.vtt">中文字幕</a><span class="walkthrough-meta">H.264 · AAC · 1080p · 12.6 MB</span></div></div></section>
+
+      <section class="doc-section" id="flow"><h2>一句话说明请求边界</h2><div class="bridge-map" aria-label="从 WebBrain 到模型提供商的请求路径"><div class="bridge-node"><strong>WebBrain</strong><span>浏览器扩展</span></div><div class="bridge-arrow" aria-hidden="true">→</div><div class="bridge-node local"><strong>127.0.0.1:8317</strong><span>EasyCLIProxyAPI + CLIProxyAPI</span></div><div class="bridge-arrow" aria-hidden="true">→</div><div class="bridge-node"><strong>提供商账户</strong><span>远程推理与账户规则</span></div></div><p>第一段连接留在你的电脑上，第二段并非如此。EasyCLIProxyAPI 在 WebBrain 之外保存上游 OAuth 信息；WebBrain 只保存你在设置中输入的本地代理客户端密钥。</p></section>
+
+      <section class="doc-section" id="setup"><div class="eyebrow">配置</div><h2>连接本地端点</h2><ol class="step-list"><li><strong>检查并安装上游程序。</strong>从 GitHub 发行页面下载 EasyCLIProxyAPI。在<strong>版本管理</strong>中安装匹配的 CLIProxyAPI 核心。</li><li><strong>把代理限制在回环地址。</strong>监听地址保持为 <code>127.0.0.1</code>，关闭局域网访问，绝不要转发端口 <code>8317</code>。用高强度随机值替换简短或默认的客户端密钥；根据版本不同，相关控件可能位于高级设置或 API 访问中。</li><li><strong>只授权你确实要使用的账户。</strong>打开 <strong>OAuth</strong>，选择 Codex、Claude、Antigravity、Kimi 或 xAI，然后在提供商页面完成登录。如果提供商展示了你不接受的条款或权限，请立即停止。</li><li><strong>启动核心并复制 OpenAI 兼容 URL。</strong>在首页启动运行时并复制 OpenAI 端点。常见默认值是 <code>http://127.0.0.1:8317/v1</code>；应以当前运行版本显示的值为准。</li><li><strong>打开 WebBrain 设置 → 提供商。</strong>搜索<strong>本地 OpenAI 兼容代理</strong>。粘贴服务器 URL 和代理客户端密钥，而不是提供商的 OAuth 令牌。</li><li><strong>加载并选择模型。</strong>点击<strong>加载模型</strong>，选择代理暴露的模型，填写真实上下文窗口；只有该模型确实接受图像时才启用视觉。</li><li><strong>保存、测试，再启用。</strong>运行<strong>测试连接</strong>并确认出现绿色成功结果，然后再把它设为聊天提供商。先在非敏感内容上使用询问模式测试。</li></ol><div class="callout warning"><strong class="callout-title">不要使用 <code>0.0.0.0</code>、局域网 IP、隧道或公开反向代理</strong><p>本地客户端密钥不是安全的互联网公开认证系统。任何获得密钥的进程都可以通过已登录的提供商账户发送请求。</p></div></section>
+
+      <section class="doc-section" id="troubleshooting"><h2>按症状排查问题</h2><div class="table-wrap"><table><thead><tr><th>症状</th><th>可能原因</th><th>检查方法</th></tr></thead><tbody><tr><td>连接被拒绝</td><td>CLIProxyAPI 核心未启动或端口已改变。</td><td>启动运行时，刷新首页，然后重新复制显示的 OpenAI URL。</td></tr><tr><td>未授权</td><td>WebBrain 中的密钥与代理客户端密钥不一致。</td><td>重新复制本地客户端密钥。绝不要把上游 OAuth 令牌粘贴到 WebBrain。</td></tr><tr><td>没有加载到模型</td><td>OAuth 未完成、账户未暴露兼容模型，或上游支持已经变化。</td><td>检查 OAuth/账户状态和 EasyCLIProxyAPI 日志，然后查看当前发行说明。</td></tr><tr><td>文本可用但图像失败</td><td>所选模型别名不接受图像输入。</td><td>关闭视觉，或选择代理报告为支持视觉的模型。</td></tr><tr><td>配额或账户错误</td><td>上游账户、套餐、地区或提供商政策拒绝了请求。</td><td>停止重试，直接检查提供商账户，并在可用时改用官方 API 密钥。</td></tr><tr><td>更新后模型或行为异常</td><td>桌面应用、核心、插件或提供商协议发生变化。</td><td>比较版本、查看发行说明，然后重新运行“加载模型”和“测试连接”。</td></tr></tbody></table></div></section>
+
+      <section class="doc-section" id="limits"><h2>WebBrain 明确不会做的事</h2><ul><li>不会捆绑、启动、更新或验证 EasyCLIProxyAPI 或 CLIProxyAPI。</li><li>不会接收或管理上游 OAuth 刷新令牌。</li><li>不会承诺消费者订阅包含类似 API 的访问或自动化访问权限。</li><li>不会绕过提供商配额、地区限制、账户审查或条款。</li><li>不会让远程托管的推理变成私密或设备端推理。</li></ul></section>
+
+      <nav class="next-links" aria-label="后续指南"><a href="/docs/zh/providers/"><span>上一篇</span>← 提供商与模型</a><a href="/docs/zh/safety/"><span>推荐阅读</span>模式、安全与隐私 →</a></nav>
+    </main>
+    <aside class="on-this-page" aria-label="本页内容"><h2>本页内容</h2><a href="#before-download">下载前须知</a><a href="#supported">支持的登录方式</a><a href="#video">视频教程</a><a href="#flow">请求边界</a><a href="#setup">配置</a><a href="#troubleshooting">故障排查</a><a href="#limits">明确限制</a></aside>
+  </div>
+  <footer class="site-footer"><div class="footer-inner"><span>WebBrain 用户指南 · 独立兼容性文档</span><div class="footer-links"><a href="/privacy">隐私</a><a href="https://github.com/webbrain-one/webbrain/issues">报告问题</a></div></div></footer><script src="/docs/assets/docs.js?v=20260809"></script>
+</body>
+</html>

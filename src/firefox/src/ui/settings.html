@@ -425,6 +425,91 @@
       white-space: nowrap;
     }
 
+    .provider-subscription-banner {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) 28px;
+      align-items: center;
+      gap: 10px;
+      margin: -2px 0 14px;
+      padding: 10px 10px 10px 12px;
+      border: 1px solid var(--border);
+      border-inline-start: 3px solid var(--warning);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--text2);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .provider-subscription-banner p { margin: 0; }
+    .provider-subscription-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: rgba(255, 152, 0, 0.13);
+      font-size: 15px;
+      line-height: 1;
+    }
+    .provider-subscription-banner a,
+    .provider-subscription-guide a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .provider-subscription-banner a:hover,
+    .provider-subscription-guide a:hover { text-decoration: underline; }
+    .provider-subscription-dismiss {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text2);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .provider-subscription-dismiss:hover {
+      border-color: var(--border);
+      background: var(--bg3);
+      color: var(--text);
+    }
+    .provider-subscription-dismiss:focus-visible,
+    .provider-subscription-banner a:focus-visible,
+    .provider-subscription-guide a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .provider-subscription-guide {
+      margin: 0 0 12px;
+      padding: 8px 10px;
+      border-inline-start: 2px solid var(--warning);
+      border-radius: 0 6px 6px 0;
+      background: rgba(255, 152, 0, 0.055);
+      color: var(--text2);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    [dir="rtl"] .provider-subscription-guide { border-radius: 6px 0 0 6px; }
+    .provider-subscription-guide-icon {
+      display: inline-block;
+      margin-inline-end: 5px;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .provider-subscription-guide a { margin-inline-start: 4px; }
+    .provider-local-proxy-guide { border-inline-start-color: var(--accent); }
+    @media (max-width: 600px) {
+      .provider-subscription-banner {
+        grid-template-columns: 28px minmax(0, 1fr) 28px;
+        align-items: start;
+      }
+      .provider-subscription-banner p { grid-column: 2; }
+      .provider-subscription-dismiss { grid-column: 3; grid-row: 1; }
+    }
+
+
     .provider-filter-bar {
       display: flex;
       align-items: center;
