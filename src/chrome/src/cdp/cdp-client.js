@@ -3763,10 +3763,32 @@ export class CDPClient {
    */
   async clickElement(tabId, selector, options = {}) {
     const trustedOnly = options?.trustedOnly === true;
+    const abortSignal = options?.abortSignal || null;
+    const throwIfAborted = () => {
+      if (!abortSignal?.aborted) return;
+      if (abortSignal.reason instanceof Error) throw abortSignal.reason;
+      const error = new Error('The click was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    };
+    const cancelPressedPointer = async () => {
+      try {
+        await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: -1, y: -1, button: 'left', buttons: 1, clickCount: 0,
+        });
+      } catch {}
+      try {
+        await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0, clickCount: 0,
+        });
+      } catch {}
+    };
     const beforeDispatch = typeof options?.beforeDispatch === 'function'
       ? options.beforeDispatch
       : null;
+    throwIfAborted();
     const info = await this.resolveSelector(tabId, selector, options);
+    throwIfAborted();
     if (!info) return { success: false, dispatched: false, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, error: info.error };
 
@@ -3800,6 +3822,7 @@ export class CDPClient {
     if (info.inViewport && info.hitOk) {
       try {
         await this.armFileInputClickGuard(tabId);
+        throwIfAborted();
         const rect = {
           x: Math.round(info.x - (info.width || 1) / 2),
           y: Math.round(info.y - (info.height || 1) / 2),
@@ -3809,6 +3832,7 @@ export class CDPClient {
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
         });
+        throwIfAborted();
         if (beforeDispatch) {
           const validation = await beforeDispatch({
             x: info.x,
@@ -3829,9 +3853,16 @@ export class CDPClient {
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,
         });
+        try {
+          throwIfAborted();
+        } catch (error) {
+          await cancelPressedPointer();
+          throw error;
+        }
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: info.x, y: info.y, button: 'left', buttons: 0, clickCount: 1,
         });
+        throwIfAborted();
         const blockedFileInput = await this.consumeFileInputClickGuard(tabId);
         if (blockedFileInput?.blocked) {
           return this.fileInputClickBlockedResult(
@@ -3851,6 +3882,7 @@ export class CDPClient {
           rect,
         };
       } catch (e) {
+        if (abortSignal?.aborted) throwIfAborted();
         // fall through to fallback
       }
     }
@@ -4210,9 +4242,38 @@ export class CDPClient {
    *      shadow root with no usable hit point).
    */
   async typeText(tabId, selector, text, clear = false, expectedBackendNodeId = null, resolveOptions = {}) {
+    const abortSignal = resolveOptions?.abortSignal || null;
+    const beforeDispatch = typeof resolveOptions?.beforeDispatch === 'function'
+      ? resolveOptions.beforeDispatch
+      : null;
+    const throwIfAborted = () => {
+      if (!abortSignal?.aborted) return;
+      if (abortSignal.reason instanceof Error) throw abortSignal.reason;
+      const error = new Error('Text entry was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    };
+    const markDispatch = () => {
+      throwIfAborted();
+      if (beforeDispatch) beforeDispatch();
+    };
+    const cancelPressedPointer = async () => {
+      try {
+        await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: -1, y: -1, button: 'left', buttons: 1, clickCount: 0,
+        });
+      } catch {}
+      try {
+        await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0, clickCount: 0,
+        });
+      } catch {}
+    };
+    throwIfAborted();
     const expectedNodeId = Number(expectedBackendNodeId);
     if (Number.isInteger(expectedNodeId) && expectedNodeId > 0) {
       const currentInfo = await this.resolveSelector(tabId, selector);
+      throwIfAborted();
       if (!currentInfo) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
       if (currentInfo.error) return { success: false, dispatched: false, noDispatch: true, error: currentInfo.error };
 
@@ -4264,6 +4325,7 @@ export class CDPClient {
         }
         const trustedSelector = `[${markerAttribute}="${marker}"]`;
         return await this.typeText(tabId, trustedSelector, text, clear, null, {
+          ...resolveOptions,
           requireUnique: true,
           dispatchBindingToken: marker,
         });
@@ -4294,6 +4356,7 @@ export class CDPClient {
     }
 
     const info = await this.resolveSelector(tabId, selector, resolveOptions);
+    throwIfAborted();
     if (!info) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, noDispatch: true, error: info.error };
     const dispatchBindingToken = String(resolveOptions?.dispatchBindingToken || '');
@@ -4343,6 +4406,7 @@ export class CDPClient {
           };
         })()
       `);
+      throwIfAborted();
       const sInfo = result?.result?.value;
       if (!sInfo?.success) {
         return {
@@ -4354,24 +4418,30 @@ export class CDPClient {
       }
 
       // Close any open native dropdown
+      markDispatch();
       await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
+      throwIfAborted();
       await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
+      throwIfAborted();
 
       // Navigate with arrow keys
       const delta = sInfo.targetIndex - sInfo.currentIndex;
       const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
       const arrowVK = delta > 0 ? 40 : 38;
       for (let i = 0; i < Math.abs(delta); i++) {
+        markDispatch();
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
+        throwIfAborted();
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
+        throwIfAborted();
       }
       const selectorJSONAfter = JSON.stringify(selector);
       const verifiedResult = await this.evaluate(tabId, `
@@ -4416,6 +4486,7 @@ export class CDPClient {
       selector,
       nodeId: info.nodeId,
     });
+    throwIfAborted();
     let focused = false;
     let dispatched = false;
 
@@ -4490,19 +4561,32 @@ export class CDPClient {
 
     // Focus path A: real mouse click (most reliable, fires trusted events).
     if (!focused && info.inViewport && info.hitOk) {
+      let pointerPressed = false;
       try {
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
         });
+        throwIfAborted();
         dispatched = true;
+        markDispatch();
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,
         });
+        pointerPressed = true;
+        throwIfAborted();
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: info.x, y: info.y, button: 'left', buttons: 0, clickCount: 1,
         });
+        pointerPressed = false;
+        throwIfAborted();
         focused = true;
-      } catch (e) { /* try next */ }
+      } catch (e) {
+        if (abortSignal?.aborted) {
+          if (pointerPressed) await cancelPressedPointer();
+          throwIfAborted();
+        }
+        // try next
+      }
     }
 
     // Focus path B: DOM.focus by nodeId (closed shadow root case).
@@ -4538,29 +4622,42 @@ export class CDPClient {
       try {
         // Select all
         dispatched = true;
+        markDispatch();
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2 /* Ctrl */, windowsVirtualKeyCode: 65,
         });
+        throwIfAborted();
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
         });
+        throwIfAborted();
         // Delete selection
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
         });
+        throwIfAborted();
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
         });
-      } catch (e) { /* best effort */ }
+        throwIfAborted();
+      } catch (e) {
+        if (abortSignal?.aborted) throwIfAborted();
+        // best effort
+      }
     }
 
     // Type via Input.insertText — atomic, fires beforeinput/input correctly.
     let typed = false;
     try {
       dispatched = true;
+      markDispatch();
       await this.sendCommand(tabId, 'Input.insertText', { text });
+      throwIfAborted();
       typed = true;
-    } catch (e) { /* fall through to JS setter */ }
+    } catch (e) {
+      if (abortSignal?.aborted) throwIfAborted();
+      // fall through to JS setter
+    }
 
     if (!typed) {
       // JS fallback using native setter. Properly escape via JSON.
@@ -4568,6 +4665,7 @@ export class CDPClient {
       const textJSON = JSON.stringify(text);
       const targetTokenJSON = JSON.stringify(dispatchBindingToken);
       dispatched = true;
+      markDispatch();
       const result = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
@@ -4618,6 +4716,7 @@ export class CDPClient {
           };
         })()
       `);
+      throwIfAborted();
       const fallbackResult = result?.result?.value || { success: false, error: 'Type failed' };
       if (fallbackResult.success === false && fallbackResult.dispatched == null) {
         fallbackResult.dispatched = dispatched;

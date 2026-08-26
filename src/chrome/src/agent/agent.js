@@ -10233,6 +10233,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (error?.code === 'content_action_timeout') {
           return this._contentActionTimeoutResult('click_ax', error);
         }
+        // A rejected first message is the no-receiver path that triggers
+        // injection; no page click was delivered unless the retry starts.
+        dispatchState.started = false;
         try {
           throwIfAborted();
           await this._injectCoreContentScripts(tabId);
@@ -20172,6 +20175,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       clickResult = await cdpClient.clickElement(tabId, trustedSelector, {
         trustedOnly: true,
         requireUnique: true,
+        abortSignal,
       });
       recoveryState.clickResult = clickResult;
       this._throwIfAborted(abortSignal);
@@ -20763,18 +20767,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? executionContext
       : {};
     if (EARLY_CDP_ACTION_TOOLS.has(name) && !context._contentActionAbortSignal) {
+      const dispatchState = { started: false };
       try {
         return await this._withContentActionDeadline(
           abortSignal => this._executeToolImpl(tabId, name, args, onUpdate, {
             ...context,
             _contentActionAbortSignal: abortSignal,
+            _contentActionDispatchState: dispatchState,
           }),
           name,
           this._contentActionDeadlineMs(name, args),
         );
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
-          return this._contentActionTimeoutResult(name, error);
+          if (dispatchState.started) return this._contentActionTimeoutResult(name, error);
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No ${name} input was sent because action preparation did not finish. Re-observe the page before retrying.`,
+          };
         }
         throw error;
       }
@@ -20787,7 +20801,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? executionContext
       : {};
     const earlyCdpAbortSignal = dispatchContext._contentActionAbortSignal || null;
+    const earlyCdpDispatchState = dispatchContext._contentActionDispatchState || { started: false };
     const throwIfEarlyCdpAborted = () => this._throwIfAborted(earlyCdpAbortSignal);
+    const markEarlyCdpDispatched = () => { earlyCdpDispatchState.started = true; };
     args = this._normalizeContinuationToolArgs(name, args);
     let coordinatePoint = null;
     let coordinateDiagnostic = null;
@@ -25509,6 +25525,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 };
               }
               dispatched = true;
+              markEarlyCdpDispatched();
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
               });
@@ -25551,6 +25568,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
             if (args.clear) {
               dispatched = true;
+              markEarlyCdpDispatched();
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
               });
@@ -25568,6 +25586,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               throwIfEarlyCdpAborted();
             }
             dispatched = true;
+            markEarlyCdpDispatched();
             await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
             throwIfEarlyCdpAborted();
             const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
@@ -25649,6 +25668,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               args.text || '',
               !!args.clear,
               expectedBackendNodeId,
+              {
+                abortSignal: earlyCdpAbortSignal,
+                beforeDispatch: markEarlyCdpDispatched,
+              },
             );
             throwIfEarlyCdpAborted();
           } catch (error) {
@@ -25751,6 +25774,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
             // Close any open native dropdown first
             dispatched = true;
+            markEarlyCdpDispatched();
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
             });
@@ -25817,6 +25841,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           throwIfEarlyCdpAborted();
           if (args.clear) {
             dispatched = true;
+            markEarlyCdpDispatched();
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
             });
@@ -25834,6 +25859,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             throwIfEarlyCdpAborted();
           }
           dispatched = true;
+          markEarlyCdpDispatched();
           await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
           throwIfEarlyCdpAborted();
           const verified = await cdpClient.verifyTextEntry(tabId, {
@@ -25956,6 +25982,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         for (let i = 0; i < repeat; i++) {
           keyDispatchAttempted = true;
+          markEarlyCdpDispatched();
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyDown',
             key,
@@ -26031,10 +26058,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // listening to mouseenter/mouseover/pointerover. We move twice (once
         // ~10px outside, once at center) so sites that only fire on the
         // first crossing of the element boundary still see a transition.
+        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: Math.max(0, x - 10), y, button: 'none', buttons: 0,
         });
         throwIfEarlyCdpAborted();
+        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
@@ -26103,6 +26132,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // mid-drag waypoints are what HTML5 dnd dragenter/dragover handlers
         // listen to; Trello/Linear/Notion need at least a handful so the
         // drop indicator can settle before the release.
+        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: x1, y: y1, button: 'none', buttons: 0,
         });
@@ -26324,13 +26354,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // accessibility-tree.js must load first so content.js's
         // get_accessibility_tree / click_ax / type_ax handlers can reach
         // window.__generateAccessibilityTree and window.__wb_ax_lookup.
+        let retryDispatchStarted = false;
         try {
           await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+          retryDispatchStarted = true;
           response = await dispatchContentAction();
         } catch (e2) {
           if (e2?.code === 'content_action_timeout') {
             return this._withCoordinateReconciliation(
-              this._contentActionTimeoutResult(name, e2),
+              retryDispatchStarted
+                ? this._contentActionTimeoutResult(name, e2)
+                : {
+                    success: false,
+                    dispatched: false,
+                    noDispatch: true,
+                    outcomeUnknown: false,
+                    retryable: true,
+                    error: `${e2.message} No ${name} action was sent because content-script injection did not finish. Re-observe the page before retrying.`,
+                  },
               coordinateDiagnostic,
             );
           }

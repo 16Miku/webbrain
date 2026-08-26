@@ -7057,7 +7057,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, abortSignal = null, dispatchState = { started: false }) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, dispatchState = { started: false }) {
+    try {
+      return await this._withContentActionDeadline(
+        deadlineAbortSignal => this._dispatchClickAxImpl(
+          tabId,
+          args,
+          axScope,
+          dispatchBinding,
+          messageRecipientContext,
+          deadlineAbortSignal,
+          upstreamAbortSignal,
+          dispatchState,
+        ),
+        'click_ax',
+      );
+    } catch (error) {
+      if (error?.code !== 'content_action_timeout') throw error;
+      if (dispatchState.started) return this._contentActionTimeoutResult('click_ax', error);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+        error: `${error.message} No click was sent because click preparation did not finish. Re-observe the page before retrying.`,
+      };
+    }
+  }
+
+  async _dispatchClickAxImpl(
+    tabId,
+    args,
+    axScope = null,
+    dispatchBinding = null,
+    messageRecipientContext = {},
+    deadlineAbortSignal = null,
+    upstreamAbortSignal = null,
+    dispatchState = { started: false },
+  ) {
+    const throwIfAborted = () => {
+      this._throwIfAborted(upstreamAbortSignal);
+      this._throwIfAborted(deadlineAbortSignal);
+    };
+    throwIfAborted();
     let contentArgs = axScope?.documentToken
       ? {
           ...args,
@@ -7079,7 +7122,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? { frameId: dispatchBinding.frameId }
       : undefined;
     const send = () => {
-      this._throwIfAborted(abortSignal);
+      throwIfAborted();
       dispatchState.started = true;
       return browser.tabs.sendMessage(tabId, {
         target: 'content',
@@ -7089,9 +7132,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
     const finish = async (response) => {
-      this._throwIfAborted(abortSignal);
+      throwIfAborted();
       response = await this._settleContentFilePickerGuard(tabId, response);
-      this._throwIfAborted(abortSignal);
+      throwIfAborted();
       if (response?.documentToken && (
         response.documentChanged === true
         || response.routeChanged === true
@@ -7105,16 +7148,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
 
     try {
-      this._throwIfAborted(abortSignal);
+      throwIfAborted();
       return await finish(await dispatch());
     } catch (error) {
       if (error?.code === 'content_action_timeout') {
         return this._contentActionTimeoutResult('click_ax', error);
       }
+      // A rejected first message is the no-receiver path that triggers
+      // injection; no page click was delivered unless the retry starts.
+      dispatchState.started = false;
       try {
-        this._throwIfAborted(abortSignal);
+        throwIfAborted();
         await this._injectCoreContentScripts(tabId);
-        this._throwIfAborted(abortSignal);
+        throwIfAborted();
         return await finish(await dispatch());
       } catch (retryError) {
         if (retryError?.code === 'content_action_timeout') {
@@ -20924,8 +20970,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
       }
       // Content script might not be injected — try injecting it
+      let retryDispatchStarted = false;
       try {
         await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+        retryDispatchStarted = true;
         let response = await dispatchContentAction();
         if (name === 'click') {
           response = await this._settleContentFilePickerGuard(tabId, response);
@@ -20960,7 +21008,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch (e2) {
         if (e2?.code === 'content_action_timeout') {
           return this._withCoordinateReconciliation(
-            this._contentActionTimeoutResult(name, e2),
+            retryDispatchStarted
+              ? this._contentActionTimeoutResult(name, e2)
+              : {
+                  success: false,
+                  dispatched: false,
+                  noDispatch: true,
+                  outcomeUnknown: false,
+                  retryable: true,
+                  error: `${e2.message} No ${name} action was sent because content-script injection did not finish. Re-observe the page before retrying.`,
+                },
             coordinateDiagnostic,
           );
         }

@@ -2902,7 +2902,9 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.clickElement = async (_tabId, selector, options) => {
       clickedSelector = selector;
-      assert.deepEqual(options, { trustedOnly: true, requireUnique: true });
+      assert.equal(options.trustedOnly, true);
+      assert.equal(options.requireUnique, true);
+      assert.ok(options.abortSignal instanceof AbortSignal);
       trustedClickCompletedAt = Date.now();
       return { success: true, method: 'cdp-mouse', rect: { x: 1, y: 2, w: 20, h: 20 } };
     };
@@ -3142,7 +3144,9 @@ test('Chrome set_checked fails closed when marker verification resolves another 
     };
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.clickElement = async (_tabId, _selector, options) => {
-      assert.deepEqual(options, { trustedOnly: true, requireUnique: true });
+      assert.equal(options.trustedOnly, true);
+      assert.equal(options.requireUnique, true);
+      assert.ok(options.abortSignal instanceof AbortSignal);
       return { success: true, method: 'cdp-mouse' };
     };
 
@@ -50831,6 +50835,58 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(trustedOnly.trusted, false);
   assert.equal(trustedOnlyFallbackCalls, 0, 'trusted-only clicks must not invoke DOM/JS fallbacks');
 
+  client.resolveSelector = async () => ({
+    inViewport: true,
+    hitOk: true,
+    x: 30,
+    y: 40,
+    width: 20,
+    height: 10,
+    tag: 'INPUT',
+    type: 'checkbox',
+  });
+  client.armFileInputClickGuard = async () => ({ armed: true });
+  let releasePress;
+  let markPressStarted;
+  const pressStarted = new Promise(resolve => { markPressStarted = resolve; });
+  const delayedPress = new Promise(resolve => { releasePress = resolve; });
+  const cancelledEvents = [];
+  client.sendCommand = async (_tabId, method, params) => {
+    if (method !== 'Input.dispatchMouseEvent') return {};
+    cancelledEvents.push(params);
+    if (params.type === 'mousePressed') {
+      markPressStarted();
+      return delayedPress;
+    }
+    return {};
+  };
+  const controller = new AbortController();
+  const timeoutError = new Error('set_checked did not return a page response within 60 seconds.');
+  timeoutError.code = 'content_action_timeout';
+  const pendingCancelledClick = client.clickElement(42, '#trusted-checkbox', {
+    trustedOnly: true,
+    abortSignal: controller.signal,
+  });
+  await pressStarted;
+  controller.abort(timeoutError);
+  releasePress({});
+  await assert.rejects(pendingCancelledClick, candidate => candidate === timeoutError);
+  assert.deepEqual(
+    cancelledEvents.map(event => ({
+      type: event.type,
+      x: event.x,
+      y: event.y,
+      clickCount: event.clickCount,
+    })),
+    [
+      { type: 'mouseMoved', x: 30, y: 40, clickCount: undefined },
+      { type: 'mousePressed', x: 30, y: 40, clickCount: 1 },
+      { type: 'mouseMoved', x: -1, y: -1, clickCount: 0 },
+      { type: 'mouseReleased', x: -1, y: -1, clickCount: 0 },
+    ],
+    'expired trusted selector press must unwind off-target without a normal release',
+  );
+
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cdp/cdp-client.js'), 'utf8');
   assert.match(
     source,
@@ -87435,12 +87491,78 @@ test('Chrome early CDP actions start their deadline before debugger attachment',
     const result = await agent.executeTool(47, 'type_text', { text: 'late text' });
     assert.equal(inputDispatches, 0, 'a late debugger attachment reached text dispatch');
     assert.equal(result.success, false);
-    assert.equal(result.dispatched, true);
-    assert.equal(result.outcomeUnknown, true);
-    assert.equal(result.retryable, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome selector typing classifies deadline expiry at the first mutating CDP command', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalTypeText = cdpClientCh.typeText;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 50, url: 'https://example.test/' }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+
+    for (const dispatchStarted of [false, true]) {
+      let releaseType;
+      let markTypeStarted;
+      const typeStarted = new Promise(resolve => { markTypeStarted = resolve; });
+      const delayedType = new Promise(resolve => { releaseType = resolve; });
+      cdpClientCh.typeText = async (_tabId, _selector, _text, _clear, _backendNodeId, options) => {
+        assert.ok(options.abortSignal instanceof AbortSignal);
+        if (dispatchStarted) options.beforeDispatch();
+        markTypeStarted();
+        await delayedType;
+        return { success: false, dispatched: dispatchStarted };
+      };
+
+      const agent = new AgentCh({});
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'type_text');
+        const error = new Error('type_text did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await typeStarted;
+        controller.abort(error);
+        releaseType();
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(
+        50,
+        'type_text',
+        { selector: '#title', text: 'late text' },
+        null,
+        { dispatchBinding: { token: 'selector-binding', frameId: 0, backendNodeId: 321 } },
+      );
+      assert.equal(result.success, false);
+      assert.equal(result.dispatched, dispatchStarted);
+      assert.equal(result.outcomeUnknown, dispatchStarted);
+      assert.equal(result.retryable, !dispatchStarted);
+      assert.equal(result.noDispatch, dispatchStarted ? undefined : true);
+    }
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.typeText = originalTypeText;
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
   }
@@ -87952,6 +88074,135 @@ test('Firefox bounds Arrow-key snapshots before and after dispatch', async () =>
     assert.equal(afterResult.dispatched, true);
     assert.equal(afterResult.outcomeUnknown, true);
     assert.equal(afterResult.retryable, false);
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('content-script injection timeouts remain pre-dispatch in Chrome and Firefox', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, runtimeName] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      let sendAttempts = 0;
+      const runtime = {
+        tabs: {
+          get: async () => ({ id: 47, url: 'https://example.test/' }),
+          sendMessage: async () => {
+            sendAttempts += 1;
+            throw new Error('Receiving end does not exist');
+          },
+        },
+      };
+      globalThis[runtimeName] = runtime;
+
+      let releaseInjection;
+      let markInjectionStarted;
+      const injectionStarted = new Promise(resolve => { markInjectionStarted = resolve; });
+      const delayedInjection = new Promise(resolve => { releaseInjection = resolve; });
+      const agent = new AgentClass({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._injectCoreContentScripts = async () => {
+        markInjectionStarted();
+        return delayedInjection;
+      };
+      if (label === 'chrome') {
+        agent._chromeProtectedPageFailure = async () => null;
+        agent._currentUrl = async () => 'https://example.test/';
+        agent._clickProgressSnapshot = async () => '{"text":"before"}';
+      }
+
+      let deadlineCalls = 0;
+      const injectionDeadlineCall = label === 'chrome' ? 3 : 2;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        deadlineCalls += 1;
+        assert.equal(toolName, 'click');
+        if (deadlineCalls !== injectionDeadlineCall) {
+          return operation(new AbortController().signal);
+        }
+        const error = new Error('click did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await injectionStarted;
+        controller.abort(error);
+        releaseInjection();
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(
+        47,
+        'click',
+        { index: 1 },
+        null,
+        { dispatchBinding: { token: `${label}-bound-click`, frameId: 0 } },
+      );
+      assert.equal(sendAttempts, 1, `${label}: injection timeout retried the click`);
+      assert.equal(result.success, false, `${label}: injection timeout reported success`);
+      assert.equal(result.dispatched, false, `${label}: injection timeout claimed a click`);
+      assert.equal(result.noDispatch, true, `${label}: injection timeout lost its no-dispatch marker`);
+      assert.equal(result.outcomeUnknown, false, `${label}: injection timeout reported an unknown outcome`);
+      assert.equal(result.retryable, true, `${label}: injection timeout blocked safe recovery`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Firefox click_ax bounds content-script injection before retry dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  let sendAttempts = 0;
+  let releaseInjection;
+  let markInjectionStarted;
+  const injectionStarted = new Promise(resolve => { markInjectionStarted = resolve; });
+  const delayedInjection = new Promise(resolve => { releaseInjection = resolve; });
+  try {
+    globalThis.browser = {
+      tabs: {
+        sendMessage: async () => {
+          sendAttempts += 1;
+          throw new Error('Receiving end does not exist');
+        },
+      },
+    };
+    const agent = new AgentFx({});
+    agent._injectCoreContentScripts = async () => {
+      markInjectionStarted();
+      return delayedInjection;
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click_ax');
+      if (deadlineCalls === 2) return operation(new AbortController().signal);
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await injectionStarted;
+      controller.abort(error);
+      releaseInjection();
+      await started;
+      throw error;
+    };
+
+    const result = await agent._dispatchClickAx(48, { ref_id: 'ref_injection_timeout' });
+    assert.equal(deadlineCalls, 2, 'click_ax injection escaped the outer action deadline');
+    assert.equal(sendAttempts, 1, 'click_ax injection timeout retried the click');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;
