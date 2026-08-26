@@ -300,8 +300,8 @@ turn; only that explicit action allows the normal conversation payload again.
 `source_grounding` and the selection anchor are persisted with the per-tab
 conversation, survive panel/service-worker restart, retries, tab switches, and
 compaction, and are cleared by New conversation. Trace runtime metadata records
-only the policy, anchor presence, and `selection_scope_excluded_messages` count — never the
-projected text itself — so a debug export can explain why context was included
+only the policy, anchor presence, and `selection_scope_excluded_messages` count —
+never the projected text itself — so a debug export can explain why context was included
 or excluded without exposing private content.
 
 ### Step 6: Tool Execution
