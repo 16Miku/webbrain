@@ -4009,8 +4009,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _keyProgressSnapshot(tabId) {
+  async _keyProgressSnapshot(tabId, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const page = await this._clickProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
     try {
       const values = await browser.tabs.executeScript(tabId, { code: `(() => {
         const el = document.activeElement;
@@ -4048,17 +4050,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : '';
         return { editable, caret, selection, scroll, mediaTime };
       })()` });
+      this._throwIfAborted(abortSignal);
       const extra = values?.[0] && typeof values[0] === 'object' ? values[0] : {};
       return JSON.stringify({ page, ...extra });
     } catch {
+      this._throwIfAborted(abortSignal);
       return JSON.stringify({ page });
     }
   }
 
-  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot) {
+  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot, abortSignal = null) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
+    this._throwIfAborted(abortSignal);
     await new Promise(resolve => setTimeout(resolve, 200));
-    const afterSnapshot = await this._keyProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
+    const afterSnapshot = await this._keyProgressSnapshot(tabId, abortSignal);
+    this._throwIfAborted(abortSignal);
     const before = this._parseKeyProgressSnapshot(beforeSnapshot);
     const after = this._parseKeyProgressSnapshot(afterSnapshot);
     if (before?.editable === true || after?.editable === true) return response;
@@ -20577,20 +20584,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const keyProgressBefore = name === 'press_keys' && String(args?.key || '').startsWith('Arrow')
-      ? await this._keyProgressSnapshot(tabId)
-      : '';
+    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, contentArgs);
+    const contentActionStartedAt = Date.now();
+    const remainingContentActionDeadlineMs = () => Math.max(
+      1,
+      contentActionDeadlineMs - (Date.now() - contentActionStartedAt),
+    );
+    const runContentActionStage = operation => this._withContentActionDeadline(
+      operation,
+      name,
+      remainingContentActionDeadlineMs(),
+    );
+    let keyProgressBefore = '';
+    if (name === 'press_keys' && String(args?.key || '').startsWith('Arrow')) {
+      try {
+        keyProgressBefore = await runContentActionStage(
+          abortSignal => this._keyProgressSnapshot(tabId, abortSignal),
+        );
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No key was sent because the pre-dispatch page snapshot did not finish. Re-observe the page before retrying.`,
+          }, coordinateDiagnostic);
+        }
+        throw error;
+      }
+    }
     const sendContentAction = () => browser.tabs.sendMessage(tabId, {
       target: 'content',
       action,
       params: contentArgs,
     }, messageOptions);
-    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, contentArgs);
-    const dispatchContentAction = () => this._withContentActionDeadline(
-      sendContentAction,
-      name,
-      contentActionDeadlineMs,
-    );
+    const dispatchContentAction = () => runContentActionStage(sendContentAction);
     try {
       let response = await dispatchContentAction();
       if (name === 'click') {
@@ -20613,7 +20643,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         response = applyReadPageWindow(response, args);
       }
       if (name === 'press_keys') {
-        response = await this._verifyProvisionalKeyProgress(tabId, args?.key, response, keyProgressBefore);
+        response = await runContentActionStage(abortSignal => this._verifyProvisionalKeyProgress(
+          tabId,
+          args?.key,
+          response,
+          keyProgressBefore,
+          abortSignal,
+        ));
       }
       this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
       return this._withCoordinateReconciliation(response, coordinateDiagnostic);
@@ -20626,7 +20662,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       // Content script might not be injected — try injecting it
       try {
-        await this._injectCoreContentScripts(tabId);
+        await runContentActionStage(() => this._injectCoreContentScripts(tabId));
         let response = await dispatchContentAction();
         if (name === 'click') {
           response = await this._settleContentFilePickerGuard(tabId, response);
@@ -20648,7 +20684,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           response = applyReadPageWindow(response, args);
         }
         if (name === 'press_keys') {
-          response = await this._verifyProvisionalKeyProgress(tabId, args?.key, response, keyProgressBefore);
+          response = await runContentActionStage(abortSignal => this._verifyProvisionalKeyProgress(
+            tabId,
+            args?.key,
+            response,
+            keyProgressBefore,
+            abortSignal,
+          ));
         }
         this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
         return this._withCoordinateReconciliation(response, coordinateDiagnostic);

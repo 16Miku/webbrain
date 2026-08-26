@@ -15788,7 +15788,8 @@ test('public click_ax preserves the complete pre-extraction dispatch and post-pr
           assert.deepEqual(clickArgs, { ref_id: 'ref_907' });
           assert.equal(value, response);
           assert.equal(before, 'before');
-          assert.deepEqual(options, { afterSnapshot: 'after' });
+          assert.equal(options.afterSnapshot, 'after');
+          assert.equal(typeof options.abortCheck, 'function');
         };
         agent._recordInteractionRect = (_tabId, toolName, value, url) => {
           events.push('interaction-rect');
@@ -86966,10 +86967,17 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(source, /const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;/, `${label}: requested wait grace missing`);
     assert.match(source, /const controller = new AbortController\(\);[\s\S]*controller\.abort\(timeoutError\)[\s\S]*operation\(controller\.signal\)/, `${label}: content action deadline does not cancel late pipeline work`);
     assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
-    assert.match(source, /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, contentArgs\);/, `${label}: page dispatch does not calculate its deadline`);
-    assert.match(source, /dispatchContentAction = \(\) => this\._withContentActionDeadline\([\s\S]*sendContentAction,[\s\S]*name,[\s\S]*contentActionDeadlineMs,[\s\S]*\);/, `${label}: page dispatch bypasses the deadline`);
+    assert.match(
+      source,
+      label === 'chrome'
+        ? /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, args\);/
+        : /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, contentArgs\);/,
+      `${label}: page dispatch does not calculate its deadline`,
+    );
+    assert.match(source, /runContentActionStage = operation => this\._withContentActionDeadline\([\s\S]*remainingContentActionDeadlineMs\(\)/, `${label}: page pipeline does not share one bounded deadline`);
+    assert.match(source, /dispatchContentAction = \(\) => runContentActionStage\(sendContentAction\);/, `${label}: page dispatch bypasses the pipeline deadline`);
     const timeoutCatch = source.indexOf("if (e?.code === 'content_action_timeout')", source.indexOf('const dispatchContentAction'));
-    const reinject = source.indexOf('await this._injectCoreContentScripts(tabId);', timeoutCatch);
+    const reinject = source.indexOf('this._injectCoreContentScripts(tabId)', timeoutCatch);
     assert.notEqual(timeoutCatch, -1, `${label}: first timeout is not handled`);
     assert.notEqual(reinject, -1, `${label}: content-script reinjection fallback missing`);
     assert.equal(timeoutCatch < reinject, true, `${label}: timed-out action may be blindly dispatched a second time`);
@@ -86996,12 +87004,16 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(source, /const reconciled = await this\._reconcileCoordinateClickWithDeadline\(/, `${label}: screenshot coordinate clicks bypass the reconciliation deadline wrapper`);
 
     if (label === 'chrome') {
+      assert.match(clickAxSource, /return await this\._withContentActionDeadline\([\s\S]*this\._dispatchClickAxImpl\([\s\S]*'click_ax'/, 'chrome: click_ax baseline and annotation bypass the pipeline deadline');
       const fallbackDeadlineStart = source.indexOf('async _maybeFallbackClickAxWithCdp(');
       const fallbackImplStart = source.indexOf('async _maybeFallbackClickAxWithCdpImpl(', fallbackDeadlineStart);
       assert.ok(fallbackDeadlineStart >= 0 && fallbackImplStart > fallbackDeadlineStart, 'chrome: click_ax fallback deadline wrapper missing');
       const fallbackDeadlineSource = source.slice(fallbackDeadlineStart, fallbackImplStart);
       assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackClickAxWithCdpImpl\([\s\S]*'click_ax'/, 'chrome: click_ax fallback pipeline bypasses the deadline');
       assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*baseline,[\s\S]*abortSignal/, 'chrome: click_ax fallback deadline does not propagate cancellation');
+    } else {
+      assert.match(source, /runContentActionStage\([\s\S]*this\._keyProgressSnapshot\(tabId, abortSignal\)/, 'firefox: pre-dispatch Arrow snapshot bypasses the pipeline deadline');
+      assert.match(source, /runContentActionStage\([\s\S]*this\._verifyProvisionalKeyProgress\([\s\S]*abortSignal/, 'firefox: post-dispatch Arrow verification bypasses the pipeline deadline');
     }
 
     const agent = new AgentClass({});
@@ -87180,7 +87192,7 @@ test('Chrome bounds the pre-dispatch click snapshot and does not claim a click o
     agent._withContentActionDeadline = async (operation, toolName, deadlineMs) => {
       deadlineCalls += 1;
       assert.equal(toolName, 'click');
-      assert.equal(deadlineMs, 60_000);
+      assert.ok(deadlineMs > 0 && deadlineMs <= 60_000);
       assert.equal(await operation(), '{"text":"before"}');
       const error = new Error('click did not return a page response within 60 seconds.');
       error.code = 'content_action_timeout';
@@ -87207,6 +87219,193 @@ test('Chrome bounds the pre-dispatch click snapshot and does not claim a click o
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome click_ax deadline starts before baseline capture and prevents a late dispatch', async () => {
+  const originalChrome = globalThis.chrome;
+  let releaseSnapshot;
+  let markSnapshotStarted;
+  const snapshotStarted = new Promise(resolve => { markSnapshotStarted = resolve; });
+  const delayedSnapshot = new Promise(resolve => { releaseSnapshot = resolve; });
+  let contentDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true };
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    agent._currentUrl = async () => 'https://example.test/';
+    agent._clickProgressSnapshot = async () => {
+      markSnapshotStarted();
+      return delayedSnapshot;
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click_ax');
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await snapshotStarted;
+      controller.abort(error);
+      releaseSnapshot('{"text":"late"}');
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent._dispatchClickAx(44, { ref_id: 'ref_late_baseline' });
+    assert.equal(deadlineCalls, 1);
+    assert.equal(contentDispatches, 0, 'late baseline capture reached click_ax dispatch');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome keeps the normal click deadline through progress annotation', async () => {
+  const originalChrome = globalThis.chrome;
+  let contentDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 45, url: 'https://example.test/' }),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true, dispatched: true, method: 'content-click' };
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._chromeProtectedPageFailure = async () => null;
+    agent._currentUrl = async () => 'https://example.test/';
+    agent._clickProgressSnapshot = async () => '{"text":"before"}';
+    agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click');
+      if (deadlineCalls < 3) return operation(new AbortController().signal);
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      controller.abort(error);
+      await assert.rejects(operation(controller.signal), candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent.executeTool(
+      45,
+      'click',
+      { index: 1 },
+      null,
+      { dispatchBinding: { token: 'bound-click', frameId: 0 } },
+    );
+    assert.equal(deadlineCalls, 3, 'click annotation did not share the action deadline');
+    assert.equal(contentDispatches, 1, 'post-dispatch timeout retried the click');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, true);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.retryable, false);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Firefox bounds Arrow-key snapshots before and after dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  let contentDispatches = 0;
+  try {
+    globalThis.browser = {
+      ...(originalBrowser || {}),
+      tabs: {
+        ...(originalBrowser?.tabs || {}),
+        get: async () => ({ id: 46, url: 'https://example.test/' }),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true, dispatched: true, method: 'content-key' };
+        },
+      },
+    };
+
+    const configure = () => {
+      const agent = new AgentFx({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._keyProgressSnapshot = async () => '{"page":"before"}';
+      return agent;
+    };
+    const timeoutError = () => {
+      const error = new Error('press_keys did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      return error;
+    };
+
+    const beforeAgent = configure();
+    beforeAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'press_keys');
+      assert.equal(await operation(new AbortController().signal), '{"page":"before"}');
+      throw timeoutError();
+    };
+    const beforeResult = await beforeAgent.executeTool(
+      46,
+      'press_keys',
+      { key: 'ArrowDown' },
+      null,
+      { dispatchBinding: { token: 'bound-key', frameId: 0 } },
+    );
+    assert.equal(contentDispatches, 0, 'pre-dispatch Arrow timeout still sent a key');
+    assert.equal(beforeResult.dispatched, false);
+    assert.equal(beforeResult.noDispatch, true);
+    assert.equal(beforeResult.outcomeUnknown, false);
+    assert.equal(beforeResult.retryable, true);
+
+    const afterAgent = configure();
+    let deadlineCalls = 0;
+    afterAgent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'press_keys');
+      if (deadlineCalls < 3) return operation(new AbortController().signal);
+      const error = timeoutError();
+      const controller = new AbortController();
+      controller.abort(error);
+      await assert.rejects(operation(controller.signal), candidate => candidate === error);
+      throw error;
+    };
+    const afterResult = await afterAgent.executeTool(
+      46,
+      'press_keys',
+      { key: 'ArrowDown' },
+      null,
+      { dispatchBinding: { token: 'bound-key', frameId: 0 } },
+    );
+    assert.equal(deadlineCalls, 3, 'post-dispatch Arrow verification escaped the action deadline');
+    assert.equal(contentDispatches, 1, 'post-dispatch Arrow timeout retried the key');
+    assert.equal(afterResult.dispatched, true);
+    assert.equal(afterResult.outcomeUnknown, true);
+    assert.equal(afterResult.retryable, false);
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 

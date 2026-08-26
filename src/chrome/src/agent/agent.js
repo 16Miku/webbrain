@@ -9910,9 +9910,55 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, abortSignal = null) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null) {
+    const dispatchState = { started: false };
+    try {
+      return await this._withContentActionDeadline(
+        deadlineAbortSignal => this._dispatchClickAxImpl(
+          tabId,
+          args,
+          axScope,
+          dispatchBinding,
+          messageRecipientContext,
+          deadlineAbortSignal,
+          upstreamAbortSignal,
+          dispatchState,
+        ),
+        'click_ax',
+      );
+    } catch (error) {
+      if (error?.code !== 'content_action_timeout') throw error;
+      if (dispatchState.started) return this._contentActionTimeoutResult('click_ax', error);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+        error: `${error.message} No click was sent because the pre-dispatch page observation did not finish. Re-observe the page before retrying.`,
+      };
+    }
+  }
+
+  async _dispatchClickAxImpl(
+    tabId,
+    args,
+    axScope = null,
+    dispatchBinding = null,
+    messageRecipientContext = {},
+    deadlineAbortSignal = null,
+    upstreamAbortSignal = null,
+    dispatchState = { started: false },
+  ) {
+    const throwIfAborted = () => {
+      this._throwIfAborted(upstreamAbortSignal);
+      this._throwIfAborted(deadlineAbortSignal);
+    };
+    throwIfAborted();
     const interactionUrl = await this._currentUrl(tabId);
+    throwIfAborted();
     const clickProgressBefore = await this._clickProgressSnapshot(tabId);
+    throwIfAborted();
     const sideEffectWatch = this._beginClickAxSideEffectWatch(tabId);
     let baseline = null;
     const captureBaseline = async () => {
@@ -9943,31 +9989,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const send = () => chrome.tabs.sendMessage(tabId, {
-      target: 'content',
-      action: 'click_ax',
-      params: contentArgs,
-    }, messageOptions);
+    const send = () => {
+      throwIfAborted();
+      dispatchState.started = true;
+      return chrome.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'click_ax',
+        params: contentArgs,
+      }, messageOptions);
+    };
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
 
     try {
       let response;
       try {
-        this._throwIfAborted(abortSignal);
+        throwIfAborted();
         await captureBaseline();
+        throwIfAborted();
         response = await dispatch();
-        this._throwIfAborted(abortSignal);
+        throwIfAborted();
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
           return this._contentActionTimeoutResult('click_ax', error);
         }
         try {
-          this._throwIfAborted(abortSignal);
+          throwIfAborted();
           await this._injectCoreContentScripts(tabId);
-          this._throwIfAborted(abortSignal);
+          throwIfAborted();
           await captureBaseline();
+          throwIfAborted();
           response = await dispatch();
-          this._throwIfAborted(abortSignal);
+          throwIfAborted();
         } catch (retryError) {
           if (retryError?.code === 'content_action_timeout') {
             return this._contentActionTimeoutResult('click_ax', retryError);
@@ -9976,7 +10028,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       response = await this._settleContentFilePickerGuard(tabId, response);
-      this._throwIfAborted(abortSignal);
+      throwIfAborted();
       if (response?.documentToken && (
         response.documentChanged === true
         || response.routeChanged === true
@@ -9988,8 +10040,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // content path consumes that binding immediately before el.click(); a
       // no-progress CDP fallback would be a second, unbound send attempt.
       if (messageRecipientContext.messageRecipientGuardRequired !== true) {
-        this._throwIfAborted(abortSignal);
-        response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, baseline);
+        throwIfAborted();
+        response = await this._maybeFallbackClickAxWithCdp(
+          tabId,
+          args,
+          response,
+          baseline,
+          deadlineAbortSignal,
+        );
+        throwIfAborted();
       }
       const observedAfterSnapshot = response?._clickAxAfterSnapshot || '';
       if (response) delete response._clickAxAfterSnapshot;
@@ -9999,8 +10058,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         args,
         response,
         clickProgressBefore,
-        { afterSnapshot: observedAfterSnapshot },
+        { afterSnapshot: observedAfterSnapshot, abortCheck: throwIfAborted },
       );
+      throwIfAborted();
       this._recordInteractionRect(tabId, 'click_ax', response, interactionUrl);
       this._annotateCredentialField('click_ax', response);
       this._clearUploadSelectorRecoveryAfterInspection(tabId, 'click_ax', response);
@@ -25780,13 +25840,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'scroll') {
       args = await this._augmentScrollArgsWithLastInteraction(tabId, args);
     }
+    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, args);
+    const contentActionStartedAt = Date.now();
+    const remainingContentActionDeadlineMs = () => Math.max(
+      1,
+      contentActionDeadlineMs - (Date.now() - contentActionStartedAt),
+    );
+    const runContentActionStage = operation => this._withContentActionDeadline(
+      operation,
+      name,
+      remainingContentActionDeadlineMs(),
+    );
     let clickProgressBefore = '';
     if (name === 'click') {
       try {
-        clickProgressBefore = await this._withContentActionDeadline(
+        clickProgressBefore = await runContentActionStage(
           () => this._clickProgressSnapshot(tabId),
-          name,
-          this._contentActionDeadlineMs(name, args),
         );
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
@@ -25839,12 +25908,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       action,
       params: contentArgs,
     }, messageOptions);
-    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, contentArgs);
-    const dispatchContentAction = () => this._withContentActionDeadline(
-      sendContentAction,
-      name,
-      contentActionDeadlineMs,
-    );
+    const dispatchContentAction = () => runContentActionStage(sendContentAction);
 
     let response;
     try {
@@ -25861,7 +25925,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // get_accessibility_tree / click_ax / type_ax handlers can reach
         // window.__generateAccessibilityTree and window.__wb_ax_lookup.
         try {
-          await this._injectCoreContentScripts(tabId);
+          await runContentActionStage(() => this._injectCoreContentScripts(tabId));
           response = await dispatchContentAction();
         } catch (e2) {
           if (e2?.code === 'content_action_timeout') {
@@ -25903,13 +25967,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           { messageRecipientGuardRequired, messageRecipientDispatchBinding },
         );
       }
-      await this._annotateClickProgress(
-        tabId,
-        name,
-        args,
-        response,
-        clickProgressBefore,
-      );
+      try {
+        await runContentActionStage(abortSignal => this._annotateClickProgress(
+          tabId,
+          name,
+          args,
+          response,
+          clickProgressBefore,
+          { abortSignal },
+        ));
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation(
+            this._contentActionTimeoutResult(name, error),
+            coordinateDiagnostic,
+          );
+        }
+        throw error;
+      }
       this._recordInteractionRect(tabId, name, response, interactionUrl);
       this._annotateCredentialField(name, response);
       if (name === 'read_page') {
@@ -26552,7 +26627,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch { /* best-effort pointer cleanup */ }
   }
 
-  async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline) {
+  async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline, upstreamAbortSignal = null) {
+    if (upstreamAbortSignal) {
+      return this._maybeFallbackClickAxWithCdpImpl(
+        tabId,
+        args,
+        response,
+        baseline,
+        upstreamAbortSignal,
+      );
+    }
     try {
       return await this._withContentActionDeadline(
         abortSignal => this._maybeFallbackClickAxWithCdpImpl(
@@ -27119,15 +27203,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (toolName !== 'click' && toolName !== 'click_ax') return response;
     if (opts.editable) return response;
 
+    const abortCheck = typeof opts.abortCheck === 'function'
+      ? opts.abortCheck
+      : () => this._throwIfAborted(opts.abortSignal);
+    abortCheck();
+
     const ident = this._clickProgressIdent(toolName, args, response);
     if (!ident) return response;
 
     let afterSnapshot = opts.afterSnapshot || '';
     if (!afterSnapshot) {
       await new Promise(r => setTimeout(r, 250));
+      abortCheck();
       afterSnapshot = await this._clickProgressSnapshot(tabId);
+      abortCheck();
     }
     const previous = this._lastClickProgress.get(tabId);
+    abortCheck();
     this._lastClickProgress.set(tabId, { ident, snapshot: afterSnapshot || beforeSnapshot || '' });
 
     if (
