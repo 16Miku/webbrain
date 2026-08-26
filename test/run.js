@@ -86789,15 +86789,46 @@ test('content-script actions have a bounded unknown-outcome timeout', () => {
   ]) {
     const source = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(source, /const CONTENT_ACTION_TIMEOUT_MS = 60_000;/, `${label}: content action deadline missing`);
+    assert.match(source, /const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;/, `${label}: requested wait grace missing`);
     assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
-    assert.match(source, /dispatchContentAction = \(\) => this\._withContentActionDeadline\(sendContentAction, name\)/, `${label}: page dispatch bypasses the deadline`);
+    assert.match(source, /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, contentArgs\);/, `${label}: page dispatch does not calculate its deadline`);
+    assert.match(source, /dispatchContentAction = \(\) => this\._withContentActionDeadline\([\s\S]*sendContentAction,[\s\S]*name,[\s\S]*contentActionDeadlineMs,[\s\S]*\);/, `${label}: page dispatch bypasses the deadline`);
     const timeoutCatch = source.indexOf("if (e?.code === 'content_action_timeout')", source.indexOf('const dispatchContentAction'));
     const reinject = source.indexOf('await this._injectCoreContentScripts(tabId);', timeoutCatch);
     assert.notEqual(timeoutCatch, -1, `${label}: first timeout is not handled`);
     assert.notEqual(reinject, -1, `${label}: content-script reinjection fallback missing`);
     assert.equal(timeoutCatch < reinject, true, `${label}: timed-out action may be blindly dispatched a second time`);
 
-    const result = new AgentClass({})._contentActionTimeoutResult('click', {
+    const clickAxStart = source.indexOf('async _dispatchClickAx(');
+    const clickAxEnd = source.indexOf('async _reconcileCoordinateClick(', clickAxStart);
+    assert.notEqual(clickAxStart, -1, `${label}: click_ax dispatcher missing`);
+    assert.notEqual(clickAxEnd, -1, `${label}: click_ax dispatcher boundary missing`);
+    const clickAxSource = source.slice(clickAxStart, clickAxEnd);
+    assert.match(clickAxSource, /const dispatch = \(\) => this\._withContentActionDeadline\(send, 'click_ax'\);/, `${label}: click_ax bypasses the deadline`);
+    const clickAxTimeoutCatch = clickAxSource.indexOf("if (error?.code === 'content_action_timeout')");
+    const clickAxReinject = clickAxSource.indexOf('await this._injectCoreContentScripts(tabId);');
+    assert.notEqual(clickAxTimeoutCatch, -1, `${label}: click_ax timeout is not handled`);
+    assert.notEqual(clickAxReinject, -1, `${label}: click_ax reinjection fallback missing`);
+    assert.equal(clickAxTimeoutCatch < clickAxReinject, true, `${label}: timed-out click_ax may be blindly dispatched a second time`);
+
+    const agent = new AgentClass({});
+    assert.equal(
+      agent._contentActionDeadlineMs('wait_for_element', { timeout: 120_000 }),
+      125_000,
+      `${label}: requested wait_for_element timeout is truncated`,
+    );
+    assert.equal(
+      agent._contentActionDeadlineMs('wait_for_element', {}),
+      60_000,
+      `${label}: default wait_for_element deadline changed`,
+    );
+    assert.equal(
+      agent._contentActionDeadlineMs('click', { timeout: 120_000 }),
+      60_000,
+      `${label}: unrelated action adopted an untrusted timeout`,
+    );
+
+    const result = agent._contentActionTimeoutResult('click', {
       message: 'click did not return a page response within 60 seconds.',
     });
     assert.equal(result.success, false, `${label}: timed-out action reported success`);
@@ -86806,7 +86837,7 @@ test('content-script actions have a bounded unknown-outcome timeout', () => {
     assert.equal(result.retryable, false, `${label}: timed-out action invited a blind retry`);
     assert.match(result.error, /may have reached the page.*inspect the current state/i, `${label}: timeout recovery instruction is unsafe`);
 
-    const readResult = new AgentClass({})._contentActionTimeoutResult('read_page', {
+    const readResult = agent._contentActionTimeoutResult('read_page', {
       message: 'read_page did not return a page response within 60 seconds.',
     });
     assert.equal(readResult.outcomeUnknown, false, `${label}: read-only timeout was treated as an uncertain mutation`);

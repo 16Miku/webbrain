@@ -133,6 +133,7 @@ const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
+const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
 const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
   'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
 ]);
@@ -790,14 +791,33 @@ export class Agent extends LoopDetector {
     }
   }
 
-  async _withContentActionDeadline(operation, toolName = 'content action') {
+  _contentActionDeadlineMs(toolName, args = {}) {
+    if (toolName !== 'wait_for_element') return CONTENT_ACTION_TIMEOUT_MS;
+    const requestedTimeoutMs = Number(args?.timeout);
+    if (!Number.isFinite(requestedTimeoutMs) || requestedTimeoutMs <= 0) {
+      return CONTENT_ACTION_TIMEOUT_MS;
+    }
+    return Math.max(
+      CONTENT_ACTION_TIMEOUT_MS,
+      requestedTimeoutMs + CONTENT_ACTION_RESPONSE_GRACE_MS,
+    );
+  }
+
+  async _withContentActionDeadline(
+    operation,
+    toolName = 'content action',
+    deadlineMs = CONTENT_ACTION_TIMEOUT_MS,
+  ) {
+    const timeoutMs = Number.isFinite(deadlineMs) && deadlineMs > 0
+      ? deadlineMs
+      : CONTENT_ACTION_TIMEOUT_MS;
     let timeoutId = null;
     const timeoutError = new Error(
-      `${toolName} did not return a page response within ${CONTENT_ACTION_TIMEOUT_MS / 1000} seconds.`,
+      `${toolName} did not return a page response within ${Math.ceil(timeoutMs / 1000)} seconds.`,
     );
     timeoutError.code = 'content_action_timeout';
     const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(timeoutError), CONTENT_ACTION_TIMEOUT_MS);
+      timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
     });
     const started = Promise.resolve().then(operation);
     // The page response may settle after the timeout. Observe that settlement
@@ -6832,6 +6852,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       action: 'click_ax',
       params: contentArgs,
     }, messageOptions);
+    const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
     const finish = async (response) => {
       response = await this._settleContentFilePickerGuard(tabId, response);
       if (response?.documentToken && (
@@ -6847,17 +6868,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
 
     try {
-      return await finish(await send());
-    } catch {
+      return await finish(await dispatch());
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return this._contentActionTimeoutResult('click_ax', error);
+      }
       try {
         await this._injectCoreContentScripts(tabId);
-        return await finish(await send());
-      } catch (error) {
+        return await finish(await dispatch());
+      } catch (retryError) {
+        if (retryError?.code === 'content_action_timeout') {
+          return this._contentActionTimeoutResult('click_ax', retryError);
+        }
         let pageUrl = '';
         try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
-        const accessFailure = firefoxHostPermissionFailure(pageUrl, error.message);
+        const accessFailure = firefoxHostPermissionFailure(pageUrl, retryError.message);
         if (accessFailure) return accessFailure;
-        return { error: `Failed to communicate with page: ${error.message}` };
+        return { error: `Failed to communicate with page: ${retryError.message}` };
       }
     }
   }
@@ -20522,7 +20549,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       action,
       params: contentArgs,
     }, messageOptions);
-    const dispatchContentAction = () => this._withContentActionDeadline(sendContentAction, name);
+    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, contentArgs);
+    const dispatchContentAction = () => this._withContentActionDeadline(
+      sendContentAction,
+      name,
+      contentActionDeadlineMs,
+    );
     try {
       let response = await dispatchContentAction();
       if (name === 'click') {
