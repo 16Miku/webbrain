@@ -10131,8 +10131,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null) {
-    const dispatchState = { started: false };
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, upstreamDispatchState = null) {
+    const dispatchState = upstreamDispatchState || { started: false };
     try {
       return await this._withContentActionDeadline(
         deadlineAbortSignal => this._dispatchClickAxImpl(
@@ -10291,7 +10291,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}, abortSignal = null) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}, abortSignal = null, dispatchState = { started: false }) {
     this._throwIfAborted(abortSignal);
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
     this._throwIfAborted(abortSignal);
@@ -10332,6 +10332,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         null,
         messageRecipientContext,
         abortSignal,
+        dispatchState,
       );
       return {
         result: {
@@ -10363,6 +10364,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _reconcileCoordinateClickWithDeadline(tabId, point, messageRecipientContext = {}) {
+    const dispatchState = { started: false };
     try {
       return await this._withContentActionDeadline(
         abortSignal => this._reconcileCoordinateClick(
@@ -10370,6 +10372,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           point,
           messageRecipientContext,
           abortSignal,
+          dispatchState,
         ),
         'click',
         this._contentActionDeadlineMs('click'),
@@ -10377,7 +10380,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       if (error?.code === 'content_action_timeout') {
         return {
-          result: this._contentActionTimeoutResult('click', error),
+          result: dispatchState.started
+            ? this._contentActionTimeoutResult('click', error)
+            : {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                outcomeUnknown: false,
+                retryable: true,
+                error: `${error.message} No click was sent because coordinate target resolution did not finish. Re-observe the page before retrying.`,
+              },
           diagnostic: null,
         };
       }
@@ -25542,9 +25554,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
               });
+              throwIfEarlyCdpAborted();
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
               });
+              throwIfEarlyCdpAborted();
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
               });
@@ -25806,9 +25820,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
             });
+            throwIfEarlyCdpAborted();
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
             });
+            throwIfEarlyCdpAborted();
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
             });

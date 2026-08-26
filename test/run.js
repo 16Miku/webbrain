@@ -87373,9 +87373,10 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       { x: 10, y: 20 },
     );
     assert.equal(coordinateResult.result.success, false, `${label}: timed-out coordinate reconciliation reported success`);
-    assert.equal(coordinateResult.result.dispatched, true, `${label}: timed-out coordinate reconciliation lost dispatch uncertainty`);
-    assert.equal(coordinateResult.result.outcomeUnknown, true, `${label}: timed-out coordinate reconciliation did not preserve unknown outcome`);
-    assert.equal(coordinateResult.result.retryable, false, `${label}: timed-out coordinate reconciliation invited a blind retry`);
+    assert.equal(coordinateResult.result.dispatched, false, `${label}: pre-dispatch coordinate timeout claimed a click`);
+    assert.equal(coordinateResult.result.noDispatch, true, `${label}: pre-dispatch coordinate timeout lost its no-dispatch marker`);
+    assert.equal(coordinateResult.result.outcomeUnknown, false, `${label}: pre-dispatch coordinate timeout reported an unknown outcome`);
+    assert.equal(coordinateResult.result.retryable, true, `${label}: pre-dispatch coordinate timeout blocked safe recovery`);
     assert.equal(coordinateResult.diagnostic, null, `${label}: timed-out coordinate reconciliation fabricated a diagnostic`);
     assert.equal(semanticDispatches, 0, `${label}: timed-out coordinate reconciliation dispatched a late semantic click`);
 
@@ -87440,6 +87441,108 @@ test('Chrome early CDP actions start their deadline before debugger attachment',
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome clear typing checks cancellation before Delete in focused paths', async () => {
+  const originalChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClientCh.attach,
+    evaluate: cdpClientCh.evaluate,
+    sendCommand: cdpClientCh.sendCommand,
+    textEntrySignature: cdpClientCh.textEntrySignature,
+  };
+  try {
+    for (const bound of [false, true]) {
+      let releaseFirstKey;
+      let markFirstKeyStarted;
+      const firstKeyStarted = new Promise(resolve => { markFirstKeyStarted = resolve; });
+      const delayedFirstKey = new Promise(resolve => { releaseFirstKey = resolve; });
+      const keyEvents = [];
+      globalThis.chrome = {
+        ...(originalChrome || {}),
+        runtime: originalChrome?.runtime || {},
+        tabs: {
+          ...(originalChrome?.tabs || {}),
+          get: async () => ({ id: 49, url: 'https://example.test/' }),
+          sendMessage: async (_tabId, message) => {
+            if (message.action === 'prepare_focused_type_dispatch') {
+              return {
+                success: true,
+                tag: 'INPUT',
+                type: 'text',
+                name: 'title',
+                beforeSignature: 'before',
+                rect: { x: 1, y: 2, w: 3, h: 4 },
+              };
+            }
+            if (message.action === 'release_dispatch_binding') return { success: true };
+            throw new Error(`unexpected focused action ${message.action}`);
+          },
+        },
+      };
+      cdpClientCh.attach = async () => ({ attached: true });
+      cdpClientCh.evaluate = async () => ({
+        result: {
+          value: {
+            focused: true,
+            editable: true,
+            contentEditable: false,
+            tag: 'INPUT',
+            type: 'text',
+            name: 'title',
+            rect: { x: 1, y: 2, w: 3, h: 4 },
+          },
+        },
+      });
+      cdpClientCh.textEntrySignature = async () => 'before';
+      cdpClientCh.sendCommand = async (_tabId, _method, params) => {
+        keyEvents.push({ type: params.type, key: params.key });
+        if (params.type === 'keyDown' && params.key === 'a') {
+          markFirstKeyStarted();
+          return delayedFirstKey;
+        }
+        return {};
+      };
+
+      const agent = new AgentCh({});
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'type_text');
+        const error = new Error('type_text did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await firstKeyStarted;
+        controller.abort(error);
+        releaseFirstKey({});
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(
+        49,
+        'type_text',
+        { text: 'replacement', clear: true },
+        null,
+        bound ? { dispatchBinding: { token: 'focused-binding', frameId: 0 } } : null,
+      );
+      assert.deepEqual(
+        keyEvents,
+        [{ type: 'keyDown', key: 'a' }],
+        `${bound ? 'bound' : 'unbound'} clear path dispatched after deadline`,
+      );
+      assert.equal(result.outcomeUnknown, true);
+      assert.equal(result.retryable, false);
+    }
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.evaluate = originals.evaluate;
+    cdpClientCh.sendCommand = originals.sendCommand;
+    cdpClientCh.textEntrySignature = originals.textEntrySignature;
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
   }
