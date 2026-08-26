@@ -43492,6 +43492,7 @@ test('selection shortcut localizations cover every interface locale with browser
     assert.equal(chinese.strings.quiz, '测验我', `${label}: the Chinese shortcut should localize Quiz me`);
     assert.equal(chinese.strings.includePageContext, '包含页面和对话上下文', `${label}: the Chinese shortcut should localize the full-context choice`);
     assert.equal(chinese.strings.hideShortcut, '隐藏此项', `${label}: the Chinese shortcut should use the compact Hide this label`);
+    assert.equal(getLocalization('en').strings.askSelection, 'Add to chat', `${label}: the English shortcut should use the concise chat action label`);
     assert.equal(getLocalization('en').strings.hideShortcut, 'Hide this', `${label}: the English shortcut should use the compact footer label`);
     assert.equal(chinese.dir, 'ltr', `${label}: Chinese should retain left-to-right layout`);
     assert.equal(getLocalization('ar').dir, 'rtl', `${label}: Arabic should use right-to-left layout`);
@@ -44899,13 +44900,16 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /\.\.\.\(action === 'custom' \? \{ includePageContext: includePageContext\?\.checked === true \} : \{\}\)/, `${label}: only custom questions should submit the full-context choice`);
     assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?\.action-label`\);[\s\S]*?label\.textContent = strings\[action\];/, `${label}: localization should update action labels without replacing their icons`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
-    assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
+    assert.match(content, /<button class="shortcut" type="button" aria-label="Add to chat" title="Add to chat" hidden>/, `${label}: shortcut fallback copy should use Add to chat before localization loads`);
+    assert.match(content, /\.shortcut \{[\s\S]*?border:1px solid rgba\(23,23,34,\.14\);[\s\S]*?background:#fff; color:#171722;[\s\S]*?box-shadow:0 9px 20px rgba\(23,23,34,\.16\)/, `${label}: shortcut should use a solid white neutral treatment with a lower shadow`);
     assert.match(content, /\.popup \{[\s\S]*?max-height:calc\(100vh - 16px\); overflow-y:auto; overscroll-behavior:contain;/, `${label}: expanded popup should remain scrollable inside short viewports`);
     assert.doesNotMatch(content, /M6\.8 8\.5 9\.2 14l2\.8-3\.4 2\.8 3\.4 2\.4-5\.5/, `${label}: discarded WebBrain W outline should be removed`);
     assert.doesNotMatch(content, /M12 2\.8c\.65 3\.78/, `${label}: Claude-like sparkle icon should be removed`);
     assert.match(content, /const MAX_SELECTION_HIGHLIGHT_RECTS = 200;/, `${label}: selection highlights should have a hard DOM-node limit`);
     assert.match(content, /function collectVisibleHighlightRects\(rects\)[\s\S]*?rect\.top < window\.innerHeight[\s\S]*?visibleRects\.length >= MAX_SELECTION_HIGHLIGHT_RECTS/, `${label}: selection snapshots should retain only a bounded set of visible lines`);
-    assert.match(content, /rects: \(highlightRects\.length \? highlightRects : \[rect\]\)\.map\(serializeRect\)/, `${label}: selection snapshots should use the bounded highlight rectangles`);
+    assert.match(content, /const rect = visibleRects\[0\] \|\| rects\[0\] \|\| range\.getBoundingClientRect\(\);/, `${label}: the shortcut should anchor to the first visible selected line`);
+    assert.match(content, /let top = rect\.top - BUTTON_SIZE - GAP;\s*if \(top < GAP\) top = rect\.bottom \+ GAP;/, `${label}: the shortcut should prefer above the selected text and fall below only near the viewport top`);
+    assert.match(content, /rects: \(visibleRects\.length \? visibleRects : \[rect\]\)\.map\(serializeRect\)/, `${label}: selection snapshots should use the bounded highlight rectangles`);
     assert.match(content, /function showSelectionHighlight\(\)[\s\S]*?highlightLayer\.appendChild\(highlight\);/, `${label}: opening the dialog should render a sticky selection highlight`);
     assert.match(content, /function containSurfaceKeyboardEvent\(event\)[\s\S]*?event\.stopImmediatePropagation\(\);/, `${label}: selection dialog keyboard events should stop page capture listeners`);
     assert.match(content, /window\.addEventListener\('keydown', containSurfaceKeyboardEvent, true\);\s*window\.addEventListener\('keypress', containSurfaceKeyboardEvent, true\);\s*window\.addEventListener\('keyup', containSurfaceKeyboardEvent, true\);/, `${label}: keyboard containment should run during window capture`);

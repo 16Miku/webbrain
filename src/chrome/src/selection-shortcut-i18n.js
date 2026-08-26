@@ -5,7 +5,7 @@
 
 const STRINGS = Object.freeze({
   en: {
-    askSelection: 'Ask WebBrain about this',
+    askSelection: 'Add to chat',
     openChat: 'Open WebBrain to chat',
     summarize: 'Summarize',
     explain: 'Explain',
@@ -23,7 +23,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Could not send to WebBrain. Try the right-click menu instead.',
   },
   zh: {
-    askSelection: '向 WebBrain 询问此内容',
+    askSelection: '添加到聊天',
     openChat: '打开 WebBrain 进行对话',
     summarize: '总结',
     explain: '解释',
@@ -41,7 +41,7 @@ const STRINGS = Object.freeze({
     sendFailed: '无法发送至 WebBrain。请尝试使用右键菜单。',
   },
   ar: {
-    askSelection: 'اسأل WebBrain عن هذا',
+    askSelection: 'إضافة إلى الدردشة',
     openChat: 'افتح WebBrain للدردشة',
     summarize: 'تلخيص',
     explain: 'شرح',
@@ -59,7 +59,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'تعذر الإرسال إلى WebBrain. جرّب قائمة النقر بزر الماوس الأيمن.',
   },
   bn: {
-    askSelection: 'এটি সম্পর্কে WebBrain-কে জিজ্ঞাসা করুন',
+    askSelection: 'চ্যাটে যোগ করুন',
     openChat: 'চ্যাট করতে WebBrain খুলুন',
     summarize: 'সারসংক্ষেপ করুন',
     explain: 'ব্যাখ্যা করুন',
@@ -77,7 +77,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'WebBrain-এ পাঠানো যায়নি। ডান-ক্লিক মেনু ব্যবহার করে দেখুন।',
   },
   de: {
-    askSelection: 'WebBrain hierzu fragen',
+    askSelection: 'Zum Chat hinzufügen',
     openChat: 'WebBrain zum Chatten öffnen',
     summarize: 'Zusammenfassen',
     explain: 'Erklären',
@@ -95,7 +95,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Senden an WebBrain fehlgeschlagen. Versuche stattdessen das Kontextmenü.',
   },
   es: {
-    askSelection: 'Preguntar a WebBrain sobre esto',
+    askSelection: 'Añadir al chat',
     openChat: 'Abrir WebBrain para chatear',
     summarize: 'Resumir',
     explain: 'Explicar',
@@ -113,7 +113,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'No se pudo enviar a WebBrain. Prueba el menú contextual.',
   },
   fa: {
-    askSelection: 'درباره این از WebBrain بپرسید',
+    askSelection: 'افزودن به چت',
     openChat: 'WebBrain را برای گفتگو باز کنید',
     summarize: 'خلاصه‌سازی',
     explain: 'توضیح',
@@ -131,7 +131,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'ارسال به WebBrain ممکن نشد. از منوی کلیک راست استفاده کنید.',
   },
   fr: {
-    askSelection: 'Interroger WebBrain à ce sujet',
+    askSelection: 'Ajouter au chat',
     openChat: 'Ouvrir WebBrain pour discuter',
     summarize: 'Résumer',
     explain: 'Expliquer',
@@ -149,7 +149,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Impossible d’envoyer à WebBrain. Essayez le menu contextuel.',
   },
   he: {
-    askSelection: 'לשאול את WebBrain על זה',
+    askSelection: 'הוספה לצ׳אט',
     openChat: 'פתיחת WebBrain לצ׳אט',
     summarize: 'סיכום',
     explain: 'הסבר',
@@ -167,7 +167,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'לא ניתן לשלוח אל WebBrain. נסו את תפריט הלחיצה הימנית.',
   },
   hi: {
-    askSelection: 'इसके बारे में WebBrain से पूछें',
+    askSelection: 'चैट में जोड़ें',
     openChat: 'चैट के लिए WebBrain खोलें',
     summarize: 'सारांश बनाएँ',
     explain: 'समझाएँ',
@@ -185,7 +185,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'WebBrain को भेजा नहीं जा सका। राइट-क्लिक मेनू आज़माएँ।',
   },
   id: {
-    askSelection: 'Tanyakan ini kepada WebBrain',
+    askSelection: 'Tambahkan ke chat',
     openChat: 'Buka WebBrain untuk mengobrol',
     summarize: 'Ringkas',
     explain: 'Jelaskan',
@@ -203,7 +203,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Tidak dapat mengirim ke WebBrain. Coba menu klik kanan.',
   },
   ja: {
-    askSelection: 'この内容について WebBrain に質問',
+    askSelection: 'チャットに追加',
     openChat: 'WebBrain を開いてチャット',
     summarize: '要約',
     explain: '説明',
@@ -221,7 +221,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'WebBrain に送信できませんでした。右クリックメニューをお試しください。',
   },
   ko: {
-    askSelection: '이 내용에 대해 WebBrain에 질문',
+    askSelection: '채팅에 추가',
     openChat: 'WebBrain을 열어 채팅',
     summarize: '요약',
     explain: '설명',
@@ -239,7 +239,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'WebBrain으로 보낼 수 없습니다. 오른쪽 클릭 메뉴를 사용해 보세요.',
   },
   ms: {
-    askSelection: 'Tanya WebBrain tentang ini',
+    askSelection: 'Tambahkan pada sembang',
     openChat: 'Buka WebBrain untuk berbual',
     summarize: 'Ringkaskan',
     explain: 'Terangkan',
@@ -257,7 +257,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Tidak dapat menghantar ke WebBrain. Cuba menu klik kanan.',
   },
   nl: {
-    askSelection: 'WebBrain hierover vragen',
+    askSelection: 'Toevoegen aan chat',
     openChat: 'WebBrain openen om te chatten',
     summarize: 'Samenvatten',
     explain: 'Uitleggen',
@@ -275,7 +275,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Verzenden naar WebBrain is mislukt. Probeer het rechtermuisknopmenu.',
   },
   pl: {
-    askSelection: 'Zapytaj WebBrain o to',
+    askSelection: 'Dodaj do czatu',
     openChat: 'Otwórz WebBrain, aby porozmawiać',
     summarize: 'Podsumuj',
     explain: 'Wyjaśnij',
@@ -293,7 +293,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Nie udało się wysłać do WebBrain. Użyj menu pod prawym przyciskiem myszy.',
   },
   pt: {
-    askSelection: 'Perguntar ao WebBrain sobre isto',
+    askSelection: 'Adicionar ao chat',
     openChat: 'Abrir o WebBrain para conversar',
     summarize: 'Resumir',
     explain: 'Explicar',
@@ -311,7 +311,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Não foi possível enviar ao WebBrain. Tente o menu do botão direito.',
   },
   ru: {
-    askSelection: 'Спросить WebBrain об этом',
+    askSelection: 'Добавить в чат',
     openChat: 'Открыть WebBrain для чата',
     summarize: 'Кратко изложить',
     explain: 'Объяснить',
@@ -329,7 +329,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Не удалось отправить в WebBrain. Попробуйте контекстное меню.',
   },
   th: {
-    askSelection: 'ถาม WebBrain เกี่ยวกับสิ่งนี้',
+    askSelection: 'เพิ่มไปยังแชท',
     openChat: 'เปิด WebBrain เพื่อแชต',
     summarize: 'สรุป',
     explain: 'อธิบาย',
@@ -347,7 +347,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'ส่งไปยัง WebBrain ไม่ได้ โปรดลองใช้เมนูคลิกขวา',
   },
   tl: {
-    askSelection: 'Itanong ito sa WebBrain',
+    askSelection: 'Idagdag sa chat',
     openChat: 'Buksan ang WebBrain para makipag-chat',
     summarize: 'Ibuod',
     explain: 'Ipaliwanag',
@@ -365,7 +365,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Hindi maipadala sa WebBrain. Subukan ang right-click menu.',
   },
   tr: {
-    askSelection: 'Bunu WebBrain’e sor',
+    askSelection: 'Sohbete ekle',
     openChat: 'Sohbet için WebBrain’i aç',
     summarize: 'Özetle',
     explain: 'Açıkla',
@@ -383,7 +383,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'WebBrain’e gönderilemedi. Sağ tık menüsünü deneyin.',
   },
   uk: {
-    askSelection: 'Запитати WebBrain про це',
+    askSelection: 'Додати до чату',
     openChat: 'Відкрити WebBrain для чату',
     summarize: 'Підсумувати',
     explain: 'Пояснити',
@@ -401,7 +401,7 @@ const STRINGS = Object.freeze({
     sendFailed: 'Не вдалося надіслати до WebBrain. Спробуйте контекстне меню.',
   },
   vi: {
-    askSelection: 'Hỏi WebBrain về nội dung này',
+    askSelection: 'Thêm vào cuộc trò chuyện',
     openChat: 'Mở WebBrain để trò chuyện',
     summarize: 'Tóm tắt',
     explain: 'Giải thích',

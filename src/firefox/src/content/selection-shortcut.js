@@ -161,13 +161,13 @@ host.lang = localization.locale;
     if (ancestor?.closest?.('input, textarea')) return null;
 
     const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
-    const rect = rects.at(-1) || range.getBoundingClientRect();
+    const visibleRects = collectVisibleHighlightRects(rects);
+    const rect = visibleRects[0] || rects[0] || range.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) return null;
-    const highlightRects = collectVisibleHighlightRects(rects);
     return {
       text,
       rect: serializeRect(rect),
-      rects: (highlightRects.length ? highlightRects : [rect]).map(serializeRect),
+      rects: (visibleRects.length ? visibleRects : [rect]).map(serializeRect),
     };
   }
 
@@ -194,12 +194,12 @@ host.lang = localization.locale;
         }
         .shortcut {
           position:fixed; width:${BUTTON_SIZE}px; height:${BUTTON_SIZE}px; display:grid;
-          place-items:center; padding:0; border:1px solid rgba(108,99,255,.34);
-          border-radius:14px; background:var(--bg); color:var(--accent);
-          box-shadow:0 10px 26px rgba(35,30,95,.22),0 2px 7px rgba(35,30,95,.12);
+          place-items:center; padding:0; border:1px solid rgba(23,23,34,.14);
+          border-radius:14px; background:#fff; color:#171722;
+          box-shadow:0 9px 20px rgba(23,23,34,.16),0 2px 5px rgba(23,23,34,.1);
           cursor:pointer; pointer-events:auto; transition:transform 130ms ease,box-shadow 130ms ease;
         }
-        .shortcut:hover { transform:translateY(-1px) scale(1.03); box-shadow:0 13px 30px rgba(35,30,95,.27),0 3px 8px rgba(35,30,95,.14); }
+        .shortcut:hover { transform:translateY(-1px) scale(1.03); box-shadow:0 12px 25px rgba(23,23,34,.2),0 3px 7px rgba(23,23,34,.12); }
         .shortcut-icon {
           display:block; font:700 25px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
           transform:translateY(-1px);
@@ -256,7 +256,8 @@ host.lang = localization.locale;
           width:auto; margin-left:auto; padding:5px 8px;
           color:var(--muted); font-size:12px; line-height:1.25;
         }
-        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.context-option input:focus-visible {
+        .shortcut:focus-visible { outline:3px solid rgba(23,23,34,.24); outline-offset:2px; }
+        .action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.context-option input:focus-visible {
           outline:3px solid rgba(108,99,255,.34); outline-offset:2px;
         }
         .toast {
@@ -275,10 +276,10 @@ host.lang = localization.locale;
         @media (prefers-reduced-motion:reduce) { .shortcut { transition:none; } }
       </style>
       <div class="selection-highlights" aria-hidden="true"></div>
-      <button class="shortcut" type="button" aria-label="Ask WebBrain about selected text" title="Ask WebBrain" hidden>
+      <button class="shortcut" type="button" aria-label="Add to chat" title="Add to chat" hidden>
         <span class="shortcut-icon" aria-hidden="true">?</span>
       </button>
-      <div class="popup" role="dialog" aria-label="Ask WebBrain about selected text" hidden>
+      <div class="popup" role="dialog" aria-label="Add to chat" hidden>
         <div class="main-view">
           <div class="actions">
             <button class="action" type="button" data-action="summarize">
@@ -377,8 +378,8 @@ host.lang = localization.locale;
     if (!snapshot || !shortcut) return;
     const rect = snapshot.rect;
     let left = rect.left + rect.width / 2 - BUTTON_SIZE / 2;
-    let top = rect.bottom + 8;
-    if (top + BUTTON_SIZE > window.innerHeight - GAP) top = rect.top - BUTTON_SIZE - 8;
+    let top = rect.top - BUTTON_SIZE - GAP;
+    if (top < GAP) top = rect.bottom + GAP;
     left = clamp(left, GAP, Math.max(GAP, window.innerWidth - BUTTON_SIZE - GAP));
     top = clamp(top, GAP, Math.max(GAP, window.innerHeight - BUTTON_SIZE - GAP));
     shortcut.style.left = `${Math.round(left)}px`;
@@ -605,6 +606,11 @@ host.lang = localization.locale;
       highlightRectCount: highlightLayer?.childElementCount || 0,
       toastVisible: !!toast && !toast.hidden,
       shortcutRect: shortcut && !shortcut.hidden ? shortcut.getBoundingClientRect().toJSON() : null,
+      selectionRect: snapshot?.rect || null,
+      shortcutLabel: shortcut?.getAttribute('aria-label') || '',
+      shortcutBackground: shortcut ? getComputedStyle(shortcut).backgroundColor : '',
+      shortcutColor: shortcut ? getComputedStyle(shortcut).color : '',
+      shortcutBoxShadow: shortcut ? getComputedStyle(shortcut).boxShadow : '',
       summarizeRect: popup && !popup.hidden
         ? shadow.querySelector('[data-action="summarize"]')?.getBoundingClientRect().toJSON() || null
         : null,

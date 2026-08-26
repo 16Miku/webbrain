@@ -706,6 +706,15 @@ for (const [label, sourcePath, manualOpen] of [
     if (!rect || rect.left < 8 || rect.top < 8 || rect.right > 352 || rect.bottom > 272) {
       throw new Error(`shortcut was not clamped to the viewport: ${JSON.stringify(rect)}`);
     }
+    if (!state.selectionRect || rect.bottom > state.selectionRect.top) {
+      throw new Error(`shortcut should prefer the top of the selected text: ${JSON.stringify(state)}`);
+    }
+    if (state.shortcutLabel !== 'Add to chat'
+        || state.shortcutBackground !== 'rgb(255, 255, 255)'
+        || state.shortcutColor !== 'rgb(23, 23, 34)'
+        || state.shortcutBoxShadow === 'none') {
+      throw new Error(`shortcut should use the neutral Add to chat treatment: ${JSON.stringify(state)}`);
+    }
     await page.mouse.click(rect.left + rect.width / 2, rect.top + rect.height / 2);
     let popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (!popupState.popupVisible) throw new Error('popup did not open for the selected text');
