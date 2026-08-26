@@ -87437,6 +87437,22 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       60_000,
       `${label}: unrelated action adopted an untrusted timeout`,
     );
+    agent._richTextToolbarGuard.hasPending = () => true;
+    assert.equal(
+      agent._needsSharedActionPipelineDeadline(41, 'click', false),
+      true,
+      `${label}: pending-toolbar click probe escaped the shared action deadline`,
+    );
+    assert.equal(
+      agent._needsSharedActionPipelineDeadline(41, 'set_checked', false),
+      true,
+      `${label}: pending-toolbar checkbox probe escaped the shared action deadline`,
+    );
+    assert.equal(
+      agent._needsSharedActionPipelineDeadline(41, 'navigate', false),
+      false,
+      `${label}: unrelated network action adopted the content pipeline deadline`,
+    );
 
     const result = agent._contentActionTimeoutResult('click', {
       message: 'click did not return a page response within 60 seconds.',

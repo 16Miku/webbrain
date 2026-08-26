@@ -1086,6 +1086,15 @@ export class Agent extends LoopDetector {
     );
   }
 
+  _needsSharedActionPipelineDeadline(tabId, toolName, formValidationCandidate = false) {
+    return formValidationCandidate === true
+      || ['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)
+      || (
+        this._richTextToolbarGuard.hasPending(tabId)
+        && RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)
+      );
+  }
+
   async _withContentActionDeadline(
     operation,
     toolName = 'content action',
@@ -7565,8 +7574,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               toolResult: pipelineToolResult,
             };
         };
-        const needsSharedActionPipelineDeadline = formValidationCandidate
-          || ['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(fnName);
+        const needsSharedActionPipelineDeadline = this._needsSharedActionPipelineDeadline(
+          tabId,
+          fnName,
+          formValidationCandidate,
+        );
         if (needsSharedActionPipelineDeadline) {
           try {
             const pipelineResult = await this._withContentActionDeadline(
