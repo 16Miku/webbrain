@@ -2274,14 +2274,36 @@ body {
   white-space: nowrap;
 }
 
+@media (max-width: 520px) {
+  .selection-scope-banner {
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .selection-scope-banner-copy {
+    grid-column: 2 / -1;
+  }
+
+  #selection-scope-restore {
+    grid-column: 2;
+    width: 100%;
+  }
+
+  #selection-scope-new-conversation {
+    grid-column: 3;
+    width: 100%;
+  }
+}
+
 @media (max-width: 340px) {
   .selection-scope-banner {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .selection-scope-banner button {
+  #selection-scope-restore,
+  #selection-scope-new-conversation {
     grid-column: 2;
-    justify-self: start;
+    width: 100%;
   }
 }
 
