@@ -116,9 +116,16 @@ function spanBounds(event, runStart) {
   };
 }
 
-function failedToolResult(result) {
-  if (result == null) return true;
-  return typeof result === 'object' && (result.success === false || Boolean(result.error));
+function normalizedToolResultStatus(result, resultStatus = '') {
+  if (['success', 'error', 'unknown'].includes(resultStatus)) return resultStatus;
+  if (result == null) return 'error';
+  return typeof result === 'object' && (result.success === false || Boolean(result.error))
+    ? 'error'
+    : 'success';
+}
+
+function failedToolResult(result, resultStatus = '') {
+  return normalizedToolResultStatus(result, resultStatus) === 'error';
 }
 
 function contentAttributes(run, includeContent) {
@@ -209,7 +216,8 @@ function inferenceSpan(event, context, includeContent) {
 function toolSpan(event, context, includeContent) {
   const data = event.data || {};
   const name = String(data.name || 'unknown');
-  const failed = failedToolResult(data.result);
+  const resultStatus = normalizedToolResultStatus(data.result, data.resultStatus);
+  const failed = failedToolResult(data.result, resultStatus);
   return {
     traceId: context.traceId,
     spanId: stableHex(`${context.run.runId}:tool:${event.seq}`, 16),
@@ -221,6 +229,8 @@ function toolSpan(event, context, includeContent) {
       ['gen_ai.operation.name', 'execute_tool'],
       ['gen_ai.tool.name', name],
       ['gen_ai.agent.name', 'WebBrain'],
+      ['webbrain.tool.result.status', resultStatus],
+      ...(data.resultErrorCode ? [['webbrain.tool.result.error_code', data.resultErrorCode]] : []),
       ...(failed ? [['error.type', 'tool_error']] : []),
       ['webbrain.event.sequence', finiteNumber(event.seq)],
       ['webbrain.step', finiteNumber(data.step)],
@@ -396,8 +406,14 @@ function bundleEvent(event, includeContent, runStart) {
     );
     if (includeContent) extra.push(['webbrain.llm.response.content', boundedContent(data.content)]);
   } else if (kind === 'tool') {
-    const failed = failedToolResult(data.result);
-    extra.push(['gen_ai.tool.name', data.name], ...(failed ? [['error.type', 'tool_error']] : []));
+    const resultStatus = normalizedToolResultStatus(data.result, data.resultStatus);
+    const failed = failedToolResult(data.result, resultStatus);
+    extra.push(
+      ['gen_ai.tool.name', data.name],
+      ['webbrain.tool.result.status', resultStatus],
+      ...(data.resultErrorCode ? [['webbrain.tool.result.error_code', data.resultErrorCode]] : []),
+      ...(failed ? [['error.type', 'tool_error']] : []),
+    );
     if (includeContent) {
       extra.push(
         ['gen_ai.tool.call.arguments', boundedContent(data.args)],

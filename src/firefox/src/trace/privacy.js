@@ -69,6 +69,20 @@ function projectNoteExtra(value) {
   return output;
 }
 
+function projectToolResultMetadata(result) {
+  if (result == null) return { resultStatus: 'unknown' };
+  const failed = typeof result === 'object'
+    && (result.success === false || Boolean(result.error));
+  const output = { resultStatus: failed ? 'error' : 'success' };
+  const errorCode = result && typeof result === 'object'
+    ? (result.errorCode || result.code)
+    : '';
+  if (failed && errorCode != null && String(errorCode).trim()) {
+    output.resultErrorCode = String(errorCode).trim().slice(0, 120);
+  }
+  return output;
+}
+
 export function projectTraceRun(run, { includeContent = false } = {}) {
   const projected = run && typeof run === 'object' ? { ...run } : {};
   if (!includeContent) {
@@ -100,7 +114,12 @@ export function projectTraceEventData(kind, data, { includeContent = false } = {
     return projected;
   }
 
-  if (kind === 'tool') return pick(source, ['step', 'name', 'latencyMs']);
+  if (kind === 'tool') {
+    return {
+      ...pick(source, ['step', 'name', 'latencyMs']),
+      ...projectToolResultMetadata(source.result),
+    };
+  }
   if (kind === 'error') return pick(source, ['step', 'phase', 'code']);
   if (kind === 'streaming') return pick(source, STREAMING_METADATA_FIELDS);
   if (kind === 'note') {

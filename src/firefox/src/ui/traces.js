@@ -535,6 +535,11 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
       const content = ev.data?.content;
       const hasVisibleContent = typeof content === 'string' ? content.trim().length > 0 : !!content;
       const toolCalls = ev.data?.toolCalls || [];
+      const declaredToolCallCount = Number.isInteger(ev.data?.toolCallCount)
+        ? Math.max(0, ev.data.toolCallCount)
+        : 0;
+      const toolCallCount = Math.max(declaredToolCallCount, toolCalls.length);
+      const hasToolCalls = toolCallCount > 0;
       let body = '';
       if (hasVisibleContent) {
         body += `<div class="content-text">${escapeHtml(content)}</div>`;
@@ -547,7 +552,9 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
         }).join('');
         body += `<div style="margin-top:6px;">${tcList}</div>`;
       }
-      if (!hasVisibleContent && toolCalls.length === 0) {
+      if (!hasVisibleContent && hasToolCalls && toolCalls.length === 0) {
+        body = `<div class="tool-args">TOOL_CALLS_REDACTED · count=${toolCallCount}</div>`;
+      } else if (!hasVisibleContent && !hasToolCalls && ev.data?.empty !== false) {
         const emptyDetails = [
           `reason=${ev.data?.emptyReason || 'unknown'}`,
           ev.data?.finishReason ? `finish=${ev.data.finishReason}` : '',
@@ -572,14 +579,27 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
       const name = ev.data?.name || '?';
       const lat = ev.data?.latencyMs != null ? `<span class="latency">${ev.data.latencyMs} ms</span>` : '';
       const args = ev.data?.args ? JSON.stringify(ev.data.args, null, 2) : '';
-      let result = ev.data?.result;
-      try { result = typeof result === 'string' ? result : JSON.stringify(result, null, 2); } catch { result = String(result); }
+      const resultStatus = ev.data?.resultStatus;
+      const explicitStatus = ['success', 'error', 'unknown'].includes(resultStatus);
+      const hasResult = Object.prototype.hasOwnProperty.call(ev.data || {}, 'result');
+      let result = hasResult ? ev.data.result : null;
+      if (!hasResult && explicitStatus) {
+        const code = ev.data?.resultErrorCode ? ` · code=${ev.data.resultErrorCode}` : '';
+        result = `(tool result redacted; ${resultStatus}${code})`;
+      } else if (!hasResult) {
+        result = '(missing tool result)';
+      } else {
+        try { result = typeof result === 'string' ? result : JSON.stringify(result, null, 2); } catch { result = String(result); }
+      }
       if (typeof result === 'string' && result.length > 4000 && compact) result = result.slice(0, 4000) + '\n' + t('tr.event.description_truncated');
-      const ok = ev.data?.result && !ev.data.result.error && ev.data.result.success !== false;
+      const inferredOk = hasResult && ev.data?.result && !ev.data.result.error && ev.data.result.success !== false;
+      const ok = explicitStatus ? resultStatus === 'success' : inferredOk;
+      const unknown = explicitStatus && resultStatus === 'unknown';
+      const marker = unknown ? '?' : (ok ? '✓' : '✗');
       return `
         <div class="event tool">
           <div class="event-head">
-            <span class="kind">${ok ? '✓' : '✗'} <span class="tool-name">${escapeHtml(name)}</span></span>
+            <span class="kind">${marker} <span class="tool-name">${escapeHtml(name)}</span></span>
             ${lat}<span class="latency">${ts}</span>
           </div>
           ${args ? `<details><summary>${escapeHtml(t('tr.event.args'))}</summary><pre>${escapeHtml(args)}</pre></details>` : ''}

@@ -8448,7 +8448,26 @@ test('trace privacy: default persistence keeps metadata and content mode is expl
   const safeTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', tool);
   assert.equal(safeTool.args, undefined);
   assert.equal(safeTool.result, undefined);
-  assert.deepEqual(safeTool, { step: 1, name: 'private_tool', latencyMs: 40 });
+  assert.deepEqual(safeTool, {
+    step: 1,
+    name: 'private_tool',
+    latencyMs: 40,
+    resultStatus: 'success',
+  });
+
+  const safeFailedTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', {
+    step: 1,
+    name: 'private_tool',
+    result: { success: false, code: 'RATE_LIMIT', message: 'PRIVATE FAILURE' },
+    latencyMs: 40,
+  });
+  assert.deepEqual(safeFailedTool, {
+    step: 1,
+    name: 'private_tool',
+    latencyMs: 40,
+    resultStatus: 'error',
+    resultErrorCode: 'RATE_LIMIT',
+  });
 
   const safeError = TRACE_PRIVACY_CH.projectTraceEventData('error', error);
   assert.equal(safeError.message, undefined);
@@ -8855,6 +8874,54 @@ test('trace export: missing tool results are rendered as failures', () => {
   }]);
   assert.equal(toolCount, 1);
   assert.match(markdown, /click_ax[^\n]*✗ \(missing tool result\)/);
+});
+
+test('trace privacy projection keeps redacted outcomes and tool-call counts meaningful', () => {
+  const projectedTool = TRACE_PRIVACY_CH.projectTraceEventData('tool', {
+    step: 1,
+    name: 'click_ax',
+    args: { secret: 'x' },
+    result: { success: true },
+    latencyMs: 4,
+  });
+  const projectedResponse = TRACE_PRIVACY_CH.projectTraceEventData('llm_response', {
+    step: 1,
+    content: '',
+    toolCalls: [{ id: 'call-1' }],
+    toolCallCount: 1,
+    empty: false,
+  });
+  assert.equal(projectedTool.result, undefined);
+  assert.equal(projectedTool.resultStatus, 'success');
+  assert.equal(projectedResponse.toolCalls, undefined);
+  assert.equal(projectedResponse.toolCallCount, 1);
+
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize([{
+      run: { runId: 'privacy-consumer', status: 'done' },
+      events: [
+        { kind: 'llm_response', data: projectedResponse },
+        { kind: 'tool', data: projectedTool },
+      ],
+    }]);
+    assert.doesNotMatch(markdown, /EMPTY_RESPONSE/, `${label}: redacted tool-call response was classified as empty`);
+    assert.doesNotMatch(markdown, /✗/, `${label}: redacted successful tool result was classified as failed`);
+    assert.match(markdown, /tool result redacted; success/, `${label}: redacted result status is missing`);
+    assert.match(markdown, /contained 1 tool call/, `${label}: redacted tool-call count is missing`);
+  }
+
+  const payload = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    session: { sessionId: 'privacy-consumer' },
+    runs: [{
+      run: { runId: 'privacy-run', conversationId: 'privacy-consumer' },
+      events: [{ seq: 1, kind: 'tool', data: projectedTool }],
+    }],
+  });
+  const event = payload.resourceSpans[0].scopeSpans[0].spans[0].events[0];
+  const attrs = otlpAttributes(event.attributes);
+  assert.equal(attrs['webbrain.tool.result.status'], 'success');
+  assert.equal(attrs['error.type'], undefined);
 });
 
 test('trace export: notes appear before the footer', () => {
@@ -10397,6 +10464,9 @@ test('trace UI: renders the trajectory rows before the detailed event timeline',
     assert.match(traces, /renderStepTrajectory\(events, compact\)/, `${browser}: run view does not render the trajectory before details`);
     assert.match(traces, /EMPTY_RESPONSE · \$\{escapeHtml\(emptyDetails\)\}/, `${browser}: empty model responses have no visible diagnostics`);
     assert.match(traces, /const hasVisibleContent = typeof content === 'string' \? content\.trim\(\)\.length > 0 : !!content/, `${browser}: whitespace-only responses are not rendered as empty`);
+    assert.match(traces, /const toolCallCount = Math\.max\(declaredToolCallCount, toolCalls\.length\)/, `${browser}: redacted tool-call count is not used by the UI`);
+    assert.match(traces, /TOOL_CALLS_REDACTED/, `${browser}: redacted tool-call responses have no neutral marker`);
+    assert.match(traces, /resultStatus/, `${browser}: tool outcome metadata is not consumed`);
     assert.match(traces, /emptyReason \|\| 'unknown'/, `${browser}: legacy empty responses should not receive an invented cause`);
     assert.match(html, /\.trajectory-table|\.trajectory-row/, `${browser}: trajectory table styles missing`);
     assert.match(html, /\.conv-summary/, `${browser}: conversation statistics style missing`);
