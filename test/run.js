@@ -2905,6 +2905,7 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
       assert.equal(options.trustedOnly, true);
       assert.equal(options.requireUnique, true);
       assert.ok(options.abortSignal instanceof AbortSignal);
+      assert.equal(typeof options.beforeDispatch, 'function');
       trustedClickCompletedAt = Date.now();
       return { success: true, method: 'cdp-mouse', rect: { x: 1, y: 2, w: 20, h: 20 } };
     };
@@ -3147,6 +3148,7 @@ test('Chrome set_checked fails closed when marker verification resolves another 
       assert.equal(options.trustedOnly, true);
       assert.equal(options.requireUnique, true);
       assert.ok(options.abortSignal instanceof AbortSignal);
+      assert.equal(typeof options.beforeDispatch, 'function');
       return { success: true, method: 'cdp-mouse' };
     };
 
@@ -50835,6 +50837,22 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(trustedOnly.trusted, false);
   assert.equal(trustedOnlyFallbackCalls, 0, 'trusted-only clicks must not invoke DOM/JS fallbacks');
 
+  let fallbackDispatchBoundaries = 0;
+  client.armFileInputClickGuard = async () => ({ armed: true });
+  client.consumeFileInputClickGuard = async () => null;
+  client.sendCommand = async (_tabId, method) => method === 'DOM.resolveNode'
+    ? { object: { objectId: 'fallback-node' } }
+    : {};
+  const guardedFallback = await client.clickElement(42, '#fallback-checkbox', {
+    beforeDispatch: async () => {
+      fallbackDispatchBoundaries += 1;
+      return { success: true };
+    },
+  });
+  assert.equal(guardedFallback.success, true);
+  assert.equal(guardedFallback.method, 'cdp-node-click');
+  assert.equal(fallbackDispatchBoundaries, 1, 'selector fallback bypassed the dispatch boundary');
+
   client.resolveSelector = async () => ({
     inViewport: true,
     hitOk: true,
@@ -87342,7 +87360,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(source, /const reconciled = await this\._reconcileCoordinateClickWithDeadline\(/, `${label}: screenshot coordinate clicks bypass the reconciliation deadline wrapper`);
 
     if (label === 'chrome') {
-      assert.match(source, /const EARLY_CDP_ACTION_TOOLS = new Set\(\['type_text', 'press_keys', 'hover', 'drag_drop'\]\);/, 'chrome: early CDP action list is incomplete');
+      assert.match(source, /const EARLY_CDP_ACTION_TOOLS = new Set\(\['click', 'type_text', 'press_keys', 'hover', 'drag_drop'\]\);/, 'chrome: early CDP action list is incomplete');
       const executeToolStart = source.indexOf('async executeTool(');
       const executeToolImplStart = source.indexOf('async _executeToolImpl(', executeToolStart);
       const executeToolWrapper = source.slice(executeToolStart, executeToolImplStart);
@@ -87498,6 +87516,73 @@ test('Chrome early CDP actions start their deadline before debugger attachment',
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.sendCommand = originalSendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome primary selector clicks classify deadline expiry at mouse dispatch', async () => {
+  const originalChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClientCh.attach,
+    evaluate: cdpClientCh.evaluate,
+    clickElement: cdpClientCh.clickElement,
+  };
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 51, url: 'https://example.test/' }),
+        query: async () => [],
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.evaluate = async () => ({ result: { value: { isSelect: false } } });
+
+    for (const dispatchStarted of [false, true]) {
+      let releaseClick;
+      let markClickStarted;
+      const clickStarted = new Promise(resolve => { markClickStarted = resolve; });
+      const delayedClick = new Promise(resolve => { releaseClick = resolve; });
+      cdpClientCh.clickElement = async (_tabId, _selector, options) => {
+        assert.ok(options.abortSignal instanceof AbortSignal);
+        if (dispatchStarted) await options.beforeDispatch({ x: 10, y: 20 });
+        markClickStarted();
+        await delayedClick;
+        return { success: false, dispatched: dispatchStarted, noDispatch: !dispatchStarted };
+      };
+
+      const agent = new AgentCh({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._clickProgressSnapshot = async () => '{"page":"before"}';
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'click');
+        const error = new Error('click did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await clickStarted;
+        controller.abort(error);
+        releaseClick();
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(51, 'click', { selector: '#late-button' });
+      assert.equal(result.success, false);
+      assert.equal(result.dispatched, dispatchStarted);
+      assert.equal(result.outcomeUnknown, dispatchStarted);
+      assert.equal(result.retryable, !dispatchStarted);
+      assert.equal(result.noDispatch, dispatchStarted ? undefined : true);
+    }
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.evaluate = originals.evaluate;
+    cdpClientCh.clickElement = originals.clickElement;
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
   }
@@ -87727,6 +87812,42 @@ test('Chrome bounds trusted checkbox recovery before and during the CDP click', 
     assert.equal(beforeResult.outcomeUnknown, false);
     assert.equal(beforeResult.retryable, true);
 
+    let releasePreparation;
+    let markPreparationStarted;
+    const preparationStarted = new Promise(resolve => { markPreparationStarted = resolve; });
+    const delayedPreparation = new Promise(resolve => { releasePreparation = resolve; });
+    const preparationAgent = new AgentCh({});
+    preparationAgent._getDevDocumentIdentity = async () => ({
+      documentId: 'checkbox-doc',
+      pageUrl: 'https://example.test/',
+    });
+    preparationAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'set_checked');
+      const error = timeoutError();
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await preparationStarted;
+      controller.abort(error);
+      releasePreparation({ success: false, dispatched: false, noDispatch: true });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.clickElement = async () => {
+      markPreparationStarted();
+      return delayedPreparation;
+    };
+    const preparationResult = await preparationAgent._completeSetCheckedWithCdp(
+      48,
+      { ref_id: 'ref_checkbox', checked: true },
+      { ...response },
+      { ref_id: 'ref_checkbox', checked: true },
+    );
+    assert.equal(preparationResult.dispatched, false);
+    assert.equal(preparationResult.noDispatch, true);
+    assert.equal(preparationResult.outcomeUnknown, false);
+    assert.equal(preparationResult.retryable, true);
+
     let releaseClick;
     let markClickStarted;
     const clickStarted = new Promise(resolve => { markClickStarted = resolve; });
@@ -87748,7 +87869,8 @@ test('Chrome bounds trusted checkbox recovery before and during the CDP click', 
       throw error;
     };
     cdpClientCh.attach = async () => ({ attached: true });
-    cdpClientCh.clickElement = async () => {
+    cdpClientCh.clickElement = async (_tabId, _selector, options) => {
+      options.beforeDispatch();
       markClickStarted();
       return delayedClick;
     };

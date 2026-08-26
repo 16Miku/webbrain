@@ -3786,6 +3786,23 @@ export class CDPClient {
     const beforeDispatch = typeof options?.beforeDispatch === 'function'
       ? options.beforeDispatch
       : null;
+    let dispatchAuthorized = false;
+    const authorizeDispatch = async ({ x = null, y = null, tag = '', rect = null } = {}) => {
+      throwIfAborted();
+      if (dispatchAuthorized || !beforeDispatch) return { success: true };
+      const validation = await beforeDispatch({ x, y, tag, rect });
+      throwIfAborted();
+      if (validation?.success !== true) {
+        return {
+          ...(validation || {}),
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+        };
+      }
+      dispatchAuthorized = true;
+      return { success: true };
+    };
     throwIfAborted();
     const info = await this.resolveSelector(tabId, selector, options);
     throwIfAborted();
@@ -3833,22 +3850,13 @@ export class CDPClient {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
         });
         throwIfAborted();
-        if (beforeDispatch) {
-          const validation = await beforeDispatch({
-            x: info.x,
-            y: info.y,
-            tag: info.tag,
-            rect,
-          });
-          if (validation?.success !== true) {
-            return {
-              ...(validation || {}),
-              success: false,
-              dispatched: false,
-              noDispatch: true,
-            };
-          }
-        }
+        const validation = await authorizeDispatch({
+          x: info.x,
+          y: info.y,
+          tag: info.tag,
+          rect,
+        });
+        if (validation.success !== true) return validation;
         dispatchAttempted = true;
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,
@@ -3903,15 +3911,23 @@ export class CDPClient {
     // and Runtime.callFunctionOn to invoke .click() on the resolved object.
     if (info.nodeId) {
       try {
+        throwIfAborted();
         await this.armFileInputClickGuard(tabId);
+        throwIfAborted();
         await this.sendCommand(tabId, 'DOM.focus', { nodeId: info.nodeId }).catch(() => {});
+        throwIfAborted();
         const { object } = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+        throwIfAborted();
         if (object?.objectId) {
+          const validation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
+          if (validation.success !== true) return validation;
+          dispatchAttempted = true;
           await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
             objectId: object.objectId,
             functionDeclaration: 'function() { this.click(); }',
             awaitPromise: false,
           });
+          throwIfAborted();
           const blockedFileInput = await this.consumeFileInputClickGuard(tabId);
           if (blockedFileInput?.blocked) {
             return this.fileInputClickBlockedResult(
@@ -3932,12 +3948,20 @@ export class CDPClient {
             },
           };
         }
-      } catch (e) { /* fall through */ }
+      } catch (e) {
+        if (abortSignal?.aborted) throwIfAborted();
+        // fall through
+      }
     }
 
     // Step 3: JS fallback for open shadow roots.
     const selectorJSON = JSON.stringify(selector);
+    throwIfAborted();
     await this.armFileInputClickGuard(tabId);
+    throwIfAborted();
+    const fallbackValidation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
+    if (fallbackValidation.success !== true) return fallbackValidation;
+    dispatchAttempted = true;
     const fb = await this.evaluate(tabId, `
       (() => {
         const sel = ${selectorJSON};
@@ -3971,6 +3995,7 @@ export class CDPClient {
         };
       })()
     `);
+    throwIfAborted();
     const blockedFileInput = await this.consumeFileInputClickGuard(tabId);
     if (blockedFileInput?.blocked) {
       return this.fileInputClickBlockedResult(
