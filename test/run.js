@@ -3980,6 +3980,11 @@ test('matches gmail.com under mail.google.com', () => {
   assert.match(a?.notes || '', /do not use click-by-text or coordinates/i);
   assert.match(a?.notes || '', /Re-read the body afterward to verify the replacement/i);
   assert.match(a?.notes || '', /If the user says not to send, never click Send/i);
+  assert.match(a?.notes || '', /exact toolbar range such as "1–50 of 860"/i);
+  assert.match(a?.notes || '', /Do not paginate to the last page merely to re-verify it/i);
+  assert.match(a?.notes || '', /matching Gmail results, not unique external objects/i);
+  assert.match(a?.notes || '', /messages or conversations depending on Gmail's Conversation View setting/i);
+  assert.match(a?.notes || '', /"of many" is not an exact count/i);
   assert.match(a?.notes || '', /top-level "Expand all" control/i);
   assert.match(a?.notes || '', /read it from oldest to newest/i);
   assert.match(a?.notes || '', /Show trimmed content.*not a substitute for expanding the conversation/is);
@@ -86750,6 +86755,64 @@ test('background reasserts active viewport glow after tab reload', () => {
     assert.match(source, /activeIndicatorTabs\.delete\(tabId\);/, `${label}: hide/remove should clear active tab`);
     assert.match(source, /onUpdated\.addListener\(\(tabId, changeInfo\) => \{[\s\S]*changeInfo\?\.status === 'complete'[\s\S]*reassertIndicatorIfActive\(tabId\);/, `${label}: completed reload should reassert active indicator`);
     assert.match(source, /setTimeout\(\(\) => \{[\s\S]*activeIndicatorTabs\.has\(tabId\)[\s\S]*WB_SHOW_AGENT_INDICATORS[\s\S]*\}, 500\);/, `${label}: delayed reassert retry missing`);
+  }
+});
+
+test('agent viewport indicator heartbeat auto-cleans stale page UI', () => {
+  for (const [label, prefix, runtimeApi] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const indicator = fs.readFileSync(path.join(ROOT, prefix, 'src/content/agent-visual-indicator.js'), 'utf8');
+
+    assert.match(background, /const INDICATOR_HEARTBEAT_INTERVAL_MS = 20_000;/, `${label}: background heartbeat cadence missing`);
+    assert.match(background, /const indicatorHeartbeatTimers = new Map\(\);/, `${label}: background heartbeat registry missing`);
+    assert.match(background, new RegExp(`${runtimeApi}\\.tabs\\.sendMessage\\(tabId, \\{ type: 'WB_AGENT_INDICATOR_HEARTBEAT' \\}`), `${label}: heartbeat is not sent to the active page`);
+    assert.match(background, /response\?\.active === false && activeIndicatorTabs\.has\(tabId\)[\s\S]*sendIndicatorMessage\(tabId, 'WB_SHOW_AGENT_INDICATORS'\)/, `${label}: an active run does not restore an expired page lease`);
+    assert.match(background, /type === 'WB_SHOW_AGENT_INDICATORS'[\s\S]*startIndicatorHeartbeat\(tabId\)/, `${label}: showing indicators does not start heartbeat`);
+    assert.match(background, /type === 'WB_HIDE_AGENT_INDICATORS'[\s\S]*stopIndicatorHeartbeat\(tabId\)/, `${label}: hiding indicators does not stop heartbeat`);
+    assert.match(background, /onRemoved\.addListener\(\(tabId\)[\s\S]*stopIndicatorHeartbeat\(tabId\)/, `${label}: tab removal leaks heartbeat`);
+
+    assert.match(indicator, /const INDICATOR_HEARTBEAT_TIMEOUT_MS = 65_000;/, `${label}: page lease timeout missing`);
+    assert.match(indicator, /function show\(\)[\s\S]*armIndicatorHeartbeat\(\)/, `${label}: show does not arm page lease`);
+    assert.match(indicator, /function hide\(\)[\s\S]*clearIndicatorHeartbeat\(\)/, `${label}: hide does not clear page lease`);
+    assert.match(indicator, /case 'WB_AGENT_INDICATOR_HEARTBEAT':[\s\S]*if \(indicatorsActive\) armIndicatorHeartbeat\(\)/, `${label}: page heartbeat does not refresh active lease`);
+    assert.match(indicator, /setTimeout\(\(\) => \{[\s\S]*if \(indicatorsActive\) hide\(\);[\s\S]*INDICATOR_HEARTBEAT_TIMEOUT_MS/, `${label}: expired page lease does not hide stale indicator`);
+  }
+});
+
+test('content-script actions have a bounded unknown-outcome timeout', () => {
+  for (const [label, prefix, AgentClass] of [
+    ['chrome', 'src/chrome', AgentCh],
+    ['firefox', 'src/firefox', AgentFx],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    assert.match(source, /const CONTENT_ACTION_TIMEOUT_MS = 60_000;/, `${label}: content action deadline missing`);
+    assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
+    assert.match(source, /dispatchContentAction = \(\) => this\._withContentActionDeadline\(sendContentAction, name\)/, `${label}: page dispatch bypasses the deadline`);
+    const timeoutCatch = source.indexOf("if (e?.code === 'content_action_timeout')", source.indexOf('const dispatchContentAction'));
+    const reinject = source.indexOf('await this._injectCoreContentScripts(tabId);', timeoutCatch);
+    assert.notEqual(timeoutCatch, -1, `${label}: first timeout is not handled`);
+    assert.notEqual(reinject, -1, `${label}: content-script reinjection fallback missing`);
+    assert.equal(timeoutCatch < reinject, true, `${label}: timed-out action may be blindly dispatched a second time`);
+
+    const result = new AgentClass({})._contentActionTimeoutResult('click', {
+      message: 'click did not return a page response within 60 seconds.',
+    });
+    assert.equal(result.success, false, `${label}: timed-out action reported success`);
+    assert.equal(result.dispatched, true, `${label}: timed-out action lost dispatch uncertainty`);
+    assert.equal(result.outcomeUnknown, true, `${label}: timed-out action did not preserve unknown outcome`);
+    assert.equal(result.retryable, false, `${label}: timed-out action invited a blind retry`);
+    assert.match(result.error, /may have reached the page.*inspect the current state/i, `${label}: timeout recovery instruction is unsafe`);
+
+    const readResult = new AgentClass({})._contentActionTimeoutResult('read_page', {
+      message: 'read_page did not return a page response within 60 seconds.',
+    });
+    assert.equal(readResult.outcomeUnknown, false, `${label}: read-only timeout was treated as an uncertain mutation`);
+    assert.equal(readResult.retryable, true, `${label}: read-only timeout was made terminal`);
+    assert.equal(Object.hasOwn(readResult, 'dispatched'), false, `${label}: read-only timeout claimed a state-changing dispatch`);
+    assert.match(readResult.error, /retry this read-only observation once/i, `${label}: read-only timeout lacks bounded recovery`);
   }
 });
 

@@ -132,6 +132,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
+const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
   'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
 ]);
@@ -787,6 +788,39 @@ export class Agent extends LoopDetector {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
+  }
+
+  async _withContentActionDeadline(operation, toolName = 'content action') {
+    let timeoutId = null;
+    const timeoutError = new Error(
+      `${toolName} did not return a page response within ${CONTENT_ACTION_TIMEOUT_MS / 1000} seconds.`,
+    );
+    timeoutError.code = 'content_action_timeout';
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(timeoutError), CONTENT_ACTION_TIMEOUT_MS);
+    });
+    const started = Promise.resolve().then(operation);
+    // The page response may settle after the timeout. Observe that settlement
+    // so it cannot become an unhandled rejection after this race has returned.
+    started.catch(() => {});
+    try {
+      return await Promise.race([started, timeout]);
+    } finally {
+      if (timeoutId != null) clearTimeout(timeoutId);
+    }
+  }
+
+  _contentActionTimeoutResult(toolName, error) {
+    const outcomeUnknown = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    return {
+      success: false,
+      ...(outcomeUnknown ? { dispatched: true } : {}),
+      outcomeUnknown,
+      retryable: !outcomeUnknown,
+      error: outcomeUnknown
+        ? `${error?.message || `${toolName} timed out`} The action may have reached the page; inspect the current state before deciding whether to retry.`
+        : `${error?.message || `${toolName} timed out`} No page result was returned; retry this read-only observation once after the page settles.`,
+    };
   }
 
   _recordVisionRouteTrace(tabId, route, capture, context, fallbackReason = null) {
@@ -20488,7 +20522,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       action,
       params: contentArgs,
     }, messageOptions);
-    const dispatchContentAction = sendContentAction;
+    const dispatchContentAction = () => this._withContentActionDeadline(sendContentAction, name);
     try {
       let response = await dispatchContentAction();
       if (name === 'click') {
@@ -20516,6 +20550,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
       return this._withCoordinateReconciliation(response, coordinateDiagnostic);
     } catch (e) {
+      if (e?.code === 'content_action_timeout') {
+        return this._withCoordinateReconciliation(
+          this._contentActionTimeoutResult(name, e),
+          coordinateDiagnostic,
+        );
+      }
       // Content script might not be injected — try injecting it
       try {
         await this._injectCoreContentScripts(tabId);
@@ -20545,6 +20585,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
         return this._withCoordinateReconciliation(response, coordinateDiagnostic);
       } catch (e2) {
+        if (e2?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation(
+            this._contentActionTimeoutResult(name, e2),
+            coordinateDiagnostic,
+          );
+        }
         let pageUrl = '';
         try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
         const accessFailure = firefoxHostPermissionFailure(pageUrl, e2.message);

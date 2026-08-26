@@ -1582,13 +1582,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
  * await — these are decorative and shouldn't block the run.
  */
 const activeIndicatorTabs = new Set();
+const indicatorHeartbeatTimers = new Map();
+const INDICATOR_HEARTBEAT_INTERVAL_MS = 20_000;
+
+function stopIndicatorHeartbeat(tabId) {
+  const timer = indicatorHeartbeatTimers.get(tabId);
+  if (timer != null) clearInterval(timer);
+  indicatorHeartbeatTimers.delete(tabId);
+}
+
+function startIndicatorHeartbeat(tabId) {
+  if (indicatorHeartbeatTimers.has(tabId)) return;
+  const timer = setInterval(() => {
+    if (!activeIndicatorTabs.has(tabId)) {
+      stopIndicatorHeartbeat(tabId);
+      return;
+    }
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'WB_AGENT_INDICATOR_HEARTBEAT' })
+        .then((response) => {
+          // The page lease may have expired while the tab/browser was frozen.
+          // Restore the indicator only if this run is still active; a late
+          // heartbeat response after HIDE must never resurrect stale UI.
+          if (response?.active === false && activeIndicatorTabs.has(tabId)) {
+            sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS');
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }, INDICATOR_HEARTBEAT_INTERVAL_MS);
+  indicatorHeartbeatTimers.set(tabId, timer);
+}
 
 function sendIndicatorMessage(tabId, type) {
   if (tabId == null || !type) return;
   if (type === 'WB_SHOW_AGENT_INDICATORS') {
     activeIndicatorTabs.add(tabId);
+    startIndicatorHeartbeat(tabId);
   } else if (type === 'WB_HIDE_AGENT_INDICATORS') {
     activeIndicatorTabs.delete(tabId);
+    stopIndicatorHeartbeat(tabId);
   }
   try {
     chrome.tabs.sendMessage(tabId, { type }).catch(() => { /* expected */ });
@@ -1613,6 +1646,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   activeIndicatorTabs.delete(tabId);
+  stopIndicatorHeartbeat(tabId);
   withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId)).catch(() => {});
 });
 

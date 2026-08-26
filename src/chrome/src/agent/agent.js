@@ -194,6 +194,7 @@ const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
 const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
+const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
 const STANDALONE_WIKIPEDIA_MODEL_SEARCH_ALIASES = new Set([
@@ -1069,6 +1070,39 @@ export class Agent extends LoopDetector {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
+  }
+
+  async _withContentActionDeadline(operation, toolName = 'content action') {
+    let timeoutId = null;
+    const timeoutError = new Error(
+      `${toolName} did not return a page response within ${CONTENT_ACTION_TIMEOUT_MS / 1000} seconds.`,
+    );
+    timeoutError.code = 'content_action_timeout';
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(timeoutError), CONTENT_ACTION_TIMEOUT_MS);
+    });
+    const started = Promise.resolve().then(operation);
+    // The page response may settle after the timeout. Observe that settlement
+    // so it cannot become an unhandled rejection after this race has returned.
+    started.catch(() => {});
+    try {
+      return await Promise.race([started, timeout]);
+    } finally {
+      if (timeoutId != null) clearTimeout(timeoutId);
+    }
+  }
+
+  _contentActionTimeoutResult(toolName, error) {
+    const outcomeUnknown = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    return {
+      success: false,
+      ...(outcomeUnknown ? { dispatched: true } : {}),
+      outcomeUnknown,
+      retryable: !outcomeUnknown,
+      error: outcomeUnknown
+        ? `${error?.message || `${toolName} timed out`} The action may have reached the page; inspect the current state before deciding whether to retry.`
+        : `${error?.message || `${toolName} timed out`} No page result was returned; retry this read-only observation once after the page settles.`,
+    };
   }
 
   _recordVisionRouteTrace(tabId, route, capture, context, fallbackReason = null) {
@@ -25694,12 +25728,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       action,
       params: contentArgs,
     }, messageOptions);
-    const dispatchContentAction = sendContentAction;
+    const dispatchContentAction = () => this._withContentActionDeadline(sendContentAction, name);
 
     let response;
     try {
         response = await dispatchContentAction();
       } catch (e) {
+        if (e?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation(
+            this._contentActionTimeoutResult(name, e),
+            coordinateDiagnostic,
+          );
+        }
         // Content script might not be injected — try injecting it.
         // accessibility-tree.js must load first so content.js's
         // get_accessibility_tree / click_ax / type_ax handlers can reach
@@ -25708,6 +25748,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await this._injectCoreContentScripts(tabId);
           response = await dispatchContentAction();
         } catch (e2) {
+          if (e2?.code === 'content_action_timeout') {
+            return this._withCoordinateReconciliation(
+              this._contentActionTimeoutResult(name, e2),
+              coordinateDiagnostic,
+            );
+          }
           return this._withCoordinateReconciliation(
             { error: `Failed to communicate with page: ${e2.message}` },
             coordinateDiagnostic,
