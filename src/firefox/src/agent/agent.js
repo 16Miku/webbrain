@@ -816,10 +816,14 @@ export class Agent extends LoopDetector {
       `${toolName} did not return a page response within ${Math.ceil(timeoutMs / 1000)} seconds.`,
     );
     timeoutError.code = 'content_action_timeout';
+    const controller = new AbortController();
     const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
+      timeoutId = setTimeout(() => {
+        try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
+        reject(timeoutError);
+      }, timeoutMs);
     });
-    const started = Promise.resolve().then(operation);
+    const started = Promise.resolve().then(() => operation(controller.signal));
     // The page response may settle after the timeout. Observe that settlement
     // so it cannot become an unhandled rejection after this race has returned.
     started.catch(() => {});
@@ -6826,7 +6830,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, abortSignal = null) {
     let contentArgs = axScope?.documentToken
       ? {
           ...args,
@@ -6854,7 +6858,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }, messageOptions);
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
     const finish = async (response) => {
+      this._throwIfAborted(abortSignal);
       response = await this._settleContentFilePickerGuard(tabId, response);
+      this._throwIfAborted(abortSignal);
       if (response?.documentToken && (
         response.documentChanged === true
         || response.routeChanged === true
@@ -6868,13 +6874,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
 
     try {
+      this._throwIfAborted(abortSignal);
       return await finish(await dispatch());
     } catch (error) {
       if (error?.code === 'content_action_timeout') {
         return this._contentActionTimeoutResult('click_ax', error);
       }
       try {
+        this._throwIfAborted(abortSignal);
         await this._injectCoreContentScripts(tabId);
+        this._throwIfAborted(abortSignal);
         return await finish(await dispatch());
       } catch (retryError) {
         if (retryError?.code === 'content_action_timeout') {
@@ -6889,8 +6898,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
+    this._throwIfAborted(abortSignal);
     const target = resolution?.semanticTarget;
     const normalized = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const expectedName = normalized(messageRecipientContext.expectedName);
@@ -6920,12 +6931,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && typeof target?.ref_id === 'string'
       && /^ref_\d+$/.test(target.ref_id);
     if (semanticEligible) {
+      this._throwIfAborted(abortSignal);
       const result = await this._dispatchClickAx(
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
         null,
         messageRecipientContext,
+        abortSignal,
       );
       return {
         result: {
@@ -6959,7 +6972,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _reconcileCoordinateClickWithDeadline(tabId, point, messageRecipientContext = {}) {
     try {
       return await this._withContentActionDeadline(
-        () => this._reconcileCoordinateClick(tabId, point, messageRecipientContext),
+        abortSignal => this._reconcileCoordinateClick(
+          tabId,
+          point,
+          messageRecipientContext,
+          abortSignal,
+        ),
         'click',
         this._contentActionDeadlineMs('click'),
       );

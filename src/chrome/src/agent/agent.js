@@ -1098,10 +1098,14 @@ export class Agent extends LoopDetector {
       `${toolName} did not return a page response within ${Math.ceil(timeoutMs / 1000)} seconds.`,
     );
     timeoutError.code = 'content_action_timeout';
+    const controller = new AbortController();
     const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
+      timeoutId = setTimeout(() => {
+        try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
+        reject(timeoutError);
+      }, timeoutMs);
     });
-    const started = Promise.resolve().then(operation);
+    const started = Promise.resolve().then(() => operation(controller.signal));
     // The page response may settle after the timeout. Observe that settlement
     // so it cannot become an unhandled rejection after this race has returned.
     started.catch(() => {});
@@ -9906,7 +9910,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, abortSignal = null) {
     const interactionUrl = await this._currentUrl(tabId);
     const clickProgressBefore = await this._clickProgressSnapshot(tabId);
     const sideEffectWatch = this._beginClickAxSideEffectWatch(tabId);
@@ -9949,16 +9953,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       let response;
       try {
+        this._throwIfAborted(abortSignal);
         await captureBaseline();
         response = await dispatch();
+        this._throwIfAborted(abortSignal);
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
           return this._contentActionTimeoutResult('click_ax', error);
         }
         try {
+          this._throwIfAborted(abortSignal);
           await this._injectCoreContentScripts(tabId);
+          this._throwIfAborted(abortSignal);
           await captureBaseline();
           response = await dispatch();
+          this._throwIfAborted(abortSignal);
         } catch (retryError) {
           if (retryError?.code === 'content_action_timeout') {
             return this._contentActionTimeoutResult('click_ax', retryError);
@@ -9967,6 +9976,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       response = await this._settleContentFilePickerGuard(tabId, response);
+      this._throwIfAborted(abortSignal);
       if (response?.documentToken && (
         response.documentChanged === true
         || response.routeChanged === true
@@ -9978,6 +9988,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // content path consumes that binding immediately before el.click(); a
       // no-progress CDP fallback would be a second, unbound send attempt.
       if (messageRecipientContext.messageRecipientGuardRequired !== true) {
+        this._throwIfAborted(abortSignal);
         response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, baseline);
       }
       const observedAfterSnapshot = response?._clickAxAfterSnapshot || '';
@@ -9999,8 +10010,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
+    this._throwIfAborted(abortSignal);
     const target = resolution?.semanticTarget;
     const normalized = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const expectedName = normalized(messageRecipientContext.expectedName);
@@ -10030,12 +10043,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && typeof target?.ref_id === 'string'
       && /^ref_\d+$/.test(target.ref_id);
     if (semanticEligible) {
+      this._throwIfAborted(abortSignal);
       const result = await this._dispatchClickAx(
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
         null,
         messageRecipientContext,
+        abortSignal,
       );
       return {
         result: {
@@ -10069,7 +10084,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _reconcileCoordinateClickWithDeadline(tabId, point, messageRecipientContext = {}) {
     try {
       return await this._withContentActionDeadline(
-        () => this._reconcileCoordinateClick(tabId, point, messageRecipientContext),
+        abortSignal => this._reconcileCoordinateClick(
+          tabId,
+          point,
+          messageRecipientContext,
+          abortSignal,
+        ),
         'click',
         this._contentActionDeadlineMs('click'),
       );
@@ -26252,12 +26272,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _maybeFallbackFieldWithCdp(tabId, toolName, args, response, messageRecipientContext = {}) {
     try {
       return await this._withContentActionDeadline(
-        () => this._maybeFallbackFieldWithCdpImpl(
+        abortSignal => this._maybeFallbackFieldWithCdpImpl(
           tabId,
           toolName,
           args,
           response,
           messageRecipientContext,
+          abortSignal,
         ),
         toolName,
         this._contentActionDeadlineMs(toolName, args),
@@ -26270,7 +26291,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _maybeFallbackFieldWithCdpImpl(tabId, toolName, args, response, messageRecipientContext = {}) {
+  async _maybeFallbackFieldWithCdpImpl(
+    tabId,
+    toolName,
+    args,
+    response,
+    messageRecipientContext = {},
+    abortSignal = null,
+  ) {
     if (!response || (toolName !== 'type_ax' && toolName !== 'set_field')) return response;
     const expected = typeof response._expectedValue === 'string' ? response._expectedValue : null;
     const clearsExisting = toolName === 'set_field'
@@ -26290,11 +26318,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     let trustedDispatched = false;
     try {
+      this._throwIfAborted(abortSignal);
       let prepared = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_prepare_field_for_trusted_type',
         params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
       });
+      this._throwIfAborted(abortSignal);
       if (!prepared?.success) {
         return {
           ...failed,
@@ -26303,12 +26333,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       await cdpClient.attach(tabId);
+      this._throwIfAborted(abortSignal);
       if (prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0) {
         const x = prepared.rect.x + prepared.rect.w / 2;
         const y = prepared.rect.y + prepared.rect.h / 2;
+        this._throwIfAborted(abortSignal);
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
+        this._throwIfAborted(abortSignal);
         trustedDispatched = true;
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
@@ -26316,6 +26349,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
         });
+        this._throwIfAborted(abortSignal);
         // The trusted click collapses the preflight selection. Re-resolve the
         // same ref and restore the requested selection immediately before
         // dispatch: replacement selects all; append collapses at the end so
@@ -26325,6 +26359,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: 'ax_prepare_field_for_trusted_type',
           params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
         });
+        this._throwIfAborted(abortSignal);
         if (!reselected?.success) {
           return {
             ...failed,
@@ -26340,6 +26375,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const trustedText = appendingContentEditable
         ? (typeof args?.text === 'string' ? args.text : '')
         : expected;
+      this._throwIfAborted(abortSignal);
       if (trustedText || appendingContentEditable) {
         await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
       } else {
@@ -26350,7 +26386,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
         });
       }
+      this._throwIfAborted(abortSignal);
       await new Promise(resolve => setTimeout(resolve, 120));
+      this._throwIfAborted(abortSignal);
       const verification = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_verify_field_value',
@@ -26360,6 +26398,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(appendingContentEditable ? { appendText: trustedText } : {}),
         },
       });
+      this._throwIfAborted(abortSignal);
       if (!verification?.success || verification.verified !== true) {
         return {
           ...failed,
@@ -26395,14 +26434,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // set_field({submit:true}) must never submit until the trusted retry has
       // itself settled and verified. Use trusted CDP keys for the submission.
       if (toolName === 'set_field' && args?.submit === true) {
+        this._throwIfAborted(abortSignal);
         if (prepared.isCombobox) {
           await new Promise(resolve => setTimeout(resolve, 80));
+          this._throwIfAborted(abortSignal);
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40,
           });
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40,
           });
+          this._throwIfAborted(abortSignal);
         }
         if (messageRecipientContext.messageRecipientGuardRequired === true) {
           const recipientValidation = await chrome.tabs.sendMessage(tabId, {
@@ -26413,6 +26455,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               messageRecipientDispatchBinding: messageRecipientContext.messageRecipientDispatchBinding || null,
             },
           });
+          this._throwIfAborted(abortSignal);
           if (recipientValidation?.success !== true) {
             return {
               ...recovered,
@@ -26426,6 +26469,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
         }
+        this._throwIfAborted(abortSignal);
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
         });
@@ -26436,6 +26480,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return recovered;
     } catch (error) {
+      if (error?.code === 'content_action_timeout') throw error;
       return {
         ...failed,
         ...(trustedDispatched ? { dispatched: true, noDispatch: false } : {}),
@@ -26444,28 +26489,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _resolveClickAxFallbackTarget(tabId, refId) {
+  async _resolveClickAxFallbackTarget(tabId, refId, abortSignal = null) {
     try {
+      this._throwIfAborted(abortSignal);
       let response = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_resolve_rect',
         params: { ref_id: refId, forClickFallback: true },
       });
+      this._throwIfAborted(abortSignal);
       if (response?.success && !response.inViewport) {
         await new Promise(resolve => setTimeout(resolve, 80));
+        this._throwIfAborted(abortSignal);
         response = await chrome.tabs.sendMessage(tabId, {
           target: 'content',
           action: 'ax_resolve_rect',
           params: { ref_id: refId, forClickFallback: true },
         });
+        this._throwIfAborted(abortSignal);
       }
       return response;
     } catch (error) {
+      if (error?.code === 'content_action_timeout') throw error;
       return { success: false, error: error?.message || String(error) };
     }
   }
 
   async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline) {
+    try {
+      return await this._withContentActionDeadline(
+        abortSignal => this._maybeFallbackClickAxWithCdpImpl(
+          tabId,
+          args,
+          response,
+          baseline,
+          abortSignal,
+        ),
+        'click_ax',
+        this._contentActionDeadlineMs('click_ax', args),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return this._contentActionTimeoutResult('click_ax', error);
+      }
+      throw error;
+    }
+  }
+
+  async _maybeFallbackClickAxWithCdpImpl(tabId, args, response, baseline, abortSignal = null) {
     if (!response || response.success !== true || !baseline) return response;
 
     const withSnapshot = (value, observation) => {
@@ -26536,6 +26607,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? { allowDelayed: false, firstDelayMs: 250 }
         : { allowDelayed: true, firstDelayMs: 250, pollMs: 150, maxMs: 1250 },
     );
+    this._throwIfAborted(abortSignal);
     {
       const assessed = this._assessClickAxObservationRound(
         response,
@@ -26545,7 +26617,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (assessed.done) return withSnapshot(assessed.value, syntheticObservation);
     }
 
-    let target = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id);
+    let target = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+    this._throwIfAborted(abortSignal);
     let targetStrongState = strongStateOf(target);
     let targetWeakState = weakStateOf(target);
     addWeakTargetHint(targetWeakStateBefore, targetWeakState);
@@ -26575,6 +26648,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       baseline,
       { allowDelayed: true, firstDelayMs: Math.min(200, settleBudget), pollMs: 150, maxMs: settleBudget },
     );
+    this._throwIfAborted(abortSignal);
     {
       const assessed = this._assessClickAxObservationRound(
         response,
@@ -26584,7 +26658,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (assessed.done) return withSnapshot(assessed.value, settledObservation);
     }
 
-    const settledTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id);
+    const settledTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+    this._throwIfAborted(abortSignal);
     const settledTargetStrongState = strongStateOf(settledTarget);
     const settledTargetWeakState = weakStateOf(settledTarget);
     addWeakTargetHint(targetWeakStateBefore, settledTargetWeakState);
@@ -26649,6 +26724,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       Date.now(),
       baseline.preparedActive || preCdpActive,
     );
+    this._throwIfAborted(abortSignal);
     // Prefer the live pre-CDP active as the "preparatory" identity for the
     // trusted round: blur-only transitions from that identity are not proof.
     fallbackBaseline.preparedActive = preCdpActive || baseline.preparedActive || '';
@@ -26657,12 +26733,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let dispatchedEvents = 0;
     let pressedDelivered = false;
     try {
+      this._throwIfAborted(abortSignal);
       await cdpClient.attach(tabId);
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'filePickerGuardArm';
       await cdpClient.armFileInputClickGuard(tabId);
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'mouseMoved';
       await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', target.x, target.y);
       dispatchedEvents++;
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'mousePressed';
       // Snapshot/tab baselines must exist before pointer input, but the
       // mutation window starts at the first click-producing event rather than
@@ -26678,6 +26758,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       dispatchStage = 'mouseReleased';
       await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y);
       dispatchedEvents++;
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'filePickerGuardConsume';
       const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
       if (blockedFileInput?.blocked) {
@@ -26696,6 +26777,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       dispatchStage = 'complete';
     } catch (error) {
+      if (error?.code === 'content_action_timeout') throw error;
       const fallbackAttempted = dispatchedEvents > 0;
       return withSnapshot({
         ...response,
@@ -26717,11 +26799,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       fallbackBaseline,
       { allowDelayed: true, firstDelayMs: 250, pollMs: 150, maxMs: 1000 },
     );
+    this._throwIfAborted(abortSignal);
     this._clickAxAddObservedHints(response, trustedObservation);
     let trustedTargetStateChanged = false;
     let trustedTargetWeakStateChanged = false;
     if (!trustedObservation.proved) {
-      const trustedTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id);
+      const trustedTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+      this._throwIfAborted(abortSignal);
       const trustedTargetStrongState = strongStateOf(trustedTarget);
       const trustedTargetWeakState = weakStateOf(trustedTarget);
       addWeakTargetHint(targetWeakState, trustedTargetWeakState);

@@ -69661,7 +69661,11 @@ test('Chrome controlled-field fallback is ref-bound, trusted, verified, and subm
   assert.ok(fallbackDeadlineStart >= 0 && fallbackImplStart > fallbackDeadlineStart, 'chrome: trusted field retry deadline wrapper missing');
   const fallbackDeadlineSource = agent.slice(fallbackDeadlineStart, fallbackImplStart);
   assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackFieldWithCdpImpl\([\s\S]*toolName/, 'chrome: trusted field retry pipeline bypasses the deadline');
+  assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*messageRecipientContext,[\s\S]*abortSignal/, 'chrome: trusted field retry deadline does not propagate cancellation');
   assert.match(fallbackDeadlineSource, /content_action_timeout[\s\S]*this\._contentActionTimeoutResult\(toolName, error\)/, 'chrome: trusted field retry timeout loses its unknown outcome');
+  const fallbackImplEnd = agent.indexOf('async _resolveClickAxFallbackTarget(', fallbackImplStart);
+  const fallbackImplSource = agent.slice(fallbackImplStart, fallbackImplEnd);
+  assert.match(fallbackImplSource, /this\._throwIfAborted\(abortSignal\)[\s\S]*Input\.insertText[\s\S]*this\._throwIfAborted\(abortSignal\)[\s\S]*Input\.dispatchKeyEvent/, 'chrome: trusted field retry can continue mutating after cancellation');
   assert.match(agent, /_maybeFallbackFieldWithCdp[\s\S]*ax_prepare_field_for_trusted_type[\s\S]*Input\.insertText[\s\S]*ax_verify_field_value/, 'chrome: trusted field retry pipeline missing');
   assert.match(agent, /verification\.verified !== true[\s\S]*if \(toolName === 'set_field' && args\?\.submit === true\)/, 'chrome: submit must remain after trusted verification');
   assert.match(content, /'ax_prepare_field_for_trusted_type'[\s\S]*window\.__wb_ax_lookup\(ref_id\)[\s\S]*el\.select\(\)/, 'chrome: trusted retry must focus and select the ref-bound field');
@@ -69680,40 +69684,77 @@ test('Chrome controlled-field fallback is ref-bound, trusted, verified, and subm
 });
 
 test('Chrome controlled-field fallback timeout preserves an unknown mutation outcome', async () => {
-  const agent = new AgentCh({});
-  let deadlineTool = '';
-  let implementationStarted = false;
-  agent._maybeFallbackFieldWithCdpImpl = async () => {
-    implementationStarted = true;
-    return new Promise(() => {});
-  };
-  agent._withContentActionDeadline = async (operation, toolName) => {
-    deadlineTool = toolName;
-    operation();
-    const error = new Error(`${toolName} did not return a page response within 60 seconds.`);
-    error.code = 'content_action_timeout';
-    throw error;
-  };
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  try {
+    let releasePreparation;
+    let markPreparationStarted;
+    const preparationStarted = new Promise(resolve => { markPreparationStarted = resolve; });
+    const delayedPreparation = new Promise(resolve => { releasePreparation = resolve; });
+    globalThis.chrome = {
+      tabs: {
+        async sendMessage(_tabId, message) {
+          assert.equal(message.action, 'ax_prepare_field_for_trusted_type');
+          markPreparationStarted();
+          return delayedPreparation;
+        },
+      },
+    };
+    let cdpMutations = 0;
+    cdpClientCh.attach = async () => {
+      cdpMutations += 1;
+      return { attached: true };
+    };
+    cdpClientCh.sendCommand = async () => {
+      cdpMutations += 1;
+      return {};
+    };
 
-  const result = await agent._maybeFallbackFieldWithCdp(
-    42,
-    'set_field',
-    { ref_id: 'ref_timeout', text: 'updated value' },
-    {
-      success: false,
-      verified: false,
-      _expectedValue: 'updated value',
-      recoveryRequired: 'fresh_tree',
-    },
-  );
+    const agent = new AgentCh({});
+    let deadlineTool = '';
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineTool = toolName;
+      const error = new Error(`${toolName} did not return a page response within 60 seconds.`);
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await preparationStarted;
+      controller.abort(error);
+      releasePreparation({
+        success: true,
+        fieldMeta: { type: 'text', contentEditable: false },
+        contentEditable: false,
+      });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
 
-  assert.equal(implementationStarted, true);
-  assert.equal(deadlineTool, 'set_field');
-  assert.equal(result.success, false);
-  assert.equal(result.dispatched, true);
-  assert.equal(result.outcomeUnknown, true);
-  assert.equal(result.retryable, false);
-  assert.match(result.error, /may have reached the page.*inspect the current state/i);
+    const result = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'set_field',
+      { ref_id: 'ref_timeout', text: 'updated value' },
+      {
+        success: false,
+        verified: false,
+        _expectedValue: 'updated value',
+        recoveryRequired: 'fresh_tree',
+      },
+    );
+
+    assert.equal(deadlineTool, 'set_field');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, true);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.retryable, false);
+    assert.equal(cdpMutations, 0, 'late field preparation reached trusted CDP mutation after timeout');
+    assert.match(result.error, /may have reached the page.*inspect the current state/i);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
 });
 
 test('Chrome controlled-field fallback recovers exactly once and never submits a mismatch', async () => {
@@ -86923,6 +86964,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     const source = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(source, /const CONTENT_ACTION_TIMEOUT_MS = 60_000;/, `${label}: content action deadline missing`);
     assert.match(source, /const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;/, `${label}: requested wait grace missing`);
+    assert.match(source, /const controller = new AbortController\(\);[\s\S]*controller\.abort\(timeoutError\)[\s\S]*operation\(controller\.signal\)/, `${label}: content action deadline does not cancel late pipeline work`);
     assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
     assert.match(source, /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, contentArgs\);/, `${label}: page dispatch does not calculate its deadline`);
     assert.match(source, /dispatchContentAction = \(\) => this\._withContentActionDeadline\([\s\S]*sendContentAction,[\s\S]*name,[\s\S]*contentActionDeadlineMs,[\s\S]*\);/, `${label}: page dispatch bypasses the deadline`);
@@ -86950,7 +86992,17 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.notEqual(coordinateDeadlineEnd, -1, `${label}: coordinate reconciliation deadline wrapper boundary missing`);
     const coordinateDeadlineSource = source.slice(coordinateDeadlineStart, coordinateDeadlineEnd);
     assert.match(coordinateDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._reconcileCoordinateClick\([\s\S]*'click'/, `${label}: coordinate reconciliation bypasses the deadline`);
+    assert.match(coordinateDeadlineSource, /abortSignal =>[\s\S]*messageRecipientContext,[\s\S]*abortSignal/, `${label}: coordinate reconciliation deadline does not propagate cancellation`);
     assert.match(source, /const reconciled = await this\._reconcileCoordinateClickWithDeadline\(/, `${label}: screenshot coordinate clicks bypass the reconciliation deadline wrapper`);
+
+    if (label === 'chrome') {
+      const fallbackDeadlineStart = source.indexOf('async _maybeFallbackClickAxWithCdp(');
+      const fallbackImplStart = source.indexOf('async _maybeFallbackClickAxWithCdpImpl(', fallbackDeadlineStart);
+      assert.ok(fallbackDeadlineStart >= 0 && fallbackImplStart > fallbackDeadlineStart, 'chrome: click_ax fallback deadline wrapper missing');
+      const fallbackDeadlineSource = source.slice(fallbackDeadlineStart, fallbackImplStart);
+      assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackClickAxWithCdpImpl\([\s\S]*'click_ax'/, 'chrome: click_ax fallback pipeline bypasses the deadline');
+      assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*baseline,[\s\S]*abortSignal/, 'chrome: click_ax fallback deadline does not propagate cancellation');
+    }
 
     const agent = new AgentClass({});
     assert.equal(
@@ -86979,10 +87031,38 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(result.error, /may have reached the page.*inspect the current state/i, `${label}: timeout recovery instruction is unsafe`);
 
     const coordinateAgent = new AgentClass({});
-    coordinateAgent._withContentActionDeadline = async (_operation, toolName) => {
+    let releaseResolution;
+    let markResolutionStarted;
+    const resolutionStarted = new Promise(resolve => { markResolutionStarted = resolve; });
+    const delayedResolution = new Promise(resolve => { releaseResolution = resolve; });
+    let semanticDispatches = 0;
+    coordinateAgent._resolveCoordinateVisualTarget = async () => {
+      markResolutionStarted();
+      return delayedResolution;
+    };
+    coordinateAgent._dispatchClickAx = async () => {
+      semanticDispatches += 1;
+      return { success: true };
+    };
+    coordinateAgent._withContentActionDeadline = async (operation, toolName) => {
       assert.equal(toolName, 'click', `${label}: coordinate reconciliation uses the wrong deadline class`);
       const error = new Error('click did not return a page response within 60 seconds.');
       error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await resolutionStarted;
+      controller.abort(error);
+      releaseResolution({
+        success: true,
+        semanticTarget: {
+          ref_id: 'ref_late',
+          role: 'button',
+          name: 'Late action',
+          eligibility: 'semantic-button',
+        },
+        documentToken: 'late-document',
+      });
+      await assert.rejects(started, candidate => candidate === error);
       throw error;
     };
     const coordinateResult = await coordinateAgent._reconcileCoordinateClickWithDeadline(
@@ -86994,6 +87074,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.equal(coordinateResult.result.outcomeUnknown, true, `${label}: timed-out coordinate reconciliation did not preserve unknown outcome`);
     assert.equal(coordinateResult.result.retryable, false, `${label}: timed-out coordinate reconciliation invited a blind retry`);
     assert.equal(coordinateResult.diagnostic, null, `${label}: timed-out coordinate reconciliation fabricated a diagnostic`);
+    assert.equal(semanticDispatches, 0, `${label}: timed-out coordinate reconciliation dispatched a late semantic click`);
 
     const readResult = agent._contentActionTimeoutResult('read_page', {
       message: 'read_page did not return a page response within 60 seconds.',
@@ -87002,6 +87083,69 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.equal(readResult.retryable, true, `${label}: read-only timeout was made terminal`);
     assert.equal(Object.hasOwn(readResult, 'dispatched'), false, `${label}: read-only timeout claimed a state-changing dispatch`);
     assert.match(readResult.error, /retry this read-only observation once/i, `${label}: read-only timeout lacks bounded recovery`);
+  }
+});
+
+test('Chrome click_ax fallback deadline cancels late target resolution before CDP', async () => {
+  const originalAttach = cdpClientCh.attach;
+  try {
+    const agent = new AgentCh({});
+    agent._observeClickAxSideEffect = async () => ({
+      observable: true,
+      proved: false,
+      safetyVeto: false,
+      safetyReasons: [],
+      weakReasons: [],
+      snapshot: '{}',
+    });
+    agent._assessClickAxObservationRound = () => ({ done: false });
+
+    let releaseTarget;
+    let markTargetStarted;
+    const targetStarted = new Promise(resolve => { markTargetStarted = resolve; });
+    const delayedTarget = new Promise(resolve => { releaseTarget = resolve; });
+    agent._resolveClickAxFallbackTarget = async () => {
+      markTargetStarted();
+      return delayedTarget;
+    };
+    let cdpAttachCalls = 0;
+    cdpClientCh.attach = async () => {
+      cdpAttachCalls += 1;
+      return { attached: true };
+    };
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click_ax');
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await targetStarted;
+      controller.abort(error);
+      releaseTarget({
+        success: true,
+        fallbackEligible: true,
+        inViewport: true,
+        documentToken: 'late-click-document',
+        x: 40,
+        y: 50,
+      });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent._maybeFallbackClickAxWithCdp(
+      9,
+      { ref_id: 'ref_late_click' },
+      { success: true },
+      { startedAt: Date.now(), preparedActive: '', sideEffectWatch: null },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, true);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.retryable, false);
+    assert.equal(cdpAttachCalls, 0, 'late target resolution reached trusted CDP dispatch after timeout');
+  } finally {
+    cdpClientCh.attach = originalAttach;
   }
 });
 
