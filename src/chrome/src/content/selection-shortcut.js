@@ -374,12 +374,20 @@ host.lang = localization.locale;
     (document.documentElement || document.body).appendChild(host);
   }
 
+  function getVisibleSelectionBottom() {
+    if (!snapshot) return 0;
+    return (snapshot.rects || []).reduce(
+      (bottom, selectionRect) => Math.max(bottom, selectionRect.bottom),
+      snapshot.rect.bottom,
+    );
+  }
+
   function positionShortcut() {
     if (!snapshot || !shortcut) return;
     const rect = snapshot.rect;
     let left = rect.left + rect.width / 2 - BUTTON_SIZE / 2;
     let top = rect.top - BUTTON_SIZE - GAP;
-    if (top < GAP) top = rect.bottom + GAP;
+    if (top < GAP) top = getVisibleSelectionBottom() + GAP;
     left = clamp(left, GAP, Math.max(GAP, window.innerWidth - BUTTON_SIZE - GAP));
     top = clamp(top, GAP, Math.max(GAP, window.innerHeight - BUTTON_SIZE - GAP));
     shortcut.style.left = `${Math.round(left)}px`;
@@ -607,6 +615,7 @@ host.lang = localization.locale;
       toastVisible: !!toast && !toast.hidden,
       shortcutRect: shortcut && !shortcut.hidden ? shortcut.getBoundingClientRect().toJSON() : null,
       selectionRect: snapshot?.rect || null,
+      selectionBottom: snapshot ? getVisibleSelectionBottom() : null,
       shortcutLabel: shortcut?.getAttribute('aria-label') || '',
       shortcutBackground: shortcut ? getComputedStyle(shortcut).backgroundColor : '',
       shortcutColor: shortcut ? getComputedStyle(shortcut).color : '',

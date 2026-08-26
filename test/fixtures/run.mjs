@@ -723,6 +723,21 @@ for (const [label, sourcePath, manualOpen] of [
     if (popupState.popupVisible || !popupState.shortcutVisible) {
       throw new Error(`Escape should close the popup and retain the shortcut: ${JSON.stringify(popupState)}`);
     }
+
+    await page.evaluate(() => {
+      const topCopy = document.createElement('p');
+      topCopy.id = 'top-copy';
+      topCopy.style.cssText = 'position:absolute;left:74px;top:2px;width:210px;margin:0';
+      topCopy.textContent = 'A multiline selection near the top edge must keep the shortcut below every selected line.';
+      document.body.appendChild(topCopy);
+    });
+    const topState = await selectFixtureText(page, '#top-copy');
+    if (!topState.selectionRect
+        || topState.selectionRect.top >= 52
+        || !topState.selectionBottom
+        || topState.shortcutRect.top < topState.selectionBottom + 7) {
+      throw new Error(`top-edge fallback should clear the full visible selection: ${JSON.stringify(topState)}`);
+    }
   });
 
   test(`${label}: selection dialog contains page shortcuts and keeps the selected text highlighted`, async (page) => {
