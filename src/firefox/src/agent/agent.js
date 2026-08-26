@@ -16171,7 +16171,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return true;
   }
 
-  restoreSelectionGroundingScope(tabId) {
+  async restoreSelectionGroundingScope(tabId) {
+    await this._hydrate(tabId);
     if (!this.selectionGroundingScopes.delete(tabId)) return false;
     this._persist(tabId);
     try {

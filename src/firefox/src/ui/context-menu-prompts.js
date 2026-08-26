@@ -37,12 +37,14 @@ export function createContextMenuPromptHandler({
     // Only a source-bound prompt has a shortcut action to report; anything
     // else would be an unattributed id riding into the run options.
     const selectionAction = sourceGrounding ? normalizeSelectionAction(payload?.selectionAction) : '';
+    const restoreSelectionScope = !sourceGrounding && payload?.restoreSelectionScope === true;
     return {
       id,
       tabId,
       text,
       ...(sourceGrounding ? { sourceGrounding } : {}),
       ...(selectionAction ? { selectionAction } : {}),
+      ...(restoreSelectionScope ? { restoreSelectionScope: true } : {}),
     };
   }
 
@@ -223,6 +225,7 @@ export function createContextMenuPromptHandler({
         },
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
         ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
+        ...(payload.restoreSelectionScope === true ? { restoreSelectionScope: true } : {}),
       });
     } catch { /* confirm durable ownership below before retrying */ }
     if (!accepted && !rejectedClaim) {

@@ -27,7 +27,7 @@
   const LOCALIZATION_KEYS = Object.freeze([
     'askSelection', 'openChat', 'summarize', 'explain', 'quiz',
     'proofread', 'humanize', 'translate', 'translateTo', 'askAbout',
-    'askQuestion', 'sendQuestion', 'hideShortcut', 'sentManual', 'sendFailed',
+    'askQuestion', 'sendQuestion', 'includePageContext', 'hideShortcut', 'sentManual', 'sendFailed',
   ]);
 
   let enabled = true;
@@ -41,6 +41,7 @@
   let shortcut = null;
   let popup = null;
   let question = null;
+  let includePageContext = null;
   let sendButton = null;
   let interfaceLanguage = resolveInterfaceLanguage('');
   let localization = null;
@@ -123,6 +124,8 @@ host.lang = localization.locale;
     question.setAttribute('aria-label', strings.askQuestion);
     question.placeholder = strings.askQuestion;
     sendButton.setAttribute('aria-label', strings.sendQuestion);
+    const contextOptionLabel = shadow.querySelector('.context-option span');
+    if (contextOptionLabel) contextOptionLabel.textContent = strings.includePageContext;
     const hideButton = shadow.querySelector('.hide');
     if (hideButton) hideButton.textContent = strings.hideShortcut;
   }
@@ -242,13 +245,18 @@ host.lang = localization.locale;
         .send:hover:not(:disabled) { background:var(--accent-strong); }
         .send:disabled { opacity:.38; cursor:default; }
         .send svg { width:15px; height:15px; }
+        .context-option {
+          display:flex; align-items:flex-start; gap:8px; margin:8px 2px 2px;
+          color:var(--muted); font-size:13px; line-height:1.35; cursor:pointer;
+        }
+        .context-option input { margin:2px 0 0; accent-color:var(--accent); }
         .divider { height:1px; margin:10px 0 4px; background:var(--border); }
         .hide-row { display:flex; }
         .hide {
           width:auto; margin-left:auto; padding:5px 8px;
           color:var(--muted); font-size:12px; line-height:1.25;
         }
-        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible {
+        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.context-option input:focus-visible {
           outline:3px solid rgba(108,99,255,.34); outline-offset:2px;
         }
         .toast {
@@ -318,6 +326,10 @@ host.lang = localization.locale;
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h11M11 6l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
+          <label class="context-option">
+            <input type="checkbox" checked>
+            <span>Include page &amp; conversation context</span>
+          </label>
           <div class="divider"></div>
           <div class="hide-row">
             <button class="hide" type="button">Hide this</button>
@@ -331,6 +343,7 @@ host.lang = localization.locale;
     shortcut = shadow.querySelector('.shortcut');
     popup = shadow.querySelector('.popup');
     question = shadow.querySelector('textarea');
+    includePageContext = shadow.querySelector('.context-option input');
     sendButton = shadow.querySelector('.send');
     toast = shadow.querySelector('.toast');
     applyLocalization();
@@ -424,6 +437,7 @@ host.lang = localization.locale;
     snapshot = nextSnapshot;
     popup.hidden = true;
     question.value = '';
+    includePageContext.checked = true;
     sendButton.disabled = true;
     shortcut.hidden = false;
     positionShortcut();
@@ -444,6 +458,7 @@ host.lang = localization.locale;
     if (!popup) return;
     popup.hidden = true;
     question.value = '';
+    includePageContext.checked = true;
     sendButton.disabled = true;
     clearSelectionHighlight();
     if (restoreFocus && shortcut && !shortcut.hidden) shortcut.focus();
@@ -455,13 +470,14 @@ host.lang = localization.locale;
     if (shortcut) shortcut.hidden = true;
     if (popup) popup.hidden = true;
     if (question) question.value = '';
+    if (includePageContext) includePageContext.checked = true;
     if (sendButton) sendButton.disabled = true;
   }
 
   function destroySurface() {
     hideToast();
     host?.remove();
-    host = shadow = highlightLayer = shortcut = popup = question = sendButton = toast = null;
+    host = shadow = highlightLayer = shortcut = popup = question = includePageContext = sendButton = toast = null;
     snapshot = null;
   }
 
@@ -492,6 +508,7 @@ host.lang = localization.locale;
       action,
       selectionText: snapshot.text,
       question: action === 'custom' ? String(customQuestion).trim() : undefined,
+      ...(action === 'custom' ? { includePageContext: includePageContext?.checked === true } : {}),
       language: action === 'custom' ? undefined : (language || interfaceLanguage),
     };
     submitting = true;
@@ -573,6 +590,9 @@ host.lang = localization.locale;
     openPopup,
     submitPreset: (action) => submitSelection(action, '', interfaceLanguage),
     submitCustom: (value) => submitSelection('custom', value),
+    setIncludePageContext: (value) => {
+      if (includePageContext) includePageContext.checked = value === true;
+    },
     hideShortcut: disableShortcut,
     getState: () => ({
       enabled,
@@ -596,6 +616,8 @@ host.lang = localization.locale;
         : null,
       questionRect: popup && !popup.hidden ? question?.getBoundingClientRect().toJSON() || null : null,
       questionValue: question?.value || '',
+      includePageContextChecked: includePageContext?.checked === true,
+      includePageContextLabel: shadow?.querySelector('.context-option span')?.textContent || '',
       hideLabel: shadow?.querySelector('.hide')?.textContent || '',
       actionIconCount: shadow?.querySelectorAll('.action > .action-icon').length || 0,
       direction: host?.dir || 'ltr',

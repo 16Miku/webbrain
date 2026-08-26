@@ -650,7 +650,9 @@ for (const [label, sourcePath, manualOpen] of [
     await page.evaluate(() => window.__webbrainSelectionShortcut.submitPreset('explain'));
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
     const submitted = await page.evaluate(() => window.__selectionMessages[0]);
-    if (submitted.action !== 'explain' || submitted.language !== 'zh') {
+    if (submitted.action !== 'explain'
+        || submitted.language !== 'zh'
+        || Object.prototype.hasOwnProperty.call(submitted, 'includePageContext')) {
       throw new Error(`fixed action did not carry the Chinese interface language: ${JSON.stringify(submitted)}`);
     }
 
@@ -662,36 +664,38 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
-  test(`${label}: custom selection questions submit without a redundant grounding control`, async (page) => {
+  test(`${label}: custom selection questions default to page context and retain a scoped choice`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
     const initial = await selectFixtureText(page);
-    if (Object.prototype.hasOwnProperty.call(initial, 'generalKnowledgeChecked')
-        || Object.prototype.hasOwnProperty.call(initial, 'generalKnowledgeLabel')
+    if (!initial.includePageContextChecked
+        || initial.includePageContextLabel !== '包含页面和对话上下文'
         || initial.hideLabel !== '隐藏此项') {
-      throw new Error(`selection state retained the removed grounding control: ${JSON.stringify(initial)}`);
+      throw new Error(`full-context choice should be localized and on by default: ${JSON.stringify(initial)}`);
     }
-    await page.evaluate(() => window.__webbrainSelectionShortcut.submitCustom('仅根据选中内容回答。'));
+    await page.evaluate(() => {
+      window.__webbrainSelectionShortcut.setIncludePageContext(false);
+      return window.__webbrainSelectionShortcut.submitCustom('仅根据选中内容回答。');
+    });
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
     const submitted = await page.evaluate(() => window.__selectionMessages[0]);
     if (submitted.action !== 'custom'
         || submitted.question !== '仅根据选中内容回答。'
-        || Object.prototype.hasOwnProperty.call(submitted, 'allowGeneralKnowledge')) {
-      throw new Error(`custom question retained the removed grounding field: ${JSON.stringify(submitted)}`);
+        || submitted.includePageContext !== false) {
+      throw new Error(`custom question lost its explicit scoped-context choice: ${JSON.stringify(submitted)}`);
     }
 
     await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().submitting);
     const nextSelection = await selectFixtureText(page);
-    if (Object.prototype.hasOwnProperty.call(nextSelection, 'generalKnowledgeChecked')
-        || Object.prototype.hasOwnProperty.call(nextSelection, 'generalKnowledgeLabel')) {
-      throw new Error(`a new selection restored the removed grounding control: ${JSON.stringify(nextSelection)}`);
+    if (!nextSelection.includePageContextChecked) {
+      throw new Error(`a new selection should restore the default-on page-context choice: ${JSON.stringify(nextSelection)}`);
     }
     await page.evaluate(() => window.__webbrainSelectionShortcut.submitCustom('现在有哪些跨平台框架？'));
     await page.waitForFunction(() => window.__selectionMessages.length === 2);
     const submittedAgain = await page.evaluate(() => window.__selectionMessages[1]);
     if (submittedAgain.action !== 'custom'
         || submittedAgain.question !== '现在有哪些跨平台框架？'
-        || Object.prototype.hasOwnProperty.call(submittedAgain, 'allowGeneralKnowledge')) {
-      throw new Error(`a repeated custom question retained the removed grounding field: ${JSON.stringify(submittedAgain)}`);
+        || submittedAgain.includePageContext !== true) {
+      throw new Error(`the default custom question did not request page and conversation context: ${JSON.stringify(submittedAgain)}`);
     }
   });
 
