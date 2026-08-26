@@ -844,7 +844,7 @@ export class Agent extends LoopDetector {
   }
 
   _contentActionTimeoutResult(toolName, error) {
-    const outcomeUnknown = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    const outcomeUnknown = BROWSER_MUTATION_TOOLS.has(toolName);
     return {
       success: false,
       ...(outcomeUnknown ? { dispatched: true } : {}),

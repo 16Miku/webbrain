@@ -196,7 +196,7 @@ const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
-const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop']);
+const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
 const STANDALONE_WIKIPEDIA_MODEL_SEARCH_ALIASES = new Set([
@@ -1127,7 +1127,7 @@ export class Agent extends LoopDetector {
   }
 
   _contentActionTimeoutResult(toolName, error) {
-    const outcomeUnknown = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    const outcomeUnknown = BROWSER_MUTATION_TOOLS.has(toolName);
     return {
       success: false,
       ...(outcomeUnknown ? { dispatched: true } : {}),
@@ -24343,6 +24343,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return await this._discoverCompactUploadTargets(tabId);
         }
         const resolvedTarget = await this._resolveCompactUploadTarget(tabId, args.targetId);
+        throwIfEarlyCdpAborted();
         if (!resolvedTarget.ok) return resolvedTarget.result;
         args = {
           attachmentId: String(args.attachmentId),
@@ -24388,6 +24389,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               else resolve(res);
             });
           });
+          throwIfEarlyCdpAborted();
           const it = items && items[0];
           if (!it) {
             if (!suppliedFilePath) return { success: false, error: `No download found for downloadId ${args.downloadId}. Use list_downloads to see valid ids.` };
@@ -24409,7 +24411,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let uploadQuery = null;
       try {
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         uploadQuery = await cdpClient.querySelectorPierce(tabId, args.selector);
+        throwIfEarlyCdpAborted();
         const objectIds = uploadQuery?.objectIds || [];
         if (objectIds.length === 0) {
           if (compactUpload) {
@@ -24440,8 +24444,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         if (attachmentPayload) {
-          uploadDispatched = true;
-          const injected = await cdpClient.setFileInputData(tabId, objectIds[0], attachmentPayload);
+          throwIfEarlyCdpAborted();
+          const injected = await cdpClient.setFileInputData(
+            tabId,
+            objectIds[0],
+            attachmentPayload,
+            {
+              abortSignal: earlyCdpAbortSignal,
+              beforeDispatch: () => {
+                uploadDispatched = true;
+                markEarlyCdpDispatched();
+              },
+            },
+          );
+          throwIfEarlyCdpAborted();
           if (!injected?.success) {
             return {
               success: false,
@@ -24451,7 +24467,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
 
           let files = null;
-          try { files = await cdpClient.getFileInputFiles(tabId, objectIds[0]); } catch {}
+          try {
+            files = await cdpClient.getFileInputFiles(tabId, objectIds[0]);
+            throwIfEarlyCdpAborted();
+          } catch (error) {
+            if (earlyCdpAbortSignal?.aborted) throwIfEarlyCdpAborted();
+          }
           if (Array.isArray(files) && files.length) {
             const attached = files.find(file => file.name === attachmentPayload.filename) || files[files.length - 1];
             return {
@@ -24487,6 +24508,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         //   {exists:false, readable:null}  → nothing attached: probe inconclusive
         //   null                           → probe couldn't run: inconclusive
         const probe = await cdpClient.probeLocalFile(tabId, args.filePath);
+        throwIfEarlyCdpAborted();
         if (probe && probe.exists && probe.readable === false) {
           return { success: false, error: `"${args.filePath}" could not be read — it almost certainly does not exist at that path. Confirm the absolute path (use list_downloads to see where files were actually saved) and retry.` };
         }
@@ -24499,8 +24521,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // pre-validation exists to prevent).
         const pathConfirmed = !!(probe && probe.exists && probe.readable === true);
 
+        throwIfEarlyCdpAborted();
         uploadDispatched = true;
+        markEarlyCdpDispatched();
         await cdpClient.setFileInputFiles(tabId, objectIds[0], [args.filePath]);
+        throwIfEarlyCdpAborted();
 
         // Verify the file actually attached. CDP's DOM.setFileInputFiles does
         // NOT throw on a non-existent path — it silently attaches a 0-byte
@@ -24513,8 +24538,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let readOk = false;
         try {
           files = await cdpClient.getFileInputFiles(tabId, objectIds[0]);
+          throwIfEarlyCdpAborted();
           readOk = Array.isArray(files);
-        } catch { readOk = false; }
+        } catch (error) {
+          if (earlyCdpAbortSignal?.aborted) throwIfEarlyCdpAborted();
+          readOk = false;
+        }
 
         if (readOk) {
           if (files.length === 0) {
@@ -24583,6 +24612,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           note: 'The local file was readable and the page handled the attachment event, but upload_file could not read the resulting FileList. This does not prove a remote upload or form submission; verify the page state and submit/commit when required.',
         };
       } catch (e) {
+        if (e?.code === 'content_action_timeout') throw e;
         return { success: false, dispatched: uploadDispatched, error: `Upload failed: ${e.message}` };
       } finally {
         await cdpClient.releaseObjectGroup(tabId, uploadQuery?.objectGroup);

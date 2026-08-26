@@ -2252,8 +2252,19 @@ export class CDPClient {
    * DOM.setFileInputFiles this needs no local path: the File and DataTransfer
    * are created in the page realm from a run-scoped attachment handle.
    */
-  async setFileInputData(tabId, objectId, { base64, filename, mimeType }) {
+  async setFileInputData(tabId, objectId, { base64, filename, mimeType }, options = {}) {
+    const abortSignal = options?.abortSignal || null;
+    const throwIfAborted = () => {
+      if (!abortSignal?.aborted) return;
+      if (abortSignal.reason instanceof Error) throw abortSignal.reason;
+      const error = new Error('The file attachment was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    };
+    throwIfAborted();
     await this.sendCommand(tabId, 'Runtime.enable');
+    throwIfAborted();
+    if (typeof options?.beforeDispatch === 'function') options.beforeDispatch();
     const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
       functionDeclaration: `function (base64, filename, mimeType) {
         if (!(this instanceof HTMLInputElement) || this.type !== 'file') {
@@ -2284,6 +2295,7 @@ export class CDPClient {
       ],
       returnByValue: true,
     });
+    throwIfAborted();
     return res?.result?.value || { success: false, dispatched: false, error: 'The page did not return an upload result.' };
   }
 

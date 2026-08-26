@@ -87489,7 +87489,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(source, /const reconciled = await this\._reconcileCoordinateClickWithDeadline\(/, `${label}: screenshot coordinate clicks bypass the reconciliation deadline wrapper`);
 
     if (label === 'chrome') {
-      assert.match(source, /const EARLY_CDP_ACTION_TOOLS = new Set\(\['click', 'type_text', 'press_keys', 'hover', 'drag_drop'\]\);/, 'chrome: early CDP action list is incomplete');
+      assert.match(source, /const EARLY_CDP_ACTION_TOOLS = new Set\(\['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file'\]\);/, 'chrome: early CDP action list is incomplete');
       const executeToolStart = source.indexOf('async executeTool(');
       const executeToolImplStart = source.indexOf('async _executeToolImpl(', executeToolStart);
       const executeToolWrapper = source.slice(executeToolStart, executeToolImplStart);
@@ -87606,6 +87606,123 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.equal(readResult.retryable, true, `${label}: read-only timeout was made terminal`);
     assert.equal(Object.hasOwn(readResult, 'dispatched'), false, `${label}: read-only timeout claimed a state-changing dispatch`);
     assert.match(readResult.error, /retry this read-only observation once/i, `${label}: read-only timeout lacks bounded recovery`);
+
+    const uploadResult = agent._contentActionTimeoutResult('upload_file', {
+      message: 'upload_file did not return a page response within 60 seconds.',
+    });
+    assert.equal(uploadResult.outcomeUnknown, true, `${label}: timed-out upload lost mutation uncertainty`);
+    assert.equal(uploadResult.dispatched, true, `${label}: timed-out upload lost its dispatch marker`);
+    assert.equal(uploadResult.retryable, false, `${label}: timed-out upload invited a blind retry`);
+  }
+});
+
+test('Chrome upload_file deadline distinguishes preparation from file-input dispatch', async () => {
+  const cdpSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cdp/cdp-client.js'), 'utf8');
+  const dataUploadStart = cdpSource.indexOf('async setFileInputData(');
+  const dataUploadEnd = cdpSource.indexOf('async _disarmProtocolFileChooserGuard(', dataUploadStart);
+  assert.ok(dataUploadStart >= 0 && dataUploadEnd > dataUploadStart, 'in-memory upload helper boundary missing');
+  assert.match(
+    cdpSource.slice(dataUploadStart, dataUploadEnd),
+    /Runtime\.enable[\s\S]*throwIfAborted\(\)[\s\S]*beforeDispatch[\s\S]*Runtime\.callFunctionOn/,
+    'in-memory upload marks dispatch before preparation has completed',
+  );
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    querySelectorPierce: cdpClientCh.querySelectorPierce,
+    probeLocalFile: cdpClientCh.probeLocalFile,
+    setFileInputData: cdpClientCh.setFileInputData,
+    setFileInputFiles: cdpClientCh.setFileInputFiles,
+    getFileInputFiles: cdpClientCh.getFileInputFiles,
+    releaseObjectGroup: cdpClientCh.releaseObjectGroup,
+  };
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.probeLocalFile = async () => ({ exists: true, readable: true, size: 12 });
+    cdpClientCh.getFileInputFiles = async () => [{ name: 'report.txt', size: 12, readable: true }];
+    cdpClientCh.releaseObjectGroup = async () => {};
+
+    const runTimedUpload = async (stallStage) => {
+      const agent = new AgentCh({});
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._resolveUserAttachment = (_tabId, attachmentId) => ({
+        ok: true,
+        attachmentId,
+        filename: 'report.txt',
+        mimeType: 'text/plain',
+        base64: 'cmVwb3J0',
+      });
+      let releaseStage;
+      let markStageStarted;
+      const stageStarted = new Promise(resolve => { markStageStarted = resolve; });
+      const stalledStage = new Promise(resolve => { releaseStage = resolve; });
+      let fileInputDispatches = 0;
+
+      cdpClientCh.querySelectorPierce = async () => {
+        if (stallStage === 'query') {
+          markStageStarted();
+          await stalledStage;
+        }
+        return { objectIds: ['input-1'], objectGroup: 'upload-deadline' };
+      };
+      cdpClientCh.setFileInputFiles = async () => {
+        fileInputDispatches += 1;
+        if (stallStage === 'dispatch') {
+          markStageStarted();
+          await stalledStage;
+        }
+      };
+      cdpClientCh.setFileInputData = async (_tabId, _objectId, _payload, options) => {
+        options.beforeDispatch();
+        fileInputDispatches += 1;
+        if (stallStage === 'attachment-dispatch') {
+          markStageStarted();
+          await stalledStage;
+        }
+        return { success: true, dispatched: true };
+      };
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'upload_file');
+        const error = new Error('upload_file did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await stageStarted;
+        controller.abort(error);
+        releaseStage();
+        await assert.rejects(started, candidate => candidate === error);
+        throw error;
+      };
+
+      const result = await agent.executeTool(42, 'upload_file', {
+        selector: 'input[type=file]',
+        ...(stallStage === 'attachment-dispatch'
+          ? { attachmentId: 'att_1' }
+          : { filePath: '/tmp/report.txt' }),
+      }, null, { promptTier: 'mid' });
+      return { result, fileInputDispatches };
+    };
+
+    const preparationTimeout = await runTimedUpload('query');
+    assert.equal(preparationTimeout.fileInputDispatches, 0, 'preparation timeout dispatched a late upload');
+    assert.equal(preparationTimeout.result.dispatched, false);
+    assert.equal(preparationTimeout.result.noDispatch, true);
+    assert.equal(preparationTimeout.result.outcomeUnknown, false);
+    assert.equal(preparationTimeout.result.retryable, true);
+
+    const dispatchTimeout = await runTimedUpload('dispatch');
+    assert.equal(dispatchTimeout.fileInputDispatches, 1, 'file-input mutation was not attempted');
+    assert.equal(dispatchTimeout.result.dispatched, true);
+    assert.equal(dispatchTimeout.result.outcomeUnknown, true);
+    assert.equal(dispatchTimeout.result.retryable, false);
+    assert.match(dispatchTimeout.result.error, /may have reached the page.*inspect the current state/i);
+
+    const attachmentDispatchTimeout = await runTimedUpload('attachment-dispatch');
+    assert.equal(attachmentDispatchTimeout.fileInputDispatches, 1, 'attachment mutation was not attempted');
+    assert.equal(attachmentDispatchTimeout.result.dispatched, true);
+    assert.equal(attachmentDispatchTimeout.result.outcomeUnknown, true);
+    assert.equal(attachmentDispatchTimeout.result.retryable, false);
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
   }
 });
 
