@@ -82168,6 +82168,9 @@ test('Compact Firefox upload_file discovers before opening its picker and attach
       tabs: {
         async executeScript(_tabId, details) {
           scripts.push(details.code);
+          if (details.code.includes('WebBrain file attachment target probe')) {
+            return [{ success: true, dispatched: false }];
+          }
           if (details.code.includes('WebBrain file attachment settle probe')) {
             return [{ attachmentState: 'input_attached' }];
           }
@@ -82231,8 +82234,10 @@ test('Compact Firefox upload_file discovers before opening its picker and attach
     assert.equal(result.success, true);
     assert.equal(result.file, 'resume.pdf');
     assert.equal(result.attachmentState, 'input_attached');
-    assert.equal(scripts.length, 2);
-    assert.match(scripts[0], /const selector = "#resume-upload"/);
+    assert.equal(scripts.length, 3);
+    assert.match(scripts[0], /WebBrain file attachment target probe/);
+    assert.match(scripts[1], /const selector = "#resume-upload"/);
+    assert.match(scripts[2], /WebBrain file attachment settle probe/);
     assert.equal(agent._compactUploadTargets.has(42), false, 'targetId must be one-use');
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
@@ -82309,16 +82314,111 @@ test('Firefox upload_file injects the exact user attachment bytes without re-fet
     assert.equal(result.attachmentState, 'input_attached');
     assert.equal(result.verified, false);
     assert.equal(result.remoteStateVerified, false);
-    assert.equal(scripts.length, 2);
-    assert.match(scripts[0], /const b64 = "R0lGODlh"/);
-    assert.match(scripts[0], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
-    assert.match(scripts[1], /WebBrain file attachment settle probe/);
+    assert.equal(scripts.length, 3);
+    assert.match(scripts[0], /WebBrain file attachment target probe/);
+    assert.match(scripts[1], /const b64 = "R0lGODlh"/);
+    assert.match(scripts[1], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
+    assert.match(scripts[2], /WebBrain file attachment settle probe/);
     assert.equal(agent._pendingUploadPickers.size, 0, 'attachmentId must not open the WebBrain picker');
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;
     if (originalFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = originalFetch;
+  }
+});
+
+test('Firefox upload_file deadline distinguishes target preparation from FileList dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  try {
+    const runTimedUpload = async stallStage => {
+      let releaseStage;
+      let markStageStarted;
+      const stageStarted = new Promise(resolve => { markStageStarted = resolve; });
+      const stalledStage = new Promise(resolve => { releaseStage = resolve; });
+      let fileInputDispatches = 0;
+      globalThis.browser = {
+        tabs: {
+          async executeScript(_tabId, details) {
+            if (details.code.includes('WebBrain file attachment target probe')) {
+              if (stallStage === 'target-probe') {
+                markStageStarted();
+                await stalledStage;
+              }
+              return [{ success: true, dispatched: false }];
+            }
+            if (details.code.includes('WebBrain file attachment settle probe')) {
+              if (stallStage === 'settle-probe') {
+                markStageStarted();
+                await stalledStage;
+              }
+              return [{ attachmentState: 'input_attached' }];
+            }
+            fileInputDispatches += 1;
+            if (stallStage === 'filelist-dispatch') {
+              markStageStarted();
+              await stalledStage;
+            }
+            return [{
+              success: true,
+              dispatched: true,
+              file: 'report.txt',
+              size: 6,
+              attachmentState: 'input_attached',
+            }];
+          },
+        },
+      };
+
+      const agent = new AgentFx({});
+      const [attachment] = agent._registerUserAttachments(42, [{
+        kind: 'document',
+        name: 'report.txt',
+        mimeType: 'text/plain',
+        dataUrl: 'data:text/plain;base64,cmVwb3J0',
+      }]);
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'upload_file');
+        const error = new Error('upload_file did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await stageStarted;
+        controller.abort(error);
+        releaseStage();
+        await assert.rejects(started, candidate => candidate === error);
+        throw error;
+      };
+
+      const result = await agent.executeTool(42, 'upload_file', {
+        selector: 'input[type=file]',
+        attachmentId: attachment.attachmentId,
+      }, null, { promptTier: 'mid' });
+      return { result, fileInputDispatches };
+    };
+
+    const preparationTimeout = await runTimedUpload('target-probe');
+    assert.equal(preparationTimeout.fileInputDispatches, 0, 'target-probe timeout dispatched a late upload');
+    assert.equal(preparationTimeout.result.dispatched, false);
+    assert.equal(preparationTimeout.result.noDispatch, true);
+    assert.equal(preparationTimeout.result.outcomeUnknown, false);
+    assert.equal(preparationTimeout.result.retryable, true);
+
+    const dispatchTimeout = await runTimedUpload('filelist-dispatch');
+    assert.equal(dispatchTimeout.fileInputDispatches, 1, 'FileList mutation was not attempted');
+    assert.equal(dispatchTimeout.result.dispatched, true);
+    assert.equal(dispatchTimeout.result.outcomeUnknown, true);
+    assert.equal(dispatchTimeout.result.retryable, false);
+    assert.match(dispatchTimeout.result.error, /may have reached the page.*inspect the current state/i);
+
+    const settleTimeout = await runTimedUpload('settle-probe');
+    assert.equal(settleTimeout.fileInputDispatches, 1, 'settle timeout lost the preceding FileList mutation');
+    assert.equal(settleTimeout.result.dispatched, true);
+    assert.equal(settleTimeout.result.outcomeUnknown, true);
+    assert.equal(settleTimeout.result.retryable, false);
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
@@ -82391,6 +82491,9 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
         },
         async executeScript(tabId, details) {
           executedScripts.push(details.code);
+          if (details.code.includes('WebBrain file attachment target probe')) {
+            return [{ success: true, dispatched: false }];
+          }
           if (details.code.includes('WebBrain file attachment settle probe')) {
             return [{ attachmentState: injectedAttachmentState }];
           }
@@ -82453,15 +82556,16 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
     assert.equal(fetchCalls[1].opts.redirect, 'manual');
     assert.equal(fetchCalls[1].opts.credentials, 'omit');
 
-    assert.equal(executedScripts.length, 2);
-    assert.ok(executedScripts[0].includes('new DataTransfer()'), 'Script should use DataTransfer');
-    assert.ok(executedScripts[0].includes('dt.items.add(file)'), 'Script should add file to DataTransfer');
-    assert.ok(executedScripts[0].includes('el.files = dt.files'), 'Script should assign DataTransfer files to input');
-    assert.ok(executedScripts[0].includes('el.type !== \'file\''), 'Script should require input[type=file]');
-    assert.ok(executedScripts[0].includes('collectDeepMatches(element.shadowRoot)'), 'Script should search open shadow roots');
-    assert.ok(executedScripts[0].includes('matches.length > 1'), 'Script should reject ambiguous selectors');
-    assert.ok(executedScripts[0].includes('exact, unique selector'), 'Script should return actionable ambiguity guidance');
-    assert.ok(executedScripts[1].includes('WebBrain file attachment settle probe'), 'Script should re-check after queued change handlers');
+    assert.equal(executedScripts.length, 3);
+    assert.ok(executedScripts[0].includes('WebBrain file attachment target probe'), 'Script should probe before dispatch');
+    assert.ok(executedScripts[1].includes('new DataTransfer()'), 'Script should use DataTransfer');
+    assert.ok(executedScripts[1].includes('dt.items.add(file)'), 'Script should add file to DataTransfer');
+    assert.ok(executedScripts[1].includes('el.files = dt.files'), 'Script should assign DataTransfer files to input');
+    assert.ok(executedScripts[1].includes('el.type !== \'file\''), 'Script should require input[type=file]');
+    assert.ok(executedScripts[1].includes('collectDeepMatches(element.shadowRoot)'), 'Script should search open shadow roots');
+    assert.ok(executedScripts[1].includes('matches.length > 1'), 'Script should reject ambiguous selectors');
+    assert.ok(executedScripts[1].includes('exact, unique selector'), 'Script should return actionable ambiguity guidance');
+    assert.ok(executedScripts[2].includes('WebBrain file attachment settle probe'), 'Script should re-check after queued change handlers');
 
     injectedAttachmentState = 'page_consumed';
     const consumed = await agent.executeTool(42, 'upload_file', args);

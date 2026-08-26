@@ -19691,6 +19691,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, error: 'No file data available to attach' };
         }
 
+        const targetProbeCode = `
+          (function() {
+            // WebBrain file attachment target probe.
+            const selector = ${JSON.stringify(args.selector)};
+            const matches = [];
+            const collectDeepMatches = (root) => {
+              matches.push(...root.querySelectorAll(selector));
+              for (const element of root.querySelectorAll('*')) {
+                if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
+              }
+            };
+            try {
+              collectDeepMatches(document);
+            } catch (e) {
+              return {
+                success: false,
+                dispatched: false,
+                error: 'Invalid file input selector: ' + selector + ' (' + (e.message || String(e)) + ')',
+              };
+            }
+            if (matches.length === 0) {
+              return { success: false, dispatched: false, error: 'Element not found matching selector: ' + selector };
+            }
+            if (matches.length > 1) {
+              return {
+                success: false,
+                dispatched: false,
+                ambiguous: true,
+                matchCount: matches.length,
+                error: 'Selector matched ' + matches.length + ' elements across the document and open shadow roots. Use an exact, unique selector for the intended <input type="file">.',
+              };
+            }
+            const el = matches[0];
+            if (!(el instanceof HTMLInputElement) || el.type !== 'file') {
+              return { success: false, dispatched: false, error: 'Selector does not match an <input type="file"> element: ' + selector };
+            }
+            return { success: true, dispatched: false };
+          })();
+        `;
         const injectCode = `
           (function() {
             const selector = ${JSON.stringify(args.selector)};
@@ -19749,92 +19788,181 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
           })();
         `;
-        let results;
-        try {
-          results = await browser.tabs.executeScript(tabId, { code: injectCode });
-        } catch (e) {
-          return {
-            success: false,
-            outcomeUnknown: true,
-            error: `Failed to inject file into page (file may be too large for script injection): ${e.message || String(e)}`,
-          };
-        }
-        const res = results && results[0];
-        if (!res || !res.success) {
-          if (compactUpload && res?.dispatched !== true) {
-            return await this._discoverCompactUploadTargets(
-              tabId,
-              'The selected file input changed before attachment. ',
-            );
-          }
-          if (res?.ambiguous) this._uploadSelectorRecoveryRequired.set(tabId, Number(res.matchCount) || 0);
-          return {
-            success: false,
-            dispatched: res?.dispatched === true,
-            ...(res?.ambiguous ? {
-              ambiguous: true,
-              matchCount: Number(res.matchCount) || 0,
-              noDispatch: true,
-              recoveryRequired: 'get_interactive_elements',
-            } : {}),
-            error: res?.ambiguous
-              ? `${res.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
-              : (res ? res.error : 'Failed to attach file to input element'),
-          };
-        }
-        let attachmentState = res.attachmentState === 'page_consumed'
-          ? 'page_consumed'
-          : 'input_attached';
-        if (attachmentState === 'input_attached') {
-          // Let change handlers queued through a microtask/timer consume or
-          // replace the input before we classify its stable local state.
-          await new Promise(resolve => setTimeout(resolve, 25));
-          const settleProbeCode = `
-            (function() {
-              // WebBrain file attachment settle probe.
-              const selector = ${JSON.stringify(args.selector)};
-              const matches = [];
-              const collectDeepMatches = (root) => {
-                matches.push(...root.querySelectorAll(selector));
-                for (const element of root.querySelectorAll('*')) {
-                  if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
-                }
-              };
-              try {
-                collectDeepMatches(document);
-              } catch {
-                return null;
-              }
-              if (matches.length !== 1) return { attachmentState: 'page_consumed' };
-              const input = matches[0];
-              if (!(input instanceof HTMLInputElement) || input.type !== 'file') {
-                return { attachmentState: 'page_consumed' };
-              }
-              const expectedName = ${JSON.stringify(filename)};
-              const expectedSize = ${Number(res.size) || 0};
-              const attached = Array.from(input.files || []).some(file => (
-                file.name === expectedName && file.size === expectedSize
-              ));
-              return { attachmentState: attached ? 'input_attached' : 'page_consumed' };
-            })();
-          `;
+        const runUploadPagePhase = async abortSignal => {
+          this._throwIfAborted(abortSignal);
+          let targetProbeResults;
           try {
-            const settledResults = await browser.tabs.executeScript(tabId, { code: settleProbeCode });
-            const settledState = settledResults?.[0]?.attachmentState;
-            if (settledState === 'input_attached' || settledState === 'page_consumed') {
-              attachmentState = settledState;
+            targetProbeResults = await browser.tabs.executeScript(tabId, { code: targetProbeCode });
+            this._throwIfAborted(abortSignal);
+          } catch (e) {
+            this._throwIfAborted(abortSignal);
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              error: `Failed to inspect the file input before attachment: ${e.message || String(e)}`,
+            };
+          }
+          const targetProbe = targetProbeResults && targetProbeResults[0];
+          if (!targetProbe || !targetProbe.success) {
+            if (compactUpload) {
+              return await this._discoverCompactUploadTargets(
+                tabId,
+                'The selected file input changed before attachment. ',
+              );
             }
-          } catch { /* Navigation/detachment leaves the initial state unverified. */ }
-        }
-        return {
-          success: true,
-          attached: { name: filename, size: res.size },
-          file: filename,
-          verified: false,
-          attachmentState,
-          remoteStateVerified: false,
-          ...(args.attachmentId != null ? { attachmentId: String(args.attachmentId) } : {}),
+            if (targetProbe?.ambiguous) {
+              this._uploadSelectorRecoveryRequired.set(tabId, Number(targetProbe.matchCount) || 0);
+            }
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              ...(targetProbe?.ambiguous ? {
+                ambiguous: true,
+                matchCount: Number(targetProbe.matchCount) || 0,
+                recoveryRequired: 'get_interactive_elements',
+              } : {}),
+              error: targetProbe?.ambiguous
+                ? `${targetProbe.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
+                : (targetProbe ? targetProbe.error : 'Failed to inspect the file input before attachment'),
+            };
+          }
+
+          // The target-only probe above cannot mutate the page. From this point
+          // onward the injected script may assign FileList and dispatch input /
+          // change events, so a lost response must be treated as an unknown
+          // upload outcome rather than retried blindly.
+          this._throwIfAborted(abortSignal);
+          markContentPipelineDispatched();
+          let results;
+          try {
+            results = await browser.tabs.executeScript(tabId, { code: injectCode });
+            this._throwIfAborted(abortSignal);
+          } catch (e) {
+            this._throwIfAborted(abortSignal);
+            return {
+              success: false,
+              dispatched: true,
+              outcomeUnknown: true,
+              retryable: false,
+              error: `Failed to inject file into page (file may be too large for script injection): ${e.message || String(e)} The file-input mutation may have reached the page; inspect the current state before deciding whether to retry.`,
+            };
+          }
+          const res = results && results[0];
+          if (!res) {
+            return {
+              success: false,
+              dispatched: true,
+              outcomeUnknown: true,
+              retryable: false,
+              error: 'The file-input script returned no result. The FileList mutation may have reached the page; inspect the current state before deciding whether to retry.',
+            };
+          }
+          if (!res.success) {
+            // A completed response can prove that the page script never reached
+            // FileList assignment even though the mutation-capable script was sent.
+            contentPipelineDispatchState.started = res.dispatched === true;
+            if (compactUpload && res.dispatched !== true) {
+              return await this._discoverCompactUploadTargets(
+                tabId,
+                'The selected file input changed before attachment. ',
+              );
+            }
+            if (res.ambiguous) this._uploadSelectorRecoveryRequired.set(tabId, Number(res.matchCount) || 0);
+            return {
+              success: false,
+              dispatched: res.dispatched === true,
+              outcomeUnknown: res.dispatched === true,
+              retryable: res.dispatched !== true,
+              ...(res.ambiguous ? {
+                ambiguous: true,
+                matchCount: Number(res.matchCount) || 0,
+                noDispatch: true,
+                recoveryRequired: 'get_interactive_elements',
+              } : {}),
+              error: res.ambiguous
+                ? `${res.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
+                : res.error,
+            };
+          }
+          let attachmentState = res.attachmentState === 'page_consumed'
+            ? 'page_consumed'
+            : 'input_attached';
+          if (attachmentState === 'input_attached') {
+            // Let change handlers queued through a microtask/timer consume or
+            // replace the input before we classify its stable local state.
+            await new Promise(resolve => setTimeout(resolve, 25));
+            this._throwIfAborted(abortSignal);
+            const settleProbeCode = `
+              (function() {
+                // WebBrain file attachment settle probe.
+                const selector = ${JSON.stringify(args.selector)};
+                const matches = [];
+                const collectDeepMatches = (root) => {
+                  matches.push(...root.querySelectorAll(selector));
+                  for (const element of root.querySelectorAll('*')) {
+                    if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
+                  }
+                };
+                try {
+                  collectDeepMatches(document);
+                } catch {
+                  return null;
+                }
+                if (matches.length !== 1) return { attachmentState: 'page_consumed' };
+                const input = matches[0];
+                if (!(input instanceof HTMLInputElement) || input.type !== 'file') {
+                  return { attachmentState: 'page_consumed' };
+                }
+                const expectedName = ${JSON.stringify(filename)};
+                const expectedSize = ${Number(res.size) || 0};
+                const attached = Array.from(input.files || []).some(file => (
+                  file.name === expectedName && file.size === expectedSize
+                ));
+                return { attachmentState: attached ? 'input_attached' : 'page_consumed' };
+              })();
+            `;
+            try {
+              const settledResults = await browser.tabs.executeScript(tabId, { code: settleProbeCode });
+              this._throwIfAborted(abortSignal);
+              const settledState = settledResults?.[0]?.attachmentState;
+              if (settledState === 'input_attached' || settledState === 'page_consumed') {
+                attachmentState = settledState;
+              }
+            } catch (e) {
+              this._throwIfAborted(abortSignal);
+              // Navigation/detachment leaves the initial state unverified.
+            }
+          }
+          return {
+            success: true,
+            attached: { name: filename, size: res.size },
+            file: filename,
+            verified: false,
+            attachmentState,
+            remoteStateVerified: false,
+            ...(args.attachmentId != null ? { attachmentId: String(args.attachmentId) } : {}),
+          };
         };
+        try {
+          return await this._withContentActionDeadline(
+            runUploadPagePhase,
+            'upload_file',
+            this._contentActionDeadlineMs('upload_file', args),
+          );
+        } catch (e) {
+          if (e?.code !== 'content_action_timeout') throw e;
+          return contentPipelineDispatchState.started
+            ? this._contentActionTimeoutResult('upload_file', e)
+            : this._contentActionPreparationTimeoutResult(
+                'upload_file',
+                e,
+                'file-input inspection',
+              );
+        }
       } catch (e) {
         return { success: false, error: e.message || String(e) };
       }
