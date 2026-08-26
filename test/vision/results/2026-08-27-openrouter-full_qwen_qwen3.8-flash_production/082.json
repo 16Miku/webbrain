@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:27:05.642Z",
+  "id": "082",
+  "model": "qwen/qwen3.8-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "082",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "search-results",
+    "title": "Case-sensitive search",
+    "image": "images/082.png",
+    "question": "What query is active, which result tab is selected, and how many results are shown? Focus on the “Case-sensitive search” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/082.png",
+    "bytes": 109802,
+    "sha256": "11a24ea55821569aeb9af5fa67def3a11939eb81a145cd4cf844247d99398558"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Case-sensitive search results page within the WebScene app.\n\n2) Visible text:\n- Nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Case-sensitive search\"\n- Field label: \"Search\"\n- Tabs: \"Exact match\" (active), \"Recent\", \"Saved\"\n- Result count: \"0 results\"\n- Chip: \"Archived\"\n- Banner: \"No matches for \"Orion-7B\"\"\n- Card 1: \"1\", \"Camera setup guide\", \"A practical guide with examples\"\n- Card 2: \"2\", \"Wireless keyboard collection\", \"Compare features and availability\"\n- Card 3: \"3\", \"Urban heat research notes\", \"Peer-reviewed articles and datasets\"\n\n3) Inputs:\n- Search field (label \"Search\"): current value \"Orion-7B\"; focused (thick dark border); enabled.\n\n4) State signals:\n- \"Exact match\" tab is the selected/active tab.\n- Banner reports \"0 results\" and \"No matches for \"Orion-7B\"\".\n- Discrepancy: despite the \"0 results / no matches\" banner, three numbered result cards (1–3) are rendered below, none of which contain the query \"Orion-7B\". These may be unrelated suggestions or stale/placeholder content.\n- No loading spinner, modal, toast, CAPTCHA, or cookie banner visible.\n\n5) Blockers:\n- The exact-match query \"Orion-7B\" returns no matches, so an action targeting a matching result is not possible on the current tab.\n- The visible cards do not correspond to the query, so clicking them may not satisfy a \"select the Orion-7B result\" goal.\n\n6) Unknowns:\n- Whether the three cards are clickable links or static placeholders (no hover/cursor cue visible).\n- Whether switching to \"Recent\" or \"Saved\" tabs, or toggling \"Archived\", would surface a match for \"Orion-7B\".\n- The green top-right circle is likely a user avatar but its label/contents are not readable.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 740,
+      "total_tokens": 1974,
+      "cost": 0.00054524,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00054524,
+        "upstream_inference_prompt_cost": 0.00019744,
+        "upstream_inference_completions_cost": 0.0003478
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 274,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1845,
+    "total": 12811
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.9166666666666666,
+    "earned": 11,
+    "possible": 12,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [
+      "notice"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 6,
+        "possible": 6,
+        "ratio": 1
+      },
+      "inputs": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "search",
+          "results"
+        ],
+        "weight": 1,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "search",
+          "results"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Case-sensitive search",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Case-sensitive search"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "tab",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Exact match",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Exact match"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "count",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "0 results",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "0 results"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "query",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "all",
+        "values": [
+          "Search",
+          "Orion-7B"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Search",
+          "Orion-7B"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "chip",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Archived",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Archived"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "notice",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "No matches for “Orion-7B”",
+        "weight": 1,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

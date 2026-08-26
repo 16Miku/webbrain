@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qwen3.8 Flash vs GLM-5.3 Flash browser benchmark - WebBrain Blog</title>
+  <meta name="description" content="We tested Qwen3.8 Flash and GLM-5.3 Flash on 400 WebBrain browser-agent cases. Both are huge multimodal MoEs with small active paths, million-token context, and near-identical list pricing. Qwen wins vision; GLM wins cost under a temporary launch discount.">
+  <meta name="keywords" content="Qwen3.8 Flash, GLM-5.3 Flash, OpenRouter, multimodal model benchmark, browser agent, mixture of experts, vision language model, tool calling, cheap AI API, WebBrain">
+  <meta property="og:title" content="Qwen3.8 Flash vs GLM-5.3 Flash: 400 browser-agent tests">
+  <meta property="og:description" content="Two new multimodal MoEs, 400 WebBrain cases, zero final errors. Qwen wins vision quality and text speed; GLM wins promotional cost and vision latency.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/qwen38-flash-vs-glm53-flash">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Qwen3.8 Flash vs GLM-5.3 Flash: the budget tier just reset">
+  <meta name="twitter:description" content="Qwen: 79/100 vision and 2.55s planner median. GLM: 76/100 vision and a temporary 50% price advantage. Architecture, pricing, and full WebBrain results.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/qwen38-flash-vs-glm53-flash">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Qwen3.8 Flash vs GLM-5.3 Flash: the budget multimodal tier just reset",
+  "description": "We tested Qwen3.8 Flash and GLM-5.3 Flash on 400 WebBrain browser-agent cases. Both are huge multimodal MoEs with small active paths, million-token context, and near-identical list pricing. Qwen wins vision; GLM wins cost under a temporary launch discount.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-27",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/qwen38-flash-vs-glm53-flash"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 27, 2026 &middot; 9 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Qwen3.8 Flash vs GLM-5.3 Flash: the budget multimodal tier just reset</h1>
+    <p class="lede"><strong>Two releases arriving within hours made the old budget multimodal shortlist look ancient.</strong> Qwen3.8 Flash and GLM-5.3 Flash are not tiny models. They are enormous sparse systems that execute only a small fraction of their weights for each token, accept text, images, and video, and expose roughly million-token context windows. On OpenRouter their normal token prices are almost identical. We sent both through WebBrain&#39;s 100-case text-planner suite and 100-case production vision suite: <strong>400 final case results, zero errors</strong>. Qwen won vision quality and text speed. GLM followed our canonical first-action hint more often, answered screenshots faster, and was cheaper only because its launch price is temporarily cut in half.</p>
+<h2 id="the-short-verdict">The short verdict</h2>
+<p>These are both credible one-model backends for a browser agent. Neither behaves like a bargain-bin checkpoint.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Text planner</th><th>Browser vision</th><th>Best reason to choose it</th></tr></thead><tbody><tr><td><strong>Qwen3.8 Flash</strong></td><td>97 tool calls + 3 terminal prose answers; 2.55s median</td><td><strong>79 strict passes</strong>, <strong>94.8%</strong> mean rubric</td><td>Better overall vision and much faster text planning</td></tr><tr><td><strong>GLM-5.3 Flash</strong></td><td><strong>100 tool calls</strong>; more canonical first routes</td><td>76 strict passes, 93.8% mean rubric; <strong>5.49s median</strong></td><td>Faster screenshots and exceptional promotional pricing</td></tr></tbody></table></div>
+<p>The important pricing word is <strong>promotional</strong>. On August 27, 2026, <a href="https://openrouter.ai/z-ai/glm-5.3-flash" target="_blank" rel="noopener">OpenRouter listed GLM-5.3 Flash</a> at <strong>$0.075 per million input tokens and $0.25 per million output tokens</strong>. That is a temporary 50% discount scheduled through September 9, 2026. Its intended list price is $0.15/$0.50, almost the same as <a href="https://openrouter.ai/qwen/qwen3.8-flash" target="_blank" rel="noopener">Qwen3.8 Flash</a> at $0.16/$0.47.</p>
+<p>So GLM is not fundamentally a half-price model next to Qwen. It is a similarly priced model currently wearing a half-price launch sticker.</p>
+<h2 id="two-different-ways-to-make-a-giant-model-cheap">Two different ways to make a giant model cheap</h2>
+<p>&quot;Flash&quot; used to imply a small dense checkpoint or an aggressively distilled sibling. These two releases take a more interesting route: keep a large pool of capacity, then make the active computation per token much smaller.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Disclosed language architecture</th><th>Active per token</th><th>Layers</th><th>Long-context design</th><th>OpenRouter context</th></tr></thead><tbody><tr><td>Qwen3.8 Flash</td><td>125B main model, plus 51B n-gram embeddings and a 4B multi-token-prediction head</td><td><strong>6B</strong></td><td>48</td><td>Gated DeltaNet + Qwen Sparse Attention</td><td>1,000,000</td></tr><tr><td>GLM-5.3 Flash</td><td>320B sparse MoE</td><td><strong>18B</strong></td><td>45</td><td>linear attention + sparse attention + IndexPool</td><td>1,310,720 advertised; provider route tops out near 1M</td></tr></tbody></table></div>
+<p>Those totals require context. “6B active” does not mean Qwen is a 6B download, and “18B active” does not make GLM a consumer-size 18B checkpoint. The weights are still large. What becomes small is the <strong>hot path</strong>: the parameters and attention work touched while generating each token. That is what makes hosted inference cheap and what makes unconventional local deployment—offloading cold capacity while keeping the active path fast—interesting.</p>
+<h3 id="qwen-6b-active-with-memory-moved-out-of-the-hot-path">Qwen: 6B active, with memory moved out of the hot path</h3>
+<p>The production <code>qwen/qwen3.8-flash</code> route is based on the open <a href="https://huggingface.co/Qwen/Qwen3.8-Flash-Next" target="_blank" rel="noopener">Qwen3.8-Flash-Next</a> release, with production features such as a default 1M context and built-in tools. Qwen calls Flash-Next an early preview of the architecture behind Qwen4.</p>
+<p>Its 48 layers repeat a 3:1 pattern: three Gated DeltaNet layers followed by one Qwen Sparse Attention layer, with MoE blocks after both. DeltaNet compresses the running history into a fixed-size state; sparse attention periodically retrieves precise information from the wider context. Only 6B of the 125B main-model parameters activate per token.</p>
+<p>The stranger idea is the additional <strong>51B-parameter n-gram embedding table</strong>. Qwen stores useful short phrase patterns in a large lookup structure that is cheap to index and easier to offload than normal transformer computation. Capacity grows without forcing every parameter through the accelerator on every token. This is not a small model. It is a large model designed so that most of its size is computationally quiet.</p>
+<h3 id="glm-a-larger-active-path-but-half-the-layers-of-its-ancestor">GLM: a larger active path, but half the layers of its ancestor</h3>
+<p><a href="https://huggingface.co/zai-org/GLM-5.3-Flash" target="_blank" rel="noopener">GLM-5.3 Flash</a> is the first natively multimodal model in the GLM-5 family. It has 320B total parameters, 18B active per token, and 45 layers. Z.ai compares that with GLM-4.5&#39;s 355B total, 32B active, and 92 layers: similar stored capacity, almost half the active parameters, and roughly half the depth.</p>
+<p>GLM also mixes linear and sparse attention. Linear attention maintains local state cheaply; sparse attention reaches back for global context. IndexPool reduces the sparse indexer&#39;s own memory and latency by pooling its keys, while Manifold-Constrained Hyper-Connections widen the residual path without paying the usual scaling penalty. <a href="https://z.ai/blog/glm-5.3-flash" target="_blank" rel="noopener">Z.ai reports</a> 3× less attention compute and a 4.4× smaller average KV cache than full GLM-5.3.</p>
+<p>Both architectures arrive at the same product proposition: keep enough total capacity for modern coding, agent, and visual work, but stop paying dense-model prices to use it.</p>
+<h2 id="openrouter-pricing-nearly-equal-after-the-sale">OpenRouter pricing: nearly equal after the sale</h2>
+<p>OpenRouter prices per million tokens on August 27:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Input now</th><th>Output now</th><th>Cache read now</th><th>Normal/list input</th><th>Normal/list output</th></tr></thead><tbody><tr><td><code>z-ai/glm-5.3-flash</code></td><td><strong>$0.075</strong></td><td><strong>$0.25</strong></td><td>$0.015</td><td>$0.15</td><td>$0.50</td></tr><tr><td><code>qwen/qwen3.8-flash</code></td><td>$0.16</td><td>$0.47</td><td>$0.016</td><td>$0.16</td><td>$0.47</td></tr></tbody></table></div>
+<p>At list price, GLM input is six percent cheaper and output is six percent more expensive. For most real workloads, that is the same price band. The current two-to-one gap is a launch promotion, not an architectural law; budget decisions made from the discounted column should include an expiry date.</p>
+<p>Our runs also show why list rates are not the whole bill. Both text runs reported more than 2.4M cached prompt tokens because the WebBrain system prompt and tool schemas repeat. Qwen emitted fewer text-planner completion tokens, while the two vision runs emitted almost exactly the same number. The exact workload mix decides which nearly identical list price is cheaper.</p>
+<h2 id="what-we-ran">What we ran</h2>
+<p>Both model IDs were served through the same OpenRouter account on August 27, 2026.</p>
+<p>The <strong>regular LLM run</strong> used WebBrain&#39;s 100-case Chrome first-action corpus at Full tier: current Act/Ask prompts, native OpenAI-compatible tool schemas, temperature 0.15, and no reasoning-effort override. It captures one response and does not execute the tool. The canonical <code>idealFirstToolCall</code> is a deterministic routing hint, not a full end-to-end success grade; a model that safely reads the accessibility tree before clicking can miss the hint and still finish the live task correctly.</p>
+<p>The <strong>vision run</strong> used WebBrain&#39;s 100 browser screenshots and exact production vision contract: the shipped six-section prompt, temperature 0, 800-token maximum, weighted fact checks, and critical-fact gating. A strict pass requires both enough weighted evidence and every critical fact.</p>
+<p>Two Qwen text requests and two Qwen vision requests hit temporary upstream 429 rate limits. All four succeeded on retry. Every final case file is complete, and no API key was stored in the results.</p>
+<p>We did not include the separate 100-case multi-turn recovery suite in this pass.</p>
+<h2 id="vision-qwen-wins-by-three-glm-wins-the-clock">Vision: Qwen wins by three, GLM wins the clock</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Strict passes</th><th>Mean rubric</th><th>Median</th><th>p95</th><th>Output tokens</th><th>Observed cost</th></tr></thead><tbody><tr><td><strong>Qwen3.8 Flash</strong></td><td><strong>79 / 100</strong></td><td><strong>94.8%</strong></td><td>8.42s</td><td>13.43s</td><td>45.3K</td><td>$0.041</td></tr><tr><td><strong>GLM-5.3 Flash</strong></td><td>76 / 100</td><td>93.8%</td><td><strong>5.49s</strong></td><td><strong>8.92s</strong></td><td>45.1K</td><td><strong>$0.021 promo</strong> / ~$0.042 list</td></tr></tbody></table></div>
+<p>Qwen&#39;s quality lead is real but narrow: three strict passes and just under one rubric point. GLM&#39;s latency lead is larger. It answered a screenshot roughly three seconds sooner at the median and kept its p95 under Qwen&#39;s median-plus-half-a-second.</p>
+<p>The difficulty curve shows where the three-pass difference comes from:</p>
+<div class="table-wrap"><table><thead><tr><th>Difficulty band</th><th>Qwen3.8 Flash</th><th>GLM-5.3 Flash</th></tr></thead><tbody><tr><td>Easy</td><td>70%</td><td><strong>80%</strong></td></tr><tr><td>Basic</td><td><strong>85%</strong></td><td>70%</td></tr><tr><td>Intermediate</td><td>85%</td><td>85%</td></tr><tr><td>Advanced</td><td>80%</td><td>80%</td></tr><tr><td>Challenging</td><td><strong>75%</strong></td><td>65%</td></tr></tbody></table></div>
+<p>Qwen is stronger at the hard end and dramatically better on authentication screens: 5/5 strict passes against GLM&#39;s 2/5. GLM wins photo understanding 5/5 to 4/5, multilingual OCR 3/5 to 2/5, and search results 5/5 to 4/5.</p>
+<p>Their overlap is revealing. Both pass 72 cases. Qwen alone passes seven; GLM alone passes four; both fail 17. The shared blind spots are the same ones that have survived several model generations: <strong>both score 0/5 on modal overlays and 1/5 on form validation</strong>. More parameters and newer attention do not automatically fix a small inline error associated with the wrong field or a dialog whose blocker must be described precisely.</p>
+<h2 id="text-planning-qwen-is-faster-glm-follows-the-hint-more-often">Text planning: Qwen is faster, GLM follows the hint more often</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Tool calls</th><th>Ideal name or terminal answer</th><th>Exact ideal</th><th>Tree first</th><th>Median</th><th>p95</th><th>Observed cost</th></tr></thead><tbody><tr><td><strong>GLM-5.3 Flash</strong></td><td><strong>100</strong></td><td><strong>41</strong></td><td><strong>13</strong></td><td>48</td><td>7.24s</td><td>16.49s</td><td><strong>$0.045 promo</strong> / ~$0.089 list</td></tr><tr><td><strong>Qwen3.8 Flash</strong></td><td>97 + 3 terminal prose</td><td>36</td><td>12</td><td>54</td><td><strong>2.55s</strong></td><td><strong>11.54s</strong></td><td>$0.057</td></tr></tbody></table></div>
+<p>Qwen&#39;s three prose responses were knowledge questions where the expected terminal action was <code>done</code>; treating them as acceptable terminal answers gives it 36 ideal-name-or-terminal outcomes. GLM emits a structured tool on every case and reaches 41 canonical tool names.</p>
+<p>The low exact totals need the same caution as every first-action article we publish. Many misses are harmless argument differences such as a trailing slash, an explicit read limit, or equivalent URL encoding. More importantly, both models often choose <code>get_accessibility_tree</code> where the deterministic hint expects an immediate click. GLM does that 48 times and Qwen 54 times. In a live browser loop, reading before acting is frequently prudent; this harness measures dispatch conformity, not final task completion.</p>
+<p>The cleaner operational distinction is speed. Qwen&#39;s 2.55-second median is excellent for a 6B-active multimodal model carrying the full WebBrain prompt and tool set. GLM is more than twice as slow on text, even though it is substantially faster on the screenshot route we tested. Provider scheduling, vision preprocessing, cache behavior, and model architecture all contribute; “Flash” is not one universal latency class.</p>
+<h2 id="the-old-budget-qwen-shortlist-is-obsolete">The old budget Qwen shortlist is obsolete</h2>
+<p>Five days ago, our <a href="/blog/qwen-budget-vision-openrouter">six-model Qwen budget comparison</a> ended with Qwen3-VL-32B Instruct at 69 strict passes and Qwen3-VL-30B-A3B Instruct at 68. Those were good results. They have already been passed by two general-purpose models that also handle serious text planning, million-token context, image input, and video input.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Vision passes</th><th>Mean rubric</th><th>Mean latency</th><th>Cost / 100 vision cases</th></tr></thead><tbody><tr><td><strong>Qwen3.8 Flash</strong></td><td><strong>79</strong></td><td><strong>94.8%</strong></td><td>8.8s</td><td>$0.041</td></tr><tr><td><strong>GLM-5.3 Flash</strong></td><td>76</td><td>93.8%</td><td>5.9s</td><td><strong>$0.021 promo</strong> / ~$0.042 list</td></tr><tr><td>Muse Glimmer 30B</td><td>73</td><td>93.3%</td><td>16.1s</td><td>$0.098</td></tr><tr><td>Qwen3-VL-32B Instruct</td><td>69</td><td>91.9%</td><td>4.6s</td><td>$0.022</td></tr><tr><td>Qwen3-VL-30B-A3B Instruct</td><td>68</td><td>91.3%</td><td><strong>2.2s</strong></td><td>$0.024</td></tr></tbody></table></div>
+<p>At GLM&#39;s current promotional price, the newer 320B-A18B model is <strong>cheaper per token than every Qwen route in that old budget table</strong>, while beating its best strict-pass score by seven. Qwen3.8 Flash costs about two cents more per 100 screenshots than the old instruct specialists, but buys ten extra passes over the 32B leader and replaces a vision-only purchasing decision with a modern multimodal generalist.</p>
+<p>There is no longer a good reason to reach first for the archaic budget Qwen3-VL routes on OpenRouter. The exceptions are narrow and measurable: Qwen3-VL-30B-A3B remains the latency winner at 2.2 seconds, and Qwen3-VL-32B remains the absolute two-cent option. If those last milliseconds or pennies are the binding constraint, keep them. For a new general browser-agent deployment, the current Flash generation gives you a larger capability surface and materially better vision without leaving the budget tier.</p>
+<h2 id="which-one-should-you-call">Which one should you call?</h2>
+<ul><li><strong>Best single hosted default:</strong> Qwen3.8 Flash. It wins strict vision quality, has the stronger challenging-case floor, and its text-planner median is less than half GLM&#39;s.</li><li><strong>Best value during the launch promotion:</strong> GLM-5.3 Flash. It is slightly behind on vision quality but faster on screenshots, emits a tool on every planner case, and currently costs half its intended list rate.</li><li><strong>Best post-promotion choice:</strong> treat them as nearly equal on token price. Pick Qwen for vision hit rate and text latency; pick GLM for screenshot latency and slightly better canonical first-route conformity.</li><li><strong>Best split WebBrain setup today:</strong> Qwen is the faster text planner; GLM is the faster vision sub-call. WebBrain can configure those roles separately if latency matters more than using one model ID everywhere.</li></ul>
+<p>The larger lesson is architectural. The useful small-model metric is no longer the number in the model name. Qwen carries well over a hundred billion main-model parameters while activating six billion. GLM stores 320 billion while activating eighteen. Both can be much more capable than yesterday&#39;s 8B and 30B budget checkpoints without making each generated token traverse the whole model.</p>
+<p>The budget tier did not merely get a little better. It got much larger, much more modern, and—in GLM&#39;s temporary case—even cheaper.</p>
+<h2 id="raw-results">Raw results</h2>
+<pre><code class="language-text">test/llm/results/2026-08-27-openrouter-full_chrome_qwen_qwen3.8-flash
+test/llm/results/2026-08-27-openrouter-full_chrome_z-ai_glm-5.3-flash
+test/vision/results/2026-08-27-openrouter-full_qwen_qwen3.8-flash_production
+test/vision/results/2026-08-27-openrouter-full_z-ai_glm-5.3-flash_production</code></pre>
+<p>The benchmark harness, screenshots, rubrics, and result files live in <a href="https://github.com/esokullu/webbrain/tree/main/test/llm" target="_blank" rel="noopener"><code>test/llm</code></a> and <a href="https://github.com/esokullu/webbrain/tree/main/test/vision" target="_blank" rel="noopener"><code>test/vision</code></a>.</p>
+<p>Tags: #Qwen38Flash #GLM53Flash #OpenRouter #MultimodalAI #MixtureOfExperts #VisionLanguageModel #ToolCalling #BrowserAgent #LocalAI #WebBrain</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>
