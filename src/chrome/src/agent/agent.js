@@ -196,6 +196,7 @@ const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+const EARLY_CDP_ACTION_TOOLS = new Set(['type_text', 'press_keys', 'hover', 'drag_drop']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
 const STANDALONE_WIKIPEDIA_MODEL_SEARCH_ALIASES = new Set([
@@ -19864,10 +19865,67 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!response || response.success !== true || response.needsTrustedClick !== true) {
       return response;
     }
+    const recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false };
+    try {
+      return await this._withContentActionDeadline(
+        abortSignal => this._completeSetCheckedWithCdpImpl(
+          tabId,
+          args,
+          response,
+          contentArgs,
+          abortSignal,
+          recoveryState,
+        ),
+        'set_checked',
+      );
+    } catch (error) {
+      if (error?.code !== 'content_action_timeout') throw error;
+      const clickDispatched = recoveryState.clickStarted;
+      const timedOut = {
+        ...response,
+        ...(clickDispatched
+          ? this._contentActionTimeoutResult('set_checked', error)
+          : {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              error: `${error.message} No checkbox click was sent because trusted recovery did not finish preparing. Re-read the page before retrying.`,
+            }),
+        trusted: recoveryState.trustedClickSucceeded,
+        verified: false,
+        needsTrustedClick: false,
+        checkedBefore: response.checkedBefore,
+        checkedAfter: undefined,
+        desiredChecked: args.checked,
+        changed: undefined,
+        checkboxIdentity: String(response.checkboxIdentity || ''),
+        checkboxState: undefined,
+        selector: response.selector || response.trustedSelector,
+        rect: recoveryState.clickResult?.rect || response.rect,
+        marker: undefined,
+        trustedSelector: undefined,
+      };
+      delete timedOut._confirmationSurfaces;
+      return timedOut;
+    }
+  }
+
+  async _completeSetCheckedWithCdpImpl(
+    tabId,
+    args,
+    response,
+    contentArgs,
+    abortSignal = null,
+    recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false },
+  ) {
+    this._throwIfAborted(abortSignal);
     const confirmationSurfacesBefore = Array.isArray(response._confirmationSurfaces)
       ? response._confirmationSurfaces
       : [];
     const beforeDocument = await this._getDevDocumentIdentity(tabId);
+    this._throwIfAborted(abortSignal);
     const trustedSelector = String(response.trustedSelector || '');
     const marker = String(response.marker || '');
     let clickResult = null;
@@ -19877,22 +19935,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       if (!trustedSelector) throw new Error('Checkbox preflight did not return a trusted selector');
       await cdpClient.attach(tabId);
+      this._throwIfAborted(abortSignal);
+      recoveryState.clickStarted = true;
       clickResult = await cdpClient.clickElement(tabId, trustedSelector, {
         trustedOnly: true,
         requireUnique: true,
       });
+      recoveryState.clickResult = clickResult;
+      this._throwIfAborted(abortSignal);
       trustedClickSucceeded = clickResult?.success === true
         && (clickResult.method === 'cdp-mouse' || clickResult.method === 'cdp-mouse-closed-shadow');
+      recoveryState.trustedClickSucceeded = trustedClickSucceeded;
       if (!trustedClickSucceeded) {
         throw new Error(clickResult?.error || 'Trusted selector click did not use CDP mouse input');
       }
     } catch (error) {
       clickError = error;
     }
+    this._throwIfAborted(abortSignal);
 
     const clickDispatched = clickResult?.dispatched === true || clickResult?.success === true;
     if (clickDispatched) {
       await new Promise(resolve => setTimeout(resolve, SET_CHECKED_VERIFY_DELAY_MS));
+      this._throwIfAborted(abortSignal);
     }
 
     let verified = null;
@@ -19915,6 +19980,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }),
         'set_checked',
       );
+      this._throwIfAborted(abortSignal);
     } catch (error) {
       verificationError = error;
       if (!clickError) clickError = error;
@@ -19948,6 +20014,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let afterDocument = null;
     if (trustedClickSucceeded && !verificationObservedState) {
       afterDocument = await this._getDevDocumentIdentity(tabId);
+      this._throwIfAborted(abortSignal);
     }
     const documentChanged = !!(
       beforeDocument?.documentId
@@ -20460,9 +20527,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    const context = executionContext && typeof executionContext === 'object'
+      ? executionContext
+      : {};
+    if (EARLY_CDP_ACTION_TOOLS.has(name) && !context._contentActionAbortSignal) {
+      try {
+        return await this._withContentActionDeadline(
+          abortSignal => this._executeToolImpl(tabId, name, args, onUpdate, {
+            ...context,
+            _contentActionAbortSignal: abortSignal,
+          }),
+          name,
+          this._contentActionDeadlineMs(name, args),
+        );
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._contentActionTimeoutResult(name, error);
+        }
+        throw error;
+      }
+    }
+    return this._executeToolImpl(tabId, name, args, onUpdate, context);
+  }
+
+  async _executeToolImpl(tabId, name, args, onUpdate = null, executionContext = null) {
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    const earlyCdpAbortSignal = dispatchContext._contentActionAbortSignal || null;
+    const throwIfEarlyCdpAborted = () => this._throwIfAborted(earlyCdpAbortSignal);
     let coordinatePoint = null;
     let coordinateDiagnostic = null;
     // Canonicalize coordinate clicks before toolbar recovery probes them.
@@ -20502,6 +20595,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       args,
       dispatchContext,
     );
+    throwIfEarlyCdpAborted();
     if (richTextToolbarBlock) return richTextToolbarBlock;
     const dispatchBinding = dispatchContext.dispatchBinding || null;
     const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
@@ -20556,6 +20650,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
+    throwIfEarlyCdpAborted();
     if (protectedFailure) {
       if (dispatchBinding) {
         await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
@@ -25106,6 +25201,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let dispatched = false;
       try {
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         if (args.index != null) {
           return {
             success: false,
@@ -25131,6 +25227,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const prepared = await sendFocusedTarget('prepare_focused_type_dispatch', {
               text: args.text || '',
             });
+            throwIfEarlyCdpAborted();
             if (!prepared?.success) {
               tokenConsumed = !!prepared;
               return prepared || {
@@ -25159,6 +25256,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
               });
+              throwIfEarlyCdpAborted();
               const delta = selectInfo.targetIndex - selectInfo.currentIndex;
               const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
               const arrowVK = delta > 0 ? 40 : 38;
@@ -25169,11 +25267,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                   type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
                 });
+                throwIfEarlyCdpAborted();
               }
               const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
                 targetText: selectInfo.targetText,
                 targetValue: selectInfo.targetValue,
               });
+              throwIfEarlyCdpAborted();
               if (!verification || verification.success !== true) {
                 throw new Error('Focused select verification returned no response.');
               }
@@ -25204,14 +25304,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
               });
+              throwIfEarlyCdpAborted();
             }
             dispatched = true;
             await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+            throwIfEarlyCdpAborted();
             const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
               text: args.text || '',
               clear: !!args.clear,
               beforeSignature: prepared.beforeSignature || '',
             });
+            throwIfEarlyCdpAborted();
             if (!verification || verification.success !== true) {
               throw new Error('Focused typing verification returned no response.');
             }
@@ -25256,6 +25359,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (!expectedBackendNodeId) {
             try {
               const probe = await cdpClient.probeRichTextToolbarSelector(tabId, args.selector);
+              throwIfEarlyCdpAborted();
               expectedBackendNodeId = Number(probe?.selectorBackendNodeId) || null;
             } catch {
               return {
@@ -25285,6 +25389,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               !!args.clear,
               expectedBackendNodeId,
             );
+            throwIfEarlyCdpAborted();
           } catch (error) {
             return {
               success: false,
@@ -25330,6 +25435,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             })()
           `);
+          throwIfEarlyCdpAborted();
           const focus = focusCheck?.result?.value;
 
           if (!focus?.focused || !focus?.editable) {
@@ -25372,6 +25478,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 };
               })()
             `);
+            throwIfEarlyCdpAborted();
             const sInfo = selectInfo?.result?.value;
             if (!sInfo?.success) {
               return {
@@ -25389,6 +25496,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
             });
+            throwIfEarlyCdpAborted();
             // Re-focus the select (Escape may have blurred it)
             await cdpClient.evaluate(tabId, `
               (() => {
@@ -25399,6 +25507,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }
               })()
             `);
+            throwIfEarlyCdpAborted();
 
             // Navigate with ArrowDown/ArrowUp — each key press changes the
             // selected option and fires native change events.
@@ -25413,6 +25522,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                 type: 'keyUp', key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
               });
+              throwIfEarlyCdpAborted();
             }
 
             // Verify the selection actually changed
@@ -25423,6 +25533,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 return { verified: true, selectedText: el.options[el.selectedIndex]?.text?.trim(), selectedValue: el.value };
               })()
             `);
+            throwIfEarlyCdpAborted();
             const v = verify?.result?.value;
             const verified = v?.verified === true && (
               v.selectedValue === sInfo.targetValue
@@ -25442,6 +25553,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
           const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
           const beforeSignature = await cdpClient.textEntrySignature(tabId, { focused: true });
+          throwIfEarlyCdpAborted();
           if (args.clear) {
             dispatched = true;
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
@@ -25456,15 +25568,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
               type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
             });
+            throwIfEarlyCdpAborted();
           }
           dispatched = true;
           await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+          throwIfEarlyCdpAborted();
           const verified = await cdpClient.verifyTextEntry(tabId, {
             focused: true,
             text: args.text || '',
             clear: !!args.clear,
             beforeSignature,
           });
+          throwIfEarlyCdpAborted();
 
           // Track field for duplicate-typing detection
           const fieldIdent = `focused:${focus.tag}|${focus.name}`;
@@ -25522,14 +25637,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const keyProgressBefore = String(key).startsWith('Arrow')
-        ? await this._keyProgressSnapshot(tabId)
+        ? await this._keyProgressSnapshot(tabId, earlyCdpAbortSignal)
         : '';
+      throwIfEarlyCdpAborted();
 
       let guardedTargetConsumed = false;
       let messageRecipientConsumed = false;
       let keyDispatchAttempted = false;
       try {
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         if (dispatchBinding?.token) {
           const validation = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
@@ -25538,6 +25655,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }, Number.isInteger(dispatchBinding.frameId)
             ? { frameId: dispatchBinding.frameId }
             : undefined);
+          throwIfEarlyCdpAborted();
           if (validation?.success !== true) {
             return validation || {
               success: false,
@@ -25554,6 +25672,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tabId,
             messageRecipientDispatchBinding,
           );
+          throwIfEarlyCdpAborted();
           if (recipientValidation?.success !== true) return recipientValidation;
           messageRecipientConsumed = true;
         }
@@ -25586,6 +25705,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             code: keyMeta.code,
             windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
           });
+          throwIfEarlyCdpAborted();
         }
 
         return await this._verifyProvisionalKeyProgress(
@@ -25593,6 +25713,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           key,
           { success: true, dispatched: true, method: 'cdp-key', key, repeat },
           keyProgressBefore,
+          earlyCdpAbortSignal,
         );
       } catch (e) {
         if (guardedTargetConsumed || messageRecipientConsumed) {
@@ -25625,6 +25746,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const rectResp = await chrome.tabs.sendMessage(tabId, {
           target: 'content', action: 'ax_resolve_rect', params: { ref_id: refId },
         });
+        throwIfEarlyCdpAborted();
         if (!rectResp || !rectResp.success) {
           return rectResp || { success: false, error: 'hover: failed to resolve ref_id' };
         }
@@ -25635,9 +25757,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const r2 = await chrome.tabs.sendMessage(tabId, {
             target: 'content', action: 'ax_resolve_rect', params: { ref_id: refId },
           });
+          throwIfEarlyCdpAborted();
           if (r2 && r2.success) Object.assign(rectResp, r2);
         }
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         const x = rectResp.x;
         const y = rectResp.y;
         // mouseMoved with button=none is enough for reveal-on-hover handlers
@@ -25647,9 +25771,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: Math.max(0, x - 10), y, button: 'none', buttons: 0,
         });
+        throwIfEarlyCdpAborted();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
+        throwIfEarlyCdpAborted();
         return {
           success: true,
           method: 'cdp-hover',
@@ -25672,6 +25798,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const stepsRaw = Number(args.steps ?? 10);
       const steps = Math.max(2, Math.min(40, Number.isFinite(stepsRaw) ? Math.floor(stepsRaw) : 10));
+      let dragPressed = false;
       try {
         // Single round-trip: content.js scrolls source-then-dest and
         // measures BOTH rects in the same viewport snapshot. The previous
@@ -25683,6 +25810,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: 'ax_resolve_two_rects',
           params: { fromRefId: fromRef, toRefId: toRef },
         });
+        throwIfEarlyCdpAborted();
         if (!rectsResp || !rectsResp.success) {
           return { success: false, error: `drag_drop: ${rectsResp?.error || 'resolve failed'}` };
         }
@@ -25704,6 +25832,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         const x1 = from.x, y1 = from.y, x2 = toResp.x, y2 = toResp.y;
 
         // mouseMoved (no button) → mousePressed at source → N waypoints
@@ -25714,9 +25843,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: x1, y: y1, button: 'none', buttons: 0,
         });
+        throwIfEarlyCdpAborted();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: x1, y: y1, button: 'left', buttons: 1, clickCount: 1,
         });
+        dragPressed = true;
+        throwIfEarlyCdpAborted();
         for (let i = 1; i <= steps; i++) {
           const t = i / steps;
           const ix = Math.round(x1 + (x2 - x1) * t);
@@ -25724,13 +25856,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
             type: 'mouseMoved', x: ix, y: iy, button: 'left', buttons: 1,
           });
+          throwIfEarlyCdpAborted();
           // Tiny pause so framework dnd state machines (drag-over throttling)
           // get a chance to tick between waypoints. Total ~steps*15ms = ~150ms.
           await new Promise(r => setTimeout(r, 15));
+          throwIfEarlyCdpAborted();
         }
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: x2, y: y2, button: 'left', buttons: 0, clickCount: 1,
         });
+        dragPressed = false;
+        throwIfEarlyCdpAborted();
         return {
           success: true,
           method: 'cdp-drag',
@@ -25740,6 +25876,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           hint: 'Re-read the accessibility tree to confirm the order/position changed. If nothing moved, the site may use HTML5 drag-and-drop with custom DataTransfer payloads that CDP cannot fully emulate — try the drag again with higher `steps` (15–20) or fall back to keyboard-based reorder controls if the site exposes them.',
         };
       } catch (e) {
+        if (dragPressed) await this._cancelTrustedClickPress(tabId);
         return { success: false, error: `drag_drop failed: ${e.message || e}` };
       }
     }
@@ -27096,8 +27233,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _keyProgressSnapshot(tabId) {
+  async _keyProgressSnapshot(tabId, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const page = await this._clickProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
     try {
       await cdpClient.attach(tabId);
       const res = await cdpClient.evaluate(tabId, `(() => {
@@ -27136,17 +27275,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : '';
         return { editable, caret, selection, scroll, mediaTime };
       })()`);
+      this._throwIfAborted(abortSignal);
       const extra = res?.result?.value && typeof res.result.value === 'object' ? res.result.value : {};
       return JSON.stringify({ page, ...extra });
     } catch {
+      this._throwIfAborted(abortSignal);
       return JSON.stringify({ page });
     }
   }
 
-  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot) {
+  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot, abortSignal = null) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
+    this._throwIfAborted(abortSignal);
     await new Promise(resolve => setTimeout(resolve, 200));
-    const afterSnapshot = await this._keyProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
+    const afterSnapshot = await this._keyProgressSnapshot(tabId, abortSignal);
+    this._throwIfAborted(abortSignal);
     const before = this._parseKeyProgressSnapshot(beforeSnapshot);
     const after = this._parseKeyProgressSnapshot(afterSnapshot);
     // Caret, selection, and custom-editor arrows are real progress that the
