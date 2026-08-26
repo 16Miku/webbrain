@@ -16221,6 +16221,7 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
   const dispatched = [];
   let inputFocusCalls = 0;
   let evaluateCall = 0;
+  let coordinateRedirectSource = '';
   const input = {
     tagName: 'INPUT',
     focus: () => { inputFocusCalls += 1; },
@@ -16272,6 +16273,7 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
     if (evaluateCall === 1) return { result: { value: undefined } }; // select guard injection
     if (evaluateCall === 2) return { result: { value: { isSelect: false } } }; // coordinate select probe
     if (evaluateCall === 3) {
+      coordinateRedirectSource = expression;
       const value = Function('document', `return (${expression});`)(document);
       return { result: { value } };
     }
@@ -16306,6 +16308,15 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
     });
 
     assert.equal(inputFocusCalls, 1, 'canvas fallback must preserve the old nearby-input focus heuristic');
+    const originalDateNow = Date.now;
+    try {
+      Date.now = () => Number.MAX_SAFE_INTEGER;
+      const expiredRedirect = Function('document', `return (${coordinateRedirectSource});`)(document);
+      assert.equal(expiredRedirect?.deadlineExpired, true, 'expired coordinate redirect must stop inside the page evaluation');
+      assert.equal(inputFocusCalls, 1, 'expired coordinate redirect must not focus the nearby input');
+    } finally {
+      Date.now = originalDateNow;
+    }
     assert.deepEqual(dispatched, [
       { type: 'mouseMoved', x: 1390, y: 748 },
       { type: 'mousePressed', x: 1390, y: 748 },
@@ -50767,6 +50778,51 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
     await client.clickElement(42, '#missing'),
     { success: false, dispatched: false, error: 'Element not found' },
   );
+
+  client.resolveSelector = async () => ({
+    inViewport: true,
+    hitOk: true,
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
+    tag: 'SELECT',
+    text: 'Current option',
+  });
+  let releaseSelectInspection;
+  let markSelectInspectionStarted;
+  const selectInspectionStarted = new Promise(resolve => { markSelectInspectionStarted = resolve; });
+  const delayedSelectInspection = new Promise(resolve => { releaseSelectInspection = resolve; });
+  let selectInspectionSource = '';
+  client.evaluate = async (_tabId, expression) => {
+    selectInspectionSource = expression;
+    markSelectInspectionStarted();
+    await delayedSelectInspection;
+    return {
+      result: {
+        value: {
+          current: 'Current option',
+          options: ['Current option', 'Other option'],
+        },
+      },
+    };
+  };
+  const selectController = new AbortController();
+  const selectTimeout = new Error('click did not return a page response within 60 seconds.');
+  selectTimeout.code = 'content_action_timeout';
+  const pendingSelectInspection = client.clickElement(42, '#account-type', {
+    abortSignal: selectController.signal,
+  });
+  await selectInspectionStarted;
+  selectController.abort(selectTimeout);
+  releaseSelectInspection();
+  await assert.rejects(pendingSelectInspection, candidate => candidate === selectTimeout);
+  assert.doesNotMatch(
+    selectInspectionSource,
+    /\.focus\s*\(/,
+    'a delayed pre-dispatch select inspection must remain observation-only',
+  );
+  client.evaluate = CDPClient.prototype.evaluate.bind(client);
 
   client.resolveSelector = async () => ({
     inViewport: true,

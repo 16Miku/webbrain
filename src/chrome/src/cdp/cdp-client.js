@@ -3821,28 +3821,29 @@ export class CDPClient {
     if (!info) return { success: false, dispatched: false, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, error: info.error };
 
-    // <select> intercept: don't click — focus the element (so type_text
-    // finds it as activeElement) and return guidance.
+    // <select> intercept: don't click or focus the element. This path runs
+    // before dispatch authorization, so even a late Runtime.evaluate must
+    // remain observation-only after the caller's action deadline expires.
     if (info.tag === 'SELECT') {
       const selectorJSON = JSON.stringify(selector);
       const optRes = await this.evaluate(tabId, `
         (() => {
           const el = document.querySelector(${selectorJSON});
           if (!el || el.tagName !== 'SELECT') return null;
-          el.focus();
           return {
             current: el.options[el.selectedIndex]?.text?.trim() || '',
             options: Array.from(el.options).map(o => o.text.trim()),
           };
         })()
       `);
+      throwIfAborted();
       const opts = optRes?.result?.value;
       return {
         success: false,
         dispatched: false,
         tag: 'SELECT',
         text: opts?.current || info.text,
-        error: `CANNOT CLICK a <select> dropdown — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused (current: "${opts?.current || ''}"). Use type_text({text: "option name"}) to change the value.` + (opts?.options ? ' Available: ' + opts.options.join(', ') : ''),
+        error: `CANNOT CLICK a <select> dropdown — clicking opens a native OS popup that cannot be controlled. Use type_text({selector: ${JSON.stringify(selector)}, text: "option name"}) to change the value.` + (opts?.options ? ' Available: ' + opts.options.join(', ') : ''),
       };
     }
 

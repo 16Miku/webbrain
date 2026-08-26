@@ -196,6 +196,7 @@ const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
@@ -1045,8 +1046,12 @@ export class Agent extends LoopDetector {
   }
 
   _throwIfAborted(signal) {
-    if (!signal?.aborted) return;
+    const deadline = signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null;
+    const deadlineAt = Number(deadline?.deadlineAt);
+    const deadlineExpired = Number.isFinite(deadlineAt) && deadlineAt > 0 && Date.now() >= deadlineAt;
+    if (!signal?.aborted && !deadlineExpired) return;
     if (signal.reason instanceof Error) throw signal.reason;
+    if (deadline?.error instanceof Error) throw deadline.error;
     const error = new Error('The operation was aborted.');
     error.name = 'AbortError';
     throw error;
@@ -1054,6 +1059,11 @@ export class Agent extends LoopDetector {
 
   _linkAbortSignals(...signals) {
     const controller = new AbortController();
+    const linkedDeadline = signals
+      .map(signal => signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null)
+      .filter(deadline => Number.isFinite(Number(deadline?.deadlineAt)))
+      .sort((a, b) => Number(a.deadlineAt) - Number(b.deadlineAt))[0];
+    if (linkedDeadline) CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, linkedDeadline);
     const listeners = [];
     const dispose = () => {
       for (const [signal, listener] of listeners.splice(0)) {
@@ -1133,6 +1143,8 @@ export class Agent extends LoopDetector {
     );
     timeoutError.code = 'content_action_timeout';
     const controller = new AbortController();
+    const deadlineAt = Date.now() + timeoutMs;
+    CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, { deadlineAt, error: timeoutError });
     const timeout = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
@@ -24926,7 +24938,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
                   if (ok) {
                     inp.scrollIntoView({ block: 'center', inline: 'center' });
-                    inp.focus();
                     let r = inp.getBoundingClientRect();
                     // Fallback for zero-dimension inputs (styled wrappers)
                     if (r.width === 0 || r.height === 0) {
@@ -25030,7 +25041,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   else target = ns.querySelector('input,textarea,select');
                 }
                 if (target) {
-                  target.focus();
                   el = target;
                 }
               }
@@ -25152,7 +25162,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
                       if (ok) {
                         inp.scrollIntoView({ block: 'center', inline: 'center' });
-                        inp.focus();
                         let r = inp.getBoundingClientRect();
                         if (r.width === 0 || r.height === 0) {
                           let p = inp.parentElement;
@@ -25211,7 +25220,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       if (/^(INPUT|TEXTAREA|SELECT)$/i.test(ns.tagName)) target = ns;
                       else target = ns.querySelector('input,textarea,select');
                     }
-                    if (target) { target.focus(); el = target; }
+                    if (target) el = target;
                   }
 
                   // Passive tag → interactive ancestor
@@ -25449,10 +25458,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             }
           }
-          // <select> intercept: don't dispatch mouse events — the native
-          // dropdown popup can't be controlled via CDP. Focus the element
-          // via JS so the follow-up type_text() finds it as activeElement,
-          // then return guidance.
+          // <select> intercept: don't dispatch mouse events or mutate focus.
+          // The model can target the select explicitly with type_text.
           if (info.tag === 'SELECT') {
             const optionsInfo = await cdpClient.evaluate(tabId, `
               (() => {
@@ -25461,7 +25468,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 for (const sel of all) {
                   const t = (sel.innerText || sel.value || '').trim().toLowerCase();
                   if (t.includes(${JSON.stringify((args.text || '').toLowerCase())})) {
-                    sel.focus();
                     return {
                       current: sel.options[sel.selectedIndex]?.text?.trim() || '',
                       options: Array.from(sel.options).map(o => o.text.trim()),
@@ -25477,7 +25483,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched: false,
               tag: 'SELECT',
               text: opts?.current || info.text,
-              error: 'CANNOT CLICK a <select> dropdown — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused. Use type_text({text: "option name"}) to change the value.' + (opts?.options ? ' Available options: ' + opts.options.join(', ') : ''),
+              error: 'CANNOT CLICK a <select> dropdown — clicking opens a native OS popup that cannot be controlled. Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector.' + (opts?.options ? ' Available options: ' + opts.options.join(', ') : ''),
             };
           }
 
@@ -25513,7 +25519,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               }
               const sel = findSelect(el);
               if (!sel) return null;
-              sel.focus();
               return { isSelect: true, current: sel.options[sel.selectedIndex]?.text?.trim() || '', options: Array.from(sel.options).map(o => o.text.trim()) };
             })()
           `);
@@ -25521,13 +25526,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // Instead of returning a hint, try auto-selecting if the
             // clicked text matches an option (already handled above).
             // If we got here, the text matched the current value or a
-            // non-option label. Return guidance but also focus the select.
+            // non-option label. Return guidance without changing focus.
             const cs = coordSelCheck.result.value;
             return {
-              success: true,
+              success: false,
+              dispatched: false,
+              noDispatch: true,
               tag: 'SELECT',
               text: cs.current,
-              hint: `This is a <select> dropdown (current: "${cs.current}"). Use type_text({text: "option name"}) to change it. Available options: ${cs.options.join(', ')}`,
+              error: `This is a <select> dropdown (current: "${cs.current}"). Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector. Available options: ${cs.options.join(', ')}`,
             };
           }
 
@@ -25667,29 +25674,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return await this._annotateClickProgress(tabId, 'click', args, clickResponse, progressBeforeText, { editable: isEditableTarget });
         }
         if (args.selector) {
-          // Check if the selector targets a <select> element before clicking.
-          // If it is, focus the element (so type_text finds it) and return guidance.
-          const selTagCheck = await cdpClient.evaluate(tabId, `
-            (() => {
-              const el = document.querySelector(${JSON.stringify(args.selector)});
-              if (!el) return null;
-              if (el.tagName === 'SELECT') {
-                el.focus();
-                const opts = Array.from(el.options).map(o => o.text.trim());
-                return { isSelect: true, current: el.options[el.selectedIndex]?.text?.trim() || '', options: opts };
-              }
-              return { isSelect: false };
-            })()
-          `);
-          const selTag = selTagCheck?.result?.value;
-          if (selTag?.isSelect) {
-            return {
-              success: true,
-              tag: 'SELECT',
-              text: selTag.current,
-              hint: `This is a <select> dropdown (current: "${selTag.current}"). Do NOT click it — use type_text({text: "option name"}) to select an option. Available options: ${selTag.options.join(', ')}`,
-            };
-          }
           const progressBeforeSel = await this._clickProgressSnapshot(tabId);
           const beforeTabIdsSel = new Set((await chrome.tabs.query({})).map(t => t.id));
           throwIfEarlyCdpAborted();
@@ -25734,7 +25718,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               let target = el;
               for (let i = 0; i < 5 && target; i++) {
                 if (target.tagName === 'SELECT') {
-                  target.focus();
                   const opts = Array.from(target.options).map(o => o.text.trim());
                   return { isSelect: true, current: target.options[target.selectedIndex]?.text?.trim() || '', options: opts };
                 }
@@ -25745,7 +25728,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (p) {
                 for (const sib of p.children) {
                   if (sib.tagName === 'SELECT') {
-                    sib.focus();
                     const opts = Array.from(sib.options).map(o => o.text.trim());
                     return { isSelect: true, current: sib.options[sib.selectedIndex]?.text?.trim() || '', options: opts };
                   }
@@ -25761,7 +25743,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched: false,
               tag: 'SELECT',
               text: coordTag.current,
-              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused (current: "${coordTag.current}"). Use type_text({text: "option name"}) to change the value. Available options: ${coordTag.options.join(', ')}`,
+              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector. Current: "${coordTag.current}". Available options: ${coordTag.options.join(', ')}`,
             };
           }
           // Smart coordinate redirect: if (x,y) lands on a label, wrapper,
@@ -25770,17 +25752,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // not on the label above it.
           const coordRedirect = await cdpClient.evaluate(tabId, `
             (() => {
+              const actionDeadlineAt = ${Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0};
+              const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+              if (deadlineExpired()) return { deadlineExpired: true };
               const el = document.elementFromPoint(${args.x}, ${args.y});
               if (!el) return null;
 
-              // Already on an input — just focus it, click as-is
+              // Preserve the legacy nearby-input focus heuristic, but only
+              // while the owning action deadline is still live.
               if (/^(INPUT|TEXTAREA)$/i.test(el.tagName)) {
+                if (deadlineExpired()) return { deadlineExpired: true };
                 el.focus();
                 return null; // no redirect needed
               }
-              // SELECT: focus but flag it so we can intercept before mouse events
+              // SELECT: flag it so we can intercept before mouse events.
               if (el.tagName === 'SELECT') {
-                el.focus();
                 const opts = Array.from(el.options).map(o => o.text.trim());
                 return { isSelect: true, current: el.options[el.selectedIndex]?.text?.trim() || '', options: opts };
               }
@@ -25818,8 +25804,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
               if (!target) return null;
 
-              // Focus the input and return its center coordinates
+              // Focus the redirected input only while the owning action is
+              // live, then return its center for the trusted mouse dispatch.
               if (target.tagName !== 'SELECT') target.scrollIntoView({ block: 'center', inline: 'center' });
+              if (deadlineExpired()) return { deadlineExpired: true };
               target.focus();
               let r = target.getBoundingClientRect();
 
@@ -25839,6 +25827,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             })()
           `);
+          throwIfEarlyCdpAborted();
           const redir = coordRedirect?.result?.value;
 
           // If coordinate redirect detected a SELECT, don't dispatch mouse
@@ -25849,7 +25838,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched: false,
               tag: 'SELECT',
               text: redir.current,
-              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused (current: "${redir.current}"). Use type_text({text: "option name"}) to change the value. Available options: ${redir.options.join(', ')}`,
+              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector. Current: "${redir.current}". Available options: ${redir.options.join(', ')}`,
             };
           }
 
