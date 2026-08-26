@@ -119,7 +119,7 @@ if (globalThis.browser?.storage?.onChanged) {
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['local_openai_proxy', 'jan', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let localScanStarted = false;
   let localModelChoices = [];

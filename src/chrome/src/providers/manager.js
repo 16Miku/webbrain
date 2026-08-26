@@ -66,7 +66,7 @@ import {
 
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
-const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy'];
+const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
@@ -604,6 +604,21 @@ export class ProviderManager {
         supportsVision: false,
         enabled: true,
       },
+      unsloth: {
+        type: 'openai',
+        category: 'local',
+        label: 'Unsloth Studio (Local)',
+        providerName: 'unsloth',
+        baseUrl: 'http://127.0.0.1:8888/v1',
+        model: '',
+        requiresModel: true,
+        contextWindow: 16384,
+        apiKey: '',
+        requiresApiKey: true,
+        supportsAskStreaming: true,
+        supportsVision: false,
+        enabled: true,
+      },
       webgpu: {
         type: 'webgpu',
         category: 'local',
@@ -1129,7 +1144,7 @@ export class ProviderManager {
   static categoryFor(id, config) {
     if (config && config.category) return config.category;
     if (config?.type === 'llamacpp' || config?.type === 'webgpu') return 'local';
-    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'webgpu'].includes(id)) return 'local';
+    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth', 'webgpu'].includes(id)) return 'local';
     if (ROUTER_PROVIDER_IDS.includes(id)) return 'router';
     return 'cloud';
   }
@@ -2074,7 +2089,7 @@ export class ProviderManager {
   /**
    * Fetch selectable models for local providers. Ollama uses its native
    * /api/tags endpoint; llama.cpp, LM Studio, Jan, vLLM, SGLang, LocalAI,
-   * GPT4All, and generic local proxies use
+   * GPT4All, Unsloth Studio, and generic local proxies use
    * OpenAI-compatible /v1/models.
    */
   async listProviderModels(id) {
@@ -2427,7 +2442,12 @@ export class ProviderManager {
   _extractModelIds(id, data) {
     const source = id === 'ollama' ? data?.models : data?.data;
     if (!Array.isArray(source)) return [];
-    const ids = source
+    // Studio exposes its full catalog, but nonresident entries fail when
+    // request-time model switching is disabled (the default).
+    const selectable = id === 'unsloth'
+      ? source.filter((m) => m?.loaded !== false)
+      : source;
+    const ids = selectable
       .map((m) => {
         if (typeof m === 'string') return m;
         return id === 'ollama' ? m?.name : m?.id;

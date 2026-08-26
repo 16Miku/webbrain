@@ -246,7 +246,7 @@ use Responses streaming. Other supported official OpenAI models use Chat
 Completions streaming. Anthropic uses its native Messages event parser, Azure
 OpenAI uses its deployment-based parser, and Gemini, DeepSeek, xAI, Mistral,
 Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Cloud,
-Ollama, LM Studio, Jan, vLLM, SGLang, and LocalAI use the OpenAI-compatible
+Ollama, LM Studio, Jan, vLLM, SGLang, LocalAI, and Unsloth Studio use the OpenAI-compatible
 Chat Completions parser. z.ai streaming tool calls add its documented
 `tool_stream` request flag. llama.cpp uses its dedicated OpenAI-compatible
 parser. Alibaba Cloud remains non-streaming because DashScope rejects

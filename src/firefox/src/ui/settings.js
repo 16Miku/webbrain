@@ -2255,6 +2255,16 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    unsloth: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8888/v1' },
+        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-unsloth-...' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model loaded in Unsloth Studio' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
     azure_openai: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://{resource}.openai.azure.com' },
@@ -2585,7 +2595,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy'];
+        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
