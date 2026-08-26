@@ -26250,6 +26250,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeFallbackFieldWithCdp(tabId, toolName, args, response, messageRecipientContext = {}) {
+    try {
+      return await this._withContentActionDeadline(
+        () => this._maybeFallbackFieldWithCdpImpl(
+          tabId,
+          toolName,
+          args,
+          response,
+          messageRecipientContext,
+        ),
+        toolName,
+        this._contentActionDeadlineMs(toolName, args),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return this._contentActionTimeoutResult(toolName, error);
+      }
+      throw error;
+    }
+  }
+
+  async _maybeFallbackFieldWithCdpImpl(tabId, toolName, args, response, messageRecipientContext = {}) {
     if (!response || (toolName !== 'type_ax' && toolName !== 'set_field')) return response;
     const expected = typeof response._expectedValue === 'string' ? response._expectedValue : null;
     const clearsExisting = toolName === 'set_field'

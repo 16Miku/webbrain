@@ -69656,6 +69656,12 @@ test('type_ax shares settled exact verification and explicit recovery contract',
 test('Chrome controlled-field fallback is ref-bound, trusted, verified, and submit-gated', () => {
   const agent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   const content = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/content.js'), 'utf8');
+  const fallbackDeadlineStart = agent.indexOf('async _maybeFallbackFieldWithCdp(');
+  const fallbackImplStart = agent.indexOf('async _maybeFallbackFieldWithCdpImpl(', fallbackDeadlineStart);
+  assert.ok(fallbackDeadlineStart >= 0 && fallbackImplStart > fallbackDeadlineStart, 'chrome: trusted field retry deadline wrapper missing');
+  const fallbackDeadlineSource = agent.slice(fallbackDeadlineStart, fallbackImplStart);
+  assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackFieldWithCdpImpl\([\s\S]*toolName/, 'chrome: trusted field retry pipeline bypasses the deadline');
+  assert.match(fallbackDeadlineSource, /content_action_timeout[\s\S]*this\._contentActionTimeoutResult\(toolName, error\)/, 'chrome: trusted field retry timeout loses its unknown outcome');
   assert.match(agent, /_maybeFallbackFieldWithCdp[\s\S]*ax_prepare_field_for_trusted_type[\s\S]*Input\.insertText[\s\S]*ax_verify_field_value/, 'chrome: trusted field retry pipeline missing');
   assert.match(agent, /verification\.verified !== true[\s\S]*if \(toolName === 'set_field' && args\?\.submit === true\)/, 'chrome: submit must remain after trusted verification');
   assert.match(content, /'ax_prepare_field_for_trusted_type'[\s\S]*window\.__wb_ax_lookup\(ref_id\)[\s\S]*el\.select\(\)/, 'chrome: trusted retry must focus and select the ref-bound field');
@@ -69671,6 +69677,43 @@ test('Chrome controlled-field fallback is ref-bound, trusted, verified, and subm
     assert.match(branch, /el\.isContentEditable[\s\S]*trustedTypeRequired: true[\s\S]*_expectedValue/, `chrome: ${toolName} contenteditables must route through trusted typing`);
     assert.doesNotMatch(branch, /document\.execCommand\('insertText'/, `chrome: ${toolName} must not accept synthetic contenteditable DOM text as verified input`);
   }
+});
+
+test('Chrome controlled-field fallback timeout preserves an unknown mutation outcome', async () => {
+  const agent = new AgentCh({});
+  let deadlineTool = '';
+  let implementationStarted = false;
+  agent._maybeFallbackFieldWithCdpImpl = async () => {
+    implementationStarted = true;
+    return new Promise(() => {});
+  };
+  agent._withContentActionDeadline = async (operation, toolName) => {
+    deadlineTool = toolName;
+    operation();
+    const error = new Error(`${toolName} did not return a page response within 60 seconds.`);
+    error.code = 'content_action_timeout';
+    throw error;
+  };
+
+  const result = await agent._maybeFallbackFieldWithCdp(
+    42,
+    'set_field',
+    { ref_id: 'ref_timeout', text: 'updated value' },
+    {
+      success: false,
+      verified: false,
+      _expectedValue: 'updated value',
+      recoveryRequired: 'fresh_tree',
+    },
+  );
+
+  assert.equal(implementationStarted, true);
+  assert.equal(deadlineTool, 'set_field');
+  assert.equal(result.success, false);
+  assert.equal(result.dispatched, true);
+  assert.equal(result.outcomeUnknown, true);
+  assert.equal(result.retryable, false);
+  assert.match(result.error, /may have reached the page.*inspect the current state/i);
 });
 
 test('Chrome controlled-field fallback recovers exactly once and never submits a mismatch', async () => {
