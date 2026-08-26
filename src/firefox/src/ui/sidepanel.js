@@ -8048,7 +8048,7 @@ async function sendMessage(extraChatParams = {}) {
     syncSendButtonState();
     return false;
   }
-  if (!retryOptions && !sourceGrounding && !isWorkflowRun
+  if (!retryOptions && !sourceGrounding && !isWorkflowRun && !contextMenuClaimOwned
       && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'attachment-read-pending', retryAfterMs: 1_000 });
     syncSendButtonState();
@@ -8212,9 +8212,9 @@ async function sendMessage(extraChatParams = {}) {
 
   let userEl = null;
   let assistantEl = null;
-  // Selection-only shortcuts and saved workflow replay must not inherit
+  // Selection/context-menu prompts and saved workflow replay must not inherit
   // attachment chips prepared for a later ordinary chat turn.
-  const attachmentsForSend = sourceGrounding || isWorkflowRun
+  const attachmentsForSend = sourceGrounding || isWorkflowRun || contextMenuClaimOwned
     ? []
     : retryOptions
       ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
@@ -8254,7 +8254,7 @@ async function sendMessage(extraChatParams = {}) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    if (!sourceGrounding && !isWorkflowRun) {
+    if (!sourceGrounding && !isWorkflowRun && !contextMenuClaimOwned) {
       if (retryOptions) consumePendingAttachmentsForTab(tabId, attachmentsForSend);
       else clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots: true });
       renderAttachmentPreviews();

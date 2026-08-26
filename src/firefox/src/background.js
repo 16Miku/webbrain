@@ -41,6 +41,7 @@ import {
   SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
+  buildFullContextSelectionPrompt,
   buildSelectionPrompt,
   normalizeSelectionAction,
   normalizeSelectionSourceGrounding,
@@ -1291,27 +1292,34 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
   const tab = sender?.tab;
   const selectionAction = normalizeSelectionAction(msg.action);
-  const sourceGrounding = selectionAction === 'custom'
-    ? SELECTION_CONTEXT_SOURCE_GROUNDING
-    : SELECTION_ONLY_SOURCE_GROUNDING;
-  const text = buildSelectionPrompt(
-    msg.selectionText,
-    msg.action,
-    msg.question,
-    msg.language,
-    sourceGrounding,
-  );
+  const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
+  const sourceGrounding = includePageContext
+    ? ''
+    : selectionAction === 'custom'
+      ? SELECTION_CONTEXT_SOURCE_GROUNDING
+      : SELECTION_ONLY_SOURCE_GROUNDING;
+  const text = includePageContext
+    ? buildFullContextSelectionPrompt(msg.selectionText, msg.question)
+    : buildSelectionPrompt(
+      msg.selectionText,
+      msg.action,
+      msg.question,
+      msg.language,
+      sourceGrounding,
+    );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
     return;
   }
-
   const payload = {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     tabId: tab.id,
     text,
-    sourceGrounding,
-    ...(selectionAction ? { selectionAction } : {}),
+    ...(sourceGrounding ? {
+      sourceGrounding,
+      ...(selectionAction ? { selectionAction } : {}),
+    } : {}),
+    ...(includePageContext ? { restoreSelectionScope: true } : {}),
     createdAt: Date.now(),
   };
 
@@ -2571,6 +2579,9 @@ async function handleMessage(msg, sender) {
         if (msg.contextMenuClear?.tabId != null) {
           await contextMenuStorage.clear(msg.contextMenuClear.tabId, msg.contextMenuClear.promptId);
         }
+        if (msg.restoreSelectionScope === true && !normalizeSelectionSourceGrounding(msg.sourceGrounding)) {
+          await agent.restoreSelectionGroundingScope(tabId);
+        }
 
         const askStreamingSettings = await browser.storage.local.get('openaiAskStreamingEnabled').catch(() => ({}));
         const runOptions = {
@@ -2858,7 +2869,7 @@ async function handleMessage(msg, sender) {
       if (detachedRunStarts.has(tabId) || agent.activeRunState(tabId)?.running) {
         return { ok: false, error: 'Wait for the current response to finish before restoring the full conversation.' };
       }
-      const restored = agent.restoreSelectionGroundingScope(tabId);
+      const restored = await agent.restoreSelectionGroundingScope(tabId);
       return { ok: true, restored, ...(await agent.getConversationState(tabId)) };
     }
 
