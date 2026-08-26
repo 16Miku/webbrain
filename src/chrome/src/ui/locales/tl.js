@@ -155,6 +155,7 @@ export default {
   "sp.selection_scope.context_title": "Napiling text + pangkalahatang kaalaman",
   "sp.selection_scope.context_description": "Ginagamit ang napiling text, ligtas na naunang usapan, at kaalaman ng modelo. Hindi available ang page, tools, files, attachment, at hilaw na laman ng naunang page.",
   "sp.selection_scope.restore": "Gamitin ang mas malawak na usapan",
+  "sp.selection_scope.restore_description": "Inaalis ng pag-restore ang hangganan ng napiling text. Magagamit ng mga susunod na mensahe ang kasalukuyang page, browser tools, files, attachments, at ang buong naunang usapan, kasama ang context ng page.",
   "sp.input.selection_placeholder": "Magtanong tungkol sa napiling text...",
 
   'sp.mode.ask': 'Tanong',

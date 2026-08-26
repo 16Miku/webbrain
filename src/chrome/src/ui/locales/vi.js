@@ -121,6 +121,7 @@ export default {
   "sp.selection_scope.context_title": "Văn bản đã chọn + kiến thức chung",
   "sp.selection_scope.context_description": "Sử dụng văn bản đã chọn, hội thoại trước đó an toàn và kiến thức của mô hình. Trang, công cụ, tệp, tệp đính kèm và nội dung thô của các trang trước vẫn không khả dụng.",
   "sp.selection_scope.restore": "Dùng cuộc trò chuyện đầy đủ",
+  "sp.selection_scope.restore_description": "Khôi phục sẽ gỡ bỏ ranh giới của văn bản đã chọn. Các tin nhắn sau có thể dùng trang hiện tại, công cụ trình duyệt, tệp, tệp đính kèm và toàn bộ cuộc trò chuyện trước đó, bao gồm ngữ cảnh trang.",
   "sp.input.selection_placeholder": "Hỏi về văn bản đã chọn...",
 
   'sp.mode.ask': "Hỏi",

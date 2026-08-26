@@ -119,6 +119,7 @@ export default {
   "sp.selection_scope.context_title": "Ausgewählter Text + Allgemeinwissen",
   "sp.selection_scope.context_description": "Verwendet den ausgewählten Text, sichere frühere Dialoge und Modellwissen. Seite, Tools, Dateien, Anhänge und rohe Inhalte früherer Seiten bleiben nicht verfügbar.",
   "sp.selection_scope.restore": "Vollständige Unterhaltung verwenden",
+  "sp.selection_scope.restore_description": "Beim Wiederherstellen wird die Begrenzung auf den ausgewählten Text aufgehoben. Künftige Nachrichten können die aktuelle Seite, Browser-Tools, Dateien, Anhänge und die vollständige frühere Unterhaltung einschließlich Seitenkontext verwenden.",
   "sp.input.selection_placeholder": "Frage zum ausgewählten Text...",
   'sp.mode.ask': 'Fragen',
   'sp.mode.ask.title': 'Fragen zur Seite stellen — keine Änderungen',
