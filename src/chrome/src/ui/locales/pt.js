@@ -121,6 +121,7 @@ export default {
   "sp.selection_scope.context_title": "Texto selecionado + conhecimento geral",
   "sp.selection_scope.context_description": "Usa o texto selecionado, o diálogo anterior seguro e o conhecimento do modelo. A página, as ferramentas, os arquivos, os anexos e o conteúdo bruto de páginas anteriores continuam indisponíveis.",
   "sp.selection_scope.restore": "Usar a conversa completa",
+  "sp.selection_scope.restore_description": "A restauração remove o limite do texto selecionado. As próximas mensagens poderão usar a página atual, as ferramentas do navegador, os arquivos, os anexos e toda a conversa anterior, incluindo o contexto da página.",
   "sp.input.selection_placeholder": "Pergunte sobre o texto selecionado...",
 
   'sp.mode.ask': "Pergunte",

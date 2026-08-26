@@ -155,6 +155,7 @@ export default {
   "sp.selection_scope.context_title": "Texte sélectionné + connaissances générales",
   "sp.selection_scope.context_description": "Utilise le texte sélectionné, le dialogue précédent sûr et les connaissances du modèle. La page, les outils, les fichiers, les pièces jointes et le contenu brut des pages précédentes restent indisponibles.",
   "sp.selection_scope.restore": "Utiliser la conversation complète",
+  "sp.selection_scope.restore_description": "La restauration supprime la limite au texte sélectionné. Les prochains messages pourront utiliser la page actuelle, les outils du navigateur, les fichiers, les pièces jointes et l’intégralité de la conversation précédente, y compris le contexte de la page.",
   "sp.input.selection_placeholder": "Posez une question sur le texte sélectionné…",
 
   'sp.mode.ask': 'Demander',

@@ -191,6 +191,7 @@ export default {
   "sp.selection_scope.context_title": "Seçili metin + genel bilgi",
   "sp.selection_scope.context_description": "Seçili metni, güvenli önceki diyaloğu ve model bilgisini kullanır. Sayfa, araçlar, dosyalar, ekler ve önceki ham sayfa içeriği kullanılamaz.",
   "sp.selection_scope.restore": "Daha geniş konuşmayı kullan",
+  "sp.selection_scope.restore_description": "Geri yükleme, seçili metin sınırını kaldırır. Sonraki mesajlar mevcut sayfayı, tarayıcı araçlarını, dosyaları, ekleri ve sayfa bağlamı dahil önceki konuşmanın tamamını kullanabilir.",
   "sp.input.selection_placeholder": "Seçili metin hakkında sorun...",
 
   'sp.mode.ask': 'Sor',

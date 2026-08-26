@@ -155,6 +155,7 @@ export default {
   "sp.selection_scope.context_title": "선택한 텍스트 + 일반 지식",
   "sp.selection_scope.context_description": "선택한 텍스트와 안전한 이전 대화 및 모델 지식을 사용합니다. 페이지, 도구, 파일, 첨부 파일과 이전 페이지 원문은 사용할 수 없습니다.",
   "sp.selection_scope.restore": "전체 대화 사용",
+  "sp.selection_scope.restore_description": "복원하면 선택한 텍스트 경계가 해제됩니다. 이후 메시지는 현재 페이지, 브라우저 도구, 파일, 첨부 파일 및 페이지 컨텍스트를 포함한 전체 이전 대화를 사용할 수 있습니다.",
   "sp.input.selection_placeholder": "선택한 텍스트에 대해 질문하세요...",
 
   'sp.mode.ask': '질문',
