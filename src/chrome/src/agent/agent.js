@@ -3067,8 +3067,8 @@ export class Agent extends LoopDetector {
     return this._richTextToolbarGuard.restore(tabId, raw);
   }
 
-  async _legacyIframeTypeAllFrames(tabId, args) {
-    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args);
+  async _legacyIframeTypeAllFrames(tabId, args, actionContext = {}) {
+    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args, actionContext);
   }
 
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, options = {}) {
@@ -7458,64 +7458,146 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       }
       const _toolStart = Date.now();
-      const toolbarPreflight = protectedPageFailure
-        ? { block: null }
-        : await this._preflightRichTextToolbarTarget(tabId, fnName, fnArgs, provider, { onUpdate });
-      const rawToolResult = protectedPageFailure
-        || toolbarPreflight.block
-        || await this.executeTool(
+      let toolbarPreflight = { block: null };
+      let rawToolResult = protectedPageFailure;
+      let toolResult;
+      if (protectedPageFailure) {
+        toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
+        toolResult = await this._maybePromoteChromeProtectedGalleryResult(
           tabId,
-          fnName,
-          fnArgs,
-          onUpdate,
-          {
-            completionBatchStartState,
-            promptTier,
-            dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
-            ...messageRecipientExecutionContext,
-            iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
-          },
-        );
-      let toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
-      toolResult = await this._maybePromoteChromeProtectedGalleryResult(
-        tabId,
-        fnName,
-        fnArgs,
-        toolResult,
-      );
-      const inspectFormValidationAfter = formValidationCandidate
-        && this._formValidationActionLooksSubmit(
           fnName,
           fnArgs,
           toolResult,
-          detectedSubmitAction,
         );
-      if (
-        inspectFormValidationAfter
-        && toolResult
-        && typeof toolResult === 'object'
-        && !toolResult.done
-        && toolResult.dispatched !== false
-      ) {
-        const formValidationFailure = await this._waitForFormValidationFailure(
-          tabId,
-          formValidationBefore,
-          {
-            toolName: fnName,
-            args: fnArgs,
-            result: toolResult,
-            detectedSubmit: detectedSubmitAction,
-            priorValidationFailure,
-            correctedPriorValidationFailure,
-          },
-          { allFrames: formValidationAllFrames },
-        );
-        if (formValidationFailure) {
-          this._applyFormValidationFailure(tabId, toolResult, formValidationFailure);
-          onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+        await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, null);
+      } else {
+        const actionDispatchState = { started: false };
+        const runActionPipeline = async abortSignal => {
+            const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(
+              tabId,
+              fnName,
+              fnArgs,
+              provider,
+              { onUpdate },
+            );
+            this._throwIfAborted(abortSignal);
+            const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(
+              tabId,
+              fnName,
+              fnArgs,
+              onUpdate,
+              {
+                completionBatchStartState,
+                promptTier,
+                dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
+                ...messageRecipientExecutionContext,
+                iframeTargetUnresolved: pipelineToolbarPreflight.iframeTargetUnresolved === true,
+                _contentActionAbortSignal: abortSignal,
+                _contentActionDispatchState: actionDispatchState,
+              },
+            );
+            if (pipelineRawToolResult?.dispatched === false || pipelineRawToolResult?.noDispatch === true) {
+              actionDispatchState.started = false;
+            } else if (
+              Agent.STATE_CHANGE_TOOLS.has(fnName)
+              && (pipelineRawToolResult?.dispatched === true || pipelineRawToolResult?.success === true)
+            ) {
+              actionDispatchState.started = true;
+            }
+            this._throwIfAborted(abortSignal);
+            let pipelineToolResult = this._normalizeToolResult(
+              fnName,
+              pipelineRawToolResult,
+              missingResponseOutcomeUnknown,
+            );
+            pipelineToolResult = await this._maybePromoteChromeProtectedGalleryResult(
+              tabId,
+              fnName,
+              fnArgs,
+              pipelineToolResult,
+            );
+            this._throwIfAborted(abortSignal);
+            const inspectFormValidationAfter = formValidationCandidate
+              && this._formValidationActionLooksSubmit(
+                fnName,
+                fnArgs,
+                pipelineToolResult,
+                detectedSubmitAction,
+              );
+            if (
+              inspectFormValidationAfter
+              && pipelineToolResult
+              && typeof pipelineToolResult === 'object'
+              && !pipelineToolResult.done
+              && pipelineToolResult.dispatched !== false
+            ) {
+              actionDispatchState.started = true;
+              const formValidationFailure = await this._waitForFormValidationFailure(
+                tabId,
+                formValidationBefore,
+                {
+                  toolName: fnName,
+                  args: fnArgs,
+                  result: pipelineToolResult,
+                  detectedSubmit: detectedSubmitAction,
+                  priorValidationFailure,
+                  correctedPriorValidationFailure,
+                },
+                { allFrames: formValidationAllFrames, abortSignal },
+              );
+              this._throwIfAborted(abortSignal);
+              if (formValidationFailure) {
+                this._applyFormValidationFailure(tabId, pipelineToolResult, formValidationFailure);
+                onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+              }
+            }
+            await this._auditRichTextToolbarTarget(
+              tabId,
+              fnName,
+              fnArgs,
+              pipelineToolResult,
+              pipelineToolbarPreflight.probe,
+            );
+            this._throwIfAborted(abortSignal);
+            return {
+              toolbarPreflight: pipelineToolbarPreflight,
+              rawToolResult: pipelineRawToolResult,
+              toolResult: pipelineToolResult,
+            };
+        };
+        const needsSharedActionPipelineDeadline = formValidationCandidate
+          || ['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(fnName);
+        if (needsSharedActionPipelineDeadline) {
+          try {
+            const pipelineResult = await this._withContentActionDeadline(
+              runActionPipeline,
+              fnName,
+              this._contentActionDeadlineMs(fnName, fnArgs),
+            );
+            toolbarPreflight = pipelineResult.toolbarPreflight;
+            rawToolResult = pipelineResult.rawToolResult;
+            toolResult = pipelineResult.toolResult;
+          } catch (error) {
+            if (error?.code !== 'content_action_timeout') throw error;
+            rawToolResult = actionDispatchState.started
+              ? this._contentActionTimeoutResult(fnName, error)
+              : {
+                  success: false,
+                  dispatched: false,
+                  noDispatch: true,
+                  outcomeUnknown: false,
+                  retryable: true,
+                  error: `${error.message} No ${fnName} action was sent because target preparation did not finish. Re-observe the page before retrying.`,
+                };
+            toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
+          }
+        } else {
+          const pipelineResult = await runActionPipeline(null);
+          toolbarPreflight = pipelineResult.toolbarPreflight;
+          rawToolResult = pipelineResult.rawToolResult;
+          toolResult = pipelineResult.toolResult;
         }
       }
-      await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, toolbarPreflight.probe);
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,
@@ -13837,16 +13919,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     tabId,
     beforeStates,
     context,
-    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200] } = {},
+    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200], abortSignal = null } = {},
   ) {
+    this._throwIfAborted(abortSignal);
     const before = Array.isArray(beforeStates) ? beforeStates : [];
     const startedAt = Date.now();
     for (let checkpointIndex = 0; checkpointIndex < checkpointsMs.length; checkpointIndex += 1) {
+      this._throwIfAborted(abortSignal);
       const checkpoint = checkpointsMs[checkpointIndex];
       const targetDelay = Math.max(0, Number(checkpoint) || 0);
       const remaining = targetDelay - (Date.now() - startedAt);
       if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      this._throwIfAborted(abortSignal);
       const after = await this._captureFormValidationState(tabId, { allFrames });
+      this._throwIfAborted(abortSignal);
       const failure = this._detectFormValidationFailure(before, after, {
         ...context,
         includeCorrectedPersistentValidation:
@@ -20113,11 +20199,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return originalResponse;
   }
 
-  async _completeSetCheckedWithCdp(tabId, args, response, contentArgs) {
+  async _completeSetCheckedWithCdp(
+    tabId,
+    args,
+    response,
+    contentArgs,
+    upstreamAbortSignal = null,
+    upstreamDispatchState = null,
+  ) {
     if (!response || response.success !== true || response.needsTrustedClick !== true) {
       return response;
     }
     const recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false };
+    if (upstreamAbortSignal) {
+      return this._completeSetCheckedWithCdpImpl(
+        tabId,
+        args,
+        response,
+        contentArgs,
+        upstreamAbortSignal,
+        recoveryState,
+        upstreamDispatchState,
+      );
+    }
     try {
       return await this._withContentActionDeadline(
         abortSignal => this._completeSetCheckedWithCdpImpl(
@@ -20127,6 +20231,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           contentArgs,
           abortSignal,
           recoveryState,
+          upstreamDispatchState,
         ),
         'set_checked',
       );
@@ -20171,6 +20276,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     contentArgs,
     abortSignal = null,
     recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false },
+    upstreamDispatchState = null,
   ) {
     this._throwIfAborted(abortSignal);
     const confirmationSurfacesBefore = Array.isArray(response._confirmationSurfaces)
@@ -20194,6 +20300,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         abortSignal,
         beforeDispatch: () => {
           recoveryState.clickStarted = true;
+          if (upstreamDispatchState) upstreamDispatchState.started = true;
           return { success: true };
         },
       });
@@ -23537,6 +23644,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_click') {
       let dispatched = false;
       try {
+        throwIfEarlyCdpAborted();
         const urlFilter = String(args.urlFilter || '').trim();
         const selector = args.selector;
         if (!selector) {
@@ -23568,6 +23676,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let binding = dispatchBinding;
         if (!binding?.token || !Number.isInteger(binding.frameId)) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfEarlyCdpAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -23582,7 +23691,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           binding = targetProbe?.dispatchBinding || null;
         }
         if (binding?.token && Number.isInteger(binding.frameId)) {
+          throwIfEarlyCdpAborted();
           dispatched = true;
+          markEarlyCdpDispatched();
           const response = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'click',
@@ -23619,6 +23730,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           },
           args: [selector, urlFilter, requestedMatchIndex],
         });
+        throwIfEarlyCdpAborted();
         const invalidSelector = census.map(item => item?.result).find(result => result?.invalidSelector);
         if (invalidSelector) {
           return { success: false, dispatched: false, noDispatch: true, error: `Invalid selector: ${invalidSelector.error}` };
@@ -23643,7 +23755,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
         const selected = candidates[0];
+        throwIfEarlyCdpAborted();
         dispatched = true;
+        markEarlyCdpDispatched();
         const clicked = await chrome.scripting.executeScript({
           target: { tabId, frameIds: [selected.frameId] },
           func: (sel, matchIndex) => {
@@ -23687,6 +23801,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_type') {
       let dispatched = false;
       try {
+        throwIfEarlyCdpAborted();
         const selector = args.selector;
         const urlFilter = String(args.urlFilter || '').trim();
         const text = args.text || '';
@@ -23717,6 +23832,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && dispatchContext.iframeTargetUnresolved !== true
         ) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfEarlyCdpAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -23734,15 +23850,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
           dispatched = true;
+          throwIfEarlyCdpAborted();
           return this._legacyIframeTypeAllFrames(tabId, {
             selector,
             text,
             clear,
             urlFilter,
             matchIndex: args.matchIndex,
+          }, {
+            abortSignal: earlyCdpAbortSignal,
+            beforeDispatch: markEarlyCdpDispatched,
           });
         }
+        throwIfEarlyCdpAborted();
         dispatched = true;
+        markEarlyCdpDispatched();
         try {
           const response = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
@@ -26346,6 +26468,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._lastAxScopes.get(tabId),
         dispatchBinding,
         { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+        earlyCdpAbortSignal,
+        earlyCdpDispatchState,
       );
     }
 
@@ -26422,9 +26546,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? { frameId: dispatchBinding.frameId }
       : undefined;
     const sendContentAction = () => {
-      if (name === 'click' && earlyCdpAbortSignal) {
+      if (earlyCdpAbortSignal) {
         throwIfEarlyCdpAborted();
-        markEarlyCdpDispatched();
+        if (Agent.STATE_CHANGE_TOOLS.has(name) && name !== 'set_checked') {
+          markEarlyCdpDispatched();
+        }
       }
       return chrome.tabs.sendMessage(tabId, {
         target: 'content',
@@ -26448,7 +26574,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // accessibility-tree.js must load first so content.js's
         // get_accessibility_tree / click_ax / type_ax handlers can reach
         // window.__generateAccessibilityTree and window.__wb_ax_lookup.
-        if (name === 'click' && earlyCdpAbortSignal) {
+        if (earlyCdpAbortSignal && Agent.STATE_CHANGE_TOOLS.has(name)) {
           // A rejected no-receiver message did not reach the page; injection
           // remains preparation until the retry send actually starts.
           earlyCdpDispatchState.started = false;
@@ -26496,7 +26622,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       if (name === 'set_checked') {
-        response = await this._completeSetCheckedWithCdp(tabId, args, response, contentArgs);
+        response = await this._completeSetCheckedWithCdp(
+          tabId,
+          args,
+          response,
+          contentArgs,
+          earlyCdpAbortSignal,
+          earlyCdpDispatchState,
+        );
       }
       if (name === 'type_ax' || name === 'set_field') {
         response = await this._maybeFallbackFieldWithCdp(
@@ -26505,6 +26638,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           args,
           response,
           { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+          earlyCdpAbortSignal,
         );
       }
       try {
@@ -26903,7 +27037,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { done: false };
   }
 
-  async _maybeFallbackFieldWithCdp(tabId, toolName, args, response, messageRecipientContext = {}) {
+  async _maybeFallbackFieldWithCdp(
+    tabId,
+    toolName,
+    args,
+    response,
+    messageRecipientContext = {},
+    upstreamAbortSignal = null,
+  ) {
+    if (upstreamAbortSignal) {
+      return this._maybeFallbackFieldWithCdpImpl(
+        tabId,
+        toolName,
+        args,
+        response,
+        messageRecipientContext,
+        upstreamAbortSignal,
+      );
+    }
     try {
       return await this._withContentActionDeadline(
         abortSignal => this._maybeFallbackFieldWithCdpImpl(

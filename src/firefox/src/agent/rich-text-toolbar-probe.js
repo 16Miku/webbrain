@@ -172,12 +172,24 @@ export class RichTextToolbarProbe {
     return geometry?.annotationRect || null;
   }
 
-  async legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex }) {
+  async legacyIframeTypeAllFrames(
+    tabId,
+    { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex },
+    { abortSignal = null, beforeDispatch = null } = {},
+  ) {
+    const throwIfAborted = () => {
+      if (!abortSignal?.aborted) return;
+      throw abortSignal.reason instanceof Error
+        ? abortSignal.reason
+        : new Error('Iframe typing was cancelled.');
+    };
+    throwIfAborted();
     const matchIndex = Number.isInteger(requestedMatchIndex) && requestedMatchIndex >= 0
       ? requestedMatchIndex
       : null;
     let navigationFrames = [];
     try { navigationFrames = await browser.webNavigation.getAllFrames({ tabId }); } catch {}
+    throwIfAborted();
     const matchingFrames = (navigationFrames || []).filter(frame => (
       frame?.frameId !== 0
       && (!urlFilter || (frameHostMatches(frame.url || '', urlFilter) && String(frame.url || '').includes(urlFilter)))
@@ -199,6 +211,7 @@ export class RichTextToolbarProbe {
         return { frameId: frame.frameId, url: frame.url || '', ok: false, error: error.message };
       }
     }));
+    throwIfAborted();
     const candidates = frames.filter(frame => matchIndex == null ? frame.matchCount > 0 : frame.matchCount > matchIndex);
     const targetCount = matchIndex == null
       ? candidates.reduce((sum, frame) => sum + Number(frame.matchCount || 0), 0)
@@ -246,12 +259,16 @@ export class RichTextToolbarProbe {
         }
       })()
     `;
+    throwIfAborted();
+    if (typeof beforeDispatch === 'function') beforeDispatch();
     let result = null;
     try {
       result = (await browser.tabs.executeScript(tabId, { frameId: selected.frameId, code }))?.[0] || null;
     } catch (error) {
+      throwIfAborted();
       return { success: false, dispatched: false, noDispatch: true, retryable: true, error: `The iframe target changed before typing: ${error.message}` };
     }
+    throwIfAborted();
     if (result?.ok) {
       return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
     }

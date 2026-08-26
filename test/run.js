@@ -67544,6 +67544,37 @@ test('form validation polling catches delayed errors', async () => {
   }
 });
 
+test('form validation polling stops when the shared action deadline expires', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const controller = new AbortController();
+    const timeoutError = new Error('submit action deadline expired');
+    timeoutError.code = 'content_action_timeout';
+    let releaseCapture;
+    let markCaptureStarted;
+    const captureStarted = new Promise(resolve => { markCaptureStarted = resolve; });
+    const delayedCapture = new Promise(resolve => { releaseCapture = resolve; });
+    let captures = 0;
+    agent._captureFormValidationState = async () => {
+      captures += 1;
+      markCaptureStarted();
+      return delayedCapture;
+    };
+
+    const polling = agent._waitForFormValidationFailure(
+      5117,
+      [],
+      { toolName: 'click', args: {}, result: { success: true, dispatched: true } },
+      { checkpointsMs: [0, 0], abortSignal: controller.signal },
+    );
+    await captureStarted;
+    controller.abort(timeoutError);
+    releaseCapture([]);
+    await assert.rejects(polling, candidate => candidate === timeoutError);
+    assert.equal(captures, 1, `${AgentClass.name}: validation polling continued after action cancellation`);
+  }
+});
+
 test('coordinate iframe submits capture validation state in all frames', async () => {
   const agent = new AgentCh({ getVisionProvider: async () => null });
   const tabId = 5118;
@@ -86436,8 +86467,8 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   const chromeAgentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   const guardIndex = chromeAgentSource.indexOf('const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
   const webMcpPreparationIndex = chromeAgentSource.indexOf('const webMcpPreparation = protectedPageFailure', guardIndex);
-  const toolbarPreflightIndex = chromeAgentSource.indexOf('const toolbarPreflight = protectedPageFailure', webMcpPreparationIndex);
-  const toolDispatchIndex = chromeAgentSource.indexOf('|| await this.executeTool(', toolbarPreflightIndex);
+  const toolbarPreflightIndex = chromeAgentSource.indexOf('const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(', webMcpPreparationIndex);
+  const toolDispatchIndex = chromeAgentSource.indexOf('const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(', toolbarPreflightIndex);
   assert.ok(
     guardIndex >= 0
       && webMcpPreparationIndex > guardIndex
@@ -87332,6 +87363,15 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     );
     assert.match(source, /runContentActionStage = operation => this\._withContentActionDeadline\([\s\S]*remainingContentActionDeadlineMs\(\)/, `${label}: page pipeline does not share one bounded deadline`);
     assert.match(source, /dispatchContentAction = \(\) => runContentActionStage\(sendContentAction\);/, `${label}: page dispatch bypasses the pipeline deadline`);
+    const toolPipelineStart = source.indexOf('const _toolStart = Date.now();');
+    const toolPipelineEnd = source.indexOf("if (fnName !== 'done')", toolPipelineStart);
+    assert.ok(toolPipelineStart >= 0 && toolPipelineEnd > toolPipelineStart, `${label}: shared tool pipeline boundary missing`);
+    const toolPipelineSource = source.slice(toolPipelineStart, toolPipelineEnd);
+    assert.match(
+      toolPipelineSource,
+      /const runActionPipeline = async abortSignal => \{[\s\S]*this\._preflightRichTextToolbarTarget\([\s\S]*this\.executeTool\([\s\S]*_contentActionAbortSignal: abortSignal[\s\S]*this\._waitForFormValidationFailure\([\s\S]*abortSignal[\s\S]*this\._withContentActionDeadline\(\s*runActionPipeline/,
+      `${label}: toolbar preflight, dispatch, and form validation do not share one action deadline`,
+    );
     const timeoutCatch = source.indexOf("if (e?.code === 'content_action_timeout')", source.indexOf('const dispatchContentAction'));
     const reinject = source.indexOf('this._injectCoreContentScripts(tabId)', timeoutCatch);
     assert.notEqual(timeoutCatch, -1, `${label}: first timeout is not handled`);

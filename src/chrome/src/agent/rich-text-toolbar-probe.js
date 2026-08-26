@@ -173,7 +173,18 @@ export class RichTextToolbarProbe {
     return geometry?.annotationRect || null;
   }
 
-  async legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex }) {
+  async legacyIframeTypeAllFrames(
+    tabId,
+    { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex },
+    { abortSignal = null, beforeDispatch = null } = {},
+  ) {
+    const throwIfAborted = () => {
+      if (!abortSignal?.aborted) return;
+      throw abortSignal.reason instanceof Error
+        ? abortSignal.reason
+        : new Error('Iframe typing was cancelled.');
+    };
+    throwIfAborted();
     const matchIndex = Number.isInteger(requestedMatchIndex) && requestedMatchIndex >= 0
       ? requestedMatchIndex
       : null;
@@ -189,6 +200,7 @@ export class RichTextToolbarProbe {
       },
       args: [selector],
     });
+    throwIfAborted();
     const frames = counted
       .map(entry => ({ frameId: entry.frameId, ...(entry.result || {}) }))
       .filter(entry => !entry.isTop && (!urlFilter || (frameHostMatches(entry.url, urlFilter) && entry.url.includes(urlFilter))));
@@ -217,6 +229,8 @@ export class RichTextToolbarProbe {
     }
     const selected = candidates[0];
     const selectedIndex = matchIndex == null ? 0 : matchIndex;
+    throwIfAborted();
+    if (typeof beforeDispatch === 'function') beforeDispatch();
     const results = await chrome.scripting.executeScript({
       target: { tabId, frameIds: [selected.frameId] },
       func: (sel, index, txt, clr) => {
@@ -245,6 +259,7 @@ export class RichTextToolbarProbe {
       },
       args: [selector, selectedIndex, text, clear],
     });
+    throwIfAborted();
     const result = results?.[0]?.result;
     if (result?.ok) {
       return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };

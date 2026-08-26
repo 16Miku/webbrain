@@ -2799,8 +2799,8 @@ export class Agent extends LoopDetector {
     return this._richTextToolbarGuard.restore(tabId, raw);
   }
 
-  async _legacyIframeTypeAllFrames(tabId, args) {
-    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args);
+  async _legacyIframeTypeAllFrames(tabId, args, actionContext = {}) {
+    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args, actionContext);
   }
 
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, options = {}) {
@@ -5987,60 +5987,128 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       }
       const _toolStart = Date.now();
-      const toolbarPreflight = await this._preflightRichTextToolbarTarget(
-        tabId,
-        fnName,
-        fnArgs,
-        provider,
-        { onUpdate },
-      );
-      const rawToolResult = toolbarPreflight.block || await this.executeTool(
-        tabId,
-        fnName,
-        fnArgs,
-        onUpdate,
-        {
-          completionBatchStartState,
-          promptTier,
-          dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
-          ...messageRecipientExecutionContext,
-          iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
-        },
-      );
-      const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
-      const inspectFormValidationAfter = formValidationCandidate
-        && this._formValidationActionLooksSubmit(
-          fnName,
-          fnArgs,
-          toolResult,
-          detectedSubmitAction,
-        );
-      if (
-        inspectFormValidationAfter
-        && toolResult
-        && typeof toolResult === 'object'
-        && !toolResult.done
-        && toolResult.dispatched !== false
-      ) {
-        const formValidationFailure = await this._waitForFormValidationFailure(
-          tabId,
-          formValidationBefore,
-          {
-            toolName: fnName,
-            args: fnArgs,
-            result: toolResult,
-            detectedSubmit: detectedSubmitAction,
-            priorValidationFailure,
-            correctedPriorValidationFailure,
-          },
-          { allFrames: formValidationAllFrames },
-        );
-        if (formValidationFailure) {
-          this._applyFormValidationFailure(tabId, toolResult, formValidationFailure);
-          onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+      let toolbarPreflight = { block: null };
+      let rawToolResult;
+      let toolResult;
+      const actionDispatchState = { started: false };
+      const runActionPipeline = async abortSignal => {
+          const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(
+            tabId,
+            fnName,
+            fnArgs,
+            provider,
+            { onUpdate },
+          );
+          this._throwIfAborted(abortSignal);
+          const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(
+            tabId,
+            fnName,
+            fnArgs,
+            onUpdate,
+            {
+              completionBatchStartState,
+              promptTier,
+              dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
+              ...messageRecipientExecutionContext,
+              iframeTargetUnresolved: pipelineToolbarPreflight.iframeTargetUnresolved === true,
+              _contentActionAbortSignal: abortSignal,
+              _contentActionDispatchState: actionDispatchState,
+            },
+          );
+          if (pipelineRawToolResult?.dispatched === false || pipelineRawToolResult?.noDispatch === true) {
+            actionDispatchState.started = false;
+          } else if (
+            Agent.STATE_CHANGE_TOOLS.has(fnName)
+            && (pipelineRawToolResult?.dispatched === true || pipelineRawToolResult?.success === true)
+          ) {
+            actionDispatchState.started = true;
+          }
+          this._throwIfAborted(abortSignal);
+          const pipelineToolResult = this._normalizeToolResult(
+            fnName,
+            pipelineRawToolResult,
+            missingResponseOutcomeUnknown,
+          );
+          const inspectFormValidationAfter = formValidationCandidate
+            && this._formValidationActionLooksSubmit(
+              fnName,
+              fnArgs,
+              pipelineToolResult,
+              detectedSubmitAction,
+            );
+          if (
+            inspectFormValidationAfter
+            && pipelineToolResult
+            && typeof pipelineToolResult === 'object'
+            && !pipelineToolResult.done
+            && pipelineToolResult.dispatched !== false
+          ) {
+            actionDispatchState.started = true;
+            const formValidationFailure = await this._waitForFormValidationFailure(
+              tabId,
+              formValidationBefore,
+              {
+                toolName: fnName,
+                args: fnArgs,
+                result: pipelineToolResult,
+                detectedSubmit: detectedSubmitAction,
+                priorValidationFailure,
+                correctedPriorValidationFailure,
+              },
+              { allFrames: formValidationAllFrames, abortSignal },
+            );
+            this._throwIfAborted(abortSignal);
+            if (formValidationFailure) {
+              this._applyFormValidationFailure(tabId, pipelineToolResult, formValidationFailure);
+              onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+            }
+          }
+          await this._auditRichTextToolbarTarget(
+            tabId,
+            fnName,
+            fnArgs,
+            pipelineToolResult,
+            pipelineToolbarPreflight.probe,
+          );
+          this._throwIfAborted(abortSignal);
+          return {
+            toolbarPreflight: pipelineToolbarPreflight,
+            rawToolResult: pipelineRawToolResult,
+            toolResult: pipelineToolResult,
+          };
+      };
+      const needsSharedActionPipelineDeadline = formValidationCandidate
+        || ['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(fnName);
+      if (needsSharedActionPipelineDeadline) {
+        try {
+          const pipelineResult = await this._withContentActionDeadline(
+            runActionPipeline,
+            fnName,
+            this._contentActionDeadlineMs(fnName, fnArgs),
+          );
+          toolbarPreflight = pipelineResult.toolbarPreflight;
+          rawToolResult = pipelineResult.rawToolResult;
+          toolResult = pipelineResult.toolResult;
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          rawToolResult = actionDispatchState.started
+            ? this._contentActionTimeoutResult(fnName, error)
+            : {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                outcomeUnknown: false,
+                retryable: true,
+                error: `${error.message} No ${fnName} action was sent because target preparation did not finish. Re-observe the page before retrying.`,
+              };
+          toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
         }
+      } else {
+        const pipelineResult = await runActionPipeline(null);
+        toolbarPreflight = pipelineResult.toolbarPreflight;
+        rawToolResult = pipelineResult.rawToolResult;
+        toolResult = pipelineResult.toolResult;
       }
-      await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, toolbarPreflight.probe);
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,
@@ -11615,16 +11683,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     tabId,
     beforeStates,
     context,
-    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200] } = {},
+    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200], abortSignal = null } = {},
   ) {
+    this._throwIfAborted(abortSignal);
     const before = Array.isArray(beforeStates) ? beforeStates : [];
     const startedAt = Date.now();
     for (let checkpointIndex = 0; checkpointIndex < checkpointsMs.length; checkpointIndex += 1) {
+      this._throwIfAborted(abortSignal);
       const checkpoint = checkpointsMs[checkpointIndex];
       const targetDelay = Math.max(0, Number(checkpoint) || 0);
       const remaining = targetDelay - (Date.now() - startedAt);
       if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      this._throwIfAborted(abortSignal);
       const after = await this._captureFormValidationState(tabId, { allFrames });
+      this._throwIfAborted(abortSignal);
       const failure = this._detectFormValidationFailure(before, after, {
         ...context,
         includeCorrectedPersistentValidation:
@@ -17809,6 +17881,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    const contentPipelineAbortSignal = dispatchContext._contentActionAbortSignal || null;
+    const contentPipelineDispatchState = dispatchContext._contentActionDispatchState || { started: false };
+    const throwIfContentPipelineAborted = () => this._throwIfAborted(contentPipelineAbortSignal);
+    const markContentPipelineDispatched = () => { contentPipelineDispatchState.started = true; };
     args = this._normalizeContinuationToolArgs(name, args);
     let coordinatePoint = null;
     let coordinateDiagnostic = null;
@@ -17871,6 +17947,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       args,
       dispatchContext,
     );
+    throwIfContentPipelineAborted();
     if (richTextToolbarBlock) return richTextToolbarBlock;
     let dispatchBinding = dispatchContext.dispatchBinding || null;
     const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
@@ -20500,6 +20577,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_click') {
       let dispatched = false;
       try {
+        throwIfContentPipelineAborted();
         const urlFilter = String(args.urlFilter || '').trim();
         const selector = args.selector;
         if (!selector) {
@@ -20531,6 +20609,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let binding = dispatchBinding;
         if (!binding?.token || !Number.isInteger(binding.frameId)) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfContentPipelineAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -20545,7 +20624,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           binding = targetProbe?.dispatchBinding || null;
         }
         if (binding?.token && Number.isInteger(binding.frameId)) {
+          throwIfContentPipelineAborted();
           dispatched = true;
+          markContentPipelineDispatched();
           const response = await browser.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'click',
@@ -20558,6 +20639,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         const frames = await browser.webNavigation.getAllFrames({ tabId }) || [];
+        throwIfContentPipelineAborted();
         const candidates = [];
         let invalidSelector = '';
         for (const frame of frames) {
@@ -20574,6 +20656,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             })()
           `;
           const results = await browser.tabs.executeScript(tabId, { code: censusCode, frameId: frame.frameId });
+          throwIfContentPipelineAborted();
           const result = results?.[0];
           if (result?.invalidSelector) {
             invalidSelector = result.error || 'invalid selector';
@@ -20620,7 +20703,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } catch (e) { return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message }; }
           })()
         `;
+        throwIfContentPipelineAborted();
         dispatched = true;
+        markContentPipelineDispatched();
         const clicked = await browser.tabs.executeScript(tabId, { code: clickCode, frameId: selected.frameId });
         const result = clicked?.[0];
         return result?.ok
@@ -20640,6 +20725,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_type') {
       let dispatched = false;
       try {
+        throwIfContentPipelineAborted();
         const selector = args.selector;
         const urlFilter = String(args.urlFilter || '').trim();
         const text = args.text || '';
@@ -20670,6 +20756,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && dispatchContext.iframeTargetUnresolved !== true
         ) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfContentPipelineAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -20687,15 +20774,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
           dispatched = true;
+          throwIfContentPipelineAborted();
           return this._legacyIframeTypeAllFrames(tabId, {
             selector,
             text,
             clear,
             urlFilter,
             matchIndex: args.matchIndex,
+          }, {
+            abortSignal: contentPipelineAbortSignal,
+            beforeDispatch: markContentPipelineDispatched,
           });
         }
+        throwIfContentPipelineAborted();
         dispatched = true;
+        markContentPipelineDispatched();
         try {
           const response = await browser.tabs.sendMessage(tabId, {
             target: 'content',
@@ -20826,6 +20919,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._lastAxScopes.get(tabId),
         dispatchBinding,
         { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+        contentPipelineAbortSignal,
+        contentPipelineDispatchState,
       );
     }
 
@@ -20924,11 +21019,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throw error;
       }
     }
-    const sendContentAction = () => browser.tabs.sendMessage(tabId, {
-      target: 'content',
-      action,
-      params: contentArgs,
-    }, messageOptions);
+    const sendContentAction = () => {
+      throwIfContentPipelineAborted();
+      if (Agent.STATE_CHANGE_TOOLS.has(name)) markContentPipelineDispatched();
+      return browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action,
+        params: contentArgs,
+      }, messageOptions);
+    };
     const dispatchContentAction = () => runContentActionStage(sendContentAction);
     try {
       let response = await dispatchContentAction();
@@ -20970,6 +21069,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
       }
       // Content script might not be injected — try injecting it
+      if (Agent.STATE_CHANGE_TOOLS.has(name)) {
+        // A rejected no-receiver message did not reach the page; injection
+        // remains preparation until the retry send actually starts.
+        contentPipelineDispatchState.started = false;
+      }
       let retryDispatchStarted = false;
       try {
         await runContentActionStage(() => this._injectCoreContentScripts(tabId));
