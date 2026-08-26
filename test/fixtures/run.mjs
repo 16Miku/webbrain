@@ -706,6 +706,15 @@ for (const [label, sourcePath, manualOpen] of [
     if (!rect || rect.left < 8 || rect.top < 8 || rect.right > 352 || rect.bottom > 272) {
       throw new Error(`shortcut was not clamped to the viewport: ${JSON.stringify(rect)}`);
     }
+    if (!state.selectionRect || rect.bottom > state.selectionRect.top) {
+      throw new Error(`shortcut should prefer the top of the selected text: ${JSON.stringify(state)}`);
+    }
+    if (state.shortcutLabel !== 'Add to chat'
+        || state.shortcutBackground !== 'rgb(255, 255, 255)'
+        || state.shortcutColor !== 'rgb(23, 23, 34)'
+        || state.shortcutBoxShadow === 'none') {
+      throw new Error(`shortcut should use the neutral Add to chat treatment: ${JSON.stringify(state)}`);
+    }
     await page.mouse.click(rect.left + rect.width / 2, rect.top + rect.height / 2);
     let popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (!popupState.popupVisible) throw new Error('popup did not open for the selected text');
@@ -713,6 +722,21 @@ for (const [label, sourcePath, manualOpen] of [
     popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (popupState.popupVisible || !popupState.shortcutVisible) {
       throw new Error(`Escape should close the popup and retain the shortcut: ${JSON.stringify(popupState)}`);
+    }
+
+    await page.evaluate(() => {
+      const topCopy = document.createElement('p');
+      topCopy.id = 'top-copy';
+      topCopy.style.cssText = 'position:absolute;left:74px;top:2px;width:210px;margin:0';
+      topCopy.textContent = 'A multiline selection near the top edge must keep the shortcut below every selected line.';
+      document.body.appendChild(topCopy);
+    });
+    const topState = await selectFixtureText(page, '#top-copy');
+    if (!topState.selectionRect
+        || topState.selectionRect.top >= 52
+        || !topState.selectionBottom
+        || topState.shortcutRect.top < topState.selectionBottom + 7) {
+      throw new Error(`top-edge fallback should clear the full visible selection: ${JSON.stringify(topState)}`);
     }
   });
 
