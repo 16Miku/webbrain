@@ -249,8 +249,12 @@ function binaryResponse(status, body = 'media-bytes', contentType = 'video/mp4',
 // adapters.js is pure ESM with no chrome.* deps — import directly.
 const {
   getActiveAdapter,
+  findLastGmailResultPage,
   getCarouselNavigationPolicy,
   getCarouselNavigationTarget,
+  getGmailResultCountPolicy,
+  getGmailResultPageUrl,
+  parseGmailPaginationRange,
   parseCarouselSlideCount,
   getFullPageCapturePolicy,
   getMessageRecipientGuardPolicy,
@@ -261,8 +265,12 @@ const {
 );
 const {
   getActiveAdapter: getActiveAdapterFx,
+  findLastGmailResultPage: findLastGmailResultPageFx,
   getCarouselNavigationPolicy: getCarouselNavigationPolicyFx,
   getCarouselNavigationTarget: getCarouselNavigationTargetFx,
+  getGmailResultCountPolicy: getGmailResultCountPolicyFx,
+  getGmailResultPageUrl: getGmailResultPageUrlFx,
+  parseGmailPaginationRange: parseGmailPaginationRangeFx,
   parseCarouselSlideCount: parseCarouselSlideCountFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
   getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
@@ -6341,6 +6349,194 @@ test('handles missing url gracefully', () => {
   assert.equal(getActiveAdapter(''), null);
   assert.equal(getActiveAdapter(null), null);
   assert.equal(getActiveAdapter(undefined), null);
+});
+
+test('Gmail result-count routes and toolbar ranges are parsed conservatively in both browsers', () => {
+  for (const [label, getPolicy, getPageUrl, parseRange, getTools] of [
+    ['chrome', getGmailResultCountPolicy, getGmailResultPageUrl, parseGmailPaginationRange, getToolsForModeCh],
+    ['firefox', getGmailResultCountPolicyFx, getGmailResultPageUrlFx, parseGmailPaginationRangeFx, getToolsForModeFx],
+  ]) {
+    const searchUrl = 'https://mail.google.com/mail/u/1/#search/label%3Agithub+%22Merged+%23%22';
+    assert.deepEqual(getPolicy(`${searchUrl}/p100`), {
+      baseUrl: searchUrl,
+      baseHashPath: 'search/label%3Agithub+%22Merged+%23%22',
+      currentPage: 100,
+    }, `${label}: Gmail /pN policy was not normalized`);
+    assert.equal(getPageUrl(searchUrl, 200), `${searchUrl}/p200`, `${label}: Gmail page route was not deterministic`);
+    assert.equal(getPolicy(`${searchUrl}/FMfcgzExampleThread`), null, `${label}: Gmail thread route gained result counting`);
+    assert.equal(getPolicy('https://example.test/#search/query'), null, `${label}: non-Gmail route gained result counting`);
+    assert.deepEqual(parseRange('Showing most recent 1–50 of many Conversations'), {
+      text: '1–50 of many', start: 1, end: 50, total: null, approximate: true,
+    }, `${label}: approximate Gmail toolbar range was not parsed`);
+    assert.deepEqual(parseRange('551-575 of 575'), {
+      text: '551-575 of 575', start: 551, end: 575, total: 575, approximate: false,
+    }, `${label}: exact Gmail toolbar range was not parsed`);
+    assert.equal(getTools('act').some(tool => tool.function.name === 'gmail_count_results'), false, `${label}: Gmail helper leaked onto unrelated sites`);
+    assert.equal(getTools('act', { gmailResultCounting: true }).some(tool => tool.function.name === 'gmail_count_results'), true, `${label}: Gmail helper was not exposed on result routes`);
+  }
+});
+
+test('Gmail result counting probes p100/p200 then binary-searches the verified last page', async () => {
+  for (const [label, findLast] of [
+    ['chrome', findLastGmailResultPage],
+    ['firefox', findLastGmailResultPageFx],
+  ]) {
+    const calls = [];
+    const result = await findLast(async (page) => {
+      calls.push(page);
+      const start = ((page - 1) * 50) + 1;
+      if (start > 5531) return { valid: false };
+      return { valid: true, range: { start, end: Math.min(start + 49, 5531), total: null } };
+    });
+    assert.equal(result.success, true, `${label}: deterministic Gmail count failed`);
+    assert.equal(result.total, 5531, `${label}: final range end was not used as the exact count`);
+    assert.equal(result.lastPage, 111);
+    assert.equal(result.nextInvalidPage, 112);
+    assert.deepEqual(calls.slice(0, 3), [1, 100, 200], `${label}: helper did not start with p100/p200 bracketing`);
+    assert.equal(calls.length <= 12, true, `${label}: binary search used too many probes`);
+
+    const exactCalls = [];
+    const exact = await findLast(async (page) => {
+      exactCalls.push(page);
+      return { valid: true, range: { start: 1, end: 17, total: 17 } };
+    });
+    assert.equal(exact.total, 17);
+    assert.deepEqual(exactCalls, [1], `${label}: exact toolbar total still triggered route probes`);
+  }
+});
+
+test('Gmail result counting restores the exact starting route after deterministic probes', async () => {
+  for (const [label, AgentClass, getPageUrl] of [
+    ['chrome', AgentCh, getGmailResultPageUrl],
+    ['firefox', AgentFx, getGmailResultPageUrlFx],
+  ]) {
+    const originalUrl = 'https://mail.google.com/mail/u/1/#search/label%3Agithub+merged/p7';
+    let currentUrl = originalUrl;
+    const navigations = [];
+    const agent = new AgentClass({});
+    agent._currentUrl = async () => currentUrl;
+    agent._probeGmailResultPage = async (_tabId, policy, page, pageSizeState) => {
+      currentUrl = getPageUrl(policy.baseUrl, page);
+      if (page === 1) pageSizeState.value = 50;
+      const start = ((page - 1) * 50) + 1;
+      if (start > 5531) return { valid: false, resolvedUrl: currentUrl };
+      return {
+        valid: true,
+        resolvedUrl: currentUrl,
+        range: { start, end: Math.min(start + 49, 5531), total: null },
+      };
+    };
+    agent.executeTool = async (_tabId, name, args) => {
+      assert.equal(name, 'navigate');
+      navigations.push(args.url);
+      currentUrl = args.url;
+      return { success: true, dispatched: true, verified: true, url: currentUrl };
+    };
+
+    const result = await agent._countGmailResults(77, null, {});
+    assert.equal(result.success, true, `${label}: exact count failed through the runtime helper`);
+    assert.equal(result.count, 5531);
+    assert.equal(result.restored, true, `${label}: starting Gmail route was not restored`);
+    assert.equal(currentUrl, originalUrl, `${label}: helper left the tab on a probe route`);
+    assert.deepEqual(navigations, [originalUrl], `${label}: restore navigation did not target the exact starting route`);
+    assert.deepEqual(result.probes.slice(0, 3).map(({ page }) => page), [1, 100, 200]);
+  }
+});
+
+test('continuationArgs may be passed unchanged as one compatibility object', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const agent = new AgentClass({});
+    const tree = agent._normalizeContinuationToolArgs('get_accessibility_tree', {
+      continuationArgs: {
+        filter: 'all', maxDepth: 15, maxChars: 6000,
+        ref_id: 'ref_root', page: 2, tree_revision: 'tree-revision-a', ignored: 'drop-me',
+      },
+    });
+    assert.deepEqual(tree, {
+      filter: 'all', maxDepth: 15, maxChars: 6000,
+      ref_id: 'ref_root', page: 2, tree_revision: 'tree-revision-a',
+    }, `${label}: nested tree continuation was not flattened safely`);
+    const prose = agent._normalizeContinuationToolArgs('read_page', {
+      continuationArgs: { offset: 4000, limit: 4000, includeChrome: false },
+      limit: 5000,
+    });
+    assert.deepEqual(prose, { offset: 4000, limit: 5000, includeChrome: false }, `${label}: explicit top-level continuation override did not win`);
+    const treeTool = getTools('act').find(tool => tool.function.name === 'get_accessibility_tree');
+    const readTool = getTools('act').find(tool => tool.function.name === 'read_page');
+    assert.equal(treeTool.function.parameters.properties.continuationArgs.type, 'object');
+    assert.equal(readTool.function.parameters.properties.continuationArgs.type, 'object');
+    assert.match(treeTool.function.description, /top-level arguments[\s\S]*pass that exact object as `continuationArgs`/i);
+  }
+});
+
+test('unsaved-change probes ignore rendered search controls and hidden duplicate fields', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const previousDocument = globalThis.document;
+  const makeField = ({ value, defaultValue = '', role = '', name = '', ariaLabel = '', placeholder = '', rendered = true, searchContainer = false }) => ({
+    type: 'text', value, defaultValue,
+    files: null,
+    getClientRects: () => rendered ? [{ width: 100, height: 20 }] : [],
+    getAttribute(attribute) {
+      if (attribute === 'role') return role;
+      if (attribute === 'name') return name;
+      if (attribute === 'aria-label') return ariaLabel;
+      if (attribute === 'placeholder') return placeholder;
+      return '';
+    },
+    closest: selector => searchContainer && selector.includes('[role="search"]') ? {} : null,
+  });
+  const searchOnly = [
+    makeField({ value: 'label:github merged', ariaLabel: 'Search mail', searchContainer: true }),
+    makeField({ value: 'Search Studio...', placeholder: 'Search Studio', rendered: false }),
+  ];
+  const realDrafts = [
+    makeField({ value: 'Release title' }),
+    makeField({ value: 'Release notes' }),
+  ];
+  const runCase = async (label, AgentClass, fields) => {
+    globalThis.document = {
+      querySelectorAll(selector) {
+        if (selector === 'input[type=file]') return [];
+        if (selector === 'input, textarea') return fields;
+        return [];
+      },
+    };
+    if (label === 'chrome') {
+      globalThis.chrome = {
+        ...(previousChrome || {}),
+        scripting: { executeScript: async ({ func }) => [{ result: func() }] },
+      };
+    } else {
+      globalThis.browser = {
+        ...(previousBrowser || {}),
+        tabs: {
+          ...(previousBrowser?.tabs || {}),
+          executeScript: async (_tabId, { code }) => [Function(`return (${code});`)()],
+        },
+      };
+    }
+    return await new AgentClass({})._probeUnsavedChanges(77, 'navigate');
+  };
+  try {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      assert.equal(await runCase(label, AgentClass, searchOnly), null, `${label}: Gmail/search controls still blocked navigation`);
+      const blocked = await runCase(label, AgentClass, [...searchOnly, ...realDrafts]);
+      assert.equal(blocked?.blockedUnsavedChanges, true, `${label}: real filled form fields lost protection`);
+      assert.match(blocked.error, /Finish or save the current form/);
+      assert.doesNotMatch(blocked.error, /GitHub|Publish release/);
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
 });
 
 test('Instagram carousel adapter exposes deterministic indexed navigation only on post permalinks', () => {
@@ -15044,7 +15240,7 @@ test('screenshot click scale: registration + 1:1 clears stale entries', () => {
   }
 });
 
-test('screenshot click scale: from_screenshot converts image px to CSS px', () => {
+test('screenshot click scale: screenshot coordinate space converts image px to CSS px', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
     const tabId = 9;
@@ -15060,7 +15256,7 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
     const converted = agent._screenshotClickCoords(tabId, {
       x: 784,
       y: 441,
-      from_screenshot: true,
+      coordinate_space: 'screenshot',
       capture_id: scaledCapture.captureId,
     });
     assert.deepEqual(converted, {
@@ -15072,7 +15268,7 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
 
     // Without the flag, coords pass through untouched (CSS-sourced coords,
     // e.g. from get_interactive_elements, must never be rescaled).
-    const passthrough = agent._screenshotClickCoords(tabId, { x: 784, y: 441 });
+    const passthrough = agent._screenshotClickCoords(tabId, { x: 784, y: 441, coordinate_space: 'css' });
     assert.deepEqual(passthrough, { x: 784, y: 441, converted: false }, `${AgentClass.name}: no flag, no conversion`);
 
     // Flag set but no stored scale (last capture was 1:1): no conversion —
@@ -15086,7 +15282,7 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
     const aligned = agent._screenshotClickCoords(tabId, {
       x: 784,
       y: 441,
-      from_screenshot: true,
+      coordinate_space: 'screenshot',
       capture_id: alignedCapture.captureId,
     });
     assert.deepEqual(aligned, {
@@ -15098,7 +15294,7 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
 
     // Non-numeric coords resolve to null so callers skip conversion.
     assert.equal(agent._screenshotClickCoords(tabId, {
-      x: 'a', y: 1, from_screenshot: true, capture_id: alignedCapture.captureId,
+      x: 'a', y: 1, coordinate_space: 'screenshot', capture_id: alignedCapture.captureId,
     }), null);
 
     // Tab cleanup drops the entry.
@@ -15139,7 +15335,7 @@ test('visual target resolution stays private across Chrome and Firefox tools and
     }
     const promptText = prompts.join('\n');
     assert.doesNotMatch(promptText, /resolve_visual_target/, `${label}: prompts must not mention the private resolver`);
-    assert.match(promptText, /click\(\{x,y,from_screenshot:true\}\)/, `${label}: prompts must route screenshot points through click directly`);
+    assert.match(promptText, /click\(\{x,y,coordinate_space:"screenshot",capture_id:"\.\.\."\}\)/, `${label}: prompts must bind screenshot points to an explicit coordinate space and capture`);
   }
 });
 
@@ -15227,7 +15423,7 @@ async function runCoordinateSemanticCase({
     const clickArgs = {
       x: 784,
       y: 441,
-      from_screenshot: true,
+      coordinate_space: 'screenshot',
       capture_id: captureIdOverride || capture.captureId,
       ...(expectedName ? { expected_name: expectedName } : {}),
       ...(expectedRole ? { expected_role: expectedRole } : {}),
@@ -15472,7 +15668,7 @@ test('stale screenshot capture IDs fail before coordinate dispatch', async () =>
   }
 });
 
-test('coordinate semantic reconciliation: plain legacy coordinates never invoke the resolver or emit diagnostics', async () => {
+test('coordinate semantic reconciliation: ambiguous legacy coordinates fail closed before dispatch', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
   const originalCdpAttach = cdpClientCh.attach;
@@ -15517,12 +15713,12 @@ test('coordinate semantic reconciliation: plain legacy coordinates never invoke 
         cdpClientCh.attach = async () => { throw new Error('stop after legacy routing check'); };
       }
       const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441 });
-      assert.equal(mappingCalls, 1, `${label}: legacy coordinate validation should remain single-pass`);
+      assert.equal(mappingCalls, 0, `${label}: ambiguous coordinates reached mapping`);
       assert.equal(resolverCalls, 0, `${label}: plain coordinate clicks must not enter reconciliation`);
-      assert.equal(Object.hasOwn(result, 'coordinateReconciliation'), false, `${label}: legacy results must keep their old shape`);
-      if (label === 'firefox') {
-        assert.deepEqual(contentClicks, [{ x: 784, y: 441 }], 'Firefox must dispatch the unchanged legacy point');
-      }
+      assert.equal(result.success, false, `${label}: ambiguous coordinates were accepted`);
+      assert.equal(result.noDispatch, true);
+      assert.equal(result.ambiguousCoordinateSpace, true);
+      assert.deepEqual(contentClicks, [], `${label}: ambiguous coordinates reached the page`);
     } finally {
       cdpClientCh.attach = originalCdpAttach;
       if (globalKey === 'chrome') {
@@ -15806,7 +16002,7 @@ test('coordinate semantic reconciliation: Chrome label fallback keeps the existi
     const result = await agent.executeTool(tabId, 'click', {
       x: 784,
       y: 441,
-      from_screenshot: true,
+      coordinate_space: 'screenshot',
       capture_id: capture.captureId,
     });
 
@@ -15923,7 +16119,7 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
     const result = await agent.executeTool(tabId, 'click', {
       x: 784,
       y: 441,
-      from_screenshot: true,
+      coordinate_space: 'screenshot',
       capture_id: capture.captureId,
     });
 
@@ -50028,7 +50224,7 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
       };
 
       const screenshotClick = await executeCase({
-        args: { ...imagePoint, from_screenshot: true, capture_id: capture.captureId },
+        args: { ...imagePoint, coordinate_space: 'screenshot', capture_id: capture.captureId },
       });
       assert.equal(screenshotClick.success, true, `${label}: stable canonical target should dispatch`);
       assert.equal(screenshotClick.target, 'intended-editor');
@@ -50040,7 +50236,7 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
       assert.equal(activeCase.boundTarget, 'intended-editor');
 
       const changedTarget = await executeCase({
-        args: { ...imagePoint, from_screenshot: true, capture_id: capture.captureId },
+        args: { ...imagePoint, coordinate_space: 'screenshot', capture_id: capture.captureId },
         replaceBeforeDispatch: true,
       });
       assert.equal(changedTarget.success, false, `${label}: a genuinely changed canonical target must fail closed`);
@@ -50048,7 +50244,7 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
       assert.equal(changedTarget.noDispatch, true);
       assert.match(changedTarget.error, /target changed after the rich-text toolbar safety preflight/);
 
-      const cssClick = await executeCase({ args: { ...cssPoint } });
+      const cssClick = await executeCase({ args: { ...cssPoint, coordinate_space: 'css' } });
       assert.equal(cssClick.success, true, `${label}: ordinary CSS-coordinate clicks must remain unchanged`);
       assert.deepEqual([activeCase.probeArgs.x, activeCase.probeArgs.y], [cssPoint.x, cssPoint.y]);
     } finally {

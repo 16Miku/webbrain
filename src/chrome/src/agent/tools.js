@@ -21,7 +21,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'get_accessibility_tree',
-      description: 'PREFERRED page-reading tool. Returns the page as a flat, indented text representation of its accessibility tree. Each kept node is one line of the form `role "accessible name" [ref_id] href="..." type="..." checked=true|false placeholder="..."`. Indentation shows hierarchy. ref_ids are STABLE across calls — re-use them in click_ax / type_ax / set_checked. Native checkbox/radio state is reported as checked=true|false. NEVER enumerate sibling or generic ref_ids one-by-one: ref_id is only for one targeted subtree you already know matters. If the result is truncated (`truncated:true`, `hasMore:true`), call again with the exact returned `continuationArgs`; it preserves filter, depth, size, and `page:nextPage`. For a complete Gmail thread, first discover the trusted `conversationRootRefId`, then read that ref_id subtree with `filter:"all"`, `maxDepth:15`, and every exact continuation until `hasMore:false`; never paginate the Gmail document root into unrelated inbox rows. `conversationExpansionState:"expanded"` separately confirms Gmail exposed the whole conversation. Before answering any other whole-page or whole-thread question, continue until `hasMore:false`. Once the needed field/button is visible for an ordinary UI task, act on it instead of reading more. Oversized trees AUTO-SLICE and return structured continuation metadata instead of an unparseable clipped result. Results may also include a structured `pageGate` when a rendered login, registration, or subscription surface blocks article access; blocking dialogs are scoped to the visible gate while retaining ref_ids for its controls. Use this first; read_page is a prose fallback for long-form articles only.',
+      description: 'PREFERRED page-reading tool. Returns the page as a flat, indented text representation of its accessibility tree. Each kept node is one line of the form `role "accessible name" [ref_id] href="..." type="..." checked=true|false placeholder="..."`. Indentation shows hierarchy. ref_ids are STABLE across calls — re-use them in click_ax / type_ax / set_checked. Native checkbox/radio state is reported as checked=true|false. NEVER enumerate sibling or generic ref_ids one-by-one: ref_id is only for one targeted subtree you already know matters. If the result is truncated (`truncated:true`, `hasMore:true`), either spread the exact returned `continuationArgs` fields into the next call as top-level arguments or pass that exact object as `continuationArgs`; never wrap it again or modify it. For a complete Gmail thread, first discover the trusted `conversationRootRefId`, then read that ref_id subtree with `filter:"all"`, `maxDepth:15`, and every exact continuation until `hasMore:false`; never paginate the Gmail document root into unrelated inbox rows. `conversationExpansionState:"expanded"` separately confirms Gmail exposed the whole conversation. Before answering any other whole-page or whole-thread question, continue until `hasMore:false`. Once the needed field/button is visible for an ordinary UI task, act on it instead of reading more. Oversized trees AUTO-SLICE and return structured continuation metadata instead of an unparseable clipped result. Results may also include a structured `pageGate` when a rendered login, registration, or subscription surface blocks article access; blocking dialogs are scoped to the visible gate while retaining ref_ids for its controls. Use this first; read_page is a prose fallback for long-form articles only.',
       parameters: {
         type: 'object',
         properties: {
@@ -31,6 +31,18 @@ export const AGENT_TOOLS = [
           ref_id: { type: 'string', description: 'Optional. Anchor the read at a previously-seen ref_id instead of document.body — returns just that element and its subtree. Useful for zooming into a nav, table, or dialog you already found.' },
           page: { type: 'number', description: 'Optional 1-based chunk number for any tree filter. When a result returns hasMore:true, reuse the exact continuationArgs so filter, maxDepth, and maxChars remain stable.' },
           tree_revision: { type: 'string', description: 'Opaque tree snapshot revision returned inside continuationArgs for page 2 and later. Omit it when starting or restarting page 1; otherwise never invent or modify it and reuse the exact continuationArgs.' },
+          continuationArgs: {
+            type: 'object',
+            description: 'Compatibility form: pass the exact continuationArgs object returned by the previous result. The runtime spreads these fields into top-level arguments. Do not nest another continuationArgs object inside it.',
+            properties: {
+              filter: { type: 'string', enum: ['all', 'visible', 'interactive'] },
+              maxDepth: { type: 'number' },
+              maxChars: { type: 'integer', maximum: STANDARD_TREE_PAGE_CHARS },
+              ref_id: { type: 'string' },
+              page: { type: 'number' },
+              tree_revision: { type: 'string' },
+            },
+          },
         },
         required: [],
       },
@@ -144,7 +156,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_page',
-      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). While `hasMore:true`, continue with the exact returned `continuationArgs`; it carries `offset:nextOffset`, `limit`, and extraction options such as `includeChrome`. Do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, `nextOffset`, and `continuationArgs` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. NOTE: PDF tabs auto-redirect to read_pdf because Chrome\'s PDF viewer is a chrome-extension:// page that content scripts cannot scrape.',
+      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). While `hasMore:true`, either spread the exact returned `continuationArgs` fields into the next call as top-level arguments or pass that exact object as `continuationArgs`; it carries `offset:nextOffset`, `limit`, and extraction options such as `includeChrome`. Never wrap it again or modify it. Do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, `nextOffset`, and `continuationArgs` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. NOTE: PDF tabs auto-redirect to read_pdf because Chrome\'s PDF viewer is a chrome-extension:// page that content scripts cannot scrape.',
       parameters: {
         type: 'object',
         properties: {
@@ -162,6 +174,15 @@ export const AGENT_TOOLS = [
             minimum: 500,
             maximum: 6000,
             description: 'Maximum prose characters to return. Default 4000; bounded to 500..6000.',
+          },
+          continuationArgs: {
+            type: 'object',
+            description: 'Compatibility form: pass the exact continuationArgs object returned by the previous result. The runtime spreads these fields into top-level arguments.',
+            properties: {
+              includeChrome: { type: 'boolean' },
+              offset: { type: 'integer', minimum: 0 },
+              limit: { type: 'integer', minimum: 500, maximum: 6000 },
+            },
           },
         },
         required: [],
@@ -288,7 +309,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'click',
-      description: 'Click an element. FOUR ways to use it: (1) CSS selector, (2) visible text, (3) element index from get_interactive_elements, (4) x/y coordinates. For text clicks, default matching is EXACT and case-insensitive. You can opt into broader matching with `textMatch: "prefix"` or `textMatch: "contains"`. Note: jQuery/Playwright pseudo-classes like `:contains()` and `:has-text()` are NOT valid CSS and will fail; use the `text` parameter instead. COORDINATES are CSS pixels; if x/y were read off a screenshot image that was reported as downscaled, pass from_screenshot: true and the image pixels are converted to CSS pixels automatically. Prefer click_ax({ref_id}) whenever possible because it avoids coordinate drift.',
+      description: 'Click an element. FOUR ways to use it: (1) CSS selector, (2) visible text, (3) element index from get_interactive_elements, (4) x/y coordinates. For text clicks, default matching is EXACT and case-insensitive. You can opt into broader matching with `textMatch: "prefix"` or `textMatch: "contains"`. Note: jQuery/Playwright pseudo-classes like `:contains()` and `:has-text()` are NOT valid CSS and will fail; use the `text` parameter instead. Every x/y click MUST declare coordinate_space. Use coordinate_space:"screenshot" plus capture_id for points read from an image; WebBrain converts them to CSS pixels. Use coordinate_space:"css" only for cx/cy values returned verbatim by a WebBrain tool. Ambiguous raw x/y clicks are rejected. Prefer click_ax({ref_id}) whenever possible because it avoids coordinate drift.',
       parameters: {
         type: 'object',
         properties: {
@@ -296,10 +317,10 @@ export const AGENT_TOOLS = [
           textMatch: { type: 'string', enum: ['exact', 'prefix', 'contains'], description: 'Text matching mode for `text`. Default is `exact` (safest).' },
           selector: { type: 'string', description: 'CSS selector for the element to click' },
           index: { type: 'number', description: 'Index from get_interactive_elements result' },
-          x: { type: 'number', description: 'X coordinate to click' },
-          y: { type: 'number', description: 'Y coordinate to click' },
-          from_screenshot: { type: 'boolean', description: 'Set true when x/y were read off the most recent screenshot image. If that screenshot was downscaled, coordinates are converted from image pixels to CSS pixels automatically; harmless otherwise.' },
-          capture_id: { type: 'string', description: 'Required with from_screenshot:true. Opaque captureId returned with the exact screenshot used for x/y.' },
+          x: { type: 'number', description: 'X coordinate to click. coordinate_space is required whenever x/y are used.' },
+          y: { type: 'number', description: 'Y coordinate to click. coordinate_space is required whenever x/y are used.' },
+          coordinate_space: { type: 'string', enum: ['screenshot', 'css'], description: 'Required with x/y. Use screenshot for pixels read from a capture (also pass capture_id); use css only for tool-returned cx/cy values.' },
+          capture_id: { type: 'string', description: 'Required with coordinate_space:"screenshot". Opaque captureId returned with the exact screenshot used for x/y.' },
           expected_name: { type: 'string', description: 'Optional safety assertion for a coordinate click. The resolved accessible name must match before dispatch.' },
           expected_role: { type: 'string', description: 'Optional safety assertion for a coordinate click. The resolved accessibility role must match before dispatch.' },
         },
@@ -371,6 +392,18 @@ export const AGENT_TOOLS = [
           force: { type: 'boolean', description: 'Set true to navigate even when the current page has unsaved changes (attached files / filled form fields). Default false: navigation is blocked to protect in-progress work.' },
         },
         required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'gmail_count_results',
+      description: 'Count every Gmail conversation in the CURRENT label/search result set. This deterministic helper probes Gmail /p100, /p200, then brackets and binary-searches the final valid page while verifying the visible range after each navigation. Use it instead of clicking the "1-50 of many" toolbar, choosing Oldest, inventing date buckets, or manually navigating /pN. It returns an exact Gmail conversation count and restores the original route. It does NOT prove that the search query is semantically complete and does not deduplicate pull requests; choose and verify the query before calling it.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
       },
     },
   },
@@ -1637,6 +1670,9 @@ export function getToolsForMode(mode, opts = {}) {
   if (opts.carouselNavigation !== true) {
     base = base.filter(tool => tool.function?.name !== 'carousel_navigate');
   }
+  if (opts.gmailResultCounting !== true) {
+    base = base.filter(tool => tool.function?.name !== 'gmail_count_results');
+  }
   if (opts.watchBeep === true && normalizedMode === 'act') {
     base = [...base, WATCH_BEEP_TOOL];
   }
@@ -1805,7 +1841,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 Available tools:
 - get_accessibility_tree: PREFERRED read. Flat-text tree of the page with roles, names, and stable ref_ids. Default starting point for almost every turn.
 - inspect_viewport: Read-only visual inspection when appearance or rendered pixels matter.
-- After visual inspection, act on a screenshot-derived point with click({x,y,from_screenshot:true}); WebBrain converts image pixels to CSS pixels mechanically.
+- After visual inspection, act on a screenshot-derived point with click({x,y,coordinate_space:"screenshot",capture_id:"..."}); WebBrain verifies the capture and converts image pixels to CSS pixels mechanically.
 - click_ax: Click a node by its ref_id from the tree. Preferred over click({text/selector}).
 - set_checked: Idempotently set a native checkbox by ref_id and verify checkedBefore/checkedAfter. Use this instead of toggling with click_ax.
 - type_ax: Type into a node by its ref_id from the tree. Preferred over the click-then-type_text pattern.
@@ -1940,7 +1976,7 @@ IFRAMES — read this:
   - \`iframe_type({urlFilter, selector, matchIndex, text, clear})\` types into exactly one form field and refuses ambiguous matches.
 - If the embedded UI remains unreliable and no fields have been changed, call \`promote_iframe({urlFilter})\` to navigate the current run tab to that frame's standalone URL. After any iframe form edits, call \`verify_form({urlFilter})\` and compare labels/values before done, even when the user will submit later.
 - The \`urlFilter\` parameter is a substring match against the iframe's URL. Use it to disambiguate when multiple iframes are present (e.g. \`urlFilter: "stripe.com"\` to target a Stripe widget specifically).
-- Coordinate clicks via \`click({x, y})\` ALSO work inside iframes — they dispatch at the OS level via CDP and don't care about origin boundaries — but selector-based iframe tools are more reliable.
+- Coordinate clicks via \`click({x, y, coordinate_space:"screenshot", capture_id:"..."})\` ALSO work inside iframes — they dispatch at the OS level via CDP and don't care about origin boundaries — but selector-based iframe tools are more reliable.
 - DO NOT refuse a task by saying "I can't access cross-origin iframes" or "Stripe's security restrictions prevent this". Those refusals are wrong in this environment. Try the iframe tools instead.
 
 TYPING — read this:
@@ -1977,7 +2013,7 @@ CLICKING — read this:
   2. \`click({text: "..."})\` — visible button/link text. Good fallback if the tree didn't surface the element cleanly.
   3. \`click({index: N})\` — legacy index from a get_interactive_elements call MADE THIS SAME TURN.
   4. \`click({selector: "..."})\` — when you have an exact CSS selector you're sure about.
-  5. \`click({x: ..., y: ...})\` — coordinates, last resort.
+  5. \`click({x: ..., y: ..., coordinate_space:"screenshot", capture_id:"..."})\` — screenshot coordinates, last resort.
 
 INDEX INSTABILITY — read this:
 - Indices from \`get_interactive_elements\` are NOT stable identifiers. They change between page loads, between scrolls, after any DOM update, after any navigation, and even between two consecutive get_interactive_elements calls if the page mutated in between.
@@ -2128,7 +2164,7 @@ export const MID_TOOL_NAMES = new Set([
   'get_accessibility_tree', 'inspect_viewport', 'click_ax', 'set_checked', 'type_ax', 'set_field',
   'list_webmcp_tools', 'execute_webmcp_tool',
   'read_page', 'read_pdf', 'get_window_info', 'get_interactive_elements',
-  'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'carousel_navigate', 'go_back', 'go_forward',
+  'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'gmail_count_results', 'carousel_navigate', 'go_back', 'go_forward',
   'extract_data', 'wait_for_element', 'wait_for_stable', 'get_selection', 'find_text',
   'new_tab', 'promote_iframe', 'done', 'clarify', 'delegate_research', 'schedule_resume', 'schedule_task',
   'iframe_read', 'iframe_click', 'iframe_type',
@@ -2166,7 +2202,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 TOOLS — use only these:
 - get_accessibility_tree: PREFERRED read. Flat-text tree with roles, names, and stable ref_ids. Use filter:"visible" by default.
 - inspect_viewport: Read-only visual inspection for ads, images, canvas, charts, and layout.
-- After inspect_viewport, act on a screenshot-derived point with click({x,y,from_screenshot:true}); WebBrain converts image pixels to CSS pixels mechanically.
+- After inspect_viewport, act on a screenshot-derived point with click({x,y,coordinate_space:"screenshot",capture_id:"..."}); WebBrain verifies the capture and converts image pixels to CSS pixels mechanically.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
 - read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run; promote_iframe({urlFilter}) navigates the current run to one child frame's standalone URL.
 - get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows or ; (semicolon), never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.

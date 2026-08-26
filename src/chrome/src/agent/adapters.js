@@ -15837,6 +15837,7 @@ const ADAPTERS = [
 - The body is a contenteditable div (rich text), not a textarea. When the user asks to revise or replace the whole draft body and the accessibility tree exposes textbox "Message Body" [ref_N], use exactly one set_field({ref_id:"ref_N", text:"<complete revised body>", clear:true, submit:false}) call. Do not click the body first, do not use press_keys to clear it, and do not use click-by-text or coordinates. Re-read the body afterward to verify the replacement. If the user says not to send, never click Send.
 - Sending: the "Send" button is bottom-left of the compose window; "Send + Schedule" arrow is next to it for scheduled send.
 - Search uses operators: from:, to:, subject:, has:attachment, before:YYYY/MM/DD.
+- When the user needs the exact number of conversations in the current Gmail label or search results, verify the search query, then call gmail_count_results. It deterministically probes /p100, /p200 and binary-searches the final valid page. Do not click the "1-50 of many" range, choose Oldest, invent date buckets, or manually guess /pN. The result is a Gmail conversation count, not automatically a count of unique emails or deduplicated pull requests.
 - Before drafting a reply or forward, make the whole conversation visible and read it from oldest to newest. Prefer Gmail's top-level "Expand all" control; if it is not exposed and Gmail keyboard shortcuts are available, press ; to expand the entire conversation. Expand any still-collapsed message header individually. "Show trimmed content" reveals quoted text inside one message and is not a substitute for expanding the conversation; open it only when that quoted material is needed.
 - For a complete-thread Gmail read, use the first accessibility result's trusted conversationRootRefId as ref_id with filter:"all" and maxDepth:15, then reuse every exact returned continuationArgs until hasMore:false. Never paginate document-root page 2+, because that walks unrelated inbox rows instead of the active conversation.
 - Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads for ordinary current-message or compose tasks, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one.`,
@@ -17231,6 +17232,164 @@ export function getActiveAdapter(url) {
     } catch (e) { /* malformed URL or broken matcher — skip */ }
   }
   return null;
+}
+
+const GMAIL_LIST_ROUTE_ROOTS = new Set([
+  'inbox', 'all', 'starred', 'snoozed', 'sent', 'drafts', 'important',
+  'spam', 'trash', 'scheduled', 'label', 'search', 'category',
+]);
+
+/**
+ * Return a stable Gmail list/search route that can be probed with /pN.
+ * Thread routes are rejected so result counting can never walk out of an
+ * opened conversation. Gmail's /pN hash route is not a public API, so callers
+ * must still verify the resolved route and visible result range after every
+ * probe.
+ */
+export function getGmailResultCountPolicy(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== 'mail.google.com') return null;
+    const rawHash = parsed.hash.replace(/^#\/?/, '').replace(/\/+$/, '');
+    if (!rawHash) return null;
+    const segments = rawHash.split('/').filter(Boolean);
+    let currentPage = 1;
+    const pageMatch = /^p(\d+)$/i.exec(segments.at(-1) || '');
+    if (pageMatch) {
+      currentPage = Number(pageMatch[1]);
+      segments.pop();
+    }
+    const root = String(segments[0] || '').toLowerCase();
+    if (!GMAIL_LIST_ROUTE_ROOTS.has(root)) return null;
+    if (['label', 'search', 'category'].includes(root) && segments.length < 2) return null;
+    if (!['label', 'search', 'category'].includes(root) && segments.length !== 1) return null;
+    const tail = segments.at(-1) || '';
+    if (segments.length > 2 && (/^FMfc[A-Za-z0-9_-]+$/.test(tail) || /^[a-f0-9]{10,}$/i.test(tail))) {
+      return null;
+    }
+    parsed.hash = `#${segments.join('/')}`;
+    return {
+      baseUrl: parsed.href,
+      baseHashPath: segments.join('/'),
+      currentPage: Number.isInteger(currentPage) && currentPage >= 1 ? currentPage : 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getGmailResultPageUrl(url, page) {
+  const policy = getGmailResultCountPolicy(url);
+  const requestedPage = Number(page);
+  if (!policy || !Number.isInteger(requestedPage) || requestedPage < 1) return null;
+  const parsed = new URL(policy.baseUrl);
+  parsed.hash = `#${policy.baseHashPath}${requestedPage === 1 ? '' : `/p${requestedPage}`}`;
+  return parsed.href;
+}
+
+function gmailCountNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return null;
+  const parsed = Number(digits);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/** Parse Gmail toolbar labels such as "1-50 of many" and "551-575 of 575". */
+export function parseGmailPaginationRange(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const match = /(\d[\d\s.,]*)\s*[\u2012\u2013\u2014-]\s*(\d[\d\s.,]*?)(?:\s*(?:of|de|sur|von|di|van|z|av|af|iz|共|\/)\s*(many|\d[\d\s.,]*))?(?=\D|$)/iu.exec(text);
+  if (!match) return null;
+  const start = gmailCountNumber(match[1]);
+  const end = gmailCountNumber(match[2]);
+  const total = /^many$/i.test(match[3] || '') ? null : gmailCountNumber(match[3]);
+  if (!start || !end || end < start || end - start >= 1000) return null;
+  if (total != null && total < end) return null;
+  return {
+    text: match[0].trim(),
+    start,
+    end,
+    total,
+    approximate: /many/i.test(match[3] || ''),
+  };
+}
+
+/**
+ * Find the final Gmail result page with bounded exponential bracketing and
+ * binary search. The probe owns navigation and must return {valid, range}.
+ */
+export async function findLastGmailResultPage(probe, { initialPage = 100, maxProbes = 32 } = {}) {
+  if (typeof probe !== 'function') return { success: false, error: 'A Gmail page probe is required.' };
+  const observations = [];
+  const byPage = new Map();
+  const inspect = async (page) => {
+    if (byPage.has(page)) return byPage.get(page);
+    if (observations.length >= maxProbes) {
+      const exhausted = { page, valid: false, probeLimitReached: true };
+      byPage.set(page, exhausted);
+      return exhausted;
+    }
+    let observed;
+    try {
+      observed = await probe(page);
+    } catch (error) {
+      observed = { valid: false, error: error?.message || String(error) };
+    }
+    const normalized = { page, ...(observed || {}), valid: observed?.valid === true };
+    observations.push(normalized);
+    byPage.set(page, normalized);
+    return normalized;
+  };
+
+  const first = await inspect(1);
+  if (!first.valid || !first.range) {
+    return { success: false, error: first.error || 'Could not verify Gmail result page 1.', observations };
+  }
+  if (Number.isSafeInteger(first.range.total)) {
+    return {
+      success: true,
+      total: first.range.total,
+      lastPage: Math.max(1, Math.ceil(first.range.total / Math.max(1, first.range.end - first.range.start + 1))),
+      exactFromToolbar: true,
+      observations,
+    };
+  }
+
+  const startPage = Math.max(2, Math.min(10000, Math.trunc(Number(initialPage) || 100)));
+  let low = 1;
+  let high = startPage;
+  let highObservation = await inspect(high);
+  while (highObservation.valid && !highObservation.probeLimitReached) {
+    low = high;
+    high = Math.min(1000000, high * 2);
+    if (high === low) break;
+    highObservation = await inspect(high);
+  }
+  if (highObservation.probeLimitReached || highObservation.valid) {
+    return { success: false, error: 'Gmail result counting reached its bounded probe limit before finding an invalid page.', observations };
+  }
+
+  while (high - low > 1) {
+    const middle = low + Math.floor((high - low) / 2);
+    const middleObservation = await inspect(middle);
+    if (middleObservation.probeLimitReached) {
+      return { success: false, error: 'Gmail result counting reached its bounded probe limit during binary search.', observations };
+    }
+    if (middleObservation.valid) low = middle;
+    else high = middle;
+  }
+
+  const last = await inspect(low);
+  if (!last.valid || !last.range || !Number.isSafeInteger(last.range.end)) {
+    return { success: false, error: 'The final Gmail result page did not expose a verifiable range.', observations };
+  }
+  return {
+    success: true,
+    total: last.range.end,
+    lastPage: low,
+    nextInvalidPage: high,
+    exactFromToolbar: false,
+    observations,
+  };
 }
 
 /** Return deterministic indexed-carousel metadata for the active URL. */
