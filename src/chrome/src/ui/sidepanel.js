@@ -13615,7 +13615,7 @@ selectionScopeRestoreBtn?.addEventListener('click', async () => {
   const tabId = currentTabId;
   if (!isSelectionGroundedForTab(tabId) || isTabProcessing(tabId)) return;
   const confirmed = typeof globalThis.confirm === 'function'
-    ? globalThis.confirm(`${t('sp.selection_scope.context_title')}\n\n${t('sp.selection_scope.context_description')}\n\n${t('sp.selection_scope.restore')}`)
+    ? globalThis.confirm(`${t('sp.selection_scope.restore')}\n\n${t('sp.selection_scope.restore_description')}`)
     : true;
   if (!confirmed) return;
   try {

@@ -119,6 +119,7 @@ export default {
   "sp.selection_scope.context_title": "טקסט נבחר + ידע כללי",
   "sp.selection_scope.context_description": "משתמש בטקסט הנבחר, בדיאלוג הקודם הבטוח ובידע של המודל. הדף, הכלים, הקבצים, הקבצים המצורפים והתוכן הגולמי של דפים קודמים אינם זמינים.",
   "sp.selection_scope.restore": "השתמשו בשיחה המלאה",
+  "sp.selection_scope.restore_description": "השחזור מסיר את הגבול של הטקסט שנבחר. הודעות עתידיות יוכלו להשתמש בדף הנוכחי, בכלי הדפדפן, בקבצים, בקבצים מצורפים ובשיחה הקודמת המלאה, כולל הקשר מהדף.",
   "sp.input.selection_placeholder": "שאלו על הטקסט שנבחר...",
   "sp.mode.ask": "שאל",
   "sp.mode.ask.title": "שאל שאלות על הדף - לא בוצעו שינויים",

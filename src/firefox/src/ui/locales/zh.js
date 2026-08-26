@@ -155,6 +155,7 @@ export default {
   "sp.selection_scope.context_title": "所选文本 + 通用知识",
   "sp.selection_scope.context_description": "使用所选文本、安全的早期对话和模型知识。页面、工具、文件、附件及早期页面原文仍不可用。",
   "sp.selection_scope.restore": "恢复完整对话",
+  "sp.selection_scope.restore_description": "恢复后将移除所选文本的边界。后续消息可以使用当前页面、浏览器工具、文件、附件以及包含页面上下文在内的完整早期对话。",
   "sp.input.selection_placeholder": "询问所选文本...",
 
   'sp.mode.ask': '问',

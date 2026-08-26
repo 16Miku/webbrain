@@ -99,6 +99,7 @@ export default {
   "sp.selection_scope.context_title": "Zaznaczony tekst + wiedza ogólna",
   "sp.selection_scope.context_description": "Używa zaznaczonego tekstu, bezpiecznego wcześniejszego dialogu i wiedzy modelu. Strona, narzędzia, pliki, załączniki oraz surowa treść wcześniejszych stron pozostają niedostępne.",
   "sp.selection_scope.restore": "Użyj pełnej rozmowy",
+  "sp.selection_scope.restore_description": "Przywrócenie usuwa ograniczenie do zaznaczonego tekstu. Kolejne wiadomości mogą korzystać z bieżącej strony, narzędzi przeglądarki, plików, załączników i całej wcześniejszej rozmowy, w tym z kontekstu strony.",
   "sp.input.selection_placeholder": "Zapytaj o zaznaczony tekst...",
   'sp.mode.ask': 'Pytaj',
   'sp.mode.ask.title': 'Zadawaj pytania o stronie — bez wprowadzania zmian',
