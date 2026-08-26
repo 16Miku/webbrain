@@ -4137,7 +4137,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
           const texts = [];
           const seen = new Set();
-          const nodes = document.querySelectorAll('[role="button"],button,[aria-label],[data-tooltip]');
+          // Gmail's .Dj surface owns the result range. Keep the fallback
+          // inside semantic toolbars so an email subject/label containing a
+          // range-like string can never spoof the count.
+          const nodes = document.querySelectorAll('.Dj,[role="toolbar"] [role="button"],[role="toolbar"] button,[role="toolbar"] [aria-label],[role="toolbar"] [data-tooltip]');
           for (const el of nodes) {
             if (!visible(el)) continue;
             for (const raw of [el.getAttribute('aria-label'), el.getAttribute('data-tooltip'), el.textContent]) {
@@ -4150,7 +4153,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
             if (texts.length >= 20) break;
           }
-          return { url: location.href, title: document.title, texts };
+          // Empty Gmail lists commonly render a dedicated td.TC message and
+          // no numeric pagination range. This structural signal is localized
+          // independently and is safer than matching "No emails" copy.
+          const empty = Array.from(document.querySelectorAll('td.TC')).some(visible)
+            && !Array.from(document.querySelectorAll('tr.zA')).some(visible);
+          return { url: location.href, title: document.title, texts, empty };
         })()
       `;
       const probeResults = await browser.tabs.executeScript(tabId, { code: probeCode });
@@ -4159,7 +4167,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         .map(parseGmailPaginationRange)
         .filter(Boolean)
         .sort((a, b) => a.text.length - b.text.length);
-      return { url: String(state.url || ''), title: String(state.title || ''), ranges };
+      return { url: String(state.url || ''), title: String(state.title || ''), ranges, empty: state.empty === true };
     } catch (error) {
       return { url: '', title: '', ranges: [], error: error?.message || String(error) };
     }
@@ -4188,9 +4196,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const routeMatches = resolvedPolicy?.baseHashPath === policy.baseHashPath && resolvedPolicy.currentPage === page;
       const expectedStart = pageSizeState.value ? ((page - 1) * pageSizeState.value) + 1 : null;
       const emptyRange = lastState.ranges.find(candidate => candidate.empty === true && candidate.total === 0);
+      const emptySurfaceRange = { text: '', start: 0, end: 0, total: 0, approximate: false, empty: true };
       const range = lastState.ranges.find(candidate => (
         page === 1 ? candidate.start === 1 : expectedStart != null && candidate.start === expectedStart
       ));
+      if (routeMatches && lastState.empty === true) {
+        if (page === 1) return { valid: true, empty: true, range: emptySurfaceRange, resolvedUrl: lastState.url };
+        return { valid: false, outOfRange: true, range: emptySurfaceRange, resolvedUrl: lastState.url };
+      }
       if (routeMatches && emptyRange) {
         if (page === 1) return { valid: true, empty: true, range: emptyRange, resolvedUrl: lastState.url };
         return { valid: false, outOfRange: true, range: emptyRange, resolvedUrl: lastState.url };

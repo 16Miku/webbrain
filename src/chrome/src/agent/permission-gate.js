@@ -59,6 +59,8 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'read_page',
   'get_accessibility_tree',
   'get_interactive_elements',
+  // The count and probe ranges come from Gmail's rendered pagination UI.
+  'gmail_count_results',
   // Hidden Compact-upload discovery returns page-authored file-input labels.
   'get_file_input_targets',
   'get_shadow_dom',
@@ -148,6 +150,9 @@ export function isNetworkMutation(name, args) {
 // bypass the gate, so keep this exhaustive.
 const TOOL_CAPABILITY = {
   navigate: Capability.NAVIGATE,
+  // This read helper temporarily walks Gmail /pN routes before restoring the
+  // exact starting URL, so it needs the same site-scoped navigation grant.
+  gmail_count_results: Capability.NAVIGATE,
   promote_iframe: Capability.NAVIGATE,
   new_tab: Capability.NAVIGATE,
   go_back: Capability.NAVIGATE,

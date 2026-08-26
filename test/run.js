@@ -6377,6 +6377,10 @@ test('Gmail result-count routes and toolbar ranges are parsed conservatively in 
     assert.equal(getTools('act').some(tool => tool.function.name === 'gmail_count_results'), false, `${label}: Gmail helper leaked onto unrelated sites`);
     assert.equal(getTools('act', { gmailResultCounting: true }).some(tool => tool.function.name === 'gmail_count_results'), true, `${label}: Gmail helper was not exposed on result routes`);
   }
+  assert.equal(capabilityForCh('gmail_count_results', {}), CapabilityCh.NAVIGATE, 'chrome: Gmail probes must require navigation permission');
+  assert.equal(capabilityFor('gmail_count_results', {}), Capability.NAVIGATE, 'firefox: Gmail probes must require navigation permission');
+  assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('gmail_count_results'), true, 'chrome: Gmail-rendered counts must remain untrusted');
+  assert.equal(UNTRUSTED_CONTENT_TOOLS.has('gmail_count_results'), true, 'firefox: Gmail-rendered counts must remain untrusted');
 });
 
 test('Gmail result counting probes p100/p200 then binary-searches the verified last page', async () => {
@@ -6481,6 +6485,16 @@ test('Gmail page probes separate verified empty, out-of-range, and inspection er
     assert.equal(empty.valid, true, `${label}: verified empty page was rejected`);
     assert.equal(empty.empty, true);
     assert.equal(empty.range.total, 0);
+
+    agent._gmailPaginationState = async () => ({
+      url: baseUrl,
+      ranges: [],
+      empty: true,
+    });
+    const emptyWithoutRange = await agent._probeGmailResultPage(77, policy, 1, { value: 0 }, null, {});
+    assert.equal(emptyWithoutRange.valid, true, `${label}: Gmail's no-range empty surface was rejected`);
+    assert.equal(emptyWithoutRange.empty, true);
+    assert.equal(emptyWithoutRange.range.total, 0);
 
     const requestedPage = 200;
     agent._currentUrl = async () => getPageUrl(baseUrl, requestedPage);
