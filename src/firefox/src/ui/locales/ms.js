@@ -153,7 +153,8 @@ export default {
   "sp.selection_scope.title": "Teks dipilih sahaja",
   "sp.selection_scope.description": "Mulakan perbualan baharu untuk mengakses halaman atau skrin.",
   "sp.selection_scope.context_title": "Teks dipilih + pengetahuan umum",
-  "sp.selection_scope.context_description": "Menggunakan teks dipilih dan pengetahuan model. Halaman, alat, fail dan perbualan terdahulu kekal tidak tersedia.",
+  "sp.selection_scope.context_description": "Menggunakan teks dipilih, dialog terdahulu yang selamat dan pengetahuan model. Halaman, alat, fail, lampiran dan kandungan mentah halaman terdahulu kekal tidak tersedia.",
+  "sp.selection_scope.restore": "Gunakan perbualan penuh",
   "sp.input.selection_placeholder": "Tanya tentang teks yang dipilih...",
 
   'sp.mode.ask': 'Tanya',

@@ -119,7 +119,8 @@ export default {
   "sp.selection_scope.title": "सिर्फ़ चुना गया टेक्स्ट",
   "sp.selection_scope.description": "पेज या स्क्रीन तक पहुँचने के लिए नई बातचीत शुरू करें।",
   "sp.selection_scope.context_title": "चुना गया टेक्स्ट + सामान्य ज्ञान",
-  "sp.selection_scope.context_description": "चुने गए टेक्स्ट और मॉडल के ज्ञान का उपयोग करता है। पेज, टूल, फ़ाइलें और पिछली बातचीत उपलब्ध नहीं हैं।",
+  "sp.selection_scope.context_description": "चुने गए टेक्स्ट, सुरक्षित पिछली बातचीत और मॉडल के ज्ञान का उपयोग करता है। पेज, टूल, फ़ाइलें, अटैचमेंट और पिछले पेज की कच्ची सामग्री उपलब्ध नहीं हैं।",
+  "sp.selection_scope.restore": "पूरी बातचीत का उपयोग करें",
   "sp.input.selection_placeholder": "चुने गए टेक्स्ट के बारे में पूछें...",
 
   'sp.mode.ask': "पूछो",

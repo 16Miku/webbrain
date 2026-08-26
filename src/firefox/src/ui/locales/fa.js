@@ -119,7 +119,8 @@ export default {
   "sp.selection_scope.title": "فقط متن انتخاب‌شده",
   "sp.selection_scope.description": "برای دسترسی به صفحه یا نمایشگر، مکالمه جدیدی شروع کنید.",
   "sp.selection_scope.context_title": "متن انتخاب‌شده + دانش عمومی",
-  "sp.selection_scope.context_description": "از متن انتخاب‌شده و دانش مدل استفاده می‌کند. صفحه، ابزارها، فایل‌ها و گفت‌وگوی قبلی همچنان در دسترس نیستند.",
+  "sp.selection_scope.context_description": "از متن انتخاب‌شده، گفت‌وگوی قبلی امن و دانش مدل استفاده می‌کند. صفحه، ابزارها، فایل‌ها، پیوست‌ها و محتوای خام صفحات قبلی همچنان در دسترس نیستند.",
+  "sp.selection_scope.restore": "استفاده از گفت‌وگوی کامل",
   "sp.input.selection_placeholder": "درباره متن انتخاب‌شده بپرسید...",
 
   'sp.mode.ask': "بپرسید",

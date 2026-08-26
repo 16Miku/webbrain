@@ -119,7 +119,8 @@ export default {
   "sp.selection_scope.title": "Chỉ văn bản đã chọn",
   "sp.selection_scope.description": "Bắt đầu cuộc trò chuyện mới để truy cập trang hoặc màn hình.",
   "sp.selection_scope.context_title": "Văn bản đã chọn + kiến thức chung",
-  "sp.selection_scope.context_description": "Sử dụng văn bản đã chọn và kiến thức của mô hình. Trang, công cụ, tệp và cuộc trò chuyện trước đó vẫn không khả dụng.",
+  "sp.selection_scope.context_description": "Sử dụng văn bản đã chọn, hội thoại trước đó an toàn và kiến thức của mô hình. Trang, công cụ, tệp, tệp đính kèm và nội dung thô của các trang trước vẫn không khả dụng.",
+  "sp.selection_scope.restore": "Dùng cuộc trò chuyện đầy đủ",
   "sp.input.selection_placeholder": "Hỏi về văn bản đã chọn...",
 
   'sp.mode.ask': "Hỏi",

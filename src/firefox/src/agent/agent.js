@@ -16099,6 +16099,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return true;
   }
 
+  restoreSelectionGroundingScope(tabId) {
+    if (!this.selectionGroundingScopes.delete(tabId)) return false;
+    this._persist(tabId);
+    try {
+      this._conversationScopeChangeListener?.(tabId, { sourceGrounding: null });
+    } catch {
+      // Scope persistence is authoritative; UI notification is best-effort.
+    }
+    return true;
+  }
+
   _selectionGroundedRunOptions(tabId, messages, runOptions = {}) {
     if (this._clearSelectionGroundingForIndependentRun(tabId, runOptions)) {
       // Independent jobs are not interactive follow-ups to whatever the user

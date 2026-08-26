@@ -34487,6 +34487,7 @@ test('all locales translate the new-conversation and selected-text scope UI', as
         'sp.selection_scope.description',
         'sp.selection_scope.context_title',
         'sp.selection_scope.context_description',
+        'sp.selection_scope.restore',
         'sp.input.selection_placeholder',
       ]) {
         assert.equal(typeof locale[key], 'string', `${label}/${filename}: missing ${key}`);
@@ -35573,9 +35574,10 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
-    const banner = html.match(/<div id="selection-scope-banner"[\s\S]*?<\/div>\s*\n\s*<button id="selection-scope-new-conversation"[\s\S]*?<\/button>\s*\n\s*<\/div>/)?.[0] || '';
+    const banner = html.match(/<div id="selection-scope-banner"[\s\S]*?<\/div>\s*(?:<button id="selection-scope-restore"[\s\S]*?<\/button>\s*)?<button id="selection-scope-new-conversation"[\s\S]*?<\/button>\s*<\/div>/)?.[0] || '';
 
     assert.match(banner, /role="region"[\s\S]*?aria-labelledby="selection-scope-title"/, `${label}: selected-text notice should be an accessible labelled region`);
+    assert.match(banner, /id="selection-scope-restore"[\s\S]*?data-i18n="sp\.selection_scope\.restore"/, `${label}: selected-text notice should expose a localized broader-conversation control`);
     assert.match(banner, /data-i18n="sp\.selection_scope\.title"[\s\S]*?data-i18n="sp\.selection_scope\.description"[\s\S]*?id="selection-scope-new-conversation"[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: selected-text notice and escape action should stay localized`);
     assert.match(css, /\.selection-scope-banner \{[\s\S]*?var\(--warning\)[\s\S]*?var\(--bg-secondary\)/, `${label}: scope notice should use warning—not destructive—color semantics`);
     assert.match(css, /@media \(max-width: 340px\) \{[\s\S]*?\.selection-scope-banner \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\);/, `${label}: selected-text notice should reflow in narrow browser panels`);
@@ -35595,6 +35597,10 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{\s*if \(msg\.type === 'conversation_scope'\) \{\s*applyConversationScopeState\(msg\.tabId, msg\.data\);\s*return;/, `${label}: sidepanel should apply scope broadcasts before run rendering guards`);
     assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?if \(!shouldContinueRunRecovery\(\)\) return;[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state, \{ shouldContinue: shouldContinueRunRecovery \}\);/, `${label}: detached run probes should reconcile scope only while their request still owns state`);
     assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true, sourceGrounding\);/, `${label}: context-menu selection should reveal its exact policy without waiting for model output`);
+    assert.match(panel, /selectionScopeRestoreBtn\?\.addEventListener\('click',[\s\S]*?globalThis\.confirm[\s\S]*?sendToBackground\('restore_selection_scope', \{ tabId \}\)[\s\S]*?applyConversationScopeState\(tabId, state\)/, `${label}: broader-conversation restore should require confirmation and reconcile authoritative scope state`);
+    assert.match(panel, /function addSelectionScopeDivider\(messageEl, sourceGrounding\)[\s\S]*?selection-scope-divider/, `${label}: each selected-text message should render an inline scope divider`);
+    assert.match(background, /case 'restore_selection_scope':[\s\S]*?agent\.restoreSelectionGroundingScope\(tabId\)[\s\S]*?agent\.getConversationState\(tabId\)/, `${label}: broader-conversation restore should clear only the selection scope`);
+    assert.match(agent, /restoreSelectionGroundingScope\(tabId\)\s*\{[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?sourceGrounding: null/, `${label}: agent should persist and broadcast explicit selection-scope restoration`);
     assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
     assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);

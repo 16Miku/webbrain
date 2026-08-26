@@ -3347,6 +3347,13 @@ async function handleMessage(msg, sender) {
       return { ok: true, clearedContextMenuPromptId };
     }
 
+    case 'restore_selection_scope': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'No tab ID' };
+      const restored = agent.restoreSelectionGroundingScope(tabId);
+      return { ok: true, restored, ...(await agent.getConversationState(tabId)) };
+    }
+
     case 'disable_dev_diagnostics': {
       if (msg.all === true) {
         return { ok: true, disabled: await agent.disableAllDevDiagnostics() };

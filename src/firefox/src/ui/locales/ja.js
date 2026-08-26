@@ -153,7 +153,8 @@ export default {
   "sp.selection_scope.title": "選択したテキストのみ",
   "sp.selection_scope.description": "ページや画面にアクセスするには、新しい会話を開始してください。",
   "sp.selection_scope.context_title": "選択したテキスト + 一般知識",
-  "sp.selection_scope.context_description": "選択したテキストとモデルの知識を使用します。ページ、ツール、ファイル、以前の会話は利用できません。",
+  "sp.selection_scope.context_description": "選択したテキスト、安全な以前の対話、モデルの知識を使用します。ページ、ツール、ファイル、添付ファイル、以前のページの生データは利用できません。",
+  "sp.selection_scope.restore": "広い会話を使用",
   "sp.input.selection_placeholder": "選択したテキストについて質問...",
 
   'sp.mode.ask': '質問',

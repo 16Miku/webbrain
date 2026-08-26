@@ -153,7 +153,8 @@ export default {
   "sp.selection_scope.title": "เฉพาะข้อความที่เลือก",
   "sp.selection_scope.description": "เริ่มการสนทนาใหม่เพื่อเข้าถึงหน้าหรือหน้าจอ",
   "sp.selection_scope.context_title": "ข้อความที่เลือก + ความรู้ทั่วไป",
-  "sp.selection_scope.context_description": "ใช้ข้อความที่เลือกและความรู้ของโมเดล โดยยังไม่สามารถเข้าถึงหน้า เครื่องมือ ไฟล์ และบทสนทนาก่อนหน้าได้",
+  "sp.selection_scope.context_description": "ใช้ข้อความที่เลือก บทสนทนาก่อนหน้าที่ปลอดภัย และความรู้ของโมเดล โดยยังไม่สามารถเข้าถึงหน้า เครื่องมือ ไฟล์ ไฟล์แนบ และเนื้อหาดิบจากหน้าก่อนหน้าได้",
+  "sp.selection_scope.restore": "ใช้บทสนทนาทั้งหมด",
   "sp.input.selection_placeholder": "ถามเกี่ยวกับข้อความที่เลือก...",
 
   'sp.mode.ask': 'ถาม',

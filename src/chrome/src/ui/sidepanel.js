@@ -587,6 +587,7 @@ const newConversationConfirmAcceptBtn = document.getElementById('new-conversatio
 const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
 const selectionScopeTitleEl = document.getElementById('selection-scope-title');
 const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
+const selectionScopeRestoreBtn = document.getElementById('selection-scope-restore');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
 let selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
@@ -1189,6 +1190,32 @@ function syncSelectionScopeUi() {
   }
   if (scoped && agentMode !== 'ask') setMode('ask');
   else resetInputPlaceholderRotation();
+  syncSelectionScopeDividers();
+}
+
+function syncSelectionScopeDividers() {
+  messagesEl?.querySelectorAll('.selection-scope-divider').forEach((divider) => {
+    const sourceGrounding = normalizeSelectionSourceGrounding(divider.dataset.sourceGrounding);
+    const key = sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_title'
+      : 'sp.selection_scope.title';
+    divider.querySelector('.selection-scope-divider-label').textContent = t(key);
+    divider.setAttribute('aria-label', t(key));
+  });
+}
+
+function addSelectionScopeDivider(messageEl, sourceGrounding) {
+  const normalized = normalizeSelectionSourceGrounding(sourceGrounding);
+  if (!messageEl || !normalized || !messagesEl) return;
+  const divider = document.createElement('div');
+  divider.className = 'selection-scope-divider';
+  divider.dataset.sourceGrounding = normalized;
+  divider.setAttribute('role', 'separator');
+  const label = document.createElement('span');
+  label.className = 'selection-scope-divider-label';
+  divider.appendChild(label);
+  messageEl.before(divider);
+  syncSelectionScopeDividers();
 }
 
 function setSelectionGroundedForTab(
@@ -8562,6 +8589,7 @@ async function sendMessage(extraChatParams = {}) {
     userEl = addMessage('user', agentPrompt ? submittedText : text, {
       attachments: attachmentsForSend,
       attachmentState: attachmentsForSend.length ? 'sending' : '',
+      ...(sourceGrounding ? { sourceGrounding } : {}),
     });
     showActivity(t('sp.activity.thinking'));
     assistantEl = addMessage('assistant', '');
@@ -11440,6 +11468,9 @@ function addMessage(role, content, options = {}) {
   } else {
     messagesEl.appendChild(msgEl);
   }
+  if (role === 'user' && options.sourceGrounding) {
+    addSelectionScopeDivider(msgEl, options.sourceGrounding);
+  }
   if (role === 'user' || role === 'assistant') {
     setMessageCreatedAt(msgEl, options.createdAt ?? Date.now());
     bindMessageInfoToggle(msgEl);
@@ -13578,6 +13609,23 @@ clearBtn.addEventListener('click', async () => {
 
 selectionScopeNewConversationBtn?.addEventListener('click', async () => {
   await startNewConversationForTab(currentTabId);
+});
+
+selectionScopeRestoreBtn?.addEventListener('click', async () => {
+  const tabId = currentTabId;
+  if (!isSelectionGroundedForTab(tabId) || isTabProcessing(tabId)) return;
+  const confirmed = typeof globalThis.confirm === 'function'
+    ? globalThis.confirm(`${t('sp.selection_scope.context_title')}\n\n${t('sp.selection_scope.context_description')}\n\n${t('sp.selection_scope.restore')}`)
+    : true;
+  if (!confirmed) return;
+  try {
+    const state = await sendToBackground('restore_selection_scope', { tabId });
+    if (state?.ok !== true) throw new Error(state?.error || 'Unable to restore the broader conversation.');
+    applyConversationScopeState(tabId, state);
+    showComposerToast(t('sp.selection_scope.restore'), { duration: 4000 });
+  } catch (error) {
+    showComposerToast(error?.message || t('sp.selection_scope.description'), { duration: 6000 });
+  }
 });
 
 providerSelect.addEventListener('change', async () => {

@@ -153,7 +153,8 @@ export default {
   "sp.selection_scope.title": "Napiling text lang",
   "sp.selection_scope.description": "Magsimula ng bagong pag-uusap para ma-access ang page o screen.",
   "sp.selection_scope.context_title": "Napiling text + pangkalahatang kaalaman",
-  "sp.selection_scope.context_description": "Ginagamit ang napiling text at kaalaman ng modelo. Hindi pa rin available ang page, tools, files, at naunang usapan.",
+  "sp.selection_scope.context_description": "Ginagamit ang napiling text, ligtas na naunang usapan, at kaalaman ng modelo. Hindi available ang page, tools, files, attachment, at hilaw na laman ng naunang page.",
+  "sp.selection_scope.restore": "Gamitin ang mas malawak na usapan",
   "sp.input.selection_placeholder": "Magtanong tungkol sa napiling text...",
 
   'sp.mode.ask': 'Tanong',
