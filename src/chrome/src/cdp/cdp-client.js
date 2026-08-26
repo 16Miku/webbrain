@@ -3776,9 +3776,15 @@ export class CDPClient {
   async clickElement(tabId, selector, options = {}) {
     const trustedOnly = options?.trustedOnly === true;
     const abortSignal = options?.abortSignal || null;
+    const deadlineAt = Number(options?.deadlineAt) || 0;
+    const deadlineError = options?.deadlineError instanceof Error
+      ? options.deadlineError
+      : null;
+    const actionExpired = () => abortSignal?.aborted || (deadlineAt > 0 && Date.now() >= deadlineAt);
     const throwIfAborted = () => {
-      if (!abortSignal?.aborted) return;
-      if (abortSignal.reason instanceof Error) throw abortSignal.reason;
+      if (!actionExpired()) return;
+      if (abortSignal?.reason instanceof Error) throw abortSignal.reason;
+      if (deadlineError) throw deadlineError;
       const error = new Error('The click was aborted.');
       error.name = 'AbortError';
       throw error;
@@ -3903,7 +3909,7 @@ export class CDPClient {
           rect,
         };
       } catch (e) {
-        if (abortSignal?.aborted) throwIfAborted();
+        if (actionExpired()) throwIfAborted();
         // fall through to fallback
       }
     }
@@ -3920,24 +3926,34 @@ export class CDPClient {
       };
     }
 
-    // Step 2: fallback. For closed shadow roots we have a nodeId — use DOM.focus
-    // and Runtime.callFunctionOn to invoke .click() on the resolved object.
+    // Step 2: fallback. For closed shadow roots we have a nodeId — resolve it
+    // and focus/click it inside one page-side deadline-guarded call. Keeping
+    // focus in that same call preserves input-click semantics without queuing
+    // a separate DOM.focus command that could run after the action timed out.
     if (info.nodeId) {
+      let objectId = null;
       try {
         throwIfAborted();
         await this.armFileInputClickGuard(tabId);
         throwIfAborted();
-        await this.sendCommand(tabId, 'DOM.focus', { nodeId: info.nodeId }).catch(() => {});
-        throwIfAborted();
         const { object } = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
         throwIfAborted();
-        if (object?.objectId) {
+        objectId = object?.objectId || null;
+        if (objectId) {
           const validation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
           if (validation.success !== true) return validation;
           dispatchAttempted = true;
           await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
-            objectId: object.objectId,
-            functionDeclaration: 'function() { this.click(); }',
+            objectId,
+            functionDeclaration: `function(actionDeadlineAt) {
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+              try { this.focus(); } catch {}
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+              this.click();
+              return true;
+            }`,
+            arguments: [{ value: deadlineAt }],
+            returnByValue: true,
             awaitPromise: false,
           });
           throwIfAborted();
@@ -3962,8 +3978,12 @@ export class CDPClient {
           };
         }
       } catch (e) {
-        if (abortSignal?.aborted) throwIfAborted();
+        if (actionExpired()) throwIfAborted();
         // fall through
+      } finally {
+        if (objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
       }
     }
 
@@ -3977,6 +3997,9 @@ export class CDPClient {
     dispatchAttempted = true;
     const fb = await this.evaluate(tabId, `
       (() => {
+        const actionDeadlineAt = ${deadlineAt};
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+        if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Click action deadline expired' };
         const sel = ${selectorJSON};
         const queryDeep = (root) => {
           try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
@@ -3994,7 +4017,9 @@ export class CDPClient {
           : tag === 'BUTTON'
             ? type === 'submit' || (!type && !!(el.form || el.closest?.('form')))
             : false;
+        if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Click action deadline expired' };
         try { el.focus(); } catch (e) {}
+        if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Click action deadline expired' };
         el.click();
         const r = el.getBoundingClientRect();
         return {
@@ -4281,12 +4306,18 @@ export class CDPClient {
    */
   async typeText(tabId, selector, text, clear = false, expectedBackendNodeId = null, resolveOptions = {}) {
     const abortSignal = resolveOptions?.abortSignal || null;
+    const deadlineAt = Number(resolveOptions?.deadlineAt) || 0;
+    const deadlineError = resolveOptions?.deadlineError instanceof Error
+      ? resolveOptions.deadlineError
+      : null;
+    const actionExpired = () => abortSignal?.aborted || (deadlineAt > 0 && Date.now() >= deadlineAt);
     const beforeDispatch = typeof resolveOptions?.beforeDispatch === 'function'
       ? resolveOptions.beforeDispatch
       : null;
     const throwIfAborted = () => {
-      if (!abortSignal?.aborted) return;
-      if (abortSignal.reason instanceof Error) throw abortSignal.reason;
+      if (!actionExpired()) return;
+      if (abortSignal?.reason instanceof Error) throw abortSignal.reason;
+      if (deadlineError) throw deadlineError;
       const error = new Error('Text entry was aborted.');
       error.name = 'AbortError';
       throw error;
@@ -4324,7 +4355,7 @@ export class CDPClient {
           ...keyParams,
         });
       } catch (error) {
-        if (abortSignal?.aborted) {
+        if (actionExpired()) {
           // A delayed debugger response can mean keyDown reached the page even
           // though the action deadline already expired. Release defensively so
           // later user or agent input cannot inherit a stuck key state.
@@ -4333,7 +4364,7 @@ export class CDPClient {
         }
         throw error;
       }
-      if (abortSignal?.aborted) {
+      if (actionExpired()) {
         await releaseKey();
         throwIfAborted();
       }
@@ -4343,7 +4374,7 @@ export class CDPClient {
           ...keyParams,
         });
       } catch (error) {
-        if (abortSignal?.aborted) {
+        if (actionExpired()) {
           await releaseKey();
           throwIfAborted();
         }
@@ -4455,6 +4486,9 @@ export class CDPClient {
       const targetTokenJSON = JSON.stringify(dispatchBindingToken);
       const result = await this.evaluate(tabId, `
         (() => {
+          const actionDeadlineAt = ${deadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Select action deadline expired' };
           const sel = ${selectorJSON};
           const needle = ${textJSON};
           const targetToken = ${targetTokenJSON};
@@ -4470,6 +4504,7 @@ export class CDPClient {
           if (targetToken && el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) {
             return { success: false, targetChanged: true, error: 'The selector target changed after safety preflight' };
           }
+          if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Select action deadline expired' };
           el.focus();
           const opts = Array.from(el.options);
           const match = opts.find(o => o.value === needle)
@@ -4571,14 +4606,16 @@ export class CDPClient {
             guardedFocus = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
               objectId,
               returnByValue: true,
-              functionDeclaration: `function (targetToken) {
+              functionDeclaration: `function (targetToken, actionDeadlineAt) {
+                if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
                 if (!this || !this.isConnected || this[Symbol.for('webbrain.dispatchBinding')] !== targetToken) return false;
                 try { this.focus(); } catch { return false; }
                 const root = this.getRootNode?.();
                 return root?.activeElement === this || document.activeElement === this;
               }`,
-              arguments: [{ value: dispatchBindingToken }],
+              arguments: [{ value: dispatchBindingToken }, { value: deadlineAt }],
             }).catch(() => null);
+            throwIfAborted();
           }
         } finally {
           if (objectId) {
@@ -4590,6 +4627,9 @@ export class CDPClient {
         const targetTokenJSON = JSON.stringify(dispatchBindingToken);
         guardedFocus = await this.evaluate(tabId, `
           (() => {
+            const actionDeadlineAt = ${deadlineAt};
+            const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+            if (deadlineExpired()) return false;
             const sel = ${selectorJSON};
             const targetToken = ${targetTokenJSON};
             const queryDeep = (root) => {
@@ -4612,10 +4652,12 @@ export class CDPClient {
             };
             const el = queryDeep(document);
             if (!el || !el.isConnected || el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) return false;
+            if (deadlineExpired()) return false;
             try { el.focus(); } catch { return false; }
             return activeDeep() === el;
           })()
         `).catch(() => null);
+        throwIfAborted();
       }
       if (guardedFocus?.result?.value !== true) {
         return {
@@ -4651,7 +4693,7 @@ export class CDPClient {
         throwIfAborted();
         focused = true;
       } catch (e) {
-        if (abortSignal?.aborted) {
+        if (actionExpired()) {
           if (pointerPressed) await cancelPressedPointer();
           throwIfAborted();
         }
@@ -4661,17 +4703,46 @@ export class CDPClient {
 
     // Focus path B: DOM.focus by nodeId (closed shadow root case).
     if (!focused && info.nodeId) {
+      let focusObjectId = null;
       try {
-        await this.sendCommand(tabId, 'DOM.focus', { nodeId: info.nodeId });
-        focused = true;
-      } catch (e) { /* try next */ }
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+        throwIfAborted();
+        focusObjectId = resolved?.object?.objectId || null;
+        if (focusObjectId) {
+          const focusResult = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+            objectId: focusObjectId,
+            returnByValue: true,
+            functionDeclaration: `function (actionDeadlineAt) {
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+              if (!this || !this.isConnected) return false;
+              try { this.focus(); } catch { return false; }
+              const root = this.getRootNode?.();
+              return root?.activeElement === this || document.activeElement === this;
+            }`,
+            arguments: [{ value: deadlineAt }],
+          });
+          throwIfAborted();
+          focused = focusResult?.result?.value === true;
+        }
+      } catch (e) {
+        if (e?.code === 'content_action_timeout' || actionExpired()) throw e;
+        // try next
+      }
+      finally {
+        if (focusObjectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId: focusObjectId }); } catch {}
+        }
+      }
     }
 
     // Focus path C: JS .focus() (open shadow root case).
     if (!focused) {
       const selectorJSON = JSON.stringify(selector);
-      await this.evaluate(tabId, `
+      const focusResult = await this.evaluate(tabId, `
         (() => {
+          const actionDeadlineAt = ${deadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return false;
           const sel = ${selectorJSON};
           const queryDeep = (root) => {
             try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
@@ -4681,9 +4752,14 @@ export class CDPClient {
             return null;
           };
           const el = queryDeep(document);
-          if (el && el.focus) el.focus();
+          if (!el || !el.focus || deadlineExpired()) return false;
+          el.focus();
+          const root = el.getRootNode?.();
+          return root?.activeElement === el || document.activeElement === el;
         })()
       `);
+      throwIfAborted();
+      focused = focusResult?.result?.value === true;
     }
 
     // Clear existing content if requested. Use Select All + Delete via key events
@@ -4700,7 +4776,7 @@ export class CDPClient {
           key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
         });
       } catch (e) {
-        if (abortSignal?.aborted) throwIfAborted();
+        if (actionExpired()) throwIfAborted();
         // best effort
       }
     }
@@ -4714,7 +4790,7 @@ export class CDPClient {
       throwIfAborted();
       typed = true;
     } catch (e) {
-      if (abortSignal?.aborted) throwIfAborted();
+      if (actionExpired()) throwIfAborted();
       // fall through to JS setter
     }
 
@@ -4727,6 +4803,9 @@ export class CDPClient {
       markDispatch();
       const result = await this.evaluate(tabId, `
         (() => {
+          const actionDeadlineAt = ${deadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Text action deadline expired' };
           const sel = ${selectorJSON};
           const txt = ${textJSON};
           const targetToken = ${targetTokenJSON};
@@ -4742,9 +4821,11 @@ export class CDPClient {
           if (targetToken && el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) {
             return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'The selector target changed after safety preflight' };
           }
+          if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Text action deadline expired' };
           try { el.focus(); } catch (e) {}
 
           if (el.isContentEditable) {
+            if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Text action deadline expired' };
             if (${clear}) el.textContent = '';
             el.textContent += txt;
             el.dispatchEvent(new InputEvent('input', { bubbles: true, data: txt }));
@@ -4762,6 +4843,7 @@ export class CDPClient {
             : HTMLInputElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
           const newVal = (${clear} ? '' : (el.value || '')) + txt;
+          if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Text action deadline expired' };
           if (setter) setter.call(el, newVal); else el.value = newVal;
 
           el.dispatchEvent(new Event('input', { bubbles: true }));

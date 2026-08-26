@@ -50973,6 +50973,20 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
     /const isSubmitControl = tag === 'INPUT'[\s\S]*tag === 'BUTTON'[\s\S]*isSubmitControl,/,
     'selector resolution should derive submit metadata from the target element',
   );
+  const clickElementStart = source.indexOf('async clickElement(');
+  const clickElementEnd = source.indexOf('\n  async ', clickElementStart + 10);
+  const clickElementSource = source.slice(clickElementStart, clickElementEnd);
+  assert.doesNotMatch(clickElementSource, /'DOM\.focus'/, 'selector clicks must not queue an unguarded pre-dispatch DOM.focus command');
+  assert.match(
+    clickElementSource,
+    /function\(actionDeadlineAt\)[\s\S]*Date\.now\(\) >= actionDeadlineAt[\s\S]*this\.focus\(\)[\s\S]*Date\.now\(\) >= actionDeadlineAt[\s\S]*this\.click\(\)/,
+    'closed-shadow selector click fallback must preserve focus and enforce the page-side deadline before clicking',
+  );
+  assert.match(
+    clickElementSource,
+    /const deadlineExpired = \(\) => actionDeadlineAt > 0 && Date\.now\(\) >= actionDeadlineAt;[\s\S]*el\.click\(\)/,
+    'open-shadow selector click fallback must enforce the page-side deadline',
+  );
 });
 
 test('Chrome selector type distinguishes pre-dispatch failure from uncertain dispatch', async () => {
@@ -50987,6 +51001,73 @@ test('Chrome selector type distinguishes pre-dispatch failure from uncertain dis
       error: 'Element not found',
     },
   );
+
+  client.resolveSelector = async () => ({
+    inViewport: false,
+    hitOk: false,
+    nodeId: null,
+    tag: 'SELECT',
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
+  });
+  let releaseSelectTypeInspection;
+  let markSelectTypeInspectionStarted;
+  const selectTypeInspectionStarted = new Promise(resolve => { markSelectTypeInspectionStarted = resolve; });
+  const delayedSelectTypeInspection = new Promise(resolve => { releaseSelectTypeInspection = resolve; });
+  let selectFocusCalls = 0;
+  const selectDocument = { activeElement: null };
+  const selectElement = {
+    tagName: 'SELECT',
+    isConnected: true,
+    selectedIndex: 0,
+    value: 'current',
+    options: [
+      { index: 0, value: 'current', text: 'Current option' },
+      { index: 1, value: 'other', text: 'Other option' },
+    ],
+    focus() {
+      selectFocusCalls += 1;
+      selectDocument.activeElement = this;
+    },
+  };
+  selectDocument.querySelector = () => selectElement;
+  const originalDateNow = Date.now;
+  const selectTypeDeadline = originalDateNow() + 10_000;
+  const selectTypeTimeout = new Error('type_text did not return a page response within 60 seconds.');
+  selectTypeTimeout.code = 'content_action_timeout';
+  client.evaluate = async (_tabId, expression) => {
+    markSelectTypeInspectionStarted();
+    await delayedSelectTypeInspection;
+    const value = Function('document', `return (${expression});`)(selectDocument);
+    return { result: { value } };
+  };
+  const pendingExpiredSelectType = client.typeText(
+    42,
+    '#account-type',
+    'Other option',
+    false,
+    null,
+    { deadlineAt: selectTypeDeadline, deadlineError: selectTypeTimeout },
+  );
+  await selectTypeInspectionStarted;
+  try {
+    Date.now = () => Number.MAX_SAFE_INTEGER;
+    releaseSelectTypeInspection();
+    await assert.rejects(pendingExpiredSelectType, candidate => candidate === selectTypeTimeout);
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(selectFocusCalls, 0, 'an expired queued select type must not focus the stale dropdown');
+  client.evaluate = CDPClient.prototype.evaluate.bind(client);
+
+  const cdpSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cdp/cdp-client.js'), 'utf8');
+  const typeTextStart = cdpSource.indexOf('async typeText(');
+  const typeTextEnd = cdpSource.indexOf('\n  async ', typeTextStart + 10);
+  const typeTextSource = cdpSource.slice(typeTextStart, typeTextEnd);
+  assert.doesNotMatch(typeTextSource, /'DOM\.focus'/, 'selector typing must not queue an unguarded DOM.focus command');
+  assert.match(typeTextSource, /actionDeadlineAt[\s\S]*Date\.now\(\) >= actionDeadlineAt[\s\S]*\.focus\(\)/, 'selector typing focus paths must check the page-side deadline');
 
   client.resolveSelector = async () => ({
     inViewport: false,
@@ -69960,6 +70041,12 @@ test('native select rescue yields only to exact clickables and refuses ambiguous
   assert.match(autoSelectBody, /if \(txt && txt === lc\) return \{ found: false, suppressedByClickable: true \};/, 'chrome: only exact clickable text should suppress select rescue');
   assert.doesNotMatch(autoSelectBody, /txt\.includes\(lc\)[^\n]*suppressedByClickable/, 'chrome: substring clickables must not suppress select rescue');
   assert.match(autoSelectBody, /if \(matchingSelects\.length !== 1\)/, 'chrome: auto-select must not pick the first of several matching dropdowns');
+  const scanStart = autoSelectBody.indexOf('const scanResult = await cdpClient.evaluate');
+  const scanEnd = autoSelectBody.indexOf('const scan = scanResult?.result?.value;', scanStart);
+  const scanBody = autoSelectBody.slice(scanStart, scanEnd);
+  assert.doesNotMatch(scanBody, /sel\.focus\s*\(/, 'chrome: auto-select scan must remain observation-only before dispatch');
+  assert.match(scanBody, /deadlineExpired\(\)/, 'chrome: auto-select scan must reject page work after the action deadline');
+  assert.match(autoSelectBody, /const focusResult = await cdpClient\.evaluate[\s\S]*deadlineExpired\(\)[\s\S]*target\.focus\(\)/, 'chrome: auto-select refocus must enforce the page-side deadline');
 
   const firefoxContent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
   const clickStart = firefoxContent.indexOf('function clickElement(params) {');
@@ -70731,6 +70818,68 @@ test('chrome CDP auto-select scopes to blocking dialogs and refuses ambiguous dr
   assert.match(body, /matchingSelects\.length !== 1/, 'chrome: auto-select should yield instead of choosing among multiple matching selects');
   assert.match(body, /globalThis\[targetSlot\] = sel/, 'chrome: auto-select should preserve the exact scoped select for refocus');
   assert.match(body, /const target = globalThis\[/, 'chrome: auto-select should refocus and verify the preserved select');
+  assert.doesNotMatch(
+    body.slice(body.indexOf('const scanResult = await cdpClient.evaluate'), body.indexOf('const scan = scanResult?.result?.value;')),
+    /sel\.focus\s*\(/,
+    'chrome: modal auto-select scan should not mutate focus before dispatch',
+  );
+});
+
+test('chrome CDP auto-select queued scan cannot focus after its action deadline', async () => {
+  const agent = new AgentCh({ getVisionProvider: async () => null });
+  let releaseScan;
+  let markScanStarted;
+  const scanStarted = new Promise(resolve => { markScanStarted = resolve; });
+  const delayedScan = new Promise(resolve => { releaseScan = resolve; });
+  let focusCalls = 0;
+  const selectElement = {
+    tagName: 'SELECT',
+    isConnected: true,
+    selectedIndex: 0,
+    options: [
+      { index: 0, value: 'current', text: 'Current option' },
+      { index: 1, value: 'other', text: 'Other option' },
+    ],
+    focus() { focusCalls += 1; },
+  };
+  const selectDocument = {
+    querySelectorAll(selector) {
+      return selector === 'select' ? [selectElement] : [];
+    },
+  };
+  let scanEvaluationSeen = false;
+  const fakeCdpClient = {
+    async evaluate(_tabId, expression) {
+      if (expression.startsWith('delete globalThis[')) {
+        return { result: { value: Function(`return (${expression});`)() } };
+      }
+      assert.equal(scanEvaluationSeen, false, 'deadline expiry must stop before auto-select refocus');
+      scanEvaluationSeen = true;
+      markScanStarted();
+      await delayedScan;
+      const value = Function('document', `return (${expression});`)(selectDocument);
+      return { result: { value } };
+    },
+    async sendCommand() {
+      throw new Error('expired auto-select scan must not dispatch keyboard input');
+    },
+  };
+
+  const originalDateNow = Date.now;
+  const pending = agent._withContentActionDeadline(
+    signal => agent._autoSelectOption(42, fakeCdpClient, 'Other option', signal),
+    'click',
+    10_000,
+  );
+  await scanStarted;
+  try {
+    Date.now = () => Number.MAX_SAFE_INTEGER;
+    releaseScan();
+    await assert.rejects(pending, error => error?.code === 'content_action_timeout');
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(focusCalls, 0, 'a queued scan that resumes after timeout must not focus its stale select');
 });
 
 test('chrome full interactive indexes stay scoped to the topmost modal', () => {

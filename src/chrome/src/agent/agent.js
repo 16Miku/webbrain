@@ -8779,6 +8779,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // target a different (for example, background) select with the same
     // options.
     const targetSlot = `__webbrainAutoSelectTarget_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0;
     const cleanupTarget = async () => {
       try {
         await cdpClient.evaluate(tabId, `delete globalThis[${JSON.stringify(targetSlot)}]`);
@@ -8786,6 +8787,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const scanResult = await cdpClient.evaluate(tabId, `
       (() => {
+        const actionDeadlineAt = ${actionDeadlineAt};
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+        if (deadlineExpired()) return { found: false, deadlineExpired: true };
         const needle = ${JSON.stringify(needle)};
         const lc = needle.toLowerCase();
         const targetSlot = ${JSON.stringify(targetSlot)};
@@ -8864,9 +8868,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // normal text resolver return an ambiguity instead.
         if (matchingSelects.length !== 1) return { found: false, matchingSelectCount: matchingSelects.length };
         const { sel, match, opts } = matchingSelects[0];
-        sel.focus();
         const cur = sel.selectedIndex;
-        if (cur !== match.index) globalThis[targetSlot] = sel;
+        if (cur !== match.index) {
+          if (deadlineExpired()) return { found: false, deadlineExpired: true };
+          globalThis[targetSlot] = sel;
+        }
         return {
           found: true,
           alreadySelected: cur === match.index,
@@ -8913,8 +8919,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // option-text lookup here.
       const focusResult = await cdpClient.evaluate(tabId, `
         (() => {
+          const actionDeadlineAt = ${actionDeadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
           const target = globalThis[${JSON.stringify(targetSlot)}];
           if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { focused: false };
+          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
           if (document.activeElement !== target) target.focus();
           return { focused: document.activeElement === target };
         })()
@@ -25679,6 +25689,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           throwIfEarlyCdpAborted();
           const selResult = await cdpClient.clickElement(tabId, args.selector, {
             abortSignal: earlyCdpAbortSignal,
+            deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+            deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
             ...(messageRecipientGuardRequired ? { trustedOnly: true } : {}),
             beforeDispatch: async ({ x, y }) => {
               if (messageRecipientGuardRequired) {
@@ -26120,15 +26132,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               expectedBackendNodeId,
               {
                 abortSignal: earlyCdpAbortSignal,
+                deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+                deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
                 beforeDispatch: markEarlyCdpDispatched,
               },
             );
             throwIfEarlyCdpAborted();
           } catch (error) {
+            const typeDispatched = earlyCdpDispatchState.started === true;
             return {
               success: false,
-              dispatched: true,
-              error: `Type failed after selector dispatch became uncertain: ${error?.message || String(error)}`,
+              ...(typeDispatched
+                ? { dispatched: true }
+                : { dispatched: false, noDispatch: true, retryable: true }),
+              error: typeDispatched
+                ? `Type failed after selector dispatch became uncertain: ${error?.message || String(error)}`
+                : `Type failed before selector dispatch: ${error?.message || String(error)}`,
             };
           }
           if (result.success) this._showAgentTarget(tabId, result.rect || result, 'type_text_selector');
