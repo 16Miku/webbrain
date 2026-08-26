@@ -21,7 +21,6 @@
   <a href="docs/">Docs</a> ·
   <a href="https://webbrain.one">Website</a> ·
   <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
-  <a href="https://www.producthunt.com/products/webbrain">Product Hunt</a> ·
   <a href="LICENSE">GPL-3.0-or-later</a>
 </p>
 

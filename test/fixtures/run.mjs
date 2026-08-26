@@ -662,38 +662,36 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
-  test(`${label}: custom selection questions use general knowledge by default and retain opt-out`, async (page) => {
+  test(`${label}: custom selection questions submit without a redundant grounding control`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
     const initial = await selectFixtureText(page);
-    if (!initial.generalKnowledgeChecked
-        || initial.generalKnowledgeLabel !== '使用通用知识'
+    if (Object.prototype.hasOwnProperty.call(initial, 'generalKnowledgeChecked')
+        || Object.prototype.hasOwnProperty.call(initial, 'generalKnowledgeLabel')
         || initial.hideLabel !== '隐藏此项') {
-      throw new Error(`selection choices should be localized with general knowledge on by default: ${JSON.stringify(initial)}`);
+      throw new Error(`selection state retained the removed grounding control: ${JSON.stringify(initial)}`);
     }
-    await page.evaluate(() => {
-      window.__webbrainSelectionShortcut.setGeneralKnowledge(false);
-      return window.__webbrainSelectionShortcut.submitCustom('仅根据选中内容回答。');
-    });
+    await page.evaluate(() => window.__webbrainSelectionShortcut.submitCustom('仅根据选中内容回答。'));
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
-    const optedOut = await page.evaluate(() => window.__selectionMessages[0]);
-    if (optedOut.action !== 'custom'
-        || optedOut.question !== '仅根据选中内容回答。'
-        || optedOut.allowGeneralKnowledge !== false) {
-      throw new Error(`custom question lost its general-knowledge opt-out: ${JSON.stringify(optedOut)}`);
+    const submitted = await page.evaluate(() => window.__selectionMessages[0]);
+    if (submitted.action !== 'custom'
+        || submitted.question !== '仅根据选中内容回答。'
+        || Object.prototype.hasOwnProperty.call(submitted, 'allowGeneralKnowledge')) {
+      throw new Error(`custom question retained the removed grounding field: ${JSON.stringify(submitted)}`);
     }
 
     await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().submitting);
     const nextSelection = await selectFixtureText(page);
-    if (!nextSelection.generalKnowledgeChecked) {
-      throw new Error(`a new selection should restore the default-on knowledge choice: ${JSON.stringify(nextSelection)}`);
+    if (Object.prototype.hasOwnProperty.call(nextSelection, 'generalKnowledgeChecked')
+        || Object.prototype.hasOwnProperty.call(nextSelection, 'generalKnowledgeLabel')) {
+      throw new Error(`a new selection restored the removed grounding control: ${JSON.stringify(nextSelection)}`);
     }
     await page.evaluate(() => window.__webbrainSelectionShortcut.submitCustom('现在有哪些跨平台框架？'));
     await page.waitForFunction(() => window.__selectionMessages.length === 2);
-    const submittedWithDefault = await page.evaluate(() => window.__selectionMessages[1]);
-    if (submittedWithDefault.action !== 'custom'
-        || submittedWithDefault.question !== '现在有哪些跨平台框架？'
-        || submittedWithDefault.allowGeneralKnowledge !== true) {
-      throw new Error(`default-on general knowledge was not submitted: ${JSON.stringify(submittedWithDefault)}`);
+    const submittedAgain = await page.evaluate(() => window.__selectionMessages[1]);
+    if (submittedAgain.action !== 'custom'
+        || submittedAgain.question !== '现在有哪些跨平台框架？'
+        || Object.prototype.hasOwnProperty.call(submittedAgain, 'allowGeneralKnowledge')) {
+      throw new Error(`a repeated custom question retained the removed grounding field: ${JSON.stringify(submittedAgain)}`);
     }
   });
 

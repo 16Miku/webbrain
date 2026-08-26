@@ -120,7 +120,7 @@ export default {
   "sp.selection_scope.description": "Start a new conversation to access the page or screen.",
   "sp.selection_scope.context_title": "Selected text + general knowledge",
   "sp.selection_scope.context_description": "Uses selected text, safe earlier dialogue, and model knowledge. Page, tools, files, attachments, and raw earlier page content stay unavailable.",
-  "sp.selection_scope.restore": "Use the broader conversation",
+  "sp.selection_scope.restore": "Use broader conversation",
   "sp.selection_scope.restore_description": "Restoring removes the selected-text boundary. Future messages can use the current page, browser tools, files, attachments, and the complete earlier conversation, including page context.",
   "sp.input.selection_placeholder": "Ask about the selected text...",
 

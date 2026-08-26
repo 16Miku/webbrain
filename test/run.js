@@ -34702,6 +34702,11 @@ test('all locales translate the new-conversation and selected-text scope UI', as
         assert.ok(locale[key].trim().length > 0, `${label}/${filename}: empty ${key}`);
       }
       if (filename === 'en.js') {
+        assert.equal(
+          locale['sp.selection_scope.restore'],
+          'Use broader conversation',
+          `${label}/${filename}: restore control should use the concise English label`,
+        );
         assert.match(
           locale['sp.selection_scope.restore_description'],
           /selected-text boundary[\s\S]*current page[\s\S]*browser tools[\s\S]*files[\s\S]*attachments[\s\S]*complete earlier conversation[\s\S]*page context/i,
@@ -35793,6 +35798,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
 
     assert.match(banner, /role="region"[\s\S]*?aria-labelledby="selection-scope-title"/, `${label}: selected-text notice should be an accessible labelled region`);
     assert.match(banner, /id="selection-scope-restore"[\s\S]*?data-i18n="sp\.selection_scope\.restore"/, `${label}: selected-text notice should expose a localized broader-conversation control`);
+    assert.match(banner, /id="selection-scope-restore"[^>]*>Use broader conversation<\/button>/, `${label}: selected-text notice should keep the concise English fallback label`);
     assert.match(banner, /data-i18n="sp\.selection_scope\.title"[\s\S]*?data-i18n="sp\.selection_scope\.description"[\s\S]*?id="selection-scope-new-conversation"[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: selected-text notice and escape action should stay localized`);
     assert.match(css, /\.selection-scope-banner \{[\s\S]*?var\(--warning\)[\s\S]*?var\(--bg-secondary\)/, `${label}: scope notice should use warning—not destructive—color semantics`);
     assert.match(css, /\.selection-scope-banner button:disabled \{[\s\S]*?cursor: not-allowed;[\s\S]*?opacity:/, `${label}: busy scope recovery should look unavailable`);
@@ -35815,6 +35821,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true, sourceGrounding\);/, `${label}: context-menu selection should reveal its exact policy without waiting for model output`);
     assert.match(panel, /function setTabProcessing\(tabId, processing\) \{[\s\S]*?syncSelectionScopeRestoreAvailability\(\);[\s\S]*?function syncSelectionScopeRestoreAvailability\(\) \{[\s\S]*?selectionScopeRestoreBtn\.disabled = !isSelectionGroundedForTab\(currentTabId\)[\s\S]*?\|\| isTabProcessing\(currentTabId\);[\s\S]*?function syncSelectionScopeUi\(\) \{[\s\S]*?syncSelectionScopeRestoreAvailability\(\);/, `${label}: restore control should track active-run state and disable immediately while busy`);
     assert.match(panel, /selectionScopeRestoreBtn\?\.addEventListener\('click',[\s\S]*?globalThis\.confirm\(`\$\{t\('sp\.selection_scope\.restore'\)\}\\n\\n\$\{t\('sp\.selection_scope\.restore_description'\)\}`\)[\s\S]*?sendToBackground\('restore_selection_scope', \{ tabId \}\)[\s\S]*?applyConversationScopeState\(tabId, state\)/, `${label}: full-conversation restore should disclose the boundary change, require confirmation, and reconcile authoritative scope state`);
+    assert.match(panel, /function formatBackgroundSendError\(action, message\)[\s\S]*?Unknown action: \$\{action\}[\s\S]*?sidebar and background are out of sync[\s\S]*?extension manager/, `${label}: mixed-version sidepanels should replace raw unknown-action errors with reload guidance`);
+    assert.match(panel, /response\?\.error[\s\S]*?formatBackgroundSendError\(action, response\.error\)/, `${label}: background response errors should pass through mixed-version recovery formatting`);
     assert.match(panel, /function addSelectionScopeDivider\(messageEl, sourceGrounding\)[\s\S]*?selection-scope-divider/, `${label}: each selected-text message should render an inline scope divider`);
     assert.match(background, /case 'restore_selection_scope':[\s\S]*?detachedRunStarts\.has\(tabId\)[\s\S]*?agent\.activeRunState\(tabId\)\?\.running[\s\S]*?ok: false[\s\S]*?agent\.restoreSelectionGroundingScope\(tabId\)[\s\S]*?agent\.getConversationState\(tabId\)/, `${label}: broader-conversation restore should reject active-run races before clearing only the selection scope`);
     assert.match(agent, /restoreSelectionGroundingScope\(tabId\)\s*\{[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?sourceGrounding: null/, `${label}: agent should persist and broadcast explicit selection-scope restoration`);
@@ -43162,7 +43170,7 @@ test('selection shortcut localizations cover every interface locale with browser
     'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
   ];
   const expectedKeys = [
-    'askAbout', 'askQuestion', 'askSelection', 'explain', 'generalKnowledge', 'hideShortcut',
+    'askAbout', 'askQuestion', 'askSelection', 'explain', 'hideShortcut',
     'humanize', 'openChat', 'proofread', 'quiz', 'sendFailed', 'sendQuestion',
     'sentManual', 'summarize', 'translate', 'translateTo',
   ];
@@ -44556,15 +44564,13 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /data-action="translate">[\s\S]*?<span class="action-label">Translate<\/span>[\s\S]*?<\/button>/, `${label}: floating popup should expose one-click Translate`);
     assert.equal((content.match(/<svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">/g) || []).length, 6, `${label}: all six floating actions should use the same accessible icon shell`);
     assert.match(content, /\.action-icon \{[\s\S]*?width:17px; height:17px; flex:0 0 17px; color:var\(--accent\);[\s\S]*?stroke-width:1\.7;[\s\S]*?stroke-linecap:round; stroke-linejoin:round;/, `${label}: action icons should share one compact line-icon treatment`);
-    assert.match(content, /class="knowledge-option"[\s\S]*?<input type="checkbox" checked>[\s\S]*?<span>Use general knowledge<\/span>/, `${label}: custom question UI should expose a default-on general-knowledge choice`);
+    assert.doesNotMatch(content, /knowledge-option|Use general knowledge|generalKnowledge|allowGeneralKnowledge/, `${label}: custom questions should not expose or retain a redundant grounding checkbox`);
     assert.match(content, /\.hide-row \{ display:flex; \}[\s\S]*?\.hide \{[\s\S]*?width:auto; margin-left:auto; padding:5px 8px;[\s\S]*?font-size:12px;/, `${label}: Hide this should be compact and right-aligned`);
     assert.match(content, /<button class="hide" type="button">Hide this<\/button>/, `${label}: the footer action should use the concise Hide this label`);
-    assert.doesNotMatch(content, /generalKnowledge\.checked = false;/, `${label}: new selection surfaces should not reset general knowledge to off`);
     assert.doesNotMatch(content, /class="language-select"|class="translate-view"/, `${label}: floating Translate should not open a second screen`);
     assert.match(content, /submitSelection\(button\.dataset\.action, '', interfaceLanguage\)/, `${label}: every floating preset should submit directly in the plugin language`);
     assert.match(content, /const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';/, `${label}: floating shortcuts should request their labels from the extension background`);
     assert.match(content, /language: action === 'custom' \? undefined : \(language \|\| interfaceLanguage\)/, `${label}: fixed actions should carry the interface language while custom questions stay untouched`);
-    assert.match(content, /allowGeneralKnowledge: action === 'custom' \? generalKnowledge\?\.checked === true : undefined/, `${label}: only custom questions should submit the broader grounding choice`);
     assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?\.action-label`\);[\s\S]*?label\.textContent = strings\[action\];/, `${label}: localization should update action labels without replacing their icons`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
@@ -44595,7 +44601,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /selectionTranslationLanguageLabel\(code, localization\.locale\) \|\| title/, `${label}: native translation targets should use localized language names with an English fallback`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
-    assert.match(background, /const sourceGrounding = selectionAction === 'custom' && msg\.allowGeneralKnowledge === true[\s\S]*?SELECTION_CONTEXT_SOURCE_GROUNDING[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING;/, `${label}: only custom questions should opt into broader structural grounding`);
+    assert.match(background, /const sourceGrounding = selectionAction === 'custom'\s*\?[\s\S]*?SELECTION_CONTEXT_SOURCE_GROUNDING[\s\S]*?: SELECTION_ONLY_SOURCE_GROUNDING;/, `${label}: custom questions should always use selection context while fixed actions remain selection-only`);
+    assert.doesNotMatch(background, /allowGeneralKnowledge/, `${label}: background grounding should not depend on a removed checkbox field`);
     assert.match(background, /\.\.\.\(normalizeSelectionSourceGrounding\(msg\.sourceGrounding\)[\s\S]*?sourceGrounding: normalizeSelectionSourceGrounding\(msg\.sourceGrounding\),/, `${label}: only allowlisted grounding should reach agent run options`);
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'humanize'\]/, `${label}: native submenu should include localized Humanize`);
     assert.match(background, /changes\.wbLocale[\s\S]*?selectionShortcutLocale = normalizeSelectionShortcutLocale\(changes\.wbLocale\.newValue\);[\s\S]*?createContextMenus\(\)\.catch/, `${label}: changing the interface locale should rebuild native context menus`);
@@ -99608,10 +99615,10 @@ test('message info toggles behaviorally through a semantic button, terminal repl
   }
 });
 
-test('Settings exposes the subscription proxy guide without presenting it as an official provider', async () => {
-  for (const [label, runtime, htmlRel, settingsRel, i18nRel] of [
-    ['chrome', 'chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
-    ['firefox', 'browser', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
+test('Settings limits the subscription proxy guide to relevant provider cards', async () => {
+  for (const [label, htmlRel, settingsRel, i18nRel] of [
+    ['chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
+    ['firefox', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
   ]) {
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
@@ -99620,24 +99627,12 @@ test('Settings exposes the subscription proxy guide without presenting it as an 
 
     assert.match(settings, /const EASY_CLI_PROXY_GUIDE_URL = 'https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/';/,
       `${label}: Settings should use the canonical HTTPS guide URL`);
-    assert.match(settings, /const EASY_CLI_PROXY_BANNER_DISMISSED_KEY = 'easyCliProxyBannerDismissed';/,
-      `${label}: the banner dismissal key should be stable`);
-    assert.match(settings, /storage\.local\.get\(\[[\s\S]*?EASY_CLI_PROXY_BANNER_DISMISSED_KEY[\s\S]*?\]\)/,
-      `${label}: banner dismissal should hydrate before providers render`);
-    assert.match(settings, /subscriptionGuideBannerDismissed = stored\[EASY_CLI_PROXY_BANNER_DISMISSED_KEY\] === true;/,
-      `${label}: stored dismissal should be interpreted strictly`);
-    assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[EASY_CLI_PROXY_BANNER_DISMISSED_KEY\\]: true \\}\\)`),
-      `${label}: dismissing the banner should persist`);
-    assert.match(settings, /if \(!subscriptionGuideBannerDismissed\) \{[\s\S]*?appendChild\(renderSubscriptionGuideBanner\(\)\)[\s\S]*?\}[\s\S]*?appendChild\(renderProviderFilterBar\(\)\)/,
-      `${label}: the optional banner should render above provider filters`);
-    assert.match(settings, /provider-subscription-dismiss[\s\S]*?aria-label="\$\{escapeHtml\(t\('st\.providers\.subscription_guide\.dismiss'\)\)\}"/,
-      `${label}: the dismiss control should have a translated accessible name`);
-    assert.doesNotMatch(settings, /provider-subscription-badge|subscription_guide\.badge/,
-      `${label}: the compact banner should not render a Third-party pill`);
-    assert.match(settings, /<span class="provider-subscription-icon" aria-hidden="true">🔌<\/span>/,
-      `${label}: the banner should use one decorative plug icon without adding an accessible label`);
+    assert.doesNotMatch(settings, /EASY_CLI_PROXY_BANNER_DISMISSED_KEY|subscriptionGuideBannerDismissed|renderSubscriptionGuideBanner|provider-subscription-banner|provider-subscription-dismiss|subscription_guide\.(?:banner_body|banner_link|dismiss)/,
+      `${label}: Providers should not render or retain state for a page-level subscription banner`);
+    assert.match(settings, /appendChild\(renderProviderFilterBar\(\)\)/,
+      `${label}: provider filters should remain at the top of the provider list`);
     assert.match(settings, /href="\$\{EASY_CLI_PROXY_GUIDE_URL\}" target="_blank" rel="noopener noreferrer"/,
-      `${label}: guide links should open securely`);
+      `${label}: provider-card guide links should open securely`);
 
     for (const [id, product] of [
       ['openai', 'ChatGPT/Codex'],
@@ -99662,18 +99657,14 @@ test('Settings exposes the subscription proxy guide without presenting it as an 
     assert.match(settings, /provider-subscription-guide-icon" aria-hidden="true">🔌<\/span>/,
       `${label}: provider-card plugs should stay hidden from assistive technology`);
 
-    assert.match(html, /\.provider-subscription-banner \{[\s\S]*?grid-template-columns:[\s\S]*?border-inline-start: 3px solid var\(--warning\)/,
-      `${label}: the banner should be compact and visually marked as cautionary`);
-    assert.doesNotMatch(html, /\.provider-subscription-badge/,
-      `${label}: removed banner pill styles should not remain`);
-    assert.match(html, /\.provider-subscription-icon \{[\s\S]*?place-items: center;[\s\S]*?border-radius: 50%;/,
-      `${label}: the plug should have a compact circular treatment`);
+    assert.doesNotMatch(html, /\.provider-subscription-(?:banner|dismiss|icon|badge)/,
+      `${label}: page-level banner styles should not remain`);
     assert.match(html, /\.provider-subscription-guide \{[\s\S]*?border-inline-start: 2px solid var\(--warning\)/,
       `${label}: card guidance should stay smaller than the provider form`);
     assert.match(html, /\.provider-subscription-guide-icon \{[\s\S]*?margin-inline-end: 5px;/,
       `${label}: provider-card plug spacing should remain RTL-safe`);
-    assert.match(html, /\.provider-subscription-dismiss:focus-visible,[\s\S]*?outline: 2px solid var\(--accent\)/,
-      `${label}: the new controls should retain keyboard focus visibility`);
+    assert.match(html, /\.provider-subscription-guide a:focus-visible \{[\s\S]*?outline: 2px solid var\(--accent\)/,
+      `${label}: provider-card links should retain keyboard focus visibility`);
     assert.match(i18n, /providerGuideEnglish[\s\S]*?providerGuideTranslations[\s\S]*?\.\.\.providerGuideEnglish,[\s\S]*?providerGuideTranslations\[code\]/,
       `${label}: the modular guide translations should merge into every runtime locale`);
   }
@@ -99684,8 +99675,15 @@ test('Settings exposes the subscription proxy guide without presenting it as an 
     'Chrome and Firefox English subscription-guide copy should stay mirrored');
   assert.deepEqual(firefoxCopy.providerGuideTranslations, chromeCopy.providerGuideTranslations,
     'Chrome and Firefox subscription-guide translations should stay mirrored');
-  assert.equal('st.providers.subscription_guide.badge' in chromeCopy.providerGuideEnglish, false,
-    'subscription-guide copy should not retain the removed Third-party pill label');
+  for (const removedKey of [
+    'st.providers.subscription_guide.badge',
+    'st.providers.subscription_guide.banner_body',
+    'st.providers.subscription_guide.banner_link',
+    'st.providers.subscription_guide.dismiss',
+  ]) {
+    assert.equal(removedKey in chromeCopy.providerGuideEnglish, false,
+      `subscription-guide copy should not retain removed page-level key ${removedKey}`);
+  }
 
   const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
   const englishKeys = Object.keys(chromeCopy.providerGuideEnglish).sort();
