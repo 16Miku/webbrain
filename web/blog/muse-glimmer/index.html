@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Muse Glimmer 30B vision and browser-agent benchmark - WebBrain Blog</title>
+  <meta name="description" content="Meta&#39;s open 30B Muse Glimmer beats every budget Qwen model in WebBrain&#39;s browser-vision benchmark, then lands above GPT-5.6 Luna on comparable first-action planner metrics—at the cost of much slower hosted inference.">
+  <meta name="keywords" content="Muse Glimmer, Meta Muse Glimmer 30B, OpenRouter, vision model benchmark, browser agent, GPT-5.6 Luna, Qwen3-VL, tool calling, open-weight AI, local multimodal model, WebBrain">
+  <meta property="og:title" content="Muse Glimmer: Meta&#39;s 30B model tested on browser vision and tool use">
+  <meta property="og:description" content="300 WebBrain cases across screenshots, first actions, and multi-turn recovery. Muse beats budget Qwen vision and lands above GPT-5.6 Luna on common planner metrics.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/muse-glimmer">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Muse Glimmer: 73/100 browser vision, above Luna on planner dispatch">
+  <meta name="twitter:description" content="Meta&#39;s open 30B VLM beats our budget Qwen vision field, emits 95 valid tool calls, and shows excellent stale-state recovery—but hosted latency is the catch.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/muse-glimmer">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Muse Glimmer",
+  "description": "Meta's open 30B Muse Glimmer beats every budget Qwen model in WebBrain's browser-vision benchmark, then lands above GPT-5.6 Luna on comparable first-action planner metrics—at the cost of much slower hosted inference.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-25",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/muse-glimmer"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 25, 2026 &middot; 12 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Muse Glimmer</h1>
+    <p class="lede"><strong>Meta&#39;s Muse Glimmer is the first model in this price and hardware class that looks genuinely strong in both halves of WebBrain&#39;s job.</strong> On our 100-case browser-vision suite, the open 30B model scored 73 strict passes and a 93.3% mean rubric score—better than every model in our recent budget Qwen sweep. On the 100-case text planner, it returned 95 schema-valid tool calls and beat GPT-5.6 Luna on both ideal-tool and exact-ideal counts. The tradeoff is speed: OpenRouter took 16.1 seconds per screenshot on average and 8.67 seconds at the median for first actions. Muse Glimmer is capable, inexpensive, open-weight, and unusually complete. It is not fast on the route we tested.</p>
+<h2 id="the-short-verdict">The short verdict</h2>
+<p>We sent <strong>300 benchmark cases</strong> to <code>meta/muse-glimmer-30b</code> through OpenRouter on August 25, 2026:</p>
+<div class="table-wrap"><table><thead><tr><th>Suite</th><th>Cases</th><th>Core result</th><th>Latency</th><th>Observed cost</th></tr></thead><tbody><tr><td>Browser vision</td><td>100</td><td><strong>73 strict passes</strong>, 93.3% mean rubric</td><td>16.15s mean</td><td>$0.098</td></tr><tr><td>First-action text planner</td><td>100</td><td><strong>95 valid tool calls</strong>, 34 ideal tools, 11 exact ideals</td><td>8.67s median</td><td>$0.240</td></tr><tr><td>Multi-turn scenarios</td><td>100</td><td><strong>41 ideal / ideal-name</strong>, 57 other, 2 anti-pattern</td><td>—</td><td>—</td></tr></tbody></table></div>
+<p>Our practical read is straightforward:</p>
+<ul><li><strong>Vision quality is excellent for the budget tier.</strong> Muse clears the best Qwen result by four strict passes and 1.4 rubric points.</li><li><strong>Text planning is above GPT-5.6 Luna on the shared deterministic measures.</strong> Muse has more valid calls, more ideal tool names, and nearly four times as many exact ideals.</li><li><strong>Recovery is uneven but real.</strong> Muse scored 9/10 on stale-reference recovery and 5/8 on the protected prompt-injection set after retry substitution, but only 2/10 on CSP-blocked evaluation and 0/10 on counter-polarity.</li><li><strong>Latency is the main weakness.</strong> Muse was 3.5 times slower than Qwen3-VL-32B Instruct on vision and slower than Luna on text first actions.</li></ul>
+<p>This is a much better result than “one model that can technically accept both text and images.” Muse is competitive in both modalities. The serving profile, not the capability surface, is what prevents an automatic recommendation.</p>
+<h2 id="what-muse-glimmer-is">What Muse Glimmer is</h2>
+<p><a href="https://huggingface.co/meta-models/Muse-Glimmer-30B" target="_blank" rel="noopener">Meta&#39;s model card</a> describes Muse Glimmer as a dense, 30-billion-parameter causal model with a dedicated perception encoder, distilled from Muse Spark and designed for autonomous agents on consumer hardware. The weights are released under Apache 2.0, with official BF16, <a href="https://huggingface.co/meta-models/Muse-Glimmer-30B-GGUF" target="_blank" rel="noopener">GGUF</a>, and ExecuTorch variants.</p>
+<p>That positioning is unusually aligned with WebBrain&#39;s workload: multimodal understanding, structured tool use, multi-step reasoning, and failure recovery in one locally deployable model. The OpenRouter route exposes a 131,072-token context. At test time its lowest listed route price was <strong>$0.30 per million input tokens and $1.10 per million output tokens</strong>; provider-specific prices can be higher.</p>
+<p>The model is dense, so “30B” means something different from Qwen&#39;s 30B-A3B MoE. Muse executes its language backbone rather than activating roughly 3B routed parameters per token. That helps explain why a Qwen MoE can be dramatically faster even when the names imply similar scale. It also means Muse&#39;s official quantized local path is central to the product story: the hosted route is convenient, but not necessarily the deployment that shows the model at its best.</p>
+<h2 id="what-we-ran">What we ran</h2>
+<p>The vision run used WebBrain&#39;s production screenshot contract: the same 100 browser screenshots, fixed six-section system prompt, temperature 0, 800-token maximum, deterministic weighted checks, and critical-fact gating used in our <a href="/blog/qwen-budget-vision-openrouter">budget Qwen comparison</a>.</p>
+<p>The text run used the current WebBrain Chrome planner payload at full tier: 100 first-action cases, native structured tools, Act temperature 0.15, and no reasoning-effort override. One request failed in transport on the original pass; its isolated retry returned a valid tool call. We substitute that retry in the measurements below.</p>
+<p>The scenario run used 100 seeded multi-turn histories covering bad-URL loops, tool errors, CSP failures, truncation, counter polarity, stale references, mode boundaries, cross-lingual interaction, and prompt injection. Three transport failures and one empty response all returned valid results on isolated retry. The consolidated figures substitute those four retry results while preserving the original run directories.</p>
+<p>No API key was stored in the result files.</p>
+<h2 id="vision-73-strict-passes-with-a-strong-hardcase-floor">Vision: 73 strict passes, with a strong hard-case floor</h2>
+<p>Muse scored every case and returned no API error:</p>
+<div class="table-wrap"><table><thead><tr><th>Difficulty band</th><th>Strict passes</th><th>Mean rubric</th><th>Mean latency</th></tr></thead><tbody><tr><td>Easy</td><td>15 / 20</td><td>94.2%</td><td>11.9s</td></tr><tr><td>Basic</td><td><strong>16 / 20</strong></td><td><strong>96.3%</strong></td><td>13.9s</td></tr><tr><td>Intermediate</td><td>14 / 20</td><td>90.6%</td><td>11.8s</td></tr><tr><td>Advanced</td><td>15 / 20</td><td>92.1%</td><td>30.1s</td></tr><tr><td>Challenging</td><td>13 / 20</td><td>93.2%</td><td>13.1s</td></tr><tr><td><strong>Overall</strong></td><td><strong>73 / 100</strong></td><td><strong>93.3%</strong></td><td><strong>16.15s</strong></td></tr></tbody></table></div>
+<p>The shape matters as much as the total. Muse never falls below 65% strict success in any band, and its challenging-band mean rubric remains above 93%. It often recovered most facts even when one critical check prevented a strict pass.</p>
+<p>Four categories were perfect: toast notifications, consent banners, chart reading, and data tables. Authentication, search, dashboards, email composition, kanban, calendars, maps, photos, security challenges, and uncertainty calibration all landed at 80% strict success.</p>
+<p>The weaknesses are familiar:</p>
+<div class="table-wrap"><table><thead><tr><th>Category</th><th>Strict success</th><th>Mean rubric</th></tr></thead><tbody><tr><td>Form validation</td><td><strong>20%</strong></td><td>76.0%</td></tr><tr><td>Modal overlays</td><td><strong>20%</strong></td><td>85.5%</td></tr><tr><td>Occlusion and contrast</td><td>40%</td><td>88.0%</td></tr><tr><td>Checkout</td><td>60%</td><td>92.0%</td></tr><tr><td>Loading state</td><td>60%</td><td>88.7%</td></tr><tr><td>Multilingual OCR</td><td>60%</td><td>92.7%</td></tr></tbody></table></div>
+<p>Form validation and modal overlays were also the budget Qwen field&#39;s shared blind spots. Muse improves the overall score without removing the failure modes that matter most when a browser agent is blocked by a dialog or must associate a field with a small inline error.</p>
+<h2 id="vision-comparison-muse-beats-the-budget-qwen-field">Vision comparison: Muse beats the budget Qwen field</h2>
+<p>The earlier <a href="/blog/qwen-budget-vision-openrouter">six-model Qwen sweep</a> used the same 100-case corpus and production screenshot contract. Adding Muse produces a clear quality winner:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Strict passes</th><th>Mean rubric</th><th>Mean latency</th><th>Output tokens</th><th>Cost / 100 cases</th></tr></thead><tbody><tr><td><strong>Muse Glimmer 30B</strong></td><td><strong>73</strong></td><td><strong>93.3%</strong></td><td>16.1s</td><td>55.9K</td><td>$0.098</td></tr><tr><td>Qwen3-VL-32B Instruct</td><td>69</td><td>91.9%</td><td>4.6s</td><td>22.2K</td><td><strong>$0.022</strong></td></tr><tr><td>Qwen3-VL-30B-A3B Instruct</td><td>68</td><td>91.3%</td><td><strong>2.2s</strong></td><td>17.1K</td><td>$0.024</td></tr><tr><td>Qwen3.5-35B-A3B</td><td>67</td><td>90.8%</td><td>5.2s</td><td>55.4K</td><td>$0.099</td></tr><tr><td>Qwen3-VL-30B-A3B Thinking</td><td>62</td><td>88.9%</td><td>6.3s</td><td>68.5K</td><td>$0.188</td></tr><tr><td>Qwen3-VL-8B Thinking</td><td>61</td><td>86.7%</td><td>6.4s</td><td>75.5K</td><td>$0.180</td></tr><tr><td>Qwen3-VL-8B Instruct</td><td>48</td><td>84.0%</td><td>2.1s</td><td>14.9K</td><td>$0.021</td></tr></tbody></table></div>
+<p>Muse buys four passes over dense Qwen3-VL-32B Instruct and five over Qwen&#39;s 30B-A3B Instruct. It also produces the best mean rubric score. This is not a rounding artifact: Muse sits above both Qwen leaders on both quality columns.</p>
+<p>The price is time and tokens. Muse emits 2.5 times as many output tokens as Qwen3-VL-32B Instruct, costs about 4.4 times as much for the replay, and takes 3.5 times as long per screenshot. Against the MoE 30B-A3B, Muse is more than seven times slower.</p>
+<p>So the deployment choice is not “Muse wins.” It is:</p>
+<ul><li><strong>Maximum budget-tier screenshot quality:</strong> Muse Glimmer.</li><li><strong>Best interactive speed/quality balance:</strong> Qwen3-VL-30B-A3B Instruct.</li><li><strong>Near-Muse quality at one-quarter of the cost:</strong> Qwen3-VL-32B Instruct.</li><li><strong>One open model for vision plus serious agentic text behavior:</strong> Muse Glimmer has the strongest evidence here.</li></ul>
+<h2 id="text-planning-capable-cautious-and-slow">Text planning: capable, cautious, and slow</h2>
+<p>The first-action run looks much like the vision run: strong output discipline, high reasoning-token use, and a long latency tail.</p>
+<div class="table-wrap"><table><thead><tr><th>Measure</th><th>Muse Glimmer</th></tr></thead><tbody><tr><td>Completed responses after retry</td><td>100 / 100</td></tr><tr><td>Structured tool calls</td><td>95</td></tr><tr><td>Schema-valid tool calls</td><td><strong>95 / 95</strong></td></tr><tr><td>Ideal tool-name matches</td><td><strong>34</strong></td></tr><tr><td>Exact ideal actions</td><td><strong>11</strong></td></tr><tr><td><code>get_accessibility_tree</code> first</td><td>51</td></tr><tr><td>Direct-action cases</td><td>49</td></tr><tr><td>Median / p95 latency</td><td>8.67s / 26.63s</td></tr><tr><td>Prompt / completion tokens</td><td>2.54M / 22.0K</td></tr><tr><td>Reasoning tokens</td><td>16.6K</td></tr><tr><td>Prompt tokens reported cached</td><td>97.6%</td></tr><tr><td>Observed 100-case cost</td><td>$0.240</td></tr></tbody></table></div>
+<p>The 95-for-95 schema row is important. Muse did not merely choose recognizable tools; every emitted call validated against the exact tool definition saved with its request. That is operationally cleaner than a model that makes the right conceptual choice but supplies an invalid enum or malformed key.</p>
+<p>Muse is also cautious. It requests a fresh accessibility tree on 51 cases even though the benchmark expects an immediate action from the state already present in the prompt. This is almost exactly GPT-5.6 Luna&#39;s behavior: Luna requested the tree 54 times. A first-action harness penalizes both models for a read-before-act policy that could work well in a real two-turn loop.</p>
+<h2 id="text-comparison-muse-is-above-luna">Text comparison: Muse is above Luna</h2>
+<p>Our <a href="/blog/american-chinese-open-model-frontier-gap-benchmark">thirteen-model American-Chinese frontier benchmark</a> ranked models primarily by leave-one-out peer consensus. Muse was run later, after WebBrain&#39;s prompt and tool schema had grown, so inserting it into that exact consensus ranking would pretend the payloads were identical. We do not do that.</p>
+<p>The 100 questions and deterministic expected actions did not change between the pinned <code>7182c21f</code> comparison checkout and the Muse run. That lets us compare the common ideal-tool and exact-ideal measures honestly. The table below is sorted by ideal tool-name count, not by the earlier article&#39;s consensus rank:</p>
+<div class="table-wrap"><table><thead><tr><th>Ideal-tool position</th><th>Model</th><th>Ideal tool</th><th>Exact ideal</th><th>Schema-valid / emitted</th><th>Tree first</th><th>Median</th><th>Replay cost</th></tr></thead><tbody><tr><td>1</td><td>Claude Sonnet 5</td><td><strong>47</strong></td><td>17</td><td>98 / 98</td><td>42</td><td>4.06s</td><td>$7.222</td></tr><tr><td>2</td><td>Kimi K3</td><td>44</td><td>18</td><td>97 / 97</td><td>45</td><td>7.54s</td><td>$1.563</td></tr><tr><td>3</td><td>Tencent HY3</td><td>41</td><td>18</td><td>90 / 90</td><td>42</td><td>5.12s</td><td>$0.246</td></tr><tr><td>4=</td><td>DeepSeek V4 Flash 0731</td><td>39</td><td>18</td><td>90 / 90</td><td>44</td><td>1.56s</td><td>$0.050</td></tr><tr><td>4=</td><td>GLM-5.2</td><td>39</td><td><strong>20</strong></td><td>86 / 89</td><td>40</td><td>1.73s</td><td>$0.545</td></tr><tr><td>6=</td><td>Gemini 3.6 Flash</td><td>36</td><td>14</td><td><strong>100 / 100</strong></td><td>59</td><td>1.96s</td><td>$1.209</td></tr><tr><td>6=</td><td>Qwen 3.6 27B</td><td>36</td><td>17</td><td>83 / 92</td><td>44</td><td>2.23s</td><td>$0.670</td></tr><tr><td>6=</td><td>xAI Grok 4.5</td><td>36</td><td>17</td><td>94 / 94</td><td>49</td><td>2.61s</td><td>$2.274</td></tr><tr><td><strong>9</strong></td><td><strong>Muse Glimmer 30B</strong></td><td><strong>34</strong></td><td><strong>11</strong></td><td><strong>95 / 95</strong></td><td><strong>51</strong></td><td><strong>8.67s</strong></td><td><strong>$0.240</strong></td></tr><tr><td>10</td><td>MiniMax M3</td><td>33</td><td>17</td><td>86 / 89</td><td>45</td><td>2.85s</td><td>$0.504</td></tr><tr><td>11=</td><td><strong>GPT-5.6 Luna Pro</strong></td><td><strong>32</strong></td><td><strong>3</strong></td><td>89 / 89</td><td>54</td><td>5.12s</td><td>$0.228</td></tr><tr><td>11=</td><td>Inkling Small</td><td>32</td><td>15</td><td>84 / 84</td><td>45</td><td>1.05s</td><td>$0.243</td></tr><tr><td>13</td><td>Poolside Laguna XS 2.1</td><td>31</td><td>5</td><td>88 / 89</td><td>45</td><td>1.15s</td><td>$0.073</td></tr><tr><td>14</td><td>GPT-5.6 Terra Pro</td><td>12</td><td>2</td><td>94 / 94</td><td>80</td><td>4.91s</td><td>$2.238</td></tr></tbody></table></div>
+<p><strong>Muse is above Luna.</strong> It selects two more ideal tool names, produces eight more exact ideal actions, emits six more valid calls, and asks for the tree slightly less often. The exact-ideal gap—11 versus 3—is the clearest evidence that Muse is not merely matching Luna&#39;s cautious policy with more verbosity.</p>
+<p>Luna still wins on speed by a wide margin: 5.12 seconds versus 8.67 seconds at the median. Their observed replay costs are effectively in the same band, $0.228 for Luna and $0.240 for Muse, although cache behavior and the larger current Muse payload make billing comparisons route-specific.</p>
+<p>Muse does not reach the top planner group on deterministic dispatch. Sonnet, Kimi, HY3, DeepSeek, GLM, Gemini, Qwen, and Grok all choose more ideal first tools. Muse&#39;s position is better described as <strong>upper-middle quality with top-tier schema discipline, full multimodality, and bottom-tier hosted latency</strong>.</p>
+<h2 id="multiturn-recovery-one-exceptional-category-several-weak-pivots">Multi-turn recovery: one exceptional category, several weak pivots</h2>
+<p>The scenario grader labels the next move as <code>ideal</code>, <code>ideal_name</code>, <code>anti</code>, <code>other</code>, or <code>empty</code>. <code>Other</code> is not a conventional test failure—it means the action matched neither the specified ideal nor a known anti-pattern—but it does show that Muse often chose a generic re-observation instead of the rubric&#39;s preferred pivot.</p>
+<p>After replacing the three transport failures and one empty original response with their isolated retries:</p>
+<div class="table-wrap"><table><thead><tr><th>Scenario category</th><th>Ideal / ideal-name</th><th>Anti-pattern</th><th>Other</th></tr></thead><tbody><tr><td>Bad-URL loop</td><td>2 / 10</td><td>0</td><td>8</td></tr><tr><td>Tool-error pivot</td><td>4 / 10</td><td>0</td><td>6</td></tr><tr><td>CSP-blocked evaluation</td><td>2 / 10</td><td>0</td><td>8</td></tr><tr><td>Truncation cascade</td><td>3 / 10</td><td>1</td><td>6</td></tr><tr><td>Counter polarity</td><td>0 / 10</td><td>1</td><td>9</td></tr><tr><td><strong>Stale reference ID</strong></td><td><strong>9 / 10</strong></td><td><strong>0</strong></td><td><strong>1</strong></td></tr><tr><td>Mode boundary</td><td>3 / 10</td><td>0</td><td>7</td></tr><tr><td>Cross-lingual</td><td>4 / 10</td><td>0</td><td>6</td></tr><tr><td>Protected prompt injection</td><td>5 / 8</td><td>0</td><td>3</td></tr><tr><td>Protected injection control</td><td><strong>2 / 2</strong></td><td>0</td><td>0</td></tr><tr><td>Unprotected prompt injection</td><td>6 / 8</td><td>0</td><td>2</td></tr><tr><td>Unprotected injection control</td><td>1 / 2</td><td>0</td><td>1</td></tr></tbody></table></div>
+<p>Stale-state recovery is the standout. When a ref ID has disappeared or a page mutation invalidates the previous tree, Muse almost always refreshes or pivots correctly. That is exactly the kind of failure recovery Meta emphasizes in the model card, and this category supports the claim.</p>
+<p>The broader scenario result is less convincing. Muse repeatedly falls back to <code>get_accessibility_tree</code> when the rubric expects a more targeted alternative. Counter-polarity is the sharpest miss: zero ideal outcomes and one known anti-pattern. The protected injection set is respectable—five of eight ideal-name outcomes, no anti-pattern, and both controls handled correctly—but the unprotected mirror did not become worse. This sample does not show a measurable benefit from the deterministic wrapper for Muse.</p>
+<h2 id="where-muse-fits">Where Muse fits</h2>
+<p>Muse Glimmer occupies a useful space that did not have a clean representative in our earlier tables:</p>
+<ul><li>It is <strong>open-weight and realistically quantizable</strong>, unlike frontier-scale MoEs.</li><li>It is <strong>natively multimodal</strong>, unlike the cheap text-planner leaders.</li><li>It is <strong>better at browser screenshots than every budget Qwen route we tested</strong>.</li><li>It is <strong>cleaner at structured tool emission than Qwen 3.6 27B</strong> in the compared runs.</li><li>It is <strong>above GPT-5.6 Luna on common deterministic first-action quality</strong>, with nearly the same observed replay cost.</li><li>It is <strong>too slow on the tested OpenRouter route</strong> to displace Qwen3-VL-30B-A3B for a latency-sensitive screenshot loop.</li></ul>
+<p>For a hosted WebBrain deployment today, we would still choose Qwen&#39;s 30B-A3B Instruct when every screenshot sits on the critical path. We would choose Muse when one open model must cover screenshot understanding, structured browser planning, and local/private deployment without splitting the job between a VLM and a text specialist.</p>
+<p>The most interesting next test is local. Meta ships official GGUF quantizations, a perception projector, and a DFlash drafter. A single-GPU Muse run would remove OpenRouter scheduling and network time, reveal whether speculative decoding fixes the latency problem, and compare the dense 30B model with Qwen&#39;s dense 32B and 3B-active MoE on the hardware the model was built to target.</p>
+<h2 id="bottom-line">Bottom line</h2>
+<p>Muse Glimmer is the new quality leader in our budget browser-vision table: <strong>73 strict passes versus Qwen&#39;s 69</strong>, with the best mean rubric score in the group. It is not the efficiency leader. The best Qwen rows return three to seven times faster and cost roughly one-quarter as much.</p>
+<p>On text planning, the answer to the question we cared about is unambiguous: <strong>Muse Glimmer sits above GPT-5.6 Luna on the common deterministic dispatch measures.</strong> Muse reaches 34 ideal tool choices and 11 exact ideals; Luna reaches 32 and 3. Muse also emits more calls with perfect saved-schema validity. Luna remains faster.</p>
+<p>The combined result makes Muse more interesting than either table alone. It is not the best text planner and not the fastest VLM. It is a 30B open model that can plausibly do both jobs well, recover stale state unusually reliably, and run on hardware an individual can own. That is a strong foundation. Now it needs a local WebBrain run to show whether Meta&#39;s consumer-hardware story can turn a 16-second hosted screenshot response into an interactive agent loop.</p>
+<h2 id="raw-results">Raw results</h2>
+<pre><code class="language-text">test/vision/results/openrouter-muse-glimmer-30b-full-20260825_meta_muse-glimmer-30b_production
+test/llm/results/openrouter-muse-glimmer-30b-full-20260825_chrome_meta_muse-glimmer-30b
+test/llm/results/openrouter-muse-glimmer-30b-retry-routing-20260825_chrome_meta_muse-glimmer-30b
+test/llm/results-scenarios/openrouter-muse-glimmer-30b-scenarios-20260825_chrome_meta_muse-glimmer-30b
+test/llm/results-scenarios/openrouter-muse-glimmer-30b-retry-scenarios-20260825_chrome_meta_muse-glimmer-30b</code></pre>
+<p>Tags: #MuseGlimmer #MetaAI #OpenWeights #OpenRouter #Qwen3VL #GPT56 #Luna #VisionLanguageModel #ToolCalling #BrowserAgent #LocalAI #WebBrain</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

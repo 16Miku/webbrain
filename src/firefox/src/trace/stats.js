@@ -36,12 +36,14 @@ export function createTraceStats() {
 export function addTraceEvent(stats, event) {
   if (!stats || !event || typeof event !== 'object') return stats;
   const data = event.data && typeof event.data === 'object' ? event.data : {};
+  if (event.kind === 'step_start' || event.kind === 'step_end' || event.kind === 'llm_response') {
+    stats.stepCount = Math.max(stats.stepCount, stepNumber(data.step));
+  }
 
   if (event.kind === 'llm_request') {
     stats.llmRequestCount += 1;
   } else if (event.kind === 'llm_response') {
     stats.llmResponseCount += 1;
-    stats.stepCount = Math.max(stats.stepCount, stepNumber(data.step));
     const usage = data.usage && typeof data.usage === 'object' ? data.usage : {};
     stats.totalInputTokens += nonNegativeNumber(usage.prompt_tokens);
     stats.totalOutputTokens += nonNegativeNumber(usage.completion_tokens);

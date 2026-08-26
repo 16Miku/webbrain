@@ -523,3 +523,24 @@ export function completionPlainFinalBlock(state) {
   if (!state?.hadAction) return null;
   return '[RUNTIME COMPLETION BLOCK: This Act/Dev run executed a consequential action, so a plain final answer cannot end it. Call done with an explicit outcome of success, partial, or failed. Use success only after a post-action observation verified the current state.]';
 }
+
+export function completionPlainFinalPartial(state, content, { verificationPending = false } = {}) {
+  const mustVerify = verificationPending
+    || !!state?.verificationDebt
+    || !!state?.iframeFormVerificationDebt;
+  const lines = [
+    'The run stopped after the model returned plain text repeatedly instead of the required structured completion.',
+    'Outcome: partial.',
+  ];
+  if (mustVerify) {
+    lines.push('A consequential action may have occurred, but its final state was not verified. Inspect the current page before retrying so the action is not repeated blindly.');
+    return lines.join('\n\n');
+  }
+  lines.push('The latest page state was observed, but the model did not complete the required done handoff.');
+  const summary = String(content || '').trim();
+  if (summary) {
+    const bounded = summary.length > 12000 ? `${summary.slice(0, 12000)}\n[Latest model output truncated]` : summary;
+    lines.push(`Latest model output (not accepted as verified completion):\n${bounded}`);
+  }
+  return lines.join('\n\n');
+}

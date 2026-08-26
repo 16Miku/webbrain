@@ -2848,6 +2848,16 @@ async function handleMessage(msg, sender) {
       return { ok: true, clearedContextMenuPromptId };
     }
 
+    case 'restore_selection_scope': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'No tab ID' };
+      if (detachedRunStarts.has(tabId) || agent.activeRunState(tabId)?.running) {
+        return { ok: false, error: 'Wait for the current response to finish before restoring the full conversation.' };
+      }
+      const restored = agent.restoreSelectionGroundingScope(tabId);
+      return { ok: true, restored, ...(await agent.getConversationState(tabId)) };
+    }
+
     case 'compact_conversation': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
