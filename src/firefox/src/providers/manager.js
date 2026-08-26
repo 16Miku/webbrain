@@ -530,7 +530,7 @@ export class ProviderManager {
         category: 'local',
         label: 'Unsloth Studio (Local)',
         providerName: 'unsloth',
-        baseUrl: 'http://localhost:8888/v1',
+        baseUrl: 'http://127.0.0.1:8888/v1',
         model: '',
         requiresModel: true,
         contextWindow: 16384,
@@ -2062,7 +2062,12 @@ export class ProviderManager {
   _extractModelIds(id, data) {
     const source = id === 'ollama' ? data?.models : data?.data;
     if (!Array.isArray(source)) return [];
-    const ids = source
+    // Studio exposes its full catalog, but nonresident entries fail when
+    // request-time model switching is disabled (the default).
+    const selectable = id === 'unsloth'
+      ? source.filter((m) => m?.loaded !== false)
+      : source;
+    const ids = selectable
       .map((m) => {
         if (typeof m === 'string') return m;
         return id === 'ollama' ? m?.name : m?.id;

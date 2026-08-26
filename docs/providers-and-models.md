@@ -194,7 +194,7 @@ proxy card require their configured client keys:
 - **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
 - **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
   authenticated local gateway; the model and proxy client API key are required
-- **Unsloth Studio**: `http://localhost:8888/v1` by default, with a configurable
+- **Unsloth Studio**: `http://127.0.0.1:8888/v1` by default, with a configurable
   port — Studio's API URL, loaded model, and generated API key are required
 
 #### Unsloth Studio
@@ -205,7 +205,7 @@ choose **Settings → API Access**, and create an API key. Keys currently use th
 `sk-unsloth-` prefix; keep the full value private.
 
 In WebBrain, open **Settings → Providers → Unsloth Studio (Local)**. Enter the
-Studio API address as `http://localhost:8888/v1`, replacing `8888` when the
+Studio API address as `http://127.0.0.1:8888/v1`, replacing `8888` when the
 running Studio instance shows a different port. Enter the generated API key,
 click **Load Models**, select the loaded model, then click **Test Connection**.
 WebBrain normalizes a

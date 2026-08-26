@@ -60825,7 +60825,7 @@ test('Unsloth Studio defaults and settings stay mirrored and conservative', () =
       category: 'local',
       label: 'Unsloth Studio (Local)',
       providerName: 'unsloth',
-      baseUrl: 'http://localhost:8888/v1',
+      baseUrl: 'http://127.0.0.1:8888/v1',
       model: '',
       requiresModel: true,
       contextWindow: 16384,
@@ -60854,7 +60854,7 @@ test('Unsloth Studio defaults and settings stay mirrored and conservative', () =
 
     const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
     const block = settings.slice(settings.indexOf('unsloth: {'), settings.indexOf('azure_openai: {'));
-    assert.match(block, /http:\/\/localhost:8888\/v1/);
+    assert.match(block, /http:\/\/127\.0\.0\.1:8888\/v1/);
     assert.match(block, /type: 'password'/);
     assert.match(block, /sk-unsloth-\.\.\./);
     assert.match(block, /key: 'model'/);
@@ -60959,9 +60959,10 @@ test('Unsloth Studio discovers models, tests connections, persists config, and r
       globalThis.fetch = async (url, init = {}) => {
         calls.push({ url: String(url), init });
         return new Response(JSON.stringify({ data: [
-          { id: 'zeta-model' },
-          { id: 'alpha-model' },
-          { id: 'zeta-model' },
+          { id: 'zeta-model', loaded: true },
+          { id: 'unloaded-model', loaded: false },
+          { id: 'alpha-model', loaded: true },
+          { id: 'zeta-model', loaded: true },
         ] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       };
       assert.deepEqual(
@@ -60977,7 +60978,7 @@ test('Unsloth Studio discovers models, tests connections, persists config, and r
         ok: true,
         models: ['alpha-model', 'zeta-model'],
         baseUrl: 'http://localhost:9999/v1',
-      }, `${label}: standard /v1/models discovery should normalize and deduplicate`);
+      }, `${label}: discovery should normalize, deduplicate, and exclude nonresident models`);
       assert.equal(calls[0].url, 'http://localhost:9999/v1/models');
       assert.equal(calls[0].init.method, 'GET');
       assert.equal(calls[0].init.headers.Accept, 'application/json');
