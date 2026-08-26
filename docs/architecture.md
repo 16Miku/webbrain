@@ -294,7 +294,7 @@ The transcript keeps every bubble for reading and recovery; the provider view
 adds the scope system note, the current selection, and (for `selection_context`)
 only the safe dialogue projection. Each selection adds an inline scope divider
 and the side-panel banner explains the included/excluded material. The user can
-confirm **Use the broader conversation** to remove the scope before the next
+confirm **Use broader conversation** to remove the scope before the next
 turn; only that explicit action allows the normal conversation payload again.
 
 `source_grounding` and the selection anchor are persisted with the per-tab

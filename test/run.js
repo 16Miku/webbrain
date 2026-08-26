@@ -34702,6 +34702,11 @@ test('all locales translate the new-conversation and selected-text scope UI', as
         assert.ok(locale[key].trim().length > 0, `${label}/${filename}: empty ${key}`);
       }
       if (filename === 'en.js') {
+        assert.equal(
+          locale['sp.selection_scope.restore'],
+          'Use broader conversation',
+          `${label}/${filename}: restore control should use the concise English label`,
+        );
         assert.match(
           locale['sp.selection_scope.restore_description'],
           /selected-text boundary[\s\S]*current page[\s\S]*browser tools[\s\S]*files[\s\S]*attachments[\s\S]*complete earlier conversation[\s\S]*page context/i,
@@ -35793,6 +35798,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
 
     assert.match(banner, /role="region"[\s\S]*?aria-labelledby="selection-scope-title"/, `${label}: selected-text notice should be an accessible labelled region`);
     assert.match(banner, /id="selection-scope-restore"[\s\S]*?data-i18n="sp\.selection_scope\.restore"/, `${label}: selected-text notice should expose a localized broader-conversation control`);
+    assert.match(banner, /id="selection-scope-restore"[^>]*>Use broader conversation<\/button>/, `${label}: selected-text notice should keep the concise English fallback label`);
     assert.match(banner, /data-i18n="sp\.selection_scope\.title"[\s\S]*?data-i18n="sp\.selection_scope\.description"[\s\S]*?id="selection-scope-new-conversation"[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: selected-text notice and escape action should stay localized`);
     assert.match(css, /\.selection-scope-banner \{[\s\S]*?var\(--warning\)[\s\S]*?var\(--bg-secondary\)/, `${label}: scope notice should use warning—not destructive—color semantics`);
     assert.match(css, /\.selection-scope-banner button:disabled \{[\s\S]*?cursor: not-allowed;[\s\S]*?opacity:/, `${label}: busy scope recovery should look unavailable`);
@@ -35815,6 +35821,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true, sourceGrounding\);/, `${label}: context-menu selection should reveal its exact policy without waiting for model output`);
     assert.match(panel, /function setTabProcessing\(tabId, processing\) \{[\s\S]*?syncSelectionScopeRestoreAvailability\(\);[\s\S]*?function syncSelectionScopeRestoreAvailability\(\) \{[\s\S]*?selectionScopeRestoreBtn\.disabled = !isSelectionGroundedForTab\(currentTabId\)[\s\S]*?\|\| isTabProcessing\(currentTabId\);[\s\S]*?function syncSelectionScopeUi\(\) \{[\s\S]*?syncSelectionScopeRestoreAvailability\(\);/, `${label}: restore control should track active-run state and disable immediately while busy`);
     assert.match(panel, /selectionScopeRestoreBtn\?\.addEventListener\('click',[\s\S]*?globalThis\.confirm\(`\$\{t\('sp\.selection_scope\.restore'\)\}\\n\\n\$\{t\('sp\.selection_scope\.restore_description'\)\}`\)[\s\S]*?sendToBackground\('restore_selection_scope', \{ tabId \}\)[\s\S]*?applyConversationScopeState\(tabId, state\)/, `${label}: full-conversation restore should disclose the boundary change, require confirmation, and reconcile authoritative scope state`);
+    assert.match(panel, /function formatBackgroundSendError\(action, message\)[\s\S]*?Unknown action: \$\{action\}[\s\S]*?sidebar and background are out of sync[\s\S]*?extension manager/, `${label}: mixed-version sidepanels should replace raw unknown-action errors with reload guidance`);
+    assert.match(panel, /response\?\.error[\s\S]*?formatBackgroundSendError\(action, response\.error\)/, `${label}: background response errors should pass through mixed-version recovery formatting`);
     assert.match(panel, /function addSelectionScopeDivider\(messageEl, sourceGrounding\)[\s\S]*?selection-scope-divider/, `${label}: each selected-text message should render an inline scope divider`);
     assert.match(background, /case 'restore_selection_scope':[\s\S]*?detachedRunStarts\.has\(tabId\)[\s\S]*?agent\.activeRunState\(tabId\)\?\.running[\s\S]*?ok: false[\s\S]*?agent\.restoreSelectionGroundingScope\(tabId\)[\s\S]*?agent\.getConversationState\(tabId\)/, `${label}: broader-conversation restore should reject active-run races before clearing only the selection scope`);
     assert.match(agent, /restoreSelectionGroundingScope\(tabId\)\s*\{[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?sourceGrounding: null/, `${label}: agent should persist and broadcast explicit selection-scope restoration`);
@@ -99608,10 +99616,10 @@ test('message info toggles behaviorally through a semantic button, terminal repl
   }
 });
 
-test('Settings exposes the subscription proxy guide without presenting it as an official provider', async () => {
-  for (const [label, runtime, htmlRel, settingsRel, i18nRel] of [
-    ['chrome', 'chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
-    ['firefox', 'browser', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
+test('Settings limits the subscription proxy guide to relevant provider cards', async () => {
+  for (const [label, htmlRel, settingsRel, i18nRel] of [
+    ['chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
+    ['firefox', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
   ]) {
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
@@ -99620,24 +99628,12 @@ test('Settings exposes the subscription proxy guide without presenting it as an 
 
     assert.match(settings, /const EASY_CLI_PROXY_GUIDE_URL = 'https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/';/,
       `${label}: Settings should use the canonical HTTPS guide URL`);
-    assert.match(settings, /const EASY_CLI_PROXY_BANNER_DISMISSED_KEY = 'easyCliProxyBannerDismissed';/,
-      `${label}: the banner dismissal key should be stable`);
-    assert.match(settings, /storage\.local\.get\(\[[\s\S]*?EASY_CLI_PROXY_BANNER_DISMISSED_KEY[\s\S]*?\]\)/,
-      `${label}: banner dismissal should hydrate before providers render`);
-    assert.match(settings, /subscriptionGuideBannerDismissed = stored\[EASY_CLI_PROXY_BANNER_DISMISSED_KEY\] === true;/,
-      `${label}: stored dismissal should be interpreted strictly`);
-    assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[EASY_CLI_PROXY_BANNER_DISMISSED_KEY\\]: true \\}\\)`),
-      `${label}: dismissing the banner should persist`);
-    assert.match(settings, /if \(!subscriptionGuideBannerDismissed\) \{[\s\S]*?appendChild\(renderSubscriptionGuideBanner\(\)\)[\s\S]*?\}[\s\S]*?appendChild\(renderProviderFilterBar\(\)\)/,
-      `${label}: the optional banner should render above provider filters`);
-    assert.match(settings, /provider-subscription-dismiss[\s\S]*?aria-label="\$\{escapeHtml\(t\('st\.providers\.subscription_guide\.dismiss'\)\)\}"/,
-      `${label}: the dismiss control should have a translated accessible name`);
-    assert.doesNotMatch(settings, /provider-subscription-badge|subscription_guide\.badge/,
-      `${label}: the compact banner should not render a Third-party pill`);
-    assert.match(settings, /<span class="provider-subscription-icon" aria-hidden="true">🔌<\/span>/,
-      `${label}: the banner should use one decorative plug icon without adding an accessible label`);
+    assert.doesNotMatch(settings, /EASY_CLI_PROXY_BANNER_DISMISSED_KEY|subscriptionGuideBannerDismissed|renderSubscriptionGuideBanner|provider-subscription-banner|provider-subscription-dismiss|subscription_guide\.(?:banner_body|banner_link|dismiss)/,
+      `${label}: Providers should not render or retain state for a page-level subscription banner`);
+    assert.match(settings, /appendChild\(renderProviderFilterBar\(\)\)/,
+      `${label}: provider filters should remain at the top of the provider list`);
     assert.match(settings, /href="\$\{EASY_CLI_PROXY_GUIDE_URL\}" target="_blank" rel="noopener noreferrer"/,
-      `${label}: guide links should open securely`);
+      `${label}: provider-card guide links should open securely`);
 
     for (const [id, product] of [
       ['openai', 'ChatGPT/Codex'],
@@ -99662,18 +99658,14 @@ test('Settings exposes the subscription proxy guide without presenting it as an 
     assert.match(settings, /provider-subscription-guide-icon" aria-hidden="true">🔌<\/span>/,
       `${label}: provider-card plugs should stay hidden from assistive technology`);
 
-    assert.match(html, /\.provider-subscription-banner \{[\s\S]*?grid-template-columns:[\s\S]*?border-inline-start: 3px solid var\(--warning\)/,
-      `${label}: the banner should be compact and visually marked as cautionary`);
-    assert.doesNotMatch(html, /\.provider-subscription-badge/,
-      `${label}: removed banner pill styles should not remain`);
-    assert.match(html, /\.provider-subscription-icon \{[\s\S]*?place-items: center;[\s\S]*?border-radius: 50%;/,
-      `${label}: the plug should have a compact circular treatment`);
+    assert.doesNotMatch(html, /\.provider-subscription-(?:banner|dismiss|icon|badge)/,
+      `${label}: page-level banner styles should not remain`);
     assert.match(html, /\.provider-subscription-guide \{[\s\S]*?border-inline-start: 2px solid var\(--warning\)/,
       `${label}: card guidance should stay smaller than the provider form`);
     assert.match(html, /\.provider-subscription-guide-icon \{[\s\S]*?margin-inline-end: 5px;/,
       `${label}: provider-card plug spacing should remain RTL-safe`);
-    assert.match(html, /\.provider-subscription-dismiss:focus-visible,[\s\S]*?outline: 2px solid var\(--accent\)/,
-      `${label}: the new controls should retain keyboard focus visibility`);
+    assert.match(html, /\.provider-subscription-guide a:focus-visible \{[\s\S]*?outline: 2px solid var\(--accent\)/,
+      `${label}: provider-card links should retain keyboard focus visibility`);
     assert.match(i18n, /providerGuideEnglish[\s\S]*?providerGuideTranslations[\s\S]*?\.\.\.providerGuideEnglish,[\s\S]*?providerGuideTranslations\[code\]/,
       `${label}: the modular guide translations should merge into every runtime locale`);
   }
@@ -99684,8 +99676,15 @@ test('Settings exposes the subscription proxy guide without presenting it as an 
     'Chrome and Firefox English subscription-guide copy should stay mirrored');
   assert.deepEqual(firefoxCopy.providerGuideTranslations, chromeCopy.providerGuideTranslations,
     'Chrome and Firefox subscription-guide translations should stay mirrored');
-  assert.equal('st.providers.subscription_guide.badge' in chromeCopy.providerGuideEnglish, false,
-    'subscription-guide copy should not retain the removed Third-party pill label');
+  for (const removedKey of [
+    'st.providers.subscription_guide.badge',
+    'st.providers.subscription_guide.banner_body',
+    'st.providers.subscription_guide.banner_link',
+    'st.providers.subscription_guide.dismiss',
+  ]) {
+    assert.equal(removedKey in chromeCopy.providerGuideEnglish, false,
+      `subscription-guide copy should not retain removed page-level key ${removedKey}`);
+  }
 
   const localeCodes = ['es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
   const englishKeys = Object.keys(chromeCopy.providerGuideEnglish).sort();

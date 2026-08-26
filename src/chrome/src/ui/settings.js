@@ -63,7 +63,6 @@ import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 const EASY_CLI_PROXY_GUIDE_URL = 'https://webbrain.one/docs/easy-cli-proxy/';
-const EASY_CLI_PROXY_BANNER_DISMISSED_KEY = 'easyCliProxyBannerDismissed';
 const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
   openai: 'ChatGPT/Codex',
   anthropic: 'Claude',
@@ -658,7 +657,6 @@ function boundedMaxAgentSteps(value) {
 // doesn't scroll forever.
 let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
-let subscriptionGuideBannerDismissed = false;
 const expandedProviders = new Set(); // ids the user explicitly expanded this session
 let customSkills = [];
 let skillPreviewRequestId = 0;
@@ -710,11 +708,10 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', EASY_CLI_PROXY_BANNER_DISMISSED_KEY, 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
-  subscriptionGuideBannerDismissed = stored[EASY_CLI_PROXY_BANNER_DISMISSED_KEY] === true;
   verboseToggle.checked = stored.verboseMode || false;
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
@@ -2563,26 +2560,6 @@ function providerSearchRank(id, config, query) {
   return 3;
 }
 
-function renderSubscriptionGuideBanner() {
-  const banner = document.createElement('aside');
-  banner.className = 'provider-subscription-banner';
-  banner.setAttribute('role', 'note');
-  banner.innerHTML = `
-    <span class="provider-subscription-icon" aria-hidden="true">🔌</span>
-    <p>${escapeHtml(t('st.providers.subscription_guide.banner_body'))}
-      <a href="${EASY_CLI_PROXY_GUIDE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.subscription_guide.banner_link'))} ↗</a>
-    </p>
-    <button type="button" class="provider-subscription-dismiss"
-            aria-label="${escapeHtml(t('st.providers.subscription_guide.dismiss'))}">&times;</button>
-  `;
-  banner.querySelector('.provider-subscription-dismiss')?.addEventListener('click', () => {
-    subscriptionGuideBannerDismissed = true;
-    banner.remove();
-    chrome.storage.local.set({ [EASY_CLI_PROXY_BANNER_DISMISSED_KEY]: true }).catch(() => {});
-  });
-  return banner;
-}
-
 function providerSubscriptionGuideHtml(definitionId) {
   if (definitionId === 'local_openai_proxy') {
     return `<aside class="provider-subscription-guide provider-local-proxy-guide" role="note">
@@ -2964,9 +2941,6 @@ function renderProviders() {
     providerConfigs[id] = { fields };
   }
 
-  if (!subscriptionGuideBannerDismissed) {
-    providersContainer.appendChild(renderSubscriptionGuideBanner());
-  }
   providersContainer.appendChild(renderProviderFilterBar());
 
   let entries = Object.entries(providersData).filter(([id]) => id !== 'webgpu');

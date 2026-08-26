@@ -11986,6 +11986,9 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
 }
 
 function formatBackgroundSendError(action, message) {
+  if (String(message || '').trim() === `Unknown action: ${action}`) {
+    return `WebBrain's sidebar and background are out of sync. Reload WebBrain from your browser's extension manager, reopen the sidebar, and try again.`;
+  }
   if (isBackgroundConnectionError(message)) {
     return `WebBrain extension connection was lost while sending "${action}". Reload the sidebar/extension and try again.`;
   }
@@ -12005,7 +12008,7 @@ async function sendToBackground(action, data = {}) {
     throw new Error(`No response from WebBrain background for "${action}". The background script may have restarted or crashed; reload the sidebar/extension and check the Firefox extension console for the original error.`);
   }
   if (response?.error) {
-    throw new Error(response.error);
+    throw new Error(formatBackgroundSendError(action, response.error));
   }
   return response;
 }
