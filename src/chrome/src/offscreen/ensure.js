@@ -8,7 +8,7 @@
  * offline SQLite/E5 retrieval workers,
  * large-file staging in
  * skill-download.js, Emergency Box downloads in emergency-download-host.js,
- * the tab-recorder in recorder.js, and the cloud bridge in
+ * the tab-recorder in recorder.js, and the local controller bridge in
  * cloud-bridge.js) must agree on a single
  * createDocument call that lists
  * every reason either of them might ever need.
@@ -18,8 +18,8 @@
  *     to a localhost LLM server fails (Private Network Access workaround).
  *   • background.js (record routes) — needs the doc to host the
  *     MediaRecorder and Web Audio mixer when recording starts.
- *   • background.js (cloud bridge routes) — needs the doc to keep an outbound
- *     WebSocket open to the local sidecar.
+ *   • background.js (local controller bridge routes) — needs the doc to keep
+ *     an outbound WebSocket open to the local sidecar.
  *
  * Both call `ensureOffscreen()` lazily; whichever fires first creates the
  * doc with the unified reason set, and the second one no-ops via the
@@ -46,7 +46,7 @@ const OFFSCREEN_REASONS = [
   'AUDIO_PLAYBACK',
 ];
 const OFFSCREEN_JUSTIFICATION =
-  'Proxy localhost requests; run local WebGPU models and offline reference search; stage validated large downloads; capture active tab and mic; maintain a localhost cloud bridge WebSocket; play conditional watch alerts.';
+  'Proxy localhost requests; run local WebGPU models and offline reference search; stage validated large downloads; capture active tab and mic; maintain a localhost controller WebSocket; play conditional watch alerts.';
 
 let ready = false;
 let inflight = null;

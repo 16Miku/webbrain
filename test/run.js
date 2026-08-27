@@ -54449,11 +54449,11 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   const bridgeStart = generalPanel.indexOf('id="cloud-bridge-setting"');
   assert.notEqual(generalStart, -1, 'Chrome General settings panel missing');
   assert.notEqual(advancedStart, -1, 'Chrome General settings should include Advanced');
-  assert.ok(bridgeStart > advancedStart, 'Cloud bridge should live inside General > Advanced');
+  assert.ok(bridgeStart > advancedStart, 'MCP should live inside General > Advanced');
   assert.match(generalPanel, /id="toggle-cloud-bridge"/, 'Chrome Advanced should expose the bridge toggle');
   assert.match(generalPanel, /id="input-cloud-bridge-url"/, 'Chrome Advanced should expose the bridge URL');
   assert.match(generalPanel, /id="cloud-bridge-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
-  assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'Cloud bridge must default off');
+  assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'MCP must default off');
   assert.match(chromeHtml, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
   assert.match(chromeHtml, /href="https:\/\/www\.webbrain\.one\/docs\/mcp\/"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/, 'MCP setting should link to the setup guide safely');
 
@@ -54500,6 +54500,21 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   const lmBridge = fs.readFileSync(path.join(ROOT, 'lmstudio-plugin/src/util/bridgeClient.ts'), 'utf8');
   for (const [label, source] of [['MCP error', mcpBridge], ['MCP connection', mcpIndex], ['LM Studio connection', lmBridge]]) {
     assert.match(source, /Settings → General → Advanced → MCP/, `${label}: runtime setup guidance should match the UI`);
+  }
+  const offscreenBridge = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/cloud-bridge.js'), 'utf8');
+  assert.match(offscreenBridge, /MCP URL must use ws:\/\/ on localhost\./, 'visible URL validation should use the MCP setting name');
+  assert.doesNotMatch(offscreenBridge, /Cloud bridge URL/, 'visible URL validation should not use the retired setting name');
+
+  const namingSurfaces = [
+    ['MCP docs', 'web/docs/mcp/index.html'],
+    ['LM Studio docs', 'web/docs/lm-studio/index.html'],
+    ['MCP blog source', 'web/blog/posts/mcp-server-introduction.md'],
+    ['MCP blog output', 'web/blog/mcp-server-introduction/index.html'],
+  ];
+  for (const [label, rel] of namingSurfaces) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    assert.match(source, /General → Advanced → MCP/, `${label}: setup path should match the Chromium UI`);
+    assert.doesNotMatch(source, /General → Advanced → Cloud bridge/, `${label}: retired setting name should not remain`);
   }
 });
 
