@@ -90134,8 +90134,18 @@ test('planner request failures expose provider settings and retry actions in bot
     );
     assert.match(
       panel,
-      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?const scheduledJobId = String\(data\?\.scheduledJobId \|\| ''\);[\s\S]*?findScheduledAssistantMessageForJob\(scheduledJobId\)[\s\S]*?queueScheduledPlannerFallbackMessage\(scheduledJobId, message\)[\s\S]*?addPlannerFallbackNote\(message, scheduledAssistantEl \|\| eventAssistantEl \|\| currentAssistantEl\);/,
+      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?const scheduledJobId = String\(data\?\.scheduledJobId \|\| ''\);[\s\S]*?const scheduledAssistantPending = scheduledAssistantPreparationJobIds\.has\(scheduledJobId\);[\s\S]*?scheduledJobId && !scheduledAssistantPending[\s\S]*?findScheduledAssistantMessageForJob\(scheduledJobId\)[\s\S]*?scheduledJobId && \(scheduledAssistantPending \|\| !scheduledAssistantEl\)[\s\S]*?queueScheduledPlannerFallbackMessage\(scheduledJobId, message\)[\s\S]*?addPlannerFallbackNote\(message, scheduledAssistantEl \|\| eventAssistantEl \|\| currentAssistantEl\);/,
       `${label}: planner-failed Act continuation is not bound or queued for the correct turn`,
+    );
+    assert.match(
+      panel,
+      /function findScheduledAssistantMessageForJob\(jobId\) \{[\s\S]*?const messages = Array\.from[\s\S]*?for \(let i = messages\.length - 1; i >= 0; i -= 1\)[\s\S]*?return messages\[i\];/,
+      `${label}: recurring scheduled runs should resolve their newest assistant turn`,
+    );
+    assert.match(
+      panel,
+      /const preparingScheduledAssistant = event === 'running' && !!jobId;[\s\S]*?scheduledAssistantPreparationJobIds\.add\(jobId\);[\s\S]*?await refreshConversationScopeState\(runTabId\);[\s\S]*?flushScheduledPlannerFallbackMessage\(jobId, currentAssistantEl\);[\s\S]*?scheduledAssistantPreparationJobIds\.delete\(jobId\);/,
+      `${label}: fast recurring warnings can escape the new-turn preparation guard`,
     );
     assert.match(
       panel,
